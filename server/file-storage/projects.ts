@@ -13,18 +13,32 @@ import { eventBus } from "../event-bus";
 
 const log = createLogger("StoreProjects");
 
+// D4: vault_id is deliberately absent from work scope columns. It anchors
+// placement and inheritance only; vault co-membership never grants work access.
 const projectScopeColumns = { scope: projects.scope, ownerUserId: projects.ownerUserId, accountId: projects.accountId };
 const milestoneScopeColumns = {
   scope: milestoneRows.scope,
   ownerUserId: milestoneRows.ownerUserId,
   accountId: milestoneRows.accountId,
-  vaultId: milestoneRows.vaultId,
 };
 const taskScopeColumns = { scope: tasks.scope, ownerUserId: tasks.ownerUserId, accountId: tasks.accountId };
 
 function principalCacheKey(): string {
   const principal = getCurrentPrincipalOrSystem();
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
+}
+
+function resolveCreationVaultId(explicitVaultId?: string): string {
+  const principal = getCurrentPrincipalOrSystem();
+  if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+    throw new Error("Project creation requires an explicit user principal");
+  }
+  const vaultId = explicitVaultId?.trim() || principal.activeVaultId;
+  if (!vaultId) throw new Error("Project creation requires an active or explicit vault");
+  if (!principal.visibleVaultIds.includes(vaultId)) {
+    throw new Error(`Project vault ${vaultId} is not visible to the current principal`);
+  }
+  return vaultId;
 }
 
 function rowToMilestone(row: typeof milestoneRows.$inferSelect): Milestone {
@@ -48,6 +62,7 @@ function rowToProject(row: typeof projects.$inferSelect, milestones: Milestone[]
   return {
     id: row.id,
     title: row.title,
+    vaultId: row.vaultId!,
     description: row.description,
     status,
     priority: row.priority as PriorityLevel,
@@ -163,6 +178,7 @@ export class FileProjectStorage {
   async createProject(input: InsertProject): Promise<Project> {
     const principal = getCurrentPrincipalOrSystem();
     const now = new Date();
+    const vaultId = resolveCreationVaultId(input.vaultId);
 
     const created = await db.transaction(async tx => {
       const [row] = await tx.insert(projects).values({
@@ -176,6 +192,7 @@ export class FileProjectStorage {
         completedAt: (input.status || "idea") === "completed" ? now : null,
         spec: input.spec || "",
         goalId: input.goalId || null,
+        vaultId,
         // Deprecated milestone JSON intentionally remains at its database default.
         tags: (input.tags || []) as unknown as Record<string, unknown>,
         people: (input.people || []) as unknown as Record<string, unknown>,
@@ -191,7 +208,7 @@ export class FileProjectStorage {
       const normalized = (input.milestones || []).map((milestone: Milestone, index: number) => ({
         id: milestone.id ?? index + 1,
         projectId: row.id,
-        vaultId: null,
+        vaultId,
         ownerUserId: row.ownerUserId,
         accountId: row.accountId,
         scope: row.scope,
@@ -264,7 +281,7 @@ export class FileProjectStorage {
           return {
             id: milestoneId,
             projectId: id,
-            vaultId: prior?.vaultId ?? null,
+            vaultId: prior?.vaultId ?? existing.vaultId,
             ownerUserId: existing.ownerUserId,
             accountId: existing.accountId,
             scope: existing.scope,
@@ -333,7 +350,7 @@ export class FileProjectStorage {
       await tx.insert(milestoneRows).values({
         id,
         projectId,
-        vaultId: null,
+        vaultId: project.vaultId,
         ownerUserId: project.ownerUserId,
         accountId: project.accountId,
         scope: project.scope,

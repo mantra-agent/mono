@@ -23,7 +23,7 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
       CREATE TABLE IF NOT EXISTS milestones (
         id INTEGER NOT NULL,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        vault_id TEXT REFERENCES vaults(id) ON DELETE SET NULL,
+        vault_id TEXT REFERENCES vaults(id) ON DELETE RESTRICT,
         owner_user_id TEXT,
         account_id TEXT,
         scope TEXT NOT NULL DEFAULT 'user',
@@ -157,7 +157,7 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
             AND conrelid = 'milestones'::regclass
         ) THEN
           ALTER TABLE milestones ADD CONSTRAINT milestones_vault_id_vaults_id_fk
-          FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE SET NULL;
+          FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE RESTRICT;
         END IF;
         IF NOT EXISTS (
           SELECT 1 FROM pg_constraint

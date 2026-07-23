@@ -10,13 +10,14 @@ import { eventBus } from "../event-bus";
 
 const log = createLogger("StoreTasks");
 
+// D4: vault_id is deliberately absent from work scope columns. It anchors
+// placement and inheritance only; vault co-membership never grants work access.
 const taskScopeColumns = { scope: tasks.scope, ownerUserId: tasks.ownerUserId, accountId: tasks.accountId };
 const projectScopeColumns = { scope: projects.scope, ownerUserId: projects.ownerUserId, accountId: projects.accountId };
 const milestoneScopeColumns = {
   scope: milestones.scope,
   ownerUserId: milestones.ownerUserId,
   accountId: milestones.accountId,
-  vaultId: milestones.vaultId,
 };
 
 function principalCacheKey(): string {
@@ -24,11 +25,25 @@ function principalCacheKey(): string {
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
 }
 
+function resolveCreationVaultId(explicitVaultId?: string): string {
+  const principal = getCurrentPrincipalOrSystem();
+  if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+    throw new Error("Task creation requires an explicit user principal");
+  }
+  const vaultId = explicitVaultId?.trim() || principal.activeVaultId;
+  if (!vaultId) throw new Error("Task creation requires an active or explicit vault");
+  if (!principal.visibleVaultIds.includes(vaultId)) {
+    throw new Error(`Task vault ${vaultId} is not visible to the current principal`);
+  }
+  return vaultId;
+}
+
 /** Convert a DB row to the Task model shape */
 function rowToTask(row: typeof tasks.$inferSelect): Task {
   return {
     id: row.id,
     title: row.title,
+    vaultId: row.vaultId!,
     description: row.description,
     status: (row.status === "push" ? "on_hold" : row.status) as TaskStatus,
     priority: row.priority as Task["priority"],
@@ -154,6 +169,7 @@ export class FileTaskStorage {
     await this.assertWorkPlacement(input.projectId, input.milestoneId);
     const now = new Date();
     const effort = input.effort || "mid";
+    const vaultId = resolveCreationVaultId(input.vaultId);
 
     const [row] = await db.insert(tasks).values({
       title: input.title,
@@ -166,6 +182,7 @@ export class FileTaskStorage {
       requiresReview: input.requiresReview ?? false,
       projectId: input.projectId ?? null,
       milestoneId: input.milestoneId ?? null,
+      vaultId,
       tags: input.tags || [],
       context: input.context || "",
       output: input.output || "",

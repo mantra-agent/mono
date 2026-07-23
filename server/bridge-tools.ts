@@ -4435,10 +4435,17 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     const sourceSessionId = typeof args._sessionId === "string" && args._sessionId.trim() ? args._sessionId.trim() : null;
     let sourceSessionLine = "";
+    let sourceMeetingVaultId: string | undefined;
     if (sourceSessionId) {
       const sourceSession = await chatFileStorage.getSession(sourceSessionId).catch(() => undefined);
       const titlePart = sourceSession?.title ? ` (${sourceSession.title})` : "";
       sourceSessionLine = `Source session: @session:${sourceSessionId}${titlePart}`;
+      if (sourceSession?.type === "meeting") {
+        if (!sourceSession.vaultId) {
+          return { result: `Meeting session ${sourceSessionId} has no pinned vault`, error: true };
+        }
+        sourceMeetingVaultId = sourceSession.vaultId;
+      }
     }
 
     try {
@@ -4455,6 +4462,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         impact: args.impact ?? null,
         effort: args.effort ?? null,
         milestoneId,
+        ...(sourceMeetingVaultId ? { vaultId: sourceMeetingVaultId } : {}),
         context,
         deadline: args.deadline ?? null,
       };
@@ -5701,8 +5709,17 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const { fileProjectStorage } = await import("./file-storage/projects");
     const { fileTaskStorage } = await import("./file-storage/tasks");
     const { goalsService: goalsServiceWork } = await import("./goals-service");
+    const { chatFileStorage } = await import("./chat-file-storage");
 
     const action = args.action || "status";
+    const sourceSessionId = typeof args._sessionId === "string" && args._sessionId.trim() ? args._sessionId.trim() : null;
+    const sourceSession = sourceSessionId
+      ? await chatFileStorage.getSession(sourceSessionId).catch(() => undefined)
+      : undefined;
+    if (sourceSession?.type === "meeting" && !sourceSession.vaultId) {
+      return { result: `Meeting session ${sourceSessionId} has no pinned vault`, error: true };
+    }
+    const sourceMeetingVaultId = sourceSession?.type === "meeting" ? sourceSession.vaultId : undefined;
 
     try {
       switch (action) {
@@ -5719,6 +5736,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             ...(args.tags !== undefined && { tags: args.tags }),
             ...(args.people !== undefined && { people: args.people }),
             ...(args.goalId !== undefined && { goalId: args.goalId }),
+            ...(sourceMeetingVaultId ? { vaultId: sourceMeetingVaultId } : {}),
           });
           const project = await fileProjectStorage.createProject(input);
           return { result: `Project created successfully. ID: ${project.id}, title: "${project.title}", status: ${project.status}, priority: ${project.priority}.` };
