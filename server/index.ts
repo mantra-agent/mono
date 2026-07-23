@@ -360,8 +360,11 @@ app.use((req, res, next) => {
   bootTracker.startPhase("database");
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
-  const { ensureMilestonesSchema } = await import("./milestone-schema");
+  await vaultsMigrationReady;
+  const { ensureWorkVaultParentSchema } = await import("./work-vault-schema");
   const { pool } = await import("./db");
+  await ensureWorkVaultParentSchema(pool);
+  const { ensureMilestonesSchema } = await import("./milestone-schema");
   await ensureMilestonesSchema(pool);
   await beginRuntimeProcessLifecycle();
   // Persona templates and skill recommendations are a runtime invariant, not
@@ -479,6 +482,8 @@ app.use((req, res, next) => {
   const { ensureWorkVaultSchema } = await import("./work-vault-schema");
   const { pool: workVaultPool } = await import("./db");
   await ensureWorkVaultSchema(workVaultPool);
+  const { ensureProjectVaultMembershipSchema } = await import("./project-vault-access");
+  await ensureProjectVaultMembershipSchema();
   await migrateProjectNotesSpecToLibrary();
   const { ensureObjectGrantSchema } = await import("./object-grant-schema");
   await ensureObjectGrantSchema(workVaultPool);

@@ -2,15 +2,23 @@ import { createLogger } from "./log";
 
 const log = createLogger("MilestoneSchema");
 const MIGRATION_LOCK_KEY = "migration.milestones-schema.v1";
+const ADOPTION_MARKER_KEY = "migration.milestones-json-adoption.v1";
+
+type QueryResult = {
+  rows?: Array<Record<string, unknown>>;
+  rowCount?: number | null;
+};
 
 type QueryableClient = {
-  query: (sql: string, params?: unknown[]) => Promise<unknown>;
+  query: (sql: string, params?: unknown[]) => Promise<QueryResult>;
   release: () => void;
 };
 
 type ConnectionPool = {
   connect: () => Promise<QueryableClient>;
 };
+
+type AdoptionMode = "replay_legacy" | "adopt_existing" | "repair_canonical";
 
 const quoteIdentifier = (value: string): string => `"${value.replace(/"/g, '""')}"`;
 
@@ -19,11 +27,28 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
   try {
     await client.query("BEGIN");
     await client.query(`SELECT pg_advisory_xact_lock(hashtext('${MIGRATION_LOCK_KEY}'))`);
+
+    const relation = await client.query(`SELECT to_regclass('public.milestones') IS NOT NULL AS existed`);
+    const relationExisted = relation.rows?.[0]?.existed === true;
+    const marker = await client.query(
+      `SELECT EXISTS (SELECT 1 FROM system_settings WHERE key = $1) AS exists`,
+      [ADOPTION_MARKER_KEY],
+    );
+    const markerExists = marker.rows?.[0]?.exists === true;
+    if (!relationExisted && markerExists) {
+      throw new Error("canonical milestones relation is missing after deprecated JSON adoption completed");
+    }
+    const adoptionMode: AdoptionMode = !relationExisted
+      ? "replay_legacy"
+      : markerExists
+        ? "repair_canonical"
+        : "adopt_existing";
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS milestones (
         id INTEGER NOT NULL,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        vault_id TEXT REFERENCES vaults(id) ON DELETE RESTRICT,
+        vault_id TEXT NOT NULL REFERENCES vaults(id) ON DELETE RESTRICT,
         owner_user_id TEXT,
         account_id TEXT,
         scope TEXT NOT NULL DEFAULT 'user',
@@ -64,9 +89,7 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
     await client.query(`
       UPDATE milestones AS milestone
       SET
-        vault_id = CASE WHEN milestone.vault_id IS NULL OR EXISTS (
-          SELECT 1 FROM vaults WHERE vaults.id = milestone.vault_id
-        ) THEN milestone.vault_id ELSE NULL END,
+        vault_id = project.vault_id,
         owner_user_id = COALESCE(milestone.owner_user_id, project.owner_user_id),
         account_id = COALESCE(milestone.account_id, project.account_id),
         scope = COALESCE(NULLIF(milestone.scope, ''), project.scope, 'user'),
@@ -82,35 +105,40 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
 
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_milestones_project_id ON milestones(project_id, id)`);
 
-    await client.query(`
-      INSERT INTO milestones (
-        id, project_id, owner_user_id, account_id, scope, created_by_user_id,
-        name, status, start_date, due_date, display_order, completed_at, created_at, updated_at
-      )
-      SELECT
-        (entry.value->>'id')::INTEGER,
-        project.id,
-        project.owner_user_id,
-        project.account_id,
-        project.scope,
-        project.owner_user_id,
-        COALESCE(NULLIF(entry.value->>'name', ''), 'Unnamed'),
-        CASE entry.value->>'status' WHEN 'active' THEN 'active' WHEN 'completed' THEN 'completed' ELSE 'planned' END,
-        NULLIF(entry.value->>'startDate', ''),
-        NULLIF(entry.value->>'dueDate', ''),
-        CASE WHEN (entry.value->>'order') ~ '^-?[0-9]+$' THEN (entry.value->>'order')::INTEGER ELSE entry.ordinality::INTEGER - 1 END,
-        CASE WHEN (entry.value->>'completedAt') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' THEN (entry.value->>'completedAt')::TIMESTAMPTZ ELSE NULL END,
-        project.created_at,
-        project.updated_at
-      FROM projects AS project
-      CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(project.milestones) = 'array' THEN project.milestones ELSE '[]'::jsonb END
-      ) WITH ORDINALITY AS entry(value, ordinality)
-      WHERE jsonb_typeof(entry.value) = 'object'
-        AND entry.value ? 'id'
-        AND (entry.value->>'id') ~ '^[0-9]+$'
-      ON CONFLICT (project_id, id) DO NOTHING
-    `);
+    if (adoptionMode === "replay_legacy") {
+      const replay = await client.query(`
+        INSERT INTO milestones (
+          id, project_id, vault_id, owner_user_id, account_id, scope, created_by_user_id,
+          name, status, start_date, due_date, display_order, completed_at, created_at, updated_at
+        )
+        SELECT
+          (entry.value->>'id')::INTEGER,
+          project.id,
+          project.vault_id,
+          project.owner_user_id,
+          project.account_id,
+          project.scope,
+          project.owner_user_id,
+          COALESCE(NULLIF(entry.value->>'name', ''), 'Unnamed'),
+          CASE entry.value->>'status' WHEN 'active' THEN 'active' WHEN 'completed' THEN 'completed' ELSE 'planned' END,
+          NULLIF(entry.value->>'startDate', ''),
+          NULLIF(entry.value->>'dueDate', ''),
+          CASE WHEN (entry.value->>'order') ~ '^-?[0-9]+$' THEN (entry.value->>'order')::INTEGER ELSE entry.ordinality::INTEGER - 1 END,
+          CASE WHEN (entry.value->>'completedAt') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' THEN (entry.value->>'completedAt')::TIMESTAMPTZ ELSE NULL END,
+          project.created_at,
+          project.updated_at
+        FROM projects AS project
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(project.milestones) = 'array' THEN project.milestones ELSE '[]'::jsonb END
+        ) WITH ORDINALITY AS entry(value, ordinality)
+        WHERE project.vault_id IS NOT NULL
+          AND jsonb_typeof(entry.value) = 'object'
+          AND entry.value ? 'id'
+          AND (entry.value->>'id') ~ '^[0-9]+$'
+        ON CONFLICT (project_id, id) DO NOTHING
+      `);
+      log.info(`adopted deprecated Project milestone JSON rows=${replay.rowCount ?? 0}`);
+    }
 
     await client.query(`
       DO $migration$
@@ -118,7 +146,11 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
         IF EXISTS (
           SELECT 1 FROM milestones AS milestone
           LEFT JOIN projects AS project ON project.id = milestone.project_id
-          WHERE milestone.id IS NULL OR milestone.project_id IS NULL OR project.id IS NULL
+          WHERE milestone.id IS NULL
+             OR milestone.project_id IS NULL
+             OR milestone.vault_id IS NULL
+             OR project.id IS NULL
+             OR milestone.vault_id IS DISTINCT FROM project.vault_id
         ) THEN
           RAISE EXCEPTION 'milestones schema convergence found invalid rows';
         END IF;
@@ -128,6 +160,7 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
       ALTER TABLE milestones
         ALTER COLUMN id SET NOT NULL,
         ALTER COLUMN project_id SET NOT NULL,
+        ALTER COLUMN vault_id SET NOT NULL,
         ALTER COLUMN scope SET DEFAULT 'user', ALTER COLUMN scope SET NOT NULL,
         ALTER COLUMN name SET NOT NULL,
         ALTER COLUMN status SET DEFAULT 'planned', ALTER COLUMN status SET NOT NULL,
@@ -195,10 +228,25 @@ export async function ensureMilestonesSchema(pool: ConnectionPool): Promise<void
         END IF;
       END $migration$
     `);
-    await client.query(`COMMENT ON COLUMN projects.milestones IS 'DEPRECATED: canonical milestones live in milestones table; remove after one release, target 2026-08-05'`);
+
+    await client.query(
+      `UPDATE system_settings
+       SET value = jsonb_build_object('completedAt', CURRENT_TIMESTAMP, 'mode', $2::text),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE key = $1`,
+      [ADOPTION_MARKER_KEY, adoptionMode],
+    );
+    await client.query(
+      `INSERT INTO system_settings (key, value, updated_at)
+       SELECT $1, jsonb_build_object('completedAt', CURRENT_TIMESTAMP, 'mode', $2::text), CURRENT_TIMESTAMP
+       WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = $1)`,
+      [ADOPTION_MARKER_KEY, adoptionMode],
+    );
+
+    await client.query(`COMMENT ON COLUMN projects.milestones IS 'DEPRECATED: rollback-only snapshot; canonical milestones live in milestones table; never replay after adoption; remove after one release, target 2026-08-05'`);
     await client.query(`COMMENT ON TABLE milestones IS 'Canonical project milestones. Numeric id is project-local and unique with project_id.'`);
     await client.query("COMMIT");
-    log.log("milestones schema convergence complete");
+    log.info(`milestones schema convergence complete mode=${adoptionMode}`);
   } catch (error) {
     try {
       await client.query("ROLLBACK");
