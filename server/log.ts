@@ -2,6 +2,7 @@
 import { mkdirSync, createWriteStream, type WriteStream } from "fs";
 import { readFile, readdir, stat, unlink } from "fs/promises";
 import { join, resolve } from "path";
+import { redactSensitiveText, redactSensitiveValue } from "./sensitive-data-redaction";
 
 /** Severity ranking for threshold-based filtering: selecting a level shows that level and above. */
 const LOG_LEVEL_RANK: Record<string, number> = { verbose: -1, debug: 0, log: 1, info: 1, warn: 2, error: 3 };
@@ -105,7 +106,14 @@ export function getRecentLogStats(): { capacity: number; held: number; droppedLi
 
 function formatArgs(args: unknown[]): string {
   return args
-    .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+    .map((arg) => {
+      if (typeof arg === "string") return redactSensitiveText(arg);
+      try {
+        return JSON.stringify(redactSensitiveValue(arg));
+      } catch {
+        return "[unserializable]";
+      }
+    })
     .join(" ");
 }
 
@@ -290,7 +298,7 @@ export function appendClientLog(level: string, source: string, message: string) 
   const normalizedLevel = level === "log" ? "info" : level.toLowerCase();
   if (!(normalizedLevel in LOG_LEVEL_RANK) || !shouldEmitLevel(normalizedLevel)) return;
   const clientSource = `client:${source.slice(0, 128)}`;
-  const boundedMessage = boundLogMessage(message);
+  const boundedMessage = boundLogMessage(redactSensitiveText(message));
   appendToLogFile(normalizedLevel, clientSource, boundedMessage);
   bufferLog(normalizedLevel, boundedMessage, clientSource);
   sink?.({ level: normalizedLevel, message: boundedMessage, source: clientSource });

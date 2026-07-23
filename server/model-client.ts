@@ -21,6 +21,7 @@ import { runWithPrincipal } from "./principal-context";
 import { resolveSessionModelTierOverride } from "./session-model-tier-override";
 import { safeStringify } from "./utils/safe-stringify";
 import { captureInferencePayload } from "./inference-payload-capture";
+import { redactSensitiveText } from "./sensitive-data-redaction";
 
 let _openaiClient: OpenAI | null = null;
 let _anthropicClient: Anthropic | null = null;
@@ -324,6 +325,12 @@ export interface ChatCompletionOptions {
    * no connector fits the budget.
    */
   latencyBudgetMs?: number;
+  /**
+   * Identifies a caller-owned cancellation that completes through a deliberate
+   * degraded path. Expected aborts are audited as aborted inference and logged
+   * at debug; the caller remains responsible for warning when it uses fallback.
+   */
+  expectedAbortReason?: string;
   signal?: AbortSignal;
   tools?: ToolDefinition[];
   /**
@@ -408,6 +415,14 @@ function isAbortError(err: unknown, signal?: AbortSignal): boolean {
   return !!signal?.aborted || e?.name === "AbortError" || e?.code === "ERR_CANCELED";
 }
 
+function matchesExpectedAbortReason(signal: AbortSignal | undefined, expectedReason: string | undefined): boolean {
+  if (!signal?.aborted || !expectedReason) return false;
+  const actualReason = signal.reason instanceof Error
+    ? signal.reason.message
+    : String(signal.reason ?? "");
+  return actualReason === expectedReason;
+}
+
 function serializeModelError(err: unknown): Record<string, unknown> {
   const e = err as {
     name?: string;
@@ -424,9 +439,9 @@ function serializeModelError(err: unknown): Record<string, unknown> {
     providerFailure?: ModelProviderFailure;
   } | null;
   return {
-    name: e?.name || "Error",
-    message: e?.message || String(err),
-    code: e?.code,
+    name: redactSensitiveText(e?.name || "Error"),
+    message: redactSensitiveText(e?.message || String(err)),
+    code: e?.code ? redactSensitiveText(e.code) : undefined,
     kind: e?.kind,
     retryable: e?.retryable,
     status: e?.status,
@@ -443,6 +458,10 @@ function auditRouting(routing: ModelRoutingDecision): Omit<ModelRoutingDecision,
   const { credential: _credential, fallbackCandidates: _fallbackCandidates, ...safe } = routing;
   return {
     ...safe,
+    attempts: safe.attempts.map((attempt) => ({
+      ...attempt,
+      reason: attempt.reason ? redactSensitiveText(attempt.reason) : undefined,
+    })),
     requestedTier: routing.tier,
     resolvedModel: routing.modelString,
     connectorProvider: routing.provider,
@@ -514,8 +533,13 @@ async function recordInference(params: {
 
 function enrichModelError(err: unknown, routing: ModelRoutingDecision, metadata?: InferenceMetadata): Error {
   const base = err instanceof Error ? err : new Error(String(err));
-  (base as Error & { code?: string; routing?: ModelRoutingDecision; inferenceMetadata?: InferenceMetadata }).routing = routing;
-  (base as Error & { code?: string; routing?: ModelRoutingDecision; inferenceMetadata?: InferenceMetadata }).inferenceMetadata = metadata;
+  type EnrichedModelError = Error & {
+    code?: string;
+    routing?: ReturnType<typeof auditRouting>;
+    inferenceMetadata?: InferenceMetadata;
+  };
+  (base as EnrichedModelError).routing = auditRouting(routing);
+  (base as EnrichedModelError).inferenceMetadata = metadata;
   if (!(base as Error & { code?: string }).code) {
     const msg = base.message.toLowerCase();
     (base as Error & { code?: string }).code = msg.includes("rate limit") || msg.includes("quota") ? "PROVIDER_QUOTA" : "MODEL_PROVIDER_ERROR";
@@ -618,7 +642,17 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
     const status: InferenceStatus = isAbortError(err, options.signal) ? "aborted" : "error";
     routing.attempts = appendFailedAttempt(routing, err);
     const errorMetadata = serializeModelError(err);
-    log.error(`chatCompletion ${status.toUpperCase()} in ${elapsed}ms provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash}: ${err.message}`);
+    const expectedAbort = status === "aborted"
+      && matchesExpectedAbortReason(options.signal, options.expectedAbortReason);
+    const completionFailureMessage =
+      `chatCompletion ${status.toUpperCase()} in ${elapsed}ms provider=${provider} model=${model} ` +
+      `activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash}` +
+      `${expectedAbort ? ` expectedAbortReason=${options.expectedAbortReason}` : ""}: ${err.message}`;
+    if (expectedAbort) {
+      log.debug(completionFailureMessage);
+    } else {
+      log.error(completionFailureMessage);
+    }
     const providerUsage = err instanceof ModelProviderError && err.providerFailure.usage
       ? {
           inputTokens: err.providerFailure.usage.inputTokens,

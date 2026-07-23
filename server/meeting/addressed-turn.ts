@@ -7,7 +7,8 @@ import type { MeetingParticipant } from "@shared/models/chat";
 const log = createLogger("MeetingParticipationInference");
 const ACTIVE_EXCHANGE_MS = 45_000;
 const MAX_CONTEXT_TURNS = 8;
-const INFERENCE_TIMEOUT_MS = 1_500;
+const INFERENCE_TIMEOUT_MS = 2_000;
+const INFERENCE_EXPECTED_ABORT_REASON = "meeting_participation_deadline";
 
 export type MeetingParticipationOutcome = "explicit" | "classified" | "fallback" | "ignored";
 
@@ -298,7 +299,10 @@ export async function inferMeetingParticipation(input: MeetingParticipationInput
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(new Error(INFERENCE_EXPECTED_ABORT_REASON)),
+    INFERENCE_TIMEOUT_MS,
+  );
   timeout.unref?.();
   try {
     const context = messages.map((message) => ({
@@ -337,9 +341,10 @@ export async function inferMeetingParticipation(input: MeetingParticipationInput
       jsonMode: true,
       semanticTierOverride: "fast",
       latencyBudgetMs: INFERENCE_TIMEOUT_MS,
-      overrideReason: "meeting participation inference has a 1500ms latency budget",
+      overrideReason: "meeting participation inference has a 2000ms latency budget",
       maxTokens: 96,
       temperature: 0,
+      expectedAbortReason: INFERENCE_EXPECTED_ABORT_REASON,
       signal: controller.signal,
       metadata: { source: "meeting_participation_inference", activity: ACTIVITY_FRAMING, sessionId: input.sessionId, sessionKey: input.sessionKey, requestId: input.turnId },
     });
