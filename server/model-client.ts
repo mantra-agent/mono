@@ -1805,6 +1805,11 @@ export interface TtftBreakdown {
 }
 
 export type StreamEvent =
+  // A transient provider failure voided the prior attempt's reasoning-only
+  // progress; the replacement attempt re-derives it. Consumers must drop any
+  // uncommitted thinking accumulation so a retry cannot stitch two attempts
+  // into one durable chronology or conversation context.
+  | { type: "attempt_reset" }
   | { type: "thinking_delta"; content: string }
   | { type: "text_delta"; content: string }
   | { type: "tool_use_start"; toolCallId: string; toolName: string }
@@ -2056,6 +2061,9 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
   // assistant text or invoke tools, so replay cannot duplicate durable work.
   let yieldedReplayUnsafeEvent = false;
   let connectedEmitted = false;
+  // Tracks whether the current attempt streamed reasoning deltas downstream.
+  // If it did and we retry, the replacement attempt must void them first.
+  let yieldedThinkingEvent = false;
 
   try {
     const authStart = Date.now();
@@ -2107,6 +2115,13 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
 
     streamRetryLoop: for (let attempt = 0; attempt < CODEX_STREAM_MAX_ATTEMPTS; attempt++) {
       if (attempt > 0) {
+        if (yieldedThinkingEvent) {
+          // The failed attempt streamed reasoning downstream. Void it before
+          // the replacement attempt so consumers cannot stitch two attempts'
+          // reasoning into one durable record.
+          yieldedThinkingEvent = false;
+          yield { type: "attempt_reset" };
+        }
         log.debug(
           `codex stream retry attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
           `reason=${lastEarlyReason || "early-failure"} delay=${CODEX_RETRY_DELAYS_MS[attempt - 1]}ms`,
@@ -2284,6 +2299,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
 
           if (chunk.type === "response.reasoning_summary_text.delta" && typeof chunk.delta === "string") {
             if (!connectedEmitted) { connectedEmitted = true; yield { type: "connected" }; }
+            yieldedThinkingEvent = true;
             yield { type: "thinking_delta", content: chunk.delta };
           } else if (chunk.type === "response.output_text.delta" && typeof chunk.delta === "string") {
             if (!connectedEmitted) { connectedEmitted = true; yield { type: "connected" }; }
