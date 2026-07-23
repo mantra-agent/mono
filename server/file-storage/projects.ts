@@ -6,27 +6,40 @@ import type {
   ProjectStatus, PriorityLevel,
 } from "@shared/models/work";
 import { createLogger } from "../log";
-import { TTLCache } from "../utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
+import { ownedInsertValues } from "../scoped-storage";
+import {
+  combineWithWorkObjectAccess,
+  hasAdminOnlyMilestoneChanges,
+  hasAdminOnlyProjectChanges,
+  type ObjectGrantCapability,
+} from "../object-grant-access";
+import { objectGrantService } from "../object-grant-service";
 import { eventBus } from "../event-bus";
 
 const log = createLogger("StoreProjects");
 
 // D4: vault_id is deliberately absent from work scope columns. It anchors
 // placement and inheritance only; vault co-membership never grants work access.
-const projectScopeColumns = { scope: projects.scope, ownerUserId: projects.ownerUserId, accountId: projects.accountId };
+const projectScopeColumns = {
+  objectId: projects.id,
+  scope: projects.scope,
+  ownerUserId: projects.ownerUserId,
+  accountId: projects.accountId,
+};
 const milestoneScopeColumns = {
+  objectId: milestoneRows.id,
+  projectId: milestoneRows.projectId,
   scope: milestoneRows.scope,
   ownerUserId: milestoneRows.ownerUserId,
   accountId: milestoneRows.accountId,
 };
-const taskScopeColumns = { scope: tasks.scope, ownerUserId: tasks.ownerUserId, accountId: tasks.accountId };
-
-function principalCacheKey(): string {
-  const principal = getCurrentPrincipalOrSystem();
-  return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
-}
+const taskScopeColumns = {
+  objectId: tasks.id,
+  scope: tasks.scope,
+  ownerUserId: tasks.ownerUserId,
+  accountId: tasks.accountId,
+};
 
 function resolveCreationVaultId(explicitVaultId?: string): string {
   const principal = getCurrentPrincipalOrSystem();
@@ -85,12 +98,7 @@ function rowToProject(row: typeof projects.$inferSelect, milestones: Milestone[]
 }
 
 export class FileProjectStorage {
-  private readonly _projectsCache = new TTLCache<Project[]>("Projects", Infinity);
-  private readonly _singleProjectCache = new TTLCache<Project | undefined>("SingleProject", Infinity);
-
   private invalidateCache(): void {
-    this._projectsCache.invalidateAll();
-    this._singleProjectCache.invalidateAll();
     eventBus.publish({ category: "system", event: "data:projects_changed", payload: { source: "project_storage" } });
   }
 
@@ -99,9 +107,11 @@ export class FileProjectStorage {
     if (projectIds.length === 0) return byProject;
 
     const rows = await db.select().from(milestoneRows).where(
-      combineWithVisibleScope(
+      combineWithWorkObjectAccess(
         getCurrentPrincipalOrSystem(),
         milestoneScopeColumns,
+        "milestone",
+        "read",
         inArray(milestoneRows.projectId, projectIds),
       ),
     ).orderBy(asc(milestoneRows.projectId), asc(milestoneRows.displayOrder), asc(milestoneRows.id));
@@ -116,9 +126,11 @@ export class FileProjectStorage {
 
   async getMilestone(projectId: number, milestoneId: number): Promise<Milestone | undefined> {
     const rows = await db.select().from(milestoneRows).where(
-      combineWithVisibleScope(
+      combineWithWorkObjectAccess(
         getCurrentPrincipalOrSystem(),
         milestoneScopeColumns,
+        "milestone",
+        "read",
         and(eq(milestoneRows.projectId, projectId), eq(milestoneRows.id, milestoneId)),
       ),
     ).limit(1);
@@ -126,8 +138,6 @@ export class FileProjectStorage {
   }
 
   async getProjects(options?: { status?: string }): Promise<Project[]> {
-    const cacheKey = `projects:${principalCacheKey()}:${options?.status || "all"}`;
-    return this._projectsCache.getOrFetch(cacheKey, async () => {
       const principal = getCurrentPrincipalOrSystem();
       const conditions = [];
       if (options?.status) {
@@ -135,10 +145,12 @@ export class FileProjectStorage {
         conditions.push(eq(projects.status, statusVal));
       }
 
-      const scopedWhere = combineWithVisibleScope(
+      const scopedWhere = combineWithWorkObjectAccess(
         principal,
         projectScopeColumns,
-        conditions.length > 0 ? and(...conditions) : undefined
+        "project",
+        "read",
+        conditions.length > 0 ? and(...conditions) : undefined,
       );
 
       const rows = await db.select().from(projects).where(scopedWhere);
@@ -156,23 +168,20 @@ export class FileProjectStorage {
 
       log.debug(`getProjects count=${result.length} status=${options?.status || "all"}`);
       return result;
-    });
   }
 
   async getProject(id: number): Promise<Project | undefined> {
-    return this._singleProjectCache.getOrFetch(`project:${principalCacheKey()}:${id}`, async () => {
-      const principal = getCurrentPrincipalOrSystem();
-      const rows = await db.select().from(projects).where(
-        combineWithVisibleScope(principal, projectScopeColumns, eq(projects.id, id))
-      ).limit(1);
-      if (rows.length === 0) {
-        log.debug(`getProject id=${id} not-found`);
-        return undefined;
-      }
-      const milestonesByProject = await this.getMilestonesForProjects([id]);
-      log.debug(`getProject id=${id} found`);
-      return rowToProject(rows[0], milestonesByProject.get(id) ?? []);
-    });
+    const principal = getCurrentPrincipalOrSystem();
+    const rows = await db.select().from(projects).where(
+      combineWithWorkObjectAccess(principal, projectScopeColumns, "project", "read", eq(projects.id, id)),
+    ).limit(1);
+    if (rows.length === 0) {
+      log.debug(`getProject id=${id} not-found`);
+      return undefined;
+    }
+    const milestonesByProject = await this.getMilestonesForProjects([id]);
+    log.debug(`getProject id=${id} found`);
+    return rowToProject(rows[0], milestonesByProject.get(id) ?? []);
   }
 
   async createProject(input: InsertProject): Promise<Project> {
@@ -238,8 +247,9 @@ export class FileProjectStorage {
     const principal = getCurrentPrincipalOrSystem();
     const updated = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(id));
+      const required: ObjectGrantCapability = hasAdminOnlyProjectChanges(updates as Record<string, unknown>) ? "admin" : "write";
       const [existing] = await tx.select().from(projects).where(
-        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, id)),
+        combineWithWorkObjectAccess(principal, projectScopeColumns, "project", required, eq(projects.id, id)),
       ).limit(1);
       if (!existing) return false;
 
@@ -262,13 +272,11 @@ export class FileProjectStorage {
       if (updates.people !== undefined) setValues.people = updates.people as unknown as Record<string, unknown>;
       if (updates.pages !== undefined) setValues.pages = updates.pages as unknown as Record<string, unknown>;
       await tx.update(projects).set(setValues).where(
-        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, id)),
+        combineWithWorkObjectAccess(principal, projectScopeColumns, "project", required, eq(projects.id, id)),
       );
 
       if (updates.milestones !== undefined) {
-        const priorRows = await tx.select().from(milestoneRows).where(
-          combineWithWritableScope(principal, milestoneScopeColumns, eq(milestoneRows.projectId, id)),
-        );
+        const priorRows = await tx.select().from(milestoneRows).where(eq(milestoneRows.projectId, id));
         const priorById = new Map(priorRows.map(row => [row.id, row]));
         let nextId = Math.max(0, ...priorRows.map(row => row.id)) + 1;
         const seen = new Set<number>();
@@ -299,18 +307,25 @@ export class FileProjectStorage {
           };
         });
         const removedIds = priorRows.filter(row => !seen.has(row.id)).map(row => row.id);
+        for (const removedId of removedIds) {
+          await objectGrantService.revokeObjectGrantsInTransaction(tx, {
+            objectType: "milestone",
+            objectId: removedId,
+            projectId: id,
+          });
+        }
         if (removedIds.length > 0) {
           await tx.update(tasks).set({ milestoneId: null, updatedAt: now }).where(
-            combineWithWritableScope(
+            combineWithWorkObjectAccess(
               principal,
               taskScopeColumns,
+              "task",
+              "admin",
               and(eq(tasks.projectId, id), inArray(tasks.milestoneId, removedIds)),
             ),
           );
         }
-        await tx.delete(milestoneRows).where(
-          combineWithWritableScope(principal, milestoneScopeColumns, eq(milestoneRows.projectId, id)),
-        );
+        await tx.delete(milestoneRows).where(eq(milestoneRows.projectId, id));
         if (replacement.length > 0) await tx.insert(milestoneRows).values(replacement);
       }
       return true;
@@ -337,12 +352,12 @@ export class FileProjectStorage {
     const newId = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
       const [project] = await tx.select().from(projects).where(
-        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+        combineWithWorkObjectAccess(principal, projectScopeColumns, "project", "admin", eq(projects.id, projectId)),
       ).limit(1);
       if (!project) return null;
       const existing = await tx.select({ id: milestoneRows.id, displayOrder: milestoneRows.displayOrder })
         .from(milestoneRows)
-        .where(combineWithVisibleScope(principal, milestoneScopeColumns, eq(milestoneRows.projectId, projectId)));
+        .where(combineWithWorkObjectAccess(principal, milestoneScopeColumns, "milestone", "read", eq(milestoneRows.projectId, projectId)));
       const id = Math.max(0, ...existing.map(row => row.id)) + 1;
       const displayOrder = Math.max(-1, ...existing.map(row => row.displayOrder)) + 1;
       const status = (input.status as Milestone["status"]) || "planned";
@@ -365,7 +380,7 @@ export class FileProjectStorage {
         updatedAt: now,
       });
       await tx.update(projects).set({ updatedAt: now }).where(
-        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+        combineWithWorkObjectAccess(principal, projectScopeColumns, "project", "admin", eq(projects.id, projectId)),
       );
       return id;
     });
@@ -386,14 +401,13 @@ export class FileProjectStorage {
     const principal = getCurrentPrincipalOrSystem();
     const changed = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
-      const [project] = await tx.select().from(projects).where(
-        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
-      ).limit(1);
-      if (!project) return false;
+      const required: ObjectGrantCapability = hasAdminOnlyMilestoneChanges(updates as Record<string, unknown>) ? "admin" : "write";
       const [existing] = await tx.select().from(milestoneRows).where(
-        combineWithWritableScope(
+        combineWithWorkObjectAccess(
           principal,
           milestoneScopeColumns,
+          "milestone",
+          required,
           and(eq(milestoneRows.projectId, projectId), eq(milestoneRows.id, milestoneId)),
         ),
       ).limit(1);
@@ -413,14 +427,13 @@ export class FileProjectStorage {
         setValues.completedAt = updates.completedAt ? new Date(updates.completedAt) : null;
       }
       await tx.update(milestoneRows).set(setValues).where(
-        combineWithWritableScope(
+        combineWithWorkObjectAccess(
           principal,
           milestoneScopeColumns,
+          "milestone",
+          required,
           and(eq(milestoneRows.projectId, projectId), eq(milestoneRows.id, milestoneId)),
         ),
-      );
-      await tx.update(projects).set({ updatedAt: new Date() }).where(
-        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
       );
       return true;
     });
@@ -435,29 +448,21 @@ export class FileProjectStorage {
     const principal = getCurrentPrincipalOrSystem();
     const removed = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
-      const [project] = await tx.select().from(projects).where(
-        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
-      ).limit(1);
-      if (!project) return false;
+      await objectGrantService.revokeObjectGrantsInTransaction(tx, {
+        objectType: "milestone",
+        objectId: milestoneId,
+        projectId,
+      });
       const deleted = await tx.delete(milestoneRows).where(
-        combineWithWritableScope(
+        combineWithWorkObjectAccess(
           principal,
           milestoneScopeColumns,
+          "milestone",
+          "admin",
           and(eq(milestoneRows.projectId, projectId), eq(milestoneRows.id, milestoneId)),
         ),
       ).returning({ id: milestoneRows.id });
       if (deleted.length === 0) return false;
-      const now = new Date();
-      await tx.update(tasks).set({ milestoneId: null, updatedAt: now }).where(
-        combineWithWritableScope(
-          principal,
-          taskScopeColumns,
-          and(eq(tasks.projectId, projectId), eq(tasks.milestoneId, milestoneId)),
-        ),
-      );
-      await tx.update(projects).set({ updatedAt: now }).where(
-        combineWithWritableScope(principal, projectScopeColumns, eq(projects.id, projectId)),
-      );
       return true;
     });
 
@@ -466,7 +471,7 @@ export class FileProjectStorage {
     const { fileTaskStorage } = await import("./tasks");
     fileTaskStorage.invalidateCache();
     log.debug(`removeMilestone projectId=${projectId} milestoneId=${milestoneId}`);
-    return this.getProject(projectId);
+    return this.getProject(projectId) ?? undefined;
   }
 
 
@@ -485,7 +490,7 @@ export class FileProjectStorage {
       pages: pages as unknown as Record<string, unknown>,
       updatedAt: new Date(),
     }).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+      combineWithWorkObjectAccess(getCurrentPrincipalOrSystem(), projectScopeColumns, "project", "write", eq(projects.id, projectId))
     );
 
     this.invalidateCache();
@@ -505,7 +510,7 @@ export class FileProjectStorage {
       files: files as unknown as Record<string, unknown>,
       updatedAt: new Date(),
     }).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+      combineWithWorkObjectAccess(getCurrentPrincipalOrSystem(), projectScopeColumns, "project", "write", eq(projects.id, projectId))
     );
 
     this.invalidateCache();
@@ -531,7 +536,7 @@ export class FileProjectStorage {
       files: files as unknown as Record<string, unknown>,
       updatedAt: new Date(),
     }).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, projectId))
+      combineWithWorkObjectAccess(getCurrentPrincipalOrSystem(), projectScopeColumns, "project", "write", eq(projects.id, projectId))
     );
 
     this.invalidateCache();
@@ -540,10 +545,28 @@ export class FileProjectStorage {
   }
 
   async deleteProject(id: number): Promise<boolean> {
-    const result = await db.delete(projects).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), projectScopeColumns, eq(projects.id, id))
-    );
-    const deleted = (result.rowCount ?? 0) > 0;
+    const principal = getCurrentPrincipalOrSystem();
+    const deleted = await db.transaction(async tx => {
+      const [project] = await tx.select({ id: projects.id }).from(projects).where(
+        combineWithWorkObjectAccess(principal, projectScopeColumns, "project", "admin", eq(projects.id, id)),
+      ).limit(1);
+      if (!project) return false;
+      await objectGrantService.revokeObjectGrantsInTransaction(tx, { objectType: "project", objectId: id });
+      const milestonesToDelete = await tx.select({ id: milestoneRows.id }).from(milestoneRows).where(
+        eq(milestoneRows.projectId, id),
+      );
+      for (const milestone of milestonesToDelete) {
+        await objectGrantService.revokeObjectGrantsInTransaction(tx, {
+          objectType: "milestone",
+          objectId: milestone.id,
+          projectId: id,
+        });
+      }
+      const rows = await tx.delete(projects).where(
+        combineWithWorkObjectAccess(principal, projectScopeColumns, "project", "admin", eq(projects.id, id)),
+      ).returning({ id: projects.id });
+      return rows.length > 0;
+    });
     log.debug(`deleteProject id=${id} success=${deleted}`);
     this.invalidateCache();
     return deleted;

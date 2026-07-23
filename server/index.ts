@@ -480,6 +480,8 @@ app.use((req, res, next) => {
   const { ensureWorkVaultSchema } = await import("./work-vault-schema");
   const { pool: workVaultPool } = await import("./db");
   await ensureWorkVaultSchema(workVaultPool);
+  const { ensureObjectGrantSchema } = await import("./object-grant-schema");
+  await ensureObjectGrantSchema(workVaultPool);
   await adoptRayPersonalLibraryIndex();
 
   const tRoutes0 = Date.now();

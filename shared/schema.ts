@@ -583,6 +583,44 @@ export const milestones = pgTable("milestones", {
 
 export type MilestoneRow = typeof milestones.$inferSelect;
 
+// ── Per-object work grants ────────────────────────────────────────
+export const objectGrantSubjectTypes = ["user", "invited_subject"] as const;
+export const objectGrantObjectTypes = ["project", "milestone", "task"] as const;
+export const objectGrantCapabilities = ["read", "write", "admin"] as const;
+export const objectGrantOriginTypes = ["meeting", "manual"] as const;
+
+export const objectGrants = pgTable("object_grants", {
+  id: serial("id").primaryKey(),
+  subjectType: text("subject_type", { enum: objectGrantSubjectTypes }).notNull(),
+  subjectId: text("subject_id").notNull(),
+  objectType: text("object_type", { enum: objectGrantObjectTypes }).notNull(),
+  /** Project/task: decimal id. Milestone: <project_id>:<milestone_id>. */
+  objectId: text("object_id").notNull(),
+  capability: text("capability", { enum: objectGrantCapabilities }).notNull(),
+  grantedByUserId: text("granted_by_user_id").notNull(),
+  originType: text("origin_type", { enum: objectGrantOriginTypes }).notNull(),
+  originId: text("origin_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (table) => [
+  check("object_grants_subject_type_check", sql`${table.subjectType} IN ('user', 'invited_subject')`),
+  check("object_grants_object_type_check", sql`${table.objectType} IN ('project', 'milestone', 'task')`),
+  check("object_grants_capability_check", sql`${table.capability} IN ('read', 'write', 'admin')`),
+  check("object_grants_origin_type_check", sql`${table.originType} IN ('meeting', 'manual')`),
+  uniqueIndex("idx_object_grants_one_live_subject_object")
+    .on(table.subjectType, table.subjectId, table.objectType, table.objectId)
+    .where(sql`${table.revokedAt} IS NULL`),
+  index("idx_object_grants_live_subject_object")
+    .on(table.subjectType, table.subjectId, table.objectType, table.objectId, table.capability)
+    .where(sql`${table.revokedAt} IS NULL`),
+  index("idx_object_grants_live_object")
+    .on(table.objectType, table.objectId)
+    .where(sql`${table.revokedAt} IS NULL`),
+]);
+
+export type ObjectGrantRow = typeof objectGrants.$inferSelect;
+export type InsertObjectGrantRow = typeof objectGrants.$inferInsert;
+
 // ── Principles ────────────────────────────────────────────────────
 export const principles = pgTable("principles", {
   id: text("id").primaryKey(),
