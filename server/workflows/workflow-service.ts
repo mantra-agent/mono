@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { db } from "../db";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db } from "../db";
 import { getCurrentPrincipal, getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { createLogger, getRecentLogs } from "../log";
@@ -48,6 +48,7 @@ import { getCloudflareLatestDeployment } from "../services/provider-connection-s
 import { buildWorkflowRunPageContent, buildWorkflowStages, parseWorkflowDefinition, type WorkflowEnvironmentTruth, type WorkflowRunDetail } from "./workflow-renderer";
 import { monitorChildSession, truncateOutput, type MonitorResult } from "../child-session-monitor";
 import { chatFileStorage } from "../chat-file-storage";
+import { getArtifactsBySession } from "../session-artifacts";
 
 const log = createLogger("WorkflowService");
 
@@ -281,6 +282,104 @@ function attemptArtifacts(detail: WorkflowRunDetail, attemptId: number): Workflo
       url: artifact.url,
       summary: artifact.summary,
     }));
+}
+
+function workflowResultEvent(result: string): string {
+  return result === "passed" ? "pass"
+    : result === "needs_review" ? "needs_review"
+      : result === "blocked" ? "blocked"
+        : result === "skipped" ? "manual"
+          : "fail";
+}
+
+const EXPLICIT_OUTCOME_PATTERN = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\[[^\]\n]+\]\s*)?(?:\*{1,2})?outcome(?:\*{1,2})?\s*:\s*(pass(?:ed)?|fail(?:ed)?|blocked|skipped|needs[_ -]?review)\b/gi;
+
+function completedChildOutcome(output: string): { result: string; failureContext: Record<string, unknown> } {
+  const matches = [...output.matchAll(EXPLICIT_OUTCOME_PATTERN)].map((match) => {
+    const normalized = match[1].toLowerCase().replace(/[ -]/g, "_");
+    if (normalized === "pass") return "passed";
+    if (normalized === "fail") return "failed";
+    return normalized;
+  });
+  const unique = [...new Set(matches)];
+  if (unique.length === 1) {
+    return {
+      result: unique[0],
+      failureContext: {
+        reason: "terminal_child_outcome_recovered",
+        source: "child-session-monitor",
+        declaredOutcome: unique[0],
+      },
+    };
+  }
+  return {
+    result: "failed",
+    failureContext: {
+      reason: unique.length > 1 ? "ambiguous_terminal_child_outcome" : "missing_terminal_child_outcome",
+      source: "child-session-monitor",
+      declaredOutcomes: unique,
+    },
+  };
+}
+
+async function projectSessionArtifactsToWorkflow(
+  workflowRunId: string,
+  attempt: WorkflowStageAttempt,
+  createdBySessionId?: string,
+): Promise<void> {
+  const childSessionId = attempt.childSessionId || createdBySessionId;
+  if (!childSessionId) return;
+  const sessionArtifacts = await getArtifactsBySession(childSessionId);
+  for (const sessionArtifact of sessionArtifacts) {
+    const refType = sessionArtifact.artifactType;
+    const refId = sessionArtifact.artifactId;
+    const kind = attempt.stageKey === "scope" && refType === "library_page"
+      ? "spec"
+      : attempt.stageKey === "documentation" && refType === "library_page"
+        ? "docs"
+        : refType;
+    const metadata = sessionArtifact.metadata && typeof sessionArtifact.metadata === "object"
+      ? sessionArtifact.metadata as Record<string, unknown>
+      : {};
+    await db.transaction(async (tx) => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.WORKFLOW_ARTIFACTS, `${workflowRunId}:${attempt.id}`);
+      const [existing] = await tx.select({ id: workflowArtifacts.id }).from(workflowArtifacts).where(visible(artifactScopeColumns, and(
+        eq(workflowArtifacts.workflowRunId, workflowRunId),
+        eq(workflowArtifacts.stageAttemptId, attempt.id),
+        eq(workflowArtifacts.refType, refType),
+        eq(workflowArtifacts.refId, refId),
+      ))).limit(1);
+      if (existing) return;
+      await tx.insert(workflowArtifacts).values({
+        workflowRunId,
+        stageAttemptId: attempt.id,
+        kind,
+        title: typeof metadata.title === "string" && metadata.title.trim()
+          ? metadata.title
+          : `${kind}: ${refId}`,
+        refType,
+        refId,
+        url: null,
+        summary: typeof metadata.summary === "string" ? metadata.summary : "",
+        metadata: { ...metadata, sourceSessionArtifactId: sessionArtifact.id },
+        createdBySessionId: childSessionId,
+        ...owner(artifactScopeColumns),
+      });
+    });
+  }
+}
+
+async function reconcilePriorStageSessionArtifacts(detail: WorkflowRunDetail, stageKey: string): Promise<WorkflowRunDetail> {
+  const sourceStageKeys = detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID
+    ? BUILD_STAGE_INPUT_SOURCES[stageKey] || []
+    : [];
+  if (sourceStageKeys.length === 0) return detail;
+  for (const stage of detail.stages.filter((candidate) => sourceStageKeys.includes(candidate.key))) {
+    for (const attempt of stage.attempts.filter((candidate) => candidate.completedAt && candidate.childSessionId)) {
+      await projectSessionArtifactsToWorkflow(detail.run.id, attempt);
+    }
+  }
+  return (await getWorkflowRun(detail.run.id)) || detail;
 }
 
 function buildRetryContext(detail: WorkflowRunDetail, stageKey: string, stageTitle: string, attempts: WorkflowStageAttempt[]): WorkflowRetryContext | undefined {
@@ -594,15 +693,12 @@ async function monitorWorkflowChild(
 
   switch (result.status) {
     case "completed": {
-      log.warn(`[monitor] Workflow child ${childSessionId} completed without checkpointing ${stageTitle} #${attemptNumber}; reconciling attempt ${attemptId} as passed`);
+      const declared = completedChildOutcome(result.output);
+      log.warn(`[monitor] Workflow child ${childSessionId} completed without checkpointing ${stageTitle} #${attemptNumber}; reconciling attempt ${attemptId} as ${declared.result}`);
       await completeStageAttempt(runId, attemptId, {
-        result: "passed",
+        result: declared.result,
         outputSummary: truncateOutput(result.output, 500),
-        failureContext: {
-          reason: "terminal_child_without_checkpoint",
-          source: "child-session-monitor",
-          childSessionId,
-        },
+        failureContext: { ...declared.failureContext, childSessionId },
       });
       break;
     }
@@ -635,7 +731,7 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
     {
       key: "scope", title: "Design", position: 0, autonomyMode: "autonomous", persona: "Architect",
       evidenceRequirements: ["A durable specification artifact (`kind: spec`) containing the complete implementation design, success conditions, target truth, verification path, and terminal state, grounded in the loaded governing context."],
-      allowedTransitions: [{ toStageKey: "design_review", on: "pass" }, { toStageKey: null, on: "blocked" }],
+      allowedTransitions: [{ toStageKey: "design_review", on: "pass" }, { toStageKey: "scope", on: "fail" }, { toStageKey: null, on: "blocked" }],
     },
     {
       key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review", persona: "Architect",
@@ -648,7 +744,7 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
       key: "implement", title: "Implement", position: 2, autonomyMode: "autonomous", persona: "Engineer",
       entryCriteria: ["Load and implement the approved specification from Stage Inputs."],
       evidenceRequirements: ["Implementation evidence, build result, impact/change-scope evidence, and branch/commit references proving the approved specification was executed under the loaded governing context."],
-      allowedTransitions: [{ toStageKey: "code_review", on: "pass" }, { toStageKey: "design_review", on: "blocked" }],
+      allowedTransitions: [{ toStageKey: "code_review", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "design_review", on: "blocked" }],
     },
     {
       key: "code_review", title: "Implementation Review", position: 3, autonomyMode: "requires_agent_review", persona: "Engineer",
@@ -1139,11 +1235,12 @@ function stageFor(detail: WorkflowRunDetail, stageKey: string) {
 }
 
 export async function startStageAttempt(runId: string, stageKey?: string, options: { childSessionId?: string; linkedPlanId?: string; inputContext?: unknown; createdBySessionId?: string; spawnChildSession?: boolean } = {}): Promise<WorkflowStageAttempt> {
-  const detail = await getWorkflowRun(runId);
-  if (!detail) throw new Error(`Workflow run not found: ${runId}`);
+  const initialDetail = await getWorkflowRun(runId);
+  if (!initialDetail) throw new Error(`Workflow run not found: ${runId}`);
   await assertNoOpenGate(runId);
-  const key = stageKey || detail.run.currentStageKey;
+  const key = stageKey || initialDetail.run.currentStageKey;
   if (!key) throw new Error(`Workflow run ${runId} has no current stage.`);
+  const detail = await reconcilePriorStageSessionArtifacts(initialDetail, key);
   const stage = stageFor(detail, key);
   const stageState = detail.stages.find((s) => s.key === key);
   // Idempotency guard: if an active attempt already exists for this stage, return it instead of creating a duplicate
@@ -1285,6 +1382,7 @@ export async function completeStageAttempt(workflowRunId: string, attemptId: num
   }
   if (failurePacket) await db.update(workflowRuns).set({ failurePacket, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, attempt.workflowRunId)));
   if (resultInput.evidence) await attachWorkflowArtifact({ workflowRunId: attempt.workflowRunId, stageAttemptId: attempt.id, kind: attempt.stageKey === "calibration" ? "calibration" : attempt.stageKey === "acceptance" ? "acceptance" : result === "passed" ? "acceptance" : "other", title: `${attempt.stageTitle} attempt ${result}`, summary: resultInput.outputSummary || "", metadata: resultInput.evidence, createdBySessionId: resultInput.createdBySessionId, render: false });
+  await projectSessionArtifactsToWorkflow(workflowRunId, completedAttempt, resultInput.createdBySessionId);
 
   return advanceWorkflowRun(workflowRunId, result === "passed" ? "autonomous" : "system", attempt.id, result, resultInput.outputSummary || "");
 }
@@ -1305,9 +1403,37 @@ export async function advanceWorkflowRun(runId: string, trigger: WorkflowTransit
     }
   }
   const stage = stageFor(detail, current);
-  const event = result === "passed" ? "pass" : result === "needs_review" ? "needs_review" : result === "blocked" ? "blocked" : result === "skipped" ? "manual" : "fail";
+  const event = workflowResultEvent(result);
   const transitionDef = stage.allowedTransitions.find((t) => t.on === event) || stage.allowedTransitions.find((t) => t.on === "manual");
-  if (!transitionDef) throw new Error(`No transition for ${current} on ${event}`);
+  if (!transitionDef) {
+    const failurePacket = {
+      reason: "missing_stage_transition",
+      stageKey: current,
+      event,
+      result,
+      fromAttemptId: fromAttemptId || null,
+      nextSuggestedFix: `Add an explicit ${event} transition to stage ${current}, then resume the workflow.`,
+    };
+    log.error(`Workflow ${runId} has no transition for ${current} on ${event}; blocking run instead of leaving it active`);
+    await recordTransition({
+      workflowRunId: runId,
+      fromStageKey: current,
+      toStageKey: current,
+      fromAttemptId,
+      trigger: "system",
+      reason: `Missing transition for ${event}; run blocked for repair.`,
+      evidence: failurePacket,
+      render: false,
+    });
+    await db.update(workflowRuns).set({
+      status: "blocked",
+      failurePacket,
+      completedAt: null,
+      updatedAt: new Date(),
+    }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
+    await renderWorkflowRunPage(runId);
+    return (await getWorkflowRun(runId))!;
+  }
   const next = transitionDef.toStageKey;
   await recordTransition({ workflowRunId: runId, fromStageKey: current, toStageKey: next, fromAttemptId, trigger, reason: reason || transitionDef.reason || event });
   // A named destination is a recovery transition. Keep the run active so the
