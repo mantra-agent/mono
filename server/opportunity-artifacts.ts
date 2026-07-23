@@ -16,7 +16,7 @@
  *           └── Resume — {Opp Title}        (kind: resume, per-opportunity)
  */
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { libraryPages, type ArtifactKind, type OpportunityRow } from "@shared/schema";
 import { opportunityStorage } from "./opportunity-storage";
 import { createLogger } from "./log";
@@ -39,23 +39,41 @@ async function createPage(title: string, parentId: string | null, placeholder: s
   return { id: page.id, slug: page.slug };
 }
 
-/** Find a page by exact title under a given parent. */
-async function findChildByTitle(parentId: string, title: string): Promise<{ id: string } | undefined> {
+/** Find a page by exact title under a given parent in one vault. */
+async function findChildByTitle(
+  parentId: string | null,
+  title: string,
+  vaultId?: string,
+): Promise<{ id: string } | undefined> {
   const [row] = await db.select({ id: libraryPages.id })
     .from(libraryPages)
-    .where(and(eq(libraryPages.parentId, parentId), eq(libraryPages.title, title)));
+    .where(and(
+      parentId === null ? sql`${libraryPages.parentId} IS NULL` : eq(libraryPages.parentId, parentId),
+      eq(libraryPages.title, title),
+      vaultId ? eq(libraryPages.vaultId, vaultId) : undefined,
+    ));
   return row;
 }
 
 /** Resolve/create the Opportunities root through the vault-aware Library lifecycle. */
 async function ensureOpportunitiesRoot(): Promise<string> {
   const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-  const { ensureMantraLibraryVault } = await import("./library-domain");
+  const { ensureMantraLibraryVault, ensureVaultPage } = await import("./library-domain");
   const principal = getCurrentPrincipalOrSystem();
   const vault = await ensureMantraLibraryVault(principal);
-  const existing = await findChildByTitle(vault.rootPageId, "Opportunities");
+  const existing = await findChildByTitle(null, "Opportunities", vault.vaultId);
   if (existing) return existing.id;
-  return (await createPage("Opportunities", vault.rootPageId, "Opportunity pipeline artifacts and research.")).id;
+  const root = await ensureVaultPage({
+    principal,
+    vaultId: vault.vaultId,
+    title: "Opportunities",
+    parentId: null,
+    structuralRole: "artifact",
+    tags: ["opportunity-artifact"],
+    plainTextContent: "Opportunity pipeline artifacts and research.",
+    sortOrder: 3,
+  });
+  return root.id;
 }
 
 export function artifactPageTitle(kind: ArtifactKind, opportunity: OpportunityRow, company: string): string {

@@ -1091,7 +1091,7 @@ export async function registerLibraryRoutes(app: Express) {
         return res
           .status(400)
           .json({ error: "Invalid input", details: err.errors });
-      res.status(500).json({ error: err.message });
+      res.status(err?.status ?? 500).json({ error: err.message });
     }
   });
 

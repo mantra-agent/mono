@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import {
   LIBRARY_PLACEMENT_INDEX_SECTIONS,
   libraryPages,
@@ -7,10 +7,7 @@ import {
 } from "@shared/models/info";
 import { vaults } from "@shared/models/vaults";
 import { db } from "./db";
-import {
-  CANONICAL_LIBRARY_INDEX_BOOTSTRAP_MARKDOWN,
-  ensureVaultPage,
-} from "./library-domain";
+import { ensureCanonicalVaultMetadataPage } from "./library-domain";
 import {
   parseLibraryIndexStructure,
   type LibraryIndexEntry,
@@ -133,49 +130,10 @@ async function readCanonicalDestinations(
   vaultId: string,
   principal: Principal,
 ): Promise<Library2Destination[]> {
-  const [indexPage] = await db
-    .select({ id: libraryPages.id, plainTextContent: libraryPages.plainTextContent })
-    .from(libraryPages)
-    .where(
-      visiblePages(
-        principal,
-        and(
-          eq(libraryPages.vaultId, vaultId),
-          eq(libraryPages.structuralRole, "meta"),
-          or(
-            eq(libraryPages.title, "Index"),
-            sql`'library-index' = ANY(${libraryPages.tags})`,
-          ),
-        ),
-      ),
-    )
-    .limit(1);
-  const [vaultRoot] = indexPage
-    ? []
-    : await db
-        .select({ id: libraryPages.id })
-        .from(libraryPages)
-        .where(
-          visiblePages(
-            principal,
-            and(
-              eq(libraryPages.vaultId, vaultId),
-              eq(libraryPages.structuralRole, "meta"),
-              sql`'library-vault' = ANY(${libraryPages.tags})`,
-            ),
-          ),
-        )
-        .limit(1);
-  const canonicalIndexPage = indexPage ?? await ensureVaultPage({
+  const canonicalIndexPage = await ensureCanonicalVaultMetadataPage({
     principal,
     vaultId,
-    title: "Index",
-    parentId: vaultRoot?.id ?? null,
-    structuralRole: "meta",
-    tags: ["library-index", "library-meta"],
-    plainTextContent: CANONICAL_LIBRARY_INDEX_BOOTSTRAP_MARKDOWN,
-    sortOrder: 1,
-    slugFallback: "index",
+    kind: "index",
   });
 
   const structure = parseLibraryIndexStructure(

@@ -57,7 +57,7 @@ process.on("unhandledRejection", (reason) => {
 import { addObjectAclsTable } from "./migrations/add-object-acls";
 import { ensureVaults } from "./migrations/ensure-vaults";
 import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
-import { adoptRayPersonalLibraryIndex } from "./migrations/adopt-ray-personal-library-index";
+import { removeLegacyVaultPages } from "./migrations/remove-legacy-vault-pages";
 
 const objectAclsMigrationReady = addObjectAclsTable();
 const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
@@ -486,7 +486,7 @@ app.use((req, res, next) => {
   await ensureInvitedSubjectSchema(workVaultPool);
   const { ensureTaskAssignmentSchema } = await import("./task-assignment-schema");
   await ensureTaskAssignmentSchema(workVaultPool);
-  await adoptRayPersonalLibraryIndex();
+  await removeLegacyVaultPages();
 
   const tRoutes0 = Date.now();
   await registerRoutes(httpServer, app);

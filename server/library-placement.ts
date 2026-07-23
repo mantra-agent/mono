@@ -25,9 +25,8 @@ export interface LibrarySemanticPlacementInput {
 export interface LibrarySemanticPlacementResult {
   outcome: LibraryPlacementOutcome;
   vaultId: string;
-  rootPageId: string;
   indexPageId: string;
-  parentId: string;
+  parentId: string | null;
   parentTitle: string;
   structuralRole: LibraryStructuralRole;
   confidence: number;
@@ -273,7 +272,6 @@ export async function placeLibraryPageSemantically(input: LibrarySemanticPlaceme
     return {
       outcome: "explicit_parent",
       vaultId: parent.vaultId ?? vault.vaultId,
-      rootPageId: vault.rootPageId,
       indexPageId: vault.indexPageId,
       parentId: parent.id,
       parentTitle: parent.title,
@@ -355,7 +353,6 @@ export async function placeLibraryPageSemantically(input: LibrarySemanticPlaceme
   return {
     outcome: "placed",
     vaultId: vault.vaultId,
-    rootPageId: vault.rootPageId,
     indexPageId: vault.indexPageId,
     parentId: selected.page.id,
     parentTitle: selected.page.title,
@@ -389,10 +386,9 @@ function reviewRequired(
   return {
     outcome: "review_required",
     vaultId: vault.vaultId,
-    rootPageId: vault.rootPageId,
     indexPageId: vault.indexPageId,
-    parentId: vault.rootPageId,
-    parentTitle: "Mantra",
+    parentId: null,
+    parentTitle: "Mantra vault root",
     structuralRole,
     confidence,
     reason,

@@ -119,8 +119,7 @@ function isProtectedPage(row: Pick<SubtreeRow, "scope" | "tags" | "structuralRol
     row.scope === "system" ||
     row.structuralRole === "meta" ||
     row.tags.includes("system-folder") ||
-    row.tags.includes("library-meta") ||
-    row.tags.includes("library-vault")
+    row.tags.includes("library-meta")
   );
 }
 
