@@ -19,6 +19,23 @@ export async function ensureTaskAssignmentSchema(pool: ConnectionPool): Promise<
     await client.query(`SELECT pg_advisory_xact_lock(hashtext('${MIGRATION_LOCK_KEY}'))`);
     await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignee_subject_type TEXT`);
     await client.query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignee_subject_id TEXT`);
+    const placeholderAssignments = await client.query(`
+      WITH cleared_tasks AS (
+        UPDATE tasks
+        SET assignee_subject_type = NULL,
+            assignee_subject_id = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE assignee_subject_id = '__omit__'
+        RETURNING id::text AS object_id
+      )
+      UPDATE object_grants AS grant
+      SET revoked_at = CURRENT_TIMESTAMP
+      FROM cleared_tasks
+      WHERE grant.object_type = 'task'
+        AND grant.object_id = cleared_tasks.object_id
+        AND grant.subject_id = '__omit__'
+        AND grant.revoked_at IS NULL
+    `) as { rowCount?: number | null };
     await client.query(`
       DO $migration$
       BEGIN
@@ -34,7 +51,7 @@ export async function ensureTaskAssignmentSchema(pool: ConnectionPool): Promise<
     await client.query(`COMMENT ON COLUMN tasks.assignee_subject_type IS 'Human obligation subject type; independent of owner execution routing.'`);
     await client.query(`COMMENT ON COLUMN tasks.assignee_subject_id IS 'Human obligation subject id; assignment synchronizes a task-only write grant.'`);
     await client.query("COMMIT");
-    log.info("task assignment schema convergence complete");
+    log.info(`task assignment schema convergence complete placeholderGrantsRevoked=${placeholderAssignments.rowCount ?? 0}`);
   } catch (error) {
     try {
       await client.query("ROLLBACK");

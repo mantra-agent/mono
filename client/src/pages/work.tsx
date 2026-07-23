@@ -1146,7 +1146,11 @@ function TaskRow({
 
 function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null }) {
   const { toast } = useToast();
-  const { vaults } = useVaults();
+  const { vaults, visibleVaultIds } = useVaults();
+  const visibleVaults = useMemo(
+    () => vaults.filter(vault => !vault.isArchived && visibleVaultIds.includes(vault.id)),
+    [vaults, visibleVaultIds],
+  );
   const [, setLocation] = useLocation();
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const [showCreate, setShowCreate] = useState(false);
@@ -1439,7 +1443,7 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
                     onUpdateProject={(data) => updateProjectMutation.mutate({ id: project.id, data })}
                     onUpdateVaults={(vaultIds) => vaultMembershipMutation.mutate({ projectId: project.id, vaultIds })}
                     vaultMembershipPending={vaultMembershipMutation.isPending}
-                    vaults={vaults}
+                    vaults={visibleVaults}
                     onUpdateMilestone={(milestoneId, data) => updateMilestoneMutation.mutate({ projectId: project.id, milestoneId, data })}
                     onDiscuss={discussWorkItem}
                     discussPending={discussMutation.isPending}
