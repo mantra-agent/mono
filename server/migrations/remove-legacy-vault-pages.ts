@@ -341,7 +341,7 @@ async function normalizeMantraFolder(
           eq(libraryPages.parentId, livePage.parentId),
           eq(libraryPages.vaultId, livePage.vaultId),
           eq(libraryPages.plainTextContent, livePage.plainTextContent),
-          sql`${libraryPages.tags} = ${livePage.tags}`,
+          eq(libraryPages.tags, livePage.tags),
         ),
       ),
     )
@@ -446,7 +446,7 @@ async function deleteExactScaffold(
             ? isNull(libraryPages.vaultId)
             : eq(libraryPages.vaultId, page.vaultId),
           eq(libraryPages.plainTextContent, page.plainTextContent),
-          sql`${libraryPages.tags} = ${page.tags}`,
+          eq(libraryPages.tags, page.tags),
           sql`NOT EXISTS (SELECT 1 FROM library_pages child WHERE child.parent_id = ${page.id})`,
         ),
       ),
