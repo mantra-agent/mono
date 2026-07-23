@@ -746,7 +746,9 @@ function ToolStepRow({
             </>
           )}
         </div>
-        {(isDone || isError) && step.elapsedMs != null && (
+        {effectiveLayer === 4 &&
+          (isDone || isError) &&
+          step.elapsedMs != null && (
           <span className="text-xs tabular-nums font-mono text-muted-foreground/50 whitespace-nowrap">
             {formatStepElapsed(step.selfTimeMs ?? step.elapsedMs)} self ·{" "}
             {formatStepElapsed(step.elapsedMs)} total
