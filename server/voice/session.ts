@@ -345,6 +345,9 @@ export async function resumeVoiceSession(
     }
   }
 
+  import("../cli-sdk-adapter").then(({ cleanupVoiceWarmHandle }) => {
+    cleanupVoiceWarmHandle(previousSessionId);
+  }).catch(() => {});
   sessions.delete(previousSessionId);
 
   const resumed: VoiceSession = {
@@ -415,7 +418,7 @@ export function endSessionsForChat(
     if (s.chatSessionId === chatSessionId && id !== excludeSessionId) {
       log.debug(`closing stale session ${id} for chatSessionId=${chatSessionId} (replaced by ${excludeSessionId || "new"})`);
       if (!chatSessionKey) chatSessionKey = s.chatSessionKey;
-      sessions.delete(id);
+      endVoiceSession(id, "replaced");
       closedIds.push(id);
       closed++;
     }
@@ -430,12 +433,12 @@ export function endVoiceSession(sessionId: string, reason?: string): VoiceSessio
 
   const session = sessions.get(sessionId);
   if (session) {
-    if (reason && !session.disconnectReason) session.disconnectReason = reason;
+    if (reason) session.disconnectReason = reason;
     if (!session.disconnectReason) session.disconnectReason = session.ending ? "session_end" : "external";
+    forceKillSession(sessionId, session, session.disconnectReason);
     const elapsed = Date.now() - session.startedAt;
     log.log(`ending session ${session.id} turns=${session.turnCount} tools=${session.toolCalls.length} elapsed=${elapsed}ms reason=${session.disconnectReason} ts=${new Date().toISOString()}`);
     log.log(`SESSION_SUMMARY session=${session.id} totalTurns=${session.turnCount} successfulTurns=${session.totalSuccessfulTurns} abortedTurns=${session.totalAbortedTurns} totalTime=${elapsed}ms disconnectReason=${session.disconnectReason} longestDataGap=${session.longestDataGapMs}ms lastDataDeliveryAge=${Date.now() - session.lastDataDeliveryAt}ms`);
-    sessions.delete(sessionId);
   }
   return session || null;
 }
@@ -514,6 +517,8 @@ export async function abortAndCleanupTurn(
 // ── Force Kill ───────────────────────────────────────────────────────────
 
 function forceKillSession(id: string, s: VoiceSession, reason: string): void {
+  s.ending = true;
+  s.activeTurnNumber = -1;
   s.disconnectReason = reason;
   if (isSessionInflight(s)) {
     abortTrace("voice.forceKillSession", {

@@ -9,6 +9,7 @@ voice-llm.ts              — Orchestration hub (~600 lines): handleCustomLLM, e
 voice/
 ├── utils.ts              — Text helpers (word-level prefix, content hash), URL resolution (getPublicBaseUrl)
 ├── session.ts            — Session CRUD, health watchdog, turn locking, DB reconciliation, journal/event helpers
+├── finalize.ts           — User-triggered terminal completion across lease, voice runtime, SessionManager, and durable chat status
 ├── sse.ts                — SSE stream primitives, orphan handling, lifecycle event wiring, backpressure tracking
 ├── persistence.ts        — Turn data persistence: messages, early transcript, error messages, orphaned turns
 ├── prompt.ts             — System prompt assembly (cached), conversation messages, tool list, resolvePromptAndMessages
@@ -41,7 +42,7 @@ Voice turns use `sdk_owned` execution mode. The Claude Agent SDK calls `toolExec
 4. **Journal logger** — Logs tool_call/tool_result with per-turn correlation IDs
 
 ### Session Lifecycle
-Sessions are in-memory (`Map<string, VoiceSession>` in `session.ts`) with a health watchdog. A session maps 1:1 to an ElevenLabs connection and 1:1 to a chat session. Sessions auto-expire after 2 hours max, 10 minutes idle (with turns), or 5 minutes idle (no turns). `voice_session_active.boot_id` is the durable owner of that process-local Map entry; `owner_user_id` and `account_id` are the durable user owner. Periodic reconciliation and inflight mutations must filter to the current process boot ID. User-triggered completion must filter to the authenticated user/account. Boot cleanup may only abandon rows older than the global maximum session age. A process must never infer that a foreign boot ID is stale merely because the session is absent from its own Map.
+Sessions are in-memory (`Map<string, VoiceSession>` in `session.ts`) with a health watchdog. A session maps 1:1 to an ElevenLabs connection and 1:1 to a chat session. Sessions auto-expire after 2 hours max, 10 minutes idle (with turns), or 5 minutes idle (no turns). `voice_session_active.boot_id` is the durable owner of that process-local Map entry; `owner_user_id` and `account_id` are the durable user owner. Periodic reconciliation and inflight mutations must filter to the current process boot ID. User-triggered completion goes through `finalize.ts`, binds voice ID + chat ID + authenticated user/account, then settles the process-local voice runtime, SessionManager projection, and durable chat row. Replacement/reconnect cleanup remains runtime-only and must never complete the shared chat. Boot cleanup may only abandon rows older than the global maximum session age. A process must never infer that a foreign boot ID is stale merely because the session is absent from its own Map.
 
 Voice start authority is PostgreSQL. `claimVoiceSessionActive` serializes per account/conversation, enforces one active user lease per conversation, and binds each `start_request_id` durably across terminal states. A same-request replay must match the original conversation; active successful starts replay the same non-secret metadata with a fresh ElevenLabs signed URL, while terminal requests fail closed. The signed URL is never persisted.
 
