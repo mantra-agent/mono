@@ -3,7 +3,7 @@ import { tasks, wellnessLogs } from "@shared/schema";
 import { db } from "./db";
 import type { Principal } from "./principal";
 import { queryDistinctInteractionPeopleSeries } from "./interaction-activity";
-import { combineWithVisibleScope } from "./scoped-storage";
+import { combineWithWorkObjectAccess } from "./object-grant-access";
 import { combineWithSensitiveVisible } from "./sensitive-scope";
 import { userDayBounds } from "./utils/user-time";
 import { fetchMergedPrsSince } from "./integrations/github-timeline";
@@ -18,6 +18,7 @@ const wellnessLogScope = {
 };
 
 const taskScope = {
+  objectId: tasks.id,
   scope: tasks.scope,
   ownerUserId: tasks.ownerUserId,
   accountId: tasks.accountId,
@@ -94,7 +95,7 @@ async function queryTaskSeries(start: Date, end: Date, principal: Principal): Pr
   const rows = await db
     .select({ date: localDate, value: sql<number>`count(*)::int` })
     .from(tasks)
-    .where(combineWithVisibleScope(principal, taskScope, and(gte(tasks.completedAt, start), lt(tasks.completedAt, end))))
+    .where(combineWithWorkObjectAccess(principal, taskScope, "task", "read", and(gte(tasks.completedAt, start), lt(tasks.completedAt, end))))
     .groupBy(localDate);
   return new Map(rows.map((row) => [row.date, Number(row.value)]));
 }

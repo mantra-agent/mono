@@ -2,9 +2,10 @@ import { sql } from "drizzle-orm";
 import { projects } from "@shared/schema";
 import { db } from "../db";
 import type { Principal } from "../principal";
-import { combineWithVisibleScope } from "../scoped-storage";
+import { combineWithWorkObjectAccess } from "../object-grant-access";
 
 const projectScopeColumns = {
+  objectId: projects.id,
   scope: projects.scope,
   ownerUserId: projects.ownerUserId,
   accountId: projects.accountId,
@@ -33,9 +34,11 @@ export async function canReadProjectAttachment(
     .select({ id: projects.id })
     .from(projects)
     .where(
-      combineWithVisibleScope(
+      combineWithWorkObjectAccess(
         principal,
         projectScopeColumns,
+        "project",
+        "read",
         linkedAttachment,
       ),
     )

@@ -3,27 +3,39 @@ import { milestones, projects, tasks } from "@shared/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import type { Task, InsertTask, TaskStatus } from "@shared/models/work";
 import { createLogger } from "../log";
-import { TTLCache } from "../utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
+import { ownedInsertValues } from "../scoped-storage";
+import {
+  combineWithWorkObjectAccess,
+  hasAdminOnlyTaskChanges,
+  type ObjectGrantCapability,
+} from "../object-grant-access";
+import { objectGrantService } from "../object-grant-service";
 import { eventBus } from "../event-bus";
 
 const log = createLogger("StoreTasks");
 
 // D4: vault_id is deliberately absent from work scope columns. It anchors
 // placement and inheritance only; vault co-membership never grants work access.
-const taskScopeColumns = { scope: tasks.scope, ownerUserId: tasks.ownerUserId, accountId: tasks.accountId };
-const projectScopeColumns = { scope: projects.scope, ownerUserId: projects.ownerUserId, accountId: projects.accountId };
+const taskScopeColumns = {
+  objectId: tasks.id,
+  scope: tasks.scope,
+  ownerUserId: tasks.ownerUserId,
+  accountId: tasks.accountId,
+};
+const projectScopeColumns = {
+  objectId: projects.id,
+  scope: projects.scope,
+  ownerUserId: projects.ownerUserId,
+  accountId: projects.accountId,
+};
 const milestoneScopeColumns = {
+  objectId: milestones.id,
+  projectId: milestones.projectId,
   scope: milestones.scope,
   ownerUserId: milestones.ownerUserId,
   accountId: milestones.accountId,
 };
-
-function principalCacheKey(): string {
-  const principal = getCurrentPrincipalOrSystem();
-  return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
-}
 
 function resolveCreationVaultId(explicitVaultId?: string): string {
   const principal = getCurrentPrincipalOrSystem();
@@ -65,18 +77,11 @@ function rowToTask(row: typeof tasks.$inferSelect): Task {
 }
 
 export class FileTaskStorage {
-  private readonly _todoCache = new TTLCache<Task[]>("TodoTasks", Infinity);
-  private readonly _singleTaskCache = new TTLCache<Task | undefined>("SingleTask", Infinity);
-
   invalidateCache(): void {
-    this._todoCache.invalidateAll();
-    this._singleTaskCache.invalidateAll();
     eventBus.publish({ category: "system", event: "data:tasks_changed", payload: { source: "task_storage" } });
   }
 
   async getTasks(options?: { status?: string; projectId?: number; owner?: string; priority?: string }): Promise<Task[]> {
-    const cacheKey = `tasks:${principalCacheKey()}:${options?.status || "all"}:${options?.projectId ?? "any"}:${options?.owner || "any"}:${options?.priority || "any"}`;
-    return this._todoCache.getOrFetch(cacheKey, async () => {
       const conditions = [];
       if (options?.status) {
         // Legacy "push" status maps to "on_hold"
@@ -89,7 +94,7 @@ export class FileTaskStorage {
 
       const predicate = conditions.length > 0 ? and(...conditions) : undefined;
       const rows = await db.select().from(tasks).where(
-        combineWithVisibleScope(getCurrentPrincipalOrSystem(), taskScopeColumns, predicate),
+        combineWithWorkObjectAccess(getCurrentPrincipalOrSystem(), taskScopeColumns, "task", "read", predicate),
       );
 
       const result = rows.map(rowToTask);
@@ -104,36 +109,31 @@ export class FileTaskStorage {
 
       log.log(`getTasks count=${result.length} status=${options?.status || "all"}`);
       return result;
-    });
   }
 
   async getTodoTasks(): Promise<Task[]> {
-    return this._todoCache.getOrFetch(`todo:${principalCacheKey()}`, async () => {
-      const predicate = and(
-        eq(tasks.owner, "me"),
-        sql`${tasks.status} IN ('ready', 'active')`,
-      );
-      const rows = await db.select().from(tasks).where(
-        combineWithVisibleScope(getCurrentPrincipalOrSystem(), taskScopeColumns, predicate),
-      );
-      const todos = rows.map(rowToTask);
-      log.log(`getTodoTasks count=${todos.length}`);
-      return todos;
-    });
+    const predicate = and(
+      eq(tasks.owner, "me"),
+      sql`${tasks.status} IN ('ready', 'active')`,
+    );
+    const rows = await db.select().from(tasks).where(
+      combineWithWorkObjectAccess(getCurrentPrincipalOrSystem(), taskScopeColumns, "task", "read", predicate),
+    );
+    const todos = rows.map(rowToTask);
+    log.log(`getTodoTasks count=${todos.length}`);
+    return todos;
   }
 
   async getTask(id: number): Promise<Task | undefined> {
-    return this._singleTaskCache.getOrFetch(`task:${principalCacheKey()}:${id}`, async () => {
-      const rows = await db.select().from(tasks).where(
-        combineWithVisibleScope(getCurrentPrincipalOrSystem(), taskScopeColumns, eq(tasks.id, id)),
-      ).limit(1);
-      if (rows.length === 0) {
-        log.log(`getTask id=${id} not-found`);
-        return undefined;
-      }
-      log.log(`getTask id=${id} found`);
-      return rowToTask(rows[0]);
-    });
+    const rows = await db.select().from(tasks).where(
+      combineWithWorkObjectAccess(getCurrentPrincipalOrSystem(), taskScopeColumns, "task", "read", eq(tasks.id, id)),
+    ).limit(1);
+    if (rows.length === 0) {
+      log.log(`getTask id=${id} not-found`);
+      return undefined;
+    }
+    log.log(`getTask id=${id} found`);
+    return rowToTask(rows[0]);
   }
 
   private async assertWorkPlacement(projectId: number | null | undefined, milestoneId: number | null | undefined): Promise<void> {
@@ -149,14 +149,16 @@ export class FileTaskStorage {
     }
     if (projectId == null) return;
     const projectRows = await db.select({ id: projects.id }).from(projects).where(
-      combineWithVisibleScope(principal, projectScopeColumns, eq(projects.id, projectId)),
+      combineWithWorkObjectAccess(principal, projectScopeColumns, "project", "read", eq(projects.id, projectId)),
     ).limit(1);
     if (projectRows.length === 0) throw new Error(`Project ${projectId} not found`);
     if (milestoneId == null) return;
     const milestoneRows = await db.select({ id: milestones.id }).from(milestones).where(
-      combineWithVisibleScope(
+      combineWithWorkObjectAccess(
         principal,
         milestoneScopeColumns,
+        "milestone",
+        "read",
         and(eq(milestones.projectId, projectId), eq(milestones.id, milestoneId)),
       ),
     ).limit(1);
@@ -201,7 +203,12 @@ export class FileTaskStorage {
   }
 
   async updateTask(id: number, updates: Partial<InsertTask>): Promise<Task | undefined> {
-    const existing = await this.getTask(id);
+    const principal = getCurrentPrincipalOrSystem();
+    const required: ObjectGrantCapability = hasAdminOnlyTaskChanges(updates as Record<string, unknown>) ? "admin" : "write";
+    const existingRows = await db.select().from(tasks).where(
+      combineWithWorkObjectAccess(principal, taskScopeColumns, "task", required, eq(tasks.id, id)),
+    ).limit(1);
+    const existing = existingRows[0] ? rowToTask(existingRows[0]) : undefined;
     if (!existing) {
       log.log(`updateTask id=${id} not-found`);
       return undefined;
@@ -238,7 +245,7 @@ export class FileTaskStorage {
     }
 
     const [row] = await db.update(tasks).set(setValues).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), taskScopeColumns, eq(tasks.id, id)),
+      combineWithWorkObjectAccess(principal, taskScopeColumns, "task", required, eq(tasks.id, id)),
     ).returning();
     if (!row) {
       log.log(`updateTask id=${id} not-writable`);
@@ -253,10 +260,18 @@ export class FileTaskStorage {
   }
 
   async deleteTask(id: number): Promise<boolean> {
-    const result = await db.delete(tasks).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), taskScopeColumns, eq(tasks.id, id)),
-    );
-    const deleted = (result.rowCount ?? 0) > 0;
+    const principal = getCurrentPrincipalOrSystem();
+    const deleted = await db.transaction(async tx => {
+      const [task] = await tx.select({ id: tasks.id }).from(tasks).where(
+        combineWithWorkObjectAccess(principal, taskScopeColumns, "task", "admin", eq(tasks.id, id)),
+      ).limit(1);
+      if (!task) return false;
+      await objectGrantService.revokeObjectGrantsInTransaction(tx, { objectType: "task", objectId: id });
+      const rows = await tx.delete(tasks).where(
+        combineWithWorkObjectAccess(principal, taskScopeColumns, "task", "admin", eq(tasks.id, id)),
+      ).returning({ id: tasks.id });
+      return rows.length > 0;
+    });
     log.log(`deleteTask id=${id} success=${deleted}`);
     this.invalidateCache();
     return deleted;
