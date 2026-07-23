@@ -61,6 +61,7 @@ export interface MoveLibraryPageResult {
 
 interface SubtreeRow {
   id: string;
+  title: string;
   parentId: string | null;
   vaultId: string | null;
   scope: string;
@@ -74,6 +75,7 @@ interface SubtreeRow {
 
 interface SubtreeSqlRow {
   id: string;
+  title: string;
   parent_id: string | null;
   vault_id: string | null;
   scope: string;
@@ -135,6 +137,7 @@ async function readSubtree(tx: DrizzleTx, pageId: string): Promise<SubtreeRow[]>
     WITH RECURSIVE subtree AS (
       SELECT
         id,
+        title,
         parent_id,
         vault_id,
         scope,
@@ -152,6 +155,7 @@ async function readSubtree(tx: DrizzleTx, pageId: string): Promise<SubtreeRow[]>
 
       SELECT
         child.id,
+        child.title,
         child.parent_id,
         child.vault_id,
         child.scope,
@@ -169,6 +173,7 @@ async function readSubtree(tx: DrizzleTx, pageId: string): Promise<SubtreeRow[]>
     )
     SELECT
       id,
+      title,
       parent_id,
       vault_id,
       scope,
@@ -184,6 +189,7 @@ async function readSubtree(tx: DrizzleTx, pageId: string): Promise<SubtreeRow[]>
 
   return (result.rows ?? []).map((row) => ({
     id: row.id,
+    title: row.title,
     parentId: row.parent_id,
     vaultId: row.vault_id,
     scope: row.scope,
@@ -326,8 +332,25 @@ export async function moveLibraryPage(
       if (writableRows.length !== subtree.length) {
         throw clientError(403, "The complete Library subtree must be visible and writable");
       }
-      if (subtree.some(isProtectedPage)) {
-        throw clientError(403, "Protected or system Library content cannot be moved");
+      if (isProtectedPage(root)) {
+        throw clientError(403, `"${root.title}" is protected Library structure and cannot be moved`);
+      }
+      // Canonical metadata identity is owned and self-healed by
+      // ensureCanonicalVaultMetadataPage, so stale meta classification on a
+      // descendant must not freeze an ordinary branch. Only non-user scope
+      // rows still refuse to ride along with a move.
+      const blockedDescendants = subtree.filter(
+        (row) => row.id !== root.id && (row.scope === "global" || row.scope === "system"),
+      );
+      if (blockedDescendants.length > 0) {
+        const names = blockedDescendants
+          .slice(0, 3)
+          .map((row) => `"${row.title}"`)
+          .join(", ");
+        throw clientError(
+          403,
+          `This branch contains ${blockedDescendants.length} system-scope page(s) that cannot be moved: ${names}`,
+        );
       }
       if (subtree.some((row) => row.vaultId !== root.vaultId)) {
         throw clientError(409, "Library subtree already spans multiple vaults and must be repaired before moving");
