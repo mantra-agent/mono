@@ -134,6 +134,10 @@ export function authorizeToolInvocation(
     return { allowed: false, reason: "human_gate_required" };
   }
 
+  if (origin === "timer" && toolName === "converse") {
+    return { allowed: false, reason: "timer_attention_owned_by_scheduler" };
+  }
+
   if (repositoryScratchWrite && !isSessionOwnedRepositoryPath(args.path, context.sessionId)) {
     return { allowed: false, reason: "session_owned_repository_required" };
   }
