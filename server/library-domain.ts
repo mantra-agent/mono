@@ -264,17 +264,58 @@ export async function ensureCanonicalVaultMetadataPage(input: {
           ),
         ),
       )
-      .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id))
-      .limit(2);
+      .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id));
 
-    if (candidates.length > 1) {
+    // Canonical metadata identity is (vault, structural_role=meta, kind tag)
+    // and its home is always the vault root. A nested row matching that
+    // identity is stale classification by definition, so demote it here at
+    // the one boundary that owns the invariant instead of failing every
+    // read, lint, and move that encounters the duplicate.
+    const rootCandidates = candidates.filter((page) => page.parentId === null);
+    if (rootCandidates.length > 1) {
       throw Object.assign(
-        new Error(`Vault has multiple canonical ${definition.title} pages; migration repair is required`),
+        new Error(`Vault has multiple root canonical ${definition.title} pages; migration repair is required`),
         { status: 409 },
       );
     }
+    const canonical = rootCandidates[0] ?? candidates[0];
+    const staleNested = candidates.filter((page) => page.id !== canonical?.id);
+    for (const stale of staleNested) {
+      const demotedTags = (stale.tags ?? []).filter(
+        (tag) => tag !== definition.tag && tag !== "library-meta",
+      );
+      const [demoted] = await tx
+        .update(libraryPages)
+        .set({
+          structuralRole: "artifact",
+          tags: demotedTags,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+          updatedByUserId: input.principal.userId ?? undefined,
+        })
+        .where(
+          combineWithWritableScope(
+            input.principal,
+            libraryScopeColumns,
+            eq(libraryPages.id, stale.id),
+          ),
+        )
+        .returning({ id: libraryPages.id });
+      if (!demoted) {
+        throw Object.assign(
+          new Error(`Stale duplicate ${definition.title} page is not writable; migration repair is required`),
+          { status: 409 },
+        );
+      }
+      log.warn("Demoted stale canonical metadata duplicate", {
+        vaultId: input.vaultId,
+        kind: input.kind,
+        pageId: stale.id,
+        parentId: stale.parentId,
+        canonicalPageId: canonical?.id ?? null,
+      });
+    }
 
-    const existing = candidates[0];
+    const existing = canonical;
     if (existing) {
       const desiredTags = Array.from(new Set([...(existing.tags ?? []), ...definition.tags]));
       const [updated] = await tx
