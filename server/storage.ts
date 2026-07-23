@@ -153,6 +153,7 @@ export interface IStorage {
   getVoiceSessionStartByRequest(requestId: string, principal: Principal): Promise<VoiceSessionActive | undefined>;
   getOwnedActiveVoiceSession(sessionId: string, bootId: string): Promise<VoiceSessionActive | undefined>;
   endVoiceSessionActive(sessionId: string, status: "complete" | "abandoned", authority: VoiceLeaseMutationAuthority): Promise<void>;
+  completeOwnedVoiceSession(sessionId: string, chatSessionId: string, principal: Principal): Promise<boolean>;
   updateVoiceSessionInflight(sessionId: string, inflightTurn: number, bootId: string): Promise<void>;
   clearVoiceSessionInflight(sessionId: string, bootId: string): Promise<void>;
   abandonExpiredVoiceSessions(staleBefore: Date): Promise<VoiceSessionActive[]>;
@@ -851,6 +852,26 @@ export class HybridStorage implements IStorage {
     await db.update(voiceSessionActive)
       .set({ status, endedAt: new Date(), inflightTurn: 0 })
       .where(voiceLeaseWritablePredicate(sessionId, authority));
+  }
+
+  async completeOwnedVoiceSession(sessionId: string, chatSessionId: string, principal: Principal): Promise<boolean> {
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) return false;
+    return db.transaction(async (tx) => {
+      const lockKey = fnv1a32(`${principal.accountId}:${chatSessionId}`);
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${0x56535452}::int4, ${lockKey}::int4)`);
+      const [row] = await tx.update(voiceSessionActive)
+        .set({ status: "complete", endedAt: new Date(), inflightTurn: 0 })
+        .where(and(
+          eq(voiceSessionActive.sessionId, sessionId),
+          eq(voiceSessionActive.chatSessionId, chatSessionId),
+          inArray(voiceSessionActive.status, ["active", "complete"]),
+          eq(voiceSessionActive.scope, "user"),
+          eq(voiceSessionActive.ownerUserId, principal.userId),
+          eq(voiceSessionActive.accountId, principal.accountId),
+        ))
+        .returning({ sessionId: voiceSessionActive.sessionId });
+      return !!row;
+    });
   }
 
   async updateVoiceSessionInflight(sessionId: string, inflightTurn: number, bootId: string): Promise<void> {
