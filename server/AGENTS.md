@@ -318,9 +318,13 @@ Environment knobs:
 - `TOOL_OUTPUT_PREVIEW_CHAR_BUDGET` default `4000`.
 - `TOOL_OUTPUT_FORCE_ARTIFACT_TOKEN_BUDGET` default `20000`.
 
+### Delegated Engineering Children
+
+`session.spawn_child` supports a structured `delegation=engineering` mode for independent coding missions. The spawn handler must validate the parent through `authorizeToolInvocation()` against a representative `build:write` Git action, persist `spawnerTool=session.spawn_child.engineering`, and set Engineer persona before first context assembly. Resumed child runs reconstruct authority only from that durable server-written provenance. Free-text topic/reason fields never grant authority. Every engineering child still owns an isolated `repos/*-{childSessionId[:8]}` clone; parent and sibling clones are not writable.
+
 ### Git Session Isolation
 
-Git write actions (clone, add, commit, push, create_pr, merge_pr, delete_branch) are available in all sessions, with **session-scoped working trees** to prevent concurrent sessions from clobbering each other's branches and commits.
+Git write actions (clone, add, commit, push, create_pr, merge_pr, delete_branch) are available in interactive sessions and explicitly delegated engineering children, with **session-scoped working trees** preventing concurrent sessions from clobbering each other's branches and commits.
 
 **Clone isolation:** The `clone` action always appends `-{sessionId[:8]}` to the directory name. `git(clone, url, directory: "xyz")` produces `repos/xyz-{sessionId[:8]}`. This is structural, not optional. Clone is idempotent: re-cloning in the same session returns the existing directory.
 

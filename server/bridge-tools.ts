@@ -4504,9 +4504,26 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (!topicRaw) return { result: "Missing 'topic' (or 'title') for spawn_child", error: true };
       const reason: string | undefined = args.reason ? String(args.reason).trim() : undefined;
       const explicitSpawnReason: string | undefined = args.spawnReason ? String(args.spawnReason).trim() : undefined;
+      const delegation = args.delegation === "engineering" ? "engineering" : "conversation";
+      const engineeringDelegation = delegation === "engineering";
+      if (engineeringDelegation) {
+        const { authorizeToolInvocation } = await import("./agent-authority");
+        const delegationAuthority = authorizeToolInvocation(
+          "git",
+          { action: "clone" },
+          args._authorityContext || {},
+        );
+        if (!delegationAuthority.allowed) {
+          return {
+            result: `Engineering child delegation denied: ${delegationAuthority.reason}`,
+            error: true,
+          };
+        }
+      }
       const shortTitle = topicRaw.split(/\s+/).slice(0, 5).join(" ");
       const spawnReason = explicitSpawnReason || `spawn_child:${topicRaw.slice(0, 60)}`;
-      const spawnerSkillRun = `session.spawn_child:${sessionId}:${spawnReason}`;
+      const spawnerTool = engineeringDelegation ? "session.spawn_child.engineering" : "session.spawn_child";
+      const spawnerSkillRun = `session.spawn_child:${sessionId}:${spawnReason}:${delegation}`;
 
       if (await isSpecSkillSession(sessionId) && isSpecChildSpawnRequest(topicRaw, reason, explicitSpawnReason, spawnReason)) {
         return {
@@ -4519,15 +4536,24 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const { recordSpawn } = await import("./sessions/tree");
         const spawnResult = await recordSpawn(
           sessionId,
-          { spawnReason, spawnerTool: "session.spawn_child", spawnerSkillRun },
+          { spawnReason, spawnerTool, spawnerSkillRun },
           async () => {
+            let personaId: number | undefined;
+            if (engineeringDelegation) {
+              const { personaStorage } = await import("./file-storage/persona-storage");
+              const engineerPersona = await personaStorage.getByName("Engineer");
+              if (!engineerPersona) {
+                throw new Error("Engineer persona is not visible to the current principal");
+              }
+              personaId = engineerPersona.id;
+            }
             const created = await chatFileStorage.createAutonomousSession(
               shortTitle,
               "agent",
               undefined,
               undefined,
               undefined,
-              { parentSessionId: sessionId, spawnReason, spawnerTool: "session.spawn_child", spawnerSkillRun, triggerType: "spawn" as const, triggerId: sessionId, triggerName: shortTitle },
+              { personaId, parentSessionId: sessionId, spawnReason, spawnerTool, spawnerSkillRun, triggerType: "spawn" as const, triggerId: sessionId, triggerName: shortTitle },
             );
             return { sessionId: created.id };
           },
@@ -4538,7 +4564,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const childConv = await chatFileStorage.getSession(childId);
           const childMessages = await chatFileStorage.getMessagesBySession(childId);
           const hasAssistantResponse = childMessages.some(m => m.role === "assistant");
-          const authorityNote = "Authority: conversational child only. This child does not receive engineering Git-write delegation; use a plan with an Engineer step for code-writing work.";
+          const authorityNote = engineeringDelegation
+            ? "Authority: engineering delegation granted. This child can use Git writes and must create and edit its own session-scoped clone."
+            : "Authority: conversational delegation. Spawn a new child with delegation=engineering for a coding mission.";
           if (!hasAssistantResponse && childMessages.length > 0) {
             await triggerChildSessionResponse(childId, "session.spawn_child.reused");
             return { result: `Reused existing child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""} for spawn reason "${spawnReason}". Started execution. ${authorityNote}` };
@@ -4615,12 +4643,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         await triggerChildSessionResponse(childId, "session.spawn_child");
 
-        toolExec.log(`[session.spawn_child] parent=${sessionId} child=${childId} spawnReason=${spawnReason} briefLen=${brief.length} autoStart=true engineeringDelegation=false`);
+        toolExec.log(`[session.spawn_child] parent=${sessionId} child=${childId} spawnReason=${spawnReason} briefLen=${brief.length} autoStart=true delegation=${delegation}`);
+        const authorityNote = engineeringDelegation
+          ? "Authority: engineering delegation granted. This child can use Git writes and must create and edit its own session-scoped clone."
+          : "Authority: conversational delegation. Spawn a new child with delegation=engineering for a coding mission.";
         return {
           result: [
             `Spawned child session ${childId}${childConv?.title ? ` (${childConv.title})` : ""}.`,
             `Warm-start brief seated (${brief.length} chars). Started execution.`,
-            "Authority: conversational child only. This child does not receive engineering Git-write delegation; use a plan with an Engineer step for code-writing work.",
+            authorityNote,
           ].join(" "),
         };
       } catch (err: any) {

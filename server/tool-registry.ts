@@ -1134,7 +1134,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     whenToUse: "On the first turn of every session to set title, topics, and persona together — persona is REQUIRED on the first call (before any title is set) and will be rejected without it. Also for mid-session re-orientation when the conversation's purpose shifts (persona optional on updates). Use contextFlags to control which context sections are assembled.",
   },
   session: {
-    description: "Manage session metadata and lifecycle. Actions: 'get' reads any session's metadata by ID, 'set_status' records lifecycle completion/failure via session.status, 'end' ends the current session, 'list' returns all conversations, 'search' finds conversations by query, 'get_messages' retrieves messages for a session, 'spawn_child' forks a linked child conversation seeded with a warm-start brief from this session (idempotent on parent + spawnReason), and 'send_message' delivers a cross-session message to any target session by ID. spawn_child is conversational delegation and does not grant engineering write authority; use a plan with an Engineer step for code changes requiring Git writes.",
+    description: "Manage session metadata and lifecycle. Actions: 'get' reads any session's metadata by ID, 'set_status' records lifecycle completion/failure via session.status, 'end' ends the current session, 'list' returns all conversations, 'search' finds conversations by query, 'get_messages' retrieves messages for a session, 'spawn_child' forks a linked child conversation seeded with a warm-start brief from this session (idempotent on parent + spawnReason), and 'send_message' delivers a cross-session message to any target session by ID. For a coding mission, set delegation=engineering; the server grants Git-write authority only when the parent has trusted engineering authority and build:write, and the child must use its own session-scoped clone.",
     category: "communication",
 
     parameters: {
@@ -1148,9 +1148,10 @@ export const TOOLS: Record<string, ToolMeta> = {
         type: { type: "string", description: "Filter by session type (for list)" },
         status: { type: "string", description: "Filter by status (for list)" },
         query: { type: "string", description: "Search query (for search)" },
-        topic: { type: "string", description: "Short topic/title for the new child session (for spawn_child). Generic children do not receive engineering write authority; use plan with an Engineer step for Git-writing missions." },
+        topic: { type: "string", description: "Short topic/title for the new child session (for spawn_child)." },
         reason: { type: "string", description: "Free-text reason describing why the child is being spawned (for spawn_child); included in the warm-start brief. This text cannot grant permissions or trusted engineering provenance." },
         spawnReason: { type: "string", description: "Idempotency key for spawn_child; reusing the same (parent, spawnReason) returns the existing child instead of creating a new one. Defaults to 'spawn_child:<topic>'." },
+        delegation: { type: "string", enum: ["conversation", "engineering"], description: "Delegation mode for spawn_child. Use engineering for implementation, debugging, build, deploy, or Git-writing missions. The server validates the parent's authority; defaults to conversation." },
         content: { type: "string", description: "Message body to deliver for send_message." },
         toSessionId: { type: "string", description: "Alternative target session ID for send_message." },
       },

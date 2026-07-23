@@ -12,9 +12,11 @@ export type ToolInvocationOrigin =
   | "http"
   | "internal";
 
+export type TrustedEngineeringDelegation = "plan" | "workflow" | "child";
+
 export interface AgentAuthorityContext {
   origin?: ToolInvocationOrigin;
-  trustedDelegation?: "plan" | "workflow";
+  trustedDelegation?: TrustedEngineeringDelegation;
   activity?: string;
   sessionId?: string;
   sessionKey?: string;
@@ -103,7 +105,8 @@ function requiresPermission(
 function isTrustedEngineeringDelegation(context: AgentAuthorityContext): boolean {
   return context.origin === "interactive"
     || context.trustedDelegation === "plan"
-    || context.trustedDelegation === "workflow";
+    || context.trustedDelegation === "workflow"
+    || context.trustedDelegation === "child";
 }
 
 function isModelOrigin(origin: ToolInvocationOrigin): boolean {
@@ -170,7 +173,7 @@ function describeAuthorityFilteredActions(
     return [
       `Current execution authority permits only: ${allowedActions.join(", ")}.`,
       "Omitted Git actions are intentionally unavailable under this session's provenance, not evidence of a broken provider credential.",
-      "Plan/workflow engineering children receive delegated write authority; generic session.spawn_child children do not.",
+      "Plan/workflow children and session.spawn_child calls with delegation=engineering receive delegated write authority; ordinary conversational children do not.",
     ].join(" ");
   }
   return `Current execution authority permits only: ${allowedActions.join(", ")}.`;
