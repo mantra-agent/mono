@@ -88,6 +88,26 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Global pre-account security subjects. These rows carry no credentials,
+// profile, account, Vault, or private relationship data.
+export const invitedSubjects = pgTable("invited_subjects", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  normalizedEmail: text("normalized_email").notNull(),
+  displayLabel: text("display_label").notNull(),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  claimedByUserId: varchar("claimed_by_user_id").references(() => users.id, { onDelete: "restrict" }),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }),
+}, (table) => [
+  uniqueIndex("idx_invited_subjects_normalized_email_unique").on(table.normalizedEmail),
+  index("idx_invited_subjects_claimed_user").on(table.claimedByUserId),
+  check("invited_subjects_email_normalized_check", sql`${table.normalizedEmail} = LOWER(BTRIM(${table.normalizedEmail})) AND NULLIF(BTRIM(${table.normalizedEmail}), '') IS NOT NULL`),
+  check("invited_subjects_claim_pair_check", sql`(${table.claimedByUserId} IS NULL AND ${table.claimedAt} IS NULL) OR (${table.claimedByUserId} IS NOT NULL AND ${table.claimedAt} IS NOT NULL)`),
+]);
+
+export type InvitedSubject = typeof invitedSubjects.$inferSelect;
+export type InsertInvitedSubject = typeof invitedSubjects.$inferInsert;
+
 export const accounts = pgTable("accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   kind: text("kind").notNull().default("personal"),

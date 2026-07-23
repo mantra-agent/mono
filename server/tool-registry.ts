@@ -578,7 +578,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         effort: { type: "string", description: "Effort: high, mid, low" },
         owner: { type: "string", description: "Execution owner: me, agent (xyz is accepted as an alias for agent)" },
         assigneeSubjectType: { type: ["string", "null"], enum: ["user", "invited_subject"], description: "Human assignee subject type. Use with assigneeSubjectId; assignment is separate from owner." },
-        assigneeSubjectId: { type: ["string", "null"], description: "Human assignee subject ID. Use with assigneeSubjectType." },
+        assigneeSubjectId: { type: ["string", "null"], description: "Human assignee reference. For user, pass the User ID. For invited_subject, pass the recipient email; the server resolves or creates the global claimable subject." },
         requiresReview: { type: "boolean", description: "Requires review" },
         projectId: { type: "number", description: "Project ID to link" },
         milestoneId: { type: "number", description: "Milestone ID to link" },

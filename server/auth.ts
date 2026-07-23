@@ -14,9 +14,9 @@ import crypto from "crypto";
 import { storage } from "./storage";
 import { getSetting, setSetting } from "./system-settings";
 import { getAutomationAuthToken } from "./automation-auth-token";
-import { loginSchema, registerSchema, type User } from "@shared/schema";
+import { loginSchema, registerSchema, users, type User } from "@shared/schema";
 import { z } from "zod";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   attachUserPrincipal,
   createServicePrincipal,
@@ -33,6 +33,9 @@ import { runWithPrincipal } from "./principal-context";
 import { MEETING_JOIN_POLICIES, getMeetingJoinPolicy, setMeetingJoinPolicy } from "./meeting/join-policy";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { getClientPresenceSnapshot } from "./client-presence";
+import { normalizeEmailAddress } from "./email-normalization";
+import { db } from "./db";
+import { claimInvitedSubjectInTransaction } from "./invited-subject-service";
 
 const setupSchema = z.object({
   email: z.string().email(),
@@ -526,7 +529,8 @@ export function setupAuth(app: Express) {
           .json({ error: "Invalid email or password format" });
       }
 
-      const { email, password } = parsed.data;
+      const email = normalizeEmailAddress(parsed.data.email);
+      const { password } = parsed.data;
       authTrace(req, "login:start", { emailHash: shortHash(email) });
       const user = await storage.getUserByEmail(email);
       if (!user) {
@@ -602,7 +606,8 @@ export function setupAuth(app: Express) {
             details: parsed.error.flatten(),
           });
       }
-      const { email, password } = parsed.data;
+      const email = normalizeEmailAddress(parsed.data.email);
+      const { password } = parsed.data;
 
       const hashed = await bcrypt.hash(password, 12);
       const authenticatedUser = await storage.createInitialAdmin({ email, password: hashed });
@@ -625,10 +630,10 @@ export function setupAuth(app: Express) {
     requirePermission("users:write"),
     async (req: Request, res: Response) => {
       try {
-        const { email } = req.body;
-        if (!email) {
+        if (typeof req.body?.email !== "string") {
           return res.status(400).json({ error: "Email is required" });
         }
+        const email = normalizeEmailAddress(req.body.email);
 
         const existing = await storage.getUserByEmail(email);
         if (existing) {
@@ -683,7 +688,8 @@ export function setupAuth(app: Express) {
           });
       }
 
-      const { email, password, inviteToken } = parsed.data;
+      const email = normalizeEmailAddress(parsed.data.email);
+      const { password, inviteToken } = parsed.data;
 
       const hashed = await bcrypt.hash(password, 12);
       let user;
@@ -694,22 +700,28 @@ export function setupAuth(app: Express) {
           return res.status(400).json({ error: "Invalid or expired invite" });
         }
 
-        if (invitedUser.email !== email) {
+        if (normalizeEmailAddress(invitedUser.email) !== email) {
           return res.status(400).json({ error: "Email does not match invite" });
         }
 
-        user = await storage.updateUser(invitedUser.id, {
-          password: hashed,
-          inviteToken: null,
-          inviteExpires: null,
+        user = await db.transaction(async tx => {
+          const [registeredUser] = await tx.update(users).set({
+            email,
+            password: hashed,
+            inviteToken: null,
+            inviteExpires: null,
+          }).where(eq(users.id, invitedUser.id)).returning();
+          if (!registeredUser) throw new Error("Registration user update produced no row");
+          await claimInvitedSubjectInTransaction(tx, registeredUser);
+          return registeredUser;
         });
       } else {
         if (process.env.PUBLIC_REGISTRATION_ENABLED !== "true") return res.status(403).json({ error: "An invitation is required" });
-        user = await storage.createUser({ email, password: hashed });
-      }
-
-      if (!user) {
-        return res.status(500).json({ error: "Registration failed" });
+        user = await db.transaction(async tx => {
+          const [registeredUser] = await tx.insert(users).values({ email, password: hashed }).returning();
+          if (!registeredUser) throw new Error("Registration user creation produced no row");
+          return registeredUser;
+        });
       }
 
       const principal = await completeUserAuth(req, res, user, "register");
