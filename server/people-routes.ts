@@ -229,6 +229,16 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
       if (!cabinetLevel || typeof cabinetLevel !== "string") {
         return res.status(400).json({ error: "cabinetLevel is required" });
       }
+      const peopleMetadata = await import("@shared/people-metadata");
+      if (typeof req.body.relation === "string" && req.body.relation.trim()) {
+        const relationCheck = peopleMetadata.validateRelation(req.body.relation, "human");
+        if (!relationCheck.ok) return res.status(400).json({ error: relationCheck.error });
+      }
+      if (Array.isArray(req.body.professionalRelations)) {
+        const list = req.body.professionalRelations.filter((r: unknown): r is string => typeof r === "string");
+        const relationsCheck = peopleMetadata.validateProfessionalRelations(list, "human");
+        if (!relationsCheck.ok) return res.status(400).json({ error: relationsCheck.error });
+      }
       const person = await peopleStorage.createPerson({
         name,
         cabinetLevel,
@@ -306,6 +316,16 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
     try {
       if (Object.prototype.hasOwnProperty.call(req.body, "vaultIds")) {
         return res.status(400).json({ error: "Update Vaults through the Person Vaults endpoint" });
+      }
+      const peopleMetadata = await import("@shared/people-metadata");
+      if (typeof req.body.relation === "string" && req.body.relation.trim()) {
+        const check = peopleMetadata.validateRelation(req.body.relation, "human");
+        if (!check.ok) return res.status(400).json({ error: check.error });
+      }
+      if (Array.isArray(req.body.professionalRelations)) {
+        const list = req.body.professionalRelations.filter((r: unknown): r is string => typeof r === "string");
+        const check = peopleMetadata.validateProfessionalRelations(list, "human");
+        if (!check.ok) return res.status(400).json({ error: check.error });
       }
       if (typeof req.body.companyId === "string" && req.body.companyId.trim()) {
         const { companyStorage } = await import("./company-storage");
