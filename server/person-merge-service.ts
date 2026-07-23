@@ -10,6 +10,7 @@ import {
   peopleImportDecisions,
   personEmails,
   personMergeAliases,
+  personVaultMemberships,
   persons,
   simplePeopleSurfaceState,
   strategies,
@@ -25,18 +26,22 @@ import {
 import { combineWithSensitiveWritable } from "./sensitive-scope";
 import type { Person } from "./people-storage";
 import { repointNetworkProfilePersonId } from "./person-merge-values";
+import { loadPersonVaultIds, visiblePersonPredicate, writablePersonPredicate } from "./person-vault-access";
 
 const personScope = {
   scope: persons.scope,
   ownerUserId: persons.ownerUserId,
   accountId: persons.accountId,
-  vaultId: persons.vaultId,
+};
+const personVaultMembershipScope = {
+  scope: personVaultMemberships.scope,
+  ownerUserId: personVaultMemberships.ownerUserId,
+  accountId: personVaultMemberships.accountId,
 };
 const aliasScope = {
   scope: personMergeAliases.scope,
   ownerUserId: personMergeAliases.ownerUserId,
   accountId: personMergeAliases.accountId,
-  vaultId: personMergeAliases.vaultId,
 };
 const surfaceScope = {
   scope: simplePeopleSurfaceState.scope,
@@ -687,12 +692,13 @@ async function personFromExistingTarget(
   const rows = await tx
     .select()
     .from(persons)
-    .where(combineWithVisibleScope(principal, personScope, eq(persons.id, targetId)))
+    .where(visiblePersonPredicate(principal, eq(persons.id, targetId)))
     .limit(1);
   if (!rows[0]) throw new Error(`Merged Person target ${targetId} not found`);
+  const vaultIds = (await loadPersonVaultIds(principal, [targetId])).get(targetId) ?? [];
   return mergeRecords(
-    rows[0] as unknown as Record<string, unknown>,
-    rows[0] as unknown as Record<string, unknown>,
+    { ...rows[0], vaultIds } as unknown as Record<string, unknown>,
+    { ...rows[0], vaultIds } as unknown as Record<string, unknown>,
   ).person;
 }
 
@@ -763,11 +769,7 @@ export async function performPersonMerge(
       .select()
       .from(persons)
       .where(
-        combineWithWritableScope(
-          principal,
-          personScope,
-          inArray(persons.id, [sourceId, targetId]),
-        ),
+        writablePersonPredicate(principal, inArray(persons.id, [sourceId, targetId])),
       )
       .for("update");
     const sourceRow = rows.find(row => row.id === sourceId);
@@ -806,7 +808,7 @@ export async function performPersonMerge(
     await tx.update(persons)
       .set(personValues(merged.person))
       .where(
-        combineWithWritableScope(principal, personScope, eq(persons.id, targetId)),
+        writablePersonPredicate(principal, eq(persons.id, targetId)),
       );
 
     const insertOwnership = ownedInsertValues(principal, aliasScope);
@@ -828,6 +830,29 @@ export async function performPersonMerge(
       mergedAt: new Date(),
     });
 
+    const sourceMemberships = await tx
+      .select({ vaultId: personVaultMemberships.vaultId })
+      .from(personVaultMemberships)
+      .where(
+        combineWithWritableScope(
+          principal,
+          personVaultMembershipScope,
+          eq(personVaultMemberships.personId, sourceId),
+        ),
+      );
+    if (sourceMemberships.length > 0) {
+      await tx.insert(personVaultMemberships)
+        .values(sourceMemberships.map(({ vaultId }) => ({
+          personId: targetId,
+          vaultId,
+          scope: "user",
+          ownerUserId: owner.userId,
+          accountId: owner.accountId,
+          createdByUserId: owner.userId,
+        })))
+        .onConflictDoNothing();
+    }
+
     await repointReferences(
       tx,
       principal,
@@ -845,8 +870,12 @@ export async function performPersonMerge(
         ),
       );
     await tx.delete(persons).where(
-      combineWithWritableScope(principal, personScope, eq(persons.id, sourceId)),
+      writablePersonPredicate(principal, eq(persons.id, sourceId)),
     );
+    merged.person.vaultIds = [...new Set([
+      ...(merged.person.vaultIds || []),
+      ...sourceMemberships.map(({ vaultId }) => vaultId),
+    ])].sort();
 
     return {
       sourcePersonId: sourceId,

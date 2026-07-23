@@ -284,9 +284,28 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
     }
   });
 
+  app.patch("/api/people/:id/vaults", async (req, res) => {
+    log.log(`PATCH /api/people/${req.params.id}/vaults`);
+    try {
+      if (!Array.isArray(req.body.vaultIds) || req.body.vaultIds.some((id: unknown) => typeof id !== "string")) {
+        return res.status(400).json({ error: "vaultIds must be an array of Vault IDs" });
+      }
+      const person = await peopleStorage.replaceVaultMemberships(req.params.id, req.body.vaultIds);
+      res.json(person);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to update Person Vaults";
+      const status = message.includes("not found") ? 404 : 400;
+      log.error(`PATCH /api/people/${req.params.id}/vaults error:`, message);
+      res.status(status).json({ error: message });
+    }
+  });
+
   app.patch("/api/people/:id", async (req, res) => {
     log.log(`PATCH /api/people/${req.params.id} fields=${Object.keys(req.body).join(",")}`);
     try {
+      if (Object.prototype.hasOwnProperty.call(req.body, "vaultIds")) {
+        return res.status(400).json({ error: "Update Vaults through the Person Vaults endpoint" });
+      }
       if (typeof req.body.companyId === "string" && req.body.companyId.trim()) {
         const { companyStorage } = await import("./company-storage");
         await companyStorage.addPerson(req.body.companyId.trim(), req.params.id);
