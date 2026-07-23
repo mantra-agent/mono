@@ -609,7 +609,7 @@ export async function runSchemaBootstrap(
       ADD COLUMN IF NOT EXISTS derivation_version TEXT,
       ADD COLUMN IF NOT EXISTS provenance JSONB NOT NULL DEFAULT '{}'::jsonb
   `);
-  await pool.query(`DO $
+  await pool.query(`DO $$
     BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_vnext_source_clarity_bounded') THEN
         ALTER TABLE memory_vnext_sources ADD CONSTRAINT memory_vnext_source_clarity_bounded CHECK (clarity IS NULL OR (clarity >= 0 AND clarity <= 1));
@@ -626,7 +626,7 @@ export async function runSchemaBootstrap(
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_vnext_claim_validity_window') THEN
         ALTER TABLE memory_vnext_claims ADD CONSTRAINT memory_vnext_claim_validity_window CHECK (valid_from IS NULL OR valid_until IS NULL OR valid_until >= valid_from);
       END IF;
-    END $`);
+    END $$`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_claim_applicability ON memory_vnext_claims(valid_from, valid_until, expected_by)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_source_lineage ON memory_vnext_sources(claim_id, source_lineage_key)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_source_evidence ON memory_vnext_sources(claim_id, relationship, clarity, certainty)`);
