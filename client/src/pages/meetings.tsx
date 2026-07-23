@@ -50,8 +50,8 @@ export default function MeetingsPage() {
   }, [data?.items]);
 
   return (
-    <div className="flex h-full w-full bg-background" data-testid="meetings-page">
-      <div className="flex w-full min-w-0 flex-col @md:w-1/3">
+    <div className="flex h-full w-full flex-col bg-background" data-testid="meetings-page">
+      <div className="flex w-full min-w-0 flex-1 flex-col">
         <div className="shrink-0 p-2">
           <HierarchySearchInput
             value={search}
@@ -88,7 +88,6 @@ export default function MeetingsPage() {
           )}
         </div>
       </div>
-      <div className="hidden min-w-0 flex-1 @md:block" />
     </div>
   );
 }
