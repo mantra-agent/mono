@@ -17,7 +17,10 @@ import {
   hashContent,
   buildChunkHeader,
 } from "./vnext-content-chunking";
-import { persistClaimCandidates } from "./vnext-claim-storage";
+import {
+  memoryVnextClaimStorage,
+  persistClaimCandidates,
+} from "./vnext-claim-storage";
 import {
   extractClaimsFromChunk,
   deduplicateChunkClaims,
