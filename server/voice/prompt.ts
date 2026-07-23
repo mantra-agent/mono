@@ -105,6 +105,7 @@ export async function buildSystemPrompt(
     profile: "voice",
     toolDefinitions: toolDefs,
     sessionId: session.chatSessionId || undefined,
+    contextBuildId: `voice-session:${session.id}:turn:${ctx?.turnId ?? conversationFocusKey(contextHistory)}`,
     conversationHistory: contextHistory.length > 0 ? contextHistory : undefined,
     onProgress,
   });

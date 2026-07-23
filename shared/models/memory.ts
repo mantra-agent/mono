@@ -11,6 +11,7 @@ import {
   unique,
   uniqueIndex,
   vector,
+  check,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -635,6 +636,93 @@ export const insertMemoryVnextClaimLinkSchema = createInsertSchema(
 
 export type MemoryVnextClaimLink = typeof memoryVnextClaimLinks.$inferSelect;
 export type InsertMemoryVnextClaimLink = z.infer<typeof insertMemoryVnextClaimLinkSchema>;
+
+/**
+ * Passive context exposure is append-only telemetry. It is idempotent per
+ * context build and deliberately carries no strength or certainty weight.
+ */
+export const memoryVnextExposures = pgTable(
+  "memory_vnext_exposures",
+  {
+    id: serial("id").primaryKey(),
+    claimId: integer("claim_id")
+      .notNull()
+      .references(() => memoryVnextClaims.id, { onDelete: "cascade" }),
+    contextBuildId: text("context_build_id").notNull(),
+    source: text("source").notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_exposure_build_claim").on(
+      table.ownerUserId,
+      table.accountId,
+      table.contextBuildId,
+      table.claimId,
+    ),
+    index("idx_memory_vnext_exposure_claim").on(table.claimId, table.occurredAt),
+    index("idx_memory_vnext_exposure_owner").on(table.scope, table.ownerUserId, table.occurredAt),
+    index("idx_memory_vnext_exposure_account").on(table.accountId, table.occurredAt),
+  ],
+);
+
+export const memoryVnextStrengthEventTypes = [
+  "explicit_confirmation",
+  "decision_use",
+  "goal_relevance",
+  "confirmed_recurrence",
+  "contextual_importance",
+  "correction",
+] as const;
+export type MemoryVnextStrengthEventType = (typeof memoryVnextStrengthEventTypes)[number];
+
+/**
+ * Meaningful reinforcement enters through this replay-safe, bounded ledger.
+ * Weight is canonical for the event type and never supplied by callers.
+ */
+export const memoryVnextStrengthEvents = pgTable(
+  "memory_vnext_strength_events",
+  {
+    id: serial("id").primaryKey(),
+    claimId: integer("claim_id")
+      .notNull()
+      .references(() => memoryVnextClaims.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    eventKey: text("event_key").notNull(),
+    weight: real("weight").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id"),
+    metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_strength_event_replay").on(
+      table.ownerUserId,
+      table.accountId,
+      table.eventKey,
+    ),
+    index("idx_memory_vnext_strength_event_claim").on(table.claimId, table.occurredAt),
+    index("idx_memory_vnext_strength_event_owner").on(table.scope, table.ownerUserId, table.occurredAt),
+    index("idx_memory_vnext_strength_event_account").on(table.accountId, table.occurredAt),
+    index("idx_memory_vnext_strength_event_type").on(table.eventType, table.occurredAt),
+    check("memory_vnext_strength_event_weight_bounded", sql`${table.weight} >= -1 AND ${table.weight} <= 1`),
+    check("memory_vnext_strength_event_type_valid", sql`${table.eventType} IN ('explicit_confirmation', 'decision_use', 'goal_relevance', 'confirmed_recurrence', 'contextual_importance', 'correction')`),
+  ],
+);
+
+export type MemoryVnextExposure = typeof memoryVnextExposures.$inferSelect;
+export type MemoryVnextStrengthEvent = typeof memoryVnextStrengthEvents.$inferSelect;
 
 export interface NeighborhoodCacheEntry {
   id: number;

@@ -11,17 +11,8 @@ const log = createLogger("MemoryVnextLifecycle");
 
 const DEFAULT_BATCH_LIMIT = 50;
 const CANONICAL_CONFIDENCE_THRESHOLD = 0.75;
-const LOW_VALUE_ACTION_CONFIDENCE_THRESHOLD = 0.45;
-const STALE_ACTION_AGE_DAYS = 30;
-
-/** Claims below this confidence + older than RETIREMENT_STALE_DAYS + no recent recall = retired */
-const RETIREMENT_CONFIDENCE_FLOOR = 0.3;
-const RETIREMENT_STALE_DAYS = 21;
-
-/** Per-run confidence decay applied to canonical claims with no recall in DECAY_UNREINFORCED_DAYS */
-const DECAY_UNREINFORCED_DAYS = 14;
-const DECAY_DELTA = 0.05;
-const DECAY_INTERVAL_MS = DECAY_UNREINFORCED_DAYS * 24 * 60 * 60 * 1000;
+// Lifecycle remains compatibility processing metadata. Passive exposure,
+// retrieval silence, age, and low strength carry no certainty or retirement authority.
 
 export interface VnextLifecycleRunOptions {
   limit?: number;
@@ -133,43 +124,9 @@ function parseEntityMentions(claim: MemoryVnextClaim): Array<{ name: string; ent
   });
 }
 
-function isOlderThanDays(date: Date, days: number): boolean {
-  return Date.now() - date.getTime() > days * 24 * 60 * 60 * 1000;
-}
-
-function metadataDate(value: unknown): Date | null {
-  if (typeof value !== "string") return null;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date : null;
-}
-
-function confidenceMaintenanceAnchor(claim: MemoryVnextClaim): { anchor: Date; lastDecayedAt: Date | null } {
-  const metadata = (claim.metadata as Record<string, unknown> | null) ?? {};
-  const lifecycle = typeof metadata.lifecycle === "object" && metadata.lifecycle !== null
-    ? metadata.lifecycle as Record<string, unknown>
-    : {};
-  const confidenceDecay = typeof lifecycle.confidenceDecay === "object" && lifecycle.confidenceDecay !== null
-    ? lifecycle.confidenceDecay as Record<string, unknown>
-    : {};
-  const lastDecayedAt = metadataDate(metadata.lastDecayedAt) ?? metadataDate(confidenceDecay.lastMaintainedAt);
-  const anchor = [
-    lastDecayedAt,
-    claim.lastRecalledAt,
-    claim.lifecycleStageUpdatedAt,
-    claim.createdAt,
-  ].filter((date): date is Date => date instanceof Date && Number.isFinite(date.getTime()))
-    .sort((a, b) => b.getTime() - a.getTime())[0] ?? claim.createdAt;
-  return { anchor, lastDecayedAt };
-}
-
 function hasContradictionOrSupersession(candidate: VnextLifecycleCandidate): boolean {
   const metadata = (candidate.claim.metadata as Record<string, unknown> | null) ?? {};
   return Boolean(metadata.contradictedByClaimId || metadata.supersededByClaimId);
-}
-
-function hasNotBeenRecalledSince(claim: MemoryVnextClaim, days: number): boolean {
-  if (!claim.lastRecalledAt) return true;
-  return isOlderThanDays(claim.lastRecalledAt, days);
 }
 
 function shouldRetire(candidate: VnextLifecycleCandidate): { shouldRetire: boolean; reason?: string; metadata?: Record<string, unknown> } {
@@ -187,92 +144,7 @@ function shouldRetire(candidate: VnextLifecycleCandidate): { shouldRetire: boole
     return { shouldRetire: true, reason: "contradicted_or_superseded" };
   }
 
-  // 3. Stale low-confidence action claim
-  if (
-    candidate.claim.claimType === "action" &&
-    candidate.claim.confidence < LOW_VALUE_ACTION_CONFIDENCE_THRESHOLD &&
-    isOlderThanDays(candidate.claim.createdAt, STALE_ACTION_AGE_DAYS)
-  ) {
-    return {
-      shouldRetire: true,
-      reason: "stale_low_confidence_action",
-      metadata: {
-        confidence: candidate.claim.confidence,
-        staleAfterDays: STALE_ACTION_AGE_DAYS,
-      },
-    };
-  }
-
-  // 4. Generic low-confidence + stale + no recall (any claim type)
-  if (
-    candidate.claim.confidence < RETIREMENT_CONFIDENCE_FLOOR &&
-    isOlderThanDays(candidate.claim.createdAt, RETIREMENT_STALE_DAYS) &&
-    hasNotBeenRecalledSince(candidate.claim, RETIREMENT_STALE_DAYS)
-  ) {
-    return {
-      shouldRetire: true,
-      reason: "low_confidence_stale_unrecalled",
-      metadata: {
-        confidence: candidate.claim.confidence,
-        staleDays: RETIREMENT_STALE_DAYS,
-        lastRecalledAt: candidate.claim.lastRecalledAt?.toISOString() ?? null,
-      },
-    };
-  }
-
-  // 5. Canonical claims that have decayed below floor
-  if (
-    candidate.claim.lifecycleStage === MEMORY_VNEXT_LIFECYCLE_STAGE.CANONICAL &&
-    candidate.claim.confidence < RETIREMENT_CONFIDENCE_FLOOR &&
-    hasNotBeenRecalledSince(candidate.claim, RETIREMENT_STALE_DAYS)
-  ) {
-    return {
-      shouldRetire: true,
-      reason: "canonical_decayed_below_floor",
-      metadata: {
-        confidence: candidate.claim.confidence,
-        lastRecalledAt: candidate.claim.lastRecalledAt?.toISOString() ?? null,
-      },
-    };
-  }
-
   return { shouldRetire: false };
-}
-
-/**
- * Decay confidence on canonical claims that haven't been recalled recently.
- * This makes retirement criteria reachable over time.
- */
-async function decayCanonicalConfidence(candidate: VnextLifecycleCandidate, runId: string): Promise<boolean> {
-  if (candidate.claim.lifecycleStage !== MEMORY_VNEXT_LIFECYCLE_STAGE.CANONICAL) return false;
-  if (!hasNotBeenRecalledSince(candidate.claim, DECAY_UNREINFORCED_DAYS)) return false;
-  // Don't decay below minimum (decayClaimConfidence already floors at 0.1)
-  if (candidate.claim.confidence <= 0.1) return false;
-
-  const now = new Date();
-  const { anchor, lastDecayedAt } = confidenceMaintenanceAnchor(candidate.claim);
-  const elapsedPeriods = Math.floor((now.getTime() - anchor.getTime()) / DECAY_INTERVAL_MS);
-  if (elapsedPeriods < 1) return false;
-
-  const delta = DECAY_DELTA * elapsedPeriods;
-  const updated = await memoryVnextClaimStorage.decayClaimConfidence(candidate.claim.id, delta, {
-    decayedAt: now,
-    expectedLastDecayedAt: lastDecayedAt,
-    elapsedPeriods,
-    intervalDays: DECAY_UNREINFORCED_DAYS,
-  });
-  if (!updated) return false;
-  logLifecycle("memory.vnext.confidence_decayed", {
-    runId,
-    claimId: candidate.claim.id,
-    from: candidate.claim.confidence,
-    to: updated.confidence,
-    delta,
-    elapsedPeriods,
-    unreinforcedDays: DECAY_UNREINFORCED_DAYS,
-    anchor: anchor.toISOString(),
-  }, "debug");
-  return true;
 }
 
 function hasIntersection(left: string[], right: string[]): boolean {
@@ -568,10 +440,13 @@ export async function runVnextLifecycle(options: VnextLifecycleRunOptions = {}):
         continue;
       }
 
-      // For canonical claims: apply confidence decay if unreinforced
+      // Canonical is compatibility processing metadata. Quiet claims remain intact.
       if (candidate.claim.lifecycleStage === MEMORY_VNEXT_LIFECYCLE_STAGE.CANONICAL) {
-        const decayed = await decayCanonicalConfidence(candidate, runId);
-        if (decayed) result.decayed++;
+        logLifecycle("memory.vnext.lifecycle_canonical_preserved", {
+          runId,
+          claimId: candidate.claim.id,
+          reason: "disuse_has_no_lifecycle_authority",
+        }, "debug");
         continue;
       }
 

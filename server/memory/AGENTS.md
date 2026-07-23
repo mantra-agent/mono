@@ -116,9 +116,10 @@ Key files:
 ### Retrieval Signals (blended)
 1. **Semantic similarity** — pgvector cosine distance on embeddings
 2. **Graph proximity** — entries linked to high-similarity hits get boosted
-3. **Recency** — exponential decay weighting by `lastRecalledAt`
-4. **Recall frequency** — `recallCount` as a weak positive signal
-5. **Source diversity** — bonus for mixing layers and source types
+3. **Explicit time metadata / creation recency** — current applicability and recency where the retrieval mode uses them
+4. **Source diversity** — bonus for mixing source types
+
+Legacy `lastRecalledAt` and `recallCount` remain readable for migration diagnostics only. They are excluded from vNext ranking and must not be reintroduced as strength or certainty proxies.
 
 ### Graph Neighborhood Cache
 - `memory_graph_cache` stores pre-computed neighbor lists per entry
@@ -129,7 +130,7 @@ Key files:
 
 All user-facing and context retrieval is vNEXT-only. `memory.search`, `search_claims`, People summarization, Library semantic search, the Memory Query API, and `memory.graph` read `memory_vnext_claims`; they never query or fall back to `memory_entries`. Retrieval algorithms may expose different modes over the same claim store: explicit hybrid search for tools/UI and contextual graph expansion for prompt assembly. Shared ranking policy lives in `vnext-retrieval-policy.ts`, while each mode owns its orchestration. Legacy `memory_entries` code is write-side ingestion, migration, maintenance, and compatibility CRUD only until retirement. Do not import legacy search from a vNEXT module or blend stores in one result set.
 
-Graph recency uses `active_touched_at`, distinct from passive `last_recalled_at`/`recall_count` diagnostics. Explicit claim reads and successful link mutations cross `MemoryVnextClaimStorage.touchClaim(s)`; context inclusion may reinforce passive recall but must never refresh active touch. Creation is fresh by `created_at`. Background lifecycle, embedding, decay, and dedup maintenance do not constitute active touch.
+Graph recency uses `active_touched_at`. `last_recalled_at` and `recall_count` are frozen compatibility telemetry and must never affect retrieval, strength, certainty, lifecycle, retirement, or deletion. Passive context inclusion records one `memory_vnext_exposures` row per claim and `context_build_id`; cache replay and retry converge on the same row and carry zero strength. Meaningful reinforcement enters only through typed `memory_vnext_strength_events` with canonical bounded weights and replay keys. Explicit claim reads and successful link mutations cross `MemoryVnextClaimStorage.touchClaim(s)`. Creation is fresh by `created_at`. Background lifecycle, embedding, and dedup maintenance do not constitute active touch.
 
 ### Tiered Context Assembly (memory.graph)
 
@@ -190,9 +191,11 @@ A nightly maintenance cycle (runs ~2 AM CT), orchestrated by `server/sleep-cycle
 
 ### Phase 1: vNext Claim Lifecycle
 - `server/memory/vnext-lifecycle.ts` — `runVnextLifecycle()`
-- Uses the existing vNext lifecycle unchanged: stage advancement (extracted → sourced → linked → canonical), existing confidence decay and retirement criteria
+- Lifecycle stage is compatibility processing metadata: extracted → sourced → linked → canonical
+- Retrieval silence, passive exposure, age, and low strength never decay certainty or retire/delete claims
+- Retirement requires explicit duplicate, contradiction, or supersession evidence
 - Bridge maintenance (cross-island bridge edges)
-- New semantic deduplication or contradiction retirement is deliberately excluded until it has shadow-mode evidence and replay guarantees
+- New semantic consolidation remains excluded until it has lossless provenance and replay guarantees
 
 ### Phase 2: REM (Creative Synthesis)
 - `server/memory/dream-engine.ts` — `runREMPhase()`

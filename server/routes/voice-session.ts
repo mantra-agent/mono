@@ -880,7 +880,12 @@ export async function registerVoiceSessionRoutes(app: Express) {
       const { filterToolSchemasForAuthority } = await import("../agent-authority");
       const tools = filterToolSchemasForAuthority(getToolSchemas(), { origin: "voice", sessionId: chatSessionId });
       const toolDefs = tools.map(t => ({ name: t.name, description: t.description }));
-      const assembled = await assembleContext({ profile: "voice", toolDefinitions: toolDefs });
+      const assembled = await assembleContext({
+        profile: "voice",
+        toolDefinitions: toolDefs,
+        sessionId: chatSessionId || undefined,
+        contextBuildId: `voice-context-preview:${chatSessionId ?? voiceSession.id}`,
+      });
       const estimatedTokens = Math.ceil(assembled.systemPrompt.length / 4);
       res.json({
         systemPrompt: assembled.systemPrompt,
