@@ -161,7 +161,12 @@ export type InsertProject = z.infer<typeof insertProjectSchema>;
 export interface Project {
   id: number;
   title: string;
+  /** Migration-compatible primary/default Vault. */
   vaultId: string;
+  /** Canonical live Vault memberships controlling owner visibility. */
+  vaultIds: string[];
+  /** Server-derived capability. Direct recipients do not manage owner Vault placement. */
+  canManageVaults: boolean;
   description: string;
   status: ProjectStatus;
   priority: PriorityLevel;

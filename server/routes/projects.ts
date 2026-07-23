@@ -182,9 +182,30 @@ export async function registerProjectsRoutes(app: Express) {
     }
   });
 
+  app.patch("/api/projects/projects/:id/vaults", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: "Project id must be a positive integer", operation: "replace_project_vaults" });
+      }
+      if (!Array.isArray(req.body.vaultIds) || req.body.vaultIds.some((vaultId: unknown) => typeof vaultId !== "string")) {
+        return res.status(400).json({ error: "vaultIds must be an array of Vault IDs", operation: "replace_project_vaults" });
+      }
+      const project = await fileProjectStorage.replaceVaultMemberships(id, req.body.vaultIds);
+      res.json(project);
+    } catch (error: unknown) {
+      const err = routeError(error, "replace_project_vaults");
+      const status = err.message.includes("not found") || err.message.includes("not administrable") ? 404 : 400;
+      res.status(status).json({ error: err.message, operation: err.operation });
+    }
+  });
+
   app.patch("/api/projects/projects/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
+      if (Object.prototype.hasOwnProperty.call(req.body, "vaultIds")) {
+        return res.status(400).json({ error: "Update Vaults through the Project Vaults endpoint", operation: "update_project" });
+      }
       const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(req.body, {
         protectedFields: ['title', 'description', 'spec'] as Array<keyof any>,
         clearableFields: ['description', 'spec'] as Array<keyof any>,

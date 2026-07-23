@@ -566,7 +566,7 @@ export const projects = pgTable("projects", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
   spec: text("spec").notNull().default(""),
   goalId: text("goal_id"),
-  /** Container and inheritance anchor only. Work visibility remains owner/grant based. */
+  /** Migration-compatible primary/default Vault. project_vault_memberships owns Project visibility. */
   vaultId: text("vault_id").references(() => vaults.id, { onDelete: "restrict" }),
   /** @deprecated Milestones are canonical in the milestones table. Remove after one release (target: 2026-08-05). */
   milestones: jsonb("milestones").notNull().default([]),
@@ -588,6 +588,23 @@ export const projects = pgTable("projects", {
 ]);
 
 export type ProjectRow = typeof projects.$inferSelect;
+
+export const projectVaultMemberships = pgTable("project_vault_memberships", {
+  projectId: integer("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "restrict" }),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.projectId, table.vaultId] }),
+  index("idx_project_vault_memberships_vault_project").on(table.vaultId, table.projectId),
+  index("idx_project_vault_memberships_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_project_vault_memberships_account").on(table.accountId),
+]);
+
+export type ProjectVaultMembership = typeof projectVaultMemberships.$inferSelect;
 
 // ── Milestones ────────────────────────────────────────────────────
 export const milestones = pgTable("milestones", {

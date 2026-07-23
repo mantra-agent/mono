@@ -4,8 +4,8 @@ import { eq, and, sql } from "drizzle-orm";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
-import { db } from "../db";
-import { vaults, users } from "@shared/schema";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db } from "../db";
+import { projectVaultMemberships, projects, vaults, users } from "@shared/schema";
 import { getPrincipal } from "../principal";
 import { assertVisible, assertWritable } from "../scoped-storage";
 import {
@@ -449,11 +449,48 @@ export function registerVaultRoutes(app: Express) {
         });
       }
 
-      // Archive the vault
-      await db
-        .update(vaults)
-        .set({ isArchived: true, updatedAt: new Date() })
-        .where(eq(vaults.id, vaultId));
+      const archived = await db.transaction(async tx => {
+        await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.OBJECT_GRANT, `vault:${vaultId}`);
+        const projectsLosingLastMembership = await tx
+          .select({ id: projects.id })
+          .from(projects)
+          .innerJoin(
+            projectVaultMemberships,
+            and(
+              eq(projectVaultMemberships.projectId, projects.id),
+              eq(projectVaultMemberships.vaultId, vaultId),
+            ),
+          )
+          .where(and(
+            eq(projects.accountId, principal.accountId),
+            eq(projects.ownerUserId, principal.userId),
+            sql`NOT EXISTS (
+              SELECT 1
+              FROM project_vault_memberships AS remaining_membership
+              JOIN vaults AS remaining_vault
+                ON remaining_vault.id = remaining_membership.vault_id
+               AND remaining_vault.is_archived = FALSE
+              WHERE remaining_membership.project_id = ${projects.id}
+                AND remaining_membership.vault_id <> ${vaultId}
+            )`,
+          ))
+          .limit(1);
+        if (projectsLosingLastMembership.length > 0) return false;
+        await tx
+          .update(vaults)
+          .set({ isArchived: true, updatedAt: new Date() })
+          .where(and(
+            eq(vaults.id, vaultId),
+            eq(vaults.accountId, principal.accountId),
+            eq(vaults.isArchived, false),
+          ));
+        return true;
+      });
+      if (!archived) {
+        return res.status(400).json({
+          error: "Move every Project in this Vault to another Vault before archiving it",
+        });
+      }
 
       // Remove from visible set
       const currentVisible = new Set(principal.visibleVaultIds);
