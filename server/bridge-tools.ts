@@ -4436,11 +4436,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const sourceSessionId = typeof args._sessionId === "string" && args._sessionId.trim() ? args._sessionId.trim() : null;
     let sourceSessionLine = "";
     let sourceMeetingVaultId: string | undefined;
+    let sourceIsMeeting = false;
     if (sourceSessionId) {
       const sourceSession = await chatFileStorage.getSession(sourceSessionId).catch(() => undefined);
       const titlePart = sourceSession?.title ? ` (${sourceSession.title})` : "";
       sourceSessionLine = `Source session: @session:${sourceSessionId}${titlePart}`;
       if (sourceSession?.type === "meeting") {
+        sourceIsMeeting = true;
         if (!sourceSession.vaultId) {
           return { result: `Meeting session ${sourceSessionId} has no pinned vault`, error: true };
         }
@@ -4456,6 +4458,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         description,
         priority: args.priority || "mid",
         owner,
+        ...(args.assigneeSubjectType !== undefined ? { assigneeSubjectType: args.assigneeSubjectType } : {}),
+        ...(args.assigneeSubjectId !== undefined ? { assigneeSubjectId: args.assigneeSubjectId } : {}),
         projectId: args.projectId ?? null,
         status: args.status || "ready",
         requiresReview: args.requiresReview ?? false,
@@ -4466,8 +4470,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         context,
         deadline: args.deadline ?? null,
       };
-      const task = await fileTaskStorage.createTask(taskData);
-      return { result: `Task created: "${task.title}" (ID: ${task.id}, priority: ${task.priority}, owner: ${task.owner}, milestone: ${task.milestoneId})${sourceSessionId ? `, source: @session:${sourceSessionId}` : ""}` };
+      const task = await fileTaskStorage.createTask(
+        taskData,
+        sourceIsMeeting
+          ? { originType: "meeting", originId: sourceSessionId }
+          : { originType: "manual" },
+      );
+      const assignee = task.assigneeSubjectType && task.assigneeSubjectId
+        ? `, assignee: ${task.assigneeSubjectType}:${task.assigneeSubjectId}`
+        : "";
+      return { result: `Task created: "${task.title}" (ID: ${task.id}, priority: ${task.priority}, owner: ${task.owner}${assignee}, milestone: ${task.milestoneId})${sourceSessionId ? `, source: @session:${sourceSessionId}` : ""}` };
     } catch (err: any) {
       return { result: `Failed to create task: ${err.message}`, error: true };
     }
@@ -4540,6 +4552,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (args.impact !== undefined) raw.impact = args.impact;
     if (args.effort !== undefined) raw.effort = args.effort;
     if (args.owner !== undefined) raw.owner = args.owner;
+    if (args.assigneeSubjectType !== undefined) raw.assigneeSubjectType = args.assigneeSubjectType;
+    if (args.assigneeSubjectId !== undefined) raw.assigneeSubjectId = args.assigneeSubjectId;
     if (args.requiresReview !== undefined) raw.requiresReview = args.requiresReview;
     if (args.projectId !== undefined) raw.projectId = args.projectId;
     if (args.milestoneId !== undefined) raw.milestoneId = args.milestoneId;
@@ -4550,10 +4564,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     try {
       const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(raw, {
-        protectedFields: ['title', 'description', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        clearableFields: ['description', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
+        protectedFields: ['title', 'description', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
+        clearableFields: ['description', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
         destructiveFields: ['description'] as Array<keyof any>,
       });
+      const assignmentClearCount = clearFields.filter(field => field === 'assigneeSubjectType' || field === 'assigneeSubjectId').length;
+      if (assignmentClearCount === 1) {
+        return { result: "Task assignment clear requires both assigneeSubjectType and assigneeSubjectId", error: true };
+      }
 
       // Apply explicit clears as null values
       for (const field of clearFields) {
@@ -4569,7 +4587,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
       if (Object.keys(updates).length === 0) return { result: "No fields to update after sanitization. Empty strings on protected fields are dropped — use clearFields to explicitly clear a field.", error: true };
 
-      const updated = await fileTaskStorage.updateTask(task.id, updates);
+      const sourceSessionId = typeof args._sessionId === "string" && args._sessionId.trim() ? args._sessionId.trim() : null;
+      let provenance: { originType: "meeting" | "manual"; originId?: string | null } = { originType: "manual" };
+      if (sourceSessionId) {
+        const { chatFileStorage } = await import("./chat-file-storage");
+        const sourceSession = await chatFileStorage.getSession(sourceSessionId).catch(() => undefined);
+        if (sourceSession?.type === "meeting") provenance = { originType: "meeting", originId: sourceSessionId };
+      }
+      const updated = await fileTaskStorage.updateTask(task.id, updates, provenance);
       if (!updated) return { result: `Failed to update task ${task.id}`, error: true };
       return { result: `Task updated: "${updated.title}" — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
     } catch (err: any) {
@@ -5738,7 +5763,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             ...(args.goalId !== undefined && { goalId: args.goalId }),
             ...(sourceMeetingVaultId ? { vaultId: sourceMeetingVaultId } : {}),
           });
-          const project = await fileProjectStorage.createProject(input);
+          const project = await fileProjectStorage.createProject(
+            input,
+            sourceSession?.type === "meeting" && sourceSessionId
+              ? { originType: "meeting", originId: sourceSessionId }
+              : undefined,
+          );
           return { result: `Project created successfully. ID: ${project.id}, title: "${project.title}", status: ${project.status}, priority: ${project.priority}.` };
         }
         case "status":
@@ -5949,12 +5979,18 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (!projectId) return { result: "Missing project id", error: true };
           const name = args.name;
           if (!name) return { result: "Missing milestone name", error: true };
-          const milestoneProject = await fileProjectStorage.addMilestone(Number(projectId), {
-            name,
-            status: args.milestoneStatus,
-            startDate: args.startDate || null,
-            dueDate: args.dueDate || null,
-          });
+          const milestoneProject = await fileProjectStorage.addMilestone(
+            Number(projectId),
+            {
+              name,
+              status: args.milestoneStatus,
+              startDate: args.startDate || null,
+              dueDate: args.dueDate || null,
+            },
+            sourceSession?.type === "meeting" && sourceSessionId
+              ? { originType: "meeting", originId: sourceSessionId }
+              : undefined,
+          );
           if (!milestoneProject) return { result: `Project ${projectId} not found`, error: true };
           const addedMilestone = milestoneProject.milestones.reduce((latest, milestone) =>
             !latest || milestone.id > latest.id ? milestone : latest,

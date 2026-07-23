@@ -10,5 +10,8 @@ function deadlineStr(deadline: string | null): string {
 
 export function formatTaskForBridge(t: Task): string {
   const dl = deadlineStr(t.deadline);
-  return `- [${t.status}] ${t.title} (id: ${t.id}, ${t.priority}, owner: ${t.owner}${dl})${t.projectId ? ` — project ${t.projectId}` : ""}`;
+  const assignee = t.assigneeSubjectType && t.assigneeSubjectId
+    ? `, assignee: ${t.assigneeSubjectType}:${t.assigneeSubjectId}`
+    : "";
+  return `- [${t.status}] ${t.title} (id: ${t.id}, ${t.priority}, owner: ${t.owner}${assignee}${dl})${t.projectId ? ` — project ${t.projectId}` : ""}`;
 }

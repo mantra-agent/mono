@@ -15,6 +15,9 @@ export type ImpactEffort = z.infer<typeof impactEffortEnum>;
 export const ownerEnum = z.enum(["me", "agent"]);
 export type Owner = z.infer<typeof ownerEnum>;
 
+export const assigneeSubjectTypeEnum = z.enum(["user", "invited_subject"]);
+export type AssigneeSubjectType = z.infer<typeof assigneeSubjectTypeEnum>;
+
 export const milestoneStatusEnum = z.enum(["planned", "active", "completed"]);
 export type MilestoneStatus = z.infer<typeof milestoneStatusEnum>;
 
@@ -81,6 +84,8 @@ export const insertTaskSchema = z.object({
   impact: impactEffortEnum.optional().default("mid"),
   effort: impactEffortEnum.optional().default("mid"),
   owner: ownerEnum.optional().default("me"),
+  assigneeSubjectType: assigneeSubjectTypeEnum.nullable().optional(),
+  assigneeSubjectId: z.string().min(1).nullable().optional(),
   requiresReview: z.boolean().optional().default(false),
   projectId: z.number().nullable().optional().default(null),
   milestoneId: z.number().nullable().optional().default(null),
@@ -102,6 +107,8 @@ export interface Task {
   impact: ImpactEffort;
   effort: ImpactEffort;
   owner: Owner;
+  assigneeSubjectType: AssigneeSubjectType | null;
+  assigneeSubjectId: string | null;
   requiresReview: boolean;
   projectId: number | null;
   milestoneId: number | null;

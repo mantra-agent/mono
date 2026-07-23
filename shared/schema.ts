@@ -482,6 +482,11 @@ export const insertTimerRunSchema = insertResponsibilityRunSchema;
 export type TimerRunRow = ResponsibilityRunRow;
 export type InsertTimerRun = InsertResponsibilityRun;
 
+export const objectGrantSubjectTypes = ["user", "invited_subject"] as const;
+export const objectGrantObjectTypes = ["project", "milestone", "task"] as const;
+export const objectGrantCapabilities = ["read", "write", "admin"] as const;
+export const objectGrantOriginTypes = ["meeting", "manual"] as const;
+
 // ── Tasks ──────────────────────────────────────────────────────────────
 export const tasks = pgTable("tasks", {
   id: serial("id").primaryKey(),
@@ -492,6 +497,9 @@ export const tasks = pgTable("tasks", {
   impact: text("impact").notNull().default("mid"),
   effort: text("effort").notNull().default("mid"),
   owner: text("owner").notNull().default("me"),
+  /** Human obligation axis. Execution ownership remains in owner (me | agent). */
+  assigneeSubjectType: text("assignee_subject_type", { enum: objectGrantSubjectTypes }),
+  assigneeSubjectId: text("assignee_subject_id"),
   requiresReview: boolean("requires_review").notNull().default(false),
   projectId: integer("project_id"),
   milestoneId: integer("milestone_id"),
@@ -515,6 +523,11 @@ export const tasks = pgTable("tasks", {
   index("idx_tasks_project").on(table.projectId),
   index("idx_tasks_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_tasks_vault").on(table.vaultId),
+  index("idx_tasks_assignee").on(table.assigneeSubjectType, table.assigneeSubjectId),
+  check("tasks_assignee_subject_pair_check", sql`
+    (${table.assigneeSubjectType} IS NULL AND ${table.assigneeSubjectId} IS NULL)
+    OR (${table.assigneeSubjectType} IN ('user', 'invited_subject') AND NULLIF(BTRIM(${table.assigneeSubjectId}), '') IS NOT NULL)
+  `),
 ]);
 
 export type TaskRow = typeof tasks.$inferSelect;
@@ -584,11 +597,6 @@ export const milestones = pgTable("milestones", {
 export type MilestoneRow = typeof milestones.$inferSelect;
 
 // ── Per-object work grants ────────────────────────────────────────
-export const objectGrantSubjectTypes = ["user", "invited_subject"] as const;
-export const objectGrantObjectTypes = ["project", "milestone", "task"] as const;
-export const objectGrantCapabilities = ["read", "write", "admin"] as const;
-export const objectGrantOriginTypes = ["meeting", "manual"] as const;
-
 export const objectGrants = pgTable("object_grants", {
   id: serial("id").primaryKey(),
   subjectType: text("subject_type", { enum: objectGrantSubjectTypes }).notNull(),

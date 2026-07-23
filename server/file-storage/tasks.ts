@@ -1,7 +1,7 @@
-import { db } from "../db";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db } from "../db";
 import { milestones, projects, tasks } from "@shared/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
-import type { Task, InsertTask, TaskStatus } from "@shared/models/work";
+import type { Task, InsertTask, TaskStatus, AssigneeSubjectType } from "@shared/models/work";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { ownedInsertValues } from "../scoped-storage";
@@ -37,6 +37,49 @@ const milestoneScopeColumns = {
   accountId: milestones.accountId,
 };
 
+export interface TaskMutationProvenance {
+  originType: "meeting" | "manual";
+  originId?: string | null;
+}
+
+type AssignmentSubject = { subjectType: AssigneeSubjectType; subjectId: string };
+
+function assignmentFromValues(
+  subjectType: AssigneeSubjectType | null | undefined,
+  subjectId: string | null | undefined,
+): AssignmentSubject | null {
+  const hasType = subjectType !== undefined && subjectType !== null;
+  const hasId = subjectId !== undefined && subjectId !== null;
+  if (!hasType && !hasId) return null;
+  if (!hasType || !hasId) throw new Error("Task assignment requires both assigneeSubjectType and assigneeSubjectId");
+  const normalizedId = subjectId!.trim();
+  if (!normalizedId) throw new Error("Task assigneeSubjectId cannot be blank");
+  return { subjectType: subjectType!, subjectId: normalizedId };
+}
+
+function assignmentPatch(
+  existing: AssignmentSubject | null,
+  updates: Partial<InsertTask>,
+): { changed: boolean; next: AssignmentSubject | null } {
+  const typeProvided = updates.assigneeSubjectType !== undefined;
+  const idProvided = updates.assigneeSubjectId !== undefined;
+  if (!typeProvided && !idProvided) return { changed: false, next: existing };
+  if (typeProvided !== idProvided) {
+    throw new Error("Task assignment updates must provide or clear assigneeSubjectType and assigneeSubjectId together");
+  }
+  return {
+    changed: true,
+    next: assignmentFromValues(updates.assigneeSubjectType, updates.assigneeSubjectId),
+  };
+}
+
+function resolveMutationOrigin(provenance?: TaskMutationProvenance): TaskMutationProvenance {
+  if (!provenance || provenance.originType === "manual") return { originType: "manual", originId: null };
+  const originId = provenance.originId?.trim();
+  if (!originId) throw new Error("Meeting task assignment requires an origin id");
+  return { originType: "meeting", originId };
+}
+
 function resolveCreationVaultId(explicitVaultId?: string): string {
   const principal = getCurrentPrincipalOrSystem();
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
@@ -62,6 +105,8 @@ function rowToTask(row: typeof tasks.$inferSelect): Task {
     impact: row.impact as Task["impact"],
     effort: row.effort as Task["effort"],
     owner: row.owner as Task["owner"],
+    assigneeSubjectType: row.assigneeSubjectType as Task["assigneeSubjectType"],
+    assigneeSubjectId: row.assigneeSubjectId,
     requiresReview: row.requiresReview,
     projectId: row.projectId,
     milestoneId: row.milestoneId,
@@ -167,34 +212,44 @@ export class FileTaskStorage {
     }
   }
 
-  async createTask(input: InsertTask): Promise<Task> {
+  async createTask(input: InsertTask, provenance?: TaskMutationProvenance): Promise<Task> {
     await this.assertWorkPlacement(input.projectId, input.milestoneId);
     const now = new Date();
     const effort = input.effort || "mid";
     const vaultId = resolveCreationVaultId(input.vaultId);
+    const assignee = assignmentFromValues(input.assigneeSubjectType, input.assigneeSubjectId);
+    const origin = resolveMutationOrigin(provenance);
 
-    const [row] = await db.insert(tasks).values({
-      title: input.title,
-      description: input.description || "",
-      status: input.status || "ready",
-      priority: input.priority || "mid",
-      impact: input.impact || "mid",
-      effort,
-      owner: input.owner || "me",
-      requiresReview: input.requiresReview ?? false,
-      projectId: input.projectId ?? null,
-      milestoneId: input.milestoneId ?? null,
-      vaultId,
-      tags: input.tags || [],
-      context: input.context || "",
-      output: input.output || "",
-      deadline: input.deadline ?? null,
-      tokenEstimate: input.tokenEstimate ?? null,
-      completedAt: (input.status || "ready") === "done" ? now : null,
-      createdAt: now,
-      updatedAt: now,
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), taskScopeColumns),
-    }).returning();
+    const row = await db.transaction(async tx => {
+      const [created] = await tx.insert(tasks).values({
+        title: input.title,
+        description: input.description || "",
+        status: input.status || "ready",
+        priority: input.priority || "mid",
+        impact: input.impact || "mid",
+        effort,
+        owner: input.owner || "me",
+        assigneeSubjectType: assignee?.subjectType ?? null,
+        assigneeSubjectId: assignee?.subjectId ?? null,
+        requiresReview: input.requiresReview ?? false,
+        projectId: input.projectId ?? null,
+        milestoneId: input.milestoneId ?? null,
+        vaultId,
+        tags: input.tags || [],
+        context: input.context || "",
+        output: input.output || "",
+        deadline: input.deadline ?? null,
+        tokenEstimate: input.tokenEstimate ?? null,
+        completedAt: (input.status || "ready") === "done" ? now : null,
+        createdAt: now,
+        updatedAt: now,
+        ...ownedInsertValues(getCurrentPrincipalOrSystem(), taskScopeColumns),
+      }).returning();
+      if (assignee) {
+        await objectGrantService.setTaskAssignmentInTransaction(tx, created.id, null, assignee, origin);
+      }
+      return created;
+    });
 
     this.invalidateCache();
     const task = rowToTask(row);
@@ -202,58 +257,65 @@ export class FileTaskStorage {
     return task;
   }
 
-  async updateTask(id: number, updates: Partial<InsertTask>): Promise<Task | undefined> {
+  async updateTask(id: number, updates: Partial<InsertTask>, provenance?: TaskMutationProvenance): Promise<Task | undefined> {
     const principal = getCurrentPrincipalOrSystem();
     const required: ObjectGrantCapability = hasAdminOnlyTaskChanges(updates as Record<string, unknown>) ? "admin" : "write";
-    const existingRows = await db.select().from(tasks).where(
-      combineWithWorkObjectAccess(principal, taskScopeColumns, "task", required, eq(tasks.id, id)),
-    ).limit(1);
-    const existing = existingRows[0] ? rowToTask(existingRows[0]) : undefined;
-    if (!existing) {
+    const origin = resolveMutationOrigin(provenance);
+    const row = await db.transaction(async tx => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.OBJECT_GRANT, `task:${id}`);
+      const [existingRow] = await tx.select().from(tasks).where(
+        combineWithWorkObjectAccess(principal, taskScopeColumns, "task", required, eq(tasks.id, id)),
+      ).limit(1);
+      const existing = existingRow ? rowToTask(existingRow) : undefined;
+      if (!existing) return undefined;
+
+      if (updates.projectId !== undefined || updates.milestoneId !== undefined) {
+        const projectId = updates.projectId !== undefined ? updates.projectId : existing.projectId;
+        const milestoneId = updates.milestoneId !== undefined ? updates.milestoneId : existing.milestoneId;
+        await this.assertWorkPlacement(projectId, milestoneId);
+      }
+
+      const previousAssignee = assignmentFromValues(existing.assigneeSubjectType, existing.assigneeSubjectId);
+      const assignee = assignmentPatch(previousAssignee, updates);
+      const setValues: Record<string, unknown> = { updatedAt: new Date() };
+      if (updates.title !== undefined) setValues.title = updates.title;
+      if (updates.description !== undefined) setValues.description = updates.description;
+      if (updates.status !== undefined) setValues.status = updates.status;
+      if (updates.priority !== undefined) setValues.priority = updates.priority;
+      if (updates.impact !== undefined) setValues.impact = updates.impact;
+      if (updates.effort !== undefined) setValues.effort = updates.effort;
+      if (updates.owner !== undefined) setValues.owner = updates.owner;
+      if (assignee.changed) {
+        setValues.assigneeSubjectType = assignee.next?.subjectType ?? null;
+        setValues.assigneeSubjectId = assignee.next?.subjectId ?? null;
+      }
+      if (updates.requiresReview !== undefined) setValues.requiresReview = updates.requiresReview;
+      if (updates.projectId !== undefined) setValues.projectId = updates.projectId;
+      if (updates.milestoneId !== undefined) setValues.milestoneId = updates.milestoneId;
+      if (updates.tags !== undefined) setValues.tags = updates.tags;
+      if (updates.context !== undefined) setValues.context = updates.context;
+      if (updates.output !== undefined) setValues.output = updates.output;
+      if (updates.deadline !== undefined) setValues.deadline = updates.deadline;
+      if (updates.tokenEstimate !== undefined) setValues.tokenEstimate = updates.tokenEstimate;
+      if (updates.status !== undefined && updates.status !== existing.status) {
+        if (updates.status === "done") setValues.completedAt = new Date();
+        else if (existing.status === "done") setValues.completedAt = null;
+      }
+
+      const [updated] = await tx.update(tasks).set(setValues).where(
+        combineWithWorkObjectAccess(principal, taskScopeColumns, "task", required, eq(tasks.id, id)),
+      ).returning();
+      if (!updated) return undefined;
+      if (assignee.changed) {
+        await objectGrantService.setTaskAssignmentInTransaction(tx, id, previousAssignee, assignee.next, origin);
+      }
+      return updated;
+    });
+    if (!row) {
       log.log(`updateTask id=${id} not-found`);
       return undefined;
     }
-
-    if (updates.projectId !== undefined || updates.milestoneId !== undefined) {
-      const projectId = updates.projectId !== undefined ? updates.projectId : existing.projectId;
-      const milestoneId = updates.milestoneId !== undefined ? updates.milestoneId : existing.milestoneId;
-      await this.assertWorkPlacement(projectId, milestoneId);
-    }
-
-    const setValues: Record<string, unknown> = { updatedAt: new Date() };
-    if (updates.title !== undefined) setValues.title = updates.title;
-    if (updates.description !== undefined) setValues.description = updates.description;
-    if (updates.status !== undefined) setValues.status = updates.status;
-    if (updates.priority !== undefined) setValues.priority = updates.priority;
-    if (updates.impact !== undefined) setValues.impact = updates.impact;
-    if (updates.effort !== undefined) setValues.effort = updates.effort;
-    if (updates.owner !== undefined) setValues.owner = updates.owner;
-    if (updates.requiresReview !== undefined) setValues.requiresReview = updates.requiresReview;
-    if (updates.projectId !== undefined) setValues.projectId = updates.projectId;
-    if (updates.milestoneId !== undefined) setValues.milestoneId = updates.milestoneId;
-    if (updates.tags !== undefined) setValues.tags = updates.tags;
-    if (updates.context !== undefined) setValues.context = updates.context;
-    if (updates.output !== undefined) setValues.output = updates.output;
-    if (updates.deadline !== undefined) setValues.deadline = updates.deadline;
-    if (updates.tokenEstimate !== undefined) setValues.tokenEstimate = updates.tokenEstimate;
-    if (updates.status !== undefined && updates.status !== existing.status) {
-      if (updates.status === "done") {
-        setValues.completedAt = new Date();
-      } else if (existing.status === "done") {
-        setValues.completedAt = null;
-      }
-    }
-
-    const [row] = await db.update(tasks).set(setValues).where(
-      combineWithWorkObjectAccess(principal, taskScopeColumns, "task", required, eq(tasks.id, id)),
-    ).returning();
-    if (!row) {
-      log.log(`updateTask id=${id} not-writable`);
-      return undefined;
-    }
-    if (updates.status && updates.status !== existing.status) {
-      log.log(`statusChange from=${existing.status} to=${updates.status} taskId=${id} title="${row.title}"`);
-    }
+    if (updates.status) log.log(`statusChange to=${updates.status} taskId=${id} title="${row.title}"`);
     log.log(`updateTask id=${id} fields=${Object.keys(updates).join(",")}`);
     this.invalidateCache();
     return rowToTask(row);

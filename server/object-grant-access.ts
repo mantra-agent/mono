@@ -93,7 +93,7 @@ export function hasAdminOnlyProjectChanges(changes: Record<string, unknown>): bo
 }
 
 export function hasAdminOnlyTaskChanges(changes: Record<string, unknown>): boolean {
-  return ["title", "description", "owner", "projectId", "milestoneId"].some(
+  return ["title", "description", "owner", "assigneeSubjectType", "assigneeSubjectId", "projectId", "milestoneId"].some(
     field => changes[field] !== undefined,
   );
 }

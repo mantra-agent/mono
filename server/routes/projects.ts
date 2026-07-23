@@ -107,10 +107,14 @@ export async function registerProjectsRoutes(app: Express) {
     try {
       const id = parseInt(req.params.id, 10);
       const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(req.body, {
-        protectedFields: ['title', 'description', 'context', 'output', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        clearableFields: ['description', 'context', 'output', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
+        protectedFields: ['title', 'description', 'context', 'output', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
+        clearableFields: ['description', 'context', 'output', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
         destructiveFields: ['description'] as Array<keyof any>,
       });
+      const assignmentClearCount = clearFields.filter(field => field === 'assigneeSubjectType' || field === 'assigneeSubjectId').length;
+      if (assignmentClearCount === 1) {
+        return res.status(400).json({ error: "Task assignment clear requires both assigneeSubjectType and assigneeSubjectId", operation: "update_task" });
+      }
       for (const field of clearFields) {
         (updates as Record<string, unknown>)[field as string] = null;
       }
