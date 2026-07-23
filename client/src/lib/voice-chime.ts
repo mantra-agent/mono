@@ -16,32 +16,42 @@ const THINKING_PATTERN_SECONDS = THINKING_ARPEGGIO.length * THINKING_STEP_SECOND
 let sharedVoiceAudioContext: AudioContext | null = null;
 let thinkingLoop: ThinkingLoop | null = null;
 
+type AudioContextConstructor = new (options?: AudioContextOptions) => AudioContext;
+
+function getAudioContextConstructor(): AudioContextConstructor | null {
+  const candidate = window.AudioContext
+    || (window as unknown as { webkitAudioContext?: AudioContextConstructor }).webkitAudioContext;
+  return candidate || null;
+}
+
 function getVoiceAudioContext(): AudioContext | null {
   try {
     if (sharedVoiceAudioContext && sharedVoiceAudioContext.state !== "closed") {
       return sharedVoiceAudioContext;
     }
-    sharedVoiceAudioContext = new AudioContext();
+    const AudioContextCtor = getAudioContextConstructor();
+    if (!AudioContextCtor) return null;
+    sharedVoiceAudioContext = new AudioContextCtor({ latencyHint: "interactive" });
     return sharedVoiceAudioContext;
   } catch {
     return null;
   }
 }
 
-export async function unlockVoiceAudioContext(): Promise<void> {
+export function unlockVoiceAudioContext(): void {
   const ctx = getVoiceAudioContext();
   if (!ctx) return;
   try {
-    await ctx.resume();
-    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.03), ctx.sampleRate);
+    void ctx.resume();
+    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.035), ctx.sampleRate);
     const source = ctx.createBufferSource();
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.0001, ctx.currentTime);
     source.buffer = buffer;
     source.connect(gain);
     gain.connect(ctx.destination);
-    source.start();
-    source.stop(ctx.currentTime + 0.03);
+    source.start(ctx.currentTime);
+    source.stop(ctx.currentTime + 0.035);
   } catch {
     // Non-critical: browsers that deny unlock still keep visual feedback intact.
   }

@@ -44,7 +44,7 @@ const log = createLogger("VoiceSession");
  * Returns once the warm-up completes or on any error (non-blocking).
  */
 async function warmUpAudioPipeline(): Promise<void> {
-  await unlockVoiceAudioContext();
+  unlockVoiceAudioContext();
   await new Promise(r => setTimeout(r, 100));
 }
 
@@ -1642,6 +1642,9 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       return;
     }
     isStartingRef.current = true;
+    if (!isNative) {
+      unlockVoiceAudioContext();
+    }
 
     resetEphemeralVoiceState({ clearTranscript: true });
     setStatus("connecting");
