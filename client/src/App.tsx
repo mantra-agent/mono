@@ -59,6 +59,7 @@ const BuildPage = lazyWithRetry(() => import("@/pages/build"));
 const DatabasePage = lazyWithRetry(() => import("@/pages/build").then(m => ({ default: m.DatabasePage })));
 const DesignPage = lazyWithRetry(() => import("@/pages/design"));
 const PeoplePage = lazyWithRetry(() => import("@/pages/people"));
+const MeetingsPage = lazyWithRetry(() => import("@/pages/meetings"));
 const CompaniesPage = lazyWithRetry(() => import("@/pages/companies"));
 const BusinessModelPage = lazyWithRetry(() => import("@/pages/business-model"));
 const CommsPage = lazyWithRetry(() => import("@/pages/comms"));
@@ -274,6 +275,7 @@ function Router() {
         <Route path="/dev">{() => <Redirect to="/build" />}</Route>
         <Route path="/people/:id" component={PeoplePage} />
         <Route path="/people" component={PeoplePage} />
+        <Route path="/meetings" component={MeetingsPage} />
         <Route path="/companies/:id" component={CompaniesPage} />
         <Route path="/companies" component={CompaniesPage} />
         <Route path="/business/model" component={BusinessModelPage} />
