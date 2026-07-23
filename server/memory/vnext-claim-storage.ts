@@ -24,6 +24,7 @@ import {
   type MemoryVnextClaimLink,
 } from "@shared/schema";
 import type { ClaimCandidate } from "./vnext-claim-extraction";
+import { deriveVnextClaimDimensions, type VnextClaimDimensions } from "./vnext-claim-dimensions";
 import { generateEmbedding } from "./embedding";
 import { MEMORY_VNEXT_EMBEDDING_PROFILE } from "./embedding-profile";
 import { cosineSimilarity } from "./graph-walker";
@@ -75,7 +76,16 @@ export interface VnextClaimSourceInput {
   quote?: string | null;
   spanStart?: number | null;
   spanEnd?: number | null;
+  /** Legacy compatibility field. */
   strength?: number;
+  clarity?: number | null;
+  certainty?: number | null;
+  sourceObservedAt?: Date | null;
+  sourceLineageKey?: string | null;
+  independence?: "same_lineage" | "independent" | "unknown" | null;
+  producerMethod?: string | null;
+  derivationVersion?: string | null;
+  provenance?: Record<string, unknown>;
 }
 
 export interface CreateVnextClaimInput {
@@ -136,6 +146,7 @@ export interface VnextClaimDetail {
   sources: MemoryVnextSourceRef[];
   entityLinks: MemoryVnextEntityLink[];
   claimLinks: MemoryVnextClaimLink[];
+  dimensions: VnextClaimDimensions;
   lifecycle: {
     stage: string;
     stageUpdatedAt: Date;
@@ -376,6 +387,11 @@ function mapRawVnextClaimRow(row: Record<string, unknown>): MemoryVnextClaim {
     content: String(row.content ?? ""),
     claimType: String(row.claim_type ?? ""),
     confidence: Number(row.confidence ?? 0),
+    observedAt: toClaimDate(row.observed_at),
+    validFrom: toClaimDate(row.valid_from),
+    validUntil: toClaimDate(row.valid_until),
+    occurredAt: toClaimDate(row.occurred_at),
+    expectedBy: toClaimDate(row.expected_by),
     topics: (row.topics as string[] | null) ?? [],
     entityMentions: row.entity_mentions ?? [],
     sourceClaimIndex: (row.source_claim_index as number | null) ?? null,
@@ -410,7 +426,7 @@ export async function executeVnextClaimSemanticSearch(
     ? sql``
     : sql`AND (scope = 'global' OR owner_user_id = ${principal.userId} OR account_id = ${principal.accountId})`;
   const results = await db.execute(sql`
-    SELECT id, title, content, claim_type, confidence, topics, entity_mentions, source_claim_index,
+    SELECT id, title, content, claim_type, confidence, observed_at, valid_from, valid_until, occurred_at, expected_by, topics, entity_mentions, source_claim_index,
       content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
       lifecycle_stage_updated_at, scope, owner_user_id, account_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
       last_recalled_at, active_touched_at, created_at, updated_at,
@@ -444,7 +460,7 @@ export async function executeVnextClaimTitleTwinSearch(
     ? sql``
     : sql`AND (scope = 'global' OR owner_user_id = ${principal.userId} OR account_id = ${principal.accountId})`;
   const results = await db.execute(sql`
-    SELECT id, title, content, claim_type, confidence, topics, entity_mentions, source_claim_index,
+    SELECT id, title, content, claim_type, confidence, observed_at, valid_from, valid_until, occurred_at, expected_by, topics, entity_mentions, source_claim_index,
       content_hash, embedding, source_memory_id, source, source_id, lifecycle_stage,
       lifecycle_stage_updated_at, scope, owner_user_id, account_id, created_by_user_id, updated_by_user_id, metadata, recall_count,
       last_recalled_at, active_touched_at, created_at, updated_at,
@@ -571,6 +587,7 @@ export class MemoryVnextClaimStorage {
         content: input.claim.content,
         claimType: normalizeClaimType(input.claim.claimType),
         confidence: input.claim.confidence,
+        observedAt: input.createdAt ?? createdAt,
         topics: input.claim.topics ?? [],
         entityMentions: input.claim.entityMentions ?? [],
         sourceClaimIndex: input.claim.sourceClaimIndex ?? null,
@@ -827,11 +844,13 @@ export class MemoryVnextClaimStorage {
       this.listEntityLinks(id),
       this.listClaimLinks(id),
     ]);
+    const dimensions = await deriveVnextClaimDimensions({ claim, sources, entityLinks, claimLinks });
     return {
       claim,
       sources,
       entityLinks,
       claimLinks,
+      dimensions,
       lifecycle: {
         stage: claim.lifecycleStage,
         stageUpdatedAt: claim.lifecycleStageUpdatedAt,
@@ -1168,23 +1187,73 @@ export class MemoryVnextClaimStorage {
 
   async addSourceRef(claimId: number, input: VnextClaimSourceInput): Promise<MemoryVnextSourceRef | null> {
     const principal = getCurrentPrincipalOrSystem();
+    const [claim] = await db
+      .select({ id: memoryVnextClaims.id })
+      .from(memoryVnextClaims)
+      .where(combineWithWritableScope(principal, vnextClaimScopeColumns, eq(memoryVnextClaims.id, claimId)))
+      .limit(1);
+    if (!claim) throw new Error(`Cannot add source evidence to vNext claim ${claimId}: claim not writable`);
+
+    const sourceType = input.sourceType.trim().slice(0, 80);
+    const sourceId = input.sourceId.trim().slice(0, 300);
+    if (!sourceType || !sourceId) throw new Error("Source evidence requires sourceType and sourceId");
+    const bounded = (value: number | null | undefined, label: string): number | null => {
+      if (value == null) return null;
+      if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error(`${label} must be between 0 and 1`);
+      return value;
+    };
+    const provenance = input.provenance ?? {};
+    if (Buffer.byteLength(JSON.stringify(provenance), "utf8") > 4_096) {
+      throw new Error("Source evidence provenance exceeds 4096 bytes");
+    }
+
     const [ref] = await db
       .insert(memoryVnextSourceRefs)
       .values({
         claimId,
-        sourceType: input.sourceType,
-        sourceId: input.sourceId,
-        relationship: input.relationship ?? "extracted_from",
-        context: input.context ?? "",
-        quote: input.quote ?? null,
+        sourceType,
+        sourceId,
+        relationship: input.relationship?.trim().slice(0, 80) || "extracted_from",
+        context: input.context?.trim().slice(0, 2_000) || "",
+        quote: input.quote?.slice(0, 4_000) ?? null,
         spanStart: input.spanStart ?? null,
         spanEnd: input.spanEnd ?? null,
-        strength: input.strength ?? 1,
+        strength: bounded(input.strength ?? 1, "Legacy source strength") ?? 1,
+        clarity: bounded(input.clarity, "Source clarity"),
+        certainty: bounded(input.certainty, "Relationship certainty"),
+        sourceObservedAt: input.sourceObservedAt ?? null,
+        sourceLineageKey: input.sourceLineageKey?.trim().slice(0, 300) || `${sourceType}:${sourceId}`,
+        independence: input.independence ?? "unknown",
+        producerMethod: input.producerMethod?.trim().slice(0, 120) || null,
+        derivationVersion: input.derivationVersion?.trim().slice(0, 80) || null,
+        provenance,
         ...ownedInsertValues(principal, vnextSourceScopeColumns),
         createdByUserId: principal.userId ?? undefined,
         updatedByUserId: principal.userId ?? undefined,
       })
-      .onConflictDoNothing()
+      .onConflictDoUpdate({
+        target: [
+          memoryVnextSourceRefs.claimId,
+          memoryVnextSourceRefs.sourceType,
+          memoryVnextSourceRefs.sourceId,
+          memoryVnextSourceRefs.relationship,
+        ],
+        set: {
+          context: sql`CASE WHEN excluded.context <> '' THEN excluded.context ELSE ${memoryVnextSourceRefs.context} END`,
+          quote: sql`COALESCE(excluded.quote, ${memoryVnextSourceRefs.quote})`,
+          spanStart: sql`COALESCE(excluded.span_start, ${memoryVnextSourceRefs.spanStart})`,
+          spanEnd: sql`COALESCE(excluded.span_end, ${memoryVnextSourceRefs.spanEnd})`,
+          clarity: sql`COALESCE(excluded.clarity, ${memoryVnextSourceRefs.clarity})`,
+          certainty: sql`COALESCE(excluded.certainty, ${memoryVnextSourceRefs.certainty})`,
+          sourceObservedAt: sql`COALESCE(excluded.source_observed_at, ${memoryVnextSourceRefs.sourceObservedAt})`,
+          sourceLineageKey: sql`COALESCE(excluded.source_lineage_key, ${memoryVnextSourceRefs.sourceLineageKey})`,
+          independence: sql`CASE WHEN excluded.independence <> 'unknown' THEN excluded.independence ELSE ${memoryVnextSourceRefs.independence} END`,
+          producerMethod: sql`COALESCE(excluded.producer_method, ${memoryVnextSourceRefs.producerMethod})`,
+          derivationVersion: sql`COALESCE(excluded.derivation_version, ${memoryVnextSourceRefs.derivationVersion})`,
+          provenance: sql`CASE WHEN excluded.provenance <> '{}'::jsonb THEN excluded.provenance ELSE ${memoryVnextSourceRefs.provenance} END`,
+          updatedByUserId: principal.userId ?? undefined,
+        },
+      })
       .returning();
     if (ref) {
       await this.advanceLifecycleStage(claimId, MEMORY_VNEXT_LIFECYCLE_STAGE.SOURCED);
@@ -2026,6 +2095,13 @@ export async function persistClaimCandidates(
               relationship: "extracted_from",
               context: `Extracted from ${source}`,
               strength: 1,
+              clarity: null,
+              certainty: null,
+              sourceObservedAt: createdAt,
+              sourceLineageKey: `${source}:${sourceId || sourceMemoryId || "unknown"}`,
+              independence: "unknown",
+              producerMethod: "claim_extraction",
+              derivationVersion: "vnext-orthogonal-v1",
             },
           ];
 

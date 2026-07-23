@@ -29,6 +29,16 @@ Columns:
 
 Metadata may keep historical stage-sweep details for audit/display, but it is not the concurrency or API contract. Sweep code must claim, complete, fail, and recover stale work using these columns.
 
+## vNext Orthogonal Claim Dimensions
+
+- The claim remains the center. Relationships, Integration Level, Certainty, Strength, and explicit time metadata remain independently inspectable.
+- `memory_vnext_claims.confidence` is compatibility-only extraction confidence. It is never claim certainty.
+- Source clarity and source-to-claim relationship certainty live on `memory_vnext_sources`; claim-link certainty remains separate on `memory_vnext_claim_links`.
+- Integration is a canonical read projection of relationship-type, direction, lineage, entity, context, and certainty diversity. Raw link count cannot determine it.
+- Strength is a canonical read projection of typed `memory_vnext_strength_events` plus decay. Exposure and legacy recall contribute zero.
+- Claim time uses `observed_at`, `valid_from`, `valid_until`, `occurred_at`, and `expected_by`. Lifecycle stage is migration compatibility metadata, not truth authority.
+- `vnext-claim-dimensions.ts` is the only dimension-derivation boundary. Do not store or introduce a combined memory-quality score.
+
 ## Integration Stages During Migration
 
 `memory_entries.layer` remains the compatibility contract while `integration_stage` becomes the semantic lifecycle signal.
