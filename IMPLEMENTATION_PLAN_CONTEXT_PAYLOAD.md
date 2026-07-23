@@ -1,62 +1,55 @@
-# Exact inference payload viewer implementation plan
+# Exact context viewer repair plan
 
-## Goal
+## Failed invariant
 
-Replace the reconstructed Rendered Prompt/Wire Payload split with one indexed expandable TreeView over a selected, concrete inference request captured at the lowest authoritative observable provider boundary.
+PR 980 persisted provider-bound requests, but the viewer replaced the accepted Context prompt tree with a second bespoke index/content renderer, rendered long JSON into a collapsed-width pane, and treated the SDK's sanitized options object as enough evidence even when warm handles had been initialized with earlier concrete options and MCP schemas. Existing rows also had no explicit complete-versus-legacy discriminant.
 
-## Authority and call-path findings
+## Observable provider boundaries
 
-- `chatCompletion` and `chatCompletionStream` are the tracked text-model roots.
-- Direct Anthropic calls dispatch concrete `messages.create` / `messages.stream` parameter objects.
-- Direct OpenAI calls dispatch concrete Chat Completions or Responses parameter objects.
-- OpenAI subscription calls dispatch a concrete JSON body through `fetch`.
-- Claude subscription calls dispatch through `cli-sdk-adapter.ts` into `query({ prompt, options })`. The exact downstream Anthropic request assembled inside Claude Code is not exposed by the Agent SDK.
-- Agent SDK documentation states that a custom string system prompt sends only the supplied string, while SDK features such as MCP tools shape behavior outside that string. Mantra disables filesystem setting sources and built-in tools, but the SDK still owns its internal model request and tool-loop envelopes.
+- Direct Anthropic: the concrete `messages.create` / `messages.stream` params immediately before SDK dispatch. These include the rendered system prompt, ordered messages, and tools actually sent.
+- Direct OpenAI: the concrete Chat Completions / Responses params immediately before SDK dispatch. Subscription calls capture the exact secret-free fetch body.
+- Claude Agent SDK: `query({ prompt, options })` or the equivalent one-shot warm-handle `.query(prompt)` handoff. Anthropic's current TypeScript SDK contract exposes `systemPrompt`, `tools`, `mcpServers`, permission/options fields, lifecycle hooks, and streamed SDK messages, but no hook exposing the private downstream Anthropic request assembled by Claude Code. Mantra can and must capture its rendered prompt/system text, original ordered messages, concrete MCP tool schemas, and serializable options. Only Claude Code's private downstream harness text and internally generated reminder/tool-loop envelopes remain unobservable.
 
-## Design
+## Implementation
 
-1. Introduce one `inference_payload_captures` table and storage module.
-   - User-owned columns: `scope`, `owner_user_id`, `account_id`, `created_by_user_id`.
-   - Store the exact secret-free observable request as JSONB, plus boundary/evidence metadata and provider usage.
-   - Persist before dispatch so failed and retried attempts remain inspectable.
-   - Keep only the newest 20 captures per user/account, deleted in the same transaction as insert.
-   - Reads always use `visibleScopePredicate`; captures require an authenticated user principal and never fall back to system ownership.
-2. Instrument each active text-provider dispatch producer.
-   - Anthropic: exact `params` object before `messages.create/stream`.
-   - OpenAI API: exact `params` before Chat Completions/Responses calls.
-   - OpenAI subscription: exact body before fetch, excluding authorization headers.
-   - Claude Agent SDK: exact prompt, complete safe scalar/list options, full application tool definitions used to create the in-process MCP server, and an explicit residual limitation. Exclude `env`, executable path, callbacks, abort signals, credentials, and opaque SDK server instances.
-   - Record one row per real attempt. Retries get separate capture IDs and attempt metadata.
-3. Replace Context viewer prompt UI.
-   - Remove the `Rendered Prompt`, `Wire Payload`, and old raw-string presentations.
-   - Add one `Prompt` Tab with a bounded recent-call selector.
-   - Render the selected capture as one indexed tree patterned after the existing Context prompt index/navigation.
-   - Every index node expands inline to complete raw JSON for that node. No truncation or summarized substitution.
-   - Token/character counts are derived from captured node serialization and remain secondary metadata.
-   - Reuse `HierarchyTreeRow` for nested structural connectors and shared collapsible primitives for disclosure.
-4. Keep Runtime and Instructions preview controls intact because they inspect current context configuration, but never present them as the captured model request.
-5. Add the additive schema to boot convergence and record the new sensitive-data boundary in `SECURITY.md`.
-6. Delete PR 959’s in-memory excerpt capture module and superseded shared wire-accounting contracts.
+1. Make `inference-payload-capture.ts` stamp every newly persisted row with one capture-version/completeness discriminant. Existing rows without it project as incomplete legacy captures. Preserve the existing append-only, principal-scoped, newest-20 retention boundary and secret exclusions.
+2. Keep direct-provider capture at `model-client.ts`'s canonical dispatch wrapper. The concrete request already contains the exact provider-visible order and resolved per-call tool set.
+3. Repair `cli-sdk-adapter.ts` so each capture snapshots:
+   - the exact rendered `prompt` and `systemPrompt` supplied to the SDK,
+   - the original ordered message/history records used to render them,
+   - every exact resolved per-call tool definition as MCP name, description, and full JSON input schema,
+   - the complete safe serializable query options,
+   - the actual immutable options/tool snapshot owned by a prewarmed worker when dispatch uses that worker rather than a newly constructed query.
+4. Replace PR 980's split bespoke index/content renderer with one inline hierarchy using the existing shared `ProfileTreeRow` disclosure styling and `HierarchyTreeRow` connectors. The selected call is the root. Object key and array order come directly from the immutable captured JSON.
+5. Give exact-content nodes semantic expansion without consulting live state:
+   - parse rendered `<section ...>` strings into ordered section rows whose expansion is the exact bounded section substring including headings, whitespace, lists, and XML boundaries,
+   - label each captured tool by its captured name and show the complete captured schema on expansion,
+   - label ordered message/tool-call/result records by role/name/index and show their complete captured content and metadata,
+   - retain all other fields as expandable raw values.
+6. Delete the custom two-pane payload index/content code and show legacy incompleteness explicitly.
+7. Update the canonical security finding and server invariant to name capture completeness, warm-handle ownership, and the precise SDK-only blind spot.
 
 ## Engineering Principles audit
 
-- **Single Source of Truth / Canonical Mutation Path:** one persisted capture is produced at the provider dispatch boundary; the viewer does not reconstruct from current context/tool state.
-- **Encode Invariants in Structure:** ownership columns are mandatory; bounded retention is enforced transactionally at insert.
-- **Replayability / Concurrency:** every attempt is append-only with a generated ID; concurrent inserts cannot overwrite one another; retention runs in the same transaction.
-- **Fail loudly, degrade gracefully:** capture failures emit an error but do not block the model request. The UI reports no captures or the precise SDK blind spot rather than fabricating data.
-- **Least Privilege / Data minimization:** no credentials, authorization headers, environment, executable paths, signals, or callbacks are persisted. Prompt/model content remains user-owned sensitive data.
-- **Progressive disclosure / Shared UI:** one hierarchy tree exposes complete depth on demand using existing primitives.
-- **Rollback:** revert the PR. The additive table may remain inert safely.
+- **Single Source of Truth:** the persisted dispatch snapshot is the only viewer input. No live context builder or registry lookup is allowed at render time.
+- **Canonical Mutation Path:** all rows still cross `captureInferencePayload`; provider adapters only supply their exact boundary projection.
+- **DRY / Minimum Viable Protocol:** one shared standard row primitive renders every level. The bespoke parallel index and content trees are removed.
+- **Encode Invariants in Structure:** one version/completeness discriminant distinguishes new complete snapshots from legacy rows.
+- **Replayability / concurrency:** captures remain append-only. Prewarmed handles carry the immutable initialization snapshot they actually own, preventing current-call state from being mislabeled as the dispatched worker state.
+- **Progressive disclosure:** the root call, payload fields, sections, messages, and tools expand inline. Exact text/schema appears only when requested.
+- **Least privilege / data minimization:** ownership predicates and newest-20 retention remain. Credentials, auth headers, executable path, environment, callbacks, signals, and opaque runtime objects remain excluded.
+- **Fail loudly, degrade gracefully:** capture failure remains visible and non-blocking. Legacy snapshots render an explicit incomplete label instead of fabricated completeness.
+- **Rollback:** revert the PR. The additive capture metadata is JSON and requires no destructive migration.
 
 ## Security gate
 
-- Assets: user prompts, system/context prompts, history, tool inputs/results, tool schemas, model-routing metadata.
-- Classification: S3 private user/model content.
-- Boundary: application provider adapter to external model provider/Agent SDK, then authenticated Context route to browser.
-- Abuse case: another user reads a captured prompt, or credentials are persisted inside a captured request.
-- Deterministic controls: required current user principal; ownership-scoped insert/read; no system fallback; explicit safe request projection excluding secret-bearing transport fields; bounded retention; authenticated existing Context routes.
-- Residual risk: authorized users can inspect their own highly sensitive prompts. Claude Agent SDK internal provider request and injected envelopes remain unobservable below `query()` and are labeled as such.
+- Assets/data classes: S3 prompt/history/tool payloads, tool schemas, routing metadata, model options.
+- Boundary: user-principal model execution to provider/SDK, PostgreSQL capture storage, authenticated Context route back to the same user.
+- Abuse case: cross-user payload disclosure; secret persistence; a warm SDK worker being labeled with schemas/options it did not receive; legacy partial data presented as complete.
+- Threats: information disclosure, confused-deputy attribution, stale-state substitution, sensitive logging.
+- Deterministic controls: required user principal, owner/account predicates, secret allowlist projection, append-only snapshot, per-handle immutable initialization evidence, bounded retention, explicit completeness discriminant.
+- Residual risk: an authorized user can inspect their own highly sensitive model context. Claude Code's private downstream request assembly remains unavailable because the SDK exposes no provider-request hook.
 
 ## Verification
 
-Run only `npm run build`, then change-scope inspection and git diff/status. No tests or standalone typecheck.
+Run `npm run build` only. After merge and stage deployment, use authenticated desktop verification on `/brain?tab=context`, select a newly captured real call, expand one rendered context section and one captured tool, and retain screenshot plus structured evidence. If the stage route cannot produce or expose a new complete call, leave the task active/needs review and state the exact blocker.

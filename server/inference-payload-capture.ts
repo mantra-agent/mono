@@ -13,6 +13,7 @@ import type {
 
 const log = createLogger("inference-payload-capture");
 export const INFERENCE_PAYLOAD_RETENTION_LIMIT = 20;
+const INFERENCE_PAYLOAD_CAPTURE_VERSION = 2;
 
 export interface CaptureInferencePayloadInput {
   provider: string;
@@ -113,7 +114,13 @@ function captureDatabaseErrorChain(error: unknown): CapturedDatabaseError[] {
   return chain;
 }
 
+function captureVersion(metadata: Record<string, unknown>): number | null {
+  const value = metadata.captureVersion;
+  return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
 function toSummary(row: typeof inferencePayloadCaptures.$inferSelect): InferencePayloadCaptureSummary {
+  const version = captureVersion(row.metadata);
   return {
     id: row.id,
     capturedAt: row.capturedAt.toISOString(),
@@ -125,6 +132,8 @@ function toSummary(row: typeof inferencePayloadCaptures.$inferSelect): Inference
     source: row.source,
     attempt: row.attempt,
     requestChars: row.requestChars,
+    captureVersion: version,
+    completeness: version === INFERENCE_PAYLOAD_CAPTURE_VERSION ? "complete" : "legacy_incomplete",
   };
 }
 
@@ -164,7 +173,10 @@ export async function captureInferencePayload(input: CaptureInferencePayloadInpu
         excludedSensitiveFields: input.excludedSensitiveFields ?? [],
         residualLimitation: input.residualLimitation ?? null,
         attempt: input.attempt ?? 1,
-        metadata: input.metadata ?? {},
+        metadata: {
+          ...(input.metadata ?? {}),
+          captureVersion: INFERENCE_PAYLOAD_CAPTURE_VERSION,
+        },
         sessionId: input.sessionId ?? null,
         source: input.source ?? null,
       });

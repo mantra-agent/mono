@@ -1,15 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Clock, FileJson2, Layers, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Clock, FileJson2, Layers } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
-import { cn } from "@/lib/utils";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import type { SpineMetadata } from "@shared/context-spine";
 import type {
   InferencePayloadCapture,
@@ -97,36 +95,139 @@ function InstructionsCard({ metadata }: { metadata: SpineMetadata }) {
   );
 }
 
+interface CapturedSection {
+  id: string;
+  title: string;
+  raw: string;
+}
+
+function parseCapturedSections(value: string): CapturedSection[] {
+  const tokenPattern = /<section\s+id="([^"]+)"\s+title="([^"]*)"\s*>|<\/section>/g;
+  const stack: Array<{ id: string; title: string; start: number; order: number }> = [];
+  const completed: Array<CapturedSection & { order: number }> = [];
+  let token: RegExpExecArray | null;
+  let order = 0;
+
+  while ((token = tokenPattern.exec(value)) !== null) {
+    if (!token[0].startsWith("</")) {
+      stack.push({ id: token[1], title: token[2] || token[1], start: token.index, order });
+      order += 1;
+      continue;
+    }
+    const opened = stack.pop();
+    if (opened) {
+      completed.push({
+        id: opened.id,
+        title: opened.title,
+        raw: value.slice(opened.start, tokenPattern.lastIndex),
+        order: opened.order,
+      });
+    }
+  }
+
+  return completed.sort((left, right) => left.order - right.order).map(({ order: _order, ...section }) => section);
+}
+
 interface PayloadNode {
   id: string;
   label: string;
   value: unknown;
-  depth: number;
   children: PayloadNode[];
+  exactText?: string;
+  kind: "field" | "section" | "tool" | "message";
 }
 
-function buildPayloadNode(label: string, value: unknown, depth = 0, path = "request"): PayloadNode {
-  const entries = Array.isArray(value)
-    ? value.map((item, index) => [`[${index}]`, item] as const)
+function toolLabel(value: unknown, index: number): string | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const nested = record.function && typeof record.function === "object"
+    ? record.function as Record<string, unknown>
+    : null;
+  const name = typeof record.name === "string" ? record.name : typeof nested?.name === "string" ? nested.name : null;
+  return name ? `[${index}] ${name}` : null;
+}
+
+function messageLabel(value: unknown, index: number): string | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const role = typeof record.role === "string" ? record.role : typeof record.type === "string" ? record.type : null;
+  const name = typeof record.name === "string" ? ` · ${record.name}` : "";
+  return role ? `[${index}] ${role}${name}` : null;
+}
+
+function isToolCollection(path: string[]): boolean {
+  return path[path.length - 1] === "tools" || path[path.length - 1] === "applicationToolDefinitions";
+}
+
+function isMessageCollection(path: string[]): boolean {
+  const key = path[path.length - 1];
+  return key === "messages" || key === "input" || key === "history";
+}
+
+function normalizeChildKind(parentPath: string[], currentPath: string[], kind: PayloadNode["kind"]): PayloadNode["kind"] {
+  if (kind !== "field") return kind;
+  if (parentPath[parentPath.length - 1] === "tools" && currentPath[currentPath.length - 1] === "function") return "tool";
+  return kind;
+}
+
+function buildPayloadNode(label: string, value: unknown, path: string[] = ["request"], id = "request"): PayloadNode {
+  if (typeof value === "string") {
+    const sections = parseCapturedSections(value);
+    return {
+      id,
+      label,
+      value,
+      kind: "field",
+      exactText: value,
+      children: sections.map((section, index) => ({
+        id: `${id}.section.${index}`,
+        label: section.title,
+        value: section.raw,
+        children: [],
+        exactText: section.raw,
+        kind: "section",
+      })),
+    };
+  }
+
+  const entries: Array<[string, unknown, "field" | "tool" | "message"]> = Array.isArray(value)
+    ? value.map((item, index) => {
+        const semanticLabel = isToolCollection(path)
+          ? toolLabel(item, index)
+          : isMessageCollection(path)
+            ? messageLabel(item, index)
+            : null;
+        return [semanticLabel ?? `[${index}]`, item, isToolCollection(path) ? "tool" : isMessageCollection(path) ? "message" : "field"];
+      })
     : value !== null && typeof value === "object"
-      ? Object.entries(value as Record<string, unknown>)
+      ? Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, item, "field"])
       : [];
+
   return {
-    id: path,
+    id,
     label,
     value,
-    depth,
-    children: entries.map(([key, child]) => buildPayloadNode(key, child, depth + 1, `${path}.${key}`)),
+    kind: "field",
+    children: entries.map(([key, child, kind], index) => {
+      const childPath = [...path, Array.isArray(value) ? String(index) : key];
+      return {
+        ...buildPayloadNode(key, child, childPath, `${id}.${index}`),
+        kind: normalizeChildKind(path, childPath, kind),
+      };
+    }),
   };
 }
 
-function rawValue(value: unknown): string {
+function exactValue(value: unknown): string {
   if (typeof value === "string") return value;
   const serialized = JSON.stringify(value, null, 2);
   return serialized === undefined ? String(value) : serialized;
 }
 
 function nodeMeta(node: PayloadNode): string {
+  if (node.kind === "section") return `${node.exactText?.length.toLocaleString() ?? 0} chars`;
+  if (node.kind === "tool") return "tool schema";
+  if (node.kind === "message") return "message";
   if (Array.isArray(node.value)) return `${node.value.length} items`;
   if (node.value !== null && typeof node.value === "object") return `${node.children.length} fields`;
   if (typeof node.value === "string") return `${node.value.length.toLocaleString()} chars`;
@@ -134,168 +235,88 @@ function nodeMeta(node: PayloadNode): string {
   return typeof node.value;
 }
 
-interface PayloadIndexNodeProps {
-  node: PayloadNode;
-  expanded: Set<string>;
-  activeId: string;
-  onToggle: (id: string) => void;
-  onNavigate: (id: string) => void;
-  continues: boolean;
+function ExactContent({ value, testId }: { value: unknown; testId: string }) {
+  return (
+    <pre
+      className="min-w-0 max-w-full overflow-x-auto whitespace-pre rounded-md bg-muted/40 p-3 font-mono text-xs leading-relaxed text-foreground"
+      data-testid={testId}
+    >
+      {exactValue(value)}
+    </pre>
+  );
 }
 
-function PayloadIndexNode({ node, expanded, activeId, onToggle, onNavigate, continues }: PayloadIndexNodeProps) {
-  const hasChildren = node.children.length > 0;
-  const open = expanded.has(node.id);
-  const row = (
-    <div className={cn("flex min-w-0 items-center gap-1 rounded-md px-1 py-1 text-xs", activeId === node.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70 hover:text-foreground")}>
-      {hasChildren ? (
-        <button type="button" className="flex h-5 w-5 shrink-0 items-center justify-center rounded" onClick={() => onToggle(node.id)} aria-label={`${open ? "Collapse" : "Expand"} ${node.label}`}>
-          <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
-        </button>
-      ) : <span className="h-5 w-5 shrink-0" />}
-      <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => onNavigate(node.id)}>{node.label}</button>
-    </div>
-  );
-  return (
-    <div>
-      {node.depth > 0 ? <HierarchyTreeRow continues={continues}>{row}</HierarchyTreeRow> : row}
-      {hasChildren && open && node.children.map((child, index) => (
-        <PayloadIndexNode
-          key={child.id}
-          node={child}
-          expanded={expanded}
-          activeId={activeId}
-          onToggle={onToggle}
-          onNavigate={onNavigate}
-          continues={index < node.children.length - 1}
-        />
+function PayloadTreeNode({ node, defaultOpen = false }: { node: PayloadNode; defaultOpen?: boolean }) {
+  const childRows = node.children.length > 0 ? (
+    <div className="mt-2 min-w-0">
+      {node.children.map((child, index) => (
+        <HierarchyTreeRow key={child.id} continues={index < node.children.length - 1}>
+          <PayloadTreeNode node={child} />
+        </HierarchyTreeRow>
       ))}
     </div>
-  );
-}
+  ) : null;
+  const ownContent = node.exactText !== undefined || node.children.length === 0
+    ? <ExactContent value={node.exactText ?? node.value} testId={`payload-exact-${node.id}`} />
+    : null;
 
-interface PayloadContentNodeProps {
-  node: PayloadNode;
-  openIds: Set<string>;
-  onOpenChange: (id: string, open: boolean) => void;
-  refs: React.MutableRefObject<Map<string, HTMLDivElement>>;
-  continues: boolean;
-}
-
-function PayloadContentNode({ node, openIds, onOpenChange, refs, continues }: PayloadContentNodeProps) {
-  const open = openIds.has(node.id);
-  const setRef = useCallback((element: HTMLDivElement | null) => {
-    if (element) refs.current.set(node.id, element);
-    else refs.current.delete(node.id);
-  }, [node.id, refs]);
-  const content = (
-    <Collapsible open={open} onOpenChange={(next) => onOpenChange(node.id, next)}>
-      <div ref={setRef} id={`payload-${node.id}`} className="min-w-0 rounded-md hover:bg-accent/40">
-        <CollapsibleTrigger asChild>
-          <button type="button" className="flex min-h-11 w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left text-sm sm:min-h-8">
-            <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
-            <span className="min-w-0 flex-1 truncate font-mono">{node.label}</span>
-            <span className="shrink-0 text-xs text-muted-foreground">{nodeMeta(node)}</span>
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="px-2 pb-2 pl-8">
-            <pre className="max-h-none min-w-0 overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 font-mono text-xs leading-relaxed text-foreground" data-testid={`payload-raw-${node.id}`}>
-              {rawValue(node.value)}
-            </pre>
-            {node.children.length > 0 && (
-              <div className="mt-2">
-                {node.children.map((child, index) => (
-                  <PayloadContentNode
-                    key={child.id}
-                    node={child}
-                    openIds={openIds}
-                    onOpenChange={onOpenChange}
-                    refs={refs}
-                    continues={index < node.children.length - 1}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
+  return (
+    <ProfileTreeRow
+      label={<span className="font-mono text-foreground">{node.label}</span>}
+      hasValue={true}
+      showEmpty={true}
+      defaultOpen={defaultOpen}
+      mobileLayout="inline"
+      testId={`payload-node-${node.id}`}
+      expandedContentClassName="min-w-0 max-w-full overflow-hidden pl-8"
+      expandedContent={(
+        <div className="min-w-0 max-w-full">
+          {ownContent}
+          {childRows}
+        </div>
+      )}
+    >
+      <span className="truncate text-muted-foreground">{nodeMeta(node)}</span>
+    </ProfileTreeRow>
   );
-  return node.depth > 0 ? <HierarchyTreeRow continues={continues}>{content}</HierarchyTreeRow> : content;
 }
 
 function PromptCaptureTree({ capture }: { capture: InferencePayloadCapture }) {
-  const root = useMemo(() => buildPayloadNode(`inference call ${capture.id}`, capture.request), [capture.id, capture.request]);
-  const [indexExpanded, setIndexExpanded] = useState<Set<string>>(() => new Set([root.id]));
-  const [contentOpen, setContentOpen] = useState<Set<string>>(() => new Set([root.id]));
-  const [activeId, setActiveId] = useState(root.id);
-  const contentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-
-  useEffect(() => {
-    setIndexExpanded(new Set([root.id]));
-    setContentOpen(new Set([root.id]));
-    setActiveId(root.id);
-  }, [capture.id, root.id]);
-
-  const toggleSet = useCallback((setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string, forced?: boolean) => {
-    setter((current) => {
-      const next = new Set(current);
-      const shouldOpen = forced ?? !next.has(id);
-      if (shouldOpen) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }, []);
-
-  const navigate = useCallback((id: string) => {
-    setActiveId(id);
-    toggleSet(setContentOpen, id, true);
-    requestAnimationFrame(() => contentRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" }));
-  }, [toggleSet]);
+  const root = useMemo(
+    () => buildPayloadNode(`inference call ${capture.id}`, capture.request),
+    [capture.id, capture.request],
+  );
 
   return (
-    <div className="flex flex-1 min-h-0 min-w-0 flex-col gap-2">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span className="font-mono">{capture.provider} / {capture.model}</span>
         <span>{capture.boundary}</span>
         <span>{capture.requestChars.toLocaleString()} chars</span>
         <span>attempt {capture.attempt}</span>
       </div>
-      <div className="rounded-md border border-border/30 px-3 py-2 text-xs text-muted-foreground">
-        <div className="flex items-center gap-2 text-foreground"><ShieldCheck className="h-3.5 w-3.5" />{capture.evidence.observableBoundary}</div>
-        {capture.evidence.residualLimitation && <div className="mt-1 leading-relaxed">{capture.evidence.residualLimitation}</div>}
-        {capture.evidence.excludedSensitiveFields.length > 0 && <div className="mt-1">Excluded: {capture.evidence.excludedSensitiveFields.join(", ")}</div>}
-      </div>
-      <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border/30 md:flex-row">
-        <aside className="max-h-64 w-full shrink-0 overflow-y-auto border-b border-border/20 bg-card/40 p-2 md:max-h-none md:w-[280px] md:border-b-0 md:border-r" aria-label="Payload index">
-          <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">Index</div>
-          <PayloadIndexNode
-            node={root}
-            expanded={indexExpanded}
-            activeId={activeId}
-            onToggle={(id) => toggleSet(setIndexExpanded, id)}
-            onNavigate={navigate}
-            continues={false}
-          />
-        </aside>
-        <div className="min-w-0 flex-1 overflow-y-auto p-2 md:p-4">
-          <PayloadContentNode
-            node={root}
-            openIds={contentOpen}
-            onOpenChange={(id, open) => toggleSet(setContentOpen, id, open)}
-            refs={contentRefs}
-            continues={false}
-          />
+      {capture.completeness === "legacy_incomplete" && (
+        <div className="flex items-center gap-2 rounded-md border border-warning/40 px-3 py-2 text-xs text-warning" data-testid="legacy-capture-warning">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          Incomplete legacy capture. New calls include the complete immutable dispatch snapshot.
         </div>
+      )}
+      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto rounded-lg border border-border/30 p-2 scrollbar-thin" data-testid="prompt-capture-tree">
+        <PayloadTreeNode key={capture.id} node={root} defaultOpen={true} />
       </div>
+      {capture.evidence.residualLimitation && (
+        <div className="px-2 text-xs leading-relaxed text-muted-foreground" data-testid="capture-residual-limitation">
+          {capture.evidence.residualLimitation}
+        </div>
+      )}
     </div>
   );
 }
 
 function captureLabel(capture: InferencePayloadCaptureSummary): string {
   const timestamp = new Date(capture.capturedAt).toLocaleString();
-  return `${timestamp} · ${formatModelName(capture.model)} · ${capture.boundary}`;
+  const legacy = capture.completeness === "legacy_incomplete" ? " · legacy" : "";
+  return `${timestamp} · ${formatModelName(capture.model)} · ${capture.boundary}${legacy}`;
 }
 
 export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {

@@ -441,11 +441,21 @@ type SdkWarmHandle = {
 };
 type SdkStartupFn = (args: { options?: SdkOptions }) => Promise<SdkWarmHandle>;
 
+interface SdkInitializationCapture {
+  options: Record<string, unknown>;
+  toolDefinitions: Array<{
+    name: string;
+    description: string;
+    inputSchema: ToolDefinition["parameters"];
+  }>;
+}
+
 interface WarmWorker {
   handle: SdkWarmHandle;
   spawnedAt: number;
   key: string;
   evicted: boolean;
+  initializationCapture: SdkInitializationCapture;
   // Stderr from the long-lived warm subprocess flows into whatever buffer the
   // currently-leasing call has registered here. Cleared on release; the
   // stderr callback is a no-op when nothing is registered.
@@ -494,7 +504,17 @@ async function spawnWarmWorker(key: string, sdkOptions: SdkOptions, startupFn: S
     },
   };
   const handle = await startupFn({ options: workerOptions });
-  return { handle, spawnedAt: Date.now(), key, evicted: false, activeStderrRef };
+  return {
+    handle,
+    spawnedAt: Date.now(),
+    key,
+    evicted: false,
+    initializationCapture: {
+      options: safeSdkOptionsForCapture(workerOptions),
+      toolDefinitions: [],
+    },
+    activeStderrRef,
+  };
 }
 
 function acquireWarmWorker(key: string): WarmWorker | null {
@@ -765,20 +785,38 @@ function buildSdkOptions(
   return sdkOptions;
 }
 
+function captureToolDefinitions(toolDefs: ToolDefinition[]): SdkInitializationCapture["toolDefinitions"] {
+  return toolDefs.map((definition) => ({
+    name: definition.name,
+    description: definition.description,
+    inputSchema: JSON.parse(JSON.stringify(definition.parameters)) as ToolDefinition["parameters"],
+  }));
+}
+
 function safeSdkOptionsForCapture(options: SdkOptions): Record<string, unknown> {
   return {
     model: options.model ?? null,
     systemPrompt: options.systemPrompt ?? null,
     tools: options.tools ?? null,
     disallowedTools: options.disallowedTools ?? [],
+    allowedTools: options.allowedTools ?? [],
     settingSources: options.settingSources ?? [],
+    settings: typeof options.settings === "object" ? options.settings : null,
+    strictMcpConfig: options.strictMcpConfig ?? false,
     permissionMode: options.permissionMode ?? null,
+    permissionPromptToolName: options.permissionPromptToolName ?? null,
     allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions ?? false,
     includePartialMessages: options.includePartialMessages ?? false,
+    includeHookEvents: options.includeHookEvents ?? false,
     persistSession: options.persistSession ?? false,
     thinking: options.thinking ?? null,
     effort: options.effort ?? null,
     maxTurns: options.maxTurns ?? null,
+    maxBudgetUsd: options.maxBudgetUsd ?? null,
+    outputFormat: options.outputFormat ?? null,
+    additionalDirectories: options.additionalDirectories ?? [],
+    toolAliases: options.toolAliases ?? null,
+    toolConfig: options.toolConfig ?? null,
     mcpServers: options.mcpServers ? Object.keys(options.mcpServers) : [],
   };
 }
@@ -1104,6 +1142,10 @@ export async function* cliSdkStream(
   let pooledWorker: WarmWorker | null = null;
   let pooledHit = false;
   let voiceWarmHit = false;
+  let initializationCapture: SdkInitializationCapture = {
+    options: safeSdkOptionsForCapture(sdkOptions),
+    toolDefinitions: captureToolDefinitions(toolDefs),
+  };
 
   // Per-call stderr buffer. For cold spawns we attach the SDK's stderr
   // callback directly. For pool hits, we register this buffer on the worker's
@@ -1123,7 +1165,8 @@ export async function* cliSdkStream(
       const warmHandle = claimVoiceWarmHandle(options.voiceSessionId, toolExecutor);
       if (warmHandle) {
         voiceWarmHit = true;
-        q = warmHandle.query(prompt);
+        initializationCapture = warmHandle.initializationCapture;
+        q = warmHandle.handle.query(prompt);
         log.debug(`voice-warm: hit sessionId=${options.voiceSessionId}`);
       }
     }
@@ -1133,6 +1176,7 @@ export async function* cliSdkStream(
         pooledWorker = acquireWarmWorker(pKey);
         if (pooledWorker) {
           pooledHit = true;
+          initializationCapture = pooledWorker.initializationCapture;
           pooledWorker.activeStderrRef.current = stderrBuf;
           q = pooledWorker.handle.query(prompt);
           log.debug(`cli-warm-pool: hit key=${pKey} worker_age_ms=${Date.now() - pooledWorker.spawnedAt}`);
@@ -1157,9 +1201,11 @@ export async function* cliSdkStream(
       authority: "Application arguments handed to @anthropic-ai/claude-agent-sdk query()",
       observableBoundary: "query({ prompt, options }) after prompt, MCP tools, and SDK options are finalized",
       request: {
+        systemPrompt: initializationCapture.options.systemPrompt ?? systemPrompt ?? null,
+        messages: options.messages,
         prompt,
-        options: safeSdkOptionsForCapture(sdkOptions),
-        applicationToolDefinitions: toolDefs,
+        options: initializationCapture.options,
+        tools: initializationCapture.toolDefinitions,
       },
       excludedSensitiveFields: [
         "options.env",
@@ -1168,7 +1214,7 @@ export async function* cliSdkStream(
         "options.abortController",
         "options.mcpServers runtime instances",
       ],
-      residualLimitation: "Claude Agent SDK and Claude Code assemble the downstream Anthropic request, internal harness text, and tool-loop system-reminder envelopes below query(). The installed SDK exposes no provider-request hook, so this capture is the lowest authoritative observable boundary and does not invent those hidden fields.",
+      residualLimitation: "Claude Code privately assembles the downstream Anthropic request below the Agent SDK query boundary. The SDK exposes no provider-request hook, so only Claude Code-added private harness text and internally generated reminder/tool-loop envelopes remain unobservable; every Mantra-supplied system/context string, ordered message, option, and tool schema is captured here.",
       metadata: {
         runId: options.runId ?? null,
         conversationId: options.convId ?? null,
@@ -1811,6 +1857,12 @@ interface VoiceWarmHandle {
   sessionId: string;
   spawnedAt: number;
   consumed: boolean;
+  initializationCapture: SdkInitializationCapture;
+}
+
+interface ClaimedVoiceWarmHandle {
+  handle: SdkWarmHandle;
+  initializationCapture: SdkInitializationCapture;
 }
 
 const VOICE_WARM_TTL_MS = 60_000;
@@ -1884,6 +1936,10 @@ export async function preWarmVoiceCli(opts: {
     sessionId: opts.sessionId,
     spawnedAt: Date.now(),
     consumed: false,
+    initializationCapture: {
+      options: safeSdkOptionsForCapture(sdkOptions),
+      toolDefinitions: captureToolDefinitions(opts.toolDefs),
+    },
   });
 
   log.debug(`voice-warm: spawned sessionId=${opts.sessionId} spawnMs=${spawnMs} tools=${opts.toolDefs.length}`);
@@ -1897,7 +1953,7 @@ export async function preWarmVoiceCli(opts: {
 export function claimVoiceWarmHandle(
   sessionId: string,
   toolExecutor: ToolExecutor,
-): SdkWarmHandle | null {
+): ClaimedVoiceWarmHandle | null {
   const handle = voiceWarmHandles.get(sessionId);
   if (!handle) return null;
 
@@ -1912,7 +1968,10 @@ export function claimVoiceWarmHandle(
   handle.consumed = true;
   voiceWarmHandles.delete(sessionId);
   log.debug(`voice-warm: claimed sessionId=${sessionId} age=${Date.now() - handle.spawnedAt}ms`);
-  return handle.warmQuery;
+  return {
+    handle: handle.warmQuery,
+    initializationCapture: handle.initializationCapture,
+  };
 }
 
 /**
