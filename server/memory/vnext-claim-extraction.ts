@@ -15,7 +15,7 @@ import { ACTIVITY_MEMORY } from "../job-profiles";
 import { extractJson } from "../utils/extract-json";
 import { getSetting } from "../system-settings";
 import { createLogger } from "../log";
-import type { MemoryEntry, MemorySource } from "@shared/schema";
+import type { MemoryEntry, MemorySource, MemoryVnextRelationship } from "@shared/schema";
 
 const log = createLogger("VnextClaimExtraction");
 
@@ -28,11 +28,34 @@ export interface ClaimCandidate {
   title: string;
   content: string;
   claimType: "state" | "cause" | "action";
+  /** Extraction confidence: how likely the source expresses this claim. */
   confidence: number;
+  /** How explicitly the source states this claim. */
+  clarity?: number;
+  /** Exact source passage supporting this claim. */
+  evidenceQuote?: string;
   topics: string[];
   entityMentions: Array<{ name: string; entityType: string }>;
-  /** Index of another claim in this batch that this claim is causally linked to */
+  /** Legacy compatibility pointer. New extraction emits explicit relationships. */
   sourceClaimIndex?: number;
+}
+
+export interface ObservationRelationshipCandidate {
+  fromClaimIndex: number;
+  toClaimIndex: number;
+  relationship: MemoryVnextRelationship;
+  /** How clearly the source expresses this relationship. */
+  clarity: number;
+  /** Certainty of the relationship, separate from either endpoint claim. */
+  certainty: number;
+  /** Exact source passage supporting the relationship. */
+  evidenceQuote: string;
+}
+
+export interface ExtractedObservation {
+  claims: ClaimCandidate[];
+  relationships: ObservationRelationshipCandidate[];
+  reasoning?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +81,13 @@ export function normalizeClaimTitle(rawTitle: string, content: string): string {
 // Claim response parsing
 // ---------------------------------------------------------------------------
 
+const OBSERVATION_RELATIONSHIPS = new Set<MemoryVnextRelationship>([
+  "equivalent_to", "similar_to", "qualifies",
+  "supports", "contradicts", "supersedes",
+  "precedes", "followed_by", "overlaps",
+  "explains", "contributed_to", "caused", "prevented", "resulted_in",
+]);
+
 function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidate[] {
   if (!Array.isArray(parsed.claims)) return [];
 
@@ -75,6 +105,8 @@ function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidat
         ? (rawType as ClaimCandidate["claimType"])
         : (legacyTypeMap[rawType] ?? null);
       const confidence = typeof c.confidence === "number" ? c.confidence : 0;
+      const clarity = typeof c.clarity === "number" ? Math.max(0, Math.min(1, c.clarity)) : confidence;
+      const evidenceQuote = typeof c.evidenceQuote === "string" ? c.evidenceQuote.trim().slice(0, 4_000) : "";
       const topics = Array.isArray(c.topics)
         ? (c.topics as unknown[]).filter((t): t is string => typeof t === "string").map(t => t.trim().toLowerCase()).filter(Boolean).slice(0, 4)
         : [];
@@ -85,10 +117,68 @@ function parseClaimsFromResponse(parsed: Record<string, unknown>): ClaimCandidat
             .map((e) => ({ name: (e.name as string).trim(), entityType: (e.entityType as string).trim() }))
         : [];
       const sourceClaimIndex = typeof c.sourceClaimIndex === "number" ? c.sourceClaimIndex : undefined;
-      return { title, content, claimType, confidence, topics, entityMentions, sourceClaimIndex } as ClaimCandidate & { claimType: ClaimCandidate["claimType"] | null };
+      return { title, content, claimType, confidence, clarity, evidenceQuote, topics, entityMentions, sourceClaimIndex } as ClaimCandidate & { claimType: ClaimCandidate["claimType"] | null };
     })
     .filter((c): c is ClaimCandidate => !!c.content && c.claimType !== null && c.confidence >= 0.4)
     .slice(0, 7);
+}
+
+function parseRelationshipsFromResponse(
+  parsed: Record<string, unknown>,
+  claimCount: number,
+): ObservationRelationshipCandidate[] {
+  if (!Array.isArray(parsed.relationships) || claimCount < 2) return [];
+  const seen = new Set<string>();
+  return (parsed.relationships as unknown[])
+    .filter((item): item is Record<string, unknown> => item != null && typeof item === "object")
+    .flatMap((item) => {
+      const fromClaimIndex = Number.isInteger(item.fromClaimIndex) ? Number(item.fromClaimIndex) : -1;
+      const toClaimIndex = Number.isInteger(item.toClaimIndex) ? Number(item.toClaimIndex) : -1;
+      const relationship = typeof item.relationship === "string" && OBSERVATION_RELATIONSHIPS.has(item.relationship as MemoryVnextRelationship)
+        ? item.relationship as MemoryVnextRelationship
+        : null;
+      const clarity = typeof item.clarity === "number" ? Math.max(0, Math.min(1, item.clarity)) : 0;
+      const certainty = typeof item.certainty === "number" ? Math.max(0, Math.min(1, item.certainty)) : 0;
+      const evidenceQuote = typeof item.evidenceQuote === "string" ? item.evidenceQuote.trim().slice(0, 4_000) : "";
+      if (
+        !relationship
+        || fromClaimIndex < 0
+        || toClaimIndex < 0
+        || fromClaimIndex >= claimCount
+        || toClaimIndex >= claimCount
+        || fromClaimIndex === toClaimIndex
+        || !evidenceQuote
+        || clarity < 0.4
+        || certainty < 0.4
+      ) return [];
+      const key = `${fromClaimIndex}:${toClaimIndex}:${relationship}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ fromClaimIndex, toClaimIndex, relationship, clarity, certainty, evidenceQuote }];
+    })
+    .slice(0, 8);
+}
+
+function normalizedEvidenceText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function parseObservationFromResponse(parsed: Record<string, unknown>, sourceText: string): ExtractedObservation {
+  const normalizedSource = normalizedEvidenceText(sourceText);
+  const claims = parseClaimsFromResponse(parsed).slice(0, 3).map((claim) => ({
+    ...claim,
+    evidenceQuote: claim.evidenceQuote && normalizedSource.includes(normalizedEvidenceText(claim.evidenceQuote))
+      ? claim.evidenceQuote
+      : undefined,
+  }));
+  const relationships = parseRelationshipsFromResponse(parsed, claims.length).filter((relationship) =>
+    normalizedSource.includes(normalizedEvidenceText(relationship.evidenceQuote)),
+  );
+  return {
+    claims,
+    relationships,
+    reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning.trim() : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -152,22 +242,30 @@ Extraction principle: look through the process wrapper to the underlying facts. 
 
 For each claim, include a "title": a 1-3 word Title Case label naming the subject of the claim (e.g. "Toku Outreach", "Brand Colors", "Eric Kamont"). Never more than 3 words.
 
-For each claim, include 1-4 topics and entityMentions for explicitly named people, companies, projects, or goals when present. entityType must be "person", "company", "project", or "goal". Company mentions must name the organization directly; never infer a company from a person's employer, a domain, or contextual association. If one claim is caused by another claim in this batch, set sourceClaimIndex to that claim's 0-based index; otherwise use null.
+For each claim, include clarity (how explicitly the source states it), evidenceQuote (the shortest exact supporting passage), 1-4 topics, and entityMentions for explicitly named people, companies, projects, or goals when present. entityType must be "person", "company", "project", or "goal". Company mentions must name the organization directly; never infer a company from a person's employer, a domain, or contextual association. sourceClaimIndex is legacy compatibility only; use null and express structure through relationships.
+
+When the source explicitly supports a relationship between two extracted claims, include it in relationships. Use only:
+- semantic: equivalent_to, similar_to, qualifies
+- evidence: supports, contradicts, supersedes
+- temporal: precedes, followed_by, overlaps
+- causal: explains, contributed_to, caused, prevented, resulted_in
+
+Every relationship must identify claim indices, include an exact supporting quote, and separately score clarity (how explicitly the source states it) and certainty (how certain the relationship is). Omit uncertain relationships. Sequence is not causality: use precedes/followed_by unless the source explicitly gives causal evidence. Causal relationships are hypotheses even when directly asserted.
 
 Respond with only valid JSON:
-{"claims":[{"title":"1-3 Word Title","content":"...","claimType":"state|cause|action","confidence":0.0,"topics":["..."],"entityMentions":[{"name":"...","entityType":"person|company|project|goal"}],"sourceClaimIndex":null}],"reasoning":"short reason, or why no claims were worth storing"}`;
+{"claims":[{"title":"1-3 Word Title","content":"...","claimType":"state|cause|action","confidence":0.0,"clarity":0.0,"evidenceQuote":"exact quote","topics":["..."],"entityMentions":[{"name":"...","entityType":"person|company|project|goal"}],"sourceClaimIndex":null}],"relationships":[{"fromClaimIndex":0,"toClaimIndex":1,"relationship":"precedes|followed_by|overlaps|supports|contradicts|supersedes|equivalent_to|similar_to|qualifies|explains|contributed_to|caused|prevented|resulted_in","clarity":0.0,"certainty":0.0,"evidenceQuote":"exact quote"}],"reasoning":"short reason, or why no claims were worth storing"}`;
 
 // ---------------------------------------------------------------------------
 // Chunk-level claim extraction
 // ---------------------------------------------------------------------------
 
-export async function extractClaimsFromChunk(
+export async function extractObservationFromChunk(
   chunk: string,
   index: number,
   total: number,
   source?: string | null,
   title?: string | null,
-): Promise<ClaimCandidate[]> {
+): Promise<ExtractedObservation> {
   try {
     const messages = [
       { role: "system" as const, content: VNEXT_CLAIM_EXTRACTION_PROMPT },
@@ -187,11 +285,22 @@ export async function extractClaimsFromChunk(
     });
 
     const parsed = JSON.parse(extractJson(result.content));
-    return parseClaimsFromResponse(parsed).slice(0, 3);
+    return parseObservationFromResponse(parsed, chunk);
   } catch (err) {
-    log.warn(`extractClaimsFromChunk: Chunk ${index + 1}/${total} vNext claim extraction failed: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
+    log.warn(`extractObservationFromChunk: Chunk ${index + 1}/${total} vNext observation extraction failed: ${err instanceof Error ? err.message : String(err)}`);
+    return { claims: [], relationships: [] };
   }
+}
+
+/** Compatibility reader for callers that have not migrated to observation relationships. */
+export async function extractClaimsFromChunk(
+  chunk: string,
+  index: number,
+  total: number,
+  source?: string | null,
+  title?: string | null,
+): Promise<ClaimCandidate[]> {
+  return (await extractObservationFromChunk(chunk, index, total, source, title)).claims;
 }
 
 // ---------------------------------------------------------------------------
