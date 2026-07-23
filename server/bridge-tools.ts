@@ -942,18 +942,46 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
     return { result: "expectedCurrentName was provided without newName. Provide both to rename.", error: true };
   }
 
+  const peopleMetadata = await import("@shared/people-metadata");
   const updates: Record<string, any> = {};
   if (typeof args.quickSummary === "string") updates.quickSummary = args.quickSummary || undefined;
   if (typeof args.cabinetLevel === "string") updates.cabinetLevel = args.cabinetLevel;
   if (typeof args.company === "string") updates.company = args.company || undefined;
   if (typeof args.role === "string") updates.role = args.role || undefined;
-  if (typeof args.relation === "string") updates.relation = args.relation || undefined;
+  if (typeof args.relation === "string") {
+    if (args.relation.trim()) {
+      const check = peopleMetadata.validateRelation(args.relation, "agent");
+      if (!check.ok) return { result: check.error!, error: true };
+      updates.relation = args.relation.trim();
+    } else {
+      updates.relation = undefined;
+    }
+  }
+  if (Array.isArray(args.professionalRelations)) {
+    const list = args.professionalRelations.filter((r: unknown): r is string => typeof r === "string" && r.trim().length > 0).map((r: string) => r.trim());
+    const check = peopleMetadata.validateProfessionalRelations(list, "agent");
+    if (!check.ok) return { result: check.error!, error: true };
+    updates.professionalRelations = list;
+  }
   if (typeof args.familiarity === "string") updates.familiarity = args.familiarity;
   if (typeof args.trust === "string") updates.trust = args.trust;
-  if (Array.isArray(args.tags)) updates.tags = args.tags;
 
-  if (!requestedNewName && Object.keys(updates).length === 0) {
-    return { result: "No updatable fields provided. Supported: newName (with expectedCurrentName), quickSummary, cabinetLevel, company, role, relation, familiarity, trust, tags.", error: true };
+  const companyIdValue = typeof args.companyId === "string" ? args.companyId.trim() : "";
+
+  let ignoredTags: { tag: string; reason: string }[] = [];
+  if (Array.isArray(args.tags)) {
+    const existing = await peopleStorage.getPerson(resolved.id);
+    const filtered = peopleMetadata.filterRedundantTags({
+      tags: args.tags.filter((t: unknown): t is string => typeof t === "string"),
+      companyName: updates.company ?? existing?.company,
+      role: updates.role ?? existing?.role,
+    });
+    updates.tags = filtered.savedTags;
+    ignoredTags = filtered.ignoredTags;
+  }
+
+  if (!requestedNewName && Object.keys(updates).length === 0 && !companyIdValue) {
+    return { result: "No updatable fields provided. Supported: newName (with expectedCurrentName), quickSummary, cabinetLevel, companyId, company, role, relation, professionalRelations, familiarity, trust, tags.", error: true };
   }
 
   let renamed = false;
@@ -969,6 +997,11 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
     renamed = true;
   }
 
+  if (companyIdValue) {
+    const { companyStorage } = await import("./company-storage");
+    await companyStorage.addPerson(companyIdValue, resolved.id);
+  }
+
   const person = Object.keys(updates).length > 0
     ? await peopleStorage.updatePerson(resolved.id, updates)
     : await peopleStorage.getPerson(resolved.id);
@@ -982,9 +1015,13 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
 
   const changed = [
     ...(renamed ? [`name (was "${expectedCurrentName}", preserved as nickname)`] : []),
+    ...(companyIdValue ? ["companyId"] : []),
     ...Object.keys(updates),
   ].join(", ");
-  return { result: `Updated ${person.name} [person:${person.id}]: ${changed}` };
+  const ignoredNote = ignoredTags.length
+    ? `\n\nIgnored redundant tags: ${ignoredTags.map(t => `${t.tag} (${t.reason})`).join(", ")}`
+    : "";
+  return { result: `Updated ${person.name} [person:${person.id}]: ${changed}${ignoredNote}`, data: ignoredTags.length ? { ignoredTags } : undefined };
 }
 
 async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandlerResult> {
@@ -995,13 +1032,32 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
   if (args.email) {
     contactInfo.push({ type: "email", label: "primary", value: args.email });
   }
+  const peopleMetadata = await import("@shared/people-metadata");
+  if (typeof args.relation === "string" && args.relation.trim()) {
+    const check = peopleMetadata.validateRelation(args.relation, "agent");
+    if (!check.ok) return { result: check.error!, error: true };
+  }
+  const professionalRelations = Array.isArray(args.professionalRelations)
+    ? args.professionalRelations.filter((r: unknown): r is string => typeof r === "string" && r.trim().length > 0).map((r: string) => r.trim())
+    : [];
+  if (professionalRelations.length) {
+    const check = peopleMetadata.validateProfessionalRelations(professionalRelations, "agent");
+    if (!check.ok) return { result: check.error!, error: true };
+  }
+  const tagFilter = peopleMetadata.filterRedundantTags({
+    tags: Array.isArray(args.tags) ? args.tags.filter((t: unknown): t is string => typeof t === "string") : [],
+    companyName: args.company,
+    role: args.role,
+  });
   const person = await peopleStorage.createPerson({
     name,
     nicknames: [],
     cabinetLevel: args.cabinetLevel || "network",
     company: args.company || undefined,
+    companyId: typeof args.companyId === "string" && args.companyId.trim() ? args.companyId.trim() : undefined,
     role: args.role || undefined,
-    relation: args.relation || undefined,
+    relation: (typeof args.relation === "string" ? args.relation.trim() : "") || undefined,
+    professionalRelations,
     introducedBy: args.introducedBy || undefined,
     familiarity: args.familiarity || undefined,
     trust: args.trust || undefined,
@@ -1011,10 +1067,14 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
     importantDates: [],
     notes: [],
     interactions: [],
-    tags: Array.isArray(args.tags) ? args.tags : [],
+    tags: tagFilter.savedTags,
     quickSummary: typeof args.quickSummary === "string" ? args.quickSummary.trim() || undefined : undefined,
     private: false,
   });
+  if (typeof args.companyId === "string" && args.companyId.trim()) {
+    const { companyStorage } = await import("./company-storage");
+    await companyStorage.addPerson(args.companyId.trim(), person.id).catch(() => {});
+  }
   if (args.notes) {
     await peopleStorage.addNote(person.id, args.notes);
   }
@@ -1024,7 +1084,10 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
     event: "data:people_changed",
     payload: { source: "people_tool", action: "create", personId: person.id, personName: person.name },
   });
-  const result = `Person created: "${person.name}" [person:${person.id}] (cabinet: ${person.cabinetLevel})${args.email ? `, email: ${args.email}` : ""}`;
+  const ignoredNote = tagFilter.ignoredTags.length
+    ? `\n\nIgnored redundant tags: ${tagFilter.ignoredTags.map(t => `${t.tag} (${t.reason})`).join(", ")}`
+    : "";
+  const result = `Person created: "${person.name}" [person:${person.id}] (cabinet: ${person.cabinetLevel})${args.email ? `, email: ${args.email}` : ""}${ignoredNote}`;
   return withPeopleSummaryStatus(result, person.quickSummary, Boolean(args.notes));
 }
 

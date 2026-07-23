@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { SurfacedPersonRow, surfacedDateLabel } from "@/components/people/surfaced-person-row";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { CompanyReferenceField } from "@/components/people/company-reference-field";
+import { PERSONAL_RELATION_OPTIONS, PROFESSIONAL_RELATION_OPTIONS } from "@shared/people-metadata";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useVaults } from "@/hooks/use-vaults";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -316,18 +317,7 @@ const INTERACTION_ICONS: Record<string, typeof MessageSquare> = {
   support: Shield,
 };
 
-const RELATION_OPTIONS = [
-  "Mother", "Father", "Biological Father", "Step Mother", "Step Father",
-  "Brother", "Sister", "Half Brother", "Half Sister", "Step Brother", "Step Sister",
-  "Grandmother", "Grandfather", "Step Grandmother", "Step Grandfather",
-  "Aunt", "Uncle", "Cousin", "Step Cousin",
-  "Son", "Daughter", "Step Son", "Step Daughter",
-  "Nephew", "Niece", "Husband", "Wife", "Spouse", "Ex-Spouse", "In-Law", "Other",
-];
-
-const PROFESSIONAL_RELATION_OPTIONS = [
-  "Partner", "Investor", "Advisor", "Colleague", "Employee", "Vendor", "Customer",
-];
+const RELATION_OPTIONS = PERSONAL_RELATION_OPTIONS;
 
 function daysAgo(dateStr?: string): string {
   if (!dateStr) return "Never";
@@ -2385,7 +2375,7 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
           <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company)} showEmpty={showEmptyProfileRows} mobileLayout="inline" testId="row-profile-company">
             <CompanyReferenceField value={person.companyId ? `@company:${person.companyId}` : person.company || ""} onCommit={(value) => {
               const match = value.match(/^@company:([^\s]+)$/);
-              updateMutation.mutate(match ? { companyId: match[1] } : { company: value, companyId: "" });
+              updateMutation.mutate({ companyId: match ? match[1] : "" });
             }} />
           </ProfileTreeRow>
 
