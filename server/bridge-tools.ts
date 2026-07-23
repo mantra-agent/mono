@@ -9471,7 +9471,7 @@ ${refs}` : ""),
         }
 
         return { result: JSON.stringify({
-          environment: env.name,
+          environment: environmentAccess.environment.name,
           provider: hostingProvider,
           deployment,
           url: checkUrl || null,

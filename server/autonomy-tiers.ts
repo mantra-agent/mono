@@ -56,6 +56,19 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   session: { default: 0, actions: { send_message: 1 } },
   settings: { default: 1, actions: { get: 0 } },
   system: { default: 0, actions: { create_issue: 1 } },
+  railway: { default: 2, actions: {
+    status: 0, deployments: 0, logs: 0, build_logs: 0, list_variables: 0,
+  }},
+  sentry: { default: 2, actions: {
+    status: 0, issues: 0, issue: 0, events: 0, latest_event: 0,
+  }},
+  platforms: { default: 2, actions: {
+    list_connections: 0, get_connection: 0, test_connection: 0,
+    list_environments: 0, get_environment: 0, get_environment_status: 0,
+    get_build_lifecycle: 0, get_build_status: 0, list_environment_workflows: 0,
+    get_context_artifacts: 0, get_cloudflare_pages_project: 0,
+    poll_cloudflare_pages_deployment: 0,
+  }},
   observe: { default: 1 },
   orient: { default: 1 },
   cognition: { default: 1, actions: { get_emotion: 0, emotion_history: 0, get_persona: 0, list_personas: 0 } },
