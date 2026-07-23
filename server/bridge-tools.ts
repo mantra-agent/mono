@@ -13305,6 +13305,11 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           content: detail.claim.content,
           claimType: detail.claim.claimType,
           confidence: detail.claim.confidence,
+          extractionConfidence: detail.claim.confidence,
+          integrationLevel: detail.dimensions.integration.level,
+          claimCertainty: detail.dimensions.certainty,
+          strengthProjection: detail.dimensions.strength,
+          temporalApplicability: detail.dimensions.temporalApplicability,
           lifecycleStage: detail.claim.lifecycleStage,
           source: detail.claim.source,
           sourceId: detail.claim.sourceId,
@@ -13363,6 +13368,16 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           context: (args.context as string) ?? "",
           quote: (args.quote as string | null) ?? null,
           strength: typeof args.strength === "number" ? args.strength : 1,
+          clarity: typeof args.clarity === "number" ? args.clarity : null,
+          certainty: typeof args.relationshipCertainty === "number" ? args.relationshipCertainty : null,
+          sourceObservedAt: typeof args.sourceObservedAt === "string" ? new Date(args.sourceObservedAt) : null,
+          sourceLineageKey: typeof args.sourceLineageKey === "string" ? args.sourceLineageKey : null,
+          independence: args.sourceIndependence === "independent" || args.sourceIndependence === "same_lineage" || args.sourceIndependence === "unknown"
+            ? args.sourceIndependence
+            : "unknown",
+          producerMethod: typeof args.producerMethod === "string" ? args.producerMethod : "memory_tool",
+          derivationVersion: typeof args.derivationVersion === "string" ? args.derivationVersion : null,
+          provenance: args.sourceProvenance && typeof args.sourceProvenance === "object" ? args.sourceProvenance : {},
         });
         return { result: JSON.stringify({ created: Boolean(ref), storage: "memory_vnext_claims", claimId, source: ref }) };
       } catch (err: unknown) {
@@ -13443,6 +13458,33 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           sources: detail.sources.map(r => ({ ...r, createdAt: iso(r.createdAt) })),
           entityLinks: detail.entityLinks.map(r => ({ ...r, createdAt: iso(r.createdAt) })),
           claimLinks: detail.claimLinks.map(r => ({ ...r, createdAt: iso(r.createdAt) })),
+          dimensions: {
+            ...detail.dimensions,
+            strength: {
+              ...detail.dimensions.strength,
+              latestEventAt: iso(detail.dimensions.strength.latestEventAt),
+              recentEvidence: detail.dimensions.strength.recentEvidence.map(event => ({
+                ...event,
+                occurredAt: iso(event.occurredAt),
+              })),
+            },
+            sourceClarity: {
+              ...detail.dimensions.sourceClarity,
+              evidence: detail.dimensions.sourceClarity.evidence.map(evidence => ({
+                ...evidence,
+                sourceObservedAt: iso(evidence.sourceObservedAt),
+              })),
+            },
+            temporalApplicability: {
+              ...detail.dimensions.temporalApplicability,
+              evaluatedAt: iso(detail.dimensions.temporalApplicability.evaluatedAt),
+              observedAt: iso(detail.dimensions.temporalApplicability.observedAt),
+              validFrom: iso(detail.dimensions.temporalApplicability.validFrom),
+              validUntil: iso(detail.dimensions.temporalApplicability.validUntil),
+              occurredAt: iso(detail.dimensions.temporalApplicability.occurredAt),
+              expectedBy: iso(detail.dimensions.temporalApplicability.expectedBy),
+            },
+          },
           lifecycle: {
             ...detail.lifecycle,
             stageUpdatedAt: iso(detail.lifecycle.stageUpdatedAt),

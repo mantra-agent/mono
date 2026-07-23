@@ -38,6 +38,7 @@ import { storageBackend } from "../object_storage/objectStorage";
 import { vaultObjectKeyAuto } from "../object_storage/vault-keys";
 import { randomUUID, createHash } from "crypto";
 import { memoryVnextClaimStorage } from "./vnext-claim-storage";
+import type { VnextClaimDimensions } from "./vnext-claim-dimensions";
 import { runVnextLifecycle } from "./vnext-lifecycle";
 import { listVisibleSources } from "./vnext-source-queue";
 import { peopleStorage } from "../people-storage";
@@ -64,6 +65,12 @@ function serializeVnextClaim(claim: MemoryVnextClaim) {
     content: claim.content,
     claimType: claim.claimType,
     confidence: claim.confidence,
+    extractionConfidence: claim.confidence,
+    observedAt: serializeDate(claim.observedAt),
+    validFrom: serializeDate(claim.validFrom),
+    validUntil: serializeDate(claim.validUntil),
+    occurredAt: serializeDate(claim.occurredAt),
+    expectedBy: serializeDate(claim.expectedBy),
     topics: claim.topics ?? [],
     entityMentions: claim.entityMentions ?? [],
     sourceClaimIndex: claim.sourceClaimIndex,
@@ -85,7 +92,11 @@ function serializeVnextSourceRef(ref: MemoryVnextSourceRef) {
   return {
     id: ref.id, claimId: ref.claimId, sourceType: ref.sourceType, sourceId: ref.sourceId,
     relationship: ref.relationship, context: ref.context, quote: ref.quote, spanStart: ref.spanStart,
-    spanEnd: ref.spanEnd, strength: ref.strength, createdAt: serializeDate(ref.createdAt),
+    spanEnd: ref.spanEnd, strength: ref.strength, clarity: ref.clarity, certainty: ref.certainty,
+    sourceObservedAt: serializeDate(ref.sourceObservedAt), sourceLineageKey: ref.sourceLineageKey,
+    independence: ref.independence, producerMethod: ref.producerMethod,
+    derivationVersion: ref.derivationVersion, provenance: ref.provenance,
+    createdAt: serializeDate(ref.createdAt),
   };
 }
 
@@ -109,7 +120,42 @@ function serializeVnextEntityLink(link: MemoryVnextEntityLink) {
 }
 
 function serializeVnextClaimLink(link: MemoryVnextClaimLink) {
-  return { id: link.id, fromClaimId: link.fromClaimId, toClaimId: link.toClaimId, relationship: link.relationship, strength: link.strength, createdAt: serializeDate(link.createdAt) };
+  return {
+    id: link.id, fromClaimId: link.fromClaimId, toClaimId: link.toClaimId,
+    relationship: link.relationship, strength: link.strength, certainty: link.certainty,
+    producerMethod: link.producerMethod, derivationVersion: link.derivationVersion,
+    provenance: link.provenance, createdAt: serializeDate(link.createdAt),
+  };
+}
+
+function serializeVnextDimensions(dimensions: VnextClaimDimensions) {
+  return {
+    ...dimensions,
+    strength: {
+      ...dimensions.strength,
+      latestEventAt: serializeDate(dimensions.strength.latestEventAt),
+      recentEvidence: dimensions.strength.recentEvidence.map((event) => ({
+        ...event,
+        occurredAt: serializeDate(event.occurredAt),
+      })),
+    },
+    sourceClarity: {
+      ...dimensions.sourceClarity,
+      evidence: dimensions.sourceClarity.evidence.map((evidence) => ({
+        ...evidence,
+        sourceObservedAt: serializeDate(evidence.sourceObservedAt),
+      })),
+    },
+    temporalApplicability: {
+      ...dimensions.temporalApplicability,
+      evaluatedAt: serializeDate(dimensions.temporalApplicability.evaluatedAt),
+      observedAt: serializeDate(dimensions.temporalApplicability.observedAt),
+      validFrom: serializeDate(dimensions.temporalApplicability.validFrom),
+      validUntil: serializeDate(dimensions.temporalApplicability.validUntil),
+      occurredAt: serializeDate(dimensions.temporalApplicability.occurredAt),
+      expectedBy: serializeDate(dimensions.temporalApplicability.expectedBy),
+    },
+  };
 }
 
 
@@ -1382,6 +1428,7 @@ async function handleGetVnextClaim(req: Request, res: Response): Promise<void> {
       sources: detail.sources.map(serializeVnextSourceRef),
       entityLinks: detail.entityLinks.map(serializeVnextEntityLink),
       claimLinks: detail.claimLinks.map(serializeVnextClaimLink),
+      dimensions: serializeVnextDimensions(detail.dimensions),
       lifecycle: {
         ...detail.lifecycle,
         stageUpdatedAt: serializeDate(detail.lifecycle.stageUpdatedAt),

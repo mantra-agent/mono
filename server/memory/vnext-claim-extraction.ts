@@ -557,6 +557,13 @@ async function processExtractedClaims(
             relationship: "extracted_from",
             context: "Claim extracted from source memory entry",
             strength: 1,
+            clarity: null,
+            certainty: null,
+            sourceObservedAt: sourceDate,
+            sourceLineageKey: `${parentEntry.source}:${parentEntry.sourceId || parentEntry.id}`,
+            independence: "unknown",
+            producerMethod: "claim_extraction",
+            derivationVersion: "vnext-orthogonal-v1",
           },
         ],
     writeBudget: {

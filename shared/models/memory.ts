@@ -440,7 +440,13 @@ export const memoryVnextClaims = pgTable(
     title: text("title"),
     content: text("content").notNull(),
     claimType: text("claim_type").notNull(),
+    /** Compatibility-only extraction model confidence. Claim certainty is derived independently. */
     confidence: real("confidence").notNull().default(0.5),
+    observedAt: timestamp("observed_at", { withTimezone: true, precision: 6 }),
+    validFrom: timestamp("valid_from", { withTimezone: true, precision: 6 }),
+    validUntil: timestamp("valid_until", { withTimezone: true, precision: 6 }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, precision: 6 }),
+    expectedBy: timestamp("expected_by", { withTimezone: true, precision: 6 }),
     topics: text("topics")
       .array()
       .default(sql`'{}'::text[]`),
@@ -517,7 +523,16 @@ export const memoryVnextSourceRefs = pgTable(
     quote: text("quote"),
     spanStart: integer("span_start"),
     spanEnd: integer("span_end"),
+    /** Legacy source strength compatibility field. Clarity is the canonical evidence-explicitness signal. */
     strength: real("strength").notNull().default(1),
+    clarity: real("clarity"),
+    certainty: real("certainty"),
+    sourceObservedAt: timestamp("source_observed_at", { withTimezone: true, precision: 6 }),
+    sourceLineageKey: text("source_lineage_key"),
+    independence: text("independence"),
+    producerMethod: text("producer_method"),
+    derivationVersion: text("derivation_version"),
+    provenance: jsonb("provenance").notNull().default(sql`'{}'::jsonb`),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
@@ -604,7 +619,12 @@ export const memoryVnextClaimLinks = pgTable(
       .notNull()
       .references(() => memoryVnextClaims.id, { onDelete: "cascade" }),
     relationship: text("relationship").notNull(),
+    /** Legacy relationship strength compatibility field. */
     strength: real("strength").notNull().default(0.5),
+    certainty: real("certainty"),
+    producerMethod: text("producer_method"),
+    derivationVersion: text("derivation_version"),
+    provenance: jsonb("provenance").notNull().default(sql`'{}'::jsonb`),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
@@ -636,6 +656,13 @@ export const insertMemoryVnextClaimLinkSchema = createInsertSchema(
 
 export type MemoryVnextClaimLink = typeof memoryVnextClaimLinks.$inferSelect;
 export type InsertMemoryVnextClaimLink = z.infer<typeof insertMemoryVnextClaimLinkSchema>;
+
+export const memoryVnextIntegrationLevels = ["isolated", "associated", "integrated", "structural"] as const;
+export type MemoryVnextIntegrationLevel = (typeof memoryVnextIntegrationLevels)[number];
+export const memoryVnextCertaintyStatuses = ["unassessed", "supported", "contested"] as const;
+export type MemoryVnextCertaintyStatus = (typeof memoryVnextCertaintyStatuses)[number];
+export const memoryVnextApplicabilityStatuses = ["unknown", "upcoming", "current", "expired", "historical"] as const;
+export type MemoryVnextApplicabilityStatus = (typeof memoryVnextApplicabilityStatuses)[number];
 
 /**
  * Passive context exposure is append-only telemetry. It is idempotent per
