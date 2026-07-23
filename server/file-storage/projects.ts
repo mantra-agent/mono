@@ -326,10 +326,10 @@ export class FileProjectStorage {
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("Project Vault membership requires an authenticated user account");
     }
-    const normalizedVaultIds = [...new Set(vaultIds.map(vaultId => vaultId.trim()).filter(Boolean))];
-    if (normalizedVaultIds.length === 0) throw new Error("A Project must belong to at least one Vault");
-    if (normalizedVaultIds.some(vaultId => !principal.visibleVaultIds.includes(vaultId))) {
-      throw new Error("Every Project Vault must be currently visible");
+    const normalizedVisibleVaultIds = [...new Set(vaultIds.map(vaultId => vaultId.trim()).filter(Boolean))];
+    if (normalizedVisibleVaultIds.length === 0) throw new Error("A Project must belong to at least one visible Vault");
+    if (normalizedVisibleVaultIds.some(vaultId => !principal.visibleVaultIds.includes(vaultId))) {
+      throw new Error("Every selected Project Vault must be currently visible");
     }
 
     await db.transaction(async tx => {
@@ -341,9 +341,13 @@ export class FileProjectStorage {
           projectVaultMembershipScopeColumns,
           eq(projectVaultMemberships.projectId, projectId),
         ));
+      const hiddenVaultIds = existingMemberships
+        .map(membership => membership.vaultId)
+        .filter(vaultId => !principal.visibleVaultIds.includes(vaultId));
+      const finalVaultIds = [...new Set([...hiddenVaultIds, ...normalizedVisibleVaultIds])];
       const lockedVaultIds = [...new Set([
         ...existingMemberships.map(membership => membership.vaultId),
-        ...normalizedVaultIds,
+        ...finalVaultIds,
       ])].sort();
       for (const vaultId of lockedVaultIds) {
         await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.OBJECT_GRANT, `vault:${vaultId}`);
@@ -363,11 +367,11 @@ export class FileProjectStorage {
         .select({ id: vaults.id })
         .from(vaults)
         .where(and(
-          inArray(vaults.id, normalizedVaultIds),
+          inArray(vaults.id, finalVaultIds),
           eq(vaults.accountId, principal.accountId),
           eq(vaults.isArchived, false),
         ));
-      if (availableVaults.length !== normalizedVaultIds.length) {
+      if (availableVaults.length !== finalVaultIds.length) {
         throw new Error("Every Project Vault must be live and writable in the active account");
       }
 
@@ -379,7 +383,7 @@ export class FileProjectStorage {
         ),
       );
       await tx.insert(projectVaultMemberships).values(
-        normalizedVaultIds.map(vaultId => ({
+        finalVaultIds.map(vaultId => ({
           projectId,
           vaultId,
           scope: "user",
@@ -389,9 +393,9 @@ export class FileProjectStorage {
         })),
       );
 
-      const primaryVaultId = normalizedVaultIds.includes(project.vaultId)
+      const primaryVaultId = finalVaultIds.includes(project.vaultId)
         ? project.vaultId
-        : normalizedVaultIds[0];
+        : normalizedVisibleVaultIds[0];
       await tx.update(projects)
         .set({ vaultId: primaryVaultId, updatedAt: new Date() })
         .where(and(

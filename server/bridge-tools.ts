@@ -104,6 +104,32 @@ type ToolHandlerResult = { result: string; error?: boolean; data?: Record<string
 
 const PEOPLE_AGENDA_SURFACE_LIMIT = 3;
 
+type TaskAssignmentToolPatch = {
+  assigneeSubjectType: "user" | "invited_subject";
+  assigneeSubjectId: string;
+};
+
+function taskAssignmentFromToolArgs(
+  args: Record<string, any>,
+): { assignment?: TaskAssignmentToolPatch; error?: string } {
+  const rawId = args.assigneeSubjectId;
+  const normalizedId = typeof rawId === "string" ? rawId.trim() : "";
+  if (!normalizedId || normalizedId === "__omit__") return {};
+
+  const rawType = args.assigneeSubjectType;
+  const normalizedType = typeof rawType === "string" ? rawType.trim() : "";
+  if (normalizedType !== "user" && normalizedType !== "invited_subject") {
+    return { error: "Task assignment requires assigneeSubjectType when assigneeSubjectId is provided" };
+  }
+
+  return {
+    assignment: {
+      assigneeSubjectType: normalizedType,
+      assigneeSubjectId: normalizedId,
+    },
+  };
+}
+
 function withPeopleSummaryStatus(
   result: string,
   quickSummary: unknown,
@@ -4572,14 +4598,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     try {
       const context = sourceSessionLine || "";
+      const assignmentInput = taskAssignmentFromToolArgs(args);
+      if (assignmentInput.error) return { result: assignmentInput.error, error: true };
 
       const taskData = {
         title,
         description,
         priority: args.priority || "mid",
         owner,
-        ...(args.assigneeSubjectType !== undefined ? { assigneeSubjectType: args.assigneeSubjectType } : {}),
-        ...(args.assigneeSubjectId !== undefined ? { assigneeSubjectId: args.assigneeSubjectId } : {}),
+        ...assignmentInput.assignment,
         projectId: args.projectId ?? null,
         status: args.status || "ready",
         requiresReview: args.requiresReview ?? false,
@@ -4672,8 +4699,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (args.impact !== undefined) raw.impact = args.impact;
     if (args.effort !== undefined) raw.effort = args.effort;
     if (args.owner !== undefined) raw.owner = args.owner;
-    if (args.assigneeSubjectType !== undefined) raw.assigneeSubjectType = args.assigneeSubjectType;
-    if (args.assigneeSubjectId !== undefined) raw.assigneeSubjectId = args.assigneeSubjectId;
+    const assignmentInput = taskAssignmentFromToolArgs(args);
+    if (assignmentInput.error) return { result: assignmentInput.error, error: true };
+    if (assignmentInput.assignment) Object.assign(raw, assignmentInput.assignment);
     if (args.requiresReview !== undefined) raw.requiresReview = args.requiresReview;
     if (args.projectId !== undefined) raw.projectId = args.projectId;
     if (args.milestoneId !== undefined) raw.milestoneId = args.milestoneId;

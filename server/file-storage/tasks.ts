@@ -54,6 +54,7 @@ function assignmentFromValues(
   if (!hasType || !hasId) throw new Error("Task assignment requires both assigneeSubjectType and assigneeSubjectId");
   const normalizedId = subjectId!.trim();
   if (!normalizedId) throw new Error("Task assigneeSubjectId cannot be blank");
+  if (normalizedId === "__omit__") throw new Error("Task assigneeSubjectId must identify a real subject");
   return { subjectType: subjectType!, subjectId: normalizedId };
 }
 
