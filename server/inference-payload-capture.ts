@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { db } from "./db";
+import { db, runOutsideDatabaseTransaction, withDatabaseLane } from "./db";
 import { createLogger } from "./log";
 import { getCurrentPrincipal, requireCurrentUserPrincipal } from "./principal-context";
 import { ownedInsertValues, visibleScopePredicate } from "./scoped-storage";
@@ -29,12 +29,61 @@ export interface CaptureInferencePayloadInput {
   source?: string | null;
 }
 
-function serializedLength(value: unknown): number {
-  try {
-    return JSON.stringify(value).length;
-  } catch {
-    return 0;
+interface EncodedProviderRequest {
+  encoding: "base64-json-utf8-v1";
+  data: string;
+}
+
+function serializeProviderRequest(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error("Provider request is not JSON serializable");
   }
+  return serialized;
+}
+
+function encodeProviderRequest(serialized: string): EncodedProviderRequest {
+  return {
+    encoding: "base64-json-utf8-v1",
+    data: Buffer.from(serialized, "utf8").toString("base64"),
+  };
+}
+
+function isEncodedProviderRequest(value: unknown): value is EncodedProviderRequest {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<EncodedProviderRequest>;
+  return candidate.encoding === "base64-json-utf8-v1" && typeof candidate.data === "string";
+}
+
+function decodeProviderRequest(value: unknown): unknown {
+  if (!isEncodedProviderRequest(value)) return value;
+  try {
+    return JSON.parse(Buffer.from(value.data, "base64").toString("utf8"));
+  } catch (error) {
+    log.error(`provider payload decode failed: ${formatErrorChain(error)}`);
+    throw new Error("Inference payload capture is unreadable");
+  }
+}
+
+function formatErrorChain(error: unknown): string {
+  const messages: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; current !== undefined && current !== null && depth < 4; depth++) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    if (current instanceof Error) {
+      const code = typeof (current as Error & { code?: unknown }).code === "string"
+        ? ` code=${(current as Error & { code: string }).code}`
+        : "";
+      messages.push(`${current.message}${code}`);
+      current = (current as Error & { cause?: unknown }).cause;
+      continue;
+    }
+    messages.push(String(current));
+    break;
+  }
+  return messages.join(" <- ");
 }
 
 function toSummary(row: typeof inferencePayloadCaptures.$inferSelect): InferencePayloadCaptureSummary {
@@ -69,47 +118,53 @@ export async function captureInferencePayload(input: CaptureInferencePayloadInpu
     ownerUserId: inferencePayloadCaptures.ownerUserId,
     accountId: inferencePayloadCaptures.accountId,
   });
-  const requestChars = serializedLength(input.request);
-
   try {
-    await db.transaction(async (tx) => {
-      await tx.insert(inferencePayloadCaptures).values({
-        id,
-        ...ownership,
-        createdByUserId: principal.userId,
-        provider: input.provider,
-        model: input.model,
-        activity: input.activity ?? null,
-        boundary: input.boundary,
-        authority: input.authority,
-        observableBoundary: input.observableBoundary,
-        request: input.request,
-        requestChars,
-        excludedSensitiveFields: input.excludedSensitiveFields ?? [],
-        residualLimitation: input.residualLimitation ?? null,
-        attempt: input.attempt ?? 1,
-        metadata: input.metadata ?? {},
-        sessionId: input.sessionId ?? null,
-        source: input.source ?? null,
-      });
+    const serializedRequest = serializeProviderRequest(input.request);
+    const encodedRequest = encodeProviderRequest(serializedRequest);
+    const requestChars = serializedRequest.length;
 
-      await tx.execute(sql`
-        DELETE FROM inference_payload_captures
-        WHERE id IN (
-          SELECT id
-          FROM inference_payload_captures
-          WHERE scope = 'user'
-            AND owner_user_id = ${principal.userId}
-            AND account_id = ${principal.accountId}
-          ORDER BY captured_at DESC, id DESC
-          OFFSET ${INFERENCE_PAYLOAD_RETENTION_LIMIT}
-        )
-      `);
-    });
+    await runOutsideDatabaseTransaction(() =>
+      withDatabaseLane("general", () =>
+        db.transaction(async (tx) => {
+          await tx.insert(inferencePayloadCaptures).values({
+            id,
+            ...ownership,
+            createdByUserId: principal.userId,
+            provider: input.provider,
+            model: input.model,
+            activity: input.activity ?? null,
+            boundary: input.boundary,
+            authority: input.authority,
+            observableBoundary: input.observableBoundary,
+            request: encodedRequest,
+            requestChars,
+            excludedSensitiveFields: input.excludedSensitiveFields ?? [],
+            residualLimitation: input.residualLimitation ?? null,
+            attempt: input.attempt ?? 1,
+            metadata: input.metadata ?? {},
+            sessionId: input.sessionId ?? null,
+            source: input.source ?? null,
+          });
+
+          await tx.execute(sql`
+            DELETE FROM inference_payload_captures
+            WHERE id IN (
+              SELECT id
+              FROM inference_payload_captures
+              WHERE scope = 'user'
+                AND owner_user_id = ${principal.userId}
+                AND account_id = ${principal.accountId}
+              ORDER BY captured_at DESC, id DESC
+              OFFSET ${INFERENCE_PAYLOAD_RETENTION_LIMIT}
+            )
+          `);
+        }),
+      ),
+    );
     log.debug(`captured provider payload id=${id} provider=${input.provider} boundary=${input.boundary} chars=${requestChars}`);
     return id;
   } catch (error) {
-    log.error(`provider payload capture failed provider=${input.provider} boundary=${input.boundary}: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`provider payload capture failed provider=${input.provider} boundary=${input.boundary}: ${formatErrorChain(error)}`);
     return null;
   }
 }
@@ -157,7 +212,7 @@ export async function getInferencePayloadCapture(id: string): Promise<InferenceP
   if (!row) return null;
   return {
     ...toSummary(row),
-    request: row.request,
+    request: decodeProviderRequest(row.request),
     evidence: {
       authority: row.authority,
       observableBoundary: row.observableBoundary,

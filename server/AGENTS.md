@@ -244,6 +244,8 @@ AgentExecutor stream → publishJournalToUI() → SessionManager.applyEvent()
 
 Generic EventBus events are process-local operational signals. `chat.stream` is delivered synchronously and discarded; other events live in a principal-scoped 2,000-entry memory ring for current-boot history, hook testing, and reconnect replay. EventBus never writes to PostgreSQL. Canonical user state and hook execution records remain durable in their owning stores.
 
+Provider-bound inference payload captures are durable diagnostic evidence, not part of the caller's business mutation. `inference-payload-capture.ts` owns their principal-scoped write, retention, lossless JSONB-safe request envelope, and transparent decode. The write must run on the general lane outside any ambient database transaction so a caller rollback cannot erase evidence or turn capture into a nested savepoint.
+
 ### When Working Here
 - `SessionManager` is a singleton — one instance per server process
 - Chat response ownership begins when a message is accepted, before model selection or context assembly. `server/integrations/chat/run-lifecycle.ts` is the sole generation authority across preparation, execution, persistence, and finalization. User messages always persist; only the newest generation may produce or settle an assistant response. Supersession and explicit cancellation are distinct terminal reasons.

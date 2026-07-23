@@ -748,6 +748,15 @@ export function runWithDatabaseTransaction<T>(
   return databaseTransactionALS.run(transaction, operation);
 }
 
+/**
+ * Run durable evidence or recovery work without inheriting the caller's
+ * business transaction. Other async context, including Principal and query
+ * attribution, remains intact.
+ */
+export function runOutsideDatabaseTransaction<T>(operation: () => Promise<T>): Promise<T> {
+  return databaseTransactionALS.exit(operation);
+}
+
 const databaseProxyTarget = Object.create(null);
 export const db = new Proxy(databaseProxyTarget, {
   get(_target, property, receiver) {
