@@ -541,7 +541,7 @@ function calibrationStageContext(detail: WorkflowRunDetail): Record<string, unkn
   };
 }
 
-async function spawnWorkflowStageChild(parentSessionId: string, detail: WorkflowRunDetail, stageKey: string, stageTitle: string, attemptNumber: number, inputContext: WorkflowStageInputContext & { extraContext?: unknown }): Promise<string> {
+async function spawnWorkflowStageChild(parentSessionId: string, detail: WorkflowRunDetail, stageKey: string, stageTitle: string, personaName: WorkflowStageDefinition["persona"], attemptNumber: number, inputContext: WorkflowStageInputContext & { extraContext?: unknown }): Promise<string> {
   const { spawnChildSession } = await import("../sessions/tree");
   const spawnReason = `workflow:${detail.run.id}:${stageKey}:attempt-${attemptNumber}`;
   const result = await spawnChildSession(parentSessionId, {
@@ -556,6 +556,7 @@ async function spawnWorkflowStageChild(parentSessionId: string, detail: Workflow
     lineageId: parentSessionId,
     workflowRunId: detail.run.id,
     workflowStageAttemptId: inputContext.stageAttemptId,
+    personaName,
   });
   return result.sessionId;
 }
@@ -632,45 +633,45 @@ export const BUILD_WORKFLOW_TEMPLATE_ID = "build-v1";
 const buildDefinition = workflowTemplateDefinitionSchema.parse({
   stages: [
     {
-      key: "scope", title: "Design", position: 0, autonomyMode: "autonomous",
+      key: "scope", title: "Design", position: 0, autonomyMode: "autonomous", persona: "Architect",
       evidenceRequirements: ["A durable specification artifact (`kind: spec`) containing the complete implementation design, success conditions, target truth, verification path, and terminal state, grounded in the loaded governing context."],
       allowedTransitions: [{ toStageKey: "design_review", on: "pass" }, { toStageKey: null, on: "blocked" }],
     },
     {
-      key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review",
+      key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review", persona: "Architect",
       entryCriteria: ["Inspect the proposed design, the current user-visible artifact or system, and every loaded governing artifact relevant to the design."],
       evidenceRequirements: ["Find and report material defects, omissions, unjustified complexity, and governing-context violations. Require structural cures before passing."],
       exitCriteria: ["Pass only when the proposed design is coherent, complete, and compliant with the loaded governing context."],
       allowedTransitions: [{ toStageKey: "implement", on: "pass" }, { toStageKey: "scope", on: "fail" }],
     },
     {
-      key: "implement", title: "Implement", position: 2, autonomyMode: "autonomous",
+      key: "implement", title: "Implement", position: 2, autonomyMode: "autonomous", persona: "Engineer",
       entryCriteria: ["Load and implement the approved specification from Stage Inputs."],
       evidenceRequirements: ["Implementation evidence, build result, impact/change-scope evidence, and branch/commit references proving the approved specification was executed under the loaded governing context."],
       allowedTransitions: [{ toStageKey: "code_review", on: "pass" }, { toStageKey: "design_review", on: "blocked" }],
     },
     {
-      key: "code_review", title: "Implementation Review", position: 3, autonomyMode: "requires_agent_review",
+      key: "code_review", title: "Implementation Review", position: 3, autonomyMode: "requires_agent_review", persona: "Engineer",
       entryCriteria: ["Inspect the complete implementation, affected systems, approved design, and every loaded governing artifact before judging readiness."],
       evidenceRequirements: ["Find and report material defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation. State required cures, residual risk, and acceptance readiness."],
       exitCriteria: ["Pass only when no material implementation or governing-context violation remains."],
       allowedTransitions: [{ toStageKey: "acceptance", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "design_review", on: "blocked" }],
     },
     {
-      key: "acceptance", title: "Acceptance Test", position: 4, autonomyMode: "autonomous",
+      key: "acceptance", title: "Acceptance Test", position: 4, autonomyMode: "autonomous", persona: "Engineer",
       entryCriteria: ["Load the approved specification from Stage Inputs, then confirm the merged implementation is deployed and healthy in the target environment."],
       evidenceRequirements: ["Deployment, boot/health, target-route, screenshot, runtime-log, and safe feature-path evidence sufficient to determine whether the deployed result does what the approved specification requires."],
       exitCriteria: ["Pass only when the deployed system boots successfully and satisfies the approved specification."],
       allowedTransitions: [{ toStageKey: "calibration", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "implement", on: "blocked" }],
     },
     {
-      key: "calibration", title: "Calibration", position: 5, autonomyMode: "autonomous",
+      key: "calibration", title: "Calibration", position: 5, autonomyMode: "autonomous", persona: "Architect",
       entryCriteria: ["Load the approved specification and acceptance evidence from Stage Inputs."],
       evidenceRequirements: ["Compare the approved specification, implementation outcome, retries, and acceptance evidence to identify what the run taught us about the product and what should change next."],
       allowedTransitions: [{ toStageKey: "documentation", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "scope", on: "blocked" }, { toStageKey: null, on: "needs_review", reason: "hard gate" }],
     },
     {
-      key: "documentation", title: "Documentation", position: 6, autonomyMode: "autonomous",
+      key: "documentation", title: "Documentation", position: 6, autonomyMode: "autonomous", persona: "Default",
       evidenceRequirements: ["Durable final documentation that records the implemented truth, linked evidence, decisions, handoff, and any remaining gates under the loaded governing context."],
       allowedTransitions: [{ toStageKey: null, on: "pass", reason: "complete" }, { toStageKey: "documentation", on: "fail" }],
     },
@@ -1179,7 +1180,7 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
   const persistedInputContext = { ...inputContext, stageAttemptId: attempt.id };
   let childSessionId = options.childSessionId || null;
   try {
-    childSessionId = childSessionId || (options.spawnChildSession === false ? null : await spawnWorkflowStageChild(parentSessionId, detail, key, stage.title, attemptNumber, persistedInputContext));
+    childSessionId = childSessionId || (options.spawnChildSession === false ? null : await spawnWorkflowStageChild(parentSessionId, detail, key, stage.title, stage.persona, attemptNumber, persistedInputContext));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await db.update(workflowStageAttempts).set({ status: "failed", result: "failed", outputSummary: `Failed to spawn workflow child: ${message}`, failureContext: { reason: "child_spawn_failed", message }, completedAt: new Date(), updatedAt: new Date() }).where(writable(attemptScopeColumns, and(eq(workflowStageAttempts.workflowRunId, runId), eq(workflowStageAttempts.id, attempt.id))));

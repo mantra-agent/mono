@@ -1489,6 +1489,7 @@ export const workflowRunStatusSchema = z.enum(workflowRunStatuses);
 export const workflowStageStatusSchema = z.enum(workflowStageStatuses);
 export const workflowAttemptResultSchema = z.enum(workflowAttemptResults);
 export const workflowAutonomyModeSchema = z.enum(workflowAutonomyModes);
+export const workflowStagePersonaSchema = z.enum(["Engineer", "Architect", "Default"]);
 export const workflowTransitionTriggerSchema = z.enum(workflowTransitionTriggers);
 export const workflowArtifactKindSchema = z.enum(workflowArtifactKinds);
 export const workflowGateStatusSchema = z.enum(workflowGateStatuses);
@@ -1498,6 +1499,7 @@ export const workflowStageDefinitionSchema = z.object({
   title: z.string().trim().min(1),
   position: z.number().int().nonnegative(),
   autonomyMode: workflowAutonomyModeSchema,
+  persona: workflowStagePersonaSchema.default("Default"),
   entryCriteria: z.array(z.string()).optional(),
   exitCriteria: z.array(z.string()).optional(),
   evidenceRequirements: z.array(z.string()).optional(),
