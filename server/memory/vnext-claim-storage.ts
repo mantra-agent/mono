@@ -23,7 +23,7 @@ import {
   type MemoryVnextEntityLink,
   type MemoryVnextClaimLink,
 } from "@shared/schema";
-import type { ClaimCandidate } from "./vnext-claim-extraction";
+import type { ClaimCandidate, ObservationRelationshipCandidate } from "./vnext-claim-extraction";
 import { deriveVnextClaimDimensions, type VnextClaimDimensions } from "./vnext-claim-dimensions";
 import { generateEmbedding } from "./embedding";
 import { MEMORY_VNEXT_EMBEDDING_PROFILE } from "./embedding-profile";
@@ -1851,12 +1851,16 @@ export const memoryVnextClaimStorage = new MemoryVnextClaimStorage();
  */
 export interface PersistClaimCandidatesInput {
   claims: ClaimCandidate[];
+  /** Source-backed relationships between candidates in this observation. */
+  relationships?: ObservationRelationshipCandidate[];
   source: MemorySource;
   sourceId?: string | null;
   /** Legacy memory entry ID. Null when not extracted from a memory_entries row. */
   sourceMemoryId?: number | null;
-  /** Source refs to attach to each created claim */
+  /** Source refs shared by every candidate in this observation. */
   sourceRefs?: VnextClaimSourceInput[];
+  /** Claim-index-specific evidence merged with shared source refs. */
+  sourceRefsByClaim?: Record<number, VnextClaimSourceInput[]>;
   /** Optional per-claim write budget metadata */
   writeBudget?: CreateVnextClaimInput["writeBudget"];
   /** Optional override for createdAt on new claims */
@@ -1868,11 +1872,15 @@ export interface PersistClaimCandidatesInput {
 }
 
 export interface PersistClaimCandidatesResult {
+  outcome: "committed" | "empty";
   created: number;
   reinforced: number;
   skipped: number;
   /** Number of candidates merged during intra-batch semantic dedup */
   mergedInBatch: number;
+  persistedClaimIds: Record<number, number>;
+  relationshipsWritten: number;
+  relationshipsSkipped: number;
 }
 
 /**
@@ -1889,15 +1897,17 @@ export interface PersistClaimCandidatesResult {
  * All writes go through memoryVnextClaimStorage.createClaim, which is
  * the single DB insert path for memory_vnext_claims.
  */
-export async function persistClaimCandidates(
+export async function applyObservation(
   input: PersistClaimCandidatesInput,
 ): Promise<PersistClaimCandidatesResult> {
   const {
     claims,
+    relationships = [],
     source,
     sourceId,
     sourceMemoryId,
     sourceRefs,
+    sourceRefsByClaim = {},
     writeBudget,
     createdAt,
     metadata: extraMetadata,
@@ -1908,6 +1918,51 @@ export async function persistClaimCandidates(
   let reinforced = 0;
   let skipped = 0;
   let mergedInBatch = 0;
+  let relationshipsWritten = 0;
+  let relationshipsSkipped = 0;
+
+  const sourceEvidenceForClaim = (claim: ClaimCandidate, claimIndex: number): VnextClaimSourceInput[] => {
+    const claimRefs = sourceRefsByClaim[claimIndex] ?? [];
+    const refs = claimRefs.length > 0
+      ? claimRefs
+      : sourceRefs?.length
+      ? sourceRefs
+      : [{
+          sourceType: sourceMemoryId ? "memory" : "queue",
+          sourceId: sourceMemoryId ? String(sourceMemoryId) : (sourceId || "unknown"),
+          relationship: "extracted_from",
+          context: `Extracted from ${source}`,
+          strength: 1,
+        }];
+    return refs.map((ref) => ({
+      ...ref,
+      clarity: ref.clarity ?? claim.clarity ?? claim.confidence,
+      certainty: ref.certainty ?? claim.confidence,
+      quote: ref.quote ?? claim.evidenceQuote ?? null,
+      sourceObservedAt: ref.sourceObservedAt ?? createdAt ?? new Date(),
+      sourceLineageKey: ref.sourceLineageKey ?? `${ref.sourceType}:${ref.sourceId}`,
+      independence: ref.independence ?? "unknown",
+      producerMethod: ref.producerMethod ?? "claim_observation_extraction",
+      derivationVersion: ref.derivationVersion ?? "vnext-observation-v1",
+      provenance: {
+        ...(ref.provenance ?? {}),
+        observationSource: `${source}:${sourceId ?? sourceMemoryId ?? "unknown"}`,
+      },
+    }));
+  };
+
+  if (claims.length === 0) {
+    return {
+      outcome: "empty",
+      created,
+      reinforced,
+      skipped,
+      mergedInBatch,
+      persistedClaimIds: {},
+      relationshipsWritten,
+      relationshipsSkipped,
+    };
+  }
 
   // -----------------------------------------------------------------------
   // Phase 1: Embed all candidates
@@ -2026,7 +2081,7 @@ export async function persistClaimCandidates(
       }
 
       if (nearDuplicate) {
-        for (const sourceRef of sourceRefs ?? []) {
+        for (const sourceRef of sourceEvidenceForClaim(claim, i)) {
           await memoryVnextClaimStorage.addSourceRef(nearDuplicate.id, sourceRef);
         }
         log.debug(JSON.stringify({
@@ -2044,25 +2099,7 @@ export async function persistClaimCandidates(
         continue;
       }
 
-      // Build source refs (default: extracted_from the source)
-      const claimSourceRefs: VnextClaimSourceInput[] = sourceRefs?.length
-        ? sourceRefs
-        : [
-            {
-              sourceType: sourceMemoryId ? "memory" : "queue",
-              sourceId: sourceMemoryId ? String(sourceMemoryId) : (sourceId || "unknown"),
-              relationship: "extracted_from",
-              context: `Extracted from ${source}`,
-              strength: 1,
-              clarity: null,
-              certainty: null,
-              sourceObservedAt: createdAt,
-              sourceLineageKey: `${source}:${sourceId || sourceMemoryId || "unknown"}`,
-              independence: "unknown",
-              producerMethod: "claim_extraction",
-              derivationVersion: "vnext-orthogonal-v1",
-            },
-          ];
+      const claimSourceRefs = sourceEvidenceForClaim(claim, i);
 
       const claimEntry = await memoryVnextClaimStorage.createClaim({
         claim,
@@ -2113,6 +2150,69 @@ export async function persistClaimCandidates(
     return survivorIndex == null ? undefined : persistedClaimIds.get(survivorIndex);
   };
 
+  for (const relationship of relationships) {
+    const fromClaimId = resolvePersistedClaimId(relationship.fromClaimIndex);
+    const toClaimId = resolvePersistedClaimId(relationship.toClaimIndex);
+    if (!fromClaimId || !toClaimId || fromClaimId === toClaimId) {
+      relationshipsSkipped++;
+      log.warn(JSON.stringify({
+        event: "memory.vnext.observation_relationship_skipped",
+        reason: fromClaimId === toClaimId ? "endpoints_consolidated" : "endpoint_unresolved",
+        fromClaimIndex: relationship.fromClaimIndex,
+        toClaimIndex: relationship.toClaimIndex,
+        relationship: relationship.relationship,
+      }));
+      continue;
+    }
+    try {
+      const [fromSources, toSources] = await Promise.all([
+        memoryVnextClaimStorage.listSourceRefs(fromClaimId),
+        memoryVnextClaimStorage.listSourceRefs(toClaimId),
+      ]);
+      const observationSourceKeys = new Set(
+        [...sourceEvidenceForClaim(claims[relationship.fromClaimIndex], relationship.fromClaimIndex), ...sourceEvidenceForClaim(claims[relationship.toClaimIndex], relationship.toClaimIndex)]
+          .map((ref) => `${ref.sourceType}:${ref.sourceId}`),
+      );
+      const evidenceSourceRefIds = [...new Set([...fromSources, ...toSources]
+        .filter((ref) => observationSourceKeys.has(`${ref.sourceType}:${ref.sourceId}`))
+        .map((ref) => ref.id))]
+        .slice(0, 20);
+      if (evidenceSourceRefIds.length === 0) throw new Error("Observation relationship has no persisted endpoint evidence");
+      const { upsertClaimRelationship } = await import("./vnext-transition-graph");
+      const causal = ["explains", "contributed_to", "caused", "prevented", "resulted_in"].includes(relationship.relationship);
+      const temporal = ["precedes", "followed_by", "overlaps"].includes(relationship.relationship);
+      await upsertClaimRelationship({
+        fromClaimId,
+        toClaimId,
+        relationship: relationship.relationship,
+        certainty: relationship.certainty,
+        producerKind: "asserted",
+        epistemicStatus: causal ? "causal_hypothesis" : temporal ? "observation" : "hypothesis",
+        provenance: {
+          source: "claim_observation_extraction",
+          sourceIdentity: `${source}:${sourceId ?? sourceMemoryId ?? "unknown"}`,
+          evidenceQuote: relationship.evidenceQuote.slice(0, 3_000),
+          clarity: relationship.clarity,
+          causalTruthEstablished: false,
+        },
+        evidenceSourceRefIds,
+        replayKey: `observation:${source}:${sourceId ?? sourceMemoryId ?? "unknown"}:${relationship.fromClaimIndex}:${relationship.toClaimIndex}:${relationship.relationship}`,
+        producerMethod: "claim_observation_extraction",
+        derivationVersion: "vnext-observation-v1",
+      });
+      relationshipsWritten++;
+    } catch (relationshipError) {
+      log.error(JSON.stringify({
+        event: "memory.vnext.observation_relationship_failed",
+        fromClaimId,
+        toClaimId,
+        relationship: relationship.relationship,
+        error: relationshipError instanceof Error ? relationshipError.message : String(relationshipError),
+      }));
+      throw relationshipError;
+    }
+  }
+
   for (let i = 0; i < claims.length; i++) {
     if (mergedInto.has(i)) continue;
     const claim = claims[i];
@@ -2133,8 +2233,9 @@ export async function persistClaimCandidates(
       // sourceClaimIndex is model-proposed semantic structure only. The shared
       // source can support a bounded qualifies edge, but it cannot establish
       // temporal order or causality without independent canonical evidence.
-      const linkedSourceIdentity = sourceRefs[0]
-        ? { sourceType: sourceRefs[0].sourceType, sourceId: sourceRefs[0].sourceId }
+      const linkedSourceRef = sourceRefs?.[0] ?? sourceRefsByClaim[i]?.[0];
+      const linkedSourceIdentity = linkedSourceRef
+        ? { sourceType: linkedSourceRef.sourceType, sourceId: linkedSourceRef.sourceId }
         : sourceMemoryId
           ? { sourceType: "memory", sourceId: String(sourceMemoryId) }
           : sourceId
@@ -2188,6 +2289,27 @@ export async function persistClaimCandidates(
     }
   }
 
-  return { created, reinforced, skipped, mergedInBatch };
+  const result: PersistClaimCandidatesResult = {
+    outcome: "committed",
+    created,
+    reinforced,
+    skipped,
+    mergedInBatch,
+    persistedClaimIds: Object.fromEntries(
+      claims.map((_, index) => [index, resolvePersistedClaimId(index)]).filter((entry): entry is [number, number] => typeof entry[1] === "number"),
+    ),
+    relationshipsWritten,
+    relationshipsSkipped,
+  };
+  log.info(JSON.stringify({
+    event: "memory.vnext.observation_committed",
+    source,
+    sourceId: sourceId ?? null,
+    ...result,
+  }));
+  return result;
 }
+
+/** Compatibility alias. All claim ingestion still crosses applyObservation. */
+export const persistClaimCandidates = applyObservation;
 
