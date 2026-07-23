@@ -168,14 +168,14 @@ async function logKnownContactInteraction(personId: string, message: EmailSignal
   const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
   const direction = getMessageDirection(message) === "outbound" ? "outbound" : "inbound";
 
+  if (existing) return false;
+
   if (direction === "outbound") {
     const cleared = await clearResponseOwed(person);
     if (cleared > 0) {
       log.info(`cleared ${cleared} response-owed interaction(s) for personId=${personId} from outbound email providerMessageId=${message.providerMessageId}`);
     }
   }
-
-  if (existing) return false;
 
   const subject = message.subject || "(no subject)";
   const verb = direction === "outbound" ? "Sent" : "Received";

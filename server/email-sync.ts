@@ -214,7 +214,14 @@ export async function getEmailPipelineHealth(): Promise<EmailPipelineHealth> {
   };
 }
 
-async function upsertMessage(msg: NormalizedMessage): Promise<{ externallyArchived: boolean }> {
+async function upsertMessage(
+  msg: NormalizedMessage,
+  options: {
+    forcePeopleSignal?: boolean;
+    peopleSignalSource?: string;
+    failOnPeopleSignalError?: boolean;
+  } = {},
+): Promise<{ externallyArchived: boolean }> {
   let shouldProcessPeopleSignal = false;
   const existing = await db.select({
     id: emailMessages.id,
@@ -285,7 +292,7 @@ async function upsertMessage(msg: NormalizedMessage): Promise<{ externallyArchiv
   const labels = msg.labelIds || [];
   const inInbox = labels.includes('INBOX');
   let hasExplicitDoneLabel = false;
-  if (!inInbox && existing[0] && !existing[0].isDone) {
+  if (msg.direction !== "outbound" && !inInbox && existing[0] && !existing[0].isDone) {
     try {
       const labelMap = await getAccountLabelMap(msg.accountId);
       for (const labelId of labels) {
@@ -299,7 +306,7 @@ async function upsertMessage(msg: NormalizedMessage): Promise<{ externallyArchiv
       // best-effort; INBOX-removal alone is enough to proceed
     }
   }
-  if (!inInbox && existing[0] && !existing[0].isDone) {
+  if (msg.direction !== "outbound" && !inInbox && existing[0] && !existing[0].isDone) {
     const row = existing[0];
     await db.update(emailMessages)
       .set({ isDone: true, doneReason: hasExplicitDoneLabel ? 'superhuman_done_in_gmail' : 'archived_in_gmail', doneAt: new Date(), updatedAt: new Date() })
@@ -324,16 +331,41 @@ async function upsertMessage(msg: NormalizedMessage): Promise<{ externallyArchiv
     return { externallyArchived: true };
   }
 
-  if (shouldProcessPeopleSignal) {
+  if (shouldProcessPeopleSignal || options.forcePeopleSignal) {
     try {
       const { processEmailPeopleSignal } = await import('./email-people-signals');
-      await processEmailPeopleSignal(msg, { source: 'email_sync' });
+      await processEmailPeopleSignal(msg, { source: options.peopleSignalSource || 'email_sync' });
     } catch (err: any) {
-      log.debug(`[upsertMessage] people signal processing failed for msg=${msg.providerMessageId}: ${err.message}`);
+      log.warn(`[upsertMessage] people signal processing failed for msg=${msg.providerMessageId}: ${err.message}`);
+      if (options.failOnPeopleSignalError) throw err;
     }
   }
 
   return { externallyArchived: false };
+}
+
+export async function ingestSentGmailMessage(
+  accountId: string,
+  providerMessageId: string,
+): Promise<NormalizedMessage> {
+  if (!accountId || !providerMessageId) {
+    throw new Error("Sent Gmail ingestion requires account and provider message identity");
+  }
+
+  await resolveEmailAccountOwner(accountId);
+  const raw = await getMessage(providerMessageId, "full", accountId);
+  const normalized = normalizeGmailMessage(raw, accountId);
+  if (normalized.direction !== "outbound") {
+    throw new Error(`Provider message ${providerMessageId} is not a sent Gmail message`);
+  }
+
+  await upsertMessage(normalized, {
+    forcePeopleSignal: true,
+    peopleSignalSource: "gmail_send",
+    failOnPeopleSignalError: true,
+  });
+  log.info(`[ingestSentGmailMessage] account=${accountId} providerMessageId=${providerMessageId} threadId=${normalized.providerThreadId || "none"}`);
+  return normalized;
 }
 
 async function getCursor(accountId: string) {

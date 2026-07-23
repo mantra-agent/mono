@@ -241,7 +241,7 @@ async function captureReferenceSnapshot(
       combineWithWritableScope(
         principal,
         opportunityScope,
-        sql`${opportunities.contactPersonId} = ${sourceId} OR ${opportunities.championPersonId} = ${sourceId}`,
+        sql`(${opportunities.contactPersonId} = ${sourceId} OR ${opportunities.championPersonId} = ${sourceId})`,
       ),
     ),
     tx.select().from(opportunityInteractions).where(

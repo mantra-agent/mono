@@ -266,17 +266,27 @@ export async function getOAuth2Client(originHost?: string) {
 
 // ─── Unified Gmail operations ───
 
-export async function getReadClientAuto(accountId?: string) {
+export async function getReadClientAndAccountAuto(accountId?: string) {
   if (accountId) {
-    return await getReadClientForAccount(accountId);
+    return {
+      gmail: await getReadClientForAccount(accountId),
+      accountId,
+    };
   }
   const accounts = await listGmailAccounts();
   for (const acct of accounts) {
     try {
-      return await getReadClientForAccount(acct.id);
+      return {
+        gmail: await getReadClientForAccount(acct.id),
+        accountId: acct.id,
+      };
     } catch (err: unknown) { log.debug("account client fallback", acct.id, err instanceof Error ? err.message : err); }
   }
   throw new Error('No Gmail accounts connected. Add an account in Settings → Connections.');
+}
+
+export async function getReadClientAuto(accountId?: string) {
+  return (await getReadClientAndAccountAuto(accountId)).gmail;
 }
 
 export async function getGmailClient() {
@@ -610,7 +620,7 @@ export async function sendEmailFromDraft(draft: {
   threadId: string | null;
   inReplyTo: string | null;
 }) {
-  const gmail = await getReadClientAuto(draft.gmailAccountId ?? undefined);
+  const { gmail, accountId } = await getReadClientAndAccountAuto(draft.gmailAccountId ?? undefined);
 
   let replyContext: ReplyContext = { inReplyTo: draft.inReplyTo, references: draft.inReplyTo, quotedHistory: null };
   if (draft.threadId) {
@@ -655,7 +665,7 @@ export async function sendEmailFromDraft(draft: {
     userId: "me",
     requestBody,
   });
-  return res.data;
+  return { message: res.data, accountId };
 }
 
 export async function createDraft(to: string, subject: string, body: string, accountId?: string) {

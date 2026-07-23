@@ -314,7 +314,7 @@ export class EmailDraftStorage {
   async send(
     principal: Principal,
     id: string,
-    sendFn: (draft: EmailDraft) => Promise<{ messageId: string }>,
+    sendFn: (draft: EmailDraft) => Promise<{ messageId: string; gmailAccountId: string }>,
   ): Promise<EmailDraft> {
     const existing = await this.getById(principal, id);
     if (!existing) {
@@ -322,7 +322,8 @@ export class EmailDraftStorage {
     }
     assertWritable(principal, existing, "email_draft");
 
-    // Idempotent: already sent
+    // Idempotent: already sent. The route may replay downstream projection,
+    // but provider delivery must never execute twice.
     if (existing.status === "sent") {
       await this.markRecapDistributionSent(principal, id);
       return existing;
@@ -342,6 +343,7 @@ export class EmailDraftStorage {
       .update(emailDrafts)
       .set({
         status: "sent",
+        gmailAccountId: result.gmailAccountId,
         sentMessageId: result.messageId,
         sentAt: sql`CURRENT_TIMESTAMP`,
         updatedAt: sql`CURRENT_TIMESTAMP`,
