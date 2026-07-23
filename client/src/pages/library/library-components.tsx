@@ -453,7 +453,7 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
   open: boolean; onOpenChange: (open: boolean) => void; page: LibraryPage | LibraryPageFull; pages: LibraryPage[];
 }) {
   const [query, setQuery] = useState("");
-  const { visibleVaults, resolveVaultId } = useVisibleVaults();
+  const { visibleVaults, resolveVaultId, isLoading: areVaultsLoading } = useVisibleVaults();
 
   interface MovePageInput {
     id: string;
@@ -510,8 +510,11 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
           <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search destinations..." className="pl-7 h-8 text-sm" data-testid="input-move-search" autoFocus />
         </div>
-        <ScrollArea className="max-h-64">
-          {destinationSections.map(({ vault, pages: destinationPages }) => (
+        <ScrollArea className="h-64">
+          {areVaultsLoading && (
+            <p className="px-2 py-3 text-sm text-muted-foreground">Loading destinations…</p>
+          )}
+          {!areVaultsLoading && destinationSections.map(({ vault, pages: destinationPages }) => (
             <div key={vault.id} className="mb-2 last:mb-0">
               <button
                 type="button"
@@ -546,7 +549,7 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
               ))}
             </div>
           ))}
-          {destinationSections.length === 0 && (
+          {!areVaultsLoading && destinationSections.length === 0 && (
             <p className="px-2 py-3 text-sm text-muted-foreground">No matching destinations.</p>
           )}
         </ScrollArea>
