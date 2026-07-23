@@ -37,9 +37,9 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
     audioReactivity: 0, swirlSpeed: 1.15, swirlAmount: 0.48,
     tickCount: 0, tickSpeed: 0, breathSpeed: 2.45, breathDepth: 0.22,
     pulseStrength: 0, dimming: 1.0,
-    fieldEnergy: 0.98, filamentDensity: 0.8, cloudDensity: 0.22,
-    flowSpeed: 0.62, flowStrength: 0.58, coherence: 0.86,
-    attractorStrength: 0.96, knotStrength: 1.0, orbitPrecision: 0,
+    fieldEnergy: 1.08, filamentDensity: 0.84, cloudDensity: 0.22,
+    flowSpeed: 0.78, flowStrength: 0.68, coherence: 0.9,
+    attractorStrength: 1.06, knotStrength: 1.08, orbitPrecision: 0,
     waveEnergy: 0.12, coreDarkness: 0.52,
   },
   tool_call: {
