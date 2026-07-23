@@ -31,6 +31,7 @@ export interface VnextLifecycleRunResult {
   retiredByReason: Record<string, number>;
   decayed: number;
   bridges: VnextBridgeRunResult;
+  shadowPredictions: import("./vnext-prediction-ledger").ShadowPredictionRunResult | null;
   skipped: number;
   skippedByReason: Partial<Record<LifecycleSkipReason, number>>;
   errors: number;
@@ -396,6 +397,7 @@ export async function runVnextLifecycle(options: VnextLifecycleRunOptions = {}):
       finalEdges: 0,
       errors: 0,
     },
+    shadowPredictions: null,
     skipped: 0,
     skippedByReason: {},
     errors: 0,
@@ -478,6 +480,21 @@ export async function runVnextLifecycle(options: VnextLifecycleRunOptions = {}):
 
   result.bridges = await runBridgePass(limit, runId);
   result.errors += result.bridges.errors;
+
+  try {
+    const { runShadowPredictionLoop } = await import("./vnext-prediction-ledger");
+    result.shadowPredictions = await runShadowPredictionLoop({
+      trigger: `lifecycle:${trigger}`,
+      limit: Math.min(limit, 25),
+      runKey: `lifecycle:${runId}`,
+    });
+  } catch (err: unknown) {
+    result.errors++;
+    logLifecycle("memory.vnext.shadow_prediction_loop_error", {
+      runId,
+      error: err instanceof Error ? err.message : String(err),
+    }, "warn");
+  }
 
   // Log retirement summary at info level when retirements occurred
   if (result.retired > 0) {

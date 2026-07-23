@@ -781,6 +781,155 @@ export type MemoryVnextTransitionPath = typeof memoryVnextTransitionPaths.$infer
 export type MemoryVnextTransitionMember = typeof memoryVnextTransitionMembers.$inferSelect;
 export type MemoryVnextTransitionEdge = typeof memoryVnextTransitionEdges.$inferSelect;
 
+export const memoryVnextPredictionOutcomes = ["confirmed", "refuted", "unobservable", "superseded"] as const;
+export type MemoryVnextPredictionOutcome = (typeof memoryVnextPredictionOutcomes)[number];
+
+/**
+ * Immutable shadow forecasts. The transition and generation snapshots preserve
+ * exactly what was knowable when the probability was recorded.
+ */
+export const memoryVnextPredictions = pgTable(
+  "memory_vnext_predictions",
+  {
+    id: serial("id").primaryKey(),
+    replayKey: text("replay_key").notNull(),
+    inputStateClaimIds: integer("input_state_claim_ids").array().notNull(),
+    actionClaimId: integer("action_claim_id").notNull(),
+    actionMode: text("action_mode").notNull(),
+    predictedOutcomeClaimId: integer("predicted_outcome_claim_id"),
+    predictedOutcomeClass: text("predicted_outcome_class").notNull(),
+    probability: real("probability").notNull(),
+    horizonSeconds: integer("horizon_seconds").notNull(),
+    expectedAt: timestamp("expected_at", { withTimezone: true, precision: 6 }).notNull(),
+    transitionPathId: integer("transition_path_id").notNull(),
+    causalClaimLinkIds: integer("causal_claim_link_ids").array().notNull().default(sql`'{}'::integer[]`),
+    transitionSnapshot: jsonb("transition_snapshot").notNull(),
+    generationContext: jsonb("generation_context").notNull(),
+    producerMethod: text("producer_method").notNull(),
+    derivationVersion: text("derivation_version").notNull(),
+    modelVersion: text("model_version"),
+    generatedAt: timestamp("generated_at", { withTimezone: true, precision: 6 }).notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_prediction_replay").on(table.ownerUserId, table.accountId, table.replayKey),
+    index("idx_memory_vnext_prediction_owner_expected").on(table.scope, table.ownerUserId, table.expectedAt),
+    index("idx_memory_vnext_prediction_account_expected").on(table.accountId, table.expectedAt),
+    index("idx_memory_vnext_prediction_action").on(table.actionClaimId, table.generatedAt),
+    check("memory_vnext_prediction_probability_bounded", sql`${table.probability} >= 0 AND ${table.probability} <= 1`),
+    check("memory_vnext_prediction_horizon_positive", sql`${table.horizonSeconds} > 0`),
+    check("memory_vnext_prediction_action_mode_valid", sql`${table.actionMode} IN ('observed', 'proposed')`),
+    check("memory_vnext_prediction_expected_after_generation", sql`${table.expectedAt} > ${table.generatedAt}`),
+  ],
+);
+
+/** Append-only resolution/correction evidence. Forecast rows are never edited. */
+export const memoryVnextPredictionResolutions = pgTable(
+  "memory_vnext_prediction_resolutions",
+  {
+    id: serial("id").primaryKey(),
+    predictionId: integer("prediction_id").notNull().references(() => memoryVnextPredictions.id, { onDelete: "restrict" }),
+    replayKey: text("replay_key").notNull(),
+    outcome: text("outcome").notNull(),
+    observedOutcomeClaimId: integer("observed_outcome_claim_id"),
+    evidenceSourceRefIds: integer("evidence_source_ref_ids").array().notNull().default(sql`'{}'::integer[]`),
+    evidenceSnapshot: jsonb("evidence_snapshot").notNull(),
+    actualValue: real("actual_value"),
+    brierScore: real("brier_score"),
+    logScore: real("log_score"),
+    scoringRuleVersion: text("scoring_rule_version").notNull(),
+    resolutionMethod: text("resolution_method").notNull(),
+    derivationVersion: text("derivation_version").notNull(),
+    supersedesResolutionId: integer("supersedes_resolution_id"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true, precision: 6 }).notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_prediction_resolution_replay").on(table.ownerUserId, table.accountId, table.replayKey),
+    index("idx_memory_vnext_prediction_resolution_prediction").on(table.predictionId, table.resolvedAt),
+    index("idx_memory_vnext_prediction_resolution_owner").on(table.scope, table.ownerUserId, table.resolvedAt),
+    check("memory_vnext_prediction_resolution_outcome_valid", sql`${table.outcome} IN ('confirmed', 'refuted', 'unobservable', 'superseded')`),
+    check("memory_vnext_prediction_resolution_actual_bounded", sql`${table.actualValue} IS NULL OR ${table.actualValue} IN (0, 1)`),
+    check("memory_vnext_prediction_resolution_brier_bounded", sql`${table.brierScore} IS NULL OR (${table.brierScore} >= 0 AND ${table.brierScore} <= 1)`),
+    check("memory_vnext_prediction_resolution_scoring_coherent", sql`(${table.outcome} IN ('confirmed', 'refuted') AND ${table.actualValue} IS NOT NULL AND ${table.brierScore} IS NOT NULL AND ${table.logScore} IS NOT NULL) OR (${table.outcome} IN ('unobservable', 'superseded') AND ${table.actualValue} IS NULL AND ${table.brierScore} IS NULL AND ${table.logScore} IS NULL)`),
+  ],
+);
+
+/** Append-only provenance for every prediction-derived relationship certainty change. */
+export const memoryVnextRelationshipCertaintyEvents = pgTable(
+  "memory_vnext_relationship_certainty_events",
+  {
+    id: serial("id").primaryKey(),
+    predictionId: integer("prediction_id").notNull().references(() => memoryVnextPredictions.id, { onDelete: "restrict" }),
+    resolutionId: integer("resolution_id").notNull().references(() => memoryVnextPredictionResolutions.id, { onDelete: "restrict" }),
+    claimLinkId: integer("claim_link_id").notNull(),
+    replayKey: text("replay_key").notNull(),
+    previousCertainty: real("previous_certainty").notNull(),
+    delta: real("delta").notNull(),
+    resultingCertainty: real("resulting_certainty").notNull(),
+    ruleVersion: text("rule_version").notNull(),
+    provenance: jsonb("provenance").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, precision: 6 }).notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_relationship_certainty_event_replay").on(table.ownerUserId, table.accountId, table.replayKey),
+    index("idx_memory_vnext_relationship_certainty_event_link").on(table.claimLinkId, table.occurredAt),
+    index("idx_memory_vnext_relationship_certainty_event_resolution").on(table.resolutionId),
+    check("memory_vnext_relationship_certainty_previous_bounded", sql`${table.previousCertainty} >= 0 AND ${table.previousCertainty} <= 1`),
+    check("memory_vnext_relationship_certainty_delta_bounded", sql`${table.delta} >= -0.04 AND ${table.delta} <= 0.02`),
+    check("memory_vnext_relationship_certainty_result_bounded", sql`${table.resultingCertainty} >= 0 AND ${table.resultingCertainty} <= 1`),
+  ],
+);
+
+/** One immutable summary per bounded shadow orchestration attempt. */
+export const memoryVnextPredictionRuns = pgTable(
+  "memory_vnext_prediction_runs",
+  {
+    id: serial("id").primaryKey(),
+    runKey: text("run_key").notNull(),
+    trigger: text("trigger").notNull(),
+    scannedPaths: integer("scanned_paths").notNull(),
+    generated: integer("generated").notNull(),
+    abstained: integer("abstained").notNull(),
+    resolved: integer("resolved").notNull(),
+    scored: integer("scored").notNull(),
+    certaintyUpdates: integer("certainty_updates").notNull(),
+    abstentionReasons: jsonb("abstention_reasons").notNull().default(sql`'{}'::jsonb`),
+    producerMethod: text("producer_method").notNull(),
+    derivationVersion: text("derivation_version").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true, precision: 6 }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true, precision: 6 }).notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_prediction_run_key").on(table.ownerUserId, table.accountId, table.runKey),
+    index("idx_memory_vnext_prediction_run_owner").on(table.scope, table.ownerUserId, table.completedAt),
+    check("memory_vnext_prediction_run_counts_nonnegative", sql`${table.scannedPaths} >= 0 AND ${table.generated} >= 0 AND ${table.abstained} >= 0 AND ${table.resolved} >= 0 AND ${table.scored} >= 0 AND ${table.certaintyUpdates} >= 0`),
+  ],
+);
+
+export type MemoryVnextPrediction = typeof memoryVnextPredictions.$inferSelect;
+export type MemoryVnextPredictionResolution = typeof memoryVnextPredictionResolutions.$inferSelect;
+export type MemoryVnextRelationshipCertaintyEvent = typeof memoryVnextRelationshipCertaintyEvents.$inferSelect;
+export type MemoryVnextPredictionRun = typeof memoryVnextPredictionRuns.$inferSelect;
+
 export const memoryVnextIntegrationLevels = ["isolated", "associated", "integrated", "structural"] as const;
 export type MemoryVnextIntegrationLevel = (typeof memoryVnextIntegrationLevels)[number];
 export const memoryVnextCertaintyStatuses = ["unassessed", "supported", "contested"] as const;
