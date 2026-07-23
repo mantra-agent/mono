@@ -1787,7 +1787,18 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
   if (!focusText) return "";
 
   const tokenBudget = await getMemoryGraphTokenBudget(request.sessionId);
-  const queryHash = `${contextPrincipalKey()}::vnext::${getQueryHash(focusText)}::${tokenBudget}`;
+  let retrievalMode: "compatibility" | "corrected" = "compatibility";
+  try {
+    const { getRetrievalControl } = await import("./memory/vnext-shadow-evaluation");
+    retrievalMode = (await getRetrievalControl()).retrievalMode;
+  } catch (err) {
+    log.warn(JSON.stringify({
+      event: "memory.graph.retrieval_control_unavailable",
+      fallbackMode: "compatibility",
+      error: err instanceof Error ? err.message : String(err),
+    }));
+  }
+  const queryHash = `${contextPrincipalKey()}::vnext::${retrievalMode}::${getQueryHash(focusText)}::${tokenBudget}`;
   const cached = _graphMemoryCache.get(queryHash);
   if (cached !== undefined) {
     if (cached.content && request.contextBuildId) {
@@ -1808,8 +1819,30 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
     }
     const { weights } = modulateWeights(BLEND_WEIGHTS[detection.type], emotionInput);
     const { retrieveVnextContext } = await import("./memory/vnext-context-retrieval");
+    const retrievalStartedAt = new Date();
     const retrieved = await retrieveVnextContext(focusText, weights);
-    const result = renderVnextContext(retrieved.candidates, tokenBudget);
+    let selectedCandidates = retrieved.candidates;
+    if (request.contextBuildId) {
+      try {
+        const { evaluateDualRetrieval } = await import("./memory/vnext-shadow-evaluation");
+        const evaluated = await evaluateDualRetrieval({
+          focusText,
+          contextBuildId: request.contextBuildId,
+          compatibilityCandidates: retrieved.candidates,
+          startedAt: retrievalStartedAt,
+        });
+        selectedCandidates = evaluated.selectedCandidates;
+        retrievalMode = evaluated.selectedMode;
+      } catch (err) {
+        log.warn(JSON.stringify({
+          event: "memory.graph.dual_retrieval_failed",
+          fallbackMode: "compatibility",
+          error: err instanceof Error ? err.message : String(err),
+        }));
+        retrievalMode = "compatibility";
+      }
+    }
+    const result = renderVnextContext(selectedCandidates, tokenBudget);
     if (result.content) {
       _graphMemoryCache.set(queryHash, result);
       if (request.contextBuildId) {
@@ -1818,6 +1851,8 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
       log.debug(JSON.stringify({
         event: "memory.graph.context_resolved",
         path: "vnext",
+        retrievalMode,
+        predictionOutputMode: "shadow",
         semanticSeeds: retrieved.semanticSeedCount,
         recentSeeds: retrieved.recentSeedCount,
         expanded: retrieved.expandedCount,

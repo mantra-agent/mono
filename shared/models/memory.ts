@@ -930,6 +930,159 @@ export type MemoryVnextPredictionResolution = typeof memoryVnextPredictionResolu
 export type MemoryVnextRelationshipCertaintyEvent = typeof memoryVnextRelationshipCertaintyEvents.$inferSelect;
 export type MemoryVnextPredictionRun = typeof memoryVnextPredictionRuns.$inferSelect;
 
+export const memoryVnextRetrievalModes = ["compatibility", "corrected"] as const;
+export type MemoryVnextRetrievalMode = (typeof memoryVnextRetrievalModes)[number];
+
+/** One user-scoped authority row. Absence is equivalent to compatibility mode. */
+export const memoryVnextRetrievalControls = pgTable(
+  "memory_vnext_retrieval_controls",
+  {
+    id: serial("id").primaryKey(),
+    retrievalMode: text("retrieval_mode").notNull().default("compatibility"),
+    predictionOutputMode: text("prediction_output_mode").notNull().default("shadow"),
+    reason: text("reason").notNull().default("default_off"),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    updatedByUserId: text("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_retrieval_control_owner").on(table.ownerUserId, table.accountId),
+    check("memory_vnext_retrieval_control_mode_valid", sql`${table.retrievalMode} IN ('compatibility', 'corrected')`),
+    check("memory_vnext_prediction_output_shadow_only", sql`${table.predictionOutputMode} = 'shadow'`),
+  ],
+);
+
+/** Append-only audit for corrected-retrieval activation and rollback. */
+export const memoryVnextRetrievalActivationEvents = pgTable(
+  "memory_vnext_retrieval_activation_events",
+  {
+    id: serial("id").primaryKey(),
+    replayKey: text("replay_key").notNull(),
+    previousMode: text("previous_mode").notNull(),
+    nextMode: text("next_mode").notNull(),
+    reason: text("reason").notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_activation_event_replay").on(table.ownerUserId, table.accountId, table.replayKey),
+    index("idx_memory_vnext_activation_event_owner").on(table.scope, table.ownerUserId, table.createdAt),
+    check("memory_vnext_activation_event_modes_valid", sql`${table.previousMode} IN ('compatibility', 'corrected') AND ${table.nextMode} IN ('compatibility', 'corrected')`),
+  ],
+);
+
+/** Reviewed retrieval judgments. No row means no label, never an inferred negative. */
+export const memoryVnextRetrievalLabels = pgTable(
+  "memory_vnext_retrieval_labels",
+  {
+    id: serial("id").primaryKey(),
+    contextKey: text("context_key").notNull(),
+    claimId: integer("claim_id").notNull().references(() => memoryVnextClaims.id, { onDelete: "cascade" }),
+    relevance: text("relevance").notNull(),
+    durableFact: boolean("durable_fact").notNull().default(false),
+    note: text("note").notNull().default(""),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    updatedByUserId: text("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_retrieval_label").on(table.ownerUserId, table.accountId, table.contextKey, table.claimId),
+    index("idx_memory_vnext_retrieval_label_context").on(table.scope, table.ownerUserId, table.contextKey),
+    check("memory_vnext_retrieval_label_relevance_valid", sql`${table.relevance} IN ('relevant', 'irrelevant')`),
+  ],
+);
+
+/** Immutable dual-retrieval measurements keyed by context build. */
+export const memoryVnextRetrievalEvaluationRuns = pgTable(
+  "memory_vnext_retrieval_evaluation_runs",
+  {
+    id: serial("id").primaryKey(),
+    replayKey: text("replay_key").notNull(),
+    contextBuildId: text("context_build_id").notNull(),
+    contextKey: text("context_key").notNull(),
+    selectedMode: text("selected_mode").notNull(),
+    compatibilityClaimIds: integer("compatibility_claim_ids").array().notNull().default(sql`'{}'::integer[]`),
+    correctedClaimIds: integer("corrected_claim_ids").array().notNull().default(sql`'{}'::integer[]`),
+    metrics: jsonb("metrics").notNull(),
+    dimensionContributions: jsonb("dimension_contributions").notNull(),
+    ablations: jsonb("ablations").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true, precision: 6 }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true, precision: 6 }).notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_retrieval_eval_replay").on(table.ownerUserId, table.accountId, table.replayKey),
+    uniqueIndex("uk_memory_vnext_retrieval_eval_context").on(table.ownerUserId, table.accountId, table.contextBuildId),
+    index("idx_memory_vnext_retrieval_eval_owner").on(table.scope, table.ownerUserId, table.completedAt),
+    check("memory_vnext_retrieval_eval_mode_valid", sql`${table.selectedMode} IN ('compatibility', 'corrected')`),
+    check("memory_vnext_retrieval_eval_time_order", sql`${table.completedAt} >= ${table.startedAt}`),
+  ],
+);
+
+/** Reviewed causal-path judgments are inputs to precision, never generated scores. */
+export const memoryVnextCausalPathReviews = pgTable(
+  "memory_vnext_causal_path_reviews",
+  {
+    id: serial("id").primaryKey(),
+    predictionId: integer("prediction_id").notNull().references(() => memoryVnextPredictions.id, { onDelete: "restrict" }),
+    judgment: text("judgment").notNull(),
+    note: text("note").notNull().default(""),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    updatedByUserId: text("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_causal_path_review").on(table.ownerUserId, table.accountId, table.predictionId),
+    check("memory_vnext_causal_path_review_valid", sql`${table.judgment} IN ('correct', 'incorrect', 'unclear')`),
+  ],
+);
+
+/** Immutable aggregate with strict-cutoff baseline details in metrics JSON. */
+export const memoryVnextPredictionEvaluationRuns = pgTable(
+  "memory_vnext_prediction_evaluation_runs",
+  {
+    id: serial("id").primaryKey(),
+    replayKey: text("replay_key").notNull(),
+    metrics: jsonb("metrics").notNull(),
+    evaluatedAt: timestamp("evaluated_at", { withTimezone: true, precision: 6 }).notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_memory_vnext_prediction_eval_replay").on(table.ownerUserId, table.accountId, table.replayKey),
+    index("idx_memory_vnext_prediction_eval_owner").on(table.scope, table.ownerUserId, table.evaluatedAt),
+  ],
+);
+
+export type MemoryVnextRetrievalControl = typeof memoryVnextRetrievalControls.$inferSelect;
+export type MemoryVnextRetrievalActivationEvent = typeof memoryVnextRetrievalActivationEvents.$inferSelect;
+export type MemoryVnextRetrievalLabel = typeof memoryVnextRetrievalLabels.$inferSelect;
+export type MemoryVnextRetrievalEvaluationRun = typeof memoryVnextRetrievalEvaluationRuns.$inferSelect;
+export type MemoryVnextCausalPathReview = typeof memoryVnextCausalPathReviews.$inferSelect;
+export type MemoryVnextPredictionEvaluationRun = typeof memoryVnextPredictionEvaluationRuns.$inferSelect;
+
 export const memoryVnextIntegrationLevels = ["isolated", "associated", "integrated", "structural"] as const;
 export type MemoryVnextIntegrationLevel = (typeof memoryVnextIntegrationLevels)[number];
 export const memoryVnextCertaintyStatuses = ["unassessed", "supported", "contested"] as const;

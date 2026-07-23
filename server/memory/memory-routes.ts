@@ -1585,6 +1585,75 @@ async function handleRunVnextShadowPredictions(req: Request, res: Response): Pro
   }
 }
 
+async function handleGetVnextRetrievalEvaluation(req: Request, res: Response): Promise<void> {
+  try {
+    const limit = Math.min(parsePositiveInt(req.query.limit) ?? 25, 100);
+    const { inspectRetrievalEvaluation } = await import("./vnext-shadow-evaluation");
+    res.json(await inspectRetrievalEvaluation(limit));
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleSetVnextRetrievalMode(req: Request, res: Response): Promise<void> {
+  try {
+    const mode = req.body?.mode;
+    if (mode !== "compatibility" && mode !== "corrected") { res.status(400).json({ error: "mode must be compatibility or corrected" }); return; }
+    const reason = typeof req.body?.reason === "string" ? req.body.reason : "";
+    const replayKey = typeof req.body?.replayKey === "string" ? req.body.replayKey : "";
+    const { setRetrievalMode } = await import("./vnext-shadow-evaluation");
+    res.json(await setRetrievalMode({ mode, reason, replayKey }));
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleSetVnextRetrievalLabel(req: Request, res: Response): Promise<void> {
+  try {
+    const claimId = parsePositiveInt(req.body?.claimId);
+    const relevance = req.body?.relevance;
+    if (!claimId || (relevance !== "relevant" && relevance !== "irrelevant")) { res.status(400).json({ error: "claimId and relevance are required" }); return; }
+    const contextKey = typeof req.body?.contextKey === "string" ? req.body.contextKey : "";
+    if (!contextKey.trim()) { res.status(400).json({ error: "contextKey is required" }); return; }
+    const { upsertRetrievalLabel } = await import("./vnext-shadow-evaluation");
+    res.json(await upsertRetrievalLabel({ contextKey, claimId, relevance, durableFact: req.body?.durableFact === true, note: typeof req.body?.note === "string" ? req.body.note : undefined }));
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleRunVnextPredictionEvaluation(req: Request, res: Response): Promise<void> {
+  try {
+    const { evaluatePredictions } = await import("./vnext-shadow-evaluation");
+    const replayKey = typeof req.body?.replayKey === "string" ? req.body.replayKey : undefined;
+    res.json({ predictionOutputMode: "shadow", run: await evaluatePredictions({ replayKey }) });
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleGetVnextPredictionEvaluation(req: Request, res: Response): Promise<void> {
+  try {
+    const limit = Math.min(parsePositiveInt(req.query.limit) ?? 25, 100);
+    const { inspectPredictionEvaluation } = await import("./vnext-shadow-evaluation");
+    res.json(await inspectPredictionEvaluation(limit));
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+async function handleSetVnextCausalPathReview(req: Request, res: Response): Promise<void> {
+  try {
+    const predictionId = parsePositiveInt(req.body?.predictionId);
+    const judgment = req.body?.judgment;
+    if (!predictionId || !["correct", "incorrect", "unclear"].includes(judgment)) { res.status(400).json({ error: "predictionId and valid judgment are required" }); return; }
+    const { upsertCausalPathReview } = await import("./vnext-shadow-evaluation");
+    res.json(await upsertCausalPathReview({ predictionId, judgment, note: typeof req.body?.note === "string" ? req.body.note : undefined }));
+  } catch (error: unknown) {
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
 async function handleGetVnextClaimLifecycle(req: Request, res: Response): Promise<void> {
   try {
     const id = parsePositiveInt(req.params.id);
@@ -1645,6 +1714,12 @@ export function registerMemoryRoutes(app: Express) {
   app.post("/api/memory/vnext/transition-paths/recompute", handleRecomputeVnextTransitionPaths);
   app.get("/api/memory/vnext/predictions", requirePermission("system:read"), handleGetVnextPredictions);
   app.post("/api/memory/vnext/predictions/run-shadow", requirePermission("system:write"), handleRunVnextShadowPredictions);
+  app.get("/api/memory/vnext/evaluation/retrieval", requirePermission("system:read"), handleGetVnextRetrievalEvaluation);
+  app.post("/api/memory/vnext/evaluation/retrieval/mode", requirePermission("system:write"), handleSetVnextRetrievalMode);
+  app.post("/api/memory/vnext/evaluation/retrieval/labels", requirePermission("system:write"), handleSetVnextRetrievalLabel);
+  app.get("/api/memory/vnext/evaluation/predictions", requirePermission("system:read"), handleGetVnextPredictionEvaluation);
+  app.post("/api/memory/vnext/evaluation/predictions/run", requirePermission("system:write"), handleRunVnextPredictionEvaluation);
+  app.post("/api/memory/vnext/evaluation/predictions/reviews", requirePermission("system:write"), handleSetVnextCausalPathReview);
   app.get("/api/memory/vnext/claims", handleSearchVnextClaims);
   app.get("/api/memory/vnext/claims/:id", handleGetVnextClaim);
   app.get("/api/memory/vnext/claims/:id/sources", handleGetVnextClaimSources);

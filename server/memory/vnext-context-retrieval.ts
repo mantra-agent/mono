@@ -50,6 +50,7 @@ export interface VnextContextCandidate {
   score: number;
   paths: string[];
   sourceRefs: MemoryVnextSourceRef[];
+  signals: Omit<CandidateSignals, "paths">;
 }
 
 export interface VnextContextRetrievalResult {
@@ -59,7 +60,7 @@ export interface VnextContextRetrievalResult {
   expandedCount: number;
 }
 
-interface CandidateSignals {
+export interface CandidateSignals {
   semantic: number;
   recency: number;
   causal: number;
@@ -245,6 +246,13 @@ export async function retrieveVnextContext(
     score: scoreCandidate(claim, ensureSignals(claim.id), weights, sourceRefs.get(claim.id) ?? [], linkCounts.get(claim.id) ?? 0),
     paths: Array.from(ensureSignals(claim.id).paths),
     sourceRefs: sourceRefs.get(claim.id) ?? [],
+    signals: {
+      semantic: ensureSignals(claim.id).semantic,
+      recency: ensureSignals(claim.id).recency,
+      causal: ensureSignals(claim.id).causal,
+      contrastive: ensureSignals(claim.id).contrastive,
+      temporal: ensureSignals(claim.id).temporal,
+    },
   })).filter((candidate) => candidate.score >= GRAPH_MIN_SCORE);
 
   const semanticPool = scored.filter(({ claim }) => ensureSignals(claim.id).semantic > 0).sort((a, b) => b.score - a.score);
