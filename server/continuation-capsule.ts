@@ -1,6 +1,7 @@
 import type { ContinuationCapsule } from "@shared/models/chat";
 import { parseReferenceText } from "@shared/reference-parser";
 import { safeStringify } from "./utils/safe-stringify";
+import { redactSensitiveValue } from "./sensitive-data-redaction";
 
 export interface ContinuationCapsuleEntry {
   role: "system" | "user" | "assistant" | "tool";
@@ -24,35 +25,6 @@ const FAILURE_PATTERN = /\b(error|failed|failure|timeout|timed out|blocked|inter
 const OPEN_LOOP_PATTERN = /\b(next|todo|remaining|pending|follow[- ]?up|open loop|open question|blocker|resume|still need|not yet|needs review|awaiting)\b/i;
 const STATE_CHANGE_PATTERN = /\b(created|updated|deleted|removed|merged|deployed|published|saved|completed|closed|opened|renamed|migrated|activated|disabled|enabled|status|commit|branch|pull request|\bpr\b|issue|task|timer|hook)\b/i;
 const MUTATION_ACTION_PATTERN = /^(create|update|delete|remove|add|merge|set|complete|close|open|save|publish|deploy|activate|disable|enable|rename|link|unlink|resolve|reopen|lock|cancel|trigger|apply|write|edit)/i;
-function isSensitiveKey(key: string): boolean {
-  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-  return normalized === "authorization"
-    || normalized === "password"
-    || normalized.includes("secret")
-    || normalized.includes("credential")
-    || normalized.includes("privatekey")
-    || normalized.includes("apikey")
-    || normalized.includes("accesstoken")
-    || normalized.includes("refreshtoken")
-    || normalized.endsWith("token")
-    || normalized.endsWith("cookie");
-}
-
-function redactSensitiveValue(value: unknown, depth = 0): unknown {
-  if (depth >= 5 || value == null) return value;
-  if (Array.isArray(value)) {
-    return value.slice(0, 24).map((item) => redactSensitiveValue(item, depth + 1));
-  }
-  if (typeof value !== "object") return value;
-  const result: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 24)) {
-    result[key] = isSensitiveKey(key)
-      ? "[REDACTED]"
-      : redactSensitiveValue(item, depth + 1);
-  }
-  return result;
-}
-
 function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
