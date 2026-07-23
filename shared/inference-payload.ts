@@ -1,3 +1,5 @@
+export type InferencePayloadCaptureCompleteness = "complete" | "legacy_incomplete";
+
 export interface InferencePayloadCaptureSummary {
   id: string;
   capturedAt: string;
@@ -9,6 +11,8 @@ export interface InferencePayloadCaptureSummary {
   source: string | null;
   attempt: number;
   requestChars: number;
+  captureVersion: number | null;
+  completeness: InferencePayloadCaptureCompleteness;
 }
 
 export interface InferencePayloadCapture extends InferencePayloadCaptureSummary {
