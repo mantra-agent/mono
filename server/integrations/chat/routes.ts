@@ -3940,29 +3940,16 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
         }
 
-        if (session.status !== "saved") {
-          await chatStorage.saveSession(
-            chatSessionId,
-            session.title || "Voice Chat",
-          );
-          chatLog.log(
-            `VoiceFinalize saved chatSessionId=${chatSessionId} title="${session.title}"`,
-          );
-        }
-
-        if (voiceSessionId) {
-          storage
-            .endVoiceSessionActive(voiceSessionId, "complete", {
-              kind: "user",
-              principal: req.principal!,
-            })
-            .catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : String(err);
-              chatLog.warn(
-                `VoiceFinalize: failed to mark voice_session_active complete voiceSessionId=${voiceSessionId}: ${msg}`,
-              );
-            });
-        }
+        const { finalizeVoiceSession } = await import("../../voice/finalize");
+        await finalizeVoiceSession({
+          chatSessionId,
+          voiceSessionId,
+          principal: req.principal!,
+          title: session.title || "Voice Chat",
+        });
+        chatLog.log(
+          `VoiceFinalize completed chatSessionId=${chatSessionId} voiceSessionId=${voiceSessionId || "none"} title="${session.title}"`,
+        );
 
         res.json({ finalized: true });
       } catch (error) {
