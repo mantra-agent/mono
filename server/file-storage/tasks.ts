@@ -1,4 +1,4 @@
-import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db } from "../db";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, type DrizzleTx } from "../db";
 import { milestones, projects, tasks } from "@shared/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import type { Task, InsertTask, TaskStatus, AssigneeSubjectType } from "@shared/models/work";
@@ -11,6 +11,7 @@ import {
   type ObjectGrantCapability,
 } from "../object-grant-access";
 import { objectGrantService } from "../object-grant-service";
+import { resolveInvitedSubjectReferenceInTransaction } from "../invited-subject-service";
 import { eventBus } from "../event-bus";
 
 const log = createLogger("StoreTasks");
@@ -71,6 +72,15 @@ function assignmentPatch(
     changed: true,
     next: assignmentFromValues(updates.assigneeSubjectType, updates.assigneeSubjectId),
   };
+}
+
+async function resolveAssignmentSubjectInTransaction(
+  tx: DrizzleTx,
+  assignment: AssignmentSubject | null,
+): Promise<AssignmentSubject | null> {
+  if (!assignment || assignment.subjectType === "user") return assignment;
+  const resolved = await resolveInvitedSubjectReferenceInTransaction(tx, assignment.subjectId, { create: true });
+  return resolved;
 }
 
 function resolveMutationOrigin(provenance?: TaskMutationProvenance): TaskMutationProvenance {
@@ -217,10 +227,11 @@ export class FileTaskStorage {
     const now = new Date();
     const effort = input.effort || "mid";
     const vaultId = resolveCreationVaultId(input.vaultId);
-    const assignee = assignmentFromValues(input.assigneeSubjectType, input.assigneeSubjectId);
+    const assigneeInput = assignmentFromValues(input.assigneeSubjectType, input.assigneeSubjectId);
     const origin = resolveMutationOrigin(provenance);
 
     const row = await db.transaction(async tx => {
+      const assignee = await resolveAssignmentSubjectInTransaction(tx, assigneeInput);
       const [created] = await tx.insert(tasks).values({
         title: input.title,
         description: input.description || "",
@@ -262,6 +273,12 @@ export class FileTaskStorage {
     const required: ObjectGrantCapability = hasAdminOnlyTaskChanges(updates as Record<string, unknown>) ? "admin" : "write";
     const origin = resolveMutationOrigin(provenance);
     const row = await db.transaction(async tx => {
+      const invitedAssignment = updates.assigneeSubjectType === "invited_subject" && updates.assigneeSubjectId
+        ? await resolveAssignmentSubjectInTransaction(tx, {
+            subjectType: "invited_subject",
+            subjectId: updates.assigneeSubjectId,
+          })
+        : null;
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.OBJECT_GRANT, `task:${id}`);
       const [existingRow] = await tx.select().from(tasks).where(
         combineWithWorkObjectAccess(principal, taskScopeColumns, "task", required, eq(tasks.id, id)),
@@ -276,7 +293,13 @@ export class FileTaskStorage {
       }
 
       const previousAssignee = assignmentFromValues(existing.assigneeSubjectType, existing.assigneeSubjectId);
-      const assignee = assignmentPatch(previousAssignee, updates);
+      const assigneePatchInput = assignmentPatch(previousAssignee, updates);
+      const assignee = assigneePatchInput.changed
+        ? {
+            changed: true,
+            next: invitedAssignment ?? await resolveAssignmentSubjectInTransaction(tx, assigneePatchInput.next),
+          }
+        : assigneePatchInput;
       const setValues: Record<string, unknown> = { updatedAt: new Date() };
       if (updates.title !== undefined) setValues.title = updates.title;
       if (updates.description !== undefined) setValues.description = updates.description;

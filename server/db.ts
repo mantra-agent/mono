@@ -799,6 +799,7 @@ export const ADVISORY_LOCK_NS = {
   MEETING_PREP: 0x4d545052, // 'MTPR' — serializes one canonical preparation-page claim per meeting
   PROJECT_MILESTONES: 0x50524d53, // 'PRMS' — serializes milestone replacement and project-local ID allocation
   OBJECT_GRANT: 0x4f424752, // 'OBGR' — serializes all grant mutations for one work object
+  INVITED_SUBJECT: 0x49565342, // 'IVSB' — serializes global email resolution and claim
   WORKFLOW_ARTIFACTS: 0x57464152, // 'WFAR' — serializes child-session artifact projection per stage attempt
 } as const;
 

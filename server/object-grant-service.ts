@@ -4,6 +4,7 @@ import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, type DrizzleTx } 
 import { createLogger } from "./log";
 import { combineWithWorkObjectAccess, workObjectKey, type ObjectGrantCapability, type WorkObjectType } from "./object-grant-access";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { resolveInvitedSubjectReferenceInTransaction, type ResolvedSecuritySubject } from "./invited-subject-service";
 import type { Principal } from "./principal";
 
 const log = createLogger("ObjectGrantService");
@@ -128,14 +129,19 @@ async function grantInTransaction(
   tx: DrizzleTx,
   principal: Principal & { userId: string },
   input: GrantObjectAccessInput,
+  preResolvedSubject?: ResolvedSecuritySubject,
 ): Promise<typeof objectGrants.$inferSelect> {
-  const subjectId = normalizeSubjectId(input.subjectId);
+  const resolvedSubject = preResolvedSubject ?? (input.subjectType === "invited_subject"
+    ? await resolveInvitedSubjectReferenceInTransaction(tx, input.subjectId, { create: true })
+    : { subjectType: input.subjectType, subjectId: normalizeSubjectId(input.subjectId) });
+  const subjectType = resolvedSubject.subjectType;
+  const subjectId = resolvedSubject.subjectId;
   const objectId = workObjectKey(input.objectType, input.objectId, input.projectId);
   await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.OBJECT_GRANT, lockKey(input.objectType, objectId));
   await assertTargetAdmin(tx, principal, input);
 
   const [active] = await tx.select().from(objectGrants).where(and(
-    eq(objectGrants.subjectType, input.subjectType),
+    eq(objectGrants.subjectType, subjectType),
     eq(objectGrants.subjectId, subjectId),
     eq(objectGrants.objectType, input.objectType),
     eq(objectGrants.objectId, objectId),
@@ -151,7 +157,7 @@ async function grantInTransaction(
   if (!unchanged) {
     if (active) await tx.update(objectGrants).set({ revokedAt: new Date() }).where(eq(objectGrants.id, active.id));
     [grant] = await tx.insert(objectGrants).values({
-      subjectType: input.subjectType,
+      subjectType,
       subjectId,
       objectType: input.objectType,
       objectId,
@@ -165,7 +171,7 @@ async function grantInTransaction(
   if (!grant) throw new Error("Object grant mutation produced no active grant");
   await writeGrantAudit(tx, principal, "object_grant.granted", {
     grantId: grant.id,
-    subjectType: input.subjectType,
+    subjectType,
     subjectId,
     objectType: input.objectType,
     objectId,
@@ -180,13 +186,18 @@ async function revokeInTransaction(
   tx: DrizzleTx,
   principal: Principal & { userId: string },
   input: RevokeObjectAccessInput,
+  preResolvedSubject?: ResolvedSecuritySubject,
 ): Promise<boolean> {
-  const subjectId = normalizeSubjectId(input.subjectId);
+  const resolvedSubject = preResolvedSubject ?? (input.subjectType === "invited_subject"
+    ? await resolveInvitedSubjectReferenceInTransaction(tx, input.subjectId, { create: false })
+    : { subjectType: input.subjectType, subjectId: normalizeSubjectId(input.subjectId) });
+  const subjectType = resolvedSubject.subjectType;
+  const subjectId = resolvedSubject.subjectId;
   const objectId = workObjectKey(input.objectType, input.objectId, input.projectId);
   await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.OBJECT_GRANT, lockKey(input.objectType, objectId));
   await assertTargetAdmin(tx, principal, input);
   const rows = await tx.update(objectGrants).set({ revokedAt: new Date() }).where(and(
-    eq(objectGrants.subjectType, input.subjectType),
+    eq(objectGrants.subjectType, subjectType),
     eq(objectGrants.subjectId, subjectId),
     eq(objectGrants.objectType, input.objectType),
     eq(objectGrants.objectId, objectId),
@@ -195,7 +206,7 @@ async function revokeInTransaction(
   if (rows.length === 0) return false;
   await writeGrantAudit(tx, principal, "object_grant.revoked", {
     grantIds: rows.map(row => row.id),
-    subjectType: input.subjectType,
+    subjectType,
     subjectId,
     objectType: input.objectType,
     objectId,
@@ -207,7 +218,12 @@ export class ObjectGrantService {
   async grant(input: GrantObjectAccessInput): Promise<typeof objectGrants.$inferSelect> {
     const principal = getCurrentPrincipalOrSystem();
     requireGrantActor(principal);
-    const result = await db.transaction(tx => grantInTransaction(tx, principal, input));
+    const result = await db.transaction(async tx => {
+      const resolvedSubject = input.subjectType === "invited_subject"
+        ? await resolveInvitedSubjectReferenceInTransaction(tx, input.subjectId, { create: true })
+        : undefined;
+      return grantInTransaction(tx, principal, input, resolvedSubject);
+    });
     log.info("object grant granted", {
       grantId: result.id,
       objectType: result.objectType,
@@ -221,8 +237,13 @@ export class ObjectGrantService {
   async revoke(input: RevokeObjectAccessInput): Promise<boolean> {
     const principal = getCurrentPrincipalOrSystem();
     requireGrantActor(principal);
-    const revoked = await db.transaction(tx => revokeInTransaction(tx, principal, input));
-    if (revoked) log.info("object grant revoked", { subjectType: input.subjectType, objectType: input.objectType, objectId: input.objectId });
+    const revoked = await db.transaction(async tx => {
+      const resolvedSubject = input.subjectType === "invited_subject"
+        ? await resolveInvitedSubjectReferenceInTransaction(tx, input.subjectId, { create: false })
+        : undefined;
+      return revokeInTransaction(tx, principal, input, resolvedSubject);
+    });
+    if (revoked) log.info("object grant revoked", { requestedSubjectType: input.subjectType, objectType: input.objectType, objectId: input.objectId });
     return revoked;
   }
 

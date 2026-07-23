@@ -482,6 +482,8 @@ app.use((req, res, next) => {
   await ensureWorkVaultSchema(workVaultPool);
   const { ensureObjectGrantSchema } = await import("./object-grant-schema");
   await ensureObjectGrantSchema(workVaultPool);
+  const { ensureInvitedSubjectSchema } = await import("./invited-subject-schema");
+  await ensureInvitedSubjectSchema(workVaultPool);
   const { ensureTaskAssignmentSchema } = await import("./task-assignment-schema");
   await ensureTaskAssignmentSchema(workVaultPool);
   await adoptRayPersonalLibraryIndex();
