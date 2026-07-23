@@ -26,16 +26,17 @@ export class AgentTimerHandler implements TimerHandler {
 
     const sessionKey = `timer:${timer.id}`;
     const title = `[Timer] ${timer.name}`;
-    const session = await chatStorage.createSession(
+    const sessionType = timer.type === "reminder" ? "agent" : "autonomous";
+    const session = await chatStorage.createAutonomousSession(
       title,
+      sessionType,
       sessionKey,
       undefined,
+      undefined,
       {
-        provenance: {
-          triggerType: "timer",
-          triggerId: timer.id,
-          triggerName: timer.name,
-        },
+        triggerType: "timer",
+        triggerId: timer.id,
+        triggerName: timer.name,
       },
     );
     const sessionId = session.id;
