@@ -7,7 +7,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Loader2, DollarSign, Search, FileText, ExternalLink, Download, ChevronRight, MoreHorizontal, X, Briefcase, Handshake, Building2, PiggyBank, MapPin, ContactRound, Trophy, Gauge, Clock, Calendar, ListChecks, AlignLeft, Link2, Sparkles } from "lucide-react";
+import { Plus, Trash2, Loader2, DollarSign, Search, FileText, ExternalLink, Download, ChevronRight, ChevronDown, MoreHorizontal, X, Briefcase, Handshake, Building2, PiggyBank, MapPin, ContactRound, Trophy, Gauge, Clock, Calendar, ListChecks, AlignLeft, Link2, Sparkles, Shield } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useVaults } from "@/hooks/use-vaults";
 import { ReferenceChip } from "@/components/references/reference-chip";
 import { resolveReference } from "@/components/references/reference-registry";
 import { useToast } from "@/hooks/use-toast";
@@ -693,6 +696,29 @@ function OpportunityDetail({
     [activities],
   );
 
+  // Vault placement — zero-or-one, assigned through the canonical setVault endpoint.
+  const detailQueryClient = useQueryClient();
+  const { toast: detailToast } = useToast();
+  const { vaults } = useVaults();
+  const assignableVaults = useMemo(
+    () => vaults
+      .filter(vault => !vault.isArchived)
+      .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name)),
+    [vaults],
+  );
+  const selectedVault = useMemo(
+    () => assignableVaults.find(vault => vault.id === opportunity.vaultId) ?? null,
+    [assignableVaults, opportunity.vaultId],
+  );
+  const vaultMutation = useMutation({
+    mutationFn: async (vaultId: string | null) => {
+      const res = await apiRequest("PATCH", `/api/exec/opportunities/${opportunity.id}/vault`, { vaultId });
+      return res.json();
+    },
+    onSuccess: () => detailQueryClient.invalidateQueries({ queryKey: ["/api/exec/opportunities"] }),
+    onError: (err: Error) => detailToast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
   const showCompany = form.type === "job";
   const hasCommitment = form.isFullTime || form.hoursPerWeek != null;
   const commitmentLabel = form.isFullTime ? "Full time" : form.hoursPerWeek ? `${form.hoursPerWeek} hrs / week` : "—";
@@ -724,6 +750,36 @@ function OpportunityDetail({
                 <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>{PRIORITIES.map(priority => <SelectItem key={priority} value={priority}><span className={cn("capitalize", PRIORITY_COLORS[priority])}>{priority}</span></SelectItem>)}</SelectContent>
               </Select>
+            </ProfileTreeRow>
+
+            <ProfileTreeRow label="Vault" icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(opportunity.vaultId)} showEmpty testId="row-opportunity-vault">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" className="h-5 max-w-48 justify-end px-1.5 text-right text-xs font-normal" data-testid="button-edit-opportunity-vault">
+                    <span className="truncate">{selectedVault?.name || "Choose Vault"}</span>
+                    <ChevronDown className="ml-1 h-3 w-3 shrink-0 text-muted-foreground" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-64 p-1" data-testid="popover-opportunity-vault">
+                  {assignableVaults.length === 0 ? (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">No Vaults available.</div>
+                  ) : assignableVaults.map(vault => {
+                    const checked = opportunity.vaultId === vault.id;
+                    return (
+                      <label key={vault.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent sm:min-h-9">
+                        <Checkbox
+                          checked={checked}
+                          disabled={vaultMutation.isPending}
+                          onCheckedChange={(nextChecked) => vaultMutation.mutate(nextChecked ? vault.id : null)}
+                          aria-label={`${checked ? "Unassign from" : "Assign to"} ${vault.name}`}
+                          data-testid={`checkbox-opportunity-vault-${vault.id}`}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+                      </label>
+                    );
+                  })}
+                </PopoverContent>
+              </Popover>
             </ProfileTreeRow>
 
             {showCompany && (
