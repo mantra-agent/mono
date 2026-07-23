@@ -2,8 +2,8 @@ import { randomBytes } from "crypto";
 import { createLogger } from "./log";
 import { db } from "./db";
 import { getSetting, setSetting } from "./system-settings";
-import { calendarEventPeople, personEmails as personEmailsTable, personMergeAliases, persons } from "@shared/schema";
-import { eq, inArray } from "drizzle-orm";
+import { calendarEventPeople, personEmails as personEmailsTable, personMergeAliases, personVaultMemberships, persons, vaults } from "@shared/schema";
+import { and, eq, inArray } from "drizzle-orm";
 import { TTLCache } from "./utils/ttl-cache";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
@@ -13,9 +13,15 @@ import { combineWithSensitiveWritable } from "./sensitive-scope";
 import { isCivilDate } from "@shared/civil-date";
 import { toCivilDate } from "./civil-date";
 import { getTimezone } from "./timezone";
+import {
+  loadPersonVaultIds,
+  personVaultMembershipScopeColumns,
+  visiblePersonPredicate,
+  writablePersonPredicate,
+} from "./person-vault-access";
 
-const personScopeColumns = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId, vaultId: persons.vaultId };
-const personMergeAliasScopeColumns = { scope: personMergeAliases.scope, ownerUserId: personMergeAliases.ownerUserId, accountId: personMergeAliases.accountId, vaultId: personMergeAliases.vaultId };
+const personScopeColumns = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId };
+const personMergeAliasScopeColumns = { scope: personMergeAliases.scope, ownerUserId: personMergeAliases.ownerUserId, accountId: personMergeAliases.accountId };
 
 export interface ContactInfo {
   type: "email" | "phone" | "social" | "other";
@@ -164,6 +170,7 @@ export interface Person {
   networkProfile?: NetworkProfile;
   dailyContact?: boolean;
   private: boolean;
+  vaultIds?: string[];
   lastViewedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -628,6 +635,7 @@ function rowToPerson(row: Record<string, any>): Person {
     networkProfile: row.networkProfile || row.network_profile || undefined,
     dailyContact: !!(row.dailyContact ?? row.daily_contact),
     private: row.private ?? false,
+    vaultIds: Array.isArray(row.vaultIds || row.vault_ids) ? (row.vaultIds || row.vault_ids) : [],
     lastViewedAt: row.lastViewedAt || row.last_viewed_at ? (typeof (row.lastViewedAt || row.last_viewed_at) === "string" ? (row.lastViewedAt || row.last_viewed_at) : new Date(row.lastViewedAt || row.last_viewed_at).toISOString()) : undefined,
     createdAt: row.createdAt ? (typeof row.createdAt === "string" ? row.createdAt : new Date(row.createdAt).toISOString()) : new Date().toISOString(),
     updatedAt: row.updatedAt ? (typeof row.updatedAt === "string" ? row.updatedAt : new Date(row.updatedAt).toISOString()) : new Date().toISOString(),
@@ -638,7 +646,8 @@ const log = createLogger("PeopleStorage");
 
 function principalCacheKey(): string {
   const principal = getCurrentPrincipalOrSystem();
-  return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
+  const visibleVaultKey = [...principal.visibleVaultIds].sort().join(",") || "no-visible-vaults";
+  return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}:${visibleVaultKey}`;
 }
 
 // ── PeopleStorage (Drizzle-backed) ──────────────────────────────
@@ -661,7 +670,11 @@ export class PeopleStorage {
       const aliases = await db
         .select({ sourceId: personMergeAliases.sourceId, targetId: personMergeAliases.targetId })
         .from(personMergeAliases)
-        .where(combineWithVisibleScope(principal, personMergeAliasScopeColumns));
+        .innerJoin(persons, eq(persons.id, personMergeAliases.targetId))
+        .where(and(
+          combineWithVisibleScope(principal, personMergeAliasScopeColumns),
+          visiblePersonPredicate(principal),
+        ));
       return new Map(aliases.map(alias => [alias.sourceId, alias.targetId]));
     });
   }
@@ -731,6 +744,96 @@ export class PeopleStorage {
     const rows = await db.select().from(personEmailsTable).where(eq(personEmailsTable.email, normalized));
     if (rows.length === 0) return null;
     return { id: rows[0].personId, name: rows[0].personName };
+  }
+
+  private async hydratePersonRows(rows: Array<typeof persons.$inferSelect>): Promise<Person[]> {
+    const principal = getCurrentPrincipalOrSystem();
+    const vaultIdsByPerson = await loadPersonVaultIds(principal, rows.map(row => row.id));
+    return rows.map(row => rowToPerson({ ...row, vaultIds: vaultIdsByPerson.get(row.id) ?? [] }));
+  }
+
+  private async assignInitialVaultMembership(personId: string): Promise<void> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType === "system") return;
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId || !principal.activeVaultId) {
+      throw new Error("Creating a Person requires an authenticated user with an active Vault");
+    }
+    const ownedVault = await db
+      .select({ id: vaults.id })
+      .from(vaults)
+      .where(and(
+        eq(vaults.id, principal.activeVaultId),
+        eq(vaults.accountId, principal.accountId),
+        eq(vaults.isArchived, false),
+      ))
+      .limit(1);
+    if (!ownedVault[0]) throw new Error("Active Vault is not available in this account");
+    await db.insert(personVaultMemberships)
+      .values({
+        personId,
+        vaultId: principal.activeVaultId,
+        scope: "user",
+        ownerUserId: principal.userId,
+        accountId: principal.accountId,
+        createdByUserId: principal.userId,
+      })
+      .onConflictDoNothing();
+  }
+
+  async replaceVaultMemberships(personId: string, vaultIds: string[]): Promise<Person> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      throw new Error("Person Vault membership requires an authenticated user account");
+    }
+    const normalizedVaultIds = [...new Set(vaultIds.map(id => id.trim()).filter(Boolean))];
+    if (normalizedVaultIds.length === 0) throw new Error("A Person must belong to at least one Vault");
+
+    await db.transaction(async tx => {
+      const [person] = await tx
+        .select({ id: persons.id })
+        .from(persons)
+        .where(writablePersonPredicate(principal, eq(persons.id, personId)))
+        .for("update");
+      if (!person) throw new Error(`Person ${personId} not found or not writable`);
+
+      const ownedVaults = await tx
+        .select({ id: vaults.id })
+        .from(vaults)
+        .where(and(
+          inArray(vaults.id, normalizedVaultIds),
+          eq(vaults.accountId, principal.accountId),
+          eq(vaults.isArchived, false),
+        ));
+      if (ownedVaults.length !== normalizedVaultIds.length) {
+        throw new Error("Every Person Vault must be live and belong to the active account");
+      }
+
+      await tx.delete(personVaultMemberships).where(
+        combineWithWritableScope(
+          principal,
+          personVaultMembershipScopeColumns,
+          eq(personVaultMemberships.personId, personId),
+        ),
+      );
+      await tx.insert(personVaultMemberships).values(
+        normalizedVaultIds.map(vaultId => ({
+          personId,
+          vaultId,
+          scope: "user",
+          ownerUserId: principal.userId!,
+          accountId: principal.accountId!,
+          createdByUserId: principal.userId!,
+        })),
+      );
+    });
+
+    this.invalidateListCache();
+    const rows = await db.select().from(persons).where(
+      combineWithWritableScope(principal, personScopeColumns, eq(persons.id, personId)),
+    );
+    const [person] = await this.hydratePersonRows(rows);
+    if (!person) throw new Error(`Person ${personId} not found after updating Vaults`);
+    return person;
   }
 
   private async savePerson(person: Person): Promise<void> {
@@ -853,14 +956,10 @@ export class PeopleStorage {
 
   async listPeople(): Promise<PersonIndexEntry[]> {
     return this._listCache.getOrFetch(`all:${principalCacheKey()}`, async () => {
-      const rows = await db.select().from(persons).where(
-        combineWithVisibleScope(getCurrentPrincipalOrSystem(), personScopeColumns)
-      );
-      const entries: PersonIndexEntry[] = [];
-      for (const row of rows) {
-        const person = rowToPerson(row);
-        entries.push(this.toIndexEntry(person));
-      }
+      const principal = getCurrentPrincipalOrSystem();
+      const rows = await db.select().from(persons).where(visiblePersonPredicate(principal));
+      const people = await this.hydratePersonRows(rows);
+      const entries = people.map(person => this.toIndexEntry(person));
       log.debug(`listPeople count=${entries.length}`);
       return entries;
     });
@@ -872,19 +971,17 @@ export class PeopleStorage {
 
   async getPerson(id: string): Promise<Person | null> {
     const resolvedId = await this.resolvePersonAlias(id);
+    const principal = getCurrentPrincipalOrSystem();
     const rows = await db.select().from(persons).where(
-      combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
-        personScopeColumns,
-        eq(persons.id, resolvedId),
-      )
+      visiblePersonPredicate(principal, eq(persons.id, resolvedId)),
     );
     if (rows.length === 0) {
       log.debug(`getPerson id=${id} resolvedId=${resolvedId} — not found`);
       return null;
     }
-    log.debug(`getPerson id=${id} resolvedId=${resolvedId} name=${rows[0].name}`);
-    return rowToPerson(rows[0]);
+    const [person] = await this.hydratePersonRows(rows);
+    log.debug(`getPerson id=${id} resolvedId=${resolvedId} name=${person.name}`);
+    return person;
   }
 
   async getPeopleByIds(ids: string[]): Promise<Person[]> {
@@ -895,13 +992,10 @@ export class PeopleStorage {
     const uniqueIds = [...new Set(resolvedIds)];
     log.debug(`getPeopleByIds count=${ids.length} unique=${uniqueIds.length} aliases=${aliasBySource.size}`);
     const rows = await db.select().from(persons).where(
-      combineWithVisibleScope(
-        principal,
-        personScopeColumns,
-        inArray(persons.id, uniqueIds),
-      )
+      visiblePersonPredicate(principal, inArray(persons.id, uniqueIds)),
     );
-    const byId = new Map(rows.map(row => [row.id, rowToPerson(row)]));
+    const people = await this.hydratePersonRows(rows);
+    const byId = new Map(people.map(person => [person.id, person]));
     return resolvedIds
       .map(id => byId.get(id) ?? null)
       .filter((person): person is Person => person !== null);
@@ -933,16 +1027,30 @@ export class PeopleStorage {
       interactions: data.interactions || [],
       tags: data.tags || [],
       private: data.private ?? false,
+      vaultIds: [],
       createdAt: now,
       updatedAt: now,
     };
     await this.savePerson(person);
+    try {
+      await this.assignInitialVaultMembership(person.id);
+    } catch (error) {
+      await db.delete(persons).where(
+        combineWithWritableScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, person.id)),
+      );
+      throw error;
+    }
+    const created = await this.getPerson(person.id);
+    if (!created) throw new Error(`Person ${person.id} was created without visible Vault membership`);
     log.debug(`createPerson created id=${person.id} name=${person.name}`);
-    return person;
+    return created;
   }
 
   async updatePerson(id: string, updates: Partial<Person>): Promise<Person> {
     log.debug(`updatePerson id=${id} fields=${Object.keys(updates).join(",")}`);
+    if (updates.vaultIds !== undefined) {
+      throw new Error("Update Person Vaults through replaceVaultMemberships");
+    }
     const person = await this.getPerson(id);
     if (!person) throw new Error(`Person ${id} not found`);
     const updated: Person = {
@@ -1051,7 +1159,7 @@ export class PeopleStorage {
   async deletePerson(id: string): Promise<void> {
     log.debug(`deletePerson id=${id}`);
     await db.delete(persons).where(
-      combineWithWritableScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, id))
+      writablePersonPredicate(getCurrentPrincipalOrSystem(), eq(persons.id, id)),
     );
     await db.delete(personEmailsTable).where(eq(personEmailsTable.personId, id));
     this.invalidateListCache();
@@ -1062,9 +1170,7 @@ export class PeopleStorage {
     const now = new Date();
     await db.update(persons)
       .set({ lastViewedAt: now })
-      .where(
-        combineWithWritableScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, id))
-      );
+      .where(writablePersonPredicate(getCurrentPrincipalOrSystem(), eq(persons.id, id)));
     this.invalidateListCache();
   }
 

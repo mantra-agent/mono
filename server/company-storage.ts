@@ -4,10 +4,11 @@ import { companies, persons, opportunities } from "@shared/schema";
 import { db } from "./db";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
+import { visiblePersonPredicate, writablePersonPredicate } from "./person-vault-access";
 
 const companyScope = { scope: companies.scope, ownerUserId: companies.ownerUserId, accountId: companies.accountId };
 const opportunityScope = { scope: opportunities.scope, ownerUserId: opportunities.ownerUserId, accountId: opportunities.accountId };
-const personScope = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId, vaultId: persons.vaultId };
+const personScope = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId };
 
 export interface Company {
   id: string;
@@ -50,7 +51,7 @@ export class CompanyStorage {
     const principal = getCurrentPrincipalOrSystem();
     const predicate = query?.trim() ? ilike(companies.name, `%${query.trim()}%`) : undefined;
     const rows = await db.select().from(companies).where(combineWithVisibleScope(principal, companyScope, predicate));
-    const visiblePeople = await db.select({ companyId: persons.companyId }).from(persons).where(combineWithVisibleScope(principal, personScope));
+    const visiblePeople = await db.select({ companyId: persons.companyId }).from(persons).where(visiblePersonPredicate(principal));
     const counts = new Map<string, number>();
     for (const person of visiblePeople) {
       if (person.companyId) counts.set(person.companyId, (counts.get(person.companyId) || 0) + 1);
@@ -129,7 +130,7 @@ export class CompanyStorage {
   async listPeople(id: string) {
     return db.select({ id: persons.id, name: persons.name, role: persons.role, company: persons.company })
       .from(persons)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), personScope, eq(persons.companyId, id)));
+      .where(visiblePersonPredicate(getCurrentPrincipalOrSystem(), eq(persons.companyId, id)));
   }
 
   async listOpportunities(id: string) {
@@ -156,13 +157,13 @@ export class CompanyStorage {
     const company = await this.get(companyIdValue);
     if (!company) throw new Error("Company not found");
     const rows = await db.update(persons).set({ companyId: company.id, company: company.name, updatedAt: new Date() })
-      .where(combineWithWritableScope(getCurrentPrincipalOrSystem(), personScope, eq(persons.id, personId))).returning({ id: persons.id });
+      .where(writablePersonPredicate(getCurrentPrincipalOrSystem(), eq(persons.id, personId))).returning({ id: persons.id });
     if (!rows[0]) throw new Error("Person not found or not writable");
   }
 
   async removePerson(companyIdValue: string, personId: string): Promise<void> {
     const rows = await db.update(persons).set({ companyId: null, company: null, updatedAt: new Date() })
-      .where(combineWithWritableScope(getCurrentPrincipalOrSystem(), personScope, and(eq(persons.id, personId), eq(persons.companyId, companyIdValue)))).returning({ id: persons.id });
+      .where(writablePersonPredicate(getCurrentPrincipalOrSystem(), and(eq(persons.id, personId), eq(persons.companyId, companyIdValue)))).returning({ id: persons.id });
     if (!rows[0]) throw new Error("Person is not linked to this company");
   }
 }

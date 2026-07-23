@@ -4,6 +4,7 @@ import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { persons, simplePeopleSurfaceState } from "@shared/schema";
+import { visiblePersonPredicate } from "../person-vault-access";
 
 const log = createLogger("SimplePeopleSurfaceState");
 
@@ -14,12 +15,7 @@ const peopleSurfaceScopeColumns = {
   vaultId: simplePeopleSurfaceState.vaultId,
 };
 
-const personScopeColumns = {
-  scope: persons.scope,
-  ownerUserId: persons.ownerUserId,
-  accountId: persons.accountId,
-  vaultId: persons.vaultId,
-};
+// Person visibility is centralized in person-vault-access.ts.
 
 /**
  * Surface-state rows must only ever reference persons the acting principal can see.
@@ -32,7 +28,7 @@ async function filterVisiblePersonIds(personIds: string[]): Promise<Set<string>>
   const rows = await db
     .select({ id: persons.id })
     .from(persons)
-    .where(combineWithVisibleScope(principal, personScopeColumns, inArray(persons.id, uniqueIds)));
+    .where(visiblePersonPredicate(principal, inArray(persons.id, uniqueIds)));
   const visible = new Set(rows.map(row => row.id));
   if (visible.size !== uniqueIds.length) {
     const rejected = uniqueIds.filter(id => !visible.has(id));

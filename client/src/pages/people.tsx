@@ -18,6 +18,8 @@ import { useToast } from "@/hooks/use-toast";
 import { SurfacedPersonRow, surfacedDateLabel } from "@/components/people/surfaced-person-row";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { CompanyReferenceField } from "@/components/people/company-reference-field";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useVaults } from "@/hooks/use-vaults";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -279,6 +281,7 @@ interface Person {
   quickSummary?: string;
   identityContent?: string;
   private: boolean;
+  vaultIds: string[];
   createdAt: string;
   updatedAt: string;
   relationshipProfile?: RelationshipProfile;
@@ -2040,6 +2043,7 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
   onNewInteractionOpened?: () => void;
 }) {
   const { toast } = useToast();
+  const { vaults } = useVaults();
   const [editingName, setEditingName] = useState(false);
   const [editName, setEditName] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -2121,6 +2125,21 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
     },
     onError: (err: Error) => {
       toast({ title: "Failed to update", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const vaultMembershipMutation = useMutation({
+    mutationFn: async (vaultIds: string[]) => {
+      const res = await apiRequest("PATCH", `/api/people/${personId}/vaults`, { vaultIds });
+      return res.json() as Promise<Person>;
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["/api/people", personId], updated);
+      queryClient.invalidateQueries({ queryKey: ["/api/people"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update Vaults", description: err.message, variant: "destructive" });
     },
   });
 
@@ -2324,6 +2343,43 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
                 />
               </div>
             ) : <Button variant="ghost" size="icon" onClick={() => setEditingMet(true)} data-testid="button-add-met"><Plus className="h-3 w-3" /></Button>}
+          </ProfileTreeRow>
+
+          <ProfileTreeRow label={<span data-testid="label-vaults">Vaults</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={(person.vaultIds || []).length > 0} showEmpty mobileLayout="inline" testId="row-profile-vaults">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" className="h-5 max-w-48 justify-end px-1.5 text-right text-xs font-normal" data-testid="button-edit-person-vaults">
+                  <span className="truncate">
+                    {vaults.filter(vault => person.vaultIds?.includes(vault.id)).map(vault => vault.name).join(", ") || "Choose Vaults"}
+                  </span>
+                  <ChevronDown className="ml-1 h-3 w-3 shrink-0 text-muted-foreground" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-64 p-1" data-testid="popover-person-vaults">
+                {vaults.map(vault => {
+                  const checked = person.vaultIds?.includes(vault.id) ?? false;
+                  const onlyMembership = checked && person.vaultIds?.length === 1;
+                  return (
+                    <label key={vault.id} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent sm:min-h-9">
+                      <Checkbox
+                        checked={checked}
+                        disabled={onlyMembership || vaultMembershipMutation.isPending}
+                        onCheckedChange={(nextChecked) => {
+                          const current = person.vaultIds || [];
+                          const next = nextChecked
+                            ? [...new Set([...current, vault.id])]
+                            : current.filter(id => id !== vault.id);
+                          vaultMembershipMutation.mutate(next);
+                        }}
+                        aria-label={`${checked ? "Remove from" : "Add to"} ${vault.name}`}
+                        data-testid={`checkbox-person-vault-${vault.id}`}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+                    </label>
+                  );
+                })}
+              </PopoverContent>
+            </Popover>
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company)} showEmpty={showEmptyProfileRows} mobileLayout="inline" testId="row-profile-company">

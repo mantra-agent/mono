@@ -549,9 +549,10 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 
 ### People & Relationships
 - **PostgreSQL-backed** in `persons`, with merge redirects in `person_merge_aliases`.
+- **Vault membership:** `person_vault_memberships` is the canonical many-to-many Person-to-Vault join. `person-vault-access.ts` owns the read predicate; authenticated People are visible only when at least one membership resolves to a currently visible live Vault in the principal account. `PeopleStorage.replaceVaultMemberships()` is the only ordinary replacement boundary.
 - **Bulk identity resolution:** `PeopleStorage.getPeopleByIds()` loads the principal-scoped alias graph once, resolves chains in memory with cycle/depth guards, then fetches People with one scoped `IN` query. Bulk size must not determine query count.
 - **Computed fields:** rollup (contact frequency), due status (cadence-based), outreach priority, mobilization readiness.
-- Key files: `people-storage.ts`, `person-merge-service.ts`, `import-queue.ts`.
+- Key files: `people-storage.ts`, `person-vault-access.ts`, `person-merge-service.ts`, `import-queue.ts`.
 
 ### Finance
 - **26 Plaid-connected tables** in `shared/models/finance.ts`

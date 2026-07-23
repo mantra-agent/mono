@@ -686,6 +686,23 @@ export const persons = pgTable("persons", {
 
 export type PersonRow = typeof persons.$inferSelect;
 
+export const personVaultMemberships = pgTable("person_vault_memberships", {
+  personId: text("person_id").notNull().references(() => persons.id, { onDelete: "cascade" }),
+  vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "cascade" }),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  createdByUserId: text("created_by_user_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.personId, table.vaultId] }),
+  index("idx_person_vault_memberships_vault_person").on(table.vaultId, table.personId),
+  index("idx_person_vault_memberships_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_person_vault_memberships_account").on(table.accountId),
+]);
+
+export type PersonVaultMembership = typeof personVaultMemberships.$inferSelect;
+
 export const personMergeAliases = pgTable("person_merge_aliases", {
   sourceId: text("source_id").primaryKey(),
   targetId: text("target_id").notNull().references(() => persons.id, { onDelete: "restrict" }),
