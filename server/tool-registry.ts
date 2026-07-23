@@ -973,6 +973,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         position: { type: "number", description: "Display order position (for passions)" },
         jdText: { type: "string", description: "Job description text (to store on an opportunity)" },
         jobUrl: { type: "string", description: "URL of the job posting (for opportunities)" },
+        vaultId: { type: ["string", "null"], description: "Optional Vault ID for an opportunity. Pass null to unassign it." },
         championPersonId: { type: "string", description: "People person ID for the champion/key contact at this opportunity (for create/update_opportunity)" },
         followUpBy: { type: "string", description: "Follow-up deadline date YYYY-MM-DD (for create/update_opportunity)" },
         followUpNote: { type: "string", description: "Note about what the follow-up should cover (for create/update_opportunity)" },

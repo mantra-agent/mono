@@ -14465,6 +14465,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             o.companyId ? `  company: @company:${o.companyId}` : o.company ? `  company: ${o.company}` : null,
             o.location ? `  location: ${o.location}` : null,
             o.priority ? `  priority: ${o.priority}` : null,
+            o.vaultId ? `  vault: ${o.vaultId}` : `  vault: unassigned`,
             o.description ? `  description: ${o.description.slice(0, 200)}${o.description.length > 200 ? "…" : ""}` : null,
             o.nextSteps ? `  nextSteps: ${o.nextSteps.slice(0, 200)}${o.nextSteps.length > 200 ? "…" : ""}` : null,
             o.isFullTime ? `  Full time` : o.hoursPerWeek ? `  ${o.hoursPerWeek} hrs/${o.timeCommitmentPeriod || "week"}` : null,
@@ -14507,6 +14508,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           if (a.championPersonId !== undefined) fields.championPersonId = a.championPersonId;
           if (a.followUpBy !== undefined) fields.followUpBy = a.followUpBy;
           if (a.followUpNote !== undefined) fields.followUpNote = a.followUpNote;
+          if (a.vaultId !== undefined) fields.vaultId = a.vaultId;
           const parsed = insertOpportunitySchema.parse(fields);
           const row = await opportunityStorage.create(principal, parsed);
           publish("create_opportunity");
@@ -14539,6 +14541,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           if (a.championPersonId !== undefined) updates.championPersonId = a.championPersonId;
           if (a.followUpBy !== undefined) updates.followUpBy = a.followUpBy;
           if (a.followUpNote !== undefined) updates.followUpNote = a.followUpNote;
+          if (a.vaultId !== undefined) updates.vaultId = a.vaultId;
           if (Object.keys(updates).length === 0) return { result: "No fields to update", error: true };
           const parsed = insertOpportunitySchema.partial().parse(updates);
           const row = await opportunityStorage.update(a.id, parsed, principal);

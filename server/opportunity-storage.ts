@@ -2,6 +2,7 @@ import { db, pool } from "./db";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import {
   opportunities,
+  vaults,
   opportunityArtifacts,
   opportunitySkills,
   opportunityInteractions,
@@ -166,6 +167,7 @@ export async function migrateOpportunitySchema(): Promise<void> {
       CREATE TABLE IF NOT EXISTS opportunities (
         id SERIAL PRIMARY KEY,
         user_id TEXT NOT NULL,
+        vault_id TEXT REFERENCES vaults(id) ON DELETE SET NULL,
         title TEXT NOT NULL,
         description TEXT,
         type TEXT NOT NULL,
@@ -207,13 +209,30 @@ export async function migrateOpportunitySchema(): Promise<void> {
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'user';
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
       ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS account_id TEXT;
+      ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS vault_id TEXT;
       UPDATE opportunities SET owner_user_id = user_id WHERE owner_user_id IS NULL;
+
+      DO $
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'opportunities_vault_id_fkey'
+            AND conrelid = 'opportunities'::regclass
+        ) THEN
+          ALTER TABLE opportunities
+            ADD CONSTRAINT opportunities_vault_id_fkey
+            FOREIGN KEY (vault_id) REFERENCES vaults(id) ON DELETE SET NULL;
+        END IF;
+      END
+      $;
 
       CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(status);
       CREATE INDEX IF NOT EXISTS idx_opportunities_type ON opportunities(type);
       CREATE INDEX IF NOT EXISTS idx_opportunities_user ON opportunities(user_id);
       CREATE INDEX IF NOT EXISTS idx_opportunities_scope_owner ON opportunities(scope, owner_user_id);
       CREATE INDEX IF NOT EXISTS idx_opportunities_account ON opportunities(account_id);
+      CREATE INDEX IF NOT EXISTS idx_opportunities_vault_id ON opportunities(vault_id);
       CREATE INDEX IF NOT EXISTS idx_opportunities_company_id ON opportunities(company_id);
 
       CREATE TABLE IF NOT EXISTS opportunity_interactions (
@@ -283,6 +302,7 @@ class OpportunityStorage {
 
   async create(principal: Principal, data: InsertOpportunity): Promise<OpportunityRow> {
     return autoHeal(async () => {
+      await this.assertAssignableVault(data.vaultId, principal);
       const normalized = await this.normalizeCompany(data);
       const ev = computeEV(normalized.type, (normalized.evInputs || {}) as Record<string, any>, normalized.probability ?? 0.05, normalized.hoursPerWeek);
       const [row] = await db.insert(opportunities).values({
@@ -305,6 +325,7 @@ class OpportunityStorage {
     return autoHeal(async () => {
       const existing = await this.get(id, principal);
       if (!existing) return undefined;
+      await this.assertAssignableVault(updates.vaultId, principal);
       const normalized = await this.normalizeCompany(updates);
       const merged = { ...existing, ...normalized };
       const needsRecompute = normalized.type !== undefined || normalized.evInputs !== undefined || normalized.probability !== undefined || normalized.hoursPerWeek !== undefined;
@@ -322,6 +343,21 @@ class OpportunityStorage {
       }
       return row;
     });
+  }
+
+  private async assertAssignableVault(vaultId: string | null | undefined, principal: Principal): Promise<void> {
+    if (vaultId === undefined || vaultId === null) return;
+    if (!principal.accountId) throw Object.assign(new Error("User account required"), { status: 401 });
+    const [vault] = await db.select({ id: vaults.id }).from(vaults).where(and(
+      eq(vaults.id, vaultId),
+      eq(vaults.accountId, principal.accountId),
+      eq(vaults.isArchived, false),
+    )).limit(1);
+    if (!vault) throw Object.assign(new Error("Opportunity Vault must be live and belong to the active account"), { status: 400 });
+  }
+
+  async setVault(id: number, vaultId: string | null, principal: Principal): Promise<OpportunityRow | undefined> {
+    return this.update(id, { vaultId }, principal);
   }
 
   private async normalizeCompany<T extends Partial<InsertOpportunity>>(data: T): Promise<T> {

@@ -2,6 +2,7 @@ import { pgTable, text, integer, timestamp, serial, real, boolean, jsonb, unique
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { vaults } from "./vaults";
 
 // ── Enums ──────────────────────────────────────────────────────────
 export const opportunityTypes = ["job", "consulting", "business", "passive_income"] as const;
@@ -26,6 +27,7 @@ export const opportunities = pgTable("opportunities", {
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
+  vaultId: text("vault_id").references(() => vaults.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   description: text("description"),
   type: text("type").notNull(),
@@ -56,6 +58,7 @@ export const opportunities = pgTable("opportunities", {
 }, (t) => [
   index("idx_opportunities_scope_owner").on(t.scope, t.ownerUserId),
   index("idx_opportunities_account").on(t.accountId),
+  index("idx_opportunities_vault_id").on(t.vaultId),
   index("idx_opportunities_company_id").on(t.companyId),
 ]);
 
@@ -251,6 +254,7 @@ export const insertOpportunitySchema = createInsertSchema(opportunities).omit({
   championPersonId: z.string().optional().nullable(),
   followUpBy: z.string().optional().nullable(),
   followUpNote: z.string().optional().nullable(),
+  vaultId: z.string().min(1).optional().nullable(),
 });
 
 // ── Types ──────────────────────────────────────────────────────────

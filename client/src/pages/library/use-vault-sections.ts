@@ -34,6 +34,8 @@ export interface VisibleVaults {
   isLoading: boolean;
   /** Resolve a page's effective vault id, folding null into the default vault. */
   resolveVaultId: (vaultId: string | null | undefined) => string | null;
+  /** Whether a concrete Vault id is enabled in the top bar. */
+  isVaultEnabled: (vaultId: string | null | undefined) => boolean;
   /** Whether a page's (resolved) vault is currently visible. */
   isVaultVisible: (vaultId: string | null | undefined) => boolean;
 }
@@ -83,9 +85,12 @@ export function useVisibleVaults(): VisibleVaults {
       vaultId: string | null | undefined,
     ): string | null => vaultId ?? defaultVaultId;
 
+    const isVaultEnabled = (vaultId: string | null | undefined): boolean =>
+      typeof vaultId === "string" && visibleVaultIdSet.has(vaultId);
+
     const isVaultVisible = (vaultId: string | null | undefined): boolean => {
       const resolved = resolveVaultId(vaultId);
-      return resolved !== null && visibleVaultIdSet.has(resolved);
+      return isVaultEnabled(resolved);
     };
 
     return {
@@ -93,6 +98,7 @@ export function useVisibleVaults(): VisibleVaults {
       defaultVaultId,
       isLoading,
       resolveVaultId,
+      isVaultEnabled,
       isVaultVisible,
     };
   }, [vaults, visibleVaultIds, isLoading]);

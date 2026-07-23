@@ -11,13 +11,15 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { useToast } from "@/hooks/use-toast";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { useVisibleVaults } from "@/pages/library/use-vault-sections";
 
 interface CompanyIndex { id: string; name: string; industry?: string; location?: string; peopleCount?: number; opportunityCount?: number; }
-interface Company extends CompanyIndex { description?: string; website?: string; notes?: string; tags: string[]; opportunities: Array<{ id: number; title: string; status: string; type: string }>; people: Array<{ id: string; name: string; role?: string }>; }
+interface Company extends CompanyIndex { description?: string; website?: string; notes?: string; tags: string[]; opportunities: Array<{ id: number; vaultId: string | null; title: string; status: string; type: string }>; people: Array<{ id: string; name: string; role?: string }>; }
 interface PersonIndex { id: string; name: string; role?: string; companyId?: string; }
 
 function CompanyDetail({ id, onClose, onDelete }: { id: string; onClose: () => void; onDelete: () => void }) {
   const { toast } = useToast();
+  const { isVaultEnabled, isLoading: vaultsLoading } = useVisibleVaults();
   const [personSearch, setPersonSearch] = useState("");
   const { data: company, isLoading } = useQuery<Company>({ queryKey: ["/api/companies", id] });
   const { data: peopleData } = useQuery<{ people: PersonIndex[] }>({ queryKey: ["/api/people"] });
@@ -42,8 +44,14 @@ function CompanyDetail({ id, onClose, onDelete }: { id: string; onClose: () => v
   const candidates = useMemo(() => (peopleData?.people || [])
     .filter(person => person.companyId !== id && person.name.toLowerCase().includes(personSearch.toLowerCase()))
     .slice(0, 8), [peopleData?.people, id, personSearch]);
+  const visibleOpportunities = useMemo(
+    () => vaultsLoading
+      ? []
+      : (company?.opportunities || []).filter(opportunity => opportunity.vaultId === null || isVaultEnabled(opportunity.vaultId)),
+    [company?.opportunities, vaultsLoading, isVaultEnabled],
+  );
 
-  if (isLoading) return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  if (isLoading || vaultsLoading) return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
   if (!company) return <div className="p-4"><Button variant="ghost" onClick={onClose}><ArrowLeft className="mr-2 h-4 w-4" />Back to Companies</Button></div>;
 
   const editable = (field: keyof Company, value: string | undefined, placeholder: string) => (
@@ -78,8 +86,8 @@ function CompanyDetail({ id, onClose, onDelete }: { id: string; onClose: () => v
     </section>
 
     <section className="overflow-hidden rounded-md border border-border/20">
-      <div className="border-b border-border/20 px-4 py-3"><h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Opportunities ({company.opportunities.length})</h2></div>
-      {company.opportunities.length === 0 ? <p className="px-4 py-6 text-sm text-muted-foreground">No opportunities linked yet.</p> : company.opportunities.map(opportunity => <div key={opportunity.id} className="flex min-h-11 items-center gap-3 border-b border-border/10 px-4 py-2 last:border-b-0"><Briefcase className="h-3.5 w-3.5 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="truncate text-sm text-foreground">{opportunity.title}</div><div className="text-xs capitalize text-muted-foreground">{opportunity.status}</div></div><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => apiRequest("DELETE", `/api/companies/${id}/opportunities/${opportunity.id}`).then(invalidate)}><X className="h-3.5 w-3.5" /></Button></div>)}
+      <div className="border-b border-border/20 px-4 py-3"><h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Opportunities ({visibleOpportunities.length})</h2></div>
+      {visibleOpportunities.length === 0 ? <p className="px-4 py-6 text-sm text-muted-foreground">No visible opportunities linked.</p> : visibleOpportunities.map(opportunity => <div key={opportunity.id} className="flex min-h-11 items-center gap-3 border-b border-border/10 px-4 py-2 last:border-b-0"><Briefcase className="h-3.5 w-3.5 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="truncate text-sm text-foreground">{opportunity.title}</div><div className="text-xs capitalize text-muted-foreground">{opportunity.status}</div></div><Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => apiRequest("DELETE", `/api/companies/${id}/opportunities/${opportunity.id}`).then(invalidate)}><X className="h-3.5 w-3.5" /></Button></div>)}
     </section>
   </div>;
 }
