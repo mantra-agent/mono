@@ -264,17 +264,54 @@ export async function ensureCanonicalVaultMetadataPage(input: {
           ),
         ),
       )
-      .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id))
-      .limit(2);
+      .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id));
 
-    if (candidates.length > 1) {
-      throw Object.assign(
-        new Error(`Vault has multiple canonical ${definition.title} pages; migration repair is required`),
-        { status: 409 },
-      );
+    // A vault must have exactly one canonical metadata page per kind. Legacy data
+    // created before this advisory lock guarded forking can leave duplicates, and
+    // because every Library, opportunity-artifact, corpus-migration, placement, and
+    // workflow-checkpoint path bootstraps through this resolver, a single duplicate
+    // would otherwise wedge the entire subsystem for the account. Self-heal under
+    // the lock instead of throwing: keep the earliest page as canonical and demote
+    // the rest to ordinary artifact pages (content preserved, reparented under the
+    // canonical page). This converges idempotently and is safe to replay.
+    const [canonical, ...duplicates] = candidates;
+    if (duplicates.length > 0) {
+      log.warn("Reconciling duplicate canonical vault metadata pages", {
+        vaultId: input.vaultId,
+        kind: input.kind,
+        keptPageId: canonical.id,
+        demotedCount: duplicates.length,
+      });
+      const canonicalTags = definition.tags as readonly string[];
+      for (const duplicate of duplicates) {
+        const [demoted] = await tx
+          .update(libraryPages)
+          .set({
+            structuralRole: "artifact",
+            tags: (duplicate.tags ?? []).filter((tag) => !canonicalTags.includes(tag)),
+            parentId: canonical.id,
+            slug: `${slugify(definition.title)}-archived-${duplicate.id.slice(0, 8)}`,
+            updatedAt: sql`CURRENT_TIMESTAMP`,
+            updatedByUserId: input.principal.userId ?? undefined,
+          })
+          .where(
+            combineWithWritableScope(
+              input.principal,
+              libraryScopeColumns,
+              eq(libraryPages.id, duplicate.id),
+            ),
+          )
+          .returning();
+        if (!demoted) {
+          throw Object.assign(
+            new Error("Canonical Library metadata duplicate is visible but not writable"),
+            { status: 403 },
+          );
+        }
+      }
     }
 
-    const existing = candidates[0];
+    const existing = canonical;
     if (existing) {
       const desiredTags = Array.from(new Set([...(existing.tags ?? []), ...definition.tags]));
       const [updated] = await tx
