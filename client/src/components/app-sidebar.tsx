@@ -27,6 +27,7 @@ import {
   LineChart,
   Mail,
   Megaphone,
+  MessagesSquare,
   Newspaper,
   Palette,
   Plug,
@@ -100,6 +101,7 @@ const navSections: NavSection[] = [
     defaultOpen: true,
     items: [
       { title: "People", url: "/people", icon: Users },
+      { title: "Meetings", url: "/meetings", icon: MessagesSquare },
       { title: "Companies", url: "/companies", icon: Briefcase },
       { title: "Pipelines", url: "/pipelines", icon: Target },
     ],

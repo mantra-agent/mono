@@ -65,6 +65,11 @@ export function registerReferenceRoutes(app: Express) {
             }
 
             case "meeting": {
+              const meetingSession = await chatFileStorage.getSession(id);
+              if (meetingSession?.type === "meeting") {
+                results[key] = meetingSession.meeting?.title || meetingSession.title || "Meeting";
+                break;
+              }
               const parts = id.split("~").map(decodeURIComponent);
               if (parts.length === 3) {
                 const [accountId, calendarId, eventId] = parts;

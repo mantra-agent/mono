@@ -739,13 +739,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   meetings: {
-    description: "Manage calendar events — create, list, update, or delete meetings. Before creating an event, verify the title, date, start time, duration/end time, and attendees; do not create until those details are confirmed.",
+    description: "Manage calendar events and query completed meeting records. Calendar actions create/list/update/delete events; records/count/get read the canonical completed meetings where Mantra captured notes. Before creating an event, verify the title, date, start time, duration/end time, and attendees; do not create until those details are confirmed.",
     category: "calendar",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["add", "list", "update", "delete", "set_metadata", "get_metadata", "link_artifact", "unlink_artifact"], description: "The action to perform" },
+        action: { type: "string", enum: ["add", "list", "update", "delete", "set_metadata", "get_metadata", "link_artifact", "unlink_artifact", "records", "count", "get"], description: "The action to perform. Use records/count/get for canonical completed meeting sessions and note totals." },
         summary: { type: "string", description: "Meeting title (for add/update)" },
         start: { type: "string", description: "Start time ISO 8601 (required for add)" },
         end: { type: "string", description: "End time ISO 8601 (default: +1h)" },
@@ -770,6 +770,12 @@ export const TOOLS: Record<string, ToolMeta> = {
         libraryPageId: { type: "string", description: "Library page ID or slug to link as a meeting artifact (for link_artifact)" },
         artifactKind: { type: "string", description: "Required explicit artifact kind for link_artifact. Use research, follow_up, recap, or another non-preparation kind. Agenda/brief calls resolve or claim the canonical preparation page and cannot replace it." },
         attendeeEmails: { type: "array", items: { type: "string" }, description: "Attendee emails for auto-linking people (for set_metadata)" },
+        meetingId: { type: "string", description: "Canonical meeting session ID (for get)" },
+        query: { type: "string", description: "Search completed meeting titles and participant names (for records)" },
+        hasNotes: { type: "boolean", description: "Filter completed meeting records by whether attributed transcript notes were captured" },
+        startAfter: { type: "string", description: "Inclusive meeting start boundary ISO 8601 (for records)" },
+        startBefore: { type: "string", description: "Exclusive meeting start boundary ISO 8601 (for records)" },
+        offset: { type: "number", description: "Pagination offset for completed meeting records" },
       },
       required: ["action"],
     },
