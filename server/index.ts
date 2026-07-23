@@ -477,6 +477,9 @@ app.use((req, res, next) => {
   await objectAclsMigrationReady;
   await migrateProjectNotesSpecToLibrary();
   await vaultsMigrationReady;
+  const { ensureWorkVaultSchema } = await import("./work-vault-schema");
+  const { pool: workVaultPool } = await import("./db");
+  await ensureWorkVaultSchema(workVaultPool);
   await adoptRayPersonalLibraryIndex();
 
   const tRoutes0 = Date.now();

@@ -73,6 +73,8 @@ export type ActivityEntry = z.infer<typeof activityEntrySchema>;
 
 export const insertTaskSchema = z.object({
   title: z.string().min(1),
+  /** Internal creation override. Omitted work defaults at the canonical storage boundary. */
+  vaultId: z.string().min(1).optional(),
   description: z.string().optional().default(""),
   status: taskStatusEnum.optional().default("ready"),
   priority: priorityEnum.optional().default("mid"),
@@ -93,6 +95,7 @@ export type InsertTask = z.infer<typeof insertTaskSchema>;
 export interface Task {
   id: number;
   title: string;
+  vaultId: string;
   description: string;
   status: TaskStatus;
   priority: PriorityLevel;
@@ -132,6 +135,8 @@ export function getDeadlineProximity(deadline: string | null): { label: string; 
 
 export const insertProjectSchema = z.object({
   title: z.string().min(1),
+  /** Internal creation override. Omitted work defaults at the canonical storage boundary. */
+  vaultId: z.string().min(1).optional(),
   description: z.string().optional().default(""),
   status: projectStatusEnum.optional().default("idea"),
   priority: priorityEnum.optional().default("mid"),
@@ -149,6 +154,7 @@ export type InsertProject = z.infer<typeof insertProjectSchema>;
 export interface Project {
   id: number;
   title: string;
+  vaultId: string;
   description: string;
   status: ProjectStatus;
   priority: PriorityLevel;

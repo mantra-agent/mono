@@ -44,6 +44,7 @@ export interface WorkspaceDocCompat {
   title: string | null;
   content: string;
   metadata: unknown;
+  vaultId: string | null;
   embedding: number[] | null;
   createdAt: Date;
   updatedAt: Date;
@@ -66,6 +67,7 @@ function entryToDoc(entry: MemoryEntry): WorkspaceDocCompat {
     title: entry.title || null,
     content: entry.content,
     metadata: entry.metadata,
+    vaultId: entry.vaultId ?? null,
     embedding: null,
     createdAt: entry.createdAt,
     updatedAt: entry.processedAt || entry.createdAt,
@@ -81,6 +83,7 @@ function targetToDoc(entry: DocumentStoreDocument): WorkspaceDocCompat {
     title: entry.title || null,
     content: entry.content,
     metadata: entry.metadata,
+    vaultId: entry.vaultId ?? null,
     embedding: null,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
@@ -189,7 +192,8 @@ export class DocumentStorage {
         await withQueryAttributionAsync("document-write", () => query, "document-upsert");
         log.verbose(() => `upsertDocument target docType=${docType} docId=${docId} (no-return)`);
         return {
-          id: 0, docType, docId, path, title, content, metadata, embedding: null,
+          id: 0, docType, docId, path, title, content, metadata,
+          vaultId: principal.activeVaultId ?? null, embedding: null,
           createdAt, updatedAt,
         };
       }

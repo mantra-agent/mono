@@ -322,6 +322,8 @@ interface SessionData {
   status: string;
   summary?: string | null;
   sessionKey: string | null;
+  /** Read projection of the document store's canonical vault_id. Never serialized into chat content. */
+  vaultId?: string;
   modelTier?: string | null;
   personaId?: number | null;
   createdAt: string;
@@ -521,6 +523,7 @@ async function readConv(id: string): Promise<SessionData | null> {
   if (!doc) return null;
   try {
     const data = JSON.parse(doc.content) as SessionData;
+    data.vaultId = doc.vaultId || undefined;
     data.hasUnreadResult = metadataBool(doc.metadata || {}, "hasUnreadResult");
     if (!data.sessionType) data.sessionType = "user";
     const legacy = data as SessionData & { needsAttention?: boolean; attentionReason?: string };
@@ -890,6 +893,7 @@ function convToMeta(data: SessionData): FileSession {
     status: data.status,
     summary: data.summary || null,
     sessionKey: data.sessionKey,
+    vaultId: data.vaultId,
     modelTier: normalizeSessionModelTierOverride(data.modelTier),
     personaId: data.personaId ?? null,
     createdAt: data.createdAt,

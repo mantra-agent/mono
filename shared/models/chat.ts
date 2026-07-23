@@ -901,6 +901,8 @@ export interface ChatSession {
   status: string;
   summary?: string | null;
   sessionKey: string | null;
+  /** Vault pinned when the session was created. Meeting work inherits this value. */
+  vaultId?: string;
   /** null means Auto: use persona/activity routing without a session override. */
   modelTier: SessionModelTierOverride | null;
   /** Current persona for this session. Conversational authority is session-scoped. */
