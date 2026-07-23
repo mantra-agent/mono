@@ -1410,7 +1410,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
 
   for (let attempt = 0; attempt < CODEX_COMPLETION_MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
-      log.warn(
+      log.debug(
         `codex completion retry attempt=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} model=${codexModel} ` +
         `reason=${lastAttemptError?.phase ?? "protocol"}:${lastAttemptError?.message ?? "response.failed"} ` +
         `delay=${CODEX_RETRY_DELAYS_MS[attempt - 1]}ms`,
@@ -1546,6 +1546,12 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
         });
       }
       if (!content) log.warn(`openai-subscription completion: empty content for model=${codexModel}`);
+      if (attempt > 0) {
+        log.warn(
+          `codex completion recovered after retry attempts=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} ` +
+          `model=${codexModel} previousFailure=${lastAttemptError?.kind ?? "unknown"}:${lastAttemptError?.message ?? "unknown"}`,
+        );
+      }
 
       return {
         content,
@@ -1564,7 +1570,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
       if (parentSignal?.aborted || (isAbortError(err, scope.signal) && !scope.timedOut())) throw new CodexAbortedError();
       if (!(err instanceof ModelProviderAttemptError)) throw err;
       lastAttemptError = err;
-      log.warn(
+      log.debug(
         `codex completion attempt failed attempt=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} model=${codexModel} ` +
         `phase=${err.phase} status=${err.status || 0} elapsedMs=${Date.now() - scope.startedAt} ` +
         `clientRequestId=${err.clientRequestId} providerRequestId=${err.providerRequestId ?? "none"} error=${err.message}`,
@@ -2011,10 +2017,11 @@ function convertToolsToCodexResponses(tools: ToolDefinition[]): Array<{ type: "f
 async function* openaiSubscriptionStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
   const start = Date.now();
   let eventCount = 0;
-  // Set true once ANY event has been yielded to the consumer. Past this
-  // point we cannot safely restart the request — mid-stream failures must
-  // surface as `error` events.
-  let yieldedRealEvent = false;
+  // A retry becomes unsafe only after substantive output can be persisted or
+  // executed downstream. Reasoning deltas and connection state do not commit
+  // assistant text or invoke tools, so replay cannot duplicate durable work.
+  let yieldedReplayUnsafeEvent = false;
+  let connectedEmitted = false;
 
   try {
     const authStart = Date.now();
@@ -2054,9 +2061,11 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
     let streamUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     const pendingToolCalls = new Map<string, { callId: string; name: string; argsAccumulator: string; reasoningEmitted: boolean }>();
     let lastEarlyReason = "";
+    let recoveredRetryAttempts = 0;
 
-    // This loop is the sole retry owner. Retries are allowed only before any
-    // downstream event, keeping replay safe for tools and visible content.
+    // This loop is the sole retry owner. Retries remain safe until text or a
+    // tool event crosses the downstream boundary. Reasoning-only progress may
+    // be superseded by a replacement attempt without duplicating work.
     // HTTP dispatch boundary: auth + request build complete — everything before
     // this is local overhead, everything after is network/provider time.
     yield { type: "request_sent", metadata: { authMs, buildMs: Date.now() - authStart - authMs } };
@@ -2064,7 +2073,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
 
     streamRetryLoop: for (let attempt = 0; attempt < CODEX_STREAM_MAX_ATTEMPTS; attempt++) {
       if (attempt > 0) {
-        log.warn(
+        log.debug(
           `codex stream retry attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
           `reason=${lastEarlyReason || "early-failure"} delay=${CODEX_RETRY_DELAYS_MS[attempt - 1]}ms`,
         );
@@ -2092,7 +2101,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
         }
         if (!(err instanceof ModelProviderAttemptError)) throw err;
         lastEarlyReason = `${err.kind}:${err.message}`;
-        log.warn(
+        log.debug(
           `codex stream attempt failed attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
           `kind=${err.kind} retryable=${err.retryable} phase=${err.phase} status=${err.status || 0} ` +
           `elapsedMs=${Date.now() - scope.startedAt} clientRequestId=${err.clientRequestId} ` +
@@ -2137,7 +2146,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           if (signal?.aborted && !scope.timedOut()) throw new CodexAbortedError();
           attemptFailure = new ModelProviderAttemptError({
             kind: scope.timedOut() ? "time_to_first_event" : "stream_interrupted",
-            retryable: !yieldedRealEvent,
+            retryable: !yieldedReplayUnsafeEvent,
             message: scope.timedOut()
               ? `time_to_first_event_timeout:${CODEX_TIME_TO_FIRST_EVENT_MS}ms`
               : (err?.message || "response body read failed"),
@@ -2154,7 +2163,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           if (!terminalEventSeen) {
             attemptFailure = new ModelProviderAttemptError({
               kind: "stream_interrupted",
-              retryable: !yieldedRealEvent,
+              retryable: !yieldedReplayUnsafeEvent,
               message: firstProviderEventSeen ? "eof_before_terminal_event" : "eof_before_first_event",
               clientRequestId: scope.clientRequestId,
               providerRequestId: response.headers.get("x-request-id") || undefined,
@@ -2182,7 +2191,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           } catch {
             attemptFailure = new ModelProviderAttemptError({
               kind: "protocol_invalid",
-              retryable: !yieldedRealEvent,
+              retryable: !yieldedReplayUnsafeEvent,
               message: "malformed_sse_json",
               bodySnippet: data.slice(0, 200),
               clientRequestId: scope.clientRequestId,
@@ -2235,15 +2244,16 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
             status: response.status,
             diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
           });
-            attemptFailure.retryable = attemptFailure.retryable && !yieldedRealEvent;
+            attemptFailure.retryable = attemptFailure.retryable && !yieldedReplayUnsafeEvent;
             break sseLoop;
           }
 
           if (chunk.type === "response.reasoning_summary_text.delta" && typeof chunk.delta === "string") {
-            if (!yieldedRealEvent) { yieldedRealEvent = true; yield { type: "connected" }; }
+            if (!connectedEmitted) { connectedEmitted = true; yield { type: "connected" }; }
             yield { type: "thinking_delta", content: chunk.delta };
           } else if (chunk.type === "response.output_text.delta" && typeof chunk.delta === "string") {
-            if (!yieldedRealEvent) { yieldedRealEvent = true; yield { type: "connected" }; }
+            if (!connectedEmitted) { connectedEmitted = true; yield { type: "connected" }; }
+            yieldedReplayUnsafeEvent = true;
             yield { type: "text_delta", content: chunk.delta };
           } else if (chunk.type === "response.output_item.added" && chunk.item?.type === "function_call") {
             // A new function call item started.
@@ -2254,7 +2264,8 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
             const name = chunk.item.name || "";
             // Key the map by item.id so delta/done event lookup by item_id works correctly
             pendingToolCalls.set(itemId, { callId, name, argsAccumulator: "", reasoningEmitted: false });
-            if (!yieldedRealEvent) { yieldedRealEvent = true; yield { type: "connected" }; }
+            if (!connectedEmitted) { connectedEmitted = true; yield { type: "connected" }; }
+            yieldedReplayUnsafeEvent = true;
             yield { type: "tool_use_start", toolCallId: callId, toolName: name };
             stopReason = "tool_use";
           } else if (chunk.type === "response.function_call_arguments.delta") {
@@ -2270,7 +2281,8 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
                   if (match) {
                     tc.reasoningEmitted = true;
                     const reasoning = match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-                    if (!yieldedRealEvent) { yieldedRealEvent = true; yield { type: "connected" }; }
+                    if (!connectedEmitted) { connectedEmitted = true; yield { type: "connected" }; }
+                    yieldedReplayUnsafeEvent = true;
                     yield { type: "tool_use_update", toolCallId: tc.callId, narrative: reasoning };
                   }
                 }
@@ -2284,7 +2296,8 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
               if (tc) {
                 let input: Record<string, unknown> = {};
                 try { input = JSON.parse(tc.argsAccumulator || "{}"); } catch { /* ignore */ }
-                if (!yieldedRealEvent) { yieldedRealEvent = true; yield { type: "connected" }; }
+                if (!connectedEmitted) { connectedEmitted = true; yield { type: "connected" }; }
+                yieldedReplayUnsafeEvent = true;
                 yield { type: "tool_use", toolCallId: tc.callId, toolName: tc.name, arguments: input };
                 pendingToolCalls.delete(itemId);
               }
@@ -2302,7 +2315,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       if (attemptFailure) {
         lastEarlyReason = `${attemptFailure.kind}:${attemptFailure.message}`;
         await reader.cancel(lastEarlyReason).catch(() => undefined);
-        log.warn(
+        log.debug(
           `codex stream attempt failed attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
           `kind=${attemptFailure.kind} retryable=${attemptFailure.retryable} phase=${attemptFailure.phase} ` +
           `status=${attemptFailure.status || 0} elapsedMs=${Date.now() - scope.startedAt} ` +
@@ -2316,11 +2329,19 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       }
 
       scope.cleanup();
+      recoveredRetryAttempts = attempt;
       // Successful end-of-stream — exit retry loop.
       break;
       } finally {
         scope.cleanup();
       }
+    }
+
+    if (recoveredRetryAttempts > 0) {
+      log.warn(
+        `codex stream recovered after retry attempts=${recoveredRetryAttempts + 1}/${CODEX_STREAM_MAX_ATTEMPTS} ` +
+        `model=${codexModel} previousFailure=${lastEarlyReason || "unknown"}`,
+      );
     }
 
     // Emit any remaining tool calls that didn't receive a done event
