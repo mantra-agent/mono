@@ -475,11 +475,11 @@ app.use((req, res, next) => {
 
 
   await objectAclsMigrationReady;
-  await migrateProjectNotesSpecToLibrary();
   await vaultsMigrationReady;
   const { ensureWorkVaultSchema } = await import("./work-vault-schema");
   const { pool: workVaultPool } = await import("./db");
   await ensureWorkVaultSchema(workVaultPool);
+  await migrateProjectNotesSpecToLibrary();
   const { ensureObjectGrantSchema } = await import("./object-grant-schema");
   await ensureObjectGrantSchema(workVaultPool);
   const { ensureInvitedSubjectSchema } = await import("./invited-subject-schema");
@@ -896,7 +896,12 @@ app.use((req, res, next) => {
 
     },
   );
-})();
+})().catch((error: unknown) => {
+  const message = error instanceof Error ? error.stack || error.message : String(error);
+  serverLog.error(`[FATAL] startup rejected: ${message}`);
+  process.exitCode = 1;
+  setImmediate(() => process.exit(1));
+});
 
 const SHUTDOWN_TIMEOUT_MS = Math.max(1_000, parseInt(process.env.APP_SHUTDOWN_TIMEOUT_MS || "8000", 10));
 let shutdownInstalled = false;

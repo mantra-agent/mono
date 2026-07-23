@@ -789,7 +789,11 @@ export async function runSchemaBootstrap(
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_prediction_run_owner ON memory_vnext_prediction_runs(scope, owner_user_id, completed_at)`);
   await pool.query(`
     CREATE OR REPLACE FUNCTION reject_memory_vnext_prediction_ledger_mutation()
-    RETURNS TRIGGER AS $ BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME; END; $ LANGUAGE plpgsql
+    RETURNS TRIGGER AS $append_only$
+    BEGIN
+      RAISE EXCEPTION '% is append-only', TG_TABLE_NAME;
+    END;
+    $append_only$ LANGUAGE plpgsql
   `);
   for (const table of [
     "memory_vnext_predictions",
@@ -871,7 +875,14 @@ export async function runSchemaBootstrap(
   `);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_memory_vnext_prediction_eval_replay ON memory_vnext_prediction_evaluation_runs(owner_user_id, account_id, replay_key)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_prediction_eval_owner ON memory_vnext_prediction_evaluation_runs(scope, owner_user_id, evaluated_at)`);
-  await pool.query(`CREATE OR REPLACE FUNCTION reject_memory_vnext_evaluation_ledger_mutation() RETURNS TRIGGER AS $ BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME; END; $ LANGUAGE plpgsql`);
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION reject_memory_vnext_evaluation_ledger_mutation()
+    RETURNS TRIGGER AS $append_only$
+    BEGIN
+      RAISE EXCEPTION '% is append-only', TG_TABLE_NAME;
+    END;
+    $append_only$ LANGUAGE plpgsql
+  `);
   for (const table of ["memory_vnext_retrieval_activation_events", "memory_vnext_retrieval_evaluation_runs", "memory_vnext_prediction_evaluation_runs"]) {
     const trigger = `trg_${table}_append_only`;
     await pool.query(`DROP TRIGGER IF EXISTS ${trigger} ON ${table}`);
@@ -2265,18 +2276,6 @@ export async function runSchemaBootstrap(
   });
 
 
-
-  await heal("library_pages type+metadata columns", async () => {
-    await pool.query(
-      `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'page'`,
-    );
-    await pool.query(
-      `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS metadata JSONB`,
-    );
-    await pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_library_pages_type ON library_pages(type)`,
-    );
-  });
 
   await heal("plaid_transactions source column", async () => {
     await pool.query(

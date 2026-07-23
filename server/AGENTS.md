@@ -629,6 +629,8 @@ Container deployments use Tini as PID 1. The shell entrypoint must `exec` `dist/
 
 `runtime-process-lifecycle.ts` owns the single durable last-boot record per Railway environment/service/replica runtime key in `system_settings`. The child registers its boot after schema bootstrap and marks clean termination only through `index.ts`'s graceful-shutdown coordinator. A later child may settle a prior active boot from bounded supervisor exit evidence; absent evidence is `unclean` with an unknown prior-boot cause. Never infer whole-container SIGKILL, OOM eviction, host migration, native crash, or provider termination from missing in-process telemetry. Railway owns container restart policy and its SIGTERM-to-SIGKILL draining interval; the wrapper must exit non-zero after exhausting its bounded child-restart budget.
 
+Boot-time database work is an ordered dependency graph. Schema owners converge before data migrations consume their columns. One-time migrations serialize across replicas, read their durable completion marker, and project only the columns they own. Retired columns have one terminal DDL owner; no later bootstrap or route may recreate them. The startup promise owns fatal rejection and exits nonzero with the original cause so the wrapper never converts a deterministic boot defect into a watchdog timeout.
+
 ### Session Compaction Archives
 
 - Compaction archives remain private indexed content. User-facing retrieval must start from a principal-scoped session and persisted compaction marker, resolve the marker's scoped archive reference, and project a public transcript server-side. Never expose or download the underlying object path directly.
