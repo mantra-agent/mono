@@ -4,7 +4,6 @@ import { useFocusContext } from "@/hooks/use-focus-context";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -943,7 +942,13 @@ export default function OpportunitiesTab() {
   const [newType, setNewType] = useState<string>("job");
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
 
-  const { data: opportunities = [], isLoading } = useQuery<Opportunity[]>({
+  const {
+    data: opportunities = [],
+    isLoading,
+    isError,
+    refetch: refetchOpportunities,
+    isFetching,
+  } = useQuery<Opportunity[]>({
     queryKey: ["/api/exec/opportunities"],
     refetchInterval: 30000,
   });
@@ -1048,29 +1053,20 @@ export default function OpportunitiesTab() {
     });
   }, []);
 
-  if (isLoading || vaultsLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (visibleOpportunities.length === 0 && opportunities.length === 0 && !creating) {
-    return (
-      <EmptyState
-        icon={DollarSign}
-        title="No opportunities yet"
-        message="Add one manually or let landscape signals surface them."
-        action={(
-          <Button onClick={() => setCreating(true)}>
-            <Plus className="h-4 w-4 mr-1" /> Add Opportunity
-          </Button>
-        )}
-        testId="exec-opportunities-empty"
-      />
-    );
-  }
+  const initialLoading = isLoading || vaultsLoading;
+  const emptyState = initialLoading
+    ? "loading"
+    : isError && opportunities.length === 0
+      ? "error"
+      : grouped.length > 0
+        ? null
+        : searchQuery.trim()
+          ? "search"
+          : opportunities.length === 0
+            ? "empty"
+            : visibleOpportunities.length === 0
+              ? "vaults"
+              : "filtered";
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
@@ -1146,13 +1142,38 @@ export default function OpportunitiesTab() {
             </div>
           ) : null}
 
-          {grouped.length === 0 ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-              {searchQuery.trim()
-                ? `No opportunities match "${searchQuery.trim()}".`
-                : opportunities.length > 0
-                  ? "No opportunities in enabled Vaults."
-                  : "No opportunities in this pipeline."}
+          {emptyState ? (
+            <div
+              className={cn(
+                "flex min-h-8 items-center gap-2 px-2 py-1.5 text-sm",
+                emptyState === "error" ? "text-error" : "text-muted-foreground",
+              )}
+              data-testid={emptyState === "empty" ? "exec-opportunities-empty" : `exec-opportunities-${emptyState}`}
+            >
+              {emptyState === "loading" ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                  <span>Loading opportunities…</span>
+                </>
+              ) : emptyState === "error" ? (
+                <>
+                  <span>Opportunities couldn’t load.</span>
+                  <button
+                    type="button"
+                    onClick={() => void refetchOpportunities()}
+                    disabled={isFetching}
+                    className="text-cta hover:text-active disabled:opacity-50"
+                  >
+                    {isFetching ? "Retrying…" : "Retry"}
+                  </button>
+                </>
+              ) : emptyState === "search" ? (
+                <span>{`No opportunities match "${searchQuery.trim()}".`}</span>
+              ) : emptyState === "vaults" ? (
+                <span>No opportunities in enabled Vaults.</span>
+              ) : (
+                <span>No opportunities yet.</span>
+              )}
             </div>
           ) : grouped.map(([status, items]) => {
             const sectionOpen = openStatuses.has(status) || searchQuery.trim().length > 0;
