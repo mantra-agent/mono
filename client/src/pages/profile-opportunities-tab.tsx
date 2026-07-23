@@ -8,23 +8,14 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Plus, Trash2, Loader2, DollarSign, Check, Search, FileText, ExternalLink, Download, ChevronRight, MoreHorizontal, X, Briefcase, Handshake, Building2, PiggyBank, MapPin, ContactRound, Trophy, Gauge, Clock, Calendar, ListChecks, AlignLeft, Link2, Sparkles } from "lucide-react";
+import { Plus, Trash2, Loader2, DollarSign, Search, FileText, ExternalLink, Download, ChevronRight, MoreHorizontal, X, Briefcase, Handshake, Building2, PiggyBank, MapPin, ContactRound, Trophy, Gauge, Clock, Calendar, ListChecks, AlignLeft, Link2, Sparkles } from "lucide-react";
 import { ReferenceChip } from "@/components/references/reference-chip";
 import { resolveReference } from "@/components/references/reference-registry";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { useVisibleVaults } from "@/pages/library/use-vault-sections";
 import { ExpandableInteractionRow } from "@/components/people/expandable-interaction-row";
 import type { OpportunityInteractionActivity } from "@shared/models/opportunities";
 import { parseDateString } from "@shared/civil-date";
@@ -41,6 +32,7 @@ interface LinkedSkill {
 
 interface Opportunity {
   id: number;
+  vaultId: string | null;
   title: string;
   description: string | null;
   type: string;
@@ -623,17 +615,11 @@ function ArtifactRail({ opportunityId, jdText }: { opportunityId: number; jdText
 function OpportunityDetail({
   opportunity,
   onSave,
-  onDelete,
-  saving,
 }: {
   opportunity: Opportunity;
   onSave: (updates: Partial<Opportunity>) => void;
-  onDelete: () => void;
-  saving: boolean;
 }) {
   const [form, setForm] = useState(() => ({ ...opportunity }));
-  const [showDelete, setShowDelete] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formRef = useRef(form);
   formRef.current = form;
@@ -641,7 +627,6 @@ function OpportunityDetail({
   // Reset form when opportunity selection changes
   useEffect(() => {
     setForm({ ...opportunity });
-    setSaveStatus("idle");
   }, [opportunity.id]);
 
   // Sync server data back into form when not actively editing
@@ -666,21 +651,8 @@ function OpportunityDetail({
         updates[key] = current[key];
       }
     }
-    if (Object.keys(updates).length > 0) {
-      setSaveStatus("saving");
-      onSave(updates);
-      // The saving prop from parent will handle the transition
-    }
+    if (Object.keys(updates).length > 0) onSave(updates);
   }, [opportunity, onSave]);
-
-  // Track when saving completes
-  useEffect(() => {
-    if (!saving && saveStatus === "saving") {
-      setSaveStatus("saved");
-      const t = setTimeout(() => setSaveStatus("idle"), 2000);
-      return () => clearTimeout(t);
-    }
-  }, [saving, saveStatus]);
 
   // Debounced auto-save
   const patch = useCallback((key: string, value: any) => {
@@ -732,55 +704,8 @@ function OpportunityDetail({
   const hasSkills = Boolean(opportunity.linkedSkills?.length);
 
   return (
-    <div className="h-full space-y-6 overflow-y-auto p-4" onBlur={handleBlur} data-testid="opportunity-detail-view">
-      <div className="space-y-0">
-        <ProfileDetailSection
-          title={(
-            <Input
-              value={form.title}
-              onClick={event => event.stopPropagation()}
-              onChange={event => patch("title", event.target.value)}
-              className="h-auto w-full border-0 bg-transparent p-0 text-xs font-bold uppercase leading-none tracking-wider text-muted-foreground shadow-none outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
-              placeholder="Opportunity title"
-              data-testid="input-opportunity-title"
-            />
-          )}
-          defaultOpen
-          testId="section-opportunity-profile"
-          collapsedContent={hasDescription ? (
-            <div className="whitespace-pre-wrap text-[14px] leading-tight text-white/80">
-              {form.description}
-            </div>
-          ) : undefined}
-          headerAction={(
-            <div className="flex shrink-0 items-center gap-1">
-              <div className="w-16 text-right text-xs font-normal normal-case tracking-normal text-muted-foreground">
-                {saveStatus === "saving" && <span className="flex items-center justify-end gap-1"><Loader2 className="h-3 w-3 animate-spin" />Saving</span>}
-                {saveStatus === "saved" && <span className="flex items-center justify-end gap-1 text-success"><Check className="h-3 w-3" />Saved</span>}
-              </div>
-              <DropdownMenu modal={false}>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-5 w-5 shrink-0 rounded text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                    aria-label="Opportunity actions"
-                    data-testid="button-opportunity-overflow"
-                  >
-                    <MoreHorizontal className="h-3 w-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" onCloseAutoFocus={event => event.preventDefault()}>
-                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setShowDelete(true)}>
-                    <Trash2 className="mr-2 h-3.5 w-3.5" />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          )}
-        >
-          <div className="overflow-hidden rounded-md border border-border/20" data-testid="opportunity-profile-tree">
+    <div className="space-y-1" onBlur={handleBlur} data-testid="opportunity-detail-view">
+      <div data-testid="opportunity-profile-tree">
             <ProfileTreeRow label="Type" icon={<Briefcase className="h-3.5 w-3.5" />} hasValue showEmpty testId="row-opportunity-type">
               <Select value={form.type} onValueChange={value => patch("type", value)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -977,7 +902,6 @@ function OpportunityDetail({
               <span className="truncate">{opportunity.linkedSkills?.map(skill => skill.name).join(", ") || "—"}</span>
             </ProfileTreeRow>
           </div>
-        </ProfileDetailSection>
 
         <ProfileDetailSection title="Activities" count={sortedActivities.length} defaultOpen testId="section-opportunity-activities">
           <div className="overflow-hidden rounded-md border border-border/20" data-testid="opportunity-activity-tree">
@@ -1001,19 +925,6 @@ function OpportunityDetail({
             ))}
           </div>
         </ProfileDetailSection>
-      </div>
-      <AlertDialog open={showDelete} onOpenChange={setShowDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete opportunity?</AlertDialogTitle>
-            <AlertDialogDescription>This will permanently delete "{opportunity.title}".</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground">Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
@@ -1022,6 +933,7 @@ function OpportunityDetail({
 export default function OpportunitiesTab() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { isVaultEnabled, isLoading: vaultsLoading } = useVisibleVaults();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
   const [openStatuses, setOpenStatuses] = useState<Set<string>>(() => new Set(["active", "pursuing", "researched", "qualified", "discovered"]));
@@ -1029,13 +941,21 @@ export default function OpportunitiesTab() {
   const [searchQuery, setSearchQuery] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [newType, setNewType] = useState<string>("job");
+  const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
 
   const { data: opportunities = [], isLoading } = useQuery<Opportunity[]>({
     queryKey: ["/api/exec/opportunities"],
     refetchInterval: 30000,
   });
 
-  const selected = useMemo(() => opportunities.find(o => o.id === selectedId), [opportunities, selectedId]);
+  const visibleOpportunities = useMemo(
+    () => vaultsLoading
+      ? []
+      : opportunities.filter(opportunity => opportunity.vaultId === null || isVaultEnabled(opportunity.vaultId)),
+    [opportunities, vaultsLoading, isVaultEnabled],
+  );
+
+  const selected = useMemo(() => visibleOpportunities.find(o => o.id === selectedId), [visibleOpportunities, selectedId]);
 
   // Publish the selected opportunity so the focus widget's pageContext carries it.
   useFocusContext(
@@ -1048,7 +968,7 @@ export default function OpportunitiesTab() {
     const order = ["active", "pursuing", "researched", "qualified", "discovered", "passed", "lost"];
     const groups: Record<string, Opportunity[]> = {};
     for (const s of order) groups[s] = [];
-    for (const opportunity of opportunities) {
+    for (const opportunity of visibleOpportunities) {
       if (!matchesOpportunity(opportunity, searchQuery)) continue;
       if (!groups[opportunity.status]) groups[opportunity.status] = [];
       groups[opportunity.status].push(opportunity);
@@ -1057,7 +977,7 @@ export default function OpportunitiesTab() {
       groups[s].sort((a, b) => (b.computedEv ?? 0) - (a.computedEv ?? 0));
     }
     return Object.entries(groups).filter(([, items]) => items.length > 0);
-  }, [opportunities, searchQuery]);
+  }, [visibleOpportunities, searchQuery]);
 
   const createMutation = useMutation({
     mutationFn: async (data: { title: string; type: string }) => {
@@ -1128,7 +1048,7 @@ export default function OpportunitiesTab() {
     });
   }, []);
 
-  if (isLoading) {
+  if (isLoading || vaultsLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -1136,7 +1056,7 @@ export default function OpportunitiesTab() {
     );
   }
 
-  if (opportunities.length === 0 && !creating) {
+  if (visibleOpportunities.length === 0 && opportunities.length === 0 && !creating) {
     return (
       <EmptyState
         icon={DollarSign}
@@ -1227,11 +1147,12 @@ export default function OpportunitiesTab() {
           ) : null}
 
           {grouped.length === 0 ? (
-            <div className="py-12 text-center">
-              <Search className="mx-auto mb-2 h-6 w-6 text-muted-foreground/50" />
-              <p className="text-xs text-muted-foreground">
-                {searchQuery.trim() ? `No opportunities match "${searchQuery.trim()}"` : "No opportunities in this pipeline."}
-              </p>
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+              {searchQuery.trim()
+                ? `No opportunities match "${searchQuery.trim()}".`
+                : opportunities.length > 0
+                  ? "No opportunities in enabled Vaults."
+                  : "No opportunities in this pipeline."}
             </div>
           ) : grouped.map(([status, items]) => {
             const sectionOpen = openStatuses.has(status) || searchQuery.trim().length > 0;
@@ -1275,7 +1196,33 @@ export default function OpportunitiesTab() {
                             }}
                           >
                             <Icon className="h-3.5 w-3.5 shrink-0" />
-                            <span className="min-w-0 flex-1 truncate">{opportunity.title}</span>
+                            {editingTitleId === opportunity.id ? (
+                              <Input
+                                defaultValue={opportunity.title}
+                                autoFocus
+                                className="h-5 min-w-0 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
+                                aria-label="Opportunity title"
+                                data-testid="input-opportunity-title"
+                                onClick={event => event.stopPropagation()}
+                                onBlur={event => {
+                                  const title = event.currentTarget.value.trim();
+                                  if (title && title !== opportunity.title) updateMutation.mutate({ id: opportunity.id, updates: { title } });
+                                  setEditingTitleId(null);
+                                }}
+                                onKeyDown={event => {
+                                  event.stopPropagation();
+                                  if (event.key === "Enter") event.currentTarget.blur();
+                                  if (event.key === "Escape") setEditingTitleId(null);
+                                }}
+                              />
+                            ) : (
+                              <span
+                                className="min-w-0 flex-1 truncate"
+                                onDoubleClick={event => { event.stopPropagation(); setEditingTitleId(opportunity.id); }}
+                              >
+                                {opportunity.title}
+                              </span>
+                            )}
                             <button
                               type="button"
                               className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
@@ -1304,7 +1251,7 @@ export default function OpportunitiesTab() {
                                 </button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => setSelectedId(opportunity.id)}>Select row</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setEditingTitleId(opportunity.id)}>Edit title</DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => { setSelectedId(opportunity.id); toggleExpanded(opportunity.id); }}>
                                   {expanded ? "Collapse" : "Expand"}
                                 </DropdownMenuItem>
@@ -1317,16 +1264,12 @@ export default function OpportunitiesTab() {
                         </div>
                       </div>
                       {expanded ? (
-                        <div className="ml-6 min-w-0 border-l border-border pl-3 pb-3 pt-1">
-                          <div className="rounded-md border border-border/20 bg-card">
-                            <OpportunityDetail
-                              key={opportunity.id}
-                              opportunity={opportunity}
-                              onSave={updates => updateMutation.mutate({ id: opportunity.id, updates })}
-                              onDelete={() => deleteMutation.mutate(opportunity.id)}
-                              saving={updateMutation.isPending}
-                            />
-                          </div>
+                        <div className="ml-6 min-w-0 border-l border-border pb-3 pl-3 pt-1">
+                          <OpportunityDetail
+                            key={opportunity.id}
+                            opportunity={opportunity}
+                            onSave={updates => updateMutation.mutate({ id: opportunity.id, updates })}
+                          />
                         </div>
                       ) : null}
                     </div>

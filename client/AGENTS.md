@@ -229,6 +229,10 @@ Use `ProfileTreeRow` for compact label/value rows with optional progressive disc
 
 Network Meetings reuses `SimpleWidgetRenderer` and `SimpleTreeRow` for completed meeting sessions. Meeting rows expand inline to the shared People and Library artifact children; do not create a second meeting card or a split-view detail surface.
 
+### Opportunity Vault Visibility
+
+Opportunity UI surfaces use `useVisibleVaults().isVaultEnabled`: unassigned Opportunities remain visible, while assigned Opportunities render only when their concrete Vault is enabled in the top bar. Expanded Pipelines rows own the title in the parent row and render frameless `ProfileTreeRow` children directly beneath it.
+
 ## Voice
 
 Voice transcript rows use one required lifecycle discriminant: `provisional`, `committed`, or `placeholder`. Only canonical server transcript events may create committed user speech. Local provider/native callbacks may create provisional composer text, and reconnect snapshots contain committed persisted history. Live and replayed voice events must pass through one event-ID-deduplicating reducer and require exact `chatSessionId` identity before mutating state or advancing the cursor.

@@ -23,8 +23,12 @@ function errMsg(err: unknown): string {
 
 function handleError(prefix: string, err: unknown, res: Response): Response {
   if (isZodError(err)) return res.status(400).json({ error: "Validation failed", details: err.errors });
+  const statusValue = err && typeof err === "object" && "status" in err
+    ? (err as { status?: unknown }).status
+    : undefined;
+  const status = typeof statusValue === "number" ? statusValue : 500;
   log.error(`${prefix} error:`, errMsg(err));
-  return res.status(500).json({ error: errMsg(err) });
+  return res.status(status).json({ error: errMsg(err) });
 }
 
 function currentPrincipal(req: Request) {
@@ -250,6 +254,22 @@ export function registerExecRoutes(app: Express): void {
       res.json(row);
     } catch (err) {
       handleError("PATCH /api/exec/opportunities/:id", err, res);
+    }
+  });
+
+  const opportunityVaultSchema = z.object({ vaultId: z.string().min(1).nullable() });
+
+  app.patch("/api/exec/opportunities/:id/vault", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      const { vaultId } = opportunityVaultSchema.parse(req.body);
+      const row = await opportunityStorage.setVault(id, vaultId, currentPrincipal(req));
+      if (!row) return res.status(404).json({ error: "Opportunity not found" });
+      publishChanged("set_opportunity_vault");
+      res.json(row);
+    } catch (err) {
+      handleError("PATCH /api/exec/opportunities/:id/vault", err, res);
     }
   });
 
