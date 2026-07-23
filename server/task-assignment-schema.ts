@@ -28,13 +28,13 @@ export async function ensureTaskAssignmentSchema(pool: ConnectionPool): Promise<
         WHERE assignee_subject_id = '__omit__'
         RETURNING id::text AS object_id
       )
-      UPDATE object_grants AS grant
+      UPDATE object_grants AS object_grant
       SET revoked_at = CURRENT_TIMESTAMP
       FROM cleared_tasks
-      WHERE grant.object_type = 'task'
-        AND grant.object_id = cleared_tasks.object_id
-        AND grant.subject_id = '__omit__'
-        AND grant.revoked_at IS NULL
+      WHERE object_grant.object_type = 'task'
+        AND object_grant.object_id = cleared_tasks.object_id
+        AND object_grant.subject_id = '__omit__'
+        AND object_grant.revoked_at IS NULL
     `) as { rowCount?: number | null };
     await client.query(`
       DO $migration$
