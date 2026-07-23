@@ -250,6 +250,7 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
         notes: req.body.notes || [],
         interactions: req.body.interactions || [],
         tags: req.body.tags || [],
+        quickSummary: typeof req.body.quickSummary === "string" ? req.body.quickSummary.trim() || undefined : undefined,
         private: req.body.private ?? false,
       });
       res.json(person);

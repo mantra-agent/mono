@@ -104,6 +104,19 @@ type ToolHandlerResult = { result: string; error?: boolean; data?: Record<string
 
 const PEOPLE_AGENDA_SURFACE_LIMIT = 3;
 
+function withPeopleSummaryStatus(
+  result: string,
+  quickSummary: unknown,
+  supportingNoteWritten: boolean,
+): ToolHandlerResult {
+  const summaryMissing = supportingNoteWritten && !(typeof quickSummary === "string" && quickSummary.trim());
+  if (!summaryMissing) return { result };
+  return {
+    result: `${result}\n\nWarning: supporting notes were saved, but the concise profile summary is empty. Add quickSummary with people.update.`,
+    data: { summaryMissing: true },
+  };
+}
+
 function formatChecklistForXyz(checklist: unknown): string {
   if (!Array.isArray(checklist) || checklist.length === 0) {
     return "Checklist: (no structured checklist defined — scorer will fall back to default checks)";
@@ -434,7 +447,11 @@ async function handlePeopleAddNote(args: Record<string, any>): Promise<ToolHandl
     event: "data:people_changed",
     payload: { source: "people_tool", action, personId: resolved.id, personName: resolved.name },
   });
-  return { result: action === "update_note" ? `Note "${title}" updated for ${resolved.name} [person:${resolved.id}]` : `Note added to ${resolved.name} [person:${resolved.id}]` };
+  const updatedPerson = await peopleStorage.getPerson(resolved.id);
+  const result = action === "update_note"
+    ? `Note "${title}" updated for ${resolved.name} [person:${resolved.id}]`
+    : `Note added to ${resolved.name} [person:${resolved.id}]`;
+  return withPeopleSummaryStatus(result, updatedPerson?.quickSummary, true);
 }
 
 async function handlePeopleUpdateNote(args: Record<string, any>): Promise<ToolHandlerResult> {
@@ -995,6 +1012,7 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
     notes: [],
     interactions: [],
     tags: Array.isArray(args.tags) ? args.tags : [],
+    quickSummary: typeof args.quickSummary === "string" ? args.quickSummary.trim() || undefined : undefined,
     private: false,
   });
   if (args.notes) {
@@ -1006,7 +1024,8 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
     event: "data:people_changed",
     payload: { source: "people_tool", action: "create", personId: person.id, personName: person.name },
   });
-  return { result: `Person created: "${person.name}" [person:${person.id}] (cabinet: ${person.cabinetLevel})${args.email ? `, email: ${args.email}` : ""}` };
+  const result = `Person created: "${person.name}" [person:${person.id}] (cabinet: ${person.cabinetLevel})${args.email ? `, email: ${args.email}` : ""}`;
+  return withPeopleSummaryStatus(result, person.quickSummary, Boolean(args.notes));
 }
 
 async function handlePeopleSetDailyContact(args: Record<string, any>): Promise<ToolHandlerResult> {
