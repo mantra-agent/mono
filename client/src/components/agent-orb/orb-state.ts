@@ -34,7 +34,7 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
   },
   thinking: {
     rimPower: 3.2, rimIntensity: 0.74, coreGlow: 0.1,
-    audioReactivity: 0, swirlSpeed: 1.15, swirlAmount: 0.48,
+    audioReactivity: 0, swirlSpeed: 1.5, swirlAmount: 0.48,
     tickCount: 0, tickSpeed: 0, breathSpeed: 2.45, breathDepth: 0.22,
     pulseStrength: 0, dimming: 1.0,
     fieldEnergy: 1.08, filamentDensity: 0.84, cloudDensity: 0.22,
