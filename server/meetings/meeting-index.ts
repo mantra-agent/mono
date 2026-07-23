@@ -1,7 +1,7 @@
 import { and, inArray } from "drizzle-orm";
 import type { MeetingParticipant } from "@shared/models/chat";
 import type { SimpleFeedItem, SimpleSection, SimpleSourceRef } from "@shared/models/simple";
-import { createMeetingArtifactChild, createMeetingPersonChild, dedupeMeetingInvitees, formatMeetingInviteeName } from "@shared/meeting-feed-items";
+import { createMeetingArtifactChild, dedupeMeetingInvitees } from "@shared/meeting-feed-items";
 import { sourceRefsToReferenceRefs } from "@shared/simple-references";
 import { libraryPages } from "@shared/models/info";
 import { chatFileStorage, type FileSession } from "../chat-file-storage";
@@ -50,6 +50,7 @@ export interface MeetingIndexRecord {
   transcriptCount: number;
   hasNotes: boolean;
   recapStatus: string | null;
+  summary: string | null;
   participants: MeetingIndexParticipant[];
   artifacts: MeetingIndexArtifact[];
 }
@@ -273,19 +274,24 @@ async function projectRecords(snapshots: MeetingSessionSnapshot[]): Promise<Meet
   ]);
   const peopleById = new Map(people.map(person => [person.id, person]));
 
-  return snapshots.map(({ session, transcriptCount }) => ({
-    id: session.id,
-    title: session.meeting?.title?.trim() || session.title,
-    startedAt: meetingStart(session),
-    endedAt: session.meeting?.endedAt ?? null,
-    platform: session.meeting?.platform ?? null,
-    botStatus: session.meeting?.botStatus ?? "unknown",
-    transcriptCount,
-    hasNotes: transcriptCount > 0,
-    recapStatus: session.meeting?.recap?.status ?? null,
-    participants: projectParticipants(session, peopleById, peopleByEmail),
-    artifacts: artifactsBySession.get(session.id) ?? [],
-  }));
+  return snapshots.map(({ session, transcriptCount }) => {
+    const artifacts = artifactsBySession.get(session.id) ?? [];
+    const recap = artifacts.find(artifact => artifact.artifactKind === "recap");
+    return {
+      id: session.id,
+      title: session.meeting?.title?.trim() || session.title,
+      startedAt: meetingStart(session),
+      endedAt: session.meeting?.endedAt ?? null,
+      platform: session.meeting?.platform ?? null,
+      botStatus: session.meeting?.botStatus ?? "unknown",
+      transcriptCount,
+      hasNotes: transcriptCount > 0,
+      recapStatus: session.meeting?.recap?.status ?? null,
+      summary: recap?.summary ?? recap?.oneLiner ?? null,
+      participants: projectParticipants(session, peopleById, peopleByEmail),
+      artifacts,
+    };
+  });
 }
 
 export async function listCompletedMeetings(filter: MeetingIndexFilter = {}): Promise<{
@@ -331,19 +337,9 @@ export function meetingRecordToSimpleFeedItem(
     personId: participant.personId,
     email: participant.email ?? participant.key ?? participant.name,
   }));
-  const children = [
-    ...attendees.map((participant, attendeeIndex) => createMeetingPersonChild({
-      key: `meeting-${meeting.id}-person-${participant.personId ?? participant.key ?? attendeeIndex}`,
-      section,
-      parentSourceRef: sourceRef,
-      name: participant.name || formatMeetingInviteeName(null, participant.email ?? "Participant"),
-      email: participant.email,
-      personId: participant.personId,
-      profileSummary: participant.profileSummary,
-      lastInteractionContext: participant.lastInteractionContext,
-      promotion: null,
-    })),
-    ...meeting.artifacts.map(artifact => createMeetingArtifactChild({
+  const children = meeting.artifacts
+    .filter(artifact => artifact.artifactKind !== "recap")
+    .map(artifact => createMeetingArtifactChild({
       key: `meeting-${meeting.id}-artifact-${artifact.pageId}`,
       section,
       title: artifact.title,
@@ -353,8 +349,7 @@ export function meetingRecordToSimpleFeedItem(
       source: artifact.source,
       summary: artifact.summary,
       oneLiner: artifact.oneLiner,
-    })),
-  ];
+    }));
 
   return {
     id: `meeting-${meeting.id}`,
@@ -373,7 +368,8 @@ export function meetingRecordToSimpleFeedItem(
       : undefined,
     children: children.length > 0 ? children : undefined,
     payload: {
-      kind: "meeting",
+      kind: "meeting_record",
+      meetingSummary: meeting.summary,
       attendees: attendees.slice(0, 3).map(participant => participant.name),
       attendeeCount: attendees.length,
       meetingId: meeting.id,
