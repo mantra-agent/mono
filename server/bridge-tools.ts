@@ -10608,7 +10608,7 @@ ${refs}` : ""),
 
           // Record session artifact link
           const { recordSessionArtifact } = await import("./session-artifacts");
-          recordSessionArtifact(args._sessionId, "library_page", page.slug, { title: page.title, pageId: page.id });
+          await recordSessionArtifact(args._sessionId, "library_page", page.slug, { title: page.title, pageId: page.id });
           return {
             result: `Page created: [${page.id}] **${page.title}** (/${page.slug})${linkSyntax} under ${page.filingResolution.parentTitle}${page.filingResolution.lint.requiresReview ? " — placement requires review" : ""}`,
             resolution: page.filingResolution,
@@ -10697,7 +10697,7 @@ ${refs}` : ""),
 
           // Record session artifact link
           const { recordSessionArtifact } = await import("./session-artifacts");
-          recordSessionArtifact(args._sessionId, "library_page", updated.slug || args.id, { title: updated.title });
+          await recordSessionArtifact(args._sessionId, "library_page", updated.slug || args.id, { title: updated.title, pageId: updated.id });
           return { result: `Library page updated: [${updated.id}] **${updated.title}**` };
         } catch (err: any) {
           if (isSerializationConflict(err)) {
@@ -10775,7 +10775,7 @@ ${refs}` : ""),
 
           // Record session artifact link
           const { recordSessionArtifact: recordArtifactEdit } = await import("./session-artifacts");
-          recordArtifactEdit(args._sessionId, "library_page", page.slug || args.id, {});
+          await recordArtifactEdit(args._sessionId, "library_page", page.slug || args.id, { title: updated.title, pageId: updated.id });
           return { result: `Library page edited: [${updated.id}] **${updated.title}** (${replacements} replacement${replacements > 1 ? "s" : ""})` };
         } catch (err: any) {
           if (isSerializationConflict(err)) {
@@ -15213,6 +15213,13 @@ function isEmptyToolArgumentValue(value: unknown): boolean {
   return false;
 }
 
+function preservesEmptyString(toolName: string, args: Record<string, any>, key: string, value: unknown): boolean {
+  if (value !== "" || key !== "new_string") return false;
+  const action = String(args.action || "");
+  return (toolName === "scratch" && action === "edit")
+    || (toolName === "library" && ["edit", "edit_library_page"].includes(action));
+}
+
 function normalizeToolArgs(toolName: string, args: Record<string, any>): Record<string, any> {
   const schemas = getToolSchemas();
   const schema = schemas.find(s => s.name === toolName);
@@ -15220,7 +15227,7 @@ function normalizeToolArgs(toolName: string, args: Record<string, any>): Record<
 
   const normalized: Record<string, any> = {};
   for (const [key, value] of Object.entries(args ?? {})) {
-    if (required.has(key)) {
+    if (required.has(key) || preservesEmptyString(toolName, args, key, value)) {
       normalized[key] = value;
       continue;
     }

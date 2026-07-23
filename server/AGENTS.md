@@ -604,7 +604,8 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 
 - Workflow stage definitions own an explicit `persona`. Stage child creation must pass it through `spawnChildSession` before context assembly and first inference; never infer workflow persona from the stage title or repair missing identity in the client.
 - Workflow stage children execute exactly one assigned stage. They must never create or start another workflow; `createWorkflowRun` enforces this from durable `workflow_sessions.role = stage_attempt` ownership so tool and HTTP callers share one boundary.
-- Stage results follow the template transition. A result with a named recovery destination keeps the run active and starts that destination; `blocked` pauses only when the transition has no destination, while `needs_review` remains a review gate.
+- Stage results follow the template transition. A result with a named recovery destination keeps the run active and starts that destination; `blocked` pauses only when the transition has no destination, while `needs_review` remains a review gate. Every runtime result must have a defined transition; an incomplete template settles the run as blocked with a failure packet, never as active without an attempt.
+- The parent monitor may recover an uncheckpointed terminal child only from one explicit `Outcome:` discriminant. Missing or contradictory outcomes fail closed. After the atomic completion claim, principal-scoped `session_artifacts` created by that child are projected under a per-attempt transaction lock into attempt-bound `workflow_artifacts` before the next stage starts; downstream stages never parse prose to discover artifacts.
 - Workflow state and its inline widget own progress. Do not write stage-start, stage-completion, retry, or transition prose into the parent session.
 
 ## Platform environment publishing
