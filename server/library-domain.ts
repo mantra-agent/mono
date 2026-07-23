@@ -267,17 +267,14 @@ export async function ensureCanonicalVaultMetadataPage(input: {
       .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id));
 
     // Canonical metadata identity is (vault, structural_role=meta, kind tag)
-    // and its home is always the vault root. A nested row matching that
-    // identity is stale classification by definition, so demote it here at
-    // the one boundary that owns the invariant instead of failing every
-    // read, lint, and move that encounters the duplicate.
+    // and its home is always the vault root. Any additional row matching that
+    // identity is stale classification by definition, whether nested or a
+    // second root-level duplicate. Converge deterministically here at the one
+    // boundary that owns the invariant: the earliest root page (or the earliest
+    // page if none sit at the root) stays canonical, and every other match is
+    // demoted below, instead of failing every read, lint, move, and workflow
+    // checkpoint that encounters the duplicate.
     const rootCandidates = candidates.filter((page) => page.parentId === null);
-    if (rootCandidates.length > 1) {
-      throw Object.assign(
-        new Error(`Vault has multiple root canonical ${definition.title} pages; migration repair is required`),
-        { status: 409 },
-      );
-    }
     const canonical = rootCandidates[0] ?? candidates[0];
     const staleNested = candidates.filter((page) => page.id !== canonical?.id);
     for (const stale of staleNested) {
