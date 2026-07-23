@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import {
   memoryVnextStrengthEvents,
   type MemoryVnextApplicabilityStatus,
@@ -141,7 +141,7 @@ function evidencePolarity(relationship: string): "support" | "contradict" | "neu
   return "neutral";
 }
 
-function deriveCertainty(sources: MemoryVnextSourceRef[]): VnextClaimDimensions["certainty"] {
+export function deriveCertainty(sources: MemoryVnextSourceRef[]): VnextClaimDimensions["certainty"] {
   const byLineage = new Map<string, { support: number; contradict: number }>();
   let assessedSourceRelationships = 0;
   for (const source of sources) {
@@ -198,7 +198,7 @@ function deriveCertainty(sources: MemoryVnextSourceRef[]): VnextClaimDimensions[
   };
 }
 
-function deriveIntegration(
+export function deriveIntegration(
   claimId: number,
   sources: MemoryVnextSourceRef[],
   entityLinks: MemoryVnextEntityLink[],
@@ -247,7 +247,7 @@ function deriveIntegration(
   };
 }
 
-function deriveTemporalApplicability(claim: MemoryVnextClaim, evaluatedAt: Date): VnextClaimDimensions["temporalApplicability"] {
+export function deriveTemporalApplicability(claim: MemoryVnextClaim, evaluatedAt: Date): VnextClaimDimensions["temporalApplicability"] {
   let status: MemoryVnextApplicabilityStatus = "unknown";
   if (claim.validUntil && claim.validUntil < evaluatedAt) status = "expired";
   else if (claim.validFrom && claim.validFrom > evaluatedAt) status = "upcoming";
@@ -315,6 +315,25 @@ async function deriveStrength(claimId: number): Promise<VnextClaimDimensions["st
     legacyRecallExcluded: true,
     explanation: "Strength is the bounded sum of valid typed event weights after 60-day exponential decay. Passive exposure and legacy recall telemetry contribute zero.",
   };
+}
+
+export async function deriveVnextStrengthValues(claimIds: number[]): Promise<Map<number, number>> {
+  const uniqueIds = [...new Set(claimIds)].slice(0, 250);
+  const result = new Map<number, number>();
+  if (uniqueIds.length === 0) return result;
+  const rows = await db.select({
+    claimId: memoryVnextStrengthEvents.claimId,
+    value: sql<number>`LEAST(1, GREATEST(0, COALESCE(sum(${memoryVnextStrengthEvents.weight} * power(0.5, extract(epoch from (CURRENT_TIMESTAMP - ${memoryVnextStrengthEvents.occurredAt})) / ${STRENGTH_HALF_LIFE_DAYS * 86_400})), 0)))::real`,
+  }).from(memoryVnextStrengthEvents)
+    .where(combineWithVisibleScope(
+      getCurrentPrincipalOrSystem(),
+      strengthEventScopeColumns,
+      inArray(memoryVnextStrengthEvents.claimId, uniqueIds),
+    ))
+    .groupBy(memoryVnextStrengthEvents.claimId);
+  for (const claimId of uniqueIds) result.set(claimId, 0);
+  for (const row of rows) result.set(row.claimId, rounded(Number(row.value ?? 0)));
+  return result;
 }
 
 export async function deriveVnextClaimDimensions(input: {
