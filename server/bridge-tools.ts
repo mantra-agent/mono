@@ -326,6 +326,98 @@ async function handlePeopleSearch(args: Record<string, any>): Promise<ToolHandle
   return { result: `Found ${results.length} people (showing ${page.length}, offset ${offset}, nextOffset ${offset + page.length < results.length ? offset + page.length : "none"}):\n${lines.join("\n")}` };
 }
 
+async function resolvePeopleVaultPerson(args: Record<string, any>): Promise<ToolHandlerResult | { id: string; name: string }> {
+  const resolved = await resolvePersonId(args);
+  if (!resolved) return { result: "Person not found. Provide an id or name.", error: true };
+  return resolved;
+}
+
+function normalizePeopleVaultIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some(id => typeof id !== "string")) return null;
+  return [...new Set(value.map(id => id.trim()).filter(Boolean))];
+}
+
+async function handlePeopleGetVaultMemberships(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const resolved = await resolvePeopleVaultPerson(args);
+  if ("result" in resolved) return resolved;
+  const { peopleStorage } = await import("./people-storage");
+  const vaults = await peopleStorage.listVaultMemberships(resolved.id);
+  return {
+    result: JSON.stringify({
+      person: { id: resolved.id, name: resolved.name },
+      vaults,
+    }, null, 2),
+  };
+}
+
+async function handlePeopleAddVaultMembership(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const resolved = await resolvePeopleVaultPerson(args);
+  if ("result" in resolved) return resolved;
+  const vaultId = typeof args.vaultId === "string" ? args.vaultId.trim() : "";
+  if (!vaultId) return { result: "add_vault_membership requires vaultId", error: true };
+
+  const { peopleStorage } = await import("./people-storage");
+  const mutation = await peopleStorage.addVaultMembership(resolved.id, vaultId);
+  if (mutation.changed) {
+    const { eventBus } = await import("./event-bus");
+    eventBus.publish({
+      category: "agent",
+      event: "data:people_changed",
+      payload: { source: "people_tool", action: "add_vault_membership", personId: mutation.person.id },
+    });
+  }
+  return {
+    result: mutation.changed
+      ? `Added Vault ${vaultId} to ${mutation.person.name} @person:${mutation.person.id}.`
+      : `${mutation.person.name} @person:${mutation.person.id} already belongs to Vault ${vaultId}.`,
+  };
+}
+
+async function handlePeopleRemoveVaultMembership(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const resolved = await resolvePeopleVaultPerson(args);
+  if ("result" in resolved) return resolved;
+  const vaultId = typeof args.vaultId === "string" ? args.vaultId.trim() : "";
+  if (!vaultId) return { result: "remove_vault_membership requires vaultId", error: true };
+
+  const { peopleStorage } = await import("./people-storage");
+  const mutation = await peopleStorage.removeVaultMembership(resolved.id, vaultId);
+  if (mutation.changed) {
+    const { eventBus } = await import("./event-bus");
+    eventBus.publish({
+      category: "agent",
+      event: "data:people_changed",
+      payload: { source: "people_tool", action: "remove_vault_membership", personId: mutation.person.id },
+    });
+  }
+  return {
+    result: mutation.changed
+      ? `Removed Vault ${vaultId} from ${mutation.person.name} @person:${mutation.person.id}.`
+      : `${mutation.person.name} @person:${mutation.person.id} did not belong to Vault ${vaultId}.`,
+  };
+}
+
+async function handlePeopleSetVaultMemberships(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const resolved = await resolvePeopleVaultPerson(args);
+  if ("result" in resolved) return resolved;
+  const vaultIds = normalizePeopleVaultIds(args.vaultIds);
+  if (!vaultIds || vaultIds.length === 0) {
+    return { result: "set_vault_memberships requires a non-empty vaultIds array. A Person must belong to at least one Vault.", error: true };
+  }
+  if (args.confirmReplace !== true) {
+    return { result: "set_vault_memberships replaces the complete membership set and requires confirmReplace=true.", error: true };
+  }
+
+  const { peopleStorage } = await import("./people-storage");
+  const person = await peopleStorage.replaceVaultMemberships(resolved.id, vaultIds, { requireVisibleTargets: true });
+  const { eventBus } = await import("./event-bus");
+  eventBus.publish({
+    category: "agent",
+    event: "data:people_changed",
+    payload: { source: "people_tool", action: "set_vault_memberships", personId: person.id },
+  });
+  return { result: `Set ${person.vaultIds?.length || vaultIds.length} Vault membership${(person.vaultIds?.length || vaultIds.length) === 1 ? "" : "s"} for ${person.name} @person:${person.id}.` };
+}
+
 async function handlePeopleGetMany(args: Record<string, any>): Promise<ToolHandlerResult> {
   const { peopleStorage } = await import("./people-storage");
   const ids = Array.isArray(args.ids) ? args.ids.map((id: unknown) => String(id)).filter(Boolean).slice(0, 100) : [];
@@ -1097,6 +1189,10 @@ const peopleSubHandlers: Record<string, (args: Record<string, any>) => Promise<T
   list: handlePeopleList,
   get: handlePeopleGet,
   get_many: handlePeopleGetMany,
+  get_vault_memberships: handlePeopleGetVaultMemberships,
+  add_vault_membership: handlePeopleAddVaultMembership,
+  remove_vault_membership: handlePeopleRemoveVaultMembership,
+  set_vault_memberships: handlePeopleSetVaultMemberships,
   query: handlePeopleQuery,
   search: handlePeopleSearch,
   agenda: handlePeopleAgenda,
@@ -4941,7 +5037,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
   async people(args) {
     const action = args.action || "list";
     const handler = peopleSubHandlers[action];
-    if (!handler) return { result: `Unknown people action: ${action}. Available: list, get, get_many, query, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, update_relationship_profile, update_network_profile, update_capital, add_commitment, update_commitment, ask_route, add_relationship_memory, get_relationship_memories, enrichment_prompt, create, update, set_daily_contact, scan_imports, scan_ignored, search_import_candidates, list_import_candidates, get_import_candidate, find_import_matches, add_import_candidate, merge_import_candidate, skip_import_candidate, undo_import_decision, preview_import_batch, apply_import_batch, get_import_batch`, error: true };
+    if (!handler) return { result: `Unknown people action: ${action}. Available: list, get, get_many, get_vault_memberships, add_vault_membership, remove_vault_membership, set_vault_memberships, query, search, agenda, add_note, update_note, delete_note, log_interaction, get_interactions, update_interaction, delete_interaction, update_relationship_profile, update_network_profile, update_capital, add_commitment, update_commitment, ask_route, add_relationship_memory, get_relationship_memories, enrichment_prompt, create, update, set_daily_contact, scan_imports, scan_ignored, search_import_candidates, list_import_candidates, get_import_candidate, find_import_matches, add_import_candidate, merge_import_candidate, skip_import_candidate, undo_import_decision, preview_import_batch, apply_import_batch, get_import_batch`, error: true };
     try {
       return await handler(args);
     } catch (err: any) {
@@ -15420,7 +15516,7 @@ function validateToolArgs(
 const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   session: new Set(["set_status", "end", "send_message"]),
   companies: new Set(["create", "update", "delete", "add_person", "remove_person", "add_opportunity", "remove_opportunity"]),
-  people: new Set(["create", "update", "merge", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact"]),
+  people: new Set(["create", "update", "merge", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact", "add_vault_membership", "remove_vault_membership", "set_vault_memberships"]),
   calendar: new Set(["create", "update", "delete"]),
   memory: new Set(["write"]),
   priorities: new Set([]),
