@@ -748,6 +748,10 @@ export function runWithDatabaseTransaction<T>(
   return databaseTransactionALS.run(transaction, operation);
 }
 
+export function hasAmbientDatabaseTransaction(): boolean {
+  return databaseTransactionALS.getStore() !== undefined;
+}
+
 const databaseProxyTarget = Object.create(null);
 export const db = new Proxy(databaseProxyTarget, {
   get(_target, property, receiver) {
