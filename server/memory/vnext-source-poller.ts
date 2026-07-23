@@ -17,11 +17,12 @@ import {
   hashContent,
   buildChunkHeader,
 } from "./vnext-content-chunking";
-import { persistClaimCandidates } from "./vnext-claim-storage";
+import { applyObservation } from "./vnext-claim-storage";
 import {
-  extractClaimsFromChunk,
+  extractObservationFromChunk,
   deduplicateChunkClaims,
   type ClaimCandidate,
+  type ObservationRelationshipCandidate,
 } from "./vnext-claim-extraction";
 
 const log = createLogger("VnextSourcePoller");
@@ -55,6 +56,11 @@ interface SourceContent {
 interface ExtractedChunkClaim {
   claim: ClaimCandidate;
   chunk: string;
+}
+
+interface ExtractedSourceObservation {
+  claims: ExtractedChunkClaim[];
+  relationships: ObservationRelationshipCandidate[];
 }
 
 function buildSessionPageSourceRefs(chunk: string) {
@@ -126,74 +132,97 @@ async function loadSourceContent(
 // Claim extraction from chunks
 // ---------------------------------------------------------------------------
 
-async function extractClaimsFromChunks(
+async function extractObservationFromChunks(
   chunks: string[],
   source: string,
   title: string,
-): Promise<ExtractedChunkClaim[]> {
+): Promise<ExtractedSourceObservation> {
   const extracted: ExtractedChunkClaim[] = [];
+  const relationships: ObservationRelationshipCandidate[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
     try {
-      const claims = await extractClaimsFromChunk(
+      const observation = await extractObservationFromChunk(
         chunks[i],
         i,
         chunks.length,
         source,
         title,
       );
-      extracted.push(...claims.map((claim) => ({ claim, chunk: chunks[i] })));
+      const indexOffset = extracted.length;
+      extracted.push(...observation.claims.map((claim) => ({ claim, chunk: chunks[i] })));
+      relationships.push(...observation.relationships.map((relationship) => ({
+        ...relationship,
+        fromClaimIndex: relationship.fromClaimIndex + indexOffset,
+        toClaimIndex: relationship.toClaimIndex + indexOffset,
+      })));
     } catch (err) {
       log.warn(
-        `extractClaimsFromChunks: chunk ${i + 1}/${chunks.length} failed: ${err instanceof Error ? err.message : String(err)}`,
+        `extractObservationFromChunks: chunk ${i + 1}/${chunks.length} failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 
   const deduplicatedClaims = deduplicateChunkClaims(extracted.map(({ claim }) => claim));
-  return deduplicatedClaims
+  const claims = deduplicatedClaims
     .map((claim) => extracted.find((item) => item.claim === claim))
     .filter((item): item is ExtractedChunkClaim => !!item)
     .slice(0, MAX_CLAIMS_PER_SOURCE);
+  const survivingIndexByOriginal = new Map<number, number>();
+  claims.forEach((item, index) => survivingIndexByOriginal.set(extracted.indexOf(item), index));
+  return {
+    claims,
+    relationships: relationships.flatMap((relationship) => {
+      const fromClaimIndex = survivingIndexByOriginal.get(relationship.fromClaimIndex);
+      const toClaimIndex = survivingIndexByOriginal.get(relationship.toClaimIndex);
+      return fromClaimIndex == null || toClaimIndex == null
+        ? []
+        : [{ ...relationship, fromClaimIndex, toClaimIndex }];
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Claim persistence — delegates to canonical persistClaimCandidates
 // ---------------------------------------------------------------------------
 
-async function persistPollerClaims(
-  extractedClaims: ExtractedChunkClaim[],
+async function persistPollerObservation(
+  observation: ExtractedSourceObservation,
   sourceContent: SourceContent,
   row: MemoryVnextSourceQueueRow,
 ): Promise<{ created: number; reinforced: number; skipped: number }> {
-  const totals = { created: 0, reinforced: 0, skipped: 0 };
-
-  for (const { claim, chunk } of extractedClaims) {
-    const sourceRefs = [
-      {
-        sourceType: row.sourceType,
-        sourceId: row.sourceId,
-        relationship: "extracted_from",
-        context: `Extracted by vNext source poller from ${row.sourceType}`,
-        strength: 1,
-      },
-      ...(row.sourceType === "session" ? buildSessionPageSourceRefs(chunk) : []),
-    ];
-    const result = await persistClaimCandidates({
-      claims: [claim],
-      source: sourceContent.sourceType,
+  const sourceObservedAt = row.lastModifiedAt;
+  const sourceRefsByClaim = Object.fromEntries(observation.claims.map(({ claim, chunk }, index) => [index, [
+    {
+      sourceType: row.sourceType,
       sourceId: row.sourceId,
-      sourceMemoryId: null,
-      sourceRefs,
-      metadata: { extractedBy: "vnext-source-poller" },
-      logPrefix: "pollerPersist",
-    });
-    totals.created += result.created;
-    totals.reinforced += result.reinforced;
-    totals.skipped += result.skipped;
-  }
-
-  return totals;
+      relationship: "extracted_from",
+      context: `Extracted by vNext source poller from ${row.sourceType}`,
+      quote: claim.evidenceQuote || null,
+      strength: 1,
+      clarity: claim.clarity ?? claim.confidence,
+      certainty: claim.confidence,
+      sourceObservedAt,
+      sourceLineageKey: `${row.sourceType}:${row.sourceId}`,
+      independence: "unknown" as const,
+      producerMethod: "claim_observation_extraction",
+      derivationVersion: "vnext-observation-v1",
+      provenance: { queueId: row.id, chunkLength: chunk.length },
+    },
+    ...(row.sourceType === "session" ? buildSessionPageSourceRefs(chunk) : []),
+  ]]));
+  const result = await applyObservation({
+    claims: observation.claims.map(({ claim }) => claim),
+    relationships: observation.relationships,
+    source: sourceContent.sourceType,
+    sourceId: row.sourceId,
+    sourceMemoryId: null,
+    sourceRefsByClaim,
+    createdAt: sourceObservedAt,
+    metadata: { extractedBy: "vnext-source-poller", observationSchema: "vnext-observation-v1" },
+    logPrefix: "pollerObservation",
+  });
+  return { created: result.created, reinforced: result.reinforced, skipped: result.skipped };
 }
 
 // ---------------------------------------------------------------------------
@@ -251,19 +280,19 @@ async function processSource(
     `processSource: extracting source=${row.sourceType}:${row.sourceId} contentLen=${sourceContent.content.length} chunks=${chunks.length}`,
   );
 
-  const extractedClaims = await extractClaimsFromChunks(
+  const observation = await extractObservationFromChunks(
     chunks,
     row.sourceType,
     sourceContent.title,
   );
 
   log.info(
-    `processSource: extracted ${extractedClaims.length} claims from source=${row.sourceType}:${row.sourceId}`,
+    `processSource: extracted ${observation.claims.length} claims and ${observation.relationships.length} relationships from source=${row.sourceType}:${row.sourceId}`,
   );
 
   let result: ProcessSourceResult = { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
-  if (extractedClaims.length > 0) {
-    const persistResult = await persistPollerClaims(extractedClaims, sourceContent, row);
+  if (observation.claims.length > 0) {
+    const persistResult = await persistPollerObservation(observation, sourceContent, row);
     result.created = persistResult.created;
     result.reinforced = persistResult.reinforced;
     result.skipped = persistResult.skipped;
