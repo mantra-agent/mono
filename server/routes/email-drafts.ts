@@ -154,9 +154,29 @@ export function registerEmailDraftRoutes(app: Express) {
         async (draft) => {
           const { sendEmailFromDraft } = await import("../gmail");
           const result = await sendEmailFromDraft(draft);
-          return { messageId: result.id || "" };
+          const messageId = result.message.id;
+          if (!messageId) {
+            throw new Error("Gmail accepted the send without returning provider message identity");
+          }
+          return {
+            messageId,
+            gmailAccountId: result.accountId,
+          };
         },
       );
+
+      if (!sent.sentMessageId || !sent.gmailAccountId) {
+        log.warn(`Sent draft ${sent.id} is missing provider message or Gmail account identity; deferred to email sync`);
+      } else {
+        try {
+          const { ingestSentGmailMessage } = await import("../email-sync");
+          await ingestSentGmailMessage(sent.gmailAccountId, sent.sentMessageId);
+          const { invalidateSimpleFeedCache } = await import("../simple/generate-feed");
+          invalidateSimpleFeedCache(principal.accountId || undefined);
+        } catch (projectionErr) {
+          log.warn(`Sent draft ${sent.id} but immediate email/People projection failed; deferred to email sync: ${projectionErr instanceof Error ? projectionErr.message : String(projectionErr)}`);
+        }
+      }
 
       res.json({
         draft: sent,
