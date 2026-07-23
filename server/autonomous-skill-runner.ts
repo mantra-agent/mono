@@ -403,13 +403,47 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
 
 export interface AutonomousRunResult {
   sessionId: string;
-  status: "succeeded" | "failed" | "yielded";
+  status: "succeeded" | "degraded" | "failed" | "yielded";
   summary?: string;
   error?: string;
+  /** Required tools with no successful invocation (present when status === "degraded"). */
+  coverageGaps?: string[];
   durationMs: number;
 }
 
 const activeSkillRuns = new Set<string>();
+
+/**
+ * Deterministic required-tool coverage check. Scans the session's persisted
+ * tool calls for at least one successful ("done") invocation of each tool the
+ * skill declares in requiredTools. Fails open: a read error must not fail an
+ * otherwise-healthy run — it logs a warning and reports full coverage.
+ */
+async function findMissingRequiredTools(sessionId: string, skillName: string): Promise<string[]> {
+  try {
+    const skill = await storage.getSkillByName(skillName);
+    const required = Array.isArray(skill?.requiredTools)
+      ? (skill.requiredTools as unknown[]).filter((t): t is string => typeof t === "string" && t.length > 0)
+      : [];
+    if (required.length === 0) return [];
+    const messages = await chatFileStorage.getMessagesBySession(sessionId);
+    const invoked = new Set<string>();
+    for (const m of messages) {
+      const calls = (m as { toolCalls?: unknown }).toolCalls;
+      if (!Array.isArray(calls)) continue;
+      for (const tc of calls) {
+        const info = tc as { toolName?: unknown; status?: unknown };
+        if (typeof info.toolName === "string" && info.status === "done") {
+          invoked.add(info.toolName);
+        }
+      }
+    }
+    return required.filter((t) => !invoked.has(t));
+  } catch (err) {
+    logger.warn(`[SkillChat] [${sessionId}] Required-tool coverage check failed open: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
 
 export function isDuplicateSkillRun(skillId: string, intentionId?: string): boolean {
   const key = intentionId || skillId;
@@ -919,10 +953,32 @@ export async function executeAutonomousSkillRun(
       logger.warn(`[SkillChat] [${sessionId}] Session deleted mid-run — skipping post-pipeline writes`);
     }
 
-    const runStatus = result.status === "succeeded" ? "succeeded" : "failed";
-    storage.updateSkillRunStatus(sessionId, runStatus, result.durationMs, runStatus === "failed" ? result.error : undefined).catch((e: unknown) => {
+    // Deterministic required-tool coverage gate. A run that never successfully
+    // invoked its skill's required tools must not terminate as a clean success.
+    // Computed here — the single source of the run's terminal discriminant —
+    // so every launch path (timer, tool, hook) inherits the same verdict.
+    let runStatus: "succeeded" | "degraded" | "failed" = result.status === "succeeded" ? "succeeded" : "failed";
+    let coverageGaps: string[] = [];
+    if (runStatus === "succeeded" && skillId) {
+      coverageGaps = await findMissingRequiredTools(sessionId, skillId);
+      if (coverageGaps.length > 0) runStatus = "degraded";
+    }
+    const terminalFailureReason = runStatus === "failed"
+      ? result.error
+      : runStatus === "degraded"
+        ? `missing_required_tools: ${coverageGaps.join(", ")}`
+        : undefined;
+    storage.updateSkillRunStatus(sessionId, runStatus, result.durationMs, terminalFailureReason).catch((e: unknown) => {
       logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status: ${e instanceof Error ? e.message : String(e)}`);
     });
+    if (runStatus === "degraded") {
+      logger.warn(`[SkillChat] [${sessionId}] Run degraded — required tools never successfully invoked: ${coverageGaps.join(", ")}`);
+      eventBus.publish({
+        category: "skill",
+        event: "skill.run.degraded",
+        payload: { sessionId, skillId, skillName: config.label, reason: "missing_required_tools", coverageGaps },
+      });
+    }
 
     eventBus.publish({
       category: "chat",
@@ -931,10 +987,13 @@ export async function executeAutonomousSkillRun(
     });
     lifecycleLog.debug(
       `phase=terminal sessionId=${sessionId} parentSessionId=${options.parentSessionId ?? "none"} ` +
-      `skillId=${skillId ?? "skillless"} status=${result.status} durationMs=${result.durationMs} ` +
+      `skillId=${skillId ?? "skillless"} status=${runStatus} durationMs=${result.durationMs} ` +
       `error=${result.error ?? "none"}`,
     );
 
+    if (runStatus === "degraded") {
+      return { ...result, status: "degraded", coverageGaps };
+    }
     return result;
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);

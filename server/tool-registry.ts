@@ -1286,6 +1286,8 @@ export const TOOLS: Record<string, ToolMeta> = {
         outputSpec: { type: "string", description: "Output specification (for create/update)" },
 
         checklist: { type: "array", items: { type: "object", properties: { check: { type: "string" }, weight: { type: "number" } }, required: ["check"] }, description: "Structured quality checklist for scoring (for create/update). Array of {check: string, weight?: number}." },
+        requiredTools: { type: "array", items: { type: "string" }, description: "Tool names that must each have at least one successful invocation for a run to terminate 'succeeded' (for create/update). A run missing any is marked 'degraded' and its timer outcome degrades with it. Pass null to clear." },
+        scoreThreshold: { type: "number", description: "Minimum checklist pass rate 0-1 (for create/update). A scored run below this reconciles the skill run and its launching timer run to 'degraded'. Pass null to clear." },
         activity: { type: "string", description: "Activity type (for create/update)" },
         version: { type: "string", description: "Version string (for create/update)" },
         sessionType: { type: "string", enum: ["autonomous", "agent"], description: "Session type for this skill's runs (for create/update). 'agent' surfaces runs as visible conversations alongside user sessions; 'autonomous' (default) files them under SYSTEM sessions." },

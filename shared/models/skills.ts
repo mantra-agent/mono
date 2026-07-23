@@ -68,6 +68,13 @@ export const skills = pgTable("skills", {
 
   checklist: jsonb("checklist").notNull().default(sql`'[]'::jsonb`),
 
+  // Deterministic run-quality config. requiredTools: tool names that must each
+  // have at least one successful invocation for a run to terminate "succeeded".
+  // scoreThreshold: minimum checklist pass rate (0-1) below which a succeeded
+  // run is reconciled to "degraded" after async scoring. Null = no gating.
+  requiredTools: jsonb("required_tools"),
+  scoreThreshold: real("score_threshold"),
+
   status: text("status").notNull().default("draft"),
   version: text("version").notNull().default("1.0"),
   author: text("author").notNull().default("user"),
@@ -95,7 +102,7 @@ export const skills = pgTable("skills", {
 
 // skillScores table removed — superseded by skill_runs. DB table retained for historical data.
 
-export const skillRunStatuses = ["running", "succeeded", "failed", "yielded", "checkpoint"] as const;
+export const skillRunStatuses = ["running", "succeeded", "degraded", "failed", "yielded", "checkpoint"] as const;
 export type SkillRunStatus = typeof skillRunStatuses[number];
 
 export const skillRuns = pgTable("skill_runs", {
@@ -155,6 +162,8 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   budgetBehavior: z.string().nullable().optional(),
   sessionType: z.enum(sessionTypes).nullable().optional(),
   checklist: z.array(checklistItemSchema).optional().default([]),
+  requiredTools: z.array(z.string().min(1)).nullable().optional(),
+  scoreThreshold: z.number().min(0).max(1).nullable().optional(),
   references: z.array(z.object({
     name: z.string().min(1),
     content: z.string().min(1),

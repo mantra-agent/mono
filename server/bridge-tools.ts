@@ -143,6 +143,20 @@ function withPeopleSummaryStatus(
   };
 }
 
+function normalizeRequiredTools(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const tools = value
+    .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+    .map((t) => t.trim());
+  return tools.length > 0 ? tools : null;
+}
+
+function normalizeScoreThreshold(value: unknown): number | null {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(1, Math.max(0, n));
+}
+
 function formatChecklistForXyz(checklist: unknown): string {
   if (!Array.isArray(checklist) || checklist.length === 0) {
     return "Checklist: (no structured checklist defined — scorer will fall back to default checks)";
@@ -7378,6 +7392,15 @@ ${lines.join("\n")}` };
           parts.push(`\nProcess:\n${skill.process}`);
           if (skill.whenToUse) parts.push(`\nWhen To Use:\n${skill.whenToUse}`);
           if (skill.outputSpec) parts.push(`Output Spec:\n${skill.outputSpec}`);
+          const requiredTools = Array.isArray(skill.requiredTools)
+            ? (skill.requiredTools as unknown[]).filter((t): t is string => typeof t === "string")
+            : [];
+          if (requiredTools.length > 0) {
+            parts.push(`Required tools (deterministic coverage gate): ${requiredTools.join(", ")} — a run missing any terminates degraded.`);
+          }
+          if (typeof skill.scoreThreshold === "number") {
+            parts.push(`Score threshold: scored runs below ${Math.round(skill.scoreThreshold * 100)}% checklist pass rate reconcile to degraded.`);
+          }
           parts.push(`\n${formatChecklistForXyz(skill.checklist)}`);
           return { result: parts.join("\n") };
         }
@@ -7391,6 +7414,8 @@ ${lines.join("\n")}` };
             outputSpec: args.outputSpec || "",
             qualityCriteria: "",
             checklist: Array.isArray(args.checklist) ? args.checklist : [],
+            ...(args.requiredTools !== undefined ? { requiredTools: normalizeRequiredTools(args.requiredTools) } : {}),
+            ...(args.scoreThreshold !== undefined ? { scoreThreshold: normalizeScoreThreshold(args.scoreThreshold) } : {}),
             status: "active",
             author: getInstanceName(),
             version: args.version || "1.0",
@@ -7410,6 +7435,8 @@ ${lines.join("\n")}` };
             if (args[key] !== undefined) updates[key] = args[key];
           }
           if (args.checklist !== undefined) updates.checklist = Array.isArray(args.checklist) ? args.checklist : [];
+          if (args.requiredTools !== undefined) updates.requiredTools = normalizeRequiredTools(args.requiredTools);
+          if (args.scoreThreshold !== undefined) updates.scoreThreshold = args.scoreThreshold === null ? null : normalizeScoreThreshold(args.scoreThreshold);
           const updated = await storage.updateSkill(id, updates);
           if (!updated) return { result: `Failed to update skill "${id}"`, error: true };
           return { result: `Updated skill "${updated.name}" (id: ${updated.id})` };

@@ -7,6 +7,7 @@ import type {
   Timer,
   InsertTimer,
   TimerRun,
+  TimerRunStatus,
   SchedulerState,
 } from "@shared/models/timers";
 import { timerTypes, timerScopes } from "@shared/models/timers";
@@ -362,6 +363,31 @@ export class FileTimerStorage {
       ownership.scope === "user" ? eq(responsibilityRuns.ownerUserId, ownership.ownerUserId) : and(isNull(responsibilityRuns.ownerUserId), isNull(responsibilityRuns.accountId))!,
     ));
     if ((result.rowCount ?? 0) === 0) throw new Error(`timer run update missed: timerId=${timer.id} runId=${runId}`);
+  }
+
+  /**
+   * Guarded post-completion reconciliation keyed by the run's session linkage,
+   * used when async skill scoring lands after the scheduler already recorded a
+   * terminal status (success → degraded on sub-threshold pass rate). The
+   * fromStatus guard in the WHERE makes the transition atomic and idempotent.
+   * Deliberately unscoped by ownership: this is a system-level integrity
+   * reconciliation keyed by an exact unique session linkage, mirroring
+   * healStuckSkillRuns.
+   */
+  async reconcileRunStatusBySession(
+    sessionId: string,
+    fromStatus: TimerRunStatus,
+    toStatus: TimerRunStatus,
+    reason: string,
+  ): Promise<{ runId: string; timerId: string } | null> {
+    const [row] = await db.update(responsibilityRuns)
+      .set({ status: toStatus, error: reason })
+      .where(and(
+        eq(responsibilityRuns.sessionId, sessionId),
+        eq(responsibilityRuns.status, fromStatus),
+      ))
+      .returning({ runId: responsibilityRuns.runId, timerId: responsibilityRuns.responsibilityId });
+    return row ?? null;
   }
 
   private async readRuns(timer: Timer, limit?: number): Promise<TimerRun[]> {

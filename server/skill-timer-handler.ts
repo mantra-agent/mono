@@ -188,6 +188,22 @@ export class SkillTimerHandler implements TimerHandler {
       return { outcome: "skipped", reason: "yield_to_interactive" };
     }
 
+    if (result.status === "degraded") {
+      const gaps = result.coverageGaps?.join(", ") || "unknown";
+      log.warn(
+        `Skill timer "${timer.name}" run degraded sessionId=${result.sessionId} — required tools never successfully invoked: ${gaps}`,
+      );
+      return {
+        outcome: "degraded",
+        reason: `missing_required_tools: ${gaps}`,
+        output: {
+          sessionId: result.sessionId,
+          skillRunStatus: result.status,
+          coverageGaps: result.coverageGaps,
+        },
+      };
+    }
+
     if (result.status !== "succeeded") {
       const errorMsg =
         result.error || `Skill run finished with status: ${result.status}`;

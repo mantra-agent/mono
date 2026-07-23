@@ -129,6 +129,7 @@ export interface IStorage {
 
   insertSkillRun(data: { skillName: string; sessionId: string; status?: SkillRunStatus }): Promise<SkillRun>;
   updateSkillRunStatus(sessionId: string, status: SkillRunStatus, durationMs?: number, failureReason?: string): Promise<SkillRun | null>;
+  reconcileSkillRunStatus(sessionId: string, fromStatus: SkillRunStatus, toStatus: SkillRunStatus, failureReason: string): Promise<SkillRun | null>;
   updateSkillRunScore(sessionId: string, data: {
     passRate: number;
     checklistTotal: number;
@@ -636,6 +637,18 @@ export class HybridStorage implements IStorage {
     const [row] = await db.update(skillRuns)
       .set(updates)
       .where(eq(skillRuns.sessionId, sessionId))
+      .returning();
+    return row ?? null;
+  }
+
+  // Guarded post-completion transition (e.g. succeeded → degraded after async
+  // scoring). Preserves completedAt/durationMs; the fromStatus guard in the
+  // WHERE makes the transition atomic, so races and double-downgrades are
+  // structurally unrepresentable.
+  async reconcileSkillRunStatus(sessionId: string, fromStatus: SkillRunStatus, toStatus: SkillRunStatus, failureReason: string): Promise<SkillRun | null> {
+    const [row] = await db.update(skillRuns)
+      .set({ status: toStatus, failureReason })
+      .where(and(eq(skillRuns.sessionId, sessionId), eq(skillRuns.status, fromStatus)))
       .returning();
     return row ?? null;
   }
