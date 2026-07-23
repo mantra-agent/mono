@@ -257,6 +257,7 @@ export async function loadProjectVaultIds(
         eq(projectVaultMemberships.ownerUserId, principal.userId!),
         eq(projectVaultMemberships.accountId, principal.accountId!),
         eq(vaults.accountId, principal.accountId!),
+        inArray(projectVaultMemberships.vaultId, principal.visibleVaultIds),
       );
   const predicates: SQL[] = [
     inArray(projectVaultMemberships.projectId, uniqueIds),
