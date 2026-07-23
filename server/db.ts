@@ -752,6 +752,14 @@ export function hasAmbientDatabaseTransaction(): boolean {
   return databaseTransactionALS.getStore() !== undefined;
 }
 
+/**
+ * Run durable evidence or recovery work without inheriting the caller's
+ * business transaction. Other async context remains intact.
+ */
+export function runOutsideDatabaseTransaction<T>(operation: () => Promise<T>): Promise<T> {
+  return databaseTransactionALS.exit(operation);
+}
+
 const databaseProxyTarget = Object.create(null);
 export const db = new Proxy(databaseProxyTarget, {
   get(_target, property, receiver) {
