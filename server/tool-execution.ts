@@ -19,7 +19,7 @@ export interface ToolExecutionContext {
   activity: string;
   runId: string;
   origin?: import("./agent-authority").ToolInvocationOrigin;
-  trustedDelegation?: "plan" | "workflow";
+  trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation;
 }
 
 export interface ToolResult {

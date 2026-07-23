@@ -61,7 +61,7 @@ Before creating a plan, work through these silently:
 ## During Execution
 
 - The plan tool spawns child sessions per step with fresh context
-- If plan creation or execution infrastructure fails, do not substitute `session.spawn_child` for an engineering step. Generic children are conversational delegations and deliberately lack trusted Git-write provenance. Repair/retry the plan path or continue the work in the trusted interactive session.
+- If plan creation or execution infrastructure fails, preserve the intended execution semantics. For a single independent engineering mission, `session.spawn_child` with `delegation=engineering` is a valid fallback; for multi-step work, repair/retry the plan path so ordering, checkpoints, and step outcomes remain durable. Never rely on free-text instructions to grant authority.
 - Progress checkpoints to a Library page automatically
 - If a step fails: assess whether to retry, skip, or pause for input
 - If scope changes mid-execution: use `add_steps` or `pause`. Don't start over

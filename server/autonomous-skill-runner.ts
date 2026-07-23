@@ -449,7 +449,7 @@ function getSkillTools(
   activity: ActivityId,
   sessionKey: string,
   sessionId: string,
-  trustedDelegation?: "plan" | "workflow",
+  trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation,
 ): {
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   toolExecutor: (name: string, args: Record<string, unknown>) => Promise<{ result: string; error: boolean }>;
@@ -1374,7 +1374,9 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
     ? "plan" as const
     : conv.spawnerTool === "workflow-executor"
       ? "workflow" as const
-      : undefined;
+      : conv.spawnerTool === "session.spawn_child.engineering"
+        ? "child" as const
+        : undefined;
   const { tools, toolExecutor } = getSkillTools(ACTIVITY_WORK, sessionKey, sessionId, trustedDelegation);
 
   let finalStatus: "succeeded" | "failed" = "succeeded";
