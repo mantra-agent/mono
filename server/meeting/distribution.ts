@@ -57,20 +57,40 @@ const libraryScopeColumns = {
 // Bound the compact, editable recap email body.
 const EMAIL_BODY_CHAR_LIMIT = 30_000;
 const RECIPIENT_ACCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
+const LANDING_BASE_URL = "https://www.trymantra.ai";
+const ONBOARDING_TOKEN_PARAM = "i";
 
-interface RecipientAccessCapability {
+interface MintedCapabilityToken {
   token: string;
   tokenHash: string;
+}
+
+interface RecipientAccessCapability extends MintedCapabilityToken {
   expiresAt: Date;
 }
 
-function createRecipientAccessCapability(): RecipientAccessCapability {
+/** Single minting primitive for every per-recipient bearer token in recap flows. */
+function mintCapabilityToken(): MintedCapabilityToken {
   const token = randomBytes(32).toString("base64url");
+  return { token, tokenHash: createHash("sha256").update(token).digest("hex") };
+}
+
+function createRecipientAccessCapability(): RecipientAccessCapability {
   return {
-    token,
-    tokenHash: createHash("sha256").update(token).digest("hex"),
+    ...mintCapabilityToken(),
     expiresAt: new Date(Date.now() + RECIPIENT_ACCESS_TTL_MS),
   };
+}
+
+/**
+ * Tokenized landing link for the recap email footer. The landing page routes
+ * token holders into the voice-visualizer FTUE; a future onboarding resolver
+ * binds the stored hash to a provisional account. Deliberately a separate
+ * capability from the recap access token so the marketing URL never carries
+ * meeting-content authority.
+ */
+function invitedLandingUrl(token: string): string {
+  return `${LANDING_BASE_URL}/?${ONBOARDING_TOKEN_PARAM}=${encodeURIComponent(token)}`;
 }
 
 function recipientRecapUrl(publicBaseUrl: string, token: string): string {
@@ -354,6 +374,7 @@ async function runDistribution(
 
   for (const attendee of attendees) {
     const capability = createRecipientAccessCapability();
+    const onboarding = mintCapabilityToken();
     let distributionId: string | null = null;
     try {
       const owned = ownedInsertValues(principal, scopeColumns);
@@ -366,6 +387,7 @@ async function runDistribution(
           isMantraUser: false,
           accessTokenHash: capability.tokenHash,
           accessExpiresAt: capability.expiresAt,
+          onboardingTokenHash: onboarding.tokenHash,
           sendMethod: "gmail_draft",
           status: "pending",
           ...owned,
@@ -381,6 +403,7 @@ async function runDistribution(
         emailContext.event,
         principal,
         recipientRecapUrl(publicBaseUrl, capability.token),
+        invitedLandingUrl(onboarding.token),
       );
       const draft = await emailDraftStorage.create(principal, {
         sessionId,
@@ -602,6 +625,7 @@ async function buildEmailContent(
   event: CalendarEvent,
   principal: Principal,
   recipientUrl: string,
+  landingUrl: string,
 ): Promise<string> {
   if (!recap.pageId) throw new Error("Canonical recap page is missing");
 
@@ -650,6 +674,7 @@ async function buildEmailContent(
       `**${section.title}**\n${section.items.map((item) => `- ${item}`).join("\n")}`,
     ),
     `[Open your recap and assigned work](${recipientUrl})`,
+    `Sent with [Mantra](${landingUrl})`,
   ];
   const body = blocks.join("\n\n");
   if (body.length > EMAIL_BODY_CHAR_LIMIT) {
