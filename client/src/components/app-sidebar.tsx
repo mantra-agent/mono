@@ -58,7 +58,7 @@ import { useCommsActivity } from "@/hooks/use-comms-activity";
 import { useOrientationActivity } from "@/hooks/use-orientation-activity";
 import { useEnvActivity } from "@/hooks/use-env-activity";
 import { ActiveStatusSpinner, getStatusClasses, type NavDotLevel } from "./nav-dot";
-import { MantraLogo } from "@/components/mantra-logo";
+import { AgentOrb } from "@/components/agent-orb";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   Collapsible,
@@ -207,7 +207,7 @@ const statusRingColors: Record<string, string> = {
   not_installed: "ring-neutral/20",
 };
 
-function XyzIcon({ status, onClick }: { status: string; onClick?: () => void }) {
+function NavigationOrb({ status, onClick }: { status: string; onClick?: () => void }) {
   return (
     <button
       type="button"
@@ -216,18 +216,22 @@ function XyzIcon({ status, onClick }: { status: string; onClick?: () => void }) 
         onClick?.();
       }}
       className={cn(
-        "relative flex shrink-0 items-center justify-center rounded-md border border-cta bg-transparent p-0 text-cta transition-colors hover:border-active hover:text-active cursor-pointer select-none overflow-visible",
-        statusRingColors[status] && `ring-1 ${statusRingColors[status]}`
+        "relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer select-none items-center justify-center overflow-hidden rounded-md border border-cta bg-background p-0 transition-colors hover:border-active",
+        statusRingColors[status] && `ring-1 ${statusRingColors[status]}`,
       )}
-      style={{ width: 28, height: 28, marginLeft: 4 }}
+      aria-label="Open main navigation"
       data-testid="button-sidebar-toggle"
     >
-      <MantraLogo className="h-[23px] w-[23px] relative" data-testid="icon-xyz-logo" />
+      <AgentOrb
+        state="idle"
+        maxFrameRate={20}
+        className="pointer-events-none absolute inset-0"
+      />
     </button>
   );
 }
 
-export function XyzIconButton() {
+export function NavigationOrbButton() {
   const { data: gatewayStatus } = useExecutorStatus();
   const { toggleSidebar, openMobile } = useSidebar();
   const { setWidgetOpen } = useFocusSession();

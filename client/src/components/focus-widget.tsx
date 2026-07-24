@@ -12,7 +12,7 @@ import { useVoiceStreaming } from "@/hooks/use-voice-streaming";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { SessionTranscriptPanel } from "@/components/session-transcript-panel";
-import { XyzIconButton } from "@/components/app-sidebar";
+import { NavigationOrbButton } from "@/components/app-sidebar";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
 import { VaultSwitcher } from "@/components/vault-switcher";
 // Tooltip import removed — FAB tooltip no longer needed
@@ -709,7 +709,7 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   const headerAndPanel = (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
       <div className="flex items-center gap-2 h-[42px] px-1.5 border-b border-black md:hidden shrink-0 bg-background">
-        <XyzIconButton />
+        {!isDesktop && <NavigationOrbButton />}
         <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={activeSessionTitle}>
           {activeSessionTitle}
         </div>
