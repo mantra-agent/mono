@@ -188,6 +188,9 @@ function invalidateVaultScopedQueries() {
     "/api/skills",
     "/api/theses",
     "/api/signals",
+    // Home/Simple feed is vault-scoped (collectors read the principal's visible
+    // vault scope); it must refresh when vault visibility changes.
+    "/api/home",
   ];
 
   for (const prefix of scopedPrefixes) {
