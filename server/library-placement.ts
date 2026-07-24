@@ -2,7 +2,7 @@ import { and, eq, inArray, type SQL } from "drizzle-orm";
 import { libraryPages } from "@shared/models/info";
 import { db } from "./db";
 import { ACTIVITY_FRAMING } from "./job-profiles";
-import { ensureMantraLibraryVault, normalizeLibraryStructuralRole, type LibraryStructuralRole } from "./library-domain";
+import { assertWritableVault, ensureMantraLibraryVault, normalizeLibraryStructuralRole, type LibraryStructuralRole } from "./library-domain";
 import { parseLibraryIndexEntries, type LibraryIndexEntry } from "./library-index-format";
 import { createLogger } from "./log";
 import { chatCompletion } from "./model-client";
@@ -10,7 +10,7 @@ import type { Principal } from "./principal";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { extractJson } from "./utils/extract-json";
 
-export type LibraryPlacementOutcome = "placed" | "explicit_parent" | "review_required";
+export type LibraryPlacementOutcome = "placed" | "explicit_parent" | "explicit_vault" | "review_required";
 
 export interface LibrarySemanticPlacementInput {
   title: string;
@@ -20,6 +20,7 @@ export interface LibrarySemanticPlacementInput {
   tags?: string[] | null;
   structuralRole?: string | null;
   explicitParentId?: string | null;
+  explicitVaultId?: string | null;
 }
 
 export interface LibrarySemanticPlacementResult {
@@ -279,6 +280,22 @@ export async function placeLibraryPageSemantically(input: LibrarySemanticPlaceme
       confidence: 1,
       reason: "Caller supplied an explicit parent; semantic placement records the decision but does not override human-selected structure.",
       lint: { requiresReview: false, code: "explicit_parent", message: null },
+      compatibility: { purpose: input.purpose ?? null },
+    };
+  }
+
+  if (input.explicitVaultId) {
+    const vaultId = await assertWritableVault(principal, input.explicitVaultId);
+    return {
+      outcome: "explicit_vault",
+      vaultId,
+      indexPageId: vault.indexPageId,
+      parentId: null,
+      parentTitle: "Vault root",
+      structuralRole,
+      confidence: 1,
+      reason: "Caller supplied an explicit destination vault; the page is filed at that vault's root.",
+      lint: { requiresReview: false, code: "none", message: null },
       compatibility: { purpose: input.purpose ?? null },
     };
   }

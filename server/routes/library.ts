@@ -925,6 +925,7 @@ export async function registerLibraryRoutes(app: Express) {
     content: z.any().optional(),
     plainTextContent: z.string().default(""),
     parentId: z.string().nullable().optional(),
+    vaultId: z.string().min(1).nullable().optional(),
     purpose: z.string().nullable().optional(),
     pageContext: z.string().nullable().optional(),
     contentSummary: z.string().nullable().optional(),
@@ -948,6 +949,7 @@ export async function registerLibraryRoutes(app: Express) {
         markdown: synced.plainTextContent,
         purpose: data.purpose ?? null,
         explicitParentId: data.parentId ?? null,
+        explicitVaultId: data.vaultId ?? null,
         pageContext: data.pageContext ?? null,
         contentSummary: data.contentSummary ?? null,
         tags: data.tags,
@@ -965,7 +967,7 @@ export async function registerLibraryRoutes(app: Express) {
         return res
           .status(400)
           .json({ error: "Invalid input", details: err.errors });
-      res.status(500).json({ error: err.message });
+      res.status(err?.status ?? 500).json({ error: err.message });
     }
   });
 

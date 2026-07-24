@@ -8,7 +8,7 @@ import { useApiMutation } from "@/hooks/use-api-mutation";
 import { downloadPageAsMarkdown } from "@/lib/editor-utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { X, Plus, Loader2, Search } from "lucide-react";
+import { X, Plus, Loader2, Search, ChevronRight, MoreHorizontal, FilePlus } from "lucide-react";
 import type { JSONContent } from "@tiptap/core";
 import type { LibraryPage, LibraryPageFull, TreeNode, DropPosition } from "./types";
 import { LibraryPageEditor, EmptyLibraryState, DeletePageDialog, MovePageDialog, PageEmoji } from "./library-components";
@@ -16,26 +16,70 @@ import { flattenTree, DndTree } from "./library-tree";
 import { useVaultSections } from "./use-vault-sections";
 import type { Vault } from "@/hooks/use-vaults";
 import { useLibraryUnread, computeHasUnreadDescendantIds } from "@/components/library-activity-indicator";
-import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
+import { HierarchySectionHeader, HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-header";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const log = createLogger("LibraryTab");
 
 const SIDEBAR_WIDTH_KEY = "library-sidebar-width";
 const EXPANDED_IDS_KEY = "library-expanded-ids";
+const COLLAPSED_VAULTS_KEY = "library-collapsed-vault-ids";
 const DEFAULT_SIDEBAR_WIDTH = 280;
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 480;
 
 const QUIET_ROW_CLASS = "px-2 py-1.5 text-sm text-muted-foreground";
 
-function VaultSectionHeader({ vault }: { vault: Vault }) {
+/**
+ * Vault section header: a collapsible disclosure trigger (mirroring the Session
+ * menu's collapsible group headers) plus a "..." actions menu whose Add Page
+ * item creates a page at this vault's root. The menu button is a sibling of the
+ * trigger — not a child — so the two buttons never nest, exactly like the page
+ * rows in the tree.
+ */
+function VaultSectionHeader({
+  vault,
+  open,
+  onAddPage,
+}: {
+  vault: Vault;
+  open: boolean;
+  onAddPage: () => void;
+}) {
   return (
-    <HierarchySectionHeader
-      className="mt-2"
+    <div
+      className="group relative mt-2 min-w-0"
       data-testid={`library-vault-section-${vault.id}`}
     >
-      <span className="truncate">{vault.name}</span>
-    </HierarchySectionHeader>
+      <CollapsibleTrigger
+        className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
+        data-testid={`button-vault-section-${vault.id}`}
+      >
+        <ChevronRight
+          className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")}
+        />
+        <span className="min-w-0 flex-1 truncate pr-6 text-left">{vault.name}</span>
+      </CollapsibleTrigger>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            className="absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-border/40 bg-background text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+            data-testid={`button-vault-menu-${vault.id}`}
+            aria-label={`${vault.name} actions`}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(e) => e.preventDefault()}>
+          <DropdownMenuItem onClick={onAddPage} data-testid={`menu-vault-add-page-${vault.id}`}>
+            <FilePlus className="h-3.5 w-3.5 mr-2" /> Add Page
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
@@ -55,6 +99,9 @@ interface VaultTreeSectionProps {
   toggleExpand: (id: string) => void;
   unreadIds: Set<string>;
   hasUnreadDescendantIds: Set<string>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onAddPage: () => void;
 }
 
 /**
@@ -67,6 +114,7 @@ function VaultTreeSection({
   vault, rootNodes, selectedId, expandedIds,
   onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onReorder, toggleExpand,
   unreadIds, hasUnreadDescendantIds,
+  open, onOpenChange, onAddPage,
 }: VaultTreeSectionProps) {
   const [dragActiveId, setDragActiveId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; position: DropPosition } | null>(null);
@@ -75,36 +123,38 @@ function VaultTreeSection({
   const flatNodeMap = useMemo(() => new Map(flatNodes.map(n => [n.id, n])), [flatNodes]);
 
   return (
-    <div className="mb-1 min-w-0">
-      <VaultSectionHeader vault={vault} />
-      {rootNodes.length === 0 ? (
-        <div className={QUIET_ROW_CLASS}>No pages yet.</div>
-      ) : (
-        <DndTree
-          treeData={rootNodes}
-          flatNodes={flatNodes}
-          flatNodeIds={flatNodeIds}
-          flatNodeMap={flatNodeMap}
-          selectedId={selectedId}
-          expandedIds={expandedIds}
-          dragActiveId={dragActiveId}
-          dropTarget={dropTarget}
-          onDragActiveIdChange={setDragActiveId}
-          onDropTargetChange={setDropTarget}
-          onSelect={onSelect}
-          onCreateChild={onCreateChild}
-          onSetEmoji={onSetEmoji}
-          onDelete={onDelete}
-          onDownload={onDownload}
-          onEnrich={onEnrich}
-          onMove={onMove}
-          onReorder={onReorder}
-          toggleExpand={toggleExpand}
-          unreadIds={unreadIds}
-          hasUnreadDescendantIds={hasUnreadDescendantIds}
-        />
-      )}
-    </div>
+    <Collapsible open={open} onOpenChange={onOpenChange} className="mb-1 min-w-0">
+      <VaultSectionHeader vault={vault} open={open} onAddPage={onAddPage} />
+      <CollapsibleContent>
+        {rootNodes.length === 0 ? (
+          <div className={QUIET_ROW_CLASS}>No pages yet.</div>
+        ) : (
+          <DndTree
+            treeData={rootNodes}
+            flatNodes={flatNodes}
+            flatNodeIds={flatNodeIds}
+            flatNodeMap={flatNodeMap}
+            selectedId={selectedId}
+            expandedIds={expandedIds}
+            dragActiveId={dragActiveId}
+            dropTarget={dropTarget}
+            onDragActiveIdChange={setDragActiveId}
+            onDropTargetChange={setDropTarget}
+            onSelect={onSelect}
+            onCreateChild={onCreateChild}
+            onSetEmoji={onSetEmoji}
+            onDelete={onDelete}
+            onDownload={onDownload}
+            onEnrich={onEnrich}
+            onMove={onMove}
+            onReorder={onReorder}
+            toggleExpand={toggleExpand}
+            unreadIds={unreadIds}
+            hasUnreadDescendantIds={hasUnreadDescendantIds}
+          />
+        )}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -191,6 +241,32 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Per-vault section collapse state. We persist the COLLAPSED set (not the
+  // expanded set) so a newly created or newly visible vault defaults to open.
+  const [collapsedVaultIds, setCollapsedVaultIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem(COLLAPSED_VAULTS_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return new Set<string>(parsed);
+      }
+    } catch { /* ignore parse errors */ }
+    return new Set<string>();
+  });
+
+  useEffect(() => {
+    localStorage.setItem(COLLAPSED_VAULTS_KEY, JSON.stringify([...collapsedVaultIds]));
+  }, [collapsedVaultIds]);
+
+  const setVaultOpen = useCallback((vaultId: string, open: boolean) => {
+    setCollapsedVaultIds(prev => {
+      const next = new Set(prev);
+      if (open) next.delete(vaultId);
+      else next.add(vaultId);
       return next;
     });
   }, []);
@@ -290,7 +366,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
     retryOn409: true,
   });
 
-  const createMutation = useApiMutation<{ parentId?: string; title?: string; tags?: string[] } | undefined, LibraryPage>({
+  const createMutation = useApiMutation<{ parentId?: string; vaultId?: string; title?: string; tags?: string[] } | undefined, LibraryPage>({
     method: "POST",
     path: "/api/info/library",
     body: (opts) => ({
@@ -298,6 +374,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
       content: null,
       plainTextContent: "",
       parentId: opts?.parentId || null,
+      vaultId: opts?.vaultId || undefined,
       tags: opts?.tags || [],
     }),
     invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"]],
@@ -458,6 +535,12 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                       toggleExpand={toggleExpand}
                       unreadIds={unreadIds}
                       hasUnreadDescendantIds={hasUnreadDescendantIds}
+                      open={isSearching ? true : !collapsedVaultIds.has(section.vault.id)}
+                      onOpenChange={(next) => setVaultOpen(section.vault.id, next)}
+                      onAddPage={() => {
+                        setVaultOpen(section.vault.id, true);
+                        createMutation.mutate({ vaultId: section.vault.id });
+                      }}
                     />
                   ))
                 )
