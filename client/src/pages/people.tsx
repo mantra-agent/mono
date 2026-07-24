@@ -20,7 +20,7 @@ import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { CompanyReferenceField } from "@/components/people/company-reference-field";
 import { PERSONAL_RELATION_OPTIONS, PROFESSIONAL_RELATION_OPTIONS } from "@shared/people-metadata";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useVaults } from "@/hooks/use-vaults";
+import { useVaults, type Vault } from "@/hooks/use-vaults";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -147,6 +147,7 @@ interface PersonIndex {
   company?: string;
   companyId?: string;
   role?: string;
+  vaultIds?: string[];
 }
 
 interface ContactInfo {
@@ -373,6 +374,57 @@ function fuzzyTokenMatch(queryToken: string, targetToken: string): number {
   return similarity >= 0.75 ? similarity * 0.8 : 0;
 }
 
+// ── Vault-colored list titles ────────────────────────────────────────────
+// A person's list title takes their driving vault's color: full color when
+// unread, a muted (reduced-alpha) variant when read. Applies to the list row
+// only — the detail view is unaffected.
+
+const READ_TITLE_ALPHA = 0.5;
+
+function hexToRgba(hex: string, alpha: number): string | null {
+  const cleaned = hex.trim().replace(/^#/, "");
+  const full = cleaned.length === 3 ? cleaned.split("").map(ch => ch + ch).join("") : cleaned;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
+  const int = parseInt(full, 16);
+  return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
+}
+
+/**
+ * Resolve the single vault whose color drives a person's list title. The active
+ * vault wins when the person belongs to it; otherwise the lowest-position member
+ * vault with a color. Returns null when no colored membership applies.
+ */
+function resolveDrivingVault(
+  vaultIds: string[] | undefined,
+  vaultById: Map<string, Vault>,
+  activeVaultId: string | null,
+): Vault | null {
+  if (!vaultIds || vaultIds.length === 0) return null;
+  if (activeVaultId && vaultIds.includes(activeVaultId)) {
+    const active = vaultById.get(activeVaultId);
+    if (active?.color) return active;
+  }
+  let best: Vault | null = null;
+  for (const id of vaultIds) {
+    const vault = vaultById.get(id);
+    if (!vault?.color) continue;
+    if (!best || vault.position < best.position) best = vault;
+  }
+  return best;
+}
+
+/** Title color for a person row, or null to fall back to default text classes. */
+function personTitleColor(
+  vaultIds: string[] | undefined,
+  vaultById: Map<string, Vault>,
+  activeVaultId: string | null,
+  full: boolean,
+): string | null {
+  const vault = resolveDrivingVault(vaultIds, vaultById, activeVaultId);
+  if (!vault?.color) return null;
+  return hexToRgba(vault.color, full ? 1 : READ_TITLE_ALPHA);
+}
+
 function fuzzyMatchPeople(query: string, people: PersonIndex[], limit: number): PersonIndex[] {
   const queryTokens = tokenize(query);
   if (queryTokens.length === 0) return [];
@@ -433,6 +485,8 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
 }) {
   const { toast } = useToast();
   const { isAdmin } = useAuth();
+  const { vaults, activeVaultId } = useVaults();
+  const vaultById = useMemo(() => new Map(vaults.map(v => [v.id, v])), [vaults]);
   const searchQuery = searchOverride ?? "";
   const showQuickAdd = showQuickAddOverride ?? false;
   const [newName, setNewName] = useState("");
@@ -551,6 +605,10 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
       Math.abs(new Date(person.createdAt).getTime() - new Date(person.updatedAt).getTime()) < 5000;
     const isUnread = !person.lastViewedAt || (person.updatedAt && new Date(person.updatedAt) > new Date(person.lastViewedAt));
     const titleClass = isUnread ? "text-foreground" : isNew ? "text-foreground" : isSelected ? "text-foreground" : "text-muted-foreground";
+    // Full color when unread (new people read as unread); muted when read.
+    const titleColor = personTitleColor(person.vaultIds, vaultById, activeVaultId, Boolean(isUnread || isNew));
+    const titleStyle = titleColor ? { color: titleColor } : undefined;
+    const colorClass = titleColor ? "" : titleClass;
     return (
       <div
         key={person.id}
@@ -558,8 +616,8 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
         onClick={() => onSelect(person.id)}
         data-testid={`person-row-${person.id}`}
       >
-        <User className={`h-3.5 w-3.5 shrink-0 ${titleClass}`} />
-        <span className={`truncate flex-1 min-w-0 pr-2 ${titleClass}`}>
+        <User className={`h-3.5 w-3.5 shrink-0 ${colorClass}`} style={titleStyle} />
+        <span className={`truncate flex-1 min-w-0 pr-2 ${colorClass}`} style={titleStyle}>
           {person.name}
           {person.nicknames && person.nicknames.length > 0 && (
             <span className="text-xs text-muted-foreground ml-1">({person.nicknames[0]})</span>
@@ -570,7 +628,7 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
         )}
       </div>
     );
-  }, [selectedId, onSelect]);
+  }, [selectedId, onSelect, vaultById, activeVaultId]);
 
   return (
     <div className="space-y-1" data-testid="people-list-view">
