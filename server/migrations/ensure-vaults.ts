@@ -100,7 +100,9 @@ export async function ensureVaults(): Promise<void> {
       "calendar_event_people",
       "calendar_event_artifacts",
       // Phase 2: People
-      "persons",
+      // NOTE: persons.vault_id is intentionally absent — it is the retired
+      // legacy single-vault pointer, owned now by person_vault_memberships.
+      // It is dropped below; do not re-add it here.
       "person_merge_aliases",
       "simple_people_surface_state",
       // Phase 2: Finance (user data, NOT plaid_accounts/plaid_sync_cursors plumbing)
@@ -158,7 +160,6 @@ export async function ensureVaults(): Promise<void> {
       { table: "library_pages", idx: "idx_library_pages_vault" },
       // Phase 2 indexes
       { table: "calendar_event_metadata", idx: "idx_cal_meta_vault" },
-      { table: "persons", idx: "idx_persons_vault" },
       { table: "person_merge_aliases", idx: "idx_person_merge_aliases_vault" },
       { table: "connected_accounts", idx: "idx_connected_accounts_vault" },
       { table: "email_messages", idx: "idx_email_messages_vault" },
@@ -179,6 +180,24 @@ export async function ensureVaults(): Promise<void> {
         END $vault_idx$;
       `);
     }
+
+    // ── 3b. Drop deprecated persons.vault_id column ────────────────
+    // persons.vault_id was the legacy single-vault pointer. Person vault
+    // membership is owned entirely by person_vault_memberships
+    // (person.vaultIds); the column has had no readers or writers since
+    // PRs #1076/#1078. Drop it so stale legacy data can never resurrect a
+    // deliberately-removed membership. DROP COLUMN cascades idx_persons_vault.
+    // IF EXISTS + the regclass guard keep this idempotent and rollback-safe:
+    // a rollback to pre-neutralize code re-adds the empty column via the
+    // ADD COLUMN loop above before serving.
+    await pool.query(`
+      DO $drop_persons_vault$
+      BEGIN
+        IF to_regclass('public.persons') IS NOT NULL THEN
+          ALTER TABLE persons DROP COLUMN IF EXISTS vault_id;
+        END IF;
+      END $drop_persons_vault$;
+    `);
 
     // ── 4. Create "Personal" vault per account ─────────────────────
     // Uses accounts table as the canonical account registry.
@@ -222,7 +241,8 @@ export async function ensureVaults(): Promise<void> {
       { table: "calendar_event_people", accountCol: "principal_account_id" },
       { table: "calendar_event_artifacts", accountCol: "principal_account_id" },
       // Phase 2: People (use account_id)
-      { table: "persons", accountCol: "account_id" },
+      // NOTE: persons is intentionally absent — its legacy vault_id column is
+      // dropped; person vault membership lives in person_vault_memberships.
       { table: "person_merge_aliases", accountCol: "account_id" },
       { table: "simple_people_surface_state", accountCol: "account_id" },
       // Phase 2: Finance (use principal_account_id — maps to accounts.id)
