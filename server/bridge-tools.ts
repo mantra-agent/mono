@@ -4360,24 +4360,34 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     if (resolvedPersona) {
       const preserveExisting = args._orientationPersonaPolicy === "preserve_existing";
-      const { setSessionPersona, setSessionPersonaIfUnset } = await import("./session-persona");
-      const selection = preserveExisting
-        ? await setSessionPersonaIfUnset(sessionId, resolvedPersona.id)
-        : null;
-      const activated = preserveExisting
-        ? selection?.persona ?? null
-        : await setSessionPersona(sessionId, resolvedPersona.id);
-      if (!activated) return { result: `Persona with id ${resolvedPersona.id} not found`, error: true };
-      effectivePersonaName = activated.name;
-      if (!preserveExisting || selection?.applied) {
-        eventBus.publish({
-          category: "agent",
-          event: "cognition.persona.switched",
-          payload: { sessionId, personaId: activated.id, personaName: activated.name },
-        });
-        results.push(`Persona activated for this session: ${activated.name} (id=${activated.id})`);
+      // The user can pin a persona from the UI. A pin is authoritative: the agent's
+      // autonomous mid-session switch (the non-preserve orient path) must not override it.
+      const pinnedSession = preserveExisting ? null : await chatFileStorage.getSession(sessionId);
+      if (pinnedSession?.personaPinnedByUser) {
+        const { personaStorage } = await import("./file-storage/persona-storage");
+        const pinnedPersona = pinnedSession.personaId ? await personaStorage.get(pinnedSession.personaId) : null;
+        effectivePersonaName = pinnedPersona?.name ?? effectivePersonaName;
+        results.push(`Persona is pinned by the user${pinnedPersona ? ` to ${pinnedPersona.name}` : ""} for this session; not switching to ${resolvedPersona.name}. If the user wants a different persona, they can pick one (or Auto) from the persona icon.`);
       } else {
-        results.push(`Persona preserved for this session: ${activated.name} (id=${activated.id})`);
+        const { setSessionPersona, setSessionPersonaIfUnset } = await import("./session-persona");
+        const selection = preserveExisting
+          ? await setSessionPersonaIfUnset(sessionId, resolvedPersona.id)
+          : null;
+        const activated = preserveExisting
+          ? selection?.persona ?? null
+          : await setSessionPersona(sessionId, resolvedPersona.id);
+        if (!activated) return { result: `Persona with id ${resolvedPersona.id} not found`, error: true };
+        effectivePersonaName = activated.name;
+        if (!preserveExisting || selection?.applied) {
+          eventBus.publish({
+            category: "agent",
+            event: "cognition.persona.switched",
+            payload: { sessionId, personaId: activated.id, personaName: activated.name },
+          });
+          results.push(`Persona activated for this session: ${activated.name} (id=${activated.id})`);
+        } else {
+          results.push(`Persona preserved for this session: ${activated.name} (id=${activated.id})`);
+        }
       }
     }
 

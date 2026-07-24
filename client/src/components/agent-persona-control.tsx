@@ -1,0 +1,144 @@
+// Use createLogger for logging ONLY
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { emitSessionChanged, emitSessionListChanged } from "@/hooks/use-data-sync";
+import { useToast } from "@/hooks/use-toast";
+import { resolvePersonaIcon } from "@/lib/persona-icons";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Sparkles } from "lucide-react";
+import type { ChatSession } from "@shared/models/chat";
+
+interface PersonaOption {
+  id: number;
+  name: string;
+  icon: string;
+  description?: string;
+}
+
+interface AgentPersonaControlProps {
+  sessionId: string;
+  /** The persona frozen on this assistant turn — drives the icon shown. */
+  persona?: { id: number; name: string; icon: string } | null;
+}
+
+/**
+ * The assistant avatar as a control: hover to read the active persona, click to
+ * pick one for this conversation. Picking a persona pins it (the agent stops
+ * auto-switching for this session); picking Auto hands the dial back to the agent.
+ * Mirrors the session-scoped model-tier override pattern in the bottom bar.
+ */
+export function AgentPersonaControl({ sessionId, persona }: AgentPersonaControlProps) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+
+  // Read (don't fetch) the sessions cache so pin state stays reactive.
+  const { data: sessions } = useQuery<ChatSession[]>({ queryKey: ["/api/sessions"], enabled: false });
+  const session = sessions?.find((s) => s.id === sessionId);
+  const pinned = Boolean(session?.personaPinnedByUser);
+  const activePersonaId = session?.personaId ?? persona?.id ?? null;
+
+  // Only load the persona list when the menu opens.
+  const { data: personas } = useQuery<PersonaOption[]>({ queryKey: ["/api/personas"], enabled: open });
+
+  const PersonaIcon = resolvePersonaIcon(persona?.icon);
+  const personaLabel = persona?.name || "Legacy persona unknown";
+  const radioValue = pinned && activePersonaId != null ? String(activePersonaId) : "auto";
+  const tooltipLabel = pinned ? `${personaLabel} · pinned by you` : `${personaLabel} · Auto`;
+
+  const mutation = useMutation({
+    mutationFn: async (nextPersonaId: number | null) => {
+      await apiRequest("PATCH", `/api/gateway/conversations/${sessionId}/persona`, {
+        personaId: nextPersonaId,
+      });
+      return nextPersonaId;
+    },
+    onMutate: async (nextPersonaId) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/sessions"] });
+      const prev = queryClient.getQueryData<ChatSession[]>(["/api/sessions"]);
+      const patch = (s: ChatSession): ChatSession =>
+        s.id === sessionId
+          ? {
+              ...s,
+              personaPinnedByUser: nextPersonaId !== null,
+              personaId: nextPersonaId !== null ? nextPersonaId : s.personaId,
+            }
+          : s;
+      queryClient.setQueryData<ChatSession[]>(["/api/sessions"], (old) => old?.map(patch));
+      queryClient.setQueryData<ChatSession>(["/api/sessions", sessionId], (old) =>
+        old ? patch(old) : old,
+      );
+      return { prev };
+    },
+    onError: (err, _next, context) => {
+      if (context?.prev) queryClient.setQueryData(["/api/sessions"], context.prev);
+      toast({ title: "Failed to update persona", description: String(err), variant: "destructive" });
+    },
+    onSuccess: () => {
+      emitSessionChanged(sessionId, "persona-pin");
+      emitSessionListChanged("persona-pin");
+    },
+  });
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={`Persona: ${personaLabel}. Click to change the persona for this conversation.`}
+              data-testid={`button-agent-persona-${sessionId}`}
+            >
+              <PersonaIcon className="h-4 w-4 text-primary" />
+            </button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="right" className="text-xs">
+          {tooltipLabel}
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+          Persona for this conversation
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup
+          value={radioValue}
+          onValueChange={(value) => {
+            const next = value === "auto" ? null : Number(value);
+            if (next === (pinned ? activePersonaId : null)) return;
+            mutation.mutate(next);
+          }}
+        >
+          <DropdownMenuRadioItem value="auto" className="gap-2">
+            <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="flex flex-col">
+              <span>Auto</span>
+              <span className="text-[10px] text-muted-foreground">Agent switches by context</span>
+            </span>
+          </DropdownMenuRadioItem>
+          {(personas ?? []).map((p) => {
+            const Icon = resolvePersonaIcon(p.icon);
+            return (
+              <DropdownMenuRadioItem key={p.id} value={String(p.id)} className="gap-2">
+                <Icon className="h-3.5 w-3.5 text-primary" />
+                <span>{p.name}</span>
+              </DropdownMenuRadioItem>
+            );
+          })}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

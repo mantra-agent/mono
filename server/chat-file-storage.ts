@@ -327,6 +327,8 @@ interface SessionData {
   vaultId?: string;
   modelTier?: string | null;
   personaId?: number | null;
+  /** True when the user manually pinned the persona from the UI; suppresses agent auto-switching for this session. */
+  personaPinnedByUser?: boolean;
   createdAt: string;
   updatedAt: string;
   messages: FileMessage[];
@@ -626,6 +628,7 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
     sessionKey: data.sessionKey,
     modelTier: normalizeSessionModelTierOverride(data.modelTier),
     personaId: data.personaId ?? null,
+    personaPinnedByUser: data.personaPinnedByUser ?? false,
     messageCount: data.messages.length,
     lastMessageRole: getLastMessageRole(data.messages),
     awaitingQuestionResponse: hasUnansweredQuestion(data.messages) || undefined,
@@ -906,6 +909,7 @@ function convToMeta(data: SessionData): FileSession {
     vaultId: data.vaultId,
     modelTier: normalizeSessionModelTierOverride(data.modelTier),
     personaId: data.personaId ?? null,
+    personaPinnedByUser: data.personaPinnedByUser ?? false,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
     type: data.type,
@@ -1063,6 +1067,7 @@ function docMetadataToSession(doc: {
     sessionKey: metadataString(meta, "sessionKey") || null,
     modelTier: normalizeSessionModelTierOverride(metadataString(meta, "modelTier")),
     personaId: metadataNumber(meta, "personaId") ?? null,
+    personaPinnedByUser: metadataBool(meta, "personaPinnedByUser"),
     createdAt,
     updatedAt,
     type: metadataString(meta, "type") as "text" | "voice" | undefined,
@@ -1142,6 +1147,7 @@ export interface IChatFileStorage {
   updateSessionTopics(id: string, topics: string[]): Promise<void>;
   updateSessionPersona(id: string, personaId: number): Promise<void>;
   setSessionPersonaIfUnset(id: string, personaId: number): Promise<{ personaId: number; applied: boolean } | null>;
+  setSessionPersonaPin(id: string, personaId: number | null): Promise<boolean>;
   clearSession(sessionKey: string): Promise<boolean>;
   updateModelTier(sessionKey: string, tier: string): Promise<boolean>;
   updateSessionStatus(id: string, status: string, summary?: string): Promise<void>;
@@ -1658,6 +1664,23 @@ export const chatFileStorage: IChatFileStorage = {
       await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
       return { personaId, applied: true };
+    });
+  },
+
+  async setSessionPersonaPin(id: string, personaId: number | null) {
+    return withConvLock(id, async () => {
+      const data = await readConv(id);
+      if (!data) return false;
+      if (personaId !== null) {
+        data.personaId = personaId;
+        data.personaPinnedByUser = true;
+      } else {
+        data.personaPinnedByUser = false;
+      }
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
+      return true;
     });
   },
 
