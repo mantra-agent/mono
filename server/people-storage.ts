@@ -199,6 +199,7 @@ export interface PersonIndexEntry {
   updatedAt?: string;
   lastViewedAt?: string;
   private: boolean;
+  vaultIds: string[];
 }
 
 export interface PersonVaultMembershipView {
@@ -1659,6 +1660,7 @@ export class PeopleStorage {
       lastViewedAt: person.lastViewedAt,
       createdAt: person.createdAt,
       updatedAt: person.updatedAt,
+      vaultIds: person.vaultIds ?? [],
     };
   }
 }
