@@ -95,13 +95,19 @@ function nextLifecycleRetryAt(claim: MemoryVnextClaim): Date {
   return new Date(Date.now() + hours * 60 * 60 * 1000);
 }
 
-async function scheduleLifecycleRetry(candidate: VnextLifecycleCandidate, runId: string, reason: LifecycleSkipReason): Promise<void> {
+async function scheduleLifecycleRetry(
+  candidate: VnextLifecycleCandidate,
+  runId: string,
+  reason: LifecycleSkipReason,
+  diagnostics?: Record<string, unknown>,
+): Promise<void> {
   if (reason === "already_terminal") return;
   const nextAttemptAt = nextLifecycleRetryAt(candidate.claim);
   await memoryVnextClaimStorage.markLifecycleSkipped(candidate.claim.id, {
     reason,
     runId,
     nextAttemptAt,
+    diagnostics,
   });
   logLifecycle("memory.vnext.lifecycle_retry_scheduled", {
     runId,
@@ -283,27 +289,47 @@ async function ensureLinks(candidate: VnextLifecycleCandidate, runId: string, re
 
   const mentions = parseEntityMentions(candidate.claim);
   if (mentions.length > 0) {
-    const resolved = await resolveVnextEntityMentions(mentions);
+    const resolutions = await resolveVnextEntityMentions(mentions);
+    const resolved = resolutions.filter((resolution) => resolution.status === "resolved");
+    const diagnostics = {
+      entityResolutions: resolutions.slice(0, 12).map((resolution) => ({
+        name: resolution.mention.name.slice(0, 160),
+        entityType: resolution.mention.entityType,
+        status: resolution.status,
+        ...(resolution.status === "resolved" ? { matchedBy: resolution.matchedBy } : {}),
+        ...(resolution.status === "ambiguous" ? { candidateCount: resolution.candidateCount } : {}),
+      })),
+    };
     for (const entity of resolved) {
-      await memoryVnextClaimStorage.linkClaimToEntity(candidate.claim.id, entity.entityType, entity.entityId);
+      await memoryVnextClaimStorage.linkClaimToEntity(
+        candidate.claim.id,
+        entity.mention.entityType,
+        entity.entityId,
+        { method: entity.matchedBy, matchedIdentity: entity.matchedValue },
+      );
     }
     if (resolved.length > 0) {
+      await memoryVnextClaimStorage.advanceLifecycleStage(candidate.claim.id, MEMORY_VNEXT_LIFECYCLE_STAGE.LINKED, {
+        reason: "entity_mentions_resolved",
+        metadata: { lifecycleEvidence: diagnostics },
+      });
       logLifecycle("memory.vnext.entity_links_created", {
         runId,
         claimId: candidate.claim.id,
         count: resolved.length,
+        entityResolutions: diagnostics.entityResolutions,
       }, "info");
       return true;
     }
     recordSkip(result, "unresolved_entities");
-    await scheduleLifecycleRetry(candidate, runId, "unresolved_entities");
+    await scheduleLifecycleRetry(candidate, runId, "unresolved_entities", diagnostics);
     logLifecycle("memory.vnext.lifecycle_skipped", {
       runId,
       claimId: candidate.claim.id,
       stage: candidate.claim.lifecycleStage,
       reason: "unresolved_entities" satisfies LifecycleSkipReason,
-      mentions: mentions.length,
-    }, "debug");
+      entityResolutions: diagnostics.entityResolutions,
+    }, "warn");
     return false;
   }
 

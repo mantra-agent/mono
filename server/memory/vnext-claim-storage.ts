@@ -179,6 +179,7 @@ export interface VnextLifecycleSkipInput {
   reason: string;
   nextAttemptAt: Date;
   runId?: string;
+  diagnostics?: Record<string, unknown>;
 }
 
 export interface VnextEmbeddingBackfillResult {
@@ -1177,6 +1178,7 @@ export class MemoryVnextClaimStorage {
           lastAttemptAt: now.toISOString(),
           nextAttemptAt: input.nextAttemptAt.toISOString(),
           ...(input.runId ? { runId: input.runId } : {}),
+          ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
         },
       },
     };
@@ -1272,7 +1274,12 @@ export class MemoryVnextClaimStorage {
     return ref ?? null;
   }
 
-  async linkClaimToEntity(claimId: number, entityType: string, entityId: string): Promise<void> {
+  async linkClaimToEntity(
+    claimId: number,
+    entityType: string,
+    entityId: string,
+    resolution?: { method: string; matchedIdentity?: string },
+  ): Promise<void> {
     const principal = getCurrentPrincipalOrSystem();
     const normalizedEntityType = entityType.trim().toLowerCase();
     const normalizedEntityId = entityId.trim();
@@ -1300,6 +1307,8 @@ export class MemoryVnextClaimStorage {
         claimId,
         entityType: normalizedEntityType,
         entityId: normalizedEntityId,
+        resolutionMethod: resolution?.method?.trim().slice(0, 80) || "manual",
+        matchedIdentity: resolution?.matchedIdentity?.trim().slice(0, 300) || null,
         ...ownedInsertValues(principal, vnextEntityScopeColumns),
         createdByUserId: principal.userId ?? undefined,
         updatedByUserId: principal.userId ?? undefined,
@@ -2118,17 +2127,19 @@ export async function applyObservation(
       });
 
       // Entity linking
-      const resolvedEntities = await resolveVnextEntityMentions(claim.entityMentions);
-      for (const entity of resolvedEntities) {
+      const entityResolutions = await resolveVnextEntityMentions(claim.entityMentions);
+      for (const entity of entityResolutions) {
+        if (entity.status !== "resolved") continue;
         try {
           await memoryVnextClaimStorage.linkClaimToEntity(
             claimEntry.id,
-            entity.entityType,
+            entity.mention.entityType,
             entity.entityId,
+            { method: entity.matchedBy, matchedIdentity: entity.matchedValue },
           );
         } catch (entityErr) {
           log.debug(
-            `${logPrefix}: entity link failed claim #${claimEntry.id} → ${entity.entityType}:${entity.entityId}: ${entityErr instanceof Error ? entityErr.message : String(entityErr)}`,
+            `${logPrefix}: entity link failed claim #${claimEntry.id} → ${entity.mention.entityType}:${entity.entityId}: ${entityErr instanceof Error ? entityErr.message : String(entityErr)}`,
           );
         }
       }

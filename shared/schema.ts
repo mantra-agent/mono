@@ -709,6 +709,32 @@ export const companies = pgTable("companies", {
 
 export type CompanyRow = typeof companies.$inferSelect;
 
+export const companyIdentityKeys = pgTable("company_identity_keys", {
+  id: serial("id").primaryKey(),
+  companyId: text("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  value: text("value").notNull(),
+  normalizedValue: text("normalized_value").notNull(),
+  identityNamespace: text("identity_namespace").notNull(),
+  source: text("source").notNull().default("manual"),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  createdByUserId: text("created_by_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedByUserId: text("revoked_by_user_id"),
+}, (table) => [
+  index("idx_company_identity_keys_company").on(table.companyId),
+  index("idx_company_identity_keys_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_company_identity_keys_normalized").on(table.normalizedValue),
+  uniqueIndex("uq_company_identity_keys_active_namespace_value")
+    .on(table.identityNamespace, table.normalizedValue)
+    .where(sql`revoked_at IS NULL`),
+]);
+
+export type CompanyIdentityKeyRow = typeof companyIdentityKeys.$inferSelect;
+
 // ── Financial Models (investor-facing business model) ─────────────
 // User-owned. One model per account in v1 (enforced by a partial unique
 // index on account_id). Assumptions are stored as a normalized jsonb blob;
