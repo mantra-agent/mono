@@ -261,6 +261,15 @@ export function WorkflowWidget({
     queryClient.invalidateQueries({ queryKey: ["/api/workflows/runs"] });
   };
 
+  const workflowRef = createReferenceRef({
+    type: "workflow",
+    id: runId,
+    metadata: { label: workflow.run.title || runId },
+  });
+  const workflowToastChip = (
+    <ReferenceRenderer refValue={workflowRef} surface="simple-chip" />
+  );
+
   const startMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/workflows/runs/${runId}/start`);
@@ -271,7 +280,7 @@ export function WorkflowWidget({
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Workflow started" });
+      toast({ title: "Workflow started", description: workflowToastChip });
       invalidateWorkflow();
     },
     onError: (err: Error) => {
@@ -289,7 +298,7 @@ export function WorkflowWidget({
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Workflow paused" });
+      toast({ title: "Workflow paused", description: workflowToastChip });
       invalidateWorkflow();
     },
     onError: (err: Error) => {
@@ -307,7 +316,7 @@ export function WorkflowWidget({
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Workflow resumed" });
+      toast({ title: "Workflow resumed", description: workflowToastChip });
       invalidateWorkflow();
     },
     onError: (err: Error) => {
@@ -325,7 +334,7 @@ export function WorkflowWidget({
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Workflow canceled" });
+      toast({ title: "Workflow canceled", description: workflowToastChip });
       invalidateWorkflow();
     },
     onError: (err: Error) => {
@@ -344,11 +353,7 @@ export function WorkflowWidget({
       <div className="group flex min-w-0 items-center gap-2 px-2 py-1.5">
         <div className="min-w-0 flex-1">
           <ReferenceRenderer
-            refValue={createReferenceRef({
-              type: "workflow",
-              id: runId,
-              metadata: { label: workflow.run.title || runId },
-            })}
+            refValue={workflowRef}
             surface="card"
             className={cn(isActive && "text-active animate-pulse")}
           />
