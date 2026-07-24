@@ -5,7 +5,7 @@ import { z } from "zod";
 import { vaults } from "./vaults";
 
 // ── Enums ──────────────────────────────────────────────────────────
-export const opportunityTypes = ["job", "consulting", "business", "passive_income"] as const;
+export const opportunityTypes = ["job", "consulting", "business", "passive_income", "customer", "partner"] as const;
 export type OpportunityType = typeof opportunityTypes[number];
 
 export const opportunityStatuses = ["discovered", "qualified", "researched", "pursuing", "active", "passed", "lost"] as const;

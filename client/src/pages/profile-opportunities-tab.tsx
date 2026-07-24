@@ -3,11 +3,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Loader2, DollarSign, Search, FileText, ExternalLink, Download, ChevronRight, ChevronDown, MoreHorizontal, X, Briefcase, Handshake, Building2, PiggyBank, MapPin, ContactRound, Trophy, Gauge, Clock, Calendar, ListChecks, AlignLeft, Link2, Sparkles, Shield } from "lucide-react";
+import { Plus, Trash2, Loader2, DollarSign, Search, FileText, ExternalLink, Download, ChevronRight, ChevronDown, MoreHorizontal, X, Briefcase, Handshake, Building2, PiggyBank, MapPin, ContactRound, Trophy, Gauge, Clock, Calendar, ListChecks, Link2, Sparkles, Shield, SlidersHorizontal, UserRound, HeartHandshake } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useVaults } from "@/hooks/use-vaults";
@@ -79,7 +79,7 @@ interface PersonResult {
   name: string;
 }
 
-const TYPES = ["job", "consulting", "business", "passive_income"] as const;
+const TYPES = ["job", "consulting", "business", "passive_income", "customer", "partner"] as const;
 const STATUSES = ["discovered", "qualified", "researched", "pursuing", "active", "passed", "lost"] as const;
 const PRIORITIES = ["high", "mid", "low"] as const;
 
@@ -88,6 +88,8 @@ const TYPE_LABELS: Record<string, string> = {
   consulting: "Consulting",
   business: "Business",
   passive_income: "Passive Income",
+  customer: "Customer",
+  partner: "Partner",
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -108,6 +110,8 @@ const TYPE_ICONS: Record<string, typeof Briefcase> = {
   consulting: Handshake,
   business: Building2,
   passive_income: PiggyBank,
+  customer: UserRound,
+  partner: HeartHandshake,
 };
 
 function matchesOpportunity(opportunity: Opportunity, query: string): boolean {
@@ -723,13 +727,21 @@ function OpportunityDetail({
   const hasCommitment = form.isFullTime || form.hoursPerWeek != null;
   const commitmentLabel = form.isFullTime ? "Full time" : form.hoursPerWeek ? `${form.hoursPerWeek} hrs / week` : "—";
   const hasFollowUp = Boolean(form.followUpBy || form.followUpNote);
-  const hasDescription = Boolean(form.description?.trim());
   const hasJobDescription = Boolean(form.jdText?.trim());
   const hasJobUrl = Boolean(form.jobUrl?.trim());
   const hasSkills = Boolean(opportunity.linkedSkills?.length);
 
   return (
     <div className="space-y-1" onBlur={handleBlur} data-testid="opportunity-detail-view">
+      <div className="mb-2 max-h-80 overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[14px] leading-tight text-white scrollbar-thin">
+        <Textarea
+          value={form.description || ""}
+          onChange={event => patch("description", event.target.value || null)}
+          placeholder="Add description"
+          className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]"
+          data-testid="textarea-opportunity-description"
+        />
+      </div>
       <div data-testid="opportunity-profile-tree">
             <ProfileTreeRow label="Type" icon={<Briefcase className="h-3.5 w-3.5" />} hasValue showEmpty testId="row-opportunity-type">
               <Select value={form.type} onValueChange={value => patch("type", value)}>
@@ -792,7 +804,7 @@ function OpportunityDetail({
               <Input value={form.location || ""} onChange={event => patch("location", event.target.value || null)} placeholder="Location" />
             </ProfileTreeRow>
 
-            <ProfileTreeRow label="Contact" icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(form.contactPersonId)} showEmpty testId="row-opportunity-contact">
+            <ProfileTreeRow label="Intro" icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(form.contactPersonId)} showEmpty testId="row-opportunity-contact">
               <PeopleSearch value={form.contactPersonId} onChange={personId => patch("contactPersonId", personId)} />
             </ProfileTreeRow>
 
@@ -867,7 +879,7 @@ function OpportunityDetail({
               <span>{commitmentLabel}</span>
             </ProfileTreeRow>
 
-            <ProfileTreeRow label="Income start" icon={<Calendar className="h-3.5 w-3.5" />} hasValue={form.timeHorizonMonths != null} showEmpty testId="row-opportunity-income-start">
+            <ProfileTreeRow label="Start" icon={<Calendar className="h-3.5 w-3.5" />} hasValue={form.timeHorizonMonths != null} showEmpty testId="row-opportunity-income-start">
               <Input type="number" value={form.timeHorizonMonths ?? ""} onChange={event => patch("timeHorizonMonths", parseInt(event.target.value) || null)} placeholder="Months" />
             </ProfileTreeRow>
 
@@ -896,17 +908,6 @@ function OpportunityDetail({
               testId="row-opportunity-next-steps"
             >
               <span className="truncate">{form.nextSteps || "—"}</span>
-            </ProfileTreeRow>
-
-            <ProfileTreeRow
-              label="Description"
-              icon={<AlignLeft className="h-3.5 w-3.5" />}
-              hasValue={hasDescription}
-              showEmpty
-              expandedContent={<Textarea value={form.description || ""} onChange={event => patch("description", event.target.value || null)} rows={5} placeholder="Notes, context, analysis" />}
-              testId="row-opportunity-description"
-            >
-              <span className="truncate">{form.description || "—"}</span>
             </ProfileTreeRow>
 
             <ProfileTreeRow
@@ -997,6 +998,7 @@ export default function OpportunitiesTab() {
   const [newTitle, setNewTitle] = useState("");
   const [newType, setNewType] = useState<string>("job");
   const [editingTitleId, setEditingTitleId] = useState<number | null>(null);
+  const [enabledTypes, setEnabledTypes] = useState<Set<string>>(() => new Set(TYPES));
 
   const {
     data: opportunities = [],
@@ -1030,6 +1032,7 @@ export default function OpportunitiesTab() {
     const groups: Record<string, Opportunity[]> = {};
     for (const s of order) groups[s] = [];
     for (const opportunity of visibleOpportunities) {
+      if (!enabledTypes.has(opportunity.type)) continue;
       if (!matchesOpportunity(opportunity, searchQuery)) continue;
       if (!groups[opportunity.status]) groups[opportunity.status] = [];
       groups[opportunity.status].push(opportunity);
@@ -1038,7 +1041,7 @@ export default function OpportunitiesTab() {
       groups[s].sort((a, b) => (b.computedEv ?? 0) - (a.computedEv ?? 0));
     }
     return Object.entries(groups).filter(([, items]) => items.length > 0);
-  }, [visibleOpportunities, searchQuery]);
+  }, [visibleOpportunities, searchQuery, enabledTypes]);
 
   const createMutation = useMutation({
     mutationFn: async (data: { title: string; type: string }) => {
@@ -1109,6 +1112,15 @@ export default function OpportunitiesTab() {
     });
   }, []);
 
+  const toggleType = useCallback((type: string) => {
+    setEnabledTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }, []);
+
   const initialLoading = isLoading || vaultsLoading;
   const emptyState = initialLoading
     ? "loading"
@@ -1128,28 +1140,64 @@ export default function OpportunitiesTab() {
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background text-foreground">
       <div className="flex-1 overflow-y-auto p-2">
         <div className="min-w-0 space-y-1">
-          <div className="relative mb-1 min-w-0">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={event => setSearchQuery(event.target.value)}
-              placeholder=""
-              className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              aria-label="Search opportunities"
-              data-testid="input-search-opportunities"
-            />
-            {searchQuery ? (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
-                aria-label="Clear opportunity search"
-                data-testid="button-clear-opportunity-search"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            ) : null}
+          <div className="mb-1 flex min-w-0 items-center gap-1">
+            <div className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={event => setSearchQuery(event.target.value)}
+                placeholder=""
+                className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                aria-label="Search opportunities"
+                data-testid="input-search-opportunities"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+                  aria-label="Clear opportunity search"
+                  data-testid="button-clear-opportunity-search"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              ) : null}
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+                  aria-label="Filter opportunities"
+                  title="Filters"
+                  data-testid="button-opportunity-filters"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-40">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger data-testid="menu-opportunity-type-filter">
+                    <Briefcase className="mr-2 h-3.5 w-3.5" />
+                    <span className="flex-1">Type</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {TYPES.map(type => (
+                      <DropdownMenuCheckboxItem
+                        key={type}
+                        checked={enabledTypes.has(type)}
+                        onCheckedChange={() => toggleType(type)}
+                        onSelect={event => event.preventDefault()}
+                        data-testid={`filter-type-${type}`}
+                      >
+                        {TYPE_LABELS[type]}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           <button
@@ -1227,6 +1275,8 @@ export default function OpportunitiesTab() {
                 <span>{`No opportunities match "${searchQuery.trim()}".`}</span>
               ) : emptyState === "vaults" ? (
                 <span>No opportunities in enabled Vaults.</span>
+              ) : emptyState === "filtered" ? (
+                <span>No opportunities match the current filters.</span>
               ) : (
                 <span>No opportunities yet.</span>
               )}

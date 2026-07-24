@@ -947,7 +947,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         transferableAssets: { type: "array", items: { type: "string" }, description: "Transferable assets" },
         title: { type: "string", description: "Opportunity title (required for create_opportunity)" },
         description: { type: "string", description: "Opportunity description" },
-        type: { type: "string", enum: ["job", "consulting", "business", "passive_income"], description: "Opportunity type (required for create_opportunity)" },
+        type: { type: "string", enum: ["job", "consulting", "business", "passive_income", "customer", "partner"], description: "Opportunity type (required for create_opportunity)" },
         status: { type: "string", enum: ["discovered", "qualified", "researched", "pursuing", "active", "passed", "lost"], description: "Opportunity status" },
         probability: { type: "number", description: "Probability 0-1 (for opportunities)" },
         isFullTime: { type: "boolean", description: "Whether opportunity is full time" },
