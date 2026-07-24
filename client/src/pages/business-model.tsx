@@ -258,10 +258,10 @@ export default function BusinessModelPage() {
             <Field label="Starting cash">
               <NumericInput value={draft.startingCash} min={0} step={1000} prefix="$" onChange={(n) => updateGlobal({ startingCash: n })} testId="input-starting-cash" />
             </Field>
-            <Field label="Starting customers">
+            <Field label="Starting accounts">
               <NumericInput value={draft.startingCustomers} min={0} step={1} onChange={(n) => updateGlobal({ startingCustomers: n })} testId="input-starting-customers" />
             </Field>
-            <Field label="Revenue / customer (mo)">
+            <Field label="Base ARPU / account (mo)">
               <NumericInput value={draft.revenuePerCustomerMonthly} min={0} step={50} prefix="$" onChange={(n) => updateGlobal({ revenuePerCustomerMonthly: n })} testId="input-revenue-per-customer" />
             </Field>
           </div>
@@ -288,8 +288,11 @@ export default function BusinessModelPage() {
                   <Field label="Pre-money valuation">
                     <NumericInput value={stage.preMoneyValuation} min={0} step={500000} prefix="$" onChange={(n) => updateStage(key, { preMoneyValuation: n })} testId={`input-${key}-premoney`} />
                   </Field>
-                  <Field label="Monthly growth">
-                    <NumericInput value={stage.monthlyGrowthRatePct} step={1} suffix="%" onChange={(n) => updateStage(key, { monthlyGrowthRatePct: n })} testId={`input-${key}-growth`} />
+                  <Field label="Referral (× / 90 days)">
+                    <NumericInput value={stage.referralCoefficient90d} min={0} step={0.1} suffix="×" onChange={(n) => updateStage(key, { referralCoefficient90d: n })} testId={`input-${key}-referral`} />
+                  </Field>
+                  <Field label="Net revenue retention (%/yr)">
+                    <NumericInput value={stage.nrrAnnualPct} min={0} step={5} suffix="%" onChange={(n) => updateStage(key, { nrrAnnualPct: n })} testId={`input-${key}-nrr`} />
                   </Field>
                   <Field label="Monthly expenses">
                     <NumericInput value={stage.monthlyExpenses} min={0} step={10000} prefix="$" onChange={(n) => updateStage(key, { monthlyExpenses: n })} testId={`input-${key}-expenses`} />
@@ -376,8 +379,10 @@ export default function BusinessModelPage() {
                 })}
               </tr>
 
-              <DataRow label="Customers" months={months} render={(m) => Math.round(m.customers).toLocaleString()} />
+              <DataRow label="Accounts" months={months} render={(m) => Math.round(m.accounts).toLocaleString()} />
+              <DataRow label="New Accounts" months={months} render={(m) => (m.newAccounts >= 0.05 ? `+${trimNum(m.newAccounts)}` : "—")} />
               <DataRow label="Revenue" months={months} render={(m) => fmtCurrency(m.revenue)} />
+              <DataRow label="Blended ARPU" months={months} render={(m) => fmtCurrency(m.blendedArpu)} />
               <DataRow label="Expenses" months={months} render={(m) => fmtCurrency(m.expenses)} />
               <DataRow
                 label="Net Cash Flow"
