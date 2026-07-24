@@ -20,7 +20,10 @@ export interface Stage {
   roundMonth: number;
   investmentAmount: number;
   preMoneyValuation: number;
-  monthlyGrowthRatePct: number;
+  /** Referral-driven logo growth: net-new account expansion multiple per 90 days. */
+  referralCoefficient90d: number;
+  /** Net revenue retention: annual in-account revenue growth (%), net of churn. */
+  nrrAnnualPct: number;
   monthlyExpenses: number;
 }
 
@@ -29,7 +32,9 @@ export interface Assumptions {
   /** 'YYYY-MM' — used only for column labels. */
   startCalendarMonth: string;
   startingCash: number;
+  /** Seed account count at month 0 (the starting cohort). */
   startingCustomers: number;
+  /** Base ARPU: monthly revenue a brand-new account enters at, before NRR expansion. */
   revenuePerCustomerMonthly: number;
   /** Exactly 4 stages, canonical order (see STAGE_KEYS). */
   stages: Stage[];
@@ -49,10 +54,10 @@ export const HORIZON_MAX = 120;
 
 /** Per-stage financing defaults, indexed by stage key. */
 const STAGE_DEFAULTS: Record<StageKey, Omit<Stage, "key">> = {
-  pre_seed: { roundMonth: 1, investmentAmount: 500_000, preMoneyValuation: 4_500_000, monthlyGrowthRatePct: 12, monthlyExpenses: 40_000 },
-  seed: { roundMonth: 12, investmentAmount: 2_000_000, preMoneyValuation: 10_000_000, monthlyGrowthRatePct: 15, monthlyExpenses: 140_000 },
-  series_a: { roundMonth: 24, investmentAmount: 8_000_000, preMoneyValuation: 32_000_000, monthlyGrowthRatePct: 12, monthlyExpenses: 400_000 },
-  series_b: { roundMonth: 36, investmentAmount: 20_000_000, preMoneyValuation: 100_000_000, monthlyGrowthRatePct: 9, monthlyExpenses: 900_000 },
+  pre_seed: { roundMonth: 1, investmentAmount: 500_000, preMoneyValuation: 4_500_000, referralCoefficient90d: 1.5, nrrAnnualPct: 150, monthlyExpenses: 40_000 },
+  seed: { roundMonth: 12, investmentAmount: 2_000_000, preMoneyValuation: 10_000_000, referralCoefficient90d: 1.5, nrrAnnualPct: 150, monthlyExpenses: 140_000 },
+  series_a: { roundMonth: 24, investmentAmount: 8_000_000, preMoneyValuation: 32_000_000, referralCoefficient90d: 1.5, nrrAnnualPct: 150, monthlyExpenses: 400_000 },
+  series_b: { roundMonth: 36, investmentAmount: 20_000_000, preMoneyValuation: 100_000_000, referralCoefficient90d: 1.5, nrrAnnualPct: 150, monthlyExpenses: 900_000 },
 };
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -96,7 +101,7 @@ export function defaultAssumptions(): Assumptions {
     startCalendarMonth: nextCalendarMonth(),
     startingCash: 50_000,
     startingCustomers: 2,
-    revenuePerCustomerMonthly: 1_000,
+    revenuePerCustomerMonthly: 500,
     stages: defaultStages(),
   };
 }
@@ -109,7 +114,8 @@ const rawStageSchema = z.object({
   roundMonth: z.number().optional(),
   investmentAmount: z.number().optional(),
   preMoneyValuation: z.number().optional(),
-  monthlyGrowthRatePct: z.number().optional(),
+  referralCoefficient90d: z.number().optional(),
+  nrrAnnualPct: z.number().optional(),
   monthlyExpenses: z.number().optional(),
 });
 
@@ -147,9 +153,8 @@ export function normalizeAssumptions(input: unknown): Assumptions {
       roundMonth: Math.round(clampMin(override.roundMonth, 1, def.roundMonth)),
       investmentAmount: clampMin(override.investmentAmount, 0, def.investmentAmount),
       preMoneyValuation: clampMin(override.preMoneyValuation, 0, def.preMoneyValuation),
-      monthlyGrowthRatePct: Number.isFinite(override.monthlyGrowthRatePct)
-        ? (override.monthlyGrowthRatePct as number)
-        : def.monthlyGrowthRatePct,
+      referralCoefficient90d: clampMin(override.referralCoefficient90d, 0, def.referralCoefficient90d),
+      nrrAnnualPct: clampMin(override.nrrAnnualPct, 0, def.nrrAnnualPct),
       monthlyExpenses: clampMin(override.monthlyExpenses, 0, def.monthlyExpenses),
     };
   });
@@ -163,7 +168,7 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     startCalendarMonth,
     startingCash: clampMin(raw.startingCash, 0, 50_000),
     startingCustomers: clampMin(raw.startingCustomers, 0, 2),
-    revenuePerCustomerMonthly: clampMin(raw.revenuePerCustomerMonthly, 0, 1_000),
+    revenuePerCustomerMonthly: clampMin(raw.revenuePerCustomerMonthly, 0, 500),
     stages,
   };
 }
@@ -179,7 +184,8 @@ export function mergeAssumptions(current: Assumptions, patch: AssumptionsPatch):
       ...(p.roundMonth !== undefined ? { roundMonth: p.roundMonth } : {}),
       ...(p.investmentAmount !== undefined ? { investmentAmount: p.investmentAmount } : {}),
       ...(p.preMoneyValuation !== undefined ? { preMoneyValuation: p.preMoneyValuation } : {}),
-      ...(p.monthlyGrowthRatePct !== undefined ? { monthlyGrowthRatePct: p.monthlyGrowthRatePct } : {}),
+      ...(p.referralCoefficient90d !== undefined ? { referralCoefficient90d: p.referralCoefficient90d } : {}),
+      ...(p.nrrAnnualPct !== undefined ? { nrrAnnualPct: p.nrrAnnualPct } : {}),
       ...(p.monthlyExpenses !== undefined ? { monthlyExpenses: p.monthlyExpenses } : {}),
     });
   }
@@ -200,8 +206,13 @@ export interface MonthRow {
   label: string;
   stageKey: StageKey;
   stageLabel: string;
-  customers: number;
+  /** Cumulative active accounts (referral-driven; never churned in v1). */
+  accounts: number;
+  /** Net-new accounts (logos) that entered this month, at base ARPU. */
+  newAccounts: number;
   revenue: number;
+  /** Blended revenue ÷ accounts — visualizes NRR expansion over the base ARPU. */
+  blendedArpu: number;
   expenses: number;
   netCashFlow: number;
   investmentIn: number;
@@ -249,14 +260,48 @@ export function computeProjection(input: Assumptions | unknown): Projection {
   const assumptions = normalizeAssumptions(input);
   const { stages, horizonMonths } = assumptions;
 
+  // ── Cohort revenue engine (v1) ──────────────────────────────────
+  // Two orthogonal per-stage dials that never touch the same dollar:
+  //   • Referral coefficient grows the NUMBER OF ACCOUNTS (net-new logos).
+  //     Monthly multiplier = referral^(1/3), since referral is a per-90-day
+  //     (three-month) expansion multiple. New logos always enter at base ARPU.
+  //   • NRR grows REVENUE WITHIN each existing account via deeper usage.
+  //     Monthly multiplier = (nrr/100)^(1/12), applied to every live cohort each
+  //     month using the active stage's rate. NRR is net of churn/contraction.
+  //
+  // A cohort that entered at month τ earns, per account at month t:
+  //   arpu0 × Π_{k=τ+1..t} nrrMonthly(k) = arpu0 × P(t)/P(τ),
+  // where P(t) is the cumulative NRR product. Total revenue is therefore
+  //   arpu0 × P(t) × Σ_{τ≤t} newAccounts(τ)/P(τ),
+  // so the whole book collapses to two running accumulators (P and S) instead
+  // of retaining every cohort — O(months), exact.
+  //
+  // v1 definition (intentional, not a bug): the ACCOUNT COUNT is never churned.
+  // Churn/contraction is represented on the revenue line via NRR, which is net
+  // of churn. Do not add a separate churn dial without revisiting this comment.
+  const arpu0 = assumptions.revenuePerCustomerMonthly;
   const months: MonthRow[] = [];
-  let customers = assumptions.startingCustomers;
+  let accounts = assumptions.startingCustomers; // seed cohort at τ=0, enters at arpu0
+  let cumulativeNrr = 1; // P(t): product of monthly NRR multipliers through month t
+  let cohortSum = accounts; // S(t) = Σ_{τ≤t} newAccounts(τ)/P(τ); seed enters at P(0)=1
   let cashBalance = assumptions.startingCash;
 
   for (let m = 1; m <= horizonMonths; m++) {
     const stage = activeStageForMonth(stages, m);
-    customers = customers * (1 + stage.monthlyGrowthRatePct / 100);
-    const revenue = customers * assumptions.revenuePerCustomerMonthly;
+    const referralMonthly = Math.pow(stage.referralCoefficient90d, 1 / 3);
+    const nrrMonthly = Math.pow(stage.nrrAnnualPct / 100, 1 / 12);
+
+    // Referral grows the account base; the delta is this month's new-logo cohort.
+    const prevAccounts = accounts;
+    accounts = prevAccounts * referralMonthly;
+    const newAccounts = accounts - prevAccounts;
+
+    // NRR expands every live cohort; the new cohort enters at the current P(m).
+    cumulativeNrr *= nrrMonthly;
+    cohortSum += newAccounts / cumulativeNrr;
+    const revenue = arpu0 * cumulativeNrr * cohortSum;
+    const blendedArpu = accounts > 0 ? revenue / accounts : 0;
+
     const expenses = stage.monthlyExpenses;
     const netCashFlow = revenue - expenses;
     const investmentIn = stages
@@ -269,8 +314,10 @@ export function computeProjection(input: Assumptions | unknown): Projection {
       label: calendarMonthLabel(assumptions.startCalendarMonth, m),
       stageKey: stage.key,
       stageLabel: STAGE_LABELS[stage.key],
-      customers,
+      accounts,
+      newAccounts,
       revenue,
+      blendedArpu,
       expenses,
       netCashFlow,
       investmentIn,
