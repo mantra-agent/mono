@@ -5297,6 +5297,13 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS account_id TEXT`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS template_persona_id INTEGER`);
+    // Persona-owned context-section bundle and tool bundle (introduced with the
+    // schema in #1109). seedDefaults() runs right after schema bootstrap and inserts
+    // these columns, but numbered migrations are not guaranteed to have applied them
+    // first — a missing column here throws 42703 and crash-loops boot. Guarantee them
+    // in the self-heal path before seeding. Defaults mirror shared/models/cognition.ts.
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS context_sections JSONB DEFAULT '{}'::jsonb`);
+    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS tool_bundle JSONB DEFAULT '[]'::jsonb`);
     await pool.query(`ALTER TABLE personas DROP CONSTRAINT IF EXISTS personas_name_key`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_personas_global_name_unique ON personas (LOWER(name)) WHERE scope = 'global'`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_personas_user_name_unique ON personas (owner_user_id, LOWER(name)) WHERE scope = 'user' AND owner_user_id IS NOT NULL`);
