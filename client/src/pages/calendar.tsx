@@ -17,7 +17,6 @@ import {
   Plus,
   MapPin,
   Users,
-  Star,
   Clock,
   Search,
   Brain,
@@ -314,41 +313,6 @@ function EventTypeIcon({ event, eventType, className }: {
 }) {
   const Icon = EVENT_TYPE_ICONS[inferEventType(event, eventType)] ?? CalendarIcon;
   return <Icon className={className} aria-hidden="true" />;
-}
-
-function isHighPrep(event: CalendarEvent): boolean {
-  const desc = event.description || "";
-  if (desc.includes("[no-prep]")) return false;
-  if (desc.includes("[prep-required]")) return true;
-  if (isPersonalAccount(event.accountEmail)) return true;
-  if (event.accountEmail && event.attendees && event.attendees.length > 0) {
-    const orgDomain = event.accountEmail.split("@")[1]?.toLowerCase();
-    if (orgDomain) {
-      const hasExternal = event.attendees.some(a => {
-        if (a.self) return false;
-        const domain = a.email.split("@")[1]?.toLowerCase();
-        return domain && domain !== orgDomain;
-      });
-      if (hasExternal) return true;
-    }
-  }
-  return false;
-}
-
-function isHighPrepWithoutTags(event: CalendarEvent): boolean {
-  if (isPersonalAccount(event.accountEmail)) return true;
-  if (event.accountEmail && event.attendees && event.attendees.length > 0) {
-    const orgDomain = event.accountEmail.split("@")[1]?.toLowerCase();
-    if (orgDomain) {
-      const hasExternal = event.attendees.some(a => {
-        if (a.self) return false;
-        const domain = a.email.split("@")[1]?.toLowerCase();
-        return domain && domain !== orgDomain;
-      });
-      if (hasExternal) return true;
-    }
-  }
-  return false;
 }
 
 function hasExternalAttendees(event: CalendarEvent, accountEmails: string[]): boolean {
@@ -840,7 +804,6 @@ function DayAllDayRow({ events, onEventClick }: {
           >
             <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             <span className="truncate">{event.summary}</span>
-            {isHighPrep(event) && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
           </button>
         ))}
       </div>
@@ -1011,7 +974,6 @@ function DayEventBlockView({ block, accountEmails, onEventClick }: {
             <span className="truncate">{event.summary}</span>
           )}
         </span>
-        {isHighPrep(event) && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
         {external && <span className="shrink-0 text-[10px] text-muted-foreground">EXT</span>}
         {hasDetails && <ChevronRight className={cn("ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />}
       </div>
@@ -1046,7 +1008,6 @@ function ScheduleEventRow({ event, mode, timezone, isExternal, isPersonal, onCli
   isPersonal?: boolean;
   onClick: () => void;
 }) {
-  const highPrep = isHighPrep(event);
   const optional = isOptionalForMe(event);
   const timeLabel = mode === "day"
     ? formatEventTime(event.start, event.end, timezone)
@@ -1078,7 +1039,6 @@ function ScheduleEventRow({ event, mode, timezone, isExternal, isPersonal, onCli
         </span>
         <span className="flex min-w-0 items-center gap-1.5">
           <span className={cn("truncate text-sm font-medium", optional ? "text-muted-foreground" : "text-foreground")}>{event.summary}</span>
-          {highPrep && <Star className="h-3 w-3 shrink-0 fill-warning text-warning" />}
           {isPersonal && <span className="shrink-0 text-[10px] font-medium text-info-foreground">PERSONAL</span>}
           {isExternal && !isPersonal && <span className="shrink-0 text-[10px] font-medium text-cat-ai-foreground">EXT</span>}
           {optional && <span className="shrink-0 text-[10px] font-medium text-muted-foreground">OPT</span>}
@@ -1106,7 +1066,6 @@ function ScheduleEventRow({ event, mode, timezone, isExternal, isPersonal, onCli
 }
 
 function EventCard({ event, calendarMap, onClick, isExternal, isPersonal, timezone }: { event: CalendarEvent; calendarMap: Map<string, CalendarInfo>; onClick: () => void; isExternal?: boolean; isPersonal?: boolean; timezone?: string }) {
-  const highPrep = isHighPrep(event);
   const optional = isOptionalForMe(event);
 
   const borderClass = isPersonal
@@ -1129,7 +1088,6 @@ function EventCard({ event, calendarMap, onClick, isExternal, isPersonal, timezo
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1 flex-wrap">
           <span className="text-xs text-muted-foreground">{formatEventTime(event.start, event.end, timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)}</span>
-          {highPrep && <Star className="h-3 w-3 text-warning fill-warning" />}
           {isPersonal && <span className="text-xs font-medium text-info-foreground">PERSONAL</span>}
           {isExternal && !isPersonal && <span className="text-xs font-medium text-cat-ai-foreground">EXT</span>}
           {optional && <span className="text-xs font-medium text-muted-foreground">OPT</span>}
@@ -1314,7 +1272,6 @@ function WeekView({ date, events, calendarMap, loading, onEventClick, accountEma
             {dayData.map(({ day, allDay }) => (
               <div key={day.toISOString()} className="px-0.5 py-1 space-y-0.5 min-h-[28px]">
                 {allDay.map(e => {
-                  const highPrep = isHighPrep(e);
                   return (
                     <button
                       key={e.id}
@@ -1323,7 +1280,6 @@ function WeekView({ date, events, calendarMap, loading, onEventClick, accountEma
                       className="w-full flex items-center gap-0.5 text-left text-xs leading-tight font-medium truncate px-1 py-0.5 rounded bg-primary/10 hover-elevate"
                       data-testid={`event-card-${e.id}`}
                     >
-                      {highPrep && <Star className="h-2.5 w-2.5 text-warning fill-warning shrink-0" />}
                       <span className="truncate">{e.summary}</span>
                     </button>
                   );
@@ -1375,16 +1331,12 @@ function WeekView({ date, events, calendarMap, loading, onEventClick, accountEma
                     const overlap = overlapMap.get(e.id) || { col: 0, totalCols: 1 };
                     const widthPercent = 100 / overlap.totalCols;
                     const leftPercent = overlap.col * widthPercent;
-                    const highPrep = isHighPrep(e);
                     const external = hasExternalAttendees(e, accountEmails);
                     const optional = isOptionalForMe(e);
 
                     let accentColor: string;
                     let bgColor: string;
-                    if (highPrep) {
-                      accentColor = "#d97706";
-                      bgColor = "rgba(217, 119, 6, 0.12)";
-                    } else if (external) {
+                    if (external) {
                       accentColor = "#8b5cf6";
                       bgColor = "rgba(139, 92, 246, 0.12)";
                     } else {
@@ -1419,7 +1371,6 @@ function WeekView({ date, events, calendarMap, loading, onEventClick, accountEma
                       >
                         <div className="flex items-center gap-0.5">
                           <span className="font-medium truncate">{e.summary}</span>
-                          {highPrep && <Star className="h-2.5 w-2.5 text-warning fill-warning shrink-0" />}
                         </div>
                         {heightPx > 28 && (
                           <span className="text-xs text-muted-foreground block truncate">
@@ -1487,32 +1438,11 @@ function MonthView({ date, events, calendarMap, loading, onDayClick, onEventClic
                 {cell.getDate()}
               </span>
               {(() => {
-                const flagged = dayEvents.filter(e => isHighPrep(e));
-                const unflagged = dayEvents.filter(e => !isHighPrep(e));
                 return (
                   <div className="flex flex-col gap-0.5 mt-0.5 w-full overflow-hidden">
-                    {flagged.map(e => {
-                      const cal = calendarMap.get(e.calendarId);
-                      return (
-                        <div
-                          key={e.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={(ev) => { ev.stopPropagation(); onEventClick(e); }}
-                          onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.stopPropagation(); ev.preventDefault(); onEventClick(e); } }}
-                          className="flex items-center gap-1 rounded px-1 py-0.5 text-xs leading-tight font-medium truncate bg-warning/10 dark:bg-warning/10 text-warning-foreground hover-elevate w-full text-left"
-                          aria-label={`Prep required: ${e.summary}`}
-                          data-testid={`month-flagged-event-${e.id}`}
-                        >
-                          <Star className="h-2.5 w-2.5 text-warning fill-warning shrink-0" />
-                          <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: cal?.backgroundColor || "#4285f4" }} />
-                          <span className="truncate">{e.summary}</span>
-                        </div>
-                      );
-                    })}
-                    {unflagged.length > 0 && (
+                    {dayEvents.length > 0 && (
                       <div className="flex flex-wrap gap-0.5">
-                        {unflagged.map(e => {
+                        {dayEvents.map(e => {
                           const cal = calendarMap.get(e.calendarId);
                           return (
                             <span
