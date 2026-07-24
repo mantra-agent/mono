@@ -245,7 +245,7 @@ export function NavigationOrbButton() {
     toggleSidebar();
   }, [isMobile, openMobile, setWidgetOpen, toggleSidebar]);
 
-  return <XyzIcon status={status} onClick={handleClick} />;
+  return <NavigationOrb status={status} onClick={handleClick} />;
 }
 
 const STORAGE_KEY = "nav-sections-collapsed";
