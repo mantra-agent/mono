@@ -134,6 +134,13 @@ export async function getSystemPrompt(
   ctx?: TurnContext,
   conversationMessages?: Array<{ role: string; content: string }>,
 ): Promise<string> {
+  if (session.toolMode === "none") {
+    if (!session.cachedSystemPrompt) {
+      throw new Error("Restricted voice session is missing its bounded prompt");
+    }
+    return session.cachedSystemPrompt;
+  }
+
   const now = Date.now();
   const focusHistory = toContextConversationHistory(conversationMessages);
   const nextFocusKey = conversationFocusKey(focusHistory);

@@ -663,8 +663,12 @@ async function executeVoiceTurnBody(
     conversationMessages = resolved.finalMessages;
 
     const executorMessages = buildExecutorMessages(systemPrompt, conversationMessages);
-    const providerSystemTools = extractProviderSystemTools((req.body as Record<string, unknown> | undefined)?.tools);
-    const tools = mergeVoiceTools(getVoiceTools(), providerSystemTools);
+    const providerSystemTools = session.toolMode === "none"
+      ? []
+      : extractProviderSystemTools((req.body as Record<string, unknown> | undefined)?.tools);
+    const tools = session.toolMode === "none"
+      ? []
+      : mergeVoiceTools(getVoiceTools(), providerSystemTools);
     if (providerSystemTools.length > 0) {
       log.debug(`turn ${currentTurn} provider system tools merged names=${providerSystemTools.map((tool) => tool.name).join(",")} session=${session.id}`);
     }

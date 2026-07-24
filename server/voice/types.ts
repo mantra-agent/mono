@@ -23,6 +23,8 @@ export interface VoiceToolCall {
   timestamp: string;
 }
 
+export type VoiceToolMode = "standard" | "none";
+
 export interface VoiceSession {
   id: string;
   chatSessionId: string | null;
@@ -69,6 +71,10 @@ export interface VoiceSession {
   activeAssistantAttemptId: string | null;
   /** Principal captured at /api/voice/start for scoping voice LLM callbacks. */
   principal: Principal | null;
+  /** Restricted public sessions receive no model-callable tools. */
+  toolMode: VoiceToolMode;
+  /** Hash-only onboarding capability used to revalidate restricted sessions after process recovery. */
+  onboardingTokenHash: string | null;
 }
 
 export interface SSEWriteState {

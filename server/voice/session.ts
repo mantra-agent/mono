@@ -279,6 +279,8 @@ export function createVoiceSession(
     activeTranscriptRevision: 0,
     activeAssistantAttemptId: null,
     principal: null,
+    toolMode: "standard",
+    onboardingTokenHash: null,
   };
   sessions.set(session.id, session);
   log.log(`created session ${session.id} chatSessionId=${session.chatSessionId} preCached=${!!preCachedSystemPrompt} activeSessions=${sessions.size} ts=${new Date().toISOString()}`);
@@ -695,39 +697,66 @@ export async function resolveSession(
     try {
       const { storage } = await import("../storage");
       const lease = await storage.getOwnedActiveVoiceSession(sessionId, eventBus.bootId);
-      if (!lease?.ownerUserId || !lease.accountId || !lease.chatSessionId) {
-        log.warn(`session resolution rejected: no complete owned lease sessionId=${sessionId} bootId=${eventBus.bootId}`);
+      if (!lease?.chatSessionId) {
+        log.warn(`session resolution rejected: no complete lease sessionId=${sessionId} bootId=${eventBus.bootId}`);
         return { session: null, sessionId };
       }
 
-      const user = await storage.getUser(lease.ownerUserId);
-      if (!user) {
-        log.error(`session recovery failed: owner user missing sessionId=${sessionId} ownerUserId=${lease.ownerUserId}`);
-        return { session: null, sessionId };
-      }
+      if (lease.scope === "system" && lease.chatSessionId.startsWith("recap-ftue:")) {
+        const onboardingTokenHash = lease.chatSessionId.slice("recap-ftue:".length);
+        const { resolveOnboardingTokenByHash } = await import("../meeting/distribution");
+        const resolution = await resolveOnboardingTokenByHash(onboardingTokenHash);
+        if (resolution.status !== "resolved" || resolution.accountState !== "provisional") {
+          log.warn(`session recovery rejected: provisional capability invalid sessionId=${sessionId}`);
+          return { session: null, sessionId };
+        }
+        const { createServicePrincipal } = await import("../principal");
+        session = sessions.get(sessionId) || null;
+        if (!session) {
+          session = createVoiceSession(undefined, undefined, sessionId);
+          session.principal = createServicePrincipal(["service:read"], []);
+          session.toolMode = "none";
+          session.onboardingTokenHash = onboardingTokenHash;
+          const { provisionalVoicePrompt } = await import("./provisional-session");
+          session.cachedSystemPrompt = provisionalVoicePrompt(resolution);
+          session.cachedAt = Date.now();
+          log.log(`provisional session recovered from exact lease sessionId=${sessionId}`);
+        }
+      } else {
+        if (!lease.ownerUserId || !lease.accountId || lease.scope !== "user") {
+          log.warn(`session resolution rejected: no complete owned lease sessionId=${sessionId} bootId=${eventBus.bootId}`);
+          return { session: null, sessionId };
+        }
 
-      const { createUserSessionPrincipal } = await import("../principal");
-      const principal = await createUserSessionPrincipal(user);
-      if (principal.accountId !== lease.accountId) {
-        log.error(`session recovery rejected: account mismatch sessionId=${sessionId} leaseAccountId=${lease.accountId} principalAccountId=${principal.accountId}`);
-        return { session: null, sessionId };
-      }
+        const user = await storage.getUser(lease.ownerUserId);
+        if (!user) {
+          log.error(`session recovery failed: owner user missing sessionId=${sessionId} ownerUserId=${lease.ownerUserId}`);
+          return { session: null, sessionId };
+        }
 
-      const { runWithPrincipal } = await import("../principal-context");
-      const { chatFileStorage } = await import("../chat-file-storage");
-      const conversation = await runWithPrincipal(principal, () => chatFileStorage.getSession(lease.chatSessionId!));
-      if (!conversation) {
-        log.warn(`session recovery rejected: conversation not visible sessionId=${sessionId} chatSessionId=${lease.chatSessionId}`);
-        return { session: null, sessionId };
-      }
+        const { createUserSessionPrincipal } = await import("../principal");
+        const principal = await createUserSessionPrincipal(user);
+        if (principal.accountId !== lease.accountId) {
+          log.error(`session recovery rejected: account mismatch sessionId=${sessionId} leaseAccountId=${lease.accountId} principalAccountId=${principal.accountId}`);
+          return { session: null, sessionId };
+        }
 
-      // A concurrent callback may have recovered the same exact lease while the
-      // durable identity checks were running. Reuse it rather than replacing it.
-      session = sessions.get(sessionId) || null;
-      if (!session) {
-        session = createVoiceSession(lease.chatSessionId, undefined, sessionId, conversation.sessionKey || undefined);
-        session.principal = principal;
-        log.log(`session recovered from exact owned lease sessionId=${sessionId} chatSessionId=${lease.chatSessionId} ownerUserId=${lease.ownerUserId} accountId=${lease.accountId}`);
+        const { runWithPrincipal } = await import("../principal-context");
+        const { chatFileStorage } = await import("../chat-file-storage");
+        const conversation = await runWithPrincipal(principal, () => chatFileStorage.getSession(lease.chatSessionId!));
+        if (!conversation) {
+          log.warn(`session recovery rejected: conversation not visible sessionId=${sessionId} chatSessionId=${lease.chatSessionId}`);
+          return { session: null, sessionId };
+        }
+
+        // A concurrent callback may have recovered the same exact lease while the
+        // durable identity checks were running. Reuse it rather than replacing it.
+        session = sessions.get(sessionId) || null;
+        if (!session) {
+          session = createVoiceSession(lease.chatSessionId, undefined, sessionId, conversation.sessionKey || undefined);
+          session.principal = principal;
+          log.log(`session recovered from exact owned lease sessionId=${sessionId} chatSessionId=${lease.chatSessionId} ownerUserId=${lease.ownerUserId} accountId=${lease.accountId}`);
+        }
       }
     } catch (error) {
       log.error("exact voice session recovery failed", {

@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { AgentOrb } from "@/components/agent-orb";
 import type { OrbState } from "@/components/agent-orb";
+import { VoiceSessionProvider, useVoiceSession } from "@/hooks/use-voice-session";
+import { queryClient } from "@/lib/queryClient";
 import { createLogger } from "@/lib/logger";
-import type { AgentVisualizerEvent, AgentVisualState } from "@shared/agent-visualizer";
+import type { AgentVisualizerEvent } from "@shared/agent-visualizer";
 
 const log = createLogger("MeetingVisualizer");
 const RECONNECT_MAX_MS = 5_000;
+const ENTRANCE_SETTLE_MS = 3_200;
 const VISUALIZER_STATES = new Set<OrbState>([
   "entrance",
   "idle",
@@ -187,9 +191,48 @@ function useMeetingSpeech(token: string, enabled: boolean): void {
   }, [enabled, token]);
 }
 
-export default function VisualizerPage() {
-  const search = new URLSearchParams(window.location.search);
-  const token = search.get("token")?.trim() || "";
+function ProvisionalVoiceVisualizer() {
+  const voiceSession = useVoiceSession();
+  const [entranceActive, setEntranceActive] = useState(true);
+  const frameRef = useRef<number>();
+  const [audioLevel, setAudioLevel] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setEntranceActive(false), ENTRANCE_SETTLE_MS);
+    void voiceSession.startSession();
+    return () => {
+      window.clearTimeout(timer);
+      void voiceSession.endSession();
+    };
+  }, []);
+
+  useEffect(() => {
+    let lastSampleAt = 0;
+    const sample = (now: number) => {
+      frameRef.current = requestAnimationFrame(sample);
+      if (now - lastSampleAt < 1000 / 30) return;
+      lastSampleAt = now;
+      setAudioLevel(voiceSession.readAudioLevel());
+    };
+    frameRef.current = requestAnimationFrame(sample);
+    return () => {
+      if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
+    };
+  }, [voiceSession.readAudioLevel]);
+
+  return (
+    <main className="fixed inset-0 overflow-hidden bg-black" aria-label="Mantra voice conversation">
+      <AgentOrb
+        state={entranceActive ? "entrance" : voiceSession.visualState}
+        audioLevel={audioLevel}
+        maxFrameRate={60}
+        className="absolute inset-0"
+      />
+    </main>
+  );
+}
+
+function RecallMeetingVisualizer({ token, search }: { token: string; search: URLSearchParams }) {
   const feed = useMeetingVisualizerFeed(token);
   const recallMeetingLevel = useRecallMeetingLevel(Boolean(token));
   useMeetingSpeech(token, Boolean(token));
@@ -212,4 +255,22 @@ export default function VisualizerPage() {
       />
     </main>
   );
+}
+
+export default function VisualizerPage() {
+  const search = new URLSearchParams(window.location.search);
+  const meetingToken = search.get("token")?.trim() || "";
+  const onboardingToken = search.get("i")?.trim() || "";
+
+  if (onboardingToken && !meetingToken) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <VoiceSessionProvider onboardingToken={onboardingToken}>
+          <ProvisionalVoiceVisualizer />
+        </VoiceSessionProvider>
+      </QueryClientProvider>
+    );
+  }
+
+  return <RecallMeetingVisualizer token={meetingToken} search={search} />;
 }
