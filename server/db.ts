@@ -713,7 +713,7 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       throw err;
     }
 
-    const settle = (failed: boolean) => {
+    const settle = (failed: boolean, err?: unknown) => {
       inFlightQueries--;
       inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
       _inFlightEntries.delete(entryId);
@@ -722,12 +722,17 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
         if (elapsed > SLOW_QUERY_THRESHOLD_MS) recordSlowQuery(elapsed);
         const truncated = safeTruncate(queryText, 2 * 1024, `db.${failed ? "failed" : "slow"}.${subsystem}`);
         const counts = `${targetPool.totalCount}/${targetPool.idleCount}/${targetPool.waitingCount}`;
-        const message = `${failed ? "query contract failed" : "SLOW query"} after ${elapsed}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}: ${truncated}`;
+        let message = `${failed ? "query contract failed" : "SLOW query"} after ${elapsed}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}: ${truncated}`;
+        if (failed && err !== undefined) {
+          const detail = err instanceof Error ? err.message : String(err);
+          const pgCode = (err as { code?: string })?.code;
+          message += ` | error=${detail}${pgCode ? ` code=${pgCode}` : ""}`;
+        }
         if (failed) log.error(message); else log.warn(message);
       }
     };
 
-    if (result && typeof result.then === "function") result.then(() => settle(false), () => settle(true));
+    if (result && typeof result.then === "function") result.then(() => settle(false), (err: unknown) => settle(true, err));
     else settle(false);
     return result;
   };

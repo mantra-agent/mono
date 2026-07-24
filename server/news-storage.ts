@@ -1,5 +1,6 @@
 import { db, pool } from "./db";
 import { eq, desc, and, sql, lt, ne, inArray, gte, gt, type SQL } from "drizzle-orm";
+import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
 import {
   signalSources,
   signalItems,
@@ -785,9 +786,11 @@ export async function migrateSignalSchema(): Promise<void> {
     `ALTER TABLE signal_sources ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'user'`,
     `ALTER TABLE signal_sources ADD COLUMN IF NOT EXISTS owner_user_id text`,
     `ALTER TABLE signal_sources ADD COLUMN IF NOT EXISTS account_id text`,
+    `ALTER TABLE signal_sources ADD COLUMN IF NOT EXISTS vault_id text`,
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'user'`,
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS owner_user_id text`,
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS account_id text`,
+    `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS vault_id text`,
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS snoozed_until timestamptz`,
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS duplicate_of_signal_id text`,
     `CREATE INDEX IF NOT EXISTS idx_signal_items_duplicate_of ON signal_items(duplicate_of_signal_id)`,
@@ -848,5 +851,49 @@ export async function migrateSignalSchema(): Promise<void> {
       log.error("migration failed:", msg, "sql:", sqlStr.slice(0, 80));
     }
   }
+  await ensureModeledColumns();
   log.debug("signal schema migration complete");
+}
+
+/**
+ * SSOT drift backstop for the signal tables. Derives the required column set
+ * from the Drizzle models and ensures every modeled column physically exists.
+ *
+ * The hand-maintained ALTER list above is the intended migration record, but it
+ * can drift from the schema — exactly the failure that took the News page down
+ * when `vault_id` was added to the scope predicates without an ensure entry.
+ * This pass closes that class: a newly-modeled column can never silently cause a
+ * read to 500 before someone adds its explicit ALTER. Columns are added nullable
+ * (the model's own defaults apply on write via ownedInsertValues/insert schemas),
+ * which is always safe on populated tables. Any add is logged loudly so the
+ * explicit ensure entry can follow.
+ */
+async function ensureModeledColumns(): Promise<void> {
+  const modeledTables: PgTable[] = [signalSources, signalItems, scanRuns, signalSourceScanDiagnostics];
+  const quoteIdent = (value: string): string => `"${value.replaceAll('"', '""')}"`;
+  for (const table of modeledTables) {
+    const config = getTableConfig(table);
+    try {
+      const existing = await pool.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+        [config.name],
+      );
+      const present = new Set(existing.rows.map((r: { column_name: string }) => r.column_name));
+      for (const column of config.columns) {
+        if (present.has(column.name)) continue;
+        try {
+          await pool.query(
+            `ALTER TABLE ${quoteIdent(config.name)} ADD COLUMN IF NOT EXISTS ${quoteIdent(column.name)} ${column.getSQLType()}`,
+          );
+          log.warn(`schema drift healed: added ${config.name}.${column.name} ${column.getSQLType()} — add an explicit ensure entry to migrateSignalSchema`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.error(`schema drift heal failed for ${config.name}.${column.name}: ${msg}`);
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error(`schema drift check failed for ${config.name}: ${msg}`);
+    }
+  }
 }

@@ -538,6 +538,19 @@ export async function runSchemaBootstrap(
   await ensureTimerOwnershipSchema(pool);
   await ensureBrowserPerformanceTelemetrySchema(pool);
 
+  // Signal/news schema is ensured on the canonical boot path — not lazily on the
+  // first read via autoHeal. Lazy healing failed in prod: a modeled column
+  // (vault_id) was missing from the ensure list, so every signal_items read
+  // 500'd and the latched autoHeal could never recover. migrateSignalSchema is
+  // idempotent and swallows per-statement errors, so it cannot block boot.
+  try {
+    const { migrateSignalSchema } = await import("./news-storage");
+    await migrateSignalSchema();
+    log("schema baseline: signal schema ensured", "migration");
+  } catch (err) {
+    log(`schema baseline: signal schema ensure failed: ${(err as Error).message}`, "migration");
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS library_vault_identity_migrations (
       id SERIAL PRIMARY KEY,
