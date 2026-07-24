@@ -3582,7 +3582,6 @@ export async function runSchemaBootstrap(
         WHERE v.account_id = p.account_id
           AND v.is_archived = FALSE
         ORDER BY
-          CASE WHEN v.id = p.vault_id THEN 0 ELSE 1 END,
           CASE WHEN v.is_default THEN 0 ELSE 1 END,
           v.position,
           v.created_at,
