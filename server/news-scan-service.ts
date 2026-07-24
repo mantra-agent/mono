@@ -2,7 +2,12 @@ import { db as database } from "./db";
 import { createLogger } from "./log";
 import { signalStorage } from "./news-storage";
 import { thesisStorage } from "./thesis-storage";
-import { getSetting, setSetting } from "./system-settings";
+import {
+  markScanConsumerActive,
+  clearScanConsumer,
+  readAndClearCurationBuffer,
+  type CurationDecision,
+} from "./news-curation-handoff";
 import { execSkills } from "@shared/schema";
 import { eq, or } from "drizzle-orm";
 import * as adapters from "./news-adapters";
@@ -303,30 +308,39 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         const validPayloads = candidatePayloads.filter(Boolean);
 
         log.log(`scan: invoking curate skill for ${validPayloads.length} candidates`);
-        await executeAutonomousSkillRun("curate", {
-          preContext: JSON.stringify({
-            candidates: validPayloads,
-            recentSurfaced: recentDedupDigest.map(entry => ({
-              id: entry.id,
-              label: entry.curatedTitle || entry.title,
-              topics: entry.matchedTopics.slice(0, 8),
-            })),
-          }),
-          spawnReason: "curate-scan",
-        });
+        // Declare an active consumer so batch_curate can hand off truthfully and
+        // fail loudly when the curate skill is instead run standalone.
+        const consumerUserId = getCurrentPrincipal()?.userId ?? null;
+        if (consumerUserId) await markScanConsumerActive(consumerUserId, scanRun.id);
+        try {
+          await executeAutonomousSkillRun("curate", {
+            preContext: JSON.stringify({
+              candidates: validPayloads,
+              recentSurfaced: recentDedupDigest.map(entry => ({
+                id: entry.id,
+                label: entry.curatedTitle || entry.title,
+                topics: entry.matchedTopics.slice(0, 8),
+              })),
+            }),
+            spawnReason: "curate-scan",
+          });
 
-        const decisions = await readCurationResults();
-        if (decisions && decisions.length > 0) {
-          skillDecisions = new Map(decisions.map(d => [d.fingerprint, d]));
-          log.log(`scan: skill returned ${decisions.length} curation decisions`);
-        } else {
-          log.warn("scan: skill returned no curation decisions, falling back to per-candidate curation");
+          const decisions = consumerUserId ? await readAndClearCurationBuffer(consumerUserId) : null;
+          if (decisions && decisions.length > 0) {
+            skillDecisions = new Map(decisions.map(d => [d.fingerprint, d]));
+            log.log(`scan: skill buffered ${decisions.length} curation decisions`);
+          } else {
+            log.warn("scan: skill buffered no curation decisions, falling back to per-candidate curation");
+          }
+        } finally {
+          if (consumerUserId) await clearScanConsumer(consumerUserId);
         }
       } catch (err) {
         log.warn(`scan: skill curation failed (${err instanceof Error ? err.message : String(err)}), falling back to per-candidate curation`);
       }
     }
 
+    let appliedSkillDecisions = 0;
     for (const { raw, scored, fingerprint } of scoredSignals) {
       const selection = selectionByFingerprint.get(fingerprint);
       let curated: adapters.CuratedSignal;
@@ -334,6 +348,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       if (selection && skillDecisions?.has(fingerprint)) {
         // Use skill decision
         const decision = skillDecisions.get(fingerprint)!;
+        appliedSkillDecisions++;
         const isRelevant = decision.isRelevant && decision.score >= 0.45;
         curated = {
           ...scored,
@@ -420,6 +435,18 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
           itemsSurfaced++;
           remainingSurfaceSlots--;
         }
+      }
+    }
+
+    // ── Curation handoff observability ──────────────────────────────
+    // The honest signal for whether the skill curation path earns its keep:
+    // how many buffered decisions actually landed on signal rows this scan.
+    const bufferedCurationCount = skillDecisions?.size ?? 0;
+    if (bufferedCurationCount > 0) {
+      if (appliedSkillDecisions === 0) {
+        log.error(`scan: buffered ${bufferedCurationCount} curation decisions but applied 0 to signal rows — handoff consumed nothing (stale or mismatched fingerprints)`);
+      } else {
+        log.info(`scan: applied ${appliedSkillDecisions}/${bufferedCurationCount} buffered curation decisions to signal rows`);
       }
     }
 
@@ -549,39 +576,5 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       errors: [msg],
       message: `Scan failed: ${msg}`,
     };
-  }
-}
-
-export interface CurationDecision {
-  fingerprint: string;
-  isRelevant: boolean;
-  score: number;
-  title: string;
-  reason: string;
-  matchedTopics: string[];
-  summary?: string;
-}
-
-/** User-scoped key for the curation mailbox — prevents cross-user bleed in multi-user deployments. */
-function curationResultsKey(userId: string): string {
-  return `skill.news-curation.lastResults.${userId}`;
-}
-
-/**
- * Reads and clears the skill curation results written by the news-curation skill
- * via the batch_curate tool action. Scoped to the current principal's userId.
- */
-export async function readCurationResults(): Promise<CurationDecision[] | null> {
-  const principal = getCurrentPrincipal();
-  if (!principal?.userId) return null;
-  const key = curationResultsKey(principal.userId);
-  try {
-    const results = await getSetting<CurationDecision[]>(key);
-    if (!results || !Array.isArray(results)) return null;
-    // Clear after reading so stale results aren't reused
-    await setSetting(key, null);
-    return results;
-  } catch {
-    return null;
   }
 }

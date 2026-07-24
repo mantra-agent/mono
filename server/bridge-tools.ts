@@ -15438,13 +15438,40 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           if (!decisions || !Array.isArray(decisions)) {
             return { result: "Missing 'decisions' array parameter", error: true };
           }
-          const { setSetting } = await import("./system-settings");
+          const { bufferCurationDecisions } = await import("./news-curation-handoff");
           const { getCurrentPrincipalOrSystem: _getPrincipal } = await import("./principal-context");
           const _principal = _getPrincipal();
-          // User-scoped key: prevents cross-user mailbox bleed in multi-user deployments
-          const _curationKey = `skill.news-curation.lastResults.${_principal.userId}`;
-          await setSetting(_curationKey, decisions);
-          return { result: `Stored ${decisions.length} curation decisions.` };
+          if (!_principal.userId) {
+            return {
+              result: JSON.stringify({
+                status: "failed",
+                buffered: 0,
+                error: "No user principal in context; curation decisions cannot be buffered.",
+              }),
+              error: true,
+            };
+          }
+          // batch_curate does not persist curation to signal rows — it hands decisions
+          // off to an in-progress news scan, which applies them. Report the true outcome
+          // and fail loudly when invoked standalone with no scan consumer to apply them.
+          const outcome = await bufferCurationDecisions(_principal.userId, decisions);
+          if (outcome.status === "no_consumer") {
+            return {
+              result: JSON.stringify({
+                status: "no_consumer",
+                buffered: outcome.buffered,
+                error: `No active news scan is consuming curation. batch_curate only hands decisions off to an in-progress scan, which applies them to signal rows; it does not persist curation on its own. Invoked with no scan consumer present, so these ${outcome.buffered} decisions were not buffered and cannot be applied. Run curation through a news scan.`,
+              }),
+              error: true,
+            };
+          }
+          return {
+            result: JSON.stringify({
+              status: "buffered",
+              buffered: outcome.buffered,
+              note: `Handed ${outcome.buffered} decisions off to the active scan consumer, which will apply them to signal rows and clear the buffer. batch_curate does not persist curation directly.`,
+            }),
+          };
         }
 
         default:
