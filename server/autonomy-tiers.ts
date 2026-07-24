@@ -34,6 +34,10 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   finance: { default: 0 },
   health: { default: 1, actions: { summary: 0, metrics: 0, activity_status: 0, list_activities: 0, activity_logs: 0, get_gratitude: 0, list_gratitudes: 0 } },
   weather: { default: 0 },
+  // News signal curation writes user-owned signal rows and the owner's own Home surface (internal, tier 1).
+  // Read actions are tier 0. `scan` fetches from external feeds (X/RSS/web/github), so it stays tier 2 and
+  // remains hard-gated for autonomous/timer/hook origins; the news-curation skill does not need it.
+  news: { default: 1, actions: { summary: 0, list_signals: 0, get_signal: 0, list_sources: 0, list_scan_runs: 0, interest_graph: 0, scan: 2 } },
   goals: { default: 1, actions: { list: 0, get: 0, search: 0 } },
 
   rules: { default: 1, actions: { list: 0, get: 0 } },
