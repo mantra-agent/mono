@@ -539,10 +539,8 @@ export class SystemTimerRegistry {
       for (const retired of RETIRED_SYSTEM_TIMERS) {
         const stale = all.filter((timer) => timer.systemKey === retired.systemKey || retired.legacyMatch(timer));
         for (const timer of stale) {
-          if (timer.enabled) {
-            await timerStorage.update(timer.id, { enabled: false });
-            log.info(`Disabled retired timer "${timer.name}" (${retired.systemKey}) owner=${principal.userId}: ${retired.description}`);
-          }
+          await timerStorage.deleteForScheduler(timer);
+          log.info(`Deleted retired timer "${timer.name}" (${retired.systemKey}) owner=${principal.userId}: ${retired.description}`);
         }
       }
       const remaining = all.filter((timer) =>
