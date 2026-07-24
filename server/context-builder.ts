@@ -8,7 +8,6 @@ import { TTLCache } from "./utils/ttl-cache";
 import { sessionOutputBuffer } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import { parseReferenceText } from "@shared/reference-parser";
-import { tiptapToMarkdown } from "@shared/markdown-tiptap";
 import { sql, or, and, eq, desc, gte, inArray } from "drizzle-orm";
 import type {
   ContextCallType,
@@ -767,11 +766,14 @@ async function resolveRuleLinkedPages(ruleTexts: string[]): Promise<string> {
   if (pageIds.length === 0) return "";
 
   const principal = getCurrentPrincipalOrSystem();
+  // Reference-only: verify visibility and resolve titles, but do NOT inline the
+  // page bodies. Inlining the full Voice Standard body (~3-4k tokens) into every
+  // system prompt violated Progressive Disclosure — the body is only needed when
+  // actually writing in Ray's voice, at which point the Rule instructs loading
+  // it on demand via get_library_page. Keep the Rule text + a compact pointer.
   const visiblePages = await db.select({
     id: libraryPages.id,
     title: libraryPages.title,
-    content: libraryPages.content,
-    plainTextContent: libraryPages.plainTextContent,
   }).from(libraryPages).where(combineWithVisibleScope(
     principal,
     {
@@ -788,26 +790,19 @@ async function resolveRuleLinkedPages(ruleTexts: string[]): Promise<string> {
     const page = pagesById.get(pageId);
     if (!page) {
       log.warn(`Rule-linked Library page unavailable ref=@page:${pageId}`);
-      return `### @page:${pageId}
-[Required Rule source unavailable. Do not claim to have applied it.]`;
+      return `- @page:${pageId} — [Required Rule source unavailable. Do not claim to have applied it.]`;
     }
-
-    const markdown = page.content
-      ? tiptapToMarkdown(page.content as Parameters<typeof tiptapToMarkdown>[0]).trim()
-      : "";
-    const content = markdown || page.plainTextContent.trim() || "[Page has no content.]";
-    return `### ${page.title} (@page:${page.id})
-${content}`;
+    return `- ${page.title} (@page:${page.id})`;
   });
 
   if (overflow > 0) {
     log.warn(`Rule-linked Library page limit exceeded loaded=${pageIds.length} omitted=${overflow}`);
-    renderedPages.push(`[${overflow} additional Rule-linked page(s) omitted by the ${MAX_RULE_LINKED_PAGES}-page context budget. Do not claim to have applied omitted sources.]`);
+    renderedPages.push(`- [${overflow} additional Rule-linked page(s) omitted by the ${MAX_RULE_LINKED_PAGES}-page context budget.]`);
   }
 
-  return `Canonical source documents required by the Rules above:
+  return `Canonical source documents referenced by the Rules above — load the full body on demand with get_library_page before applying; it is intentionally not inlined here:
 
-${renderedPages.join("\n\n")}`;
+${renderedPages.join("\n")}`;
 }
 
 async function resolveActiveRules(): Promise<string> {
@@ -2028,59 +2023,36 @@ WARNING: Coding instructions could not be loaded from any source (environment co
 }
 
 async function resolvePlanningInstructions(): Promise<string> {
-  const header = `## Planning Instructions
-
-This section is always loaded. Use it for any complex, multi-turn, or cross-domain task.`;
-
-  // Strategy 1: Resolve through the same principal-scoped Platform and
-  // Library boundary as coding instructions.
-  try {
-    const { listVisibleEnvironmentContextPages } = await import("./platforms/context-artifact-access");
-    const pages = await listVisibleEnvironmentContextPages(["planning_process"]);
-    const contents = pages.map(page => page.content.trim()).filter(Boolean);
-    if (contents.length > 0) {
-      return `${header}
-
-${contents.join("\n\n---\n\n")}`;
-    }
-  } catch (err) {
-    const { createLogger } = await import("./log");
-    createLogger("ContextBuilder").warn("Failed to load planning process from environment artifact", { error: err instanceof Error ? err.message : String(err) });
-  }
-
-  // Strategy 2: Filesystem fallback (PLANNING.md)
-  try {
-    const planningProcessPath = path.resolve(process.cwd(), "PLANNING.md");
-    const planningProcess = await readFile(planningProcessPath, "utf-8");
-    const { createLogger } = await import("./log");
-    createLogger("ContextBuilder").warn("Planning instructions loaded from filesystem PLANNING.md (fallback). Prefer linking a Library page as a planning_process context artifact on the platform environment.");
-    return `${header}
-
-${planningProcess.trim()}`;
-  } catch {
-    // All strategies failed
-  }
-
-  // Strategy 3: Degraded
-  return `${header}
-
-WARNING: Planning instructions could not be loaded from any source (environment context artifact or filesystem PLANNING.md). Planning may proceed with reduced guidance.`;
+  // Reference-only: render a compact pointer that preserves the load-bearing
+  // invariants. The full planning process (planning_process context artifact /
+  // PLANNING.md) is retrieved on demand for complex, multi-step planning work.
+  return [
+    "## Planning Instructions (reference)",
+    "",
+    "Compact pointer — the full planning process is not inlined. The load-bearing rules:",
+    "",
+    "- Work-tracking invariant: before non-trivial work, create or identify a task attached to a project and/or milestone, with a deliberate due date (today for same-session tracking). If placement is unclear, pause and align before doing untracked work.",
+    "- Plan when work needs more than ~3 turns, spans systems, touches core architecture, needs research, or is expensive to reverse. Skip for single clear actions or brainstorming.",
+    "- Before planning, resolve silently: goal/definition-of-done, assumptions, research needed, domain docs to load, simplest approach, and any genuine forks worth asking about.",
+    "- Order steps by dependency; each step independently executable in a child session; begin execution immediately after creation.",
+    "- Surface Ray-facing decision artifacts to Home/Inbox on completion; pause abandoned plans with a note rather than leaving them running.",
+  ].join("\n");
 }
 
 async function resolveGoalsInstructions(): Promise<string> {
-  try {
-    const goalsProcessPath = path.resolve(process.cwd(), "GOALS.md");
-    const goalsProcess = await readFile(goalsProcessPath, "utf-8");
-    return `## Goals Instructions
-
-This section is always loaded. Use it whenever goals may be created, edited, linked, reviewed, or discussed.
-
-${goalsProcess.trim()}`;
-  } catch (error) {
-    return `## Goals Instructions
-
-CRITICAL: Failed to load root GOALS.md. Do not create or modify goals until GOALS.md can be loaded. Error: ${error instanceof Error ? error.message : String(error)}`;
-  }
+  // Reference-only: render a compact pointer that preserves the dedup invariant.
+  // The full goals mutation process (GOALS.md) is retrieved on demand for
+  // complex goal restructuring; routine mutations follow the rules below.
+  return [
+    "## Goals Instructions (reference)",
+    "",
+    "Compact pointer — the full goals mutation process is not inlined. The load-bearing rules:",
+    "",
+    "- Core invariant: one goal per intended outcome per horizon. Repeated mentions are reinforcement or status, not new goals. Inspect existing goals for the horizon and compare by meaning before creating.",
+    "- Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime.",
+    "- create only when no equivalent active goal exists; otherwise update (clearer name), update status (active/on_track/at_risk/achieved/blocked/dormant), set_parent, or reinforce. A duplicate rejection is protection — update the existing goal instead.",
+    "- Use the goals tool directly; the priorities tool is a deprecated compatibility alias.",
+  ].join("\n");
 }
 
 async function resolveTools(request: ContextRequest): Promise<string> {
