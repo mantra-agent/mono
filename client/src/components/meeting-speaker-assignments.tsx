@@ -399,12 +399,12 @@ export function MeetingSpeakerAssignments({
           <HierarchyTreeRow key={row.id} continues={continues}>
             <div
               className={cn(
-                "sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center",
+                "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center",
                 continues && "border-b border-border/20",
               )}
               data-testid={`person-speaker-row-${row.id.replace(/[^a-zA-Z0-9_-]+/g, "-")}`}
             >
-              <div className="min-w-0 border-b border-border/10 sm:border-b-0 sm:border-r">
+              <div className="min-w-0 border-r border-border/10">
                 {hasStableSpeaker && participant ? (
                   <div className="flex min-h-8 min-w-0 items-center px-2 py-1.5">
                     <PersonAssignmentControl
