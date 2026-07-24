@@ -474,8 +474,8 @@ function JsonSection({ value, sectionId }: { value: unknown; sectionId: string }
                 icon={<SlidersHorizontal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
                 label={labelFromKey(key)}
                 meta={
-                  <span className="flex items-center justify-end gap-2">
-                    {isScalar ? <span className="text-muted-foreground/70">{scalarPreview(fieldValue)}</span> : null}
+                  <span className="flex min-w-0 items-center justify-end gap-2">
+                    {isScalar ? <span className="min-w-0 max-w-[12rem] truncate text-muted-foreground/70">{scalarPreview(fieldValue)}</span> : null}
                     <span className="shrink-0">{formatTokens(estimateTokens(fieldValue))} tokens</span>
                   </span>
                 }
