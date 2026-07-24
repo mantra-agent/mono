@@ -3565,6 +3565,11 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_person_vault_memberships_vault_person ON person_vault_memberships(vault_id, person_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_person_vault_memberships_scope_owner ON person_vault_memberships(scope, owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_person_vault_memberships_account ON person_vault_memberships(account_id)`);
+    // One-time seed only. The NOT EXISTS guard is load-bearing: this runs on
+    // every boot, so without it any person deliberately removed from a vault
+    // (or moved to a non-default vault) would be silently re-added to their
+    // legacy/default vault, because ON CONFLICT DO NOTHING cannot protect a
+    // row that was intentionally deleted. Only seed people with zero memberships.
     const backfill = await pool.query(`
       INSERT INTO person_vault_memberships (
         person_id, vault_id, scope, owner_user_id, account_id, created_by_user_id
@@ -3587,6 +3592,9 @@ export async function runSchemaBootstrap(
       WHERE p.scope = 'user'
         AND p.owner_user_id IS NOT NULL
         AND p.account_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM person_vault_memberships pvm WHERE pvm.person_id = p.id
+        )
       ON CONFLICT (person_id, vault_id) DO NOTHING
     `);
     if (backfill.rowCount) {
