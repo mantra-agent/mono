@@ -20,8 +20,14 @@ const setupStepTitle: Record<SetupStep, string> = {
 
 type AuthErrorState = CopyableAuthErrorState;
 
-function LoginForm({ onError }: { onError: (error: AuthErrorState) => void }) {
-  const [email, setEmail] = useState("");
+interface LoginFormProps {
+  initialEmail: string;
+  onAuthenticated: () => void;
+  onError: (error: AuthErrorState) => void;
+}
+
+function LoginForm({ initialEmail, onAuthenticated, onError }: LoginFormProps) {
+  const [email, setEmail] = useState(initialEmail);
   const [password, setPassword] = useState("");
   const emailRef = useRef<HTMLInputElement>(null);
   const login = useLogin();
@@ -35,6 +41,7 @@ function LoginForm({ onError }: { onError: (error: AuthErrorState) => void }) {
     login.mutate(
       { email, password },
       {
+        onSuccess: onAuthenticated,
         onError: (err: any) => {
           const msg = err.message?.includes("401")
             ? "Invalid email or password"
@@ -289,12 +296,31 @@ function SetupForm({ onStepChange, onError }: { onStepChange: (step: SetupStep) 
   );
 }
 
-export default function LoginPage() {
+export interface LoginPageProps {
+  initialEmail?: string;
+  returnTo?: string;
+}
+
+function safeReturnTo(value: string | undefined): string {
+  return value?.startsWith("/") && !value.startsWith("//") ? value : "/home";
+}
+
+export default function LoginPage({ initialEmail, returnTo }: LoginPageProps) {
+  const query = new URLSearchParams(window.location.search);
+  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const resolvedInitialEmail = initialEmail ?? fragment.get("email") ?? query.get("email") ?? "";
+  const resolvedReturnTo = returnTo ?? fragment.get("returnTo") ?? query.get("returnTo") ?? undefined;
   const { data: authStatus, isLoading } = useAuthStatus();
   const [, setLocation] = useLocation();
   const devLoginAttempted = useRef(false);
   const [setupStep, setSetupStep] = useState<SetupStep>("email");
   const [authError, setAuthError] = useState<AuthErrorState | null>(null);
+
+  useEffect(() => {
+    if (window.location.hash) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
+  }, []);
 
   useEffect(() => {
     if (import.meta.env.DEV && authStatus?.setupComplete && !devLoginAttempted.current) {
@@ -326,6 +352,14 @@ export default function LoginPage() {
   }
 
   const needsSetup = !authStatus?.setupComplete;
+  const handleAuthenticated = () => {
+    const target = safeReturnTo(resolvedReturnTo);
+    if (target.startsWith("/r/")) {
+      window.location.replace(target);
+      return;
+    }
+    setLocation(target, { replace: true });
+  };
 
   return (
     <div className="flex min-h-screen justify-center bg-background p-4 pt-[14vh]">
@@ -336,7 +370,15 @@ export default function LoginPage() {
         <h1 className={authTitleClass} aria-hidden={!needsSetup || !setupStepTitle[setupStep]}>
           {needsSetup ? setupStepTitle[setupStep] : ""}
         </h1>
-        {needsSetup ? <SetupForm onStepChange={setSetupStep} onError={setAuthError} /> : <LoginForm onError={setAuthError} />}
+        {needsSetup ? (
+          <SetupForm onStepChange={setSetupStep} onError={setAuthError} />
+        ) : (
+          <LoginForm
+            initialEmail={resolvedInitialEmail}
+            onAuthenticated={handleAuthenticated}
+            onError={setAuthError}
+          />
+        )}
       </div>
       <CopyableAuthError error={authError} onDismiss={() => setAuthError(null)} />
     </div>

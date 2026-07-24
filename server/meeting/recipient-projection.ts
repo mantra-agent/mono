@@ -130,11 +130,10 @@ async function loadRecapContent(meeting: MeetingSessionMeta): Promise<RecipientR
   };
 }
 
-export async function getRecipientRecapProjection(
-  token: string,
+async function projectRecipientRecap(
+  capability: DistributionCapability,
 ): Promise<RecipientRecapProjection | null> {
-  const capability = await resolveCapability(token);
-  if (!capability?.ownerUserId || !capability.accountId) return null;
+  if (!capability.ownerUserId || !capability.accountId) return null;
   const session = await resolveMeetingTransportSession(capability.sessionId);
   const meeting = session?.meeting;
   if (!meeting
@@ -156,6 +155,37 @@ export async function getRecipientRecapProjection(
       expiresAt: capability.accessExpiresAt.toISOString(),
     };
   });
+}
+
+export async function getRecipientRecapProjection(
+  token: string,
+): Promise<RecipientRecapProjection | null> {
+  const capability = await resolveCapability(token);
+  return capability ? projectRecipientRecap(capability) : null;
+}
+
+export async function getAuthenticatedOnboardingRecapProjection(
+  token: string,
+  authenticatedEmail: string,
+): Promise<RecipientRecapProjection | null> {
+  const normalizedToken = token.trim();
+  if (!normalizedToken || normalizedToken.length > 200) return null;
+  const normalizedEmail = normalizeEmailAddress(authenticatedEmail);
+  const [distribution] = await db.select({
+    sessionId: meetingRecapDistributions.sessionId,
+    ownerUserId: meetingRecapDistributions.ownerUserId,
+    accountId: meetingRecapDistributions.accountId,
+    attendeeEmail: meetingRecapDistributions.attendeeEmail,
+    accessExpiresAt: meetingRecapDistributions.accessExpiresAt,
+  }).from(meetingRecapDistributions).where(and(
+    eq(meetingRecapDistributions.onboardingTokenHash, hashCapabilityToken(normalizedToken)),
+    sql`LOWER(BTRIM(${meetingRecapDistributions.attendeeEmail})) = ${normalizedEmail}`,
+    sql`${meetingRecapDistributions.status} IN ('draft_created', 'sent')`,
+    isNull(meetingRecapDistributions.accessRevokedAt),
+    gt(meetingRecapDistributions.accessExpiresAt, new Date()),
+  )).limit(1);
+  if (!distribution?.accessExpiresAt) return null;
+  return projectRecipientRecap(distribution as DistributionCapability);
 }
 
 function sectionContent(markdown: string, heading: string): string {

@@ -5,7 +5,7 @@
  *   Returns owner-scoped per-attendee distribution provenance. Email drafts
  *   render through canonical @email_draft references in the Session transcript.
  */
-import { type Express } from "express";
+import { type Express, type Request } from "express";
 import { eq, and } from "drizzle-orm";
 import { db } from "../db";
 import { meetingRecapDistributions } from "@shared/schema";
@@ -15,10 +15,59 @@ import { getPrincipal } from "../principal";
 import { chatStorage } from "../integrations/chat/storage";
 import { principalOwnsMeeting } from "../meeting/owner-principal";
 import { finalizeMeetingSession } from "../meeting/recap";
-import { distributeRecap } from "../meeting/distribution";
+import { distributeRecap, resolveOnboardingToken } from "../meeting/distribution";
 import { createLogger } from "../log";
 import type { RecipientRecapProjectionResponse } from "@shared/meeting-recipient-recap";
-import { getRecipientRecapProjection } from "../meeting/recipient-projection";
+import {
+  getAuthenticatedOnboardingRecapProjection,
+  getRecipientRecapProjection,
+} from "../meeting/recipient-projection";
+import { normalizeEmailAddress } from "../email-normalization";
+import { storage } from "../storage";
+
+const LANDING_ROOT_URL = "https://www.trymantra.ai/";
+
+type RecapEntryDecision =
+  | { outcome: "landing"; location: string }
+  | { outcome: "visualizer"; location: string }
+  | { outcome: "login"; location: string }
+  | { outcome: "recap"; location: string };
+
+async function authenticatedEmail(req: Request): Promise<string | null> {
+  if (!req.session.userId) return null;
+  const user = await storage.getUser(req.session.userId);
+  return user?.email ? normalizeEmailAddress(user.email) : null;
+}
+
+async function resolveRecapEntryDecision(
+  req: Request,
+  token: string,
+): Promise<RecapEntryDecision> {
+  const resolution = await resolveOnboardingToken(token);
+  if (resolution.status === "not_found") {
+    return { outcome: "landing", location: LANDING_ROOT_URL };
+  }
+  if (resolution.accountState === "provisional") {
+    return {
+      outcome: "visualizer",
+      location: `${LANDING_ROOT_URL}?i=${encodeURIComponent(token)}`,
+    };
+  }
+
+  const currentEmail = await authenticatedEmail(req);
+  if (currentEmail !== normalizeEmailAddress(resolution.email)) {
+    const fragment = new URLSearchParams({
+      email: resolution.email,
+      returnTo: `/r/${encodeURIComponent(token)}`,
+    });
+    return { outcome: "login", location: `/login#${fragment.toString()}` };
+  }
+
+  return {
+    outcome: "recap",
+    location: `/meeting-recap/${encodeURIComponent(token)}`,
+  };
+}
 
 const log = createLogger("MeetingDistributionRoutes");
 
@@ -29,6 +78,29 @@ const scopeColumns = {
 };
 
 export function registerMeetingDistributionRoutes(app: Express): void {
+  /**
+   * GET /r/:token
+   *
+   * Pure-read universal recap entry. The server owns the account/session switch
+   * so scanners and clients cannot accidentally create, consume, or claim state.
+   */
+  app.get("/r/:token", async (req, res) => {
+    try {
+      const token = req.params.token?.trim() ?? "";
+      const decision = await resolveRecapEntryDecision(req, token);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.redirect(302, decision.location);
+    } catch (error) {
+      log.error("Failed to resolve recap entry", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.redirect(302, LANDING_ROOT_URL);
+    }
+  });
+
   /**
    * GET /api/public/meeting-recaps/:token
    *
@@ -53,6 +125,44 @@ export function registerMeetingDistributionRoutes(app: Express): void {
       res.status(404).json({ error: "Recap unavailable" });
     }
   });
+
+  /**
+   * GET /api/meeting-recaps/onboarding/:token
+   *
+   * Matching real-account sessions may reuse the recipient recap view. The
+   * onboarding capability never grants content without exact session-email
+   * identity, and invalid/mismatched states remain indistinguishable.
+   */
+  app.get(
+    "/api/meeting-recaps/onboarding/:token",
+    requireAuth,
+    async (req, res) => {
+      try {
+        const email = await authenticatedEmail(req);
+        if (!email) {
+          res.status(404).json({ error: "Recap unavailable" });
+          return;
+        }
+        const projection = await getAuthenticatedOnboardingRecapProjection(
+          req.params.token ?? "",
+          email,
+        );
+        if (!projection) {
+          res.status(404).json({ error: "Recap unavailable" });
+          return;
+        }
+        const response: RecipientRecapProjectionResponse = { projection };
+        res.setHeader("Cache-Control", "private, no-store");
+        res.setHeader("Referrer-Policy", "no-referrer");
+        res.json(response);
+      } catch (error) {
+        log.error("Failed to project authenticated onboarding recap", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        res.status(404).json({ error: "Recap unavailable" });
+      }
+    },
+  );
 
   /**
    * POST /api/meetings/:sessionId/recap/retry

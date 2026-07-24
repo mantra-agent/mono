@@ -277,6 +277,14 @@ function Router() {
         <Route path="/people/:id" component={PeoplePage} />
         <Route path="/people" component={PeoplePage} />
         <Route path="/meetings" component={MeetingsPage} />
+        <Route path="/meeting-recap/:token">
+          {(params: { token?: string }) => (
+            <RecipientRecapPage
+              token={params.token ?? ""}
+              accessMode="authenticated_onboarding"
+            />
+          )}
+        </Route>
         <Route path="/companies/:id" component={CompaniesPage} />
         <Route path="/companies" component={CompaniesPage} />
         <Route path="/business/model" component={BusinessModelPage} />
@@ -342,6 +350,14 @@ function AuthGate({ children }: { children: ReactNode }) {
     return (
       <Suspense fallback={<PageFallback />}>
         <WaitlistPage />
+      </Suspense>
+    );
+  }
+
+  if (location === "/login") {
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <LoginPage />
       </Suspense>
     );
   }
