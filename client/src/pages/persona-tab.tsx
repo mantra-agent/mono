@@ -23,6 +23,7 @@ interface Persona {
   expressionTags: string[];
   cognitiveOverrides: Record<string, unknown>;
   semanticTier: "max" | "high" | "balanced" | "fast" | null;
+  contextSections: Record<string, boolean>;
   isDefault: boolean;
   isActive: boolean;
   isSystem: boolean;
@@ -30,6 +31,15 @@ interface Persona {
   source: "seed" | "user";
   createdAt: string;
   updatedAt: string;
+}
+
+interface ContextSectionCatalogEntry {
+  id: string;
+  title: string;
+  description: string;
+  recommendedFor: string;
+  tokenCost: "small" | "medium" | "large";
+  defaultIncluded: boolean;
 }
 
 function overrideLabel(key: string): string {
@@ -116,7 +126,7 @@ function PersonaTreeItem({
   persona: Persona;
   onActivate: () => void;
   onDelete: () => void;
-  onUpdate: (data: { description?: string; icon?: string; promptOverlay?: string; expressionTags?: string[]; semanticTier?: "max" | "high" | "balanced" | "fast" }) => void;
+  onUpdate: (data: { description?: string; icon?: string; promptOverlay?: string; expressionTags?: string[]; semanticTier?: "max" | "high" | "balanced" | "fast"; contextSections?: Record<string, boolean> }) => void;
   activating: boolean;
 }) {
   const [editing, setEditing] = useState(false);
@@ -125,6 +135,12 @@ function PersonaTreeItem({
   const [editTags, setEditTags] = useState(persona.expressionTags.join(", "));
   const [editIcon, setEditIcon] = useState(persona.icon);
   const [editTier, setEditTier] = useState(persona.semanticTier || "balanced");
+  const [editContextSections, setEditContextSections] = useState<Record<string, boolean>>(persona.contextSections || {});
+  const { data: sectionCatalog = [] } = useQuery<ContextSectionCatalogEntry[]>({ queryKey: ["/api/personas/section-catalog"] });
+  const sectionOn = (entry: ContextSectionCatalogEntry) =>
+    entry.id in editContextSections ? editContextSections[entry.id] : entry.defaultIncluded;
+  const toggleSection = (entry: ContextSectionCatalogEntry) =>
+    setEditContextSections(prev => ({ ...prev, [entry.id]: !(entry.id in prev ? prev[entry.id] : entry.defaultIncluded) }));
   const overrideEntries = Object.entries(persona.cognitiveOverrides || {});
   const handleSave = () => {
     const tags = editTags.split(",").map(t => t.trim()).filter(Boolean);
@@ -134,6 +150,7 @@ function PersonaTreeItem({
       promptOverlay: editOverlay || undefined,
       expressionTags: tags,
       semanticTier: editTier,
+      contextSections: editContextSections,
     });
     setEditing(false);
   };
@@ -144,6 +161,7 @@ function PersonaTreeItem({
     setEditTags(persona.expressionTags.join(", "));
     setEditIcon(persona.icon);
     setEditTier(persona.semanticTier || "balanced");
+    setEditContextSections(persona.contextSections || {});
     setEditing(false);
   };
 
@@ -179,6 +197,33 @@ function PersonaTreeItem({
       <div className="space-y-1.5">
         <Label className="text-xs">Expression Tags</Label>
         <Input value={editTags} onChange={e => setEditTags(e.target.value)} className="h-8 text-sm" />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs">Context Sections</Label>
+        <p className="text-[11px] text-muted-foreground">Optional context sections this persona loads. Bootstrap sections always load and aren't listed.</p>
+        <div className="max-h-64 space-y-0.5 overflow-y-auto rounded-md border border-border/40 bg-background/70 p-2">
+          {sectionCatalog.map((entry) => {
+            const on = sectionOn(entry);
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                onClick={() => toggleSection(entry)}
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left transition-colors hover:bg-accent/40"
+                data-testid={`context-section-toggle-${entry.id}`}
+              >
+                <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border", on ? "border-cta bg-cta text-cta-foreground" : "border-border/60")}>
+                  {on && <Check className="h-3 w-3" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs text-foreground">{entry.title}</span>
+                  <span className="block truncate text-[10px] text-muted-foreground">{entry.description}</span>
+                </span>
+                <Badge variant="outline" className="text-[9px]">{entry.tokenCost}</Badge>
+              </button>
+            );
+          })}
+        </div>
       </div>
       <div className="flex gap-2">
         <Button size="sm" onClick={handleSave}>Save</Button>

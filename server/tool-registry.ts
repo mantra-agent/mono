@@ -1122,16 +1122,11 @@ export const TOOLS: Record<string, ToolMeta> = {
         title: { type: "string", description: "Session title, 1-3 words" },
         topics: { type: "array", items: { type: "string" }, description: "Topic keywords, up to 8" },
         persona: { type: ["string", "number"], description: "Persona name or numeric ID to activate" },
-        contextFlags: {
-          type: "object",
-          description: "Context section flags — map of section ID to boolean. true = include, false = exclude. Bootstrap sections cannot be excluded. Flags merge with existing flags; an empty object explicitly selects bootstrap/default sections only and completes context orientation.",
-          additionalProperties: { type: "boolean" },
-        },
         reasoning: { type: "string", description: "Brief explanation of why these orientation choices were made" },
       },
       required: [],
     },
-    whenToUse: "On the first turn of every session to set title, topics, and persona together — persona is REQUIRED on the first call (before any title is set) and will be rejected without it. Also for mid-session re-orientation when the conversation's purpose shifts (persona optional on updates). Use contextFlags to control which context sections are assembled.",
+    whenToUse: "On the first turn of every session to set title, topics, and persona together — persona is REQUIRED on the first call (before any title is set) and will be rejected without it. Also for mid-session re-orientation when the conversation's purpose shifts (persona optional on updates). The active persona determines which context sections and tools load — switch persona to change what's assembled.",
   },
   session: {
     description: "Manage session metadata and lifecycle. Actions: 'get' reads any session's metadata by ID, 'set_status' records lifecycle completion/failure via session.status, 'end' ends the current session, 'list' returns all conversations, 'search' finds conversations by query, 'get_messages' retrieves messages for a session, 'spawn_child' forks a linked child conversation seeded with a warm-start brief from this session (idempotent on parent + spawnReason), and 'send_message' delivers a cross-session message to any target session by ID. For a coding mission, set delegation=engineering; the server grants Git-write authority only when the parent has trusted engineering authority and build:write, and the child must use its own session-scoped clone.",

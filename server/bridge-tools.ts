@@ -4281,10 +4281,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const hasTitle = args.title !== undefined;
     const hasTopics = args.topics !== undefined;
     const hasPersona = args.persona !== undefined;
-    const hasContextFlags = args.contextFlags !== undefined;
 
-    if (!hasTitle && !hasTopics && !hasPersona && !hasContextFlags) {
-      return { result: "No orientation parameters provided. Pass at least one of: title, topics, persona, contextFlags.", error: true };
+    if (!hasTitle && !hasTopics && !hasPersona) {
+      return { result: "No orientation parameters provided. Pass at least one of: title, topics, persona.", error: true };
     }
 
     // First-turn enforcement: if no meaningful title is set yet, persona is required
@@ -4311,7 +4310,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     let resolvedPersona: { id: number; name: string } | undefined;
-    let effectivePersonaName: string | undefined;
     if (hasPersona) {
       const { personaStorage } = await import("./file-storage/persona-storage");
       const numId = Number(args.persona);
@@ -4366,7 +4364,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (pinnedSession?.personaPinnedByUser) {
         const { personaStorage } = await import("./file-storage/persona-storage");
         const pinnedPersona = pinnedSession.personaId ? await personaStorage.get(pinnedSession.personaId) : null;
-        effectivePersonaName = pinnedPersona?.name ?? effectivePersonaName;
         results.push(`Persona is pinned by the user${pinnedPersona ? ` to ${pinnedPersona.name}` : ""} for this session; not switching to ${resolvedPersona.name}. If the user wants a different persona, they can pick one (or Auto) from the persona icon.`);
       } else {
         const { setSessionPersona, setSessionPersonaIfUnset } = await import("./session-persona");
@@ -4377,7 +4374,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           ? selection?.persona ?? null
           : await setSessionPersona(sessionId, resolvedPersona.id);
         if (!activated) return { result: `Persona with id ${resolvedPersona.id} not found`, error: true };
-        effectivePersonaName = activated.name;
         if (!preserveExisting || selection?.applied) {
           eventBus.publish({
             category: "agent",
@@ -4388,57 +4384,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         } else {
           results.push(`Persona preserved for this session: ${activated.name} (id=${activated.id})`);
         }
-      }
-    }
-
-    // --- Context flags ---
-    if (args.contextFlags !== undefined || validatedTitle || cleanedTopics || resolvedPersona) {
-      if (args.contextFlags !== undefined && (typeof args.contextFlags !== "object" || args.contextFlags === null || Array.isArray(args.contextFlags))) {
-        return { result: "contextFlags must be an object mapping semantic context flags or section IDs to booleans.", error: true };
-      }
-
-      const providedFlags = (args.contextFlags || {}) as Record<string, unknown>;
-      const { getSectionConfig, getBootstrapSectionIds } = await import("./context-spine-config");
-      const { isSemanticContextFlag, recommendSemanticContextFlags } = await import("./context-instruction-groups");
-      const bootstrapIds = getBootstrapSectionIds();
-      const recommendedFlags = recommendSemanticContextFlags({
-        title: validatedTitle,
-        topics: cleanedTopics,
-        personaName: effectivePersonaName ?? resolvedPersona?.name,
-      });
-      const mergedFlags: Record<string, unknown> = { ...recommendedFlags, ...providedFlags };
-      const validatedFlags: Record<string, boolean> = {};
-      const warnings: string[] = [];
-
-      for (const [key, value] of Object.entries(mergedFlags)) {
-        const config = getSectionConfig(key);
-        if (!config && !isSemanticContextFlag(key)) {
-          warnings.push(`Unknown context flag "${key}" — ignored`);
-          continue;
-        }
-        if (bootstrapIds.has(key) && value === false) {
-          warnings.push(`Bootstrap section "${key}" cannot be excluded — ignored`);
-          continue;
-        }
-        validatedFlags[key] = !!value;
-      }
-
-      // An empty flag map is meaningful: orientation considered optional context
-      // and chose the bootstrap/default sections only. Persist it so null remains
-      // the single "orientation has not established context scope" state.
-      const existingFlags = await chatFileStorage.readSessionContextFlags(sessionId);
-      await chatFileStorage.updateSessionContextFlags(sessionId, { ...(existingFlags || {}), ...validatedFlags });
-      const included = Object.entries(validatedFlags).filter(([, v]) => v).map(([k]) => k);
-      const excluded = Object.entries(validatedFlags).filter(([, v]) => !v).map(([k]) => k);
-      const parts: string[] = [];
-      if (included.length > 0) parts.push(`included: ${included.join(", ")}`);
-      if (excluded.length > 0) parts.push(`excluded: ${excluded.join(", ")}`);
-      results.push(parts.length > 0
-        ? `Context flags set (${parts.join("; ")})`
-        : "Context flags set (bootstrap/default sections only)");
-
-      if (warnings.length > 0) {
-        results.push(`Context flag warnings: ${warnings.join("; ")}`);
       }
     }
 

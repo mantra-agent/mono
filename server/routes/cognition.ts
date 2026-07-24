@@ -44,6 +44,19 @@ export async function registerCognitionRoutes(app: Express) {
     }
   });
 
+  // Catalog of optional context sections a persona bundle can toggle. Bootstrap
+  // sections are always loaded and intentionally excluded from this list.
+  app.get("/api/personas/section-catalog", async (_req, res) => {
+    log.debug("GET /api/personas/section-catalog");
+    try {
+      const { getContextSectionCatalog } = await import("../context-builder");
+      res.json(getContextSectionCatalog());
+    } catch (error: any) {
+      log.error("GET /api/personas/section-catalog error:", error?.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   const createPersonaSchema = z.object({
     name: z.string().min(1).max(100),
     description: z.string().max(1000).optional(),
@@ -52,6 +65,8 @@ export async function registerCognitionRoutes(app: Express) {
     expressionTags: z.array(z.string()).max(20).optional(),
     cognitiveOverrides: z.record(z.unknown()).optional(),
     semanticTier: semanticTierSchema.nullable().optional(),
+    contextSections: z.record(z.boolean()).optional(),
+    toolBundle: z.array(z.string()).optional(),
   });
 
   app.post("/api/personas", async (req, res) => {
@@ -80,6 +95,8 @@ export async function registerCognitionRoutes(app: Express) {
     expressionTags: z.array(z.string()).max(20).optional(),
     cognitiveOverrides: z.record(z.unknown()).optional(),
     semanticTier: semanticTierSchema.nullable().optional(),
+    contextSections: z.record(z.boolean()).optional(),
+    toolBundle: z.array(z.string()).optional(),
   });
 
   app.put("/api/personas/:id", async (req, res) => {

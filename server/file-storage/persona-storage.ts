@@ -38,6 +38,8 @@ export interface PersonaEntry {
   cognitiveOverrides: Record<string, unknown>;
   semanticTier: SemanticTier | null;
   routingExamples: string[];
+  contextSections: Record<string, boolean>;
+  toolBundle: string[];
   isDefault: boolean;
   isActive: boolean;
   isSystem: boolean;
@@ -60,6 +62,8 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
       (row.cognitiveOverrides as Record<string, unknown>) || {},
     semanticTier: row.semanticTier ? semanticTierSchema.parse(row.semanticTier) : null,
     routingExamples: (row.routingExamples as string[]) || [],
+    contextSections: (row.contextSections as Record<string, boolean>) || {},
+    toolBundle: (row.toolBundle as string[]) || [],
     isDefault: row.isDefault,
     isActive: row.isActive,
     isSystem: row.isSystem ?? false,
@@ -114,6 +118,92 @@ const PERSONA_ROUTING_EXAMPLES: Record<string, string[]> = {
 
 function routingExamplesForPersona(name: string): string[] {
   return PERSONA_ROUTING_EXAMPLES[name] ?? [];
+}
+
+/**
+ * Per-persona context section bundles. Persona is the single source of truth for
+ * which optional context sections load. Bootstrap sections always load; sections
+ * marked defaultIncluded load unless a bundle sets them false. Values are deltas
+ * from the default-included baseline: `true` adds an opt-in section, `false` drops
+ * a default one. An empty bundle therefore reproduces the default-included context.
+ */
+const DEFAULT_CONTEXT_SECTIONS: Record<string, boolean> = {
+  "memory": true,
+  "memory.recent_sessions": true,
+  "world_model.people.others": true,
+  "world_model.active_work": true,
+  "world_model.people.self.principles": true,
+  "world_model.people.self.chat_instructions": true,
+  "thoughts": true,
+  "session_context": true,
+};
+
+const PERSONA_CONTEXT_SECTIONS: Record<string, Record<string, boolean>> = {
+  Default: DEFAULT_CONTEXT_SECTIONS,
+  Companion: {
+    "memory": true,
+    "world_model.people.others": true,
+    "world_model.people.self.principles": true,
+    "world_model.people.self.journal": true,
+    "world_model.people.self.chat_instructions": true,
+    "thoughts": true,
+  },
+  Coach: {
+    "memory": true,
+    "world_model.active_work": true,
+    "world_model.people.self.principles": true,
+    "world_model.people.self.journal": true,
+    "thoughts": true,
+  },
+  Strategist: {
+    "memory": true,
+    "world_model.people.others": true,
+    "world_model.active_work": true,
+    "world_model.decisions": true,
+    "world_model.people.self.principles": true,
+    "thoughts": true,
+  },
+  Architect: {
+    "memory": true,
+    "world_model.active_work": true,
+    "world_model.decisions": true,
+    "world_model.people.self.principles": true,
+    "thoughts": true,
+  },
+  Engineer: {
+    "world_model.active_work": true,
+    "thoughts": true,
+    "world_model.people.partner.goals": false,
+  },
+  Operator: {
+    "world_model.active_work": true,
+    "world_model.decisions": true,
+    "thoughts": true,
+  },
+  Creative: {
+    "memory": true,
+    "world_model.people.self.principles": true,
+    "world_model.people.self.journal": true,
+    "thoughts": true,
+  },
+  Investigator: {
+    "memory": true,
+    "world_model.people.others": true,
+    "world_model.active_work": true,
+    "capabilities.library": true,
+    "thoughts": true,
+  },
+  Persuader: {
+    "memory": true,
+    "world_model.people.others": true,
+    "world_model.people.self.principles": true,
+  },
+  Router: {},
+};
+
+/** Resolve the context section bundle for a persona by name, defaulting to the standard conversational bundle. */
+function contextSectionsForPersona(name: string): Record<string, boolean> {
+  return PERSONA_CONTEXT_SECTIONS[name] ?? DEFAULT_CONTEXT_SECTIONS;
 }
 
 const SEED_PERSONAS = [
@@ -553,6 +643,8 @@ class PersonaStorageClass {
     expressionTags?: string[];
     cognitiveOverrides?: Record<string, unknown>;
     semanticTier?: SemanticTier | null;
+    contextSections?: Record<string, boolean>;
+    toolBundle?: string[];
   }): Promise<PersonaEntry> {
     const systemNameConflict = (await this.listForManagement()).some(
       (persona) =>
@@ -575,6 +667,8 @@ class PersonaStorageClass {
         expressionTags: input.expressionTags || [],
         cognitiveOverrides: input.cognitiveOverrides || {},
         semanticTier: input.semanticTier ?? "balanced",
+        contextSections: input.contextSections ?? contextSectionsForPersona("Default"),
+        toolBundle: input.toolBundle ?? [],
         isDefault: false,
         isActive: false,
         sortOrder: maxSort + 1,
@@ -602,6 +696,8 @@ class PersonaStorageClass {
       expressionTags?: string[];
       cognitiveOverrides?: Record<string, unknown>;
       semanticTier?: SemanticTier | null;
+      contextSections?: Record<string, boolean>;
+      toolBundle?: string[];
     },
   ): Promise<PersonaEntry | null> {
     const existing = await this.get(id);
@@ -619,6 +715,10 @@ class PersonaStorageClass {
       updates.cognitiveOverrides = input.cognitiveOverrides;
     if (input.semanticTier !== undefined)
       updates.semanticTier = input.semanticTier === null ? null : semanticTierSchema.parse(input.semanticTier);
+    if (input.contextSections !== undefined)
+      updates.contextSections = input.contextSections;
+    if (input.toolBundle !== undefined)
+      updates.toolBundle = input.toolBundle;
     const [updated] = await db
       .update(personas)
       .set({
@@ -747,6 +847,8 @@ class PersonaStorageClass {
           expressionTags: target.expressionTags,
           cognitiveOverrides: target.cognitiveOverrides,
           semanticTier: target.semanticTier,
+          contextSections: target.contextSections,
+          toolBundle: target.toolBundle,
           isDefault: false,
           isActive: true,
           sortOrder: maxSort + 1,
@@ -821,6 +923,8 @@ class PersonaStorageClass {
           cognitiveOverrides: seed.cognitiveOverrides,
           semanticTier: semanticTierForPersona(seed.name),
           routingExamples: routingExamplesForPersona(seed.name),
+          contextSections: contextSectionsForPersona(seed.name),
+          toolBundle: [],
           isDefault: seed.isDefault,
           isActive: seed.isActive,
           isSystem: (seed as { isSystem?: boolean }).isSystem ?? false,
@@ -908,7 +1012,10 @@ class PersonaStorageClass {
         routingExamplesForPersona(seed.name).length > 0;
       const expectedIsSystem = (seed as { isSystem?: boolean }).isSystem ?? false;
       const needsSystemUpdate = existing.isSystem !== expectedIsSystem;
-      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate || needsRoutingUpdate || needsSystemUpdate) {
+      const expectedContextSections = contextSectionsForPersona(seed.name);
+      const needsContextUpdate =
+        JSON.stringify(existing.contextSections ?? {}) !== JSON.stringify(expectedContextSections);
+      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate || needsRoutingUpdate || needsSystemUpdate || needsContextUpdate) {
         const updates: Record<string, unknown> = { updatedAt: new Date() };
         if (needsOverlayUpdate) {
           updates.promptOverlay = seed.promptOverlay;
@@ -922,6 +1029,7 @@ class PersonaStorageClass {
         if (needsTierUpdate) updates.semanticTier = semanticTierForPersona(seed.name);
         if (needsRoutingUpdate) updates.routingExamples = routingExamplesForPersona(seed.name);
         if (needsSystemUpdate) updates.isSystem = expectedIsSystem;
+        if (needsContextUpdate) updates.contextSections = expectedContextSections;
         await db
           .update(personas)
           .set(updates)

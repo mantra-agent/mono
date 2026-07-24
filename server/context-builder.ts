@@ -374,8 +374,8 @@ async function resolveGeneralInstructions(): Promise<string> {
   return `${UNIVERSAL_CONVERSATION_CONTEXT}\n\n${PERSONAL_RULE_CONTEXT}`;
 }
 
-/** Section descriptions for the orient catalog. Keyed by section ID. */
-const SECTION_CATALOG: Record<string, { description: string; recommendedFor: string; tokenCost: "small" | "medium" | "large" }> = {
+/** Section descriptions for the persona context-bundle catalog. Keyed by section ID. */
+export const SECTION_CATALOG: Record<string, { description: string; recommendedFor: string; tokenCost: "small" | "medium" | "large" }> = {
   "world_model.people.self.persona": { description: "Active persona and available persona modes", recommendedFor: "conversations, coaching", tokenCost: "medium" },
   "world_model.people.self.emotional_guidance": { description: "How to use and update emotional state", recommendedFor: "conversations", tokenCost: "small" },
   "world_model.people.self.emotional_state": { description: "Current emotional state and narrative", recommendedFor: "conversations", tokenCost: "small" },
@@ -407,41 +407,42 @@ const SECTION_CATALOG: Record<string, { description: string; recommendedFor: str
   "capabilities.library": { description: "Library page tree index", recommendedFor: "conversations, spec work", tokenCost: "large" },
 };
 
-/**
- * Build a compact section catalog for orient instructions.
- * Lists all non-bootstrap sections with their descriptions, recommended use, and token cost.
- */
-function buildContextSectionCatalog(): string {
-  const lines: string[] = [
-    "**Context Section Catalog**",
-    "",
-    "On first orient, set `contextFlags` to include only sections relevant to the session's purpose. Bootstrap sections (identity, voice, general instructions, calendar, tools, library, memory graph) are always included automatically.",
-    "",
-    "Available sections (default: excluded unless marked ✅):",
-    "",
-  ];
+export interface ContextSectionCatalogEntry {
+  id: string;
+  title: string;
+  description: string;
+  recommendedFor: string;
+  tokenCost: "small" | "medium" | "large";
+  defaultIncluded: boolean;
+}
 
+/**
+ * Public catalog of optional (non-bootstrap) context sections a persona can toggle.
+ * Persona bundles are the single source of truth for which of these load; this
+ * catalog exists so the Persona editor can render the available sections. Bootstrap
+ * sections are always loaded and are intentionally excluded here.
+ */
+export function getContextSectionCatalog(): ContextSectionCatalogEntry[] {
+  const bootstrapIds = getBootstrapSectionIds();
   const defaultIncludedIds = new Set(
     SPINE_SECTIONS.filter(s => s.defaultIncluded === true).map(s => s.id),
   );
-
-  const bootstrapIds = getBootstrapSectionIds();
-
+  const entries: ContextSectionCatalogEntry[] = [];
+  const seen = new Set<string>();
   for (const [sectionId, meta] of Object.entries(SECTION_CATALOG)) {
-    if (bootstrapIds.has(sectionId)) continue; // bootstrap sections are always included, skip from opt-in catalog
-    const isDefault = defaultIncludedIds.has(sectionId);
-    const marker = isDefault ? "✅" : "·";
-    lines.push(`- ${marker} \`${sectionId}\` [${meta.tokenCost}]: ${meta.description}. Use for: ${meta.recommendedFor}.`);
+    if (bootstrapIds.has(sectionId) || seen.has(sectionId)) continue;
+    seen.add(sectionId);
+    const config = SPINE_SECTIONS.find(s => s.id === sectionId);
+    entries.push({
+      id: sectionId,
+      title: config?.title ?? sectionId,
+      description: meta.description,
+      recommendedFor: meta.recommendedFor,
+      tokenCost: meta.tokenCost,
+      defaultIncluded: defaultIncludedIds.has(sectionId),
+    });
   }
-
-  lines.push("");
-  lines.push("**Session type profiles** (recommended starting points):");
-  lines.push("- **Conversation**: include memory, people.others, partner.goals, active_work, session_context, thoughts, principles, chat_instructions");
-  lines.push("- **Implementation**: exclude memory, people.others, partner.goals, decisions, capabilities.library, capabilities.skills, thoughts, session_context");
-  lines.push("- **Planning/Review**: include partner.goals, active_work, goals_by_horizon, decisions, memory, principles, thoughts");
-  lines.push("- **Coaching/Reflection**: include principles, partner.goals, thoughts, memory, journal");
-
-  return lines.join("\n");
+  return entries;
 }
 
 async function resolveOrientationProtocol(request: ContextRequest): Promise<string> {
@@ -458,10 +459,9 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
           "",
           `This session is already oriented as "${conv?.title}"${conv?.topics?.length ? ` with topics: ${conv.topics.join(", ")}` : ""}.`,
           "Do not call `orient` solely to satisfy first-turn orientation. The session startup path already performed that setup.",
-          "Use `orient` later only when the conversation's purpose shifts materially; include persona when changing persona.",
+          "Use `orient` later only when the conversation's purpose shifts materially — switching persona is how you change mode.",
+          "Your active persona is the single source of which context sections and tools load; there is no separate context-flag step. To change what loads, switch persona.",
           "Your prior emotional state carries over automatically. Call `set_emotion` only if the new context genuinely shifts your state.",
-          "",
-          buildContextSectionCatalog(),
         ].join("\n");
       }
     } catch (err: unknown) {
@@ -490,7 +490,7 @@ async function resolveOrientationProtocol(request: ContextRequest): Promise<stri
       "- Use the `orient` tool to add new topics accretively, reconsider persona fit, and update the title for durable shifts.",
       "- Update emotional narrative via `set_emotion` if the shift genuinely changes how you feel.",
       "",
-      buildContextSectionCatalog(),
+      "Persona is the single source of which context sections and tools load — pick the persona that fits the work, and switch personas later to change what's loaded. There is no separate context-flag step.",
     ].join("\n");
   }
 
