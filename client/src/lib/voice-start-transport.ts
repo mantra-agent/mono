@@ -40,6 +40,7 @@ export interface VoiceStartRequest {
   chatSessionId: string | null;
   isReconnect: boolean;
   requestId: string;
+  onboardingToken?: string;
 }
 
 function toBoundedLogError(error: unknown): { name?: string; message: string } {
@@ -69,6 +70,7 @@ export async function fetchVoiceStartStream(
       chatSessionId: request.chatSessionId || undefined,
       isReconnect: request.isReconnect || undefined,
       requestId: request.requestId,
+      onboardingToken: request.onboardingToken,
     }),
     signal,
   });
@@ -138,6 +140,7 @@ export async function fetchVoiceStartFallback(request: VoiceStartRequest): Promi
     chatSessionId: request.chatSessionId || undefined,
     isReconnect: request.isReconnect || undefined,
     requestId: request.requestId,
+    onboardingToken: request.onboardingToken,
   });
   return await response.json() as VoiceStartResponse;
 }

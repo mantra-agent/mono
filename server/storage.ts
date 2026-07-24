@@ -150,6 +150,8 @@ export interface IStorage {
 
 
   claimVoiceSessionActive(input: { sessionId: string; chatSessionId: string; requestId: string; bootId: string; principal: Principal; reconnect: boolean }): Promise<VoiceLeaseClaimResult>;
+  claimProvisionalVoiceSessionActive(input: { sessionId: string; capabilityKey: string; requestId: string; bootId: string }): Promise<VoiceLeaseClaimResult>;
+  getProvisionalVoiceSessionStartByRequest(requestId: string, capabilityKey: string): Promise<VoiceSessionActive | undefined>;
   completeVoiceSessionStart(sessionId: string, bootId: string, response: Record<string, unknown>): Promise<VoiceSessionActive | undefined>;
   getVoiceSessionStartByRequest(requestId: string, principal: Principal): Promise<VoiceSessionActive | undefined>;
   getOwnedActiveVoiceSession(sessionId: string, bootId: string): Promise<VoiceSessionActive | undefined>;
@@ -822,6 +824,78 @@ export class HybridStorage implements IStorage {
   }
 
 
+  async claimProvisionalVoiceSessionActive(input: {
+    sessionId: string;
+    capabilityKey: string;
+    requestId: string;
+    bootId: string;
+  }): Promise<VoiceLeaseClaimResult> {
+    if (!input.capabilityKey || !input.requestId) {
+      throw new Error("Provisional voice lease requires capabilityKey and requestId");
+    }
+
+    return db.transaction(async (tx) => {
+      const lockKey = fnv1a32(input.capabilityKey);
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${0x56535452}::int4, ${lockKey}::int4)`);
+
+      const [replayed] = await tx.select()
+        .from(voiceSessionActive)
+        .where(and(
+          eq(voiceSessionActive.chatSessionId, input.capabilityKey),
+          eq(voiceSessionActive.startRequestId, input.requestId),
+          eq(voiceSessionActive.scope, "system"),
+        ))
+        .limit(1);
+      if (replayed) return { outcome: "existing", lease: replayed };
+
+      const [active] = await tx.select()
+        .from(voiceSessionActive)
+        .where(and(
+          eq(voiceSessionActive.chatSessionId, input.capabilityKey),
+          eq(voiceSessionActive.status, "active"),
+          eq(voiceSessionActive.scope, "system"),
+        ))
+        .limit(1);
+      if (active) {
+        await tx.update(voiceSessionActive)
+          .set({ status: "abandoned", endedAt: new Date(), inflightTurn: 0 })
+          .where(and(
+            eq(voiceSessionActive.id, active.id),
+            eq(voiceSessionActive.status, "active"),
+            eq(voiceSessionActive.scope, "system"),
+          ));
+      }
+
+      const [lease] = await tx.insert(voiceSessionActive).values({
+        sessionId: input.sessionId,
+        chatSessionId: input.capabilityKey,
+        status: "active",
+        bootId: input.bootId,
+        scope: "system",
+        ownerUserId: null,
+        accountId: null,
+        startRequestId: input.requestId,
+      }).returning();
+
+      return { outcome: "claimed", lease, replacedSessionId: active?.sessionId ?? null };
+    });
+  }
+
+  async getProvisionalVoiceSessionStartByRequest(
+    requestId: string,
+    capabilityKey: string,
+  ): Promise<VoiceSessionActive | undefined> {
+    const [row] = await db.select()
+      .from(voiceSessionActive)
+      .where(and(
+        eq(voiceSessionActive.startRequestId, requestId),
+        eq(voiceSessionActive.chatSessionId, capabilityKey),
+        eq(voiceSessionActive.scope, "system"),
+      ))
+      .limit(1);
+    return row;
+  }
+
   async completeVoiceSessionStart(sessionId: string, bootId: string, response: Record<string, unknown>): Promise<VoiceSessionActive | undefined> {
     const [row] = await db.update(voiceSessionActive)
       .set({ startResponse: response, startReadyAt: new Date() })
@@ -855,7 +929,7 @@ export class HybridStorage implements IStorage {
         eq(voiceSessionActive.sessionId, sessionId),
         eq(voiceSessionActive.status, "active"),
         eq(voiceSessionActive.bootId, bootId),
-        eq(voiceSessionActive.scope, "user"),
+        inArray(voiceSessionActive.scope, ["user", "system"]),
       ))
       .limit(1);
     return row;

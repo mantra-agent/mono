@@ -40,6 +40,7 @@ import type { MeetingSessionMeta, MeetingRecapMeta } from "@shared/models/chat";
 import { getRuntimePublicBaseUrl } from "../runtime-identity";
 import { normalizeEmailAddress } from "../email-normalization";
 import { resolveOrCreateInvitedSubjectInTransaction } from "../invited-subject-service";
+import { resolveMeetingTransportSession } from "./owner-principal";
 
 const log = createLogger("MeetingDistribution");
 
@@ -109,20 +110,21 @@ export type OnboardingTokenResolution =
       email: string;
       displayName: string;
       meetingSessionId: string;
+      meetingTitle: string;
     };
 
-/** Pure read: resolve the onboarding capability without creating or claiming identity. */
-export async function resolveOnboardingToken(
-  rawToken: string,
+async function resolveOnboardingTokenHash(
+  tokenHash: string,
 ): Promise<OnboardingTokenResolution> {
-  const token = rawToken.trim();
-  if (!token || token.length > 200) return { status: "not_found" };
+  if (!/^[a-f0-9]{64}$/i.test(tokenHash)) return { status: "not_found" };
 
   const [resolved] = await db
     .select({
       email: meetingRecapDistributions.attendeeEmail,
       displayName: meetingRecapDistributions.attendeeName,
       meetingSessionId: meetingRecapDistributions.sessionId,
+      ownerUserId: meetingRecapDistributions.ownerUserId,
+      accountId: meetingRecapDistributions.accountId,
       userId: users.id,
     })
     .from(meetingRecapDistributions)
@@ -130,17 +132,45 @@ export async function resolveOnboardingToken(
       users,
       sql`LOWER(BTRIM(${users.email})) = LOWER(BTRIM(${meetingRecapDistributions.attendeeEmail}))`,
     )
-    .where(eq(meetingRecapDistributions.onboardingTokenHash, hashCapabilityToken(token)))
+    .where(eq(meetingRecapDistributions.onboardingTokenHash, tokenHash))
     .limit(1);
 
-  if (!resolved) return { status: "not_found" };
+  if (!resolved || !resolved.ownerUserId || !resolved.accountId) {
+    return { status: "not_found" };
+  }
+  const meetingSession = await resolveMeetingTransportSession(resolved.meetingSessionId);
+  const meeting = meetingSession?.meeting;
+  if (!meeting
+    || meeting.ownerUserId !== resolved.ownerUserId
+    || meeting.principalAccountId !== resolved.accountId) {
+    return { status: "not_found" };
+  }
   return {
     status: "resolved",
     accountState: resolved.userId ? "real" : "provisional",
     email: normalizeEmailAddress(resolved.email),
     displayName: resolved.displayName?.trim() || normalizeEmailAddress(resolved.email),
     meetingSessionId: resolved.meetingSessionId,
+    meetingTitle: meeting.title?.trim()
+      || meeting.recap?.pageTitle?.replace(/^Meeting:\s*/i, "").trim()
+      || "meeting",
   };
+}
+
+/** Pure read: resolve the onboarding capability without creating or claiming identity. */
+export async function resolveOnboardingToken(
+  rawToken: string,
+): Promise<OnboardingTokenResolution> {
+  const token = rawToken.trim();
+  if (!token || token.length > 200) return { status: "not_found" };
+  return resolveOnboardingTokenHash(hashCapabilityToken(token));
+}
+
+/** Internal pure-read recovery from an already hashed onboarding capability. */
+export async function resolveOnboardingTokenByHash(
+  tokenHash: string,
+): Promise<OnboardingTokenResolution> {
+  return resolveOnboardingTokenHash(tokenHash.trim());
 }
 
 function distributionLockKey(sessionId: string): bigint {

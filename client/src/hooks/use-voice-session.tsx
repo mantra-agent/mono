@@ -216,7 +216,13 @@ function classifyStartFailure(err: unknown, ctx: { signedUrlReceived: boolean })
   return { reason: "unknown", message: msg || "Could not start voice session." };
 }
 
-export function VoiceSessionProvider({ children }: { children: ReactNode }) {
+export function VoiceSessionProvider({
+  children,
+  onboardingToken,
+}: {
+  children: ReactNode;
+  onboardingToken?: string;
+}) {
   const isNative = isNativeVoiceBridge();
   const nativeListenerCleanupRef = useRef<(() => void) | null>(null);
 
@@ -1163,6 +1169,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
         chatSessionId: chatConversationIdRef.current,
         isReconnect,
         requestId,
+        onboardingToken,
       };
       const transportCallbacks = {
         onPhase: applyVoiceStartPhase,
@@ -1312,11 +1319,13 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
     } finally {
       connectAbortRef.current = null;
     }
-  }, [toast, queryClient, phoneDiag, cleanupSession, applyVoiceStartPhase, initElevenLabsSession]);
+  }, [toast, queryClient, phoneDiag, cleanupSession, applyVoiceStartPhase, initElevenLabsSession, onboardingToken]);
 
   useEffect(() => { connectSessionRef.current = connectSession; }, [connectSession]);
 
   useEffect(() => {
+    if (onboardingToken) return;
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1693,7 +1702,7 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       clearHeartbeat();
       if (ws) { ws.onclose = null; ws.close(); }
     };
-  }, [queryClient, stopUIRefresh, finalizeSession, cleanupSession, playDisconnectChimeOnce]);
+  }, [queryClient, stopUIRefresh, finalizeSession, cleanupSession, playDisconnectChimeOnce, onboardingToken]);
 
   const startSession = useCallback(async () => {
     // Synchronous guard. Set BEFORE any async work or React state updates
@@ -1747,7 +1756,9 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
       startFailureMessageRef.current = null;
       const stack = err instanceof Error ? err.stack : "";
       log.error("VOICE:START_SESSION:FAILED", { error: rawMsg.slice(0, 300), hasStack: Boolean(stack) });
-      toast({ title: "Failed to Start", description: userMsg, variant: "destructive" });
+      if (!onboardingToken) {
+        toast({ title: "Failed to Start", description: userMsg, variant: "destructive" });
+      }
       resetEphemeralVoiceState();
       setStatus("idle");
       setConnectionPhases([]);

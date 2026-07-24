@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, NextFunction, Request, Response } from "express";
 import { eq } from "drizzle-orm";
 import { requireAuth } from "../auth";
 import { createLogger } from "../log";
@@ -9,6 +9,15 @@ import { VoiceEvents } from "@shared/event-catalog";
 import { getSecretSync } from "../secrets-store";
 import crypto from "crypto";
 import { FTUE_AGENT_NAME } from "../onboarding";
+import { createServicePrincipal } from "../principal";
+import { runWithPrincipal } from "../principal-context";
+import { resolveOnboardingToken } from "../meeting/distribution";
+import {
+  provisionalFirstMessage,
+  provisionalVoiceIdentity,
+  provisionalVoicePrompt,
+  type ProvisionalVoiceIdentity,
+} from "../voice/provisional-session";
 import { resolveSpeechRecognitionHints } from "../speech-recognition-hints";
 import {
   assembleVoiceContext,
@@ -24,6 +33,35 @@ const voiceLog = createLogger("VoiceSession");
 
 let agentSetupComplete = false;
 let agentSetupPromise: Promise<void> | null = null;
+
+async function resolveProvisionalVoiceIdentity(rawToken: unknown): Promise<ProvisionalVoiceIdentity | null> {
+  if (typeof rawToken !== "string") return null;
+  const token = rawToken.trim();
+  if (!token) return null;
+  const resolution = await resolveOnboardingToken(token);
+  if (resolution.status !== "resolved" || resolution.accountState !== "provisional") return null;
+  return provisionalVoiceIdentity(token, resolution);
+}
+
+async function requireAuthenticatedOrProvisionalVoice(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  if (typeof req.body?.onboardingToken !== "string") {
+    await requireAuth(req, res, next);
+    return;
+  }
+  const identity = await resolveProvisionalVoiceIdentity(req.body.onboardingToken);
+  if (!identity) {
+    res.status(404).json({ error: "Voice welcome unavailable" });
+    return;
+  }
+  res.locals.provisionalVoiceIdentity = identity;
+  const principal = createServicePrincipal(["service:read"], []);
+  req.principal = principal;
+  runWithPrincipal(principal, next);
+}
 
 async function performAgentSetup(elAgentId: string): Promise<void> {
   const { setupAgentCallbackUrl, fetchAndCacheVoiceId } = await import("../elevenlabs");
@@ -321,7 +359,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
 
 
 
-  app.post("/api/voice/start", requireAuth, async (req, res) => {
+  app.post("/api/voice/start", requireAuthenticatedOrProvisionalVoice, async (req, res) => {
     const startTime = Date.now();
     const userAgent = req.headers["user-agent"] || "(unknown)";
     const origin = req.headers.origin || req.headers.referer || "(unknown)";
@@ -332,17 +370,19 @@ export async function registerVoiceSessionRoutes(app: Express) {
 
     const wantsStream = req.headers.accept?.includes("text/event-stream");
     const requestId = req.body.requestId || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const chatSessionId: string | null = req.body.chatSessionId || null;
-    const isReconnect = !!req.body.isReconnect;
+    const provisionalIdentity = res.locals.provisionalVoiceIdentity as ProvisionalVoiceIdentity | undefined;
+    const chatSessionId: string | null = provisionalIdentity ? null : req.body.chatSessionId || null;
+    const isReconnect = provisionalIdentity ? false : !!req.body.isReconnect;
 
-    if (!chatSessionId) {
+    if (!provisionalIdentity && !chatSessionId) {
       return res.status(400).json({ error: "chatSessionId is required to start voice" });
     }
-    if (req.principal?.actorType !== "user" || !req.principal.userId || !req.principal.accountId) {
+    if (!provisionalIdentity
+      && (req.principal?.actorType !== "user" || !req.principal.userId || !req.principal.accountId)) {
       return res.status(401).json({ error: "Authenticated user principal required to start voice" });
     }
 
-    voiceLog.log(`start request requestId=${requestId} chatSessionId=${chatSessionId || "(new)"} origin=${origin} mobile=${isMobile} stream=${!!wantsStream} isReconnect=${isReconnect}`);
+    voiceLog.log(`start request requestId=${requestId} mode=${provisionalIdentity ? "provisional" : "authenticated"} chatSessionId=${chatSessionId || "(none)"} origin=${origin} mobile=${isMobile} stream=${!!wantsStream} isReconnect=${isReconnect}`);
 
     // ---- Pre-await error checks (must run BEFORE any res.writeHead). ----
     const elAgentId = getSecretSync("ELEVENLABS_AGENT_ID");
@@ -415,14 +455,21 @@ export async function registerVoiceSessionRoutes(app: Express) {
     try {
       const { generateVoiceSessionId } = await import("../voice-llm");
       sessionId = generateVoiceSessionId();
-      const leaseClaim = await storage.claimVoiceSessionActive({
-        sessionId,
-        chatSessionId,
-        requestId,
-        bootId: eventBus.bootId,
-        principal: req.principal,
-        reconnect: isReconnect,
-      });
+      const leaseClaim = provisionalIdentity
+        ? await storage.claimProvisionalVoiceSessionActive({
+            sessionId,
+            capabilityKey: provisionalIdentity.capabilityKey,
+            requestId,
+            bootId: eventBus.bootId,
+          })
+        : await storage.claimVoiceSessionActive({
+            sessionId,
+            chatSessionId: chatSessionId!,
+            requestId,
+            bootId: eventBus.bootId,
+            principal: req.principal!,
+            reconnect: isReconnect,
+          });
       if (leaseClaim.outcome === "conflict") {
         const existingSessionId = leaseClaim.lease.sessionId;
         voiceLog.warn(`voice lease claim conflict requestId=${requestId} chatSessionId=${chatSessionId} existingSessionId=${existingSessionId}`);
@@ -469,7 +516,9 @@ export async function registerVoiceSessionRoutes(app: Express) {
             throw new Error("Timed out waiting for the authoritative voice start response");
           }
           await new Promise((resolve) => setTimeout(resolve, 100));
-          const refreshed = await storage.getVoiceSessionStartByRequest(requestId, req.principal);
+          const refreshed = provisionalIdentity
+            ? await storage.getProvisionalVoiceSessionStartByRequest(requestId, provisionalIdentity.capabilityKey)
+            : await storage.getVoiceSessionStartByRequest(requestId, req.principal!);
           if (!refreshed) {
             throw new Error("The authoritative voice start failed before completion");
           }
@@ -558,8 +607,10 @@ export async function registerVoiceSessionRoutes(app: Express) {
 
       let prefetchedSignedUrl: string | null = null;
 
-      if (!usedFastReconnect) await ensureVoiceSessionPersona(chatSessionId);
-      const ftuePreOriented = !usedFastReconnect ? await preOrientFtueVoiceSession(chatSessionId) : false;
+      if (!usedFastReconnect && !provisionalIdentity) await ensureVoiceSessionPersona(chatSessionId);
+      const ftuePreOriented = !usedFastReconnect && !provisionalIdentity
+        ? await preOrientFtueVoiceSession(chatSessionId)
+        : false;
       if (ftuePreOriented) {
         accumulatedSystemSteps.push({ name: "ftue_preorient", status: "done" as const });
       }
@@ -567,10 +618,19 @@ export async function registerVoiceSessionRoutes(app: Express) {
       if (!assembled) {
         currentPhase = "context_assembly_voice";
         phaseStartMs = Date.now();
-        const result = await assembleVoiceContext(chatSessionId, sessionId!, sendPhaseEvent);
-        assembled = result.assembled;
-        contextElapsed = result.contextElapsed;
-        prefetchedSignedUrl = result.prefetchedSignedUrl || null;
+        if (provisionalIdentity) {
+          const contextStart = Date.now();
+          const signedUrlPromise = (await import("../elevenlabs")).getSignedUrl(elAgentId);
+          assembled = { systemPrompt: provisionalVoicePrompt(provisionalIdentity.resolution) };
+          contextElapsed = Date.now() - contextStart;
+          prefetchedSignedUrl = await signedUrlPromise;
+          sendPhaseEvent("context_assembly_voice", "done", contextElapsed);
+        } else {
+          const result = await assembleVoiceContext(chatSessionId, sessionId!, sendPhaseEvent);
+          assembled = result.assembled;
+          contextElapsed = result.contextElapsed;
+          prefetchedSignedUrl = result.prefetchedSignedUrl || null;
+        }
       }
 
       let session;
@@ -621,7 +681,9 @@ export async function registerVoiceSessionRoutes(app: Express) {
       }
 
       // The in-memory session inherits the same Principal that won the durable claim.
-      session.principal = req.principal;
+      session.principal = req.principal!;
+      session.toolMode = provisionalIdentity ? "none" : "standard";
+      session.onboardingTokenHash = provisionalIdentity?.tokenHash ?? null;
 
       if (assembled) {
         session.cachedSystemPrompt = assembled.systemPrompt;
@@ -693,8 +755,10 @@ export async function registerVoiceSessionRoutes(app: Express) {
       }
 
       // Compose FTUE first_message if this is a welcome session
-      let firstMessage: string | undefined;
-      if (chatSessionId && !isReconnect) {
+      let firstMessage: string | undefined = provisionalIdentity
+        ? provisionalFirstMessage(provisionalIdentity.resolution)
+        : undefined;
+      if (!provisionalIdentity && chatSessionId && !isReconnect) {
         try {
           const { chatFileStorage } = await import("../chat-file-storage");
           const sessionMeta = await chatFileStorage.getSession(chatSessionId);
@@ -734,7 +798,9 @@ export async function registerVoiceSessionRoutes(app: Express) {
       const sessionPersona = chatSessionId
         ? await (await import("../session-persona")).resolveSessionPersonaSnapshot(chatSessionId)
         : undefined;
-      const recognitionHints = await resolveSpeechRecognitionHints();
+      const recognitionHints = provisionalIdentity
+        ? { keyterms: [] }
+        : await resolveSpeechRecognitionHints();
       const replayMetadata = {
         agentId: elAgentId,
         voiceId,
