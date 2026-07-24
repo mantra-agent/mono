@@ -292,7 +292,15 @@ function workflowResultEvent(result: string): string {
           : "fail";
 }
 
-const EXPLICIT_OUTCOME_PATTERN = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\[[^\]\n]+\]\s*)?(?:\*{1,2})?outcome(?:\*{1,2})?\s*:\s*(pass(?:ed)?|fail(?:ed)?|blocked|skipped|needs[_ -]?review)\b/gi;
+// Recovers a stage child's declared verdict from its final output when the child ends
+// without calling complete_stage_attempt. Tolerant of the formatting variance models
+// actually emit: a heading or bracket tag, an optional bounded label word before the
+// noun ("Stage Outcome", "Final Outcome"), and emphasis markers around the label, the
+// word "outcome", or the verdict itself ("**pass**"). The verdict \b anchor is kept so
+// prose like "fail-safe" or "passing" cannot false-match, and no arbitrary prose prefix
+// is allowed: a false positive that mislabels a fail as a pass is worse than a false
+// negative here, so the line-start/heading anchor stays.
+const EXPLICIT_OUTCOME_PATTERN = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\[[^\]\n]+\]\s*)?[*_]{0,2}(?:(?:stage|final|step|overall|workflow|verdict|result)\s+)?[*_]{0,2}outcome[*_]{0,2}\s*:\s*[*_]{0,2}\s*(pass(?:ed)?|fail(?:ed)?|blocked|skipped|needs[_ -]?review)\b/gi;
 
 function completedChildOutcome(output: string): { result: string; failureContext: Record<string, unknown> } {
   const matches = [...output.matchAll(EXPLICIT_OUTCOME_PATTERN)].map((match) => {
