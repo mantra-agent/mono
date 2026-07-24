@@ -18,6 +18,8 @@ import { isAgentType } from "@shared/instance-config";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { getCurrentPrincipal, runWithPrincipal } from "./principal-context";
 import type { Principal } from "./principal";
+import { extractSuccessfulToolInvocations, evaluateDeterministicItem } from "./skill-scoring";
+import type { ChecklistItem } from "@shared/schema";
 
 const logger = createLogger("AutonomousSkillRunner");
 const lifecycleLog = createLogger("AutonomousLifecycle");
@@ -406,41 +408,36 @@ export interface AutonomousRunResult {
   status: "succeeded" | "degraded" | "failed" | "yielded";
   summary?: string;
   error?: string;
-  /** Required tools with no successful invocation (present when status === "degraded"). */
-  coverageGaps?: string[];
+  /** Tools from failed deterministic checklist items (present when status === "degraded"). */
+  failedToolChecks?: string[];
   durationMs: number;
 }
 
 const activeSkillRuns = new Set<string>();
 
 /**
- * Deterministic required-tool coverage check. Scans the session's persisted
- * tool calls for at least one successful ("done") invocation of each tool the
- * skill declares in requiredTools. Fails open: a read error must not fail an
- * otherwise-healthy run — it logs a warning and reports full coverage.
+ * Terminal-time evaluation of the skill checklist's deterministic items
+ * (kind "tool_invoked"), using the same shared evaluator the scorer uses —
+ * one specification (the checklist), one evaluator, two invocation points.
+ * Returns the tool names whose checks failed. Fails open on read errors,
+ * safely: the async scoring pass re-evaluates the identical items minutes
+ * later and reconciles status downward if the failure is real.
  */
-async function findMissingRequiredTools(sessionId: string, skillName: string): Promise<string[]> {
+async function findFailedDeterministicChecks(sessionId: string, skillName: string): Promise<string[]> {
   try {
     const skill = await storage.getSkillByName(skillName);
-    const required = Array.isArray(skill?.requiredTools)
-      ? (skill.requiredTools as unknown[]).filter((t): t is string => typeof t === "string" && t.length > 0)
-      : [];
-    if (required.length === 0) return [];
+    const checklist = Array.isArray(skill?.checklist) ? (skill.checklist as ChecklistItem[]) : [];
+    if (!checklist.some((c) => c?.kind === "tool_invoked")) return [];
     const messages = await chatFileStorage.getMessagesBySession(sessionId);
-    const invoked = new Set<string>();
-    for (const m of messages) {
-      const calls = (m as { toolCalls?: unknown }).toolCalls;
-      if (!Array.isArray(calls)) continue;
-      for (const tc of calls) {
-        const info = tc as { toolName?: unknown; status?: unknown };
-        if (typeof info.toolName === "string" && info.status === "done") {
-          invoked.add(info.toolName);
-        }
-      }
+    const invoked = extractSuccessfulToolInvocations(messages);
+    const failed: string[] = [];
+    for (const item of checklist) {
+      const result = evaluateDeterministicItem(item, invoked);
+      if (result && !result.passed && typeof item.tool === "string") failed.push(item.tool);
     }
-    return required.filter((t) => !invoked.has(t));
+    return failed;
   } catch (err) {
-    logger.warn(`[SkillChat] [${sessionId}] Required-tool coverage check failed open: ${err instanceof Error ? err.message : String(err)}`);
+    logger.warn(`[SkillChat] [${sessionId}] Deterministic checklist evaluation failed open: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 }
@@ -953,30 +950,30 @@ export async function executeAutonomousSkillRun(
       logger.warn(`[SkillChat] [${sessionId}] Session deleted mid-run — skipping post-pipeline writes`);
     }
 
-    // Deterministic required-tool coverage gate. A run that never successfully
-    // invoked its skill's required tools must not terminate as a clean success.
-    // Computed here — the single source of the run's terminal discriminant —
-    // so every launch path (timer, tool, hook) inherits the same verdict.
+    // Terminal gate for the checklist's deterministic items. A run that never
+    // successfully invoked a tool its checklist requires must not terminate as
+    // a clean success. Computed here — the single terminal-status mutation
+    // point — so every launch path (timer, tool, hook) inherits the verdict.
     let runStatus: "succeeded" | "degraded" | "failed" = result.status === "succeeded" ? "succeeded" : "failed";
-    let coverageGaps: string[] = [];
+    let failedToolChecks: string[] = [];
     if (runStatus === "succeeded" && skillId) {
-      coverageGaps = await findMissingRequiredTools(sessionId, skillId);
-      if (coverageGaps.length > 0) runStatus = "degraded";
+      failedToolChecks = await findFailedDeterministicChecks(sessionId, skillId);
+      if (failedToolChecks.length > 0) runStatus = "degraded";
     }
     const terminalFailureReason = runStatus === "failed"
       ? result.error
       : runStatus === "degraded"
-        ? `missing_required_tools: ${coverageGaps.join(", ")}`
+        ? `tool_coverage_failed: ${failedToolChecks.join(", ")}`
         : undefined;
     storage.updateSkillRunStatus(sessionId, runStatus, result.durationMs, terminalFailureReason).catch((e: unknown) => {
       logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status: ${e instanceof Error ? e.message : String(e)}`);
     });
     if (runStatus === "degraded") {
-      logger.warn(`[SkillChat] [${sessionId}] Run degraded — required tools never successfully invoked: ${coverageGaps.join(", ")}`);
+      logger.warn(`[SkillChat] [${sessionId}] Run degraded — deterministic checklist tool checks failed: ${failedToolChecks.join(", ")}`);
       eventBus.publish({
         category: "skill",
         event: "skill.run.degraded",
-        payload: { sessionId, skillId, skillName: config.label, reason: "missing_required_tools", coverageGaps },
+        payload: { sessionId, skillId, skillName: config.label, reason: "tool_coverage_failed", failedToolChecks },
       });
     }
 
@@ -992,7 +989,7 @@ export async function executeAutonomousSkillRun(
     );
 
     if (runStatus === "degraded") {
-      return { ...result, status: "degraded", coverageGaps };
+      return { ...result, status: "degraded", failedToolChecks };
     }
     return result;
   } catch (err: unknown) {

@@ -4388,10 +4388,13 @@ export async function runSchemaBootstrap(
 
   await heal("skills run-quality config columns", async () => {
     await pool.query(
-      `ALTER TABLE skills ADD COLUMN IF NOT EXISTS required_tools JSONB`,
-    );
-    await pool.query(
       `ALTER TABLE skills ADD COLUMN IF NOT EXISTS score_threshold REAL`,
+    );
+    // required_tools shipped briefly and was removed before any skill used it:
+    // it duplicated the checklist as a second quality-specification surface.
+    // Deterministic tool gating lives in checklist items (kind "tool_invoked").
+    await pool.query(
+      `ALTER TABLE skills DROP COLUMN IF EXISTS required_tools`,
     );
   });
 
