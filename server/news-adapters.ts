@@ -2,7 +2,7 @@ import { createLogger } from "./log";
 import { getSecretSync } from "./secrets-store";
 import { createHash } from "crypto";
 import { ACTIVITY_FRAMING } from "./job-profiles";
-import type { SignalSourceType } from "@shared/schema";
+import type { SignalSourceType, RecentSignalDigestEntry } from "@shared/schema";
 
 const log = createLogger("LandscapeAdapters");
 
@@ -93,6 +93,8 @@ export interface CuratedSignal extends ScoredSignal {
   curationScore: number | null;
   matchedTopics: string[];
   agentSummary: string | null;
+  /** Event-cluster link the curator proposed against the trailing dedup digest, if any. */
+  duplicateOfSignalId: string | null;
 }
 
 // ── Fingerprint ────────────────────────────────────────────────────
@@ -128,8 +130,11 @@ function jaccard(a: Set<string>, b: Set<string>): number {
 }
 
 /**
- * Cluster signals by title similarity while preserving consensus evidence.
- * The compatibility wrapper `deduplicateByStory` still returns primaries only.
+ * Cluster signals by title similarity within a single scan run while preserving
+ * consensus evidence. This is intra-run, lexical, and deliberately strict; it does
+ * not catch the same story resurfacing across runs from a different outlet (a
+ * different URL and a differently-worded headline). Cross-run, event-level dedup is
+ * handled by `findRecentEventDuplicate` against the trailing dedup digest.
  */
 export function clusterSignalsByStory(signals: RawSignal[]): StoryCluster[] {
   if (signals.length <= 1) return signals.map(signal => ({
@@ -173,8 +178,66 @@ export function clusterSignalsByStory(signals: RawSignal[]): StoryCluster[] {
   });
 }
 
-export function deduplicateByStory(signals: RawSignal[]): RawSignal[] {
-  return clusterSignalsByStory(signals).map(cluster => cluster.primary);
+// ── Cross-Run Event Deduplication ──────────────────────────────────
+
+export interface EventDuplicateMatch {
+  entry: RecentSignalDigestEntry;
+  sharedTopicCount: number;
+  sameThesisSet: boolean;
+}
+
+function normalizedSet(values: string[]): Set<string> {
+  const set = new Set<string>();
+  for (const value of values) {
+    const key = value.trim().toLowerCase();
+    if (key) set.add(key);
+  }
+  return set;
+}
+
+function setsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const value of a) { if (!b.has(value)) return false; }
+  return true;
+}
+
+function sharedCount(a: Set<string>, b: Set<string>): number {
+  let count = 0;
+  for (const value of a) { if (b.has(value)) count++; }
+  return count;
+}
+
+/**
+ * Detect whether a candidate covers the same real-world event as a signal already
+ * surfaced or dismissed within the trailing window. This is the cross-run backstop
+ * that URL fingerprints and intra-run title clustering both miss: two outlets, two
+ * URLs, two headlines, one story.
+ *
+ * A match requires an identical (non-empty) thesis set AND at least `minSharedTopics`
+ * shared matched topics. Requiring a non-empty thesis set prevents two unrelated
+ * items that merely share generic topics from collapsing together. Among candidates
+ * the strongest topic overlap wins so the log names the most defensible primary.
+ */
+export function findRecentEventDuplicate(
+  candidate: { matchedTopics: string[]; matchingTheses: string[] },
+  digest: RecentSignalDigestEntry[],
+  minSharedTopics: number = 2,
+): EventDuplicateMatch | null {
+  const candidateTopics = normalizedSet(candidate.matchedTopics);
+  const candidateTheses = normalizedSet(candidate.matchingTheses);
+  if (candidateTheses.size === 0) return null;
+
+  let best: EventDuplicateMatch | null = null;
+  for (const entry of digest) {
+    const entryTheses = normalizedSet(entry.matchingTheses);
+    if (!setsEqual(candidateTheses, entryTheses)) continue;
+    const shared = sharedCount(candidateTopics, normalizedSet(entry.matchedTopics));
+    if (shared < minSharedTopics) continue;
+    if (!best || shared > best.sharedTopicCount) {
+      best = { entry, sharedTopicCount: shared, sameThesisSet: true };
+    }
+  }
+  return best;
 }
 
 // ── Source Adapters ────────────────────────────────────────────────
@@ -1246,13 +1309,20 @@ function fallbackCuratedTitle(_signal: ScoredSignal): string | null {
   return null;
 }
 
-export async function curateSignalCandidate(signal: ScoredSignal, interestGraph: InterestTopic[]): Promise<CuratedSignal> {
+export async function curateSignalCandidate(signal: ScoredSignal, interestGraph: InterestTopic[], recentDigest: RecentSignalDigestEntry[] = []): Promise<CuratedSignal> {
   const readable = await fetchReadableArticleText(signal.url);
   const articleText = readable.text || signal.snippet || signal.title;
   const topicContext = interestGraph
     .slice(0, 60)
     .map(t => `${t.tag} (${t.source}, weight ${t.weight.toFixed(2)})`)
     .join("; ");
+  // Compact recent-history context so the curator can flag same-event resurfacing.
+  const recentContext = recentDigest.slice(0, 25).map(entry => ({
+    id: entry.id,
+    label: entry.curatedTitle || entry.title,
+    topics: entry.matchedTopics.slice(0, 8),
+  }));
+  const recentIds = new Set(recentDigest.map(entry => entry.id));
 
   try {
     const { chatCompletion } = await import("./model-client");
@@ -1263,9 +1333,10 @@ export async function curateSignalCandidate(signal: ScoredSignal, interestGraph:
       temperature: 0.2,
       maxTokens: 500,
       messages: [
-        { role: "system", content: "You curate Ray's News Surface. Judge whether a candidate is concretely relevant to pinned interests or recent work. Topics can match literally or conceptually. For broad topics like Innovation, look for real novelty: new capability, interface, technical primitive, business model, funding, adoption, or ecosystem shift. The display title must be a compact label, not a headline rewrite: 2-4 words, Title Case, no question phrases, no article-style wording, no filler like 'What is', 'How to', 'Guide to', 'The future of'. Good examples: New AR Hardware, Competitor Funded, Harness Innovation, Spatial Workflow. Bad examples: What Is a Meta-Harness, This Startup Is Building, How AI Avatars Work. If you cannot name the relevance cleanly, set isRelevant=false. Return strict JSON only." },
+        { role: "system", content: "You curate Ray's News Surface. Judge whether a candidate is concretely relevant to pinned interests or recent work. Topics can match literally or conceptually. For broad topics like Innovation, look for real novelty: new capability, interface, technical primitive, business model, funding, adoption, or ecosystem shift. The display title must be a compact label, not a headline rewrite: 2-4 words, Title Case, no question phrases, no article-style wording, no filler like 'What is', 'How to', 'Guide to', 'The future of'. Good examples: New AR Hardware, Competitor Funded, Harness Innovation, Spatial Workflow. Bad examples: What Is a Meta-Harness, This Startup Is Building, How AI Avatars Work. If the candidate covers the same real-world event as an item in recentlySurfaced (same announcement, product, or story even from a different outlet), set duplicateOfId to that item's id. If you cannot name the relevance cleanly, set isRelevant=false. Return strict JSON only." },
         { role: "user", content: JSON.stringify({
           topics: topicContext,
+          recentlySurfaced: recentContext,
           candidate: {
             sourceType: signal.sourceType,
             title: signal.title,
@@ -1282,6 +1353,7 @@ export async function curateSignalCandidate(signal: ScoredSignal, interestGraph:
             reason: "one short sentence explaining why Ray should care; plain text only, no HTML or escaped HTML",
             matchedTopics: "array of topic strings",
             summary: "optional one short sentence factual summary; plain text only, no HTML or escaped HTML",
+            duplicateOfId: "optional id from recentlySurfaced if this is the same event, else omit",
           },
         }) },
       ],
@@ -1293,6 +1365,8 @@ export async function curateSignalCandidate(signal: ScoredSignal, interestGraph:
     const bannedTitlePattern = /^(what|how|why|when|where|guide|the future|this|these|a |an |the )\b/i;
     const title = rawTitle && rawTitle.split(/\s+/).length <= 4 && !bannedTitlePattern.test(rawTitle) ? rawTitle : fallbackCuratedTitle(signal);
     const reason = typeof parsed?.reason === "string" ? cleanHumanText(parsed.reason, 240) : "";
+    const proposedDuplicateId = typeof parsed?.duplicateOfId === "string" ? parsed.duplicateOfId.trim() : "";
+    const duplicateOfSignalId = proposedDuplicateId && recentIds.has(proposedDuplicateId) ? proposedDuplicateId : null;
     return {
       ...signal,
       relevanceScore: Math.max(signal.relevanceScore, score),
@@ -1302,6 +1376,7 @@ export async function curateSignalCandidate(signal: ScoredSignal, interestGraph:
       curationScore: score,
       matchedTopics: Array.isArray(parsed?.matchedTopics) ? parsed.matchedTopics.filter((t: unknown) => typeof t === "string").slice(0, 8) : signal.relevanceTags,
       agentSummary: typeof parsed?.summary === "string" ? cleanHumanText(parsed.summary, 300) : null,
+      duplicateOfSignalId,
     };
   } catch (err) {
     log.warn(`curateSignalCandidate failed for ${signal.url}: ${err instanceof Error ? err.message : String(err)}`);
@@ -1313,6 +1388,7 @@ export async function curateSignalCandidate(signal: ScoredSignal, interestGraph:
       curationScore: null,
       matchedTopics: signal.relevanceTags,
       agentSummary: null,
+      duplicateOfSignalId: null,
     };
   }
 }

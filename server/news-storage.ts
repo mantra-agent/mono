@@ -14,6 +14,7 @@ import {
   type InsertSignalSourceScanDiagnostics,
   type SignalSourceScanDiagnostics,
   type SignalItemStatus,
+  type RecentSignalDigestEntry,
 } from "@shared/schema";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
@@ -337,6 +338,8 @@ export class SignalStorage {
           relevanceTags: normalizedData.relevanceTags,
           matchingSkills: normalizedData.matchingSkills,
           matchingTheses: normalizedData.matchingTheses,
+          // Preserve the first event-cluster link once established.
+          duplicateOfSignalId: existing.duplicateOfSignalId ?? normalizedData.duplicateOfSignalId ?? null,
           status: nextStatus,
         })
         .where(writableItems(eq(signalItems.id, existing.id)))
@@ -419,6 +422,40 @@ export class SignalStorage {
         log.debug(`dismissed ${result.length} surfaced signals older than ${olderThanDays} days`);
       }
       return result.length;
+    });
+  }
+
+  /**
+   * Compact digest of signals surfaced or dismissed within the trailing window,
+   * used to detect same-event resurfacing across scan runs. Scoped to the current
+   * principal (news data is user-owned) and bounded so a busy history cannot
+   * unbound the scan. Recency is anchored on scannedAt, which surfaceSignal and
+   * upsertSignal bump on every scan touch.
+   */
+  async getRecentDedupDigest(withinHours: number = 72, limit: number = 200): Promise<RecentSignalDigestEntry[]> {
+    return autoHeal(async () => {
+      const cutoff = new Date(Date.now() - withinHours * 60 * 60 * 1000);
+      const rows = await db.select({
+        id: signalItems.id,
+        title: signalItems.title,
+        curatedTitle: signalItems.curatedTitle,
+        matchedTopics: signalItems.matchedTopics,
+        matchingTheses: signalItems.matchingTheses,
+      })
+        .from(signalItems)
+        .where(visibleItems(and(
+          inArray(signalItems.status, ["surfaced", "dismissed"]),
+          gte(signalItems.scannedAt, cutoff),
+        )))
+        .orderBy(desc(signalItems.scannedAt))
+        .limit(limit);
+      return rows.map(row => ({
+        id: row.id,
+        title: row.title,
+        curatedTitle: row.curatedTitle ?? null,
+        matchedTopics: row.matchedTopics ?? [],
+        matchingTheses: row.matchingTheses ?? [],
+      }));
     });
   }
 
@@ -752,6 +789,8 @@ export async function migrateSignalSchema(): Promise<void> {
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS owner_user_id text`,
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS account_id text`,
     `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS snoozed_until timestamptz`,
+    `ALTER TABLE signal_items ADD COLUMN IF NOT EXISTS duplicate_of_signal_id text`,
+    `CREATE INDEX IF NOT EXISTS idx_signal_items_duplicate_of ON signal_items(duplicate_of_signal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_signal_sources_scope_owner ON signal_sources(scope, owner_user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_signal_sources_account ON signal_sources(account_id)`,
     `CREATE INDEX IF NOT EXISTS idx_signal_items_scope_owner ON signal_items(scope, owner_user_id)`,
