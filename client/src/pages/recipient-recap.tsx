@@ -61,8 +61,18 @@ function RecipientTaskRow({ task }: { task: RecipientRecapTaskProjection }) {
   );
 }
 
-export default function RecipientRecapPage({ token }: { token: string }) {
-  const endpoint = `/api/public/meeting-recaps/${encodeURIComponent(token)}`;
+interface RecipientRecapPageProps {
+  token: string;
+  accessMode?: "capability" | "authenticated_onboarding";
+}
+
+export default function RecipientRecapPage({
+  token,
+  accessMode = "capability",
+}: RecipientRecapPageProps) {
+  const endpoint = accessMode === "authenticated_onboarding"
+    ? `/api/meeting-recaps/onboarding/${encodeURIComponent(token)}`
+    : `/api/public/meeting-recaps/${encodeURIComponent(token)}`;
   const query = useQuery<RecipientRecapProjectionResponse>({
     queryKey: [endpoint],
     queryFn: getQueryFn({ on401: "throw" }),

@@ -59,8 +59,7 @@ const libraryScopeColumns = {
 // Bound the compact, editable recap email body.
 const EMAIL_BODY_CHAR_LIMIT = 30_000;
 const RECIPIENT_ACCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
-const LANDING_BASE_URL = "https://www.trymantra.ai";
-const ONBOARDING_TOKEN_PARAM = "i";
+const APP_BASE_URL = "https://app.trymantra.ai";
 
 interface MintedCapabilityToken {
   token: string;
@@ -89,14 +88,13 @@ function createRecipientAccessCapability(): RecipientAccessCapability {
 }
 
 /**
- * Tokenized landing link for the recap email footer. The landing page routes
- * token holders into the voice-visualizer FTUE; a future onboarding resolver
- * binds the stored hash to a provisional account. Deliberately a separate
- * capability from the recap access token so the marketing URL never carries
- * meeting-content authority.
+ * Universal recap-onboarding entry. The app resolves current account state
+ * before deciding whether this recipient belongs in login, recap, or FTUE.
+ * Deliberately a separate capability from the recap access token so this URL
+ * never carries meeting-content authority by itself.
  */
-function invitedLandingUrl(token: string): string {
-  return `${LANDING_BASE_URL}/?${ONBOARDING_TOKEN_PARAM}=${encodeURIComponent(token)}`;
+function onboardingEntryUrl(token: string): string {
+  return `${APP_BASE_URL}/r/${encodeURIComponent(token)}`;
 }
 
 function recipientRecapUrl(publicBaseUrl: string, token: string): string {
@@ -473,7 +471,7 @@ async function runDistribution(
         emailContext.event,
         principal,
         recipientRecapUrl(publicBaseUrl, capability.token),
-        invitedLandingUrl(onboarding.token),
+        onboardingEntryUrl(onboarding.token),
       );
       const draft = await emailDraftStorage.create(principal, {
         sessionId,
