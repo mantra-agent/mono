@@ -794,9 +794,15 @@ function captureToolDefinitions(toolDefs: ToolDefinition[]): SdkInitializationCa
 }
 
 function safeSdkOptionsForCapture(options: SdkOptions): Record<string, unknown> {
+  // `systemPrompt` is intentionally omitted here. The captured request hoists it
+  // to the top-level `systemPrompt` field (mirroring how `messages` is hoisted to
+  // `prompt`), so re-storing it inside this options projection would duplicate the
+  // full ~20k-token system prompt in the capture — a Single Source of Truth
+  // violation that inflated the OPTIONS section and rendered an unlabeled,
+  // token-less system-prompt row in the Context viewer. The system prompt lives
+  // once, at top level.
   return {
     model: options.model ?? null,
-    systemPrompt: options.systemPrompt ?? null,
     tools: options.tools ?? null,
     disallowedTools: options.disallowedTools ?? [],
     allowedTools: options.allowedTools ?? [],
@@ -1210,7 +1216,10 @@ export async function* cliSdkStream(
       // twice in the Context viewer. The system prompt lives once in
       // `systemPrompt`; the conversation lives once in `prompt`.
       request: {
-        systemPrompt: initializationCapture.options.systemPrompt ?? systemPrompt ?? null,
+        // Canonical single location for the system prompt. `options` no longer
+        // carries it (see safeSdkOptionsForCapture), so source it from the local
+        // finalized systemPrompt directly.
+        systemPrompt: systemPrompt ?? null,
         prompt,
         options: initializationCapture.options,
         tools: initializationCapture.toolDefinitions,
