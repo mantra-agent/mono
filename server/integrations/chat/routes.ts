@@ -1533,14 +1533,22 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     onProgress?.("ctx_history", "done", Date.now() - histStart);
 
     const { filterToolSchemasForAuthority } = await import("../../agent-authority");
-    const allToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "interactive", sessionId });
+    const { filterToolsForPersonaBundle } = await import("../../tool-registry");
+    const { resolveSessionPersona } = await import("../../session-persona");
+    // Two independent gates compose here: authority decides what this session is
+    // ALLOWED to call; the active persona's tool bundle decides what this MODE loads.
+    // An empty bundle passes everything through (today's behavior), so gating is
+    // dormant until a persona is deliberately given a bundle.
+    const authorityScopedDefs = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "interactive", sessionId });
+    const activePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
+    const allToolDefs = filterToolsForPersonaBundle(authorityScopedDefs, activePersona?.toolBundle);
     const toolDefs: ToolDefinition[] = allToolDefs.map((t) => ({
       name: t.name,
       description: t.description,
       parameters: t.parameters,
     }));
     chatLog.log(
-      `tools loaded count=${allToolDefs.length} sessionId=${sessionId}`,
+      `tools loaded count=${allToolDefs.length} authorityCount=${authorityScopedDefs.length} persona=${activePersona?.name ?? "none"} bundle=${activePersona?.toolBundle?.length ?? 0} sessionId=${sessionId}`,
     );
 
     const contextBuildStart = Date.now();

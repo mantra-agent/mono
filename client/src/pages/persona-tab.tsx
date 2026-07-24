@@ -24,6 +24,7 @@ interface Persona {
   cognitiveOverrides: Record<string, unknown>;
   semanticTier: "max" | "high" | "balanced" | "fast" | null;
   contextSections: Record<string, boolean>;
+  toolBundle: string[];
   isDefault: boolean;
   isActive: boolean;
   isSystem: boolean;
@@ -40,6 +41,13 @@ interface ContextSectionCatalogEntry {
   recommendedFor: string;
   tokenCost: "small" | "medium" | "large";
   defaultIncluded: boolean;
+}
+
+interface ToolCatalogEntry {
+  name: string;
+  description: string;
+  category: string;
+  isCore: boolean;
 }
 
 function overrideLabel(key: string): string {
@@ -126,7 +134,7 @@ function PersonaTreeItem({
   persona: Persona;
   onActivate: () => void;
   onDelete: () => void;
-  onUpdate: (data: { description?: string; icon?: string; promptOverlay?: string; expressionTags?: string[]; semanticTier?: "max" | "high" | "balanced" | "fast"; contextSections?: Record<string, boolean> }) => void;
+  onUpdate: (data: { description?: string; icon?: string; promptOverlay?: string; expressionTags?: string[]; semanticTier?: "max" | "high" | "balanced" | "fast"; contextSections?: Record<string, boolean>; toolBundle?: string[] }) => void;
   activating: boolean;
 }) {
   const [editing, setEditing] = useState(false);
@@ -141,6 +149,13 @@ function PersonaTreeItem({
     entry.id in editContextSections ? editContextSections[entry.id] : entry.defaultIncluded;
   const toggleSection = (entry: ContextSectionCatalogEntry) =>
     setEditContextSections(prev => ({ ...prev, [entry.id]: !(entry.id in prev ? prev[entry.id] : entry.defaultIncluded) }));
+  const [editToolBundle, setEditToolBundle] = useState<string[]>(persona.toolBundle || []);
+  const { data: toolCatalog = [] } = useQuery<ToolCatalogEntry[]>({ queryKey: ["/api/personas/tool-catalog"] });
+  const toolOn = (entry: ToolCatalogEntry) => entry.isCore || editToolBundle.includes(entry.name);
+  const toggleTool = (entry: ToolCatalogEntry) => {
+    if (entry.isCore) return;
+    setEditToolBundle(prev => prev.includes(entry.name) ? prev.filter(n => n !== entry.name) : [...prev, entry.name]);
+  };
   const overrideEntries = Object.entries(persona.cognitiveOverrides || {});
   const handleSave = () => {
     const tags = editTags.split(",").map(t => t.trim()).filter(Boolean);
@@ -151,6 +166,7 @@ function PersonaTreeItem({
       expressionTags: tags,
       semanticTier: editTier,
       contextSections: editContextSections,
+      toolBundle: editToolBundle,
     });
     setEditing(false);
   };
@@ -162,6 +178,7 @@ function PersonaTreeItem({
     setEditIcon(persona.icon);
     setEditTier(persona.semanticTier || "balanced");
     setEditContextSections(persona.contextSections || {});
+    setEditToolBundle(persona.toolBundle || []);
     setEditing(false);
   };
 
@@ -220,6 +237,34 @@ function PersonaTreeItem({
                   <span className="block truncate text-[10px] text-muted-foreground">{entry.description}</span>
                 </span>
                 <Badge variant="outline" className="text-[9px]">{entry.tokenCost}</Badge>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs">Tool Inclusions</Label>
+        <p className="text-[11px] text-muted-foreground">Tools this persona loads. Core tools always load. Leave everything below off to load all tools; turn any on to scope this persona to core + your selection.</p>
+        <div className="max-h-64 space-y-0.5 overflow-y-auto rounded-md border border-border/40 bg-background/70 p-2">
+          {toolCatalog.map((entry) => {
+            const on = toolOn(entry);
+            return (
+              <button
+                key={entry.name}
+                type="button"
+                onClick={() => toggleTool(entry)}
+                disabled={entry.isCore}
+                className={cn("flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left transition-colors", entry.isCore ? "cursor-default opacity-70" : "hover:bg-accent/40")}
+                data-testid={`tool-toggle-${entry.name}`}
+              >
+                <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border", on ? "border-cta bg-cta text-cta-foreground" : "border-border/60")}>
+                  {on && <Check className="h-3 w-3" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs text-foreground">{entry.name}</span>
+                  <span className="block truncate text-[10px] text-muted-foreground">{entry.description}</span>
+                </span>
+                {entry.isCore && <Badge variant="outline" className="text-[9px]">core</Badge>}
               </button>
             );
           })}
