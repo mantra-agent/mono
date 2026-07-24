@@ -17,8 +17,8 @@
  *     all writes are user-owned, not system orphans.
  */
 import { createHash, randomBytes } from "crypto";
-import { db, pool } from "../db";
-import { meetingRecapDistributions } from "@shared/schema";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, pool } from "../db";
+import { meetingRecapDistributions, users } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import {
   combineWithVisibleScope,
@@ -34,10 +34,12 @@ import { formatInTimezone } from "../timezone";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { eventBus } from "../event-bus";
-import { eq, and, SQL } from "drizzle-orm";
+import { eq, and, sql, SQL } from "drizzle-orm";
 import type { Principal } from "../principal";
 import type { MeetingSessionMeta, MeetingRecapMeta } from "@shared/models/chat";
 import { getRuntimePublicBaseUrl } from "../runtime-identity";
+import { normalizeEmailAddress } from "../email-normalization";
+import { resolveOrCreateInvitedSubjectInTransaction } from "../invited-subject-service";
 
 const log = createLogger("MeetingDistribution");
 
@@ -70,9 +72,13 @@ interface RecipientAccessCapability extends MintedCapabilityToken {
 }
 
 /** Single minting primitive for every per-recipient bearer token in recap flows. */
+function hashCapabilityToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
 function mintCapabilityToken(): MintedCapabilityToken {
   const token = randomBytes(32).toString("base64url");
-  return { token, tokenHash: createHash("sha256").update(token).digest("hex") };
+  return { token, tokenHash: hashCapabilityToken(token) };
 }
 
 function createRecipientAccessCapability(): RecipientAccessCapability {
@@ -95,6 +101,48 @@ function invitedLandingUrl(token: string): string {
 
 function recipientRecapUrl(publicBaseUrl: string, token: string): string {
   return `${publicBaseUrl.replace(/\/$/, "")}/recap/${encodeURIComponent(token)}`;
+}
+
+export type OnboardingTokenResolution =
+  | { status: "not_found" }
+  | {
+      status: "resolved";
+      accountState: "real" | "provisional";
+      email: string;
+      displayName: string;
+      meetingSessionId: string;
+    };
+
+/** Pure read: resolve the onboarding capability without creating or claiming identity. */
+export async function resolveOnboardingToken(
+  rawToken: string,
+): Promise<OnboardingTokenResolution> {
+  const token = rawToken.trim();
+  if (!token || token.length > 200) return { status: "not_found" };
+
+  const [resolved] = await db
+    .select({
+      email: meetingRecapDistributions.attendeeEmail,
+      displayName: meetingRecapDistributions.attendeeName,
+      meetingSessionId: meetingRecapDistributions.sessionId,
+      userId: users.id,
+    })
+    .from(meetingRecapDistributions)
+    .leftJoin(
+      users,
+      sql`LOWER(BTRIM(${users.email})) = LOWER(BTRIM(${meetingRecapDistributions.attendeeEmail}))`,
+    )
+    .where(eq(meetingRecapDistributions.onboardingTokenHash, hashCapabilityToken(token)))
+    .limit(1);
+
+  if (!resolved) return { status: "not_found" };
+  return {
+    status: "resolved",
+    accountState: resolved.userId ? "real" : "provisional",
+    email: normalizeEmailAddress(resolved.email),
+    displayName: resolved.displayName?.trim() || normalizeEmailAddress(resolved.email),
+    meetingSessionId: resolved.meetingSessionId,
+  };
 }
 
 function distributionLockKey(sessionId: string): bigint {
@@ -378,21 +426,43 @@ async function runDistribution(
     let distributionId: string | null = null;
     try {
       const owned = ownedInsertValues(principal, scopeColumns);
-      const [row] = await db
-        .insert(meetingRecapDistributions)
-        .values({
-          sessionId,
-          attendeeEmail: attendee.email,
-          attendeeName: attendee.name ?? null,
-          isMantraUser: false,
-          accessTokenHash: capability.tokenHash,
-          accessExpiresAt: capability.expiresAt,
-          onboardingTokenHash: onboarding.tokenHash,
-          sendMethod: "gmail_draft",
-          status: "pending",
-          ...owned,
-        })
-        .returning({ id: meetingRecapDistributions.id });
+      const normalizedEmail = normalizeEmailAddress(attendee.email);
+      const row = await db.transaction(async (tx) => {
+        await acquireAdvisoryTransactionLock(
+          tx,
+          ADVISORY_LOCK_NS.INVITED_SUBJECT,
+          normalizedEmail,
+        );
+        const [existingUser] = await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(sql`LOWER(BTRIM(${users.email})) = ${normalizedEmail}`)
+          .limit(1);
+        const isMantraUser = !!existingUser;
+        if (!isMantraUser) {
+          await resolveOrCreateInvitedSubjectInTransaction(
+            tx,
+            normalizedEmail,
+            attendee.name,
+          );
+        }
+        const [createdDistribution] = await tx
+          .insert(meetingRecapDistributions)
+          .values({
+            sessionId,
+            attendeeEmail: normalizedEmail,
+            attendeeName: attendee.name ?? null,
+            isMantraUser,
+            accessTokenHash: capability.tokenHash,
+            accessExpiresAt: capability.expiresAt,
+            onboardingTokenHash: onboarding.tokenHash,
+            sendMethod: "gmail_draft",
+            status: "pending",
+            ...owned,
+          })
+          .returning({ id: meetingRecapDistributions.id });
+        return createdDistribution;
+      });
       distributionId = row?.id ?? null;
       if (!distributionId) throw new Error("Recap recipient record was not created");
 
