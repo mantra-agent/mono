@@ -573,9 +573,11 @@ function PeopleListView({ selectedId, onSelect, searchOverride, showQuickAddOver
 
   const surfacedItems = useMemo((): SimpleFeedItem[] => {
     const peopleById = new Set(people.map(p => p.id));
-    const inbox = simpleFeed?.sections.find(section => section.section === "inbox")?.items ?? [];
-    return inbox.filter(item => {
-      if (item.widgetType !== "person") return false;
+    const collectPeopleItems = (items: SimpleFeedItem[]): SimpleFeedItem[] => items.flatMap(item => [
+      ...(item.widgetType === "person" ? [item] : []),
+      ...collectPeopleItems(item.children ?? []),
+    ]);
+    return collectPeopleItems(simpleFeed?.sections.flatMap(section => section.items) ?? []).filter(item => {
       const personId = item.sourceRefs.find(ref => ref.type === "person")?.id;
       return personId ? peopleById.has(personId) : false;
     });
