@@ -574,18 +574,31 @@ export async function assembleContext(options: {
   const callType: ContextCallType = "full";
   const llmMode: LlmMode = profile === "voice" ? "voice" : "text";
 
-  // --- Context flag scoping ---
+  // --- Context section scoping ---
   // If caller already provides excludeSections (e.g. skill runs), use those directly.
-  // Otherwise, derive excludeSections from session-level context flags.
+  // Otherwise, derive include/exclude sections from the active persona's context bundle.
   let resolvedExcludeSections = excludeSections && excludeSections.length > 0 ? excludeSections : undefined;
   let resolvedIncludeSections = includeSections && includeSections.length > 0 ? includeSections : undefined;
 
   if (!resolvedExcludeSections && sessionId) {
     try {
-      const { chatFileStorage } = await import("./chat-file-storage");
       const { SPINE_SECTIONS, getBootstrapSectionIds, getDefaultIncludedSectionIds } = await import("./context-spine-config");
       const { expandSemanticContextFlags, expandDisabledSemanticContextFlags, isSemanticContextFlag } = await import("./context-instruction-groups");
-      const contextFlags = await chatFileStorage.readSessionContextFlags(sessionId);
+      const { resolveSessionPersona } = await import("./session-persona");
+      const { chatFileStorage } = await import("./chat-file-storage");
+      // Persona is the default source of truth for which optional context sections load.
+      // Programmatic sessions (skills, autonomous jobs, voice prep) may still set explicit
+      // session context flags that override the persona bundle. The agent's orient tool no
+      // longer writes session flags, so interactive sessions are governed purely by persona.
+      // persistFallback is false: context scoping is a read path and must not mutate the
+      // session — context-builder's own persona resolve owns any fallback persist.
+      const activePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
+      const personaBundle = activePersona?.contextSections ?? null;
+      const sessionFlags = await chatFileStorage.readSessionContextFlags(sessionId);
+      const contextFlags: Record<string, boolean> | null =
+        personaBundle || sessionFlags
+          ? { ...(personaBundle ?? {}), ...(sessionFlags ?? {}) }
+          : null;
       const bootstrapIds = getBootstrapSectionIds();
 
       if (contextFlags === null) {

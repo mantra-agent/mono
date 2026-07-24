@@ -2,6 +2,8 @@ const PLACEHOLDER_TITLES = new Set(["New Session", "New Chat"]);
 
 export interface SessionOrientationSnapshot {
   title?: string | null;
+  personaId?: number | null;
+  /** Legacy signal: pre-persona sessions marked orientation via context flags. */
   contextFlags?: Record<string, boolean> | null;
 }
 
@@ -13,13 +15,14 @@ export function hasRealSessionTitle(title: string | null | undefined): boolean {
 /**
  * Canonical persisted orientation invariant.
  *
- * A session is established only after it has both a meaningful title and an
- * explicit context-scope decision. An empty contextFlags map is meaningful: it
- * selects bootstrap/default sections only. Undefined/null means scope has not
- * been established yet.
+ * A session is established once it has a meaningful title and an active persona.
+ * Persona is the single source of context sections and tools, so selecting one is
+ * the orientation act that scopes the session. Legacy sessions that predate
+ * persona-owned context are still honored via their persisted context flags.
  */
 export function isSessionOrientationEstablished(
   session: SessionOrientationSnapshot | null | undefined,
 ): boolean {
-  return hasRealSessionTitle(session?.title) && session?.contextFlags != null;
+  return hasRealSessionTitle(session?.title)
+    && (session?.personaId != null || session?.contextFlags != null);
 }
