@@ -62,6 +62,14 @@ export const signalItems = pgTable("signal_items", {
   fingerprint: text("fingerprint").notNull().unique(),
   status: text("status").notNull().default("new"),
   snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+  /**
+   * Event-cluster link. When set, this signal covers the same real-world event as an
+   * earlier signal (identified by that signal's id) that was already surfaced or dismissed.
+   * URL fingerprints identify a single article; this identifies a single story across outlets.
+   * Nullable and self-referential: the earliest surfaced/dismissed signal for an event is the
+   * cluster primary and carries a null link.
+   */
+  duplicateOfSignalId: text("duplicate_of_signal_id"),
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
@@ -74,6 +82,7 @@ export const signalItems = pgTable("signal_items", {
   index("idx_signal_items_snoozed_until").on(table.snoozedUntil),
   index("idx_signal_items_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_signal_items_account").on(table.accountId),
+  index("idx_signal_items_duplicate_of").on(table.duplicateOfSignalId),
 ]);
 
 /** Scan run history — audit trail for each scan execution */
@@ -156,6 +165,21 @@ export const insertScanRunSchema = createInsertSchema(scanRuns).omit({
 export const insertSignalSourceScanDiagnosticsSchema = createInsertSchema(signalSourceScanDiagnostics).omit({
   id: true,
 });
+
+// ── Dedup DTOs ─────────────────────────────────────────────────────
+
+/**
+ * Compact record of a signal already surfaced or dismissed within the trailing
+ * dedup window. Used to detect same-event resurfacing across scan runs without
+ * loading full signal rows.
+ */
+export interface RecentSignalDigestEntry {
+  id: string;
+  title: string;
+  curatedTitle: string | null;
+  matchedTopics: string[];
+  matchingTheses: string[];
+}
 
 // ── Types ──────────────────────────────────────────────────────────
 export type SignalSource = typeof signalSources.$inferSelect;

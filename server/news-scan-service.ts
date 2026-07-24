@@ -254,6 +254,11 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       log.log(`scan: auto-dismissed ${staleSurfacedDismissed} surfaced signals older than 3 days`);
     }
 
+    // Trailing-72h digest of already surfaced/dismissed signals — the shared context
+    // for both curation (soft, LLM-marked) and the deterministic surfacing backstop
+    // that catch the same event resurfacing from a different outlet across scan runs.
+    const recentDedupDigest = await signalStorage.getRecentDedupDigest(72);
+
     const scoredSignals = dedupedSignals
       .map(raw => {
         const fingerprint = adapters.computeFingerprint(raw.url);
@@ -299,7 +304,14 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
 
         log.log(`scan: invoking news-curation skill for ${validPayloads.length} candidates`);
         await executeAutonomousSkillRun("news-curation", {
-          preContext: JSON.stringify({ candidates: validPayloads }),
+          preContext: JSON.stringify({
+            candidates: validPayloads,
+            recentSurfaced: recentDedupDigest.map(entry => ({
+              id: entry.id,
+              label: entry.curatedTitle || entry.title,
+              topics: entry.matchedTopics.slice(0, 8),
+            })),
+          }),
           spawnReason: "news-curation-scan",
         });
 
@@ -332,10 +344,11 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
           curationScore: decision.score,
           matchedTopics: decision.matchedTopics?.length ? decision.matchedTopics : scored.relevanceTags,
           agentSummary: decision.summary ?? null,
+          duplicateOfSignalId: null,
         };
       } else if (selection && !skillDecisions) {
         // Fallback: skill failed entirely, use per-candidate curation
-        curated = await adapters.curateSignalCandidate(scored, interestGraph);
+        curated = await adapters.curateSignalCandidate(scored, interestGraph, recentDedupDigest);
       } else {
         // Not a selected candidate — uncurated
         curated = {
@@ -346,11 +359,21 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
           curationScore: null,
           matchedTopics: scored.relevanceTags,
           agentSummary: null,
+          duplicateOfSignalId: null,
         };
       }
       const ranked = rankedSignals.find(signal => signal.rawMetadata.__fingerprint === fingerprint);
       const qualifiesForSurface = Boolean(curated.curatedTitle && curated.curatedReason && ((curated.curationScore ?? curated.relevanceScore) >= 0.45 || (ranked?.importanceScore ?? 0) >= 0.45));
-      const shouldSurface = qualifiesForSurface && remainingSurfaceSlots > 0;
+      // Deterministic cross-run backstop: suppress surfacing when this candidate covers the
+      // same event (identical thesis set + 2+ shared topics) as a signal already surfaced or
+      // dismissed within the trailing 72h. The curator's soft duplicateOfId is a fallback link.
+      const eventDuplicate = adapters.findRecentEventDuplicate(
+        { matchedTopics: curated.matchedTopics, matchingTheses: curated.matchingTheses },
+        recentDedupDigest,
+      );
+      const duplicateOfSignalId = eventDuplicate?.entry.id ?? curated.duplicateOfSignalId ?? null;
+      const suppressedAsDuplicate = qualifiesForSurface && Boolean(eventDuplicate);
+      const shouldSurface = qualifiesForSurface && !suppressedAsDuplicate && remainingSurfaceSlots > 0;
       const status = shouldSurface ? "surfaced" : qualifiesForSurface ? "new" : scored.relevanceScore >= relevanceThreshold ? "new" : "archived";
 
       const { item, isNew } = await signalStorage.upsertSignal({
@@ -372,18 +395,26 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         matchingSkills: curated.matchingSkills,
         matchingTheses: curated.matchingTheses,
         fingerprint,
+        duplicateOfSignalId,
         status,
       });
 
       diagnostics.recordPersisted(raw.sourceId);
 
+      if (suppressedAsDuplicate && eventDuplicate) {
+        log.info(`scan: suppressed event-duplicate surfacing — signal ${item.id} duplicates ${eventDuplicate.entry.id} (identical thesis set + ${eventDuplicate.sharedTopicCount} shared topics within 72h)`);
+      }
+
       if (isNew && status === "surfaced") {
         diagnostics.recordSurfaced(raw.sourceId);
         itemsSurfaced++;
         remainingSurfaceSlots--;
+      } else if (isNew && suppressedAsDuplicate) {
+        // New signal we withheld from the surface as a same-event duplicate.
+        itemsDeduped++;
       } else if (!isNew) {
         itemsDeduped++;
-        if (qualifiesForSurface && item.status === "new" && remainingSurfaceSlots > 0) {
+        if (qualifiesForSurface && !suppressedAsDuplicate && item.status === "new" && remainingSurfaceSlots > 0) {
           await signalStorage.surfaceSignal(item.id);
           diagnostics.recordSurfaced(raw.sourceId);
           itemsSurfaced++;
