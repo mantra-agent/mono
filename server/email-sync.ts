@@ -26,10 +26,25 @@ interface EmailAccountOwner {
   principal: Principal;
 }
 
-async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccountOwner> {
+type EmailAccountVaultScope = "active_vault" | "visible_vaults";
+
+async function resolveEmailAccountOwner(
+  accountId: string,
+  vaultScope: EmailAccountVaultScope,
+): Promise<EmailAccountOwner> {
   const principal = requireCurrentUserPrincipal();
-  if (principal.visibleVaultIds.length !== 1 || !principal.activeVaultId) {
-    throw new Error("Email account sync requires exactly one active visible Vault");
+  let vaultPredicate;
+
+  if (vaultScope === "active_vault") {
+    if (principal.visibleVaultIds.length !== 1 || !principal.activeVaultId) {
+      throw new Error("Email account sync requires exactly one active visible Vault");
+    }
+    vaultPredicate = eq(connectedAccounts.vaultId, principal.activeVaultId);
+  } else {
+    if (principal.visibleVaultIds.length === 0) {
+      throw new Error("Sent email projection requires at least one visible Vault");
+    }
+    vaultPredicate = inArray(connectedAccounts.vaultId, principal.visibleVaultIds);
   }
 
   const [account] = await db
@@ -54,18 +69,24 @@ async function resolveEmailAccountOwner(accountId: string): Promise<EmailAccount
         eq(connectedAccounts.provider, "google"),
         eq(connectedAccounts.ownerUserId, principal.userId),
         eq(connectedAccounts.principalAccountId, principal.accountId),
-        eq(connectedAccounts.vaultId, principal.activeVaultId),
+        vaultPredicate,
       ),
     )
     .limit(1);
+
+  const vaultIsAllowed = account?.vaultId != null && (
+    vaultScope === "active_vault"
+      ? account.vaultId === principal.activeVaultId
+      : principal.visibleVaultIds.includes(account.vaultId)
+  );
 
   if (
     !account ||
     account.ownerUserId !== principal.userId ||
     account.principalAccountId !== principal.accountId ||
-    account.vaultId !== principal.activeVaultId
+    !vaultIsAllowed
   ) {
-    throw new Error(`Connected Google account is outside the active owner/Vault scope: accountId=${accountId}`);
+    throw new Error(`Connected Google account is outside the owner/${vaultScope} scope: accountId=${accountId}`);
   }
 
   return {
@@ -352,7 +373,7 @@ export async function ingestSentGmailMessage(
     throw new Error("Sent Gmail ingestion requires account and provider message identity");
   }
 
-  await resolveEmailAccountOwner(accountId);
+  await resolveEmailAccountOwner(accountId, "visible_vaults");
   const raw = await getMessage(providerMessageId, "full", accountId);
   const normalized = normalizeGmailMessage(raw, accountId);
   if (normalized.direction !== "outbound") {
@@ -637,7 +658,7 @@ async function reconcileEmailAttentionState(accountId: string): Promise<number> 
 }
 
 async function syncAccount(accountId: string): Promise<{ ok: boolean; error?: string }> {
-  const owner = await resolveEmailAccountOwner(accountId);
+  const owner = await resolveEmailAccountOwner(accountId, "active_vault");
   return syncAccountForOwner(accountId, owner);
 }
 
