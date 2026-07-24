@@ -1034,6 +1034,9 @@ export async function deleteZombieSkills(): Promise<void> {
     "audit",
     "decompose",
     "sleep-forgetting",
+    // Legacy short/mid/long memory lifecycle skills, superseded by the vNext "sleep" cycle.
+    "consolidate",
+    "integrate",
   ];
   let retiredCount = 0;
 
