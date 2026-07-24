@@ -61,6 +61,8 @@ import {
   ChevronRight,
   Loader2,
   FolderKanban,
+  FolderInput,
+  Milestone as MilestoneIcon,
 
   Calendar,
   Tag,
@@ -1030,6 +1032,63 @@ function TaskRow({
             <Pencil className="h-3.5 w-3.5 mr-2" />
             Rename
           </DropdownMenuItem>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger data-testid={`menu-task-move-${task.id}`}>
+              <FolderInput className="h-3.5 w-3.5 mr-2" />
+              Move
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
+              {(task.projectId != null || task.milestoneId != null) && (
+                <>
+                  <DropdownMenuItem
+                    onClick={() => onUpdate({ projectId: null, milestoneId: null })}
+                    data-testid={`menu-task-move-none-${task.id}`}
+                  >
+                    <X className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
+                    No project
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              {availableProjects.length === 0 && (
+                <DropdownMenuItem disabled>No active projects</DropdownMenuItem>
+              )}
+              {availableProjects.map(p => {
+                const projectMilestones = p.milestones || [];
+                return (
+                  <DropdownMenuSub key={p.id}>
+                    <DropdownMenuSubTrigger data-testid={`menu-task-move-project-${p.id}`}>
+                      <FolderKanban className="h-3.5 w-3.5 mr-2 shrink-0" />
+                      <span className="truncate">{p.title}</span>
+                      {task.projectId === p.id && <Check className="h-3 w-3 ml-auto" />}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="max-h-[60vh] overflow-y-auto">
+                      <DropdownMenuItem
+                        onClick={() => onUpdate({ projectId: p.id, milestoneId: null })}
+                        data-testid={`menu-task-move-project-root-${p.id}`}
+                      >
+                        <span className="w-3.5 mr-2 shrink-0" />
+                        <span className="truncate text-muted-foreground">No milestone</span>
+                        {task.projectId === p.id && task.milestoneId == null && <Check className="h-3 w-3 ml-auto" />}
+                      </DropdownMenuItem>
+                      {projectMilestones.length > 0 && <DropdownMenuSeparator />}
+                      {projectMilestones.map(m => (
+                        <DropdownMenuItem
+                          key={m.id}
+                          onClick={() => onUpdate({ projectId: p.id, milestoneId: m.id })}
+                          data-testid={`menu-task-move-milestone-${p.id}-${m.id}`}
+                        >
+                          <MilestoneIcon className="h-3.5 w-3.5 mr-2 shrink-0" />
+                          <span className="truncate">{m.name}</span>
+                          {task.projectId === p.id && task.milestoneId === m.id && <Check className="h-3 w-3 ml-auto" />}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                );
+              })}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
           {!hideProjectAssign && (
             <DropdownMenuSub>
               <DropdownMenuSubTrigger data-testid={`menu-task-assign-${task.id}`}>
