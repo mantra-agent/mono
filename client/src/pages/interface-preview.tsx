@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { XyzIconButton } from "@/components/app-sidebar";
+import { NavigationOrbButton } from "@/components/app-sidebar";
 import { SurfaceRenderer } from "./zero/surface-renderer";
 import type { SurfaceDescriptor } from "@shared/models/glasses";
 import "./zero/glasses.css";
@@ -77,7 +77,7 @@ function GlassesFrame() {
   return (
     <div className="relative mx-auto aspect-square w-full max-w-[520px] overflow-hidden rounded-[2rem] border border-border bg-black shadow-[0_0_40px_rgba(255,255,255,0.03)]">
       <div className="absolute left-3 top-3 z-20">
-        <XyzIconButton />
+        <NavigationOrbButton />
       </div>
       <SurfaceRenderer descriptor={descriptor} />
     </div>

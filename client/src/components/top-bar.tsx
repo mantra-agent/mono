@@ -1,4 +1,4 @@
-import { navTree, XyzIconButton } from "@/components/app-sidebar";
+import { navTree, NavigationOrbButton } from "@/components/app-sidebar";
 import { useSidebar } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { MessageSquare } from "lucide-react";
@@ -145,7 +145,7 @@ export function TopBar() {
         style={{ height: 42 }}
         data-testid="top-bar"
       >
-        {!previewOwnsAgentIcon && <XyzIconButton />}
+        {!previewOwnsAgentIcon && <NavigationOrbButton />}
         {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} href={pageHeaderConfig?.titleHref} />}
       </div>
     );
@@ -162,7 +162,7 @@ export function TopBar() {
       style={{ height: 42 }}
       data-testid="top-bar"
     >
-      {!previewOwnsAgentIcon && <XyzIconButton />}
+      {!previewOwnsAgentIcon && <NavigationOrbButton />}
       {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} href={pageHeaderConfig?.titleHref} />}
       {navOpen && <div className="flex-1" />}
       <ConnectionsIndicator />
