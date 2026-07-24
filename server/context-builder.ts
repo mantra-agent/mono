@@ -728,12 +728,23 @@ async function resolveActivePersona(request: ContextRequest): Promise<string> {
       .map(p => `  - **${p.name}**: ${p.description || "(no description)"}`)
       .join("\n");
 
-    const switchingGuidance = [
-      `\n\n**Active persona: ${resolved.name}**`,
-      `\nFirst-turn persona selection is handled by the session orientation protocol. Mid-session, switch personas proactively using the \`orient\` tool (with just the \`persona\` parameter) when the conversation shifts to a domain better served by a different mode. Do not ask permission — read the moment and adapt. Switch back to Default when the need passes.`,
-      `\nAvailable personas:`,
-      otherPersonas,
-    ].join("\n");
+    const pinnedForSession = request.sessionId
+      ? Boolean((await (await import("./chat-file-storage")).chatFileStorage.getSession(request.sessionId))?.personaPinnedByUser)
+      : false;
+
+    const switchingGuidance = pinnedForSession
+      ? [
+          `\n\n**Active persona: ${resolved.name}** (pinned by the user for this session)`,
+          `\nThe user manually pinned this persona from the UI. Do not auto-switch personas for this session — stay as ${resolved.name} until the user changes it or selects Auto from the persona icon. If the user explicitly asks you to switch, tell them to pick a persona (or Auto) from that icon.`,
+          `\nOther personas (for awareness only — do not switch to them autonomously while pinned):`,
+          otherPersonas,
+        ].join("\n")
+      : [
+          `\n\n**Active persona: ${resolved.name}**`,
+          `\nFirst-turn persona selection is handled by the session orientation protocol. Mid-session, switch personas proactively using the \`orient\` tool (with just the \`persona\` parameter) when the conversation shifts to a domain better served by a different mode. Do not ask permission — read the moment and adapt. Switch back to Default when the need passes.`,
+          `\nAvailable personas:`,
+          otherPersonas,
+        ].join("\n");
 
     return overlay + switchingGuidance;
   } catch (err) {

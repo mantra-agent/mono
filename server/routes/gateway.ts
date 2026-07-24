@@ -694,6 +694,37 @@ export async function registerGatewayRoutes(app: Express) {
     }
   });
 
+  // Pin or clear the session-scoped persona. personaId: number pins that persona
+  // (agent stops auto-switching for this session); personaId: null returns to Auto.
+  app.patch("/api/gateway/conversations/:id/persona", async (req, res) => {
+    try {
+      const sessionId = req.params.id;
+      if (!req.body || !Object.prototype.hasOwnProperty.call(req.body, "personaId")) {
+        return res.status(400).json({ error: "personaId is required (a number to pin, or null for Auto)" });
+      }
+      const raw = req.body.personaId;
+      const personaId = raw === null ? null : Number(raw);
+      if (personaId !== null && (!Number.isInteger(personaId) || personaId <= 0)) {
+        return res.status(400).json({ error: "personaId must be a positive integer or null" });
+      }
+      if (personaId !== null) {
+        const { personaStorage } = await import("../file-storage/persona-storage");
+        const persona = await personaStorage.get(personaId);
+        if (!persona) {
+          return res.status(404).json({ error: "Persona not found" });
+        }
+      }
+      const { chatFileStorage } = await import("../chat-file-storage");
+      const updated = await chatFileStorage.setSessionPersonaPin(sessionId, personaId);
+      if (!updated) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      res.json({ ok: true, personaId, pinned: personaId !== null });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.patch("/api/gateway/conversations/:id/attention", async (req, res) => {
     try {
       const sessionId = req.params.id;

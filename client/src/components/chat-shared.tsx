@@ -66,6 +66,7 @@ import {
 } from "lucide-react";
 import { resolveToolIcon } from "@/lib/tool-icons";
 import { resolvePersonaIcon } from "@/lib/persona-icons";
+import { AgentPersonaControl } from "@/components/agent-persona-control";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
@@ -2947,20 +2948,7 @@ export const ChatTurn = memo(function ChatTurn({
           <AlertCircle className="h-4 w-4 text-destructive" />
         </div>
       ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div
-              className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10"
-              aria-label={`Persona: ${personaLabel}`}
-              data-testid={`icon-agent-persona-${message.id}`}
-            >
-              <PersonaIcon className="h-4 w-4 text-primary" />
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="right" className="text-xs">
-            {personaLabel}
-          </TooltipContent>
-        </Tooltip>
+        <AgentPersonaControl sessionId={message.sessionId} persona={message.persona} />
       )}
       <div className="min-w-0 flex-1 group">
         {isErrorMessage && (
