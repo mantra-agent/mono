@@ -5,7 +5,6 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -38,7 +37,6 @@ import {
   Bot,
   MapPin,
   Users,
-  Star,
   Trash2,
   Loader2,
   Link as LinkIcon,
@@ -145,48 +143,6 @@ interface CalendarMetadata {
     mode: "selected_shared_streams";
     sharedStreams: Array<{ selector: { attendeeEmail?: string; participantLabel?: string } }>;
   } | null;
-}
-
-const PERSONAL_DOMAINS = new Set([
-  "gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com",
-  "icloud.com", "me.com", "aol.com", "protonmail.com", "proton.me", "live.com", "msn.com",
-]);
-
-function isPersonalAccount(email: string): boolean {
-  return PERSONAL_DOMAINS.has(email.split("@")[1]?.toLowerCase() || "");
-}
-
-function isHighPrep(event: CalendarEvent): boolean {
-  const desc = event.description || "";
-  if (desc.includes("[no-prep]")) return false;
-  if (desc.includes("[prep-required]")) return true;
-  if (isPersonalAccount(event.accountEmail)) return true;
-  if (event.accountEmail && event.attendees && event.attendees.length > 0) {
-    const orgDomain = event.accountEmail.split("@")[1]?.toLowerCase();
-    if (orgDomain) {
-      return event.attendees.some(a => {
-        if (a.self) return false;
-        const domain = a.email.split("@")[1]?.toLowerCase();
-        return !!domain && domain !== orgDomain;
-      });
-    }
-  }
-  return false;
-}
-
-function isHighPrepWithoutTags(event: CalendarEvent): boolean {
-  if (isPersonalAccount(event.accountEmail)) return true;
-  if (event.accountEmail && event.attendees && event.attendees.length > 0) {
-    const orgDomain = event.accountEmail.split("@")[1]?.toLowerCase();
-    if (orgDomain) {
-      return event.attendees.some(a => {
-        if (a.self) return false;
-        const domain = a.email.split("@")[1]?.toLowerCase();
-        return !!domain && domain !== orgDomain;
-      });
-    }
-  }
-  return false;
 }
 
 function toISOLocal(date: Date): string {
@@ -301,7 +257,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const [description, setDescription] = useState("");
   const [selectedCalendarId, setSelectedCalendarId] = useState(calendarId || calendars[0]?.id || "");
   const [attendeesInput, setAttendeesInput] = useState("");
-  const [prepRequired, setPrepRequired] = useState(false);
   const [joinMode, setJoinMode] = useState<MeetingJoinMode>("dont_join");
   const [initialFormSnapshot, setInitialFormSnapshot] = useState<string | null>(null);
   const [recurrenceType, setRecurrenceType] = useState<string>("none");
@@ -331,7 +286,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         metadata?.agentJoinEnabled ?? false,
         metadata?.agentJoinOverride,
       );
-      setPrepRequired(isHighPrep(eventData));
       setJoinMode(resolvedJoinMode);
       setInitialFormSnapshot(JSON.stringify({
         title: eventData.summary || "",
@@ -341,7 +295,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         description: cleanDescription(eventData.description || ""),
         selectedCalendarId: eventData.calendarId || calendarId || calendars[0]?.id || "",
         attendeesInput: (eventData.attendees ?? []).map(a => a.email).join(", "),
-        prepRequired: isHighPrep(eventData),
       }));
       setInitialized(true);
     }
@@ -457,15 +410,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         .map(email => ({ email }));
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-      const descBase = description.trim();
-      let descFinal: string | undefined;
-      if (prepRequired) {
-        descFinal = descBase ? descBase + "\n[prep-required]" : "[prep-required]";
-      } else if (!isCreate && eventData && isHighPrepWithoutTags(eventData)) {
-        descFinal = descBase ? descBase + "\n[no-prep]" : "[no-prep]";
-      } else {
-        descFinal = descBase || undefined;
-      }
+      const descFinal: string | undefined = description.trim() || undefined;
 
       // Build recurrence RRULE for create only
       let recurrence: string[] | undefined;
@@ -538,7 +483,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
           description,
           selectedCalendarId,
           attendeesInput,
-          prepRequired,
         }));
       }
       if (isCreate) {
@@ -635,7 +579,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     description,
     selectedCalendarId,
     attendeesInput,
-    prepRequired,
   });
   const hasUnsavedChanges = isCreate || (initialFormSnapshot !== null && currentFormSnapshot !== initialFormSnapshot);
 
@@ -849,15 +792,6 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
               </ProfileTreeRow>
             )}
 
-            <ProfileTreeRow label="Prep Required" icon={<Star className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-event-prep-required">
-              <Switch
-                checked={prepRequired}
-                onCheckedChange={setPrepRequired}
-                disabled={isReadOnly}
-                aria-label="Prep Required"
-                data-testid="switch-prep-required"
-              />
-            </ProfileTreeRow>
           </div>
 
           {/* Attendees */}

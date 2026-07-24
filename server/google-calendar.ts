@@ -299,31 +299,3 @@ function mapEvent(ev: any, calendarId: string, accountId: string, accountEmail: 
   };
 }
 
-// ─── High-prep event detection ───
-
-const PERSONAL_DOMAINS = new Set([
-  'gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com',
-  'outlook.com', 'icloud.com', 'me.com', 'aol.com',
-  'protonmail.com', 'proton.me', 'live.com', 'msn.com',
-]);
-
-export function isHighPrepEvent(event: CalendarEvent): boolean {
-  const desc = event.description || '';
-  if (desc.includes('[no-prep]')) return false;
-  if (desc.includes('[prep-required]')) return true;
-
-  if (event.accountEmail) {
-    const domain = event.accountEmail.split('@')[1]?.toLowerCase();
-    if (domain && PERSONAL_DOMAINS.has(domain)) return true;
-    if (domain && (event.attendees?.length ?? 0) > 0) {
-      const hasExternal = event.attendees!.some(a => {
-        if (a.self) return false;
-        const attendeeDomain = a.email.split('@')[1]?.toLowerCase();
-        return attendeeDomain && attendeeDomain !== domain;
-      });
-      if (hasExternal) return true;
-    }
-  }
-
-  return false;
-}

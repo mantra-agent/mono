@@ -5,7 +5,7 @@ import { listGmailAccounts } from "./gmail";
 import {
   hasCalendarAccess,
   listCalendars, listEvents, listAllEvents, getEvent, createEvent, updateEvent, deleteEvent,
-  isHighPrepEvent, type CalendarEvent
+  type CalendarEvent
 } from "./google-calendar";
 import { getTimezone, getDateInTimezone } from "./timezone";
 import { PeopleStorage, peopleStorage } from "./people-storage";
@@ -325,36 +325,6 @@ export function registerCalendarRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/calendar/upcoming", async (_req, res) => {
-    try {
-      const tz = getTimezone();
-      const now = new Date();
-      const timeMin = now.toISOString();
-
-      const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const fourWeeksLater = new Date(now.getTime() + 28 * 24 * 60 * 60 * 1000);
-
-      const upcomingResult = await listAllEvents({
-        timeMin,
-        timeMax: sevenDaysLater.toISOString(),
-        maxResults: 250,
-      });
-
-      const fourWeekResult = await listAllEvents({
-        timeMin: sevenDaysLater.toISOString(),
-        timeMax: fourWeeksLater.toISOString(),
-        maxResults: 250,
-      });
-
-      const highPrep = fourWeekResult.events.filter(isHighPrepEvent);
-      const errors = [...upcomingResult.errors, ...fourWeekResult.errors];
-
-      res.json({ upcoming: upcomingResult.events, highPrep, ...(errors.length > 0 ? { errors } : {}) });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   app.post("/api/calendar/sync", async (_req, res) => {
     try {
       const gmailAccounts = await listGmailAccounts();
@@ -369,79 +339,6 @@ export function registerCalendarRoutes(app: Express): void {
       );
 
       res.json({ synced: true, accountCount });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/calendar/prep-briefs", async (_req, res) => {
-    try {
-      const tz = getTimezone();
-      const now = new Date();
-      const twoWeeksOut = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
-      const { events } = await listAllEvents({ timeMin: now.toISOString(), timeMax: twoWeeksOut.toISOString() });
-      const prepEvents = events.filter(e => isHighPrepEvent(e));
-
-      if (prepEvents.length === 0) {
-        return res.json({ briefs: [] });
-      }
-
-      const peopleStorage = new PeopleStorage();
-      const allPeople = await peopleStorage.listPeople();
-      const emailToPerson = new Map<string, any>();
-      for (const p of allPeople) {
-        const person = p as any;
-        if (person.email) emailToPerson.set(person.email.toLowerCase(), person);
-        if (person.emails) {
-          for (const e of person.emails) emailToPerson.set(e.toLowerCase(), person);
-        }
-      }
-
-      const briefs = prepEvents.slice(0, 10).map(event => {
-        const attendeeDetails = (event.attendees || [])
-          .filter(a => !a.self)
-          .map(a => {
-            const person = emailToPerson.get(a.email?.toLowerCase() || "");
-            if (person) {
-              const lastInteraction = person.interactions?.length > 0
-                ? person.interactions[person.interactions.length - 1]
-                : null;
-              return {
-                email: a.email,
-                name: a.displayName || person.name,
-                personId: person.id,
-                relationship: person.relation || person.cabinetLevel || null,
-                summary: person.summary || null,
-                lastInteraction: lastInteraction ? { date: lastInteraction.date, type: lastInteraction.type, summary: lastInteraction.summary } : null,
-              };
-            }
-            return {
-              email: a.email,
-              name: a.displayName || null,
-              personId: null,
-              relationship: null,
-              summary: null,
-              lastInteraction: null,
-            };
-          });
-
-        return {
-          eventId: event.id,
-          calendarId: event.calendarId,
-          accountId: event.accountId,
-          summary: event.summary,
-          start: event.start,
-          end: event.end,
-          location: event.location,
-          description: event.description,
-          attendeeCount: (event.attendees || []).length,
-          attendees: attendeeDetails,
-          isHighPrep: true,
-          daysUntil: Math.ceil((new Date(event.start?.dateTime || event.start?.date || "").getTime() - now.getTime()) / (24 * 60 * 60 * 1000)),
-        };
-      });
-
-      res.json({ briefs });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

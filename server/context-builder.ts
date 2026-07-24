@@ -35,7 +35,7 @@ import { personaStorage } from "./file-storage/persona-storage";
 import { renderFocusContextBlock } from "@shared/models/chat";
 import { peopleStorage } from "./people-storage";
 import { chatFileStorage } from "./chat-file-storage";
-import { listAllEvents, isHighPrepEvent, hasCalendarAccess } from "./google-calendar";
+import { listAllEvents, hasCalendarAccess } from "./google-calendar";
 import { listGmailAccounts } from "./gmail";
 import { getJournalEntriesSince } from "./thoughts";
 import { getRecentThoughts } from "./thoughts";
@@ -1332,26 +1332,14 @@ async function fetchCalendarData(): Promise<string> {
       const attendees = (e.attendees || []).filter((a: any) => !a.self).map((a: any) => a.displayName || a.email).slice(0, 5);
       const attendeeStr = attendees.length > 0 ? ` (with ${attendees.join(", ")})` : "";
       const loc = e.location ? ` @ ${e.location}` : "";
-      const prep = isHighPrepEvent(e) ? " ⚑" : "";
       const annotation = buildAnnotation(e.id, e.accountId, e.calendarId);
-      return `- ${formatTime(e.start?.dateTime || e.start?.date || "")} — ${e.summary || "(untitled)"}${attendeeStr}${loc}${prep}${annotation}`;
+      return `- ${formatTime(e.start?.dateTime || e.start?.date || "")} — ${e.summary || "(untitled)"}${attendeeStr}${loc}${annotation}`;
     });
 
-    let weekSection = `### Upcoming (next 7 days)\n${eventLines.join("\n")}\n\n⚑ = high-prep event`;
+    let weekSection = `### Upcoming (next 7 days)\n${eventLines.join("\n")}`;
 
 
     sections.push(weekSection);
-  }
-
-  const highPrepEvents = monthEvents.filter(e => isHighPrepEvent(e));
-  if (highPrepEvents.length > 0) {
-    const prepLines = highPrepEvents.slice(0, 8).map(e => {
-      const attendees = (e.attendees || []).filter((a: any) => !a.self).map((a: any) => a.displayName || a.email).slice(0, 3);
-      const attendeeStr = attendees.length > 0 ? ` (${(e.attendees || []).length} attendees incl. ${attendees.join(", ")})` : "";
-      const annotation = buildAnnotation(e.id, e.accountId, e.calendarId);
-      return `- ${formatDate(e.start?.dateTime || e.start?.date || "")} — ${e.summary || "(untitled)"}${attendeeStr}${annotation}`;
-    });
-    sections.push(`### High-Prep Events (2-4 weeks out)\n${prepLines.join("\n")}\n\nThese events may need preparation. Proactively mention them when relevant.`);
   }
 
   return sections.length > 0 ? sections.join("\n\n") : "No upcoming events.";
