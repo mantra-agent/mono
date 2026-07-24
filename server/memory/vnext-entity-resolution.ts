@@ -9,6 +9,18 @@ export interface ResolvedVnextEntityMention {
 }
 
 /**
+ * Canonical set of entity types a vNext claim mention can resolve and link to.
+ * Single source of truth shared by extraction, lifecycle mention parsing, and
+ * resolution. These must not diverge: if a consumer omits a type, mentions of
+ * that type are silently dropped and never become entity links.
+ */
+export const VNEXT_LINKABLE_ENTITY_TYPES = ["person", "company", "project", "goal"] as const;
+export type VnextLinkableEntityType = (typeof VNEXT_LINKABLE_ENTITY_TYPES)[number];
+export function isVnextLinkableEntityType(value: unknown): value is VnextLinkableEntityType {
+  return typeof value === "string" && (VNEXT_LINKABLE_ENTITY_TYPES as readonly string[]).includes(value);
+}
+
+/**
  * Resolve vNext claim entity mentions against People, Companies, Projects, and Goals.
  * Returns only high-confidence, unambiguous matches so lifecycle linking fails closed.
  */

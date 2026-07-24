@@ -5,7 +5,11 @@ import {
   type VnextBridgeCandidate,
   type VnextLifecycleCandidate,
 } from "./vnext-claim-storage";
-import { resolveVnextEntityMentions } from "./vnext-entity-resolution";
+import {
+  resolveVnextEntityMentions,
+  isVnextLinkableEntityType,
+  type VnextLinkableEntityType,
+} from "./vnext-entity-resolution";
 
 const log = createLogger("MemoryVnextLifecycle");
 
@@ -113,15 +117,14 @@ function recordRetirement(result: VnextLifecycleRunResult, reason: string): void
   result.retiredByReason[reason] = (result.retiredByReason[reason] ?? 0) + 1;
 }
 
-function parseEntityMentions(claim: MemoryVnextClaim): Array<{ name: string; entityType: "person" | "project" | "goal" }> {
+function parseEntityMentions(claim: MemoryVnextClaim): Array<{ name: string; entityType: VnextLinkableEntityType }> {
   if (!Array.isArray(claim.entityMentions)) return [];
   return claim.entityMentions.flatMap((mention) => {
     if (!mention || typeof mention !== "object") return [];
     const value = mention as Record<string, unknown>;
     const name = typeof value.name === "string" ? value.name.trim() : "";
-    const entityType = typeof value.entityType === "string" ? value.entityType : "";
-    if (!name || (entityType !== "person" && entityType !== "project" && entityType !== "goal")) return [];
-    return [{ name, entityType }];
+    if (!name || !isVnextLinkableEntityType(value.entityType)) return [];
+    return [{ name, entityType: value.entityType }];
   });
 }
 
