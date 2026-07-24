@@ -122,6 +122,52 @@ async function ensureUserCanSeeVault(principal: Principal, vaultId: string): Pro
     .where(eq(users.id, principal.userId));
 }
 
+/**
+ * Assert that `vaultId` is a live, writable destination vault for `principal`,
+ * returning the validated id. Shared authorization gate for filing a page into
+ * an explicitly chosen vault (create-at-vault-root). Parallels the
+ * in-transaction check in library-move.ts's requireDestinationVault, but runs
+ * against the module `db` for pre-insert validation. Throws status-bearing
+ * errors so routes surface 403 rather than 500.
+ */
+export async function assertWritableVault(
+  principal: Principal,
+  vaultId: string,
+): Promise<string> {
+  if (!principal.accountId) {
+    throw Object.assign(
+      new Error("An account principal is required to file into a vault"),
+      { status: 403 },
+    );
+  }
+  if (
+    principal.actorType !== "system" &&
+    !principal.visibleVaultIds.includes(vaultId)
+  ) {
+    throw Object.assign(new Error("Destination vault is not visible"), {
+      status: 403,
+    });
+  }
+  const [vault] = await db
+    .select({ id: vaults.id })
+    .from(vaults)
+    .where(
+      and(
+        eq(vaults.id, vaultId),
+        eq(vaults.accountId, principal.accountId),
+        eq(vaults.isArchived, false),
+      ),
+    )
+    .limit(1);
+  if (!vault) {
+    throw Object.assign(
+      new Error("Destination vault not found, writable, or active"),
+      { status: 403 },
+    );
+  }
+  return vault.id;
+}
+
 export async function ensureVaultPage(input: {
   principal: Principal;
   vaultId: string;

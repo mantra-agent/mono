@@ -16,6 +16,7 @@ export interface CreateFiledLibraryPageInput {
   markdown: string;
   purpose?: string | null;
   explicitParentId?: string | null;
+  explicitVaultId?: string | null;
   pageContext?: string | null;
   contentSummary?: string | null;
   tags?: string[];
@@ -92,6 +93,7 @@ export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput)
     tags: input.tags ?? [],
     structuralRole: input.structuralRole ?? null,
     explicitParentId: input.explicitParentId ?? null,
+    explicitVaultId: input.explicitVaultId ?? null,
   }, principal);
   const synced = syncContentFields({ markdown: input.markdown });
   const slugBase = slugifyLibraryTitle(input.title, "page");
