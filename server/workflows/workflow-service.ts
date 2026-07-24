@@ -292,43 +292,11 @@ function workflowResultEvent(result: string): string {
           : "fail";
 }
 
-// Recovers a stage child's declared verdict from its final output when the child ends
-// without calling complete_stage_attempt. Tolerant of the formatting variance models
-// actually emit: a heading or bracket tag, an optional bounded label word before the
-// noun ("Stage Outcome", "Final Outcome"), and emphasis markers around the label, the
-// word "outcome", or the verdict itself ("**pass**"). The verdict \b anchor is kept so
-// prose like "fail-safe" or "passing" cannot false-match, and no arbitrary prose prefix
-// is allowed: a false positive that mislabels a fail as a pass is worse than a false
-// negative here, so the line-start/heading anchor stays.
-const EXPLICIT_OUTCOME_PATTERN = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:\[[^\]\n]+\]\s*)?[*_]{0,2}(?:(?:stage|final|step|overall|workflow|verdict|result)\s+)?[*_]{0,2}outcome[*_]{0,2}\s*:\s*[*_]{0,2}\s*(pass(?:ed)?|fail(?:ed)?|blocked|skipped|needs[_ -]?review)\b/gi;
-
-function completedChildOutcome(output: string): { result: string; failureContext: Record<string, unknown> } {
-  const matches = [...output.matchAll(EXPLICIT_OUTCOME_PATTERN)].map((match) => {
-    const normalized = match[1].toLowerCase().replace(/[ -]/g, "_");
-    if (normalized === "pass") return "passed";
-    if (normalized === "fail") return "failed";
-    return normalized;
-  });
-  const unique = [...new Set(matches)];
-  if (unique.length === 1) {
-    return {
-      result: unique[0],
-      failureContext: {
-        reason: "terminal_child_outcome_recovered",
-        source: "child-session-monitor",
-        declaredOutcome: unique[0],
-      },
-    };
-  }
-  return {
-    result: "failed",
-    failureContext: {
-      reason: unique.length > 1 ? "ambiguous_terminal_child_outcome" : "missing_terminal_child_outcome",
-      source: "child-session-monitor",
-      declaredOutcomes: unique,
-    },
-  };
-}
+// The stage verdict has exactly one source of truth: the structured
+// complete_stage_attempt row (enum-validated, atomically claimed, drives the
+// transition). There is deliberately no prose fallback. A child that ends
+// without recording a verdict has not decided anything the engine may act on;
+// the monitor fails that attempt for retry rather than guessing from markdown.
 
 async function projectSessionArtifactsToWorkflow(
   workflowRunId: string,
@@ -562,12 +530,16 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
     }
   }
 
+  const stageAttemptIdForCompletion = "stageAttemptId" in context && Number.isSafeInteger((context as WorkflowStageInputContext & { stageAttemptId?: number }).stageAttemptId)
+    ? (context as WorkflowStageInputContext & { stageAttemptId: number }).stageAttemptId
+    : null;
   lines.push(
     "",
     "## Completion",
-    `Workflow run: ${context.workflowRunId}. Attempt ${context.attemptNumber}/${context.maxAttempts}.`,
+    `Workflow run: ${context.workflowRunId}.${stageAttemptIdForCompletion !== null ? ` Stage attempt: ${stageAttemptIdForCompletion}.` : ""} Attempt ${context.attemptNumber}/${context.maxAttempts}.`,
     "Execute only this assigned stage. Do not create or start another workflow; this workflow owns downstream orchestration.",
-    "State the outcome, cite the evidence created, and name the next required action for any failure or blocker.",
+    "Your terminal action MUST be a single `complete_stage_attempt` call that records this attempt's verdict as structured data: pass the workflow run ID, the stage attempt ID above, and `result` set to exactly one of `passed`, `failed`, `blocked`, `needs_review`, or `skipped`, together with the evidence you produced and — for any fail or blocker — the failure reason and the next required action.",
+    "Do not report the verdict only as prose. A stage attempt that ends without a `complete_stage_attempt` call records no verdict, is treated as a failed attempt, and is retried.",
   );
   return lines.join("\n");
 }
@@ -701,12 +673,22 @@ async function monitorWorkflowChild(
 
   switch (result.status) {
     case "completed": {
-      const declared = completedChildOutcome(result.output);
-      log.warn(`[monitor] Workflow child ${childSessionId} completed without checkpointing ${stageTitle} #${attemptNumber}; reconciling attempt ${attemptId} as ${declared.result}`);
+      // Reached only when the child session ended while its attempt was still
+      // active — i.e. it never recorded a verdict through complete_stage_attempt
+      // (had it done so, the status check above would have short-circuited). We
+      // do not infer the verdict from prose: an unrecorded verdict is a failed
+      // attempt, retried with a fresh, more forceful instruction. The run never
+      // advances on a guessed pass.
+      log.warn(`[monitor] Workflow child ${childSessionId} ended without recording a verdict for ${stageTitle} #${attemptNumber}; failing attempt ${attemptId} as missing_verdict for retry`);
       await completeStageAttempt(runId, attemptId, {
-        result: declared.result,
+        result: "failed",
         outputSummary: truncateOutput(result.output, 500),
-        failureContext: { ...declared.failureContext, childSessionId },
+        failureContext: {
+          reason: "missing_verdict",
+          source: "child-session-monitor",
+          childSessionId,
+          nextSuggestedFix: "End the retry with a single complete_stage_attempt call recording the structured verdict.",
+        },
       });
       break;
     }
