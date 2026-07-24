@@ -11,34 +11,27 @@ function primaryReference(item: SimpleFeedItem) {
   return item.references?.[0] ?? (item.sourceRefs?.[0] ? sourceRefToReferenceRef(item.sourceRefs[0]) : null);
 }
 
-/** Derive a short reason label for Tier 1 items */
-function tierLabel(item: SimpleFeedItem): string | null {
-  const tier = item.payload?.surfaceTier;
-  if (tier !== 1) return null;
-  if (item.payload?.responseOwedDetails) return "Response owed";
-  if (item.payload?.commitmentDetails) return "Open commitment";
-  return null;
-}
+const OUTREACH_LABELS: Record<string, string> = {
+  follow_up: "Follow-up with",
+  check_in: "Check-in with",
+  reconnect: "Reconnect with",
+};
 
 function PersonInline({ item }: { item: SimpleFeedItem }) {
   const reference = primaryReference(item);
-  const badge = stringPayload(item, "contextBadge");
-  const label = tierLabel(item);
-  // Prefer tier label over generic badge, fall back to suggestedAction
-  const subtitle = label || badge || stringPayload(item, "suggestedAction");
+  const outreachType = stringPayload(item, "outreachType");
+  const outreachLabel = outreachType ? OUTREACH_LABELS[outreachType] : null;
+  const badge = stringPayload(item, "contextBadge") || stringPayload(item, "suggestedAction");
 
   return (
     <div className="flex min-w-0 items-center gap-1.5">
+      {outreachLabel ? <span className="shrink-0 text-xs text-muted-foreground">{outreachLabel}</span> : null}
       {reference ? (
         <ReferenceRenderer refValue={reference} surface="simple-row" />
       ) : (
         <span className="truncate text-sm font-medium">{item.title}</span>
       )}
-      {subtitle ? (
-        <span className={`shrink-0 text-xs ${label ? "text-warning-foreground" : "text-muted-foreground"}`}>
-          {subtitle}
-        </span>
-      ) : null}
+      {!outreachLabel && badge ? <span className="shrink-0 text-xs text-muted-foreground">{badge}</span> : null}
     </div>
   );
 }
