@@ -13552,7 +13552,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       if (!entityId) return { result: "Missing 'entityId' parameter", error: true };
       try {
         const { memoryVnextClaimStorage } = await import("./memory/vnext-claim-storage");
-        await memoryVnextClaimStorage.linkClaimToEntity(claimId, entityType, entityId);
+        await memoryVnextClaimStorage.linkClaimToEntity(claimId, entityType, entityId, { method: "manual_tool" });
         return { result: JSON.stringify({ linked: true, storage: "memory_vnext_claims", claimId, entityType, entityId }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

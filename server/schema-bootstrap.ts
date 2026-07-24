@@ -2670,6 +2670,8 @@ export async function runSchemaBootstrap(
         claim_id INTEGER NOT NULL REFERENCES memory_vnext_claims(id) ON DELETE CASCADE,
         entity_type TEXT NOT NULL,
         entity_id TEXT NOT NULL,
+        resolution_method TEXT NOT NULL DEFAULT 'manual',
+        matched_identity TEXT,
         scope TEXT NOT NULL DEFAULT 'user',
         owner_user_id TEXT,
         account_id TEXT,
@@ -2679,6 +2681,8 @@ export async function runSchemaBootstrap(
         CONSTRAINT uk_memory_vnext_entity_link UNIQUE (claim_id, entity_type, entity_id)
       )
     `);
+    await pool.query(`ALTER TABLE memory_vnext_entity_links ADD COLUMN IF NOT EXISTS resolution_method TEXT NOT NULL DEFAULT 'manual'`);
+    await pool.query(`ALTER TABLE memory_vnext_entity_links ADD COLUMN IF NOT EXISTS matched_identity TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_entity_claim ON memory_vnext_entity_links(claim_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_entity ON memory_vnext_entity_links(entity_type, entity_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_entity_scope_owner ON memory_vnext_entity_links(scope, owner_user_id)`);
@@ -5297,11 +5301,11 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS account_id TEXT`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS template_persona_id INTEGER`);
-    // Persona-owned context/tool bundles and their defaults-version marker.
-    // seedDefaults() runs right after schema bootstrap and reads/writes these columns,
-    // but numbered migrations are not guaranteed to have applied first — a missing
-    // column here throws 42703 and crash-loops boot. Guarantee them in the self-heal
-    // path before seeding. Defaults mirror shared/models/cognition.ts.
+    // Persona-owned context-section bundle and tool bundle (introduced with the
+    // schema in #1109). seedDefaults() runs right after schema bootstrap and inserts
+    // these columns, but numbered migrations are not guaranteed to have applied them
+    // first — a missing column here throws 42703 and crash-loops boot. Guarantee them
+    // in the self-heal path before seeding. Defaults mirror shared/models/cognition.ts.
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS context_sections JSONB DEFAULT '{}'::jsonb`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS tool_bundle JSONB DEFAULT '[]'::jsonb`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS bundle_defaults_version INTEGER NOT NULL DEFAULT 0`);
@@ -6232,6 +6236,57 @@ export async function runSchemaBootstrap(
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_scope_owner ON companies(scope, owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(name)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS company_identity_keys (
+        id SERIAL PRIMARY KEY,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        value TEXT NOT NULL,
+        normalized_value TEXT NOT NULL,
+        identity_namespace TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        scope TEXT NOT NULL DEFAULT 'user',
+        owner_user_id TEXT,
+        account_id TEXT,
+        created_by_user_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        revoked_at TIMESTAMPTZ,
+        revoked_by_user_id TEXT
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_company_identity_keys_company ON company_identity_keys(company_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_company_identity_keys_scope_owner ON company_identity_keys(scope, owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_company_identity_keys_normalized ON company_identity_keys(normalized_value)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_company_identity_keys_active_namespace_value ON company_identity_keys(identity_namespace, normalized_value) WHERE revoked_at IS NULL`);
+    await pool.query(`
+      INSERT INTO company_identity_keys (
+        company_id, kind, value, normalized_value, identity_namespace, source,
+        scope, owner_user_id, account_id, created_by_user_id
+      )
+      SELECT c.id, 'canonical', c.name,
+        lower(regexp_replace(trim(c.name), '\\s+', ' ', 'g')),
+        CASE WHEN c.scope = 'global' THEN 'global' ELSE 'account:' || COALESCE(c.account_id, 'owner:' || COALESCE(c.owner_user_id, 'system')) END,
+        'bootstrap', c.scope, c.owner_user_id, c.account_id, c.owner_user_id
+      FROM companies c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM company_identity_keys k
+        WHERE k.company_id = c.id AND k.kind = 'canonical' AND k.revoked_at IS NULL
+      )
+      ON CONFLICT DO NOTHING
+    `);
+    await pool.query(`
+      UPDATE company_identity_keys k
+      SET revoked_at = CURRENT_TIMESTAMP, revoked_by_user_id = 'bootstrap-conflict'
+      WHERE k.kind = 'canonical'
+        AND k.revoked_at IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM companies c
+          WHERE (CASE WHEN c.scope = 'global' THEN 'global' ELSE 'account:' || COALESCE(c.account_id, 'owner:' || COALESCE(c.owner_user_id, 'system')) END) = k.identity_namespace
+            AND lower(regexp_replace(trim(c.name), '\\s+', ' ', 'g')) = k.normalized_value
+            AND c.id <> k.company_id
+        )
+    `);
     await pool.query(`ALTER TABLE persons ADD COLUMN IF NOT EXISTS company_id TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_persons_company_id ON persons(company_id)`);
   });

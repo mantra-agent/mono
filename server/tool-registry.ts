@@ -484,6 +484,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         id: { type: "string", description: "Company ID or exact name" },
         query: { type: "string", description: "Company search query" },
         name: { type: "string", description: "Company name" },
+        aliases: { type: "array", items: { type: "string" }, description: "Complete exact alternate-name set for canonical identity resolution (for create/update). Updates replace active aliases; rename preserves the previous canonical name as an alias." },
         description: { type: "string", description: "Company description" },
         website: { type: "string", description: "Company website" },
         industry: { type: "string", description: "Company industry" },

@@ -576,6 +576,8 @@ export const memoryVnextEntityLinks = pgTable(
       .references(() => memoryVnextClaims.id, { onDelete: "cascade" }),
     entityType: text("entity_type").notNull(),
     entityId: text("entity_id").notNull(),
+    resolutionMethod: text("resolution_method").notNull().default("manual"),
+    matchedIdentity: text("matched_identity"),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
