@@ -11031,11 +11031,25 @@ ${refs}` : ""),
           setData.plainTextContent = synced.plainTextContent;
         }
         const parentIdProvided = args.parentId !== undefined;
+        const vaultProvided = args.destinationVaultId !== undefined;
+        // "" and the string "null" both mean the vault root (no parent); a real
+        // id string is a reparent. When only destinationVaultId is supplied, the
+        // intent is "move to that vault's root", so the destination parent is null.
+        // Without this, a vault-only move silently no-ops (parent unchanged) and a
+        // "null" string is looked up as a page id and 404s — the exact failure that
+        // blocked cross-vault moves through this tool.
+        const normalizedExplicitParent =
+          args.parentId === "" || args.parentId === "null"
+            ? null
+            : (args.parentId as string | null);
         const newParentId = parentIdProvided
-          ? (args.parentId === "" ? null : (args.parentId as string | null))
-          : oldParentId;
+          ? normalizedExplicitParent
+          : vaultProvided
+            ? null
+            : oldParentId;
+        const shouldMove = parentIdProvided || vaultProvided;
         let movedPage: typeof libraryPages.$inferSelect | null = null;
-        if (parentIdProvided) {
+        if (shouldMove) {
           const { moveLibraryPage } = await import("./library-move");
           const moveResult = await moveLibraryPage(
             {
@@ -11057,7 +11071,7 @@ ${refs}` : ""),
           const updated = await db.transaction(async (tx) => {
             // Lock the old parent always, plus the new parent when it's
             // changing. Sorted dedup happens inside the helper.
-            const lockTargets = parentIdProvided && newParentId !== oldParentId
+            const lockTargets = shouldMove && newParentId !== oldParentId
               ? [oldParentId, newParentId]
               : [oldParentId];
             await acquireLibraryParentLocks(tx, lockTargets);
