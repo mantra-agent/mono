@@ -155,7 +155,7 @@ function AudioSourcePolicyControl({
       variant="ghost"
       size="sm"
       className={cn(
-        "h-9 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground",
+        "h-7 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground",
         isShared && !failed && "text-active hover:text-active",
         failed && "text-destructive hover:text-destructive",
       )}
@@ -322,7 +322,7 @@ function PersonAssignmentControl({
 function ExpectedPerson({ participant }: { participant: MeetingParticipant }) {
   if (participant.personId) {
     return (
-      <div className="flex min-h-11 min-w-0 items-center px-3">
+      <div className="flex min-h-8 min-w-0 items-center px-2 py-1.5">
         <ReferenceRenderer
           refValue={createReferenceRef({
             type: "person",
@@ -336,7 +336,7 @@ function ExpectedPerson({ participant }: { participant: MeetingParticipant }) {
     );
   }
   return (
-    <div className="flex min-h-11 items-center gap-2 px-3 text-sm text-muted-foreground">
+    <div className="flex min-h-8 items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
       <UserRound className="h-3.5 w-3.5 shrink-0" />
       <span className="truncate">{participant.label}</span>
     </div>
@@ -354,7 +354,7 @@ function SpeakerState({
   const active = stream?.status === "active";
   return (
     <div
-      className="flex min-h-11 min-w-0 items-center gap-2 px-3 text-sm text-muted-foreground"
+      className="flex min-h-8 min-w-0 items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground"
       title={recognitionTitle(stream)}
     >
       <Mic2 className={cn(
@@ -406,7 +406,7 @@ export function MeetingSpeakerAssignments({
             >
               <div className="min-w-0 border-b border-border/10 sm:border-b-0 sm:border-r">
                 {hasStableSpeaker && participant ? (
-                  <div className="flex min-h-11 min-w-0 items-center px-3">
+                  <div className="flex min-h-8 min-w-0 items-center px-2 py-1.5">
                     <PersonAssignmentControl
                       participant={participant}
                       sessionId={sessionId}
@@ -417,7 +417,7 @@ export function MeetingSpeakerAssignments({
                 ) : participant ? (
                   <ExpectedPerson participant={participant} />
                 ) : (
-                  <div className="flex min-h-11 items-center gap-2 px-3 text-sm text-muted-foreground">
+                  <div className="flex min-h-8 items-center gap-2 px-2 py-1.5 text-sm text-muted-foreground">
                     <UserRound className="h-3.5 w-3.5 shrink-0" />
                     <span>Unresolved person</span>
                   </div>
@@ -427,7 +427,7 @@ export function MeetingSpeakerAssignments({
                 <SpeakerState participant={participant} stream={row.stream} />
               ) : null}
               {meeting.botStatus === "live" && row.stream ? (
-                <div className="px-1 pb-1 sm:pb-0 sm:pr-2">
+                <div className="flex items-center px-1 sm:pr-2">
                   <AudioSourcePolicyControl
                     sessionId={sessionId}
                     stream={row.stream}
