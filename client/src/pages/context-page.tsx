@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ChevronRight, Clock, FileJson2 } from "lucide-react";
+import { AlertTriangle, Bot, ChevronRight, FileJson2, MessageSquare, SlidersHorizontal, User, Wrench } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { usePageHeader } from "@/hooks/use-page-header";
@@ -97,6 +97,15 @@ function exactValue(value: unknown): string {
   if (typeof value === "string") return value;
   const serialized = JSON.stringify(value, null, 2);
   return serialized === undefined ? String(value) : serialized;
+}
+
+/**
+ * Same char-based estimation the accounting uses for the request-level total
+ * (requestChars / 4). Reused for per-tool and per-parameter schema weight so
+ * the numbers are consistent with the section estimates.
+ */
+function estimateTokens(value: unknown): number {
+  return Math.max(1, Math.round(exactValue(value).length / 4));
 }
 
 function positiveInteger(value: unknown): number | null {
@@ -358,12 +367,14 @@ function HtmlContent({ value }: { value: string }) {
  * add the same chevron disclosure the session menu uses.
  */
 function SessionMenuRow({
+  icon,
   label,
   meta,
   expandedContent,
   defaultOpen = false,
   testId,
 }: {
+  icon?: ReactNode;
   label: ReactNode;
   meta?: ReactNode;
   expandedContent?: ReactNode;
@@ -372,14 +383,18 @@ function SessionMenuRow({
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
+  // Match the Session-menu session-title row: leading icon, flex-1 label, then
+  // right-aligned meta followed by the disclosure control on the right.
+  const iconNode = icon != null ? <span className="flex shrink-0 items-center justify-center">{icon}</span> : null;
   const labelNode = <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>;
   const metaNode = meta != null ? (
-    <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-muted-foreground">{meta}</span>
+    <span className="shrink-0 pl-2 text-xs tabular-nums text-muted-foreground">{meta}</span>
   ) : null;
 
   if (!expandedContent) {
     return (
       <div className={cn(HIERARCHY_SESSION_ROW_CLASS, "text-muted-foreground")} data-testid={testId}>
+        {iconNode}
         {labelNode}
         {metaNode}
       </div>
@@ -389,15 +404,28 @@ function SessionMenuRow({
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
       <CollapsibleTrigger className={cn(HIERARCHY_SESSION_ROW_CLASS, "text-muted-foreground hover:bg-accent/70")}>
-        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        {iconNode}
         {labelNode}
         {metaNode}
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="px-2 pb-3 pl-7 text-xs leading-relaxed text-foreground">{expandedContent}</div>
       </CollapsibleContent>
     </Collapsible>
   );
+}
+
+function messageRoleIcon(message: unknown): ReactNode {
+  const raw = isRecord(message)
+    ? (typeof message.role === "string" ? message.role : typeof message.type === "string" ? message.type : "")
+    : "";
+  const role = raw.toLowerCase();
+  const className = "h-3.5 w-3.5 shrink-0 text-muted-foreground";
+  if (role.includes("assistant")) return <Bot className={className} />;
+  if (role.includes("tool") || role.includes("function")) return <Wrench className={className} />;
+  if (role.includes("user")) return <User className={className} />;
+  return <MessageSquare className={className} />;
 }
 
 function MessageSection({ value }: { value: unknown }) {
@@ -411,6 +439,7 @@ function MessageSection({ value }: { value: unknown }) {
         return (
           <SessionMenuRow
             key={`${label}-${index}`}
+            icon={messageRoleIcon(message)}
             label={label}
             testId={`message-row-${index}`}
             expandedContent={typeof content === "string"
@@ -439,6 +468,7 @@ function JsonSection({ value, sectionId }: { value: unknown; sectionId: string }
             return (
               <SessionMenuRow
                 key={key}
+                icon={<SlidersHorizontal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
                 label={labelFromKey(key)}
                 meta={isScalar ? scalarPreview(fieldValue) : undefined}
                 testId={`option-row-${key}`}
@@ -460,6 +490,7 @@ interface ToolParamDoc {
   typeLabel: string;
   required: boolean;
   description: string | null;
+  tokenCount: number;
 }
 
 interface ToolDoc {
@@ -508,6 +539,7 @@ function describeTool(tool: unknown): ToolDoc | null {
     typeLabel: schemaTypeLabel(paramSchema),
     required: required.includes(paramName),
     description: isRecord(paramSchema) && typeof paramSchema.description === "string" ? paramSchema.description : null,
+    tokenCount: estimateTokens(paramSchema),
   }));
 
   return { name, description, params };
@@ -530,6 +562,7 @@ function ToolDocumentation({ doc }: { doc: ToolDoc }) {
                 <span className={cn("text-xs", param.required ? "text-warning" : "text-muted-foreground")}>
                   {param.required ? "required" : "optional"}
                 </span>
+                <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{formatTokens(param.tokenCount)} tokens</span>
               </div>
               {param.description && (
                 <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{param.description}</p>
@@ -554,8 +587,9 @@ function ToolSection({ value }: { value: unknown }) {
         return (
           <SessionMenuRow
             key={`${label}-${index}`}
+            icon={<Wrench className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
             label={<span className="font-mono text-foreground">{label}</span>}
-            meta={doc ? `${doc.params.length} param${doc.params.length === 1 ? "" : "s"}` : undefined}
+            meta={`${formatTokens(estimateTokens(tool))} tokens`}
             testId={`tool-row-${index}`}
             expandedContent={doc
               ? <ToolDocumentation doc={doc} />
@@ -619,11 +653,6 @@ function PromptCaptureSections({ capture }: { capture: InferencePayloadCapture }
           <PromptSectionBlock key={section.id} section={section} defaultOpen={index === 0} />
         ))}
       </div>
-      {capture.evidence.residualLimitation && (
-        <div className="px-2 text-xs leading-relaxed text-muted-foreground" data-testid="capture-residual-limitation">
-          {capture.evidence.residualLimitation}
-        </div>
-      )}
     </div>
   );
 }
@@ -679,11 +708,6 @@ export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
               ))}
             </SelectContent>
           </Select>
-          {captureQuery.data && (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Clock className="h-3 w-3" />{new Date(captureQuery.data.capturedAt).toLocaleString()}
-            </span>
-          )}
         </div>
 
         {capturesQuery.isLoading || captureQuery.isLoading ? (

@@ -1200,9 +1200,17 @@ export async function* cliSdkStream(
       boundary: "claude-agent-sdk.query",
       authority: "Application arguments handed to @anthropic-ai/claude-agent-sdk query()",
       observableBoundary: "query({ prompt, options }) after prompt, MCP tools, and SDK options are finalized",
+      // Capture exactly the arguments handed to query({ prompt, options }).
+      // `buildPrompt(options.messages)` has already split the source array into
+      // `systemPrompt` (system-role messages) and `prompt` (the ordered
+      // [User]/[Assistant]/[Tool Result] conversation). Including the raw
+      // `options.messages` array here would re-store the system prompt (as
+      // messages[0]) and the conversation (== prompt) a second time — a Single
+      // Source of Truth violation that surfaced as the system prompt rendering
+      // twice in the Context viewer. The system prompt lives once in
+      // `systemPrompt`; the conversation lives once in `prompt`.
       request: {
         systemPrompt: initializationCapture.options.systemPrompt ?? systemPrompt ?? null,
-        messages: options.messages,
         prompt,
         options: initializationCapture.options,
         tools: initializationCapture.toolDefinitions,
