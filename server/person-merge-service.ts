@@ -830,7 +830,6 @@ export async function performPersonMerge(
       ...insertOwnership,
       ownerUserId: owner.userId,
       accountId: owner.accountId,
-      vaultId: targetRow.vaultId,
       mergedAt: new Date(),
     });
 

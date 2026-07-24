@@ -763,7 +763,6 @@ export const persons = pgTable("persons", {
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
-  vaultId: text("vault_id"),
   lastViewedAt: timestamp("last_viewed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -771,7 +770,6 @@ export const persons = pgTable("persons", {
   index("idx_persons_cabinet_level").on(table.cabinetLevel),
   index("idx_persons_company_id").on(table.companyId),
   index("idx_persons_scope_owner").on(table.scope, table.ownerUserId),
-  index("idx_persons_vault").on(table.vaultId),
 ]);
 
 export type PersonRow = typeof persons.$inferSelect;
