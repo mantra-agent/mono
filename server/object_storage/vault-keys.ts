@@ -8,7 +8,7 @@
  */
 import type { Principal } from "../principal";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { storageBackend, PRIVATE_PREFIX } from "./s3-backend";
+import { storageBackend, PRIVATE_PREFIX, type ObjectMetadata } from "./s3-backend";
 import { createLogger } from "../log";
 
 const log = createLogger("VaultKeys");
@@ -143,6 +143,43 @@ export async function resolveObjectKeyWithFallback(
   if (legacyMeta) {
     return { key: legacyKey, source: "legacy" };
   }
+
+  return null;
+}
+
+/**
+ * Resolve an object key across an ordered list of candidate vaults, then legacy.
+ *
+ * An object's bytes live in whichever vault was active when it was written, which
+ * is not necessarily the reader's currently-active vault. Trying only the active
+ * vault (plus legacy) strands objects whose home vault differs from the active one
+ * — the "image stopped rendering after switching vaults" failure. This resolver
+ * walks the ordered candidate vaults (pass the active vault first, then every vault
+ * the reader can see) and returns the first hit, so reads succeed for any object
+ * the reader is entitled to see without widening visibility beyond the reader's own
+ * vault set. Bounded by the small number of visible vaults; the active vault is
+ * tried first for the fast path.
+ *
+ * @param entityPath - The entity portion (e.g. "uploads/abc.png")
+ * @param vaultIds - Ordered candidate vault ids; nullish and duplicate ids are skipped
+ * @returns The resolved key, its source, and head metadata, or null if nothing matched
+ */
+export async function resolveObjectKeyAcrossVaults(
+  entityPath: string,
+  vaultIds: Array<string | null | undefined>,
+): Promise<{ key: string; source: "vault" | "legacy"; meta: ObjectMetadata } | null> {
+  const seen = new Set<string>();
+  for (const vaultId of vaultIds) {
+    if (!vaultId || seen.has(vaultId)) continue;
+    seen.add(vaultId);
+    const vaultKey = `${VAULT_PREFIX}${vaultId}/${entityPath}`;
+    const meta = await storageBackend.headObject(vaultKey);
+    if (meta) return { key: vaultKey, source: "vault", meta };
+  }
+
+  const legacyKey = `${PRIVATE_PREFIX}${entityPath}`;
+  const legacyMeta = await storageBackend.headObject(legacyKey);
+  if (legacyMeta) return { key: legacyKey, source: "legacy", meta: legacyMeta };
 
   return null;
 }
