@@ -10,6 +10,13 @@ import {
   combineWithWritableScope,
   ownedInsertValues,
 } from "../scoped-storage";
+import {
+  CANONICAL_PERSONA_NAMES,
+  PERSONA_BUNDLE_DEFAULTS_VERSION,
+  contextSectionsForPersona,
+  hasPersonaBundleDefaults,
+  toolBundleForPersona,
+} from "../persona-bundle-defaults";
 
 const log = createLogger("PersonaStorage");
 const personaScopeColumns = {
@@ -40,6 +47,7 @@ export interface PersonaEntry {
   routingExamples: string[];
   contextSections: Record<string, boolean>;
   toolBundle: string[];
+  bundleDefaultsVersion: number;
   isDefault: boolean;
   isActive: boolean;
   isSystem: boolean;
@@ -64,6 +72,7 @@ function rowToEntry(row: typeof personas.$inferSelect): PersonaEntry {
     routingExamples: (row.routingExamples as string[]) || [],
     contextSections: (row.contextSections as Record<string, boolean>) || {},
     toolBundle: (row.toolBundle as string[]) || [],
+    bundleDefaultsVersion: row.bundleDefaultsVersion ?? 0,
     isDefault: row.isDefault,
     isActive: row.isActive,
     isSystem: row.isSystem ?? false,
@@ -118,92 +127,6 @@ const PERSONA_ROUTING_EXAMPLES: Record<string, string[]> = {
 
 function routingExamplesForPersona(name: string): string[] {
   return PERSONA_ROUTING_EXAMPLES[name] ?? [];
-}
-
-/**
- * Per-persona context section bundles. Persona is the single source of truth for
- * which optional context sections load. Bootstrap sections always load; sections
- * marked defaultIncluded load unless a bundle sets them false. Values are deltas
- * from the default-included baseline: `true` adds an opt-in section, `false` drops
- * a default one. An empty bundle therefore reproduces the default-included context.
- */
-const DEFAULT_CONTEXT_SECTIONS: Record<string, boolean> = {
-  "memory": true,
-  "memory.recent_sessions": true,
-  "world_model.people.others": true,
-  "world_model.active_work": true,
-  "world_model.people.self.principles": true,
-  "world_model.people.self.chat_instructions": true,
-  "thoughts": true,
-  "session_context": true,
-};
-
-const PERSONA_CONTEXT_SECTIONS: Record<string, Record<string, boolean>> = {
-  Default: DEFAULT_CONTEXT_SECTIONS,
-  Companion: {
-    "memory": true,
-    "world_model.people.others": true,
-    "world_model.people.self.principles": true,
-    "world_model.people.self.journal": true,
-    "world_model.people.self.chat_instructions": true,
-    "thoughts": true,
-  },
-  Coach: {
-    "memory": true,
-    "world_model.active_work": true,
-    "world_model.people.self.principles": true,
-    "world_model.people.self.journal": true,
-    "thoughts": true,
-  },
-  Strategist: {
-    "memory": true,
-    "world_model.people.others": true,
-    "world_model.active_work": true,
-    "world_model.decisions": true,
-    "world_model.people.self.principles": true,
-    "thoughts": true,
-  },
-  Architect: {
-    "memory": true,
-    "world_model.active_work": true,
-    "world_model.decisions": true,
-    "world_model.people.self.principles": true,
-    "thoughts": true,
-  },
-  Engineer: {
-    "world_model.active_work": true,
-    "thoughts": true,
-    "world_model.people.partner.goals": false,
-  },
-  Operator: {
-    "world_model.active_work": true,
-    "world_model.decisions": true,
-    "thoughts": true,
-  },
-  Creative: {
-    "memory": true,
-    "world_model.people.self.principles": true,
-    "world_model.people.self.journal": true,
-    "thoughts": true,
-  },
-  Investigator: {
-    "memory": true,
-    "world_model.people.others": true,
-    "world_model.active_work": true,
-    "capabilities.library": true,
-    "thoughts": true,
-  },
-  Persuader: {
-    "memory": true,
-    "world_model.people.others": true,
-    "world_model.people.self.principles": true,
-  },
-  Router: {},
-};
-
-/** Resolve the context section bundle for a persona by name, defaulting to the standard conversational bundle. */
-function contextSectionsForPersona(name: string): Record<string, boolean> {
-  return PERSONA_CONTEXT_SECTIONS[name] ?? DEFAULT_CONTEXT_SECTIONS;
 }
 
 const SEED_PERSONAS = [
@@ -668,7 +591,11 @@ class PersonaStorageClass {
         cognitiveOverrides: input.cognitiveOverrides || {},
         semanticTier: input.semanticTier ?? "balanced",
         contextSections: input.contextSections ?? contextSectionsForPersona("Default"),
+        // Custom personas preserve the documented empty-bundle passthrough unless
+        // their creator explicitly selects tools. Curated defaults apply only to
+        // named canonical personas.
         toolBundle: input.toolBundle ?? [],
+        bundleDefaultsVersion: PERSONA_BUNDLE_DEFAULTS_VERSION,
         isDefault: false,
         isActive: false,
         sortOrder: maxSort + 1,
@@ -849,6 +776,7 @@ class PersonaStorageClass {
           semanticTier: target.semanticTier,
           contextSections: target.contextSections,
           toolBundle: target.toolBundle,
+          bundleDefaultsVersion: target.bundleDefaultsVersion,
           isDefault: false,
           isActive: true,
           sortOrder: maxSort + 1,
@@ -911,6 +839,14 @@ class PersonaStorageClass {
   }
 
   async seedDefaults(): Promise<void> {
+    const seedNames = SEED_PERSONAS.map((seed) => seed.name).sort();
+    const defaultNames = [...CANONICAL_PERSONA_NAMES].sort();
+    if (JSON.stringify(seedNames) !== JSON.stringify(defaultNames)) {
+      throw new Error(
+        `Persona bundle defaults must exactly cover seed personas: seeds=${seedNames.join(",")} defaults=${defaultNames.join(",")}`,
+      );
+    }
+
     for (const seed of SEED_PERSONAS) {
       await db
         .insert(personas)
@@ -924,7 +860,8 @@ class PersonaStorageClass {
           semanticTier: semanticTierForPersona(seed.name),
           routingExamples: routingExamplesForPersona(seed.name),
           contextSections: contextSectionsForPersona(seed.name),
-          toolBundle: [],
+          toolBundle: toolBundleForPersona(seed.name),
+          bundleDefaultsVersion: PERSONA_BUNDLE_DEFAULTS_VERSION,
           isDefault: seed.isDefault,
           isActive: seed.isActive,
           isSystem: (seed as { isSystem?: boolean }).isSystem ?? false,
@@ -940,8 +877,9 @@ class PersonaStorageClass {
     const removedLegacyRows = await this.reconcileLegacySeedRows();
     this.invalidateCache();
     await this.updateSeedOverlays();
+    const initializedUserCopies = await this.initializeUserPersonaBundles();
     log.log(
-      `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows`,
+      `seedDefaults: ensured ${SEED_PERSONAS.length} seed personas; removed ${removedLegacyRows} legacy scoped seed rows; initialized ${initializedUserCopies} user persona bundles`,
     );
   }
 
@@ -994,6 +932,86 @@ class PersonaStorageClass {
     return row ? rowToEntry(row) : null;
   }
 
+  /**
+   * Initialize curated bundles on existing user copies exactly once.
+   *
+   * Only canonical user copies with a known seed name participate. Empty fields
+   * inherit the curated defaults; non-empty fields are preserved as user-owned
+   * customization. The version marker makes boot retries idempotent and prevents
+   * future default revisions from silently rewriting a user's chosen bundle.
+   */
+  private async initializeUserPersonaBundles(): Promise<number> {
+    const principal = getCurrentPrincipalOrSystem();
+    const batchSize = 200;
+    let initialized = 0;
+    let lastId = 0;
+
+    while (true) {
+      const candidates = await db
+        .select({
+          id: personas.id,
+          name: personas.name,
+          contextSections: personas.contextSections,
+          toolBundle: personas.toolBundle,
+        })
+        .from(personas)
+        .where(
+          combineWithVisibleScope(
+            principal,
+            personaScopeColumns,
+            and(
+              eq(personas.source, "user"),
+              sql`${personas.bundleDefaultsVersion} < ${PERSONA_BUNDLE_DEFAULTS_VERSION}`,
+              sql`${personas.id} > ${lastId}`,
+            ),
+          ),
+        )
+        .orderBy(personas.id)
+        .limit(batchSize);
+      if (candidates.length === 0) break;
+
+      for (const candidate of candidates) {
+        lastId = candidate.id;
+        if (!hasPersonaBundleDefaults(candidate.name)) continue;
+        const currentContext = (candidate.contextSections as Record<string, boolean> | null) ?? {};
+        const currentTools = (candidate.toolBundle as string[] | null) ?? [];
+        const [updated] = await db
+          .update(personas)
+          .set({
+            contextSections: Object.keys(currentContext).length > 0
+              ? currentContext
+              : contextSectionsForPersona(candidate.name),
+            toolBundle: currentTools.length > 0
+              ? currentTools
+              : toolBundleForPersona(candidate.name),
+            bundleDefaultsVersion: PERSONA_BUNDLE_DEFAULTS_VERSION,
+            updatedAt: new Date(),
+          })
+          .where(
+            combineWithWritableScope(
+              principal,
+              personaScopeColumns,
+              and(
+                eq(personas.id, candidate.id),
+                eq(personas.source, "user"),
+                sql`${personas.bundleDefaultsVersion} < ${PERSONA_BUNDLE_DEFAULTS_VERSION}`,
+              ),
+            ),
+          )
+          .returning({ id: personas.id });
+        if (updated) initialized++;
+      }
+    }
+
+    if (initialized > 0) {
+      this.invalidateCache();
+      log.log(
+        `initializeUserPersonaBundles: initialized ${initialized} user persona copies at defaults version ${PERSONA_BUNDLE_DEFAULTS_VERSION}`,
+      );
+    }
+    return initialized;
+  }
+
   /** Update canonical global seed personas with the production definitions. */
   private async updateSeedOverlays(): Promise<void> {
     let updated = 0;
@@ -1015,7 +1033,12 @@ class PersonaStorageClass {
       const expectedContextSections = contextSectionsForPersona(seed.name);
       const needsContextUpdate =
         JSON.stringify(existing.contextSections ?? {}) !== JSON.stringify(expectedContextSections);
-      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate || needsRoutingUpdate || needsSystemUpdate || needsContextUpdate) {
+      const expectedToolBundle = toolBundleForPersona(seed.name);
+      const needsToolUpdate =
+        JSON.stringify(existing.toolBundle ?? []) !== JSON.stringify(expectedToolBundle);
+      const needsBundleVersionUpdate =
+        existing.bundleDefaultsVersion !== PERSONA_BUNDLE_DEFAULTS_VERSION;
+      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate || needsRoutingUpdate || needsSystemUpdate || needsContextUpdate || needsToolUpdate || needsBundleVersionUpdate) {
         const updates: Record<string, unknown> = { updatedAt: new Date() };
         if (needsOverlayUpdate) {
           updates.promptOverlay = seed.promptOverlay;
@@ -1030,6 +1053,8 @@ class PersonaStorageClass {
         if (needsRoutingUpdate) updates.routingExamples = routingExamplesForPersona(seed.name);
         if (needsSystemUpdate) updates.isSystem = expectedIsSystem;
         if (needsContextUpdate) updates.contextSections = expectedContextSections;
+        if (needsToolUpdate) updates.toolBundle = expectedToolBundle;
+        if (needsBundleVersionUpdate) updates.bundleDefaultsVersion = PERSONA_BUNDLE_DEFAULTS_VERSION;
         await db
           .update(personas)
           .set(updates)
@@ -1048,7 +1073,7 @@ class PersonaStorageClass {
       log.log(
         "updateSeedOverlays: updated " +
           updated +
-          " seed personas with production overlays/icons",
+          " seed personas with production overlays, context, and tool defaults",
       );
     }
   }
