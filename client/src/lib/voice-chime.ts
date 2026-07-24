@@ -3,23 +3,24 @@ type ChimeNote = { freq: number; offset: number; duration: number; gain: number 
 type ThinkingLoop = {
   ctx: AudioContext;
   master: GainNode;
-  filter: BiquadFilterNode;
+  reverb: ConvolverNode;
+  noiseBuffer: AudioBuffer;
   timers: number[];
-  oscillators: OscillatorNode[];
+  sources: AudioScheduledSourceNode[];
   stopped: boolean;
   cycleIndex: number;
 };
 
-const THINKING_ARPEGGIO = [392, 493.88, 587.33, 659.25, 587.33, 493.88];
-const THINKING_STEP_SECONDS = 0.28;
-const THINKING_PATTERN_SECONDS = THINKING_ARPEGGIO.length * THINKING_STEP_SECONDS;
-
-// A slower macro-cycle layered on top of the base pattern: each repeat transposes
-// by one of these semitone offsets before returning to the same tone. Combined
-// with the independent filter-drift cycle below, the loop doesn't sound identical
-// again for ~47s, so long thinking spans don't read as a stuck ringtone.
-const THINKING_PHRASE_SEMITONES = [0, -2, 2, -1];
-const THINKING_FILTER_DRIFT_HZ = [1450, 1620, 1300, 1550, 1220, 1700, 1380];
+// The thinking bed is percussive, not melodic: a reverb-washed "chk-a-chk-chk"
+// group of short noise transients with only a faint tonal tint. Each group is a
+// firm hit, a quick quiet grace hit ("a"), then two firm hits, followed by space
+// before the group repeats.
+const THINKING_GROUP_OFFSETS = [0, 0.085, 0.235, 0.345];
+const THINKING_HIT_GAINS = [0.9, 0.45, 0.85, 0.7];
+const THINKING_GROUP_SECONDS = 0.95;
+// Faint tonal color cycled across groups. Narrow intervals at low level so a long
+// think reads as texture with a hint of movement, never a tune.
+const THINKING_TONE_HZ = [349.23, 392, 415.3, 392];
 
 let sharedVoiceAudioContext: AudioContext | null = null;
 let thinkingLoop: ThinkingLoop | null = null;
@@ -75,11 +76,11 @@ function closeThinkingLoop(loop: ThinkingLoop, delayMs = 180): void {
     loop.master.gain.cancelScheduledValues(loop.ctx.currentTime);
     loop.master.gain.setValueAtTime(loop.master.gain.value, loop.ctx.currentTime);
     loop.master.gain.linearRampToValueAtTime(0, stopAt);
-    for (const oscillator of loop.oscillators) {
+    for (const source of loop.sources) {
       try {
-        oscillator.stop(stopAt + 0.04);
+        source.stop(stopAt + 0.04);
       } catch {
-        // Oscillator may already have ended naturally.
+        // Source may already have ended naturally.
       }
     }
   } catch {
@@ -140,61 +141,105 @@ export function playDisconnectionChime(): void {
   ]);
 }
 
-function scheduleThinkingArpeggio(loop: ThinkingLoop, startAt: number): void {
+// A decaying-noise impulse response gives the bed its atmospheric reverb tail
+// without a bundled asset. Generated once per loop start.
+function buildReverbImpulse(ctx: AudioContext, seconds: number): AudioBuffer {
+  const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
+  const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+  for (let channel = 0; channel < 2; channel += 1) {
+    const data = impulse.getChannelData(channel);
+    for (let i = 0; i < length; i += 1) {
+      const decay = Math.pow(1 - i / length, 2.6);
+      data[i] = (Math.random() * 2 - 1) * decay;
+    }
+  }
+  return impulse;
+}
+
+// A short white-noise buffer reused for every percussive transient.
+function buildNoiseBuffer(ctx: AudioContext): AudioBuffer {
+  const length = Math.max(1, Math.floor(ctx.sampleRate * 0.12));
+  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < length; i += 1) data[i] = Math.random() * 2 - 1;
+  return buffer;
+}
+
+// One "chk": a band-passed noise transient with a fast percussive envelope, plus
+// a faint triangle tick for tonal color. Both feed a dry path and a reverb send.
+function scheduleThinkingHit(
+  loop: ThinkingLoop,
+  startAt: number,
+  params: { gain: number; toneHz: number; pan: number },
+): void {
+  const ctx = loop.ctx;
+  const { gain, toneHz, pan } = params;
+
+  const panner = ctx.createStereoPanner();
+  panner.pan.setValueAtTime(pan, startAt);
+  panner.connect(loop.master);
+  panner.connect(loop.reverb);
+
+  const noise = ctx.createBufferSource();
+  noise.buffer = loop.noiseBuffer;
+  const bandpass = ctx.createBiquadFilter();
+  bandpass.type = "bandpass";
+  bandpass.frequency.setValueAtTime(1900, startAt);
+  bandpass.Q.setValueAtTime(0.8, startAt);
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.0001, startAt);
+  noiseGain.gain.linearRampToValueAtTime(gain * 0.5, startAt + 0.004);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0006, startAt + 0.07);
+  noise.connect(bandpass);
+  bandpass.connect(noiseGain);
+  noiseGain.connect(panner);
+  noise.start(startAt);
+  noise.stop(startAt + 0.12);
+  loop.sources.push(noise);
+
+  const osc = ctx.createOscillator();
+  osc.type = "triangle";
+  osc.frequency.setValueAtTime(toneHz, startAt);
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(0.0001, startAt);
+  oscGain.gain.linearRampToValueAtTime(gain * 0.16, startAt + 0.006);
+  oscGain.gain.exponentialRampToValueAtTime(0.0005, startAt + 0.12);
+  osc.connect(oscGain);
+  oscGain.connect(panner);
+  osc.start(startAt);
+  osc.stop(startAt + 0.14);
+  loop.sources.push(osc);
+}
+
+function scheduleThinkingGroup(loop: ThinkingLoop, startAt: number): void {
   if (loop.stopped) return;
 
-  const semitoneShift = THINKING_PHRASE_SEMITONES[loop.cycleIndex % THINKING_PHRASE_SEMITONES.length];
-  const transpose = Math.pow(2, semitoneShift / 12);
-  const reverseThisCycle = Math.floor(loop.cycleIndex / THINKING_PHRASE_SEMITONES.length) % 2 === 1;
-  const notes = reverseThisCycle ? [...THINKING_ARPEGGIO].reverse() : THINKING_ARPEGGIO;
-
-  notes.forEach((baseFreq, index) => {
-    const freq = baseFreq * transpose;
-    const noteStart = startAt + index * THINKING_STEP_SECONDS;
-    const noteDuration = 0.34;
-    const oscillator = loop.ctx.createOscillator();
-    const gain = loop.ctx.createGain();
-    const pan = loop.ctx.createStereoPanner();
-
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(freq, noteStart);
-    oscillator.frequency.exponentialRampToValueAtTime(freq * 1.003, noteStart + noteDuration);
-
-    gain.gain.setValueAtTime(0.0001, noteStart);
-    gain.gain.linearRampToValueAtTime(0.018, noteStart + 0.055);
-    gain.gain.exponentialRampToValueAtTime(0.001, noteStart + noteDuration);
-
-    pan.pan.setValueAtTime((index % 2 === 0 ? -0.08 : 0.08), noteStart);
-
-    oscillator.connect(gain);
-    gain.connect(pan);
-    pan.connect(loop.filter);
-
-    oscillator.start(noteStart);
-    oscillator.stop(noteStart + noteDuration + 0.03);
-    loop.oscillators.push(oscillator);
+  const toneBase = THINKING_TONE_HZ[loop.cycleIndex % THINKING_TONE_HZ.length];
+  THINKING_GROUP_OFFSETS.forEach((offset, index) => {
+    // The quiet grace hit ("a") sits a fifth up for a hint of movement.
+    const toneHz = index === 1 ? toneBase * 1.5 : toneBase;
+    const pan = index % 2 === 0 ? -0.06 : 0.06;
+    scheduleThinkingHit(loop, startAt + offset, {
+      gain: THINKING_HIT_GAINS[index],
+      toneHz,
+      pan,
+    });
   });
-
-  // Drift the lowpass cutoff on its own, longer-period cycle so timbre and
-  // pitch don't reset in lockstep — the two cycles only realign after
-  // lcm(phrase, drift) repeats, well past any normal thinking turn.
-  const driftHz = THINKING_FILTER_DRIFT_HZ[loop.cycleIndex % THINKING_FILTER_DRIFT_HZ.length];
-  loop.filter.frequency.cancelScheduledValues(startAt);
-  loop.filter.frequency.setValueAtTime(loop.filter.frequency.value, startAt);
-  loop.filter.frequency.linearRampToValueAtTime(driftHz, startAt + THINKING_PATTERN_SECONDS * 0.6);
 
   loop.cycleIndex += 1;
   const nextTimer = window.setTimeout(() => {
-    scheduleThinkingArpeggio(loop, loop.ctx.currentTime + 0.04);
-  }, THINKING_PATTERN_SECONDS * 1000);
+    scheduleThinkingGroup(loop, loop.ctx.currentTime + 0.03);
+  }, THINKING_GROUP_SECONDS * 1000);
   loop.timers.push(nextTimer);
 }
 
 /**
- * Starts the canonical thinking bed for voice turns. The sound is intentionally
- * quiet and melodic: a soft ascending/descending arpeggio that reads as active
- * work without becoming a ringtone or a drone. It stops via
- * `stopVoiceThinkingLoop()` as soon as speech begins.
+ * Starts the canonical thinking bed for voice turns. The sound is a quiet,
+ * reverb-washed percussive pulse ("chk-a-chk-chk") with only a faint tonal tint
+ * — it reads as active processing without becoming a ringtone, a drone, or a dry
+ * click track. Onset delay and barge-in are enforced by the caller; this
+ * function starts producing sound the moment it is invoked. Stop via
+ * `stopVoiceThinkingLoop()`.
  */
 export function startVoiceThinkingLoop(): void {
   if (thinkingLoop) return;
@@ -202,29 +247,40 @@ export function startVoiceThinkingLoop(): void {
     const ctx = getVoiceAudioContext();
     if (!ctx) return;
     void ctx.resume();
+
     const master = ctx.createGain();
-    const filter = ctx.createBiquadFilter();
-
     master.gain.setValueAtTime(0, ctx.currentTime);
-    master.gain.linearRampToValueAtTime(0.82, ctx.currentTime + 0.16);
-
-    filter.type = "lowpass";
-    filter.frequency.setValueAtTime(1450, ctx.currentTime);
-    filter.Q.setValueAtTime(0.45, ctx.currentTime);
-    filter.connect(master);
+    master.gain.linearRampToValueAtTime(0.6, ctx.currentTime + 0.2);
     master.connect(ctx.destination);
 
-    const loop: ThinkingLoop = { ctx, master, filter, timers: [], oscillators: [], stopped: false, cycleIndex: 0 };
+    const reverb = ctx.createConvolver();
+    reverb.buffer = buildReverbImpulse(ctx, 1.5);
+    const reverbGain = ctx.createGain();
+    reverbGain.gain.setValueAtTime(0.7, ctx.currentTime);
+    reverb.connect(reverbGain);
+    reverbGain.connect(master);
+
+    const loop: ThinkingLoop = {
+      ctx,
+      master,
+      reverb,
+      noiseBuffer: buildNoiseBuffer(ctx),
+      timers: [],
+      sources: [],
+      stopped: false,
+      cycleIndex: 0,
+    };
     thinkingLoop = loop;
-    scheduleThinkingArpeggio(loop, ctx.currentTime + 0.04);
+    scheduleThinkingGroup(loop, ctx.currentTime + 0.05);
   } catch {
     // AudioContext may be blocked or unavailable. Visual feedback still works.
   }
 }
 
-export function stopVoiceThinkingLoop(): void {
+export function stopVoiceThinkingLoop(options?: { immediate?: boolean }): void {
   const loop = thinkingLoop;
   thinkingLoop = null;
   if (!loop) return;
-  closeThinkingLoop(loop);
+  // Barge-in requires a hard stop (<=100ms); ordinary stops may fade gently.
+  closeThinkingLoop(loop, options?.immediate ? 30 : 160);
 }
