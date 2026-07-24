@@ -302,8 +302,8 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         );
         const validPayloads = candidatePayloads.filter(Boolean);
 
-        log.log(`scan: invoking news-curation skill for ${validPayloads.length} candidates`);
-        await executeAutonomousSkillRun("news-curation", {
+        log.log(`scan: invoking curate skill for ${validPayloads.length} candidates`);
+        await executeAutonomousSkillRun("curate", {
           preContext: JSON.stringify({
             candidates: validPayloads,
             recentSurfaced: recentDedupDigest.map(entry => ({
@@ -312,7 +312,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
               topics: entry.matchedTopics.slice(0, 8),
             })),
           }),
-          spawnReason: "news-curation-scan",
+          spawnReason: "curate-scan",
         });
 
         const decisions = await readCurationResults();

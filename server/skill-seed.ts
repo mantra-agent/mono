@@ -28,6 +28,10 @@ const SKILL_RENAMES: Record<string, string> = {
   "landscape-scan": "scan",
   "opportunity-research": "research",
   "council-advocate": "advocate",
+  "coaching-model-1-0": "coach",
+  "news-curation": "curate",
+  "reliability-sentinel": "sentry",
+  "security-sentinel": "guard",
 };
 
 export async function migrateSkillRenames(): Promise<void> {
@@ -48,8 +52,8 @@ export async function migrateSkillRenames(): Promise<void> {
 
 const ADDITIONAL_SKILL_RECOMMENDATIONS: Record<string, string> = {
   "affirm": "Companion",
-  "coaching-model-1-0": "Coach",
-  "news-curation": "Investigator",
+  "coach": "Coach",
+  "curate": "Investigator",
   "research": "Investigator",
   "scan": "Operator",
 };
