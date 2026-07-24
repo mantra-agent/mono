@@ -328,7 +328,10 @@ function PayloadTreeNode({ node, defaultOpen = false }: { node: PayloadNode; def
       expandedContentClassName="min-w-0 max-w-full overflow-hidden pl-8"
       expandedContent={expandedContent}
     >
-      <span className="truncate text-muted-foreground">{nodeMeta(node)}</span>
+      <span className="flex min-w-0 items-center justify-end gap-2">
+        <span className="truncate text-muted-foreground">{nodeMeta(node)}</span>
+        <span className="shrink-0 tabular-nums text-muted-foreground">{formatTokens(estimateTokens(node.value))} tokens</span>
+      </span>
     </ProfileTreeRow>
   );
 }
@@ -470,7 +473,12 @@ function JsonSection({ value, sectionId }: { value: unknown; sectionId: string }
                 key={key}
                 icon={<SlidersHorizontal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
                 label={labelFromKey(key)}
-                meta={isScalar ? scalarPreview(fieldValue) : undefined}
+                meta={
+                  <span className="flex items-center justify-end gap-2">
+                    {isScalar ? <span className="text-muted-foreground/70">{scalarPreview(fieldValue)}</span> : null}
+                    <span className="shrink-0">{formatTokens(estimateTokens(fieldValue))} tokens</span>
+                  </span>
+                }
                 testId={`option-row-${key}`}
                 expandedContent={isScalar
                   ? undefined
