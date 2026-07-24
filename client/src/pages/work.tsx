@@ -78,7 +78,6 @@ import {
   MessageSquare,
   MoreHorizontal,
   ArrowUpFromLine,
-  Link2,
   StickyNote,
   Pencil,
   FileText,
@@ -845,7 +844,6 @@ function TaskRow({
   onDelete,
   projects,
   isDone,
-  hideProjectAssign,
   onDiscuss,
   discussPending,
 }: {
@@ -858,7 +856,6 @@ function TaskRow({
   onDelete: () => void;
   projects: Project[];
   isDone?: boolean;
-  hideProjectAssign?: boolean;
   onDiscuss: (item: DiscussableWorkItem) => void;
   discussPending: boolean;
 }) {
@@ -1089,36 +1086,6 @@ function TaskRow({
               })}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
-          {!hideProjectAssign && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger data-testid={`menu-task-assign-${task.id}`}>
-                <Link2 className="h-3.5 w-3.5 mr-2" />
-                Assign to Project
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {task.projectId && (
-                  <DropdownMenuItem onClick={() => onUpdate({ projectId: null })} data-testid={`menu-task-unassign-${task.id}`}>
-                    <X className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
-                    Unassign
-                  </DropdownMenuItem>
-                )}
-                {availableProjects.length === 0 && !task.projectId && (
-                  <DropdownMenuItem disabled>No active projects</DropdownMenuItem>
-                )}
-                {availableProjects.map(p => (
-                  <DropdownMenuItem
-                    key={p.id}
-                    onClick={() => onUpdate({ projectId: p.id })}
-                    data-testid={`menu-task-assign-project-${p.id}`}
-                  >
-                    <FolderKanban className="h-3.5 w-3.5 mr-2" />
-                    {p.title}
-                    {task.projectId === p.id && <Check className="h-3 w-3 ml-auto" />}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          )}
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
               {task.owner === "me" ? <User className="h-3.5 w-3.5 mr-2" /> : <Bot className="h-3.5 w-3.5 mr-2" />}
@@ -2318,7 +2285,6 @@ function ProjectTreeNode({
                         onDelete={() => onDeleteTask(task)}
                         projects={projects}
                         isDone={task.status === "done"}
-                        hideProjectAssign
                         onDiscuss={onDiscuss}
                         discussPending={discussPending}
                       />
@@ -2363,7 +2329,6 @@ function ProjectTreeNode({
                   onDelete={() => onDeleteTask(task)}
                   projects={projects}
                   isDone={task.status === "done"}
-                  hideProjectAssign
                   onDiscuss={onDiscuss}
                   discussPending={discussPending}
                 />
