@@ -143,12 +143,32 @@ function withPeopleSummaryStatus(
   };
 }
 
-function normalizeRequiredTools(value: unknown): string[] | null {
-  if (!Array.isArray(value)) return null;
-  const tools = value
-    .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
-    .map((t) => t.trim());
-  return tools.length > 0 ? tools : null;
+/**
+ * Write-boundary validation for deterministic checklist items. The checklist
+ * is the single quality-specification surface; tool references inside it must
+ * name real registry tools, or a typo would silently degrade every future run.
+ * Returns an error message, or null when valid.
+ */
+async function validateChecklistToolRefs(checklist: unknown): Promise<string | null> {
+  if (!Array.isArray(checklist)) return null;
+  const deterministic = checklist.filter(
+    (item): item is { check?: unknown; kind?: unknown; tool?: unknown } =>
+      !!item && typeof item === "object" && (item as { kind?: unknown }).kind === "tool_invoked",
+  );
+  if (deterministic.length === 0) return null;
+  const missing = deterministic.filter((item) => typeof item.tool !== "string" || item.tool.trim().length === 0);
+  if (missing.length > 0) {
+    return `Checklist items with kind "tool_invoked" require a tool name (${missing.length} item(s) missing one).`;
+  }
+  const { getBridgeToolNames } = await import("./tool-registry");
+  const known = await getBridgeToolNames();
+  const unknown = deterministic
+    .map((item) => (item.tool as string).trim())
+    .filter((tool) => !known.has(tool));
+  if (unknown.length > 0) {
+    return `Unknown tool name(s) in deterministic checklist items: ${unknown.join(", ")}. Use tools(action=list) for valid names.`;
+  }
+  return null;
 }
 
 function normalizeScoreThreshold(value: unknown): number | null {
@@ -7392,11 +7412,13 @@ ${lines.join("\n")}` };
           parts.push(`\nProcess:\n${skill.process}`);
           if (skill.whenToUse) parts.push(`\nWhen To Use:\n${skill.whenToUse}`);
           if (skill.outputSpec) parts.push(`Output Spec:\n${skill.outputSpec}`);
-          const requiredTools = Array.isArray(skill.requiredTools)
-            ? (skill.requiredTools as unknown[]).filter((t): t is string => typeof t === "string")
+          const deterministicTools = Array.isArray(skill.checklist)
+            ? (skill.checklist as Array<{ kind?: unknown; tool?: unknown }>)
+                .filter((c) => !!c && c.kind === "tool_invoked" && typeof c.tool === "string")
+                .map((c) => c.tool as string)
             : [];
-          if (requiredTools.length > 0) {
-            parts.push(`Required tools (deterministic coverage gate): ${requiredTools.join(", ")} — a run missing any terminates degraded.`);
+          if (deterministicTools.length > 0) {
+            parts.push(`Deterministic tool checks (from checklist): ${deterministicTools.join(", ")} — a run without a successful invocation of each terminates degraded.`);
           }
           if (typeof skill.scoreThreshold === "number") {
             parts.push(`Score threshold: scored runs below ${Math.round(skill.scoreThreshold * 100)}% checklist pass rate reconcile to degraded.`);
@@ -7406,6 +7428,8 @@ ${lines.join("\n")}` };
         }
         case "create": {
           if (!args.name || !args.process) return { result: "Missing required fields: name, process", error: true };
+          const checklistError = await validateChecklistToolRefs(args.checklist);
+          if (checklistError) return { result: checklistError, error: true };
           const newSkill = await storage.createSkill({
             name: args.name,
             description: args.description || "",
@@ -7414,7 +7438,6 @@ ${lines.join("\n")}` };
             outputSpec: args.outputSpec || "",
             qualityCriteria: "",
             checklist: Array.isArray(args.checklist) ? args.checklist : [],
-            ...(args.requiredTools !== undefined ? { requiredTools: normalizeRequiredTools(args.requiredTools) } : {}),
             ...(args.scoreThreshold !== undefined ? { scoreThreshold: normalizeScoreThreshold(args.scoreThreshold) } : {}),
             status: "active",
             author: getInstanceName(),
@@ -7434,8 +7457,11 @@ ${lines.join("\n")}` };
           for (const key of ["name", "description", "process", "whenToUse", "outputSpec", "status", "version", "category", "activity", "sessionType"]) {
             if (args[key] !== undefined) updates[key] = args[key];
           }
-          if (args.checklist !== undefined) updates.checklist = Array.isArray(args.checklist) ? args.checklist : [];
-          if (args.requiredTools !== undefined) updates.requiredTools = normalizeRequiredTools(args.requiredTools);
+          if (args.checklist !== undefined) {
+            const checklistError = await validateChecklistToolRefs(args.checklist);
+            if (checklistError) return { result: checklistError, error: true };
+            updates.checklist = Array.isArray(args.checklist) ? args.checklist : [];
+          }
           if (args.scoreThreshold !== undefined) updates.scoreThreshold = args.scoreThreshold === null ? null : normalizeScoreThreshold(args.scoreThreshold);
           const updated = await storage.updateSkill(id, updates);
           if (!updated) return { result: `Failed to update skill "${id}"`, error: true };

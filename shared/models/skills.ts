@@ -22,9 +22,19 @@ export type SkillInputType = typeof skillInputTypes[number];
 export const skillCategories = ["memory", "thinking", "chat", "goals", "people", "projects", "strategy", "reflection", "development", "other"] as const;
 export type SkillCategory = typeof skillCategories[number];
 
+export const checklistKinds = ["judgment", "tool_invoked"] as const;
+export type ChecklistKind = typeof checklistKinds[number];
+
 export interface ChecklistItem {
   check: string;
   weight?: number;
+  /** Evaluation kind. "judgment" (default) is scored by the LLM evaluator.
+   * "tool_invoked" is deterministic: passes iff `tool` has at least one
+   * successful invocation in the run's persisted tool calls. */
+  kind?: ChecklistKind;
+  /** Tool name for kind "tool_invoked". Validated against the unified tool
+   * registry at the skills tool write boundary. */
+  tool?: string;
 }
 
 export interface CheckResult {
@@ -41,6 +51,10 @@ export interface ComparativeResult {
 export const checklistItemSchema = z.object({
   check: z.string().min(1),
   weight: z.number().optional(),
+  kind: z.enum(checklistKinds).optional(),
+  tool: z.string().min(1).optional(),
+}).refine((item) => item.kind !== "tool_invoked" || typeof item.tool === "string", {
+  message: 'checklist items with kind "tool_invoked" require a tool name',
 });
 
 export const skills = pgTable("skills", {
@@ -68,11 +82,10 @@ export const skills = pgTable("skills", {
 
   checklist: jsonb("checklist").notNull().default(sql`'[]'::jsonb`),
 
-  // Deterministic run-quality config. requiredTools: tool names that must each
-  // have at least one successful invocation for a run to terminate "succeeded".
-  // scoreThreshold: minimum checklist pass rate (0-1) below which a succeeded
-  // run is reconciled to "degraded" after async scoring. Null = no gating.
-  requiredTools: jsonb("required_tools"),
+  // scoreThreshold: minimum checklist pass rate (0-1) below which a scored
+  // "succeeded" run is reconciled to "degraded". Null = no gating. Deterministic
+  // per-tool gating lives in checklist items with kind "tool_invoked" — the
+  // checklist is the single quality-specification surface.
   scoreThreshold: real("score_threshold"),
 
   status: text("status").notNull().default("draft"),
@@ -162,7 +175,6 @@ export const insertSkillSchema = createInsertSchema(skills).omit({
   budgetBehavior: z.string().nullable().optional(),
   sessionType: z.enum(sessionTypes).nullable().optional(),
   checklist: z.array(checklistItemSchema).optional().default([]),
-  requiredTools: z.array(z.string().min(1)).nullable().optional(),
   scoreThreshold: z.number().min(0).max(1).nullable().optional(),
   references: z.array(z.object({
     name: z.string().min(1),

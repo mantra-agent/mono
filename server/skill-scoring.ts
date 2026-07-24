@@ -108,7 +108,7 @@ async function buildSessionTranscript(sessionId: string): Promise<{ transcript: 
   const transcriptBudget = TRANSCRIPT_CHAR_BUDGET - artifactBlocks.length;
   const transcript = truncateForBudget(fullTranscript, transcriptBudget) + artifactBlocks;
 
-  return { transcript, hasActivity: hasAssistantActivity(messages) || artifacts.length > 0 };
+  return { transcript, hasActivity: hasAssistantActivity(messages) || artifacts.length > 0, messages };
 }
 
 const log = createLogger("SkillScoring");
@@ -117,6 +117,36 @@ const DEFAULT_CHECKLIST: ChecklistItem[] = [
   { check: "Skill produced meaningful output relevant to its purpose", weight: 1 },
   { check: "No error indicators in output", weight: 1 },
 ];
+
+/**
+ * Single quality-evaluation home. The checklist is the only specification of
+ * run quality: deterministic items (kind "tool_invoked") are evaluated here in
+ * code, judgment items by the LLM evaluator below. The runner invokes these
+ * same deterministic functions at run terminal, so early gating and async
+ * scoring can never disagree on an objective check.
+ */
+export function extractSuccessfulToolInvocations(messages: FileMessage[]): Set<string> {
+  const invoked = new Set<string>();
+  for (const m of messages) {
+    if (!Array.isArray(m.toolCalls)) continue;
+    for (const tc of m.toolCalls as ToolCallInfo[]) {
+      if (tc && typeof tc.toolName === "string" && tc.status === "done") invoked.add(tc.toolName);
+    }
+  }
+  return invoked;
+}
+
+export function evaluateDeterministicItem(item: ChecklistItem, invokedTools: Set<string>): CheckResult | null {
+  if (item?.kind !== "tool_invoked" || typeof item.tool !== "string") return null;
+  const passed = invokedTools.has(item.tool);
+  return {
+    check: item.check,
+    passed,
+    evidence: passed
+      ? `Deterministic: tool "${item.tool}" had a successful invocation.`
+      : `Deterministic: no successful invocation of tool "${item.tool}" in this run.`,
+  };
+}
 
 export function registerSkillScoringListener(): void {
   eventBus.on("event", async (busEvent: { event: string; payload: Record<string, unknown> }) => {
@@ -180,20 +210,39 @@ async function scoreSkillRun(
     log.log(`${skillId}: no custom checklist defined, using default checklist`);
   }
 
-  const { transcript, hasActivity } = await buildSessionTranscript(sessionId);
+  const { transcript, hasActivity, messages } = await buildSessionTranscript(sessionId);
 
   if (!hasActivity) {
     log.warn(`${skillId}: no output found in ${sessionId}, skipping`);
     return;
   }
 
-  const checkResults = await evaluateChecklist(skillId, checklist, transcript);
+  // One checklist, two evaluator kinds: deterministic items are computed in
+  // code from persisted tool calls; only judgment items go to the LLM. Results
+  // merge back in checklist order into a single passRate.
+  const invokedTools = extractSuccessfulToolInvocations(messages);
+  const deterministicByIndex = new Map<number, CheckResult>();
+  checklist.forEach((item, i) => {
+    const result = evaluateDeterministicItem(item, invokedTools);
+    if (result) deterministicByIndex.set(i, result);
+  });
+  const judgmentIndexes = checklist.map((_, i) => i).filter((i) => !deterministicByIndex.has(i));
+  const judgmentResults = judgmentIndexes.length > 0
+    ? await evaluateChecklist(skillId, judgmentIndexes.map((i) => checklist[i]), transcript)
+    : [];
 
-  const allParseErrors = checkResults.length > 0 && checkResults.every((r) => r.evidence === "Evaluation parse error");
+  const allParseErrors = judgmentResults.length > 0 && judgmentResults.every((r) => r.evidence === "Evaluation parse error");
   if (allParseErrors) {
-    log.warn(`${skillId}: all checklist items returned parse errors for ${sessionId}, skipping score recording`);
+    log.warn(`${skillId}: all judgment checklist items returned parse errors for ${sessionId}, skipping score recording`);
     return;
   }
+
+  const checkResults: CheckResult[] = checklist.map((item, i) => {
+    const deterministic = deterministicByIndex.get(i);
+    if (deterministic) return deterministic;
+    const j = judgmentIndexes.indexOf(i);
+    return judgmentResults[j] ?? { check: item.check, passed: false, evidence: "No evaluation result" };
+  });
 
   const passed = checkResults.filter((r) => r.passed).length;
   const total = checkResults.length;

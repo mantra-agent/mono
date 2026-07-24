@@ -189,17 +189,17 @@ export class SkillTimerHandler implements TimerHandler {
     }
 
     if (result.status === "degraded") {
-      const gaps = result.coverageGaps?.join(", ") || "unknown";
+      const failed = result.failedToolChecks?.join(", ") || "unknown";
       log.warn(
-        `Skill timer "${timer.name}" run degraded sessionId=${result.sessionId} — required tools never successfully invoked: ${gaps}`,
+        `Skill timer "${timer.name}" run degraded sessionId=${result.sessionId} — deterministic checklist tool checks failed: ${failed}`,
       );
       return {
         outcome: "degraded",
-        reason: `missing_required_tools: ${gaps}`,
+        reason: `tool_coverage_failed: ${failed}`,
         output: {
           sessionId: result.sessionId,
           skillRunStatus: result.status,
-          coverageGaps: result.coverageGaps,
+          failedToolChecks: result.failedToolChecks,
         },
       };
     }
