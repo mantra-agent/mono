@@ -14,7 +14,7 @@ import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { SessionTranscriptPanel } from "@/components/session-transcript-panel";
 import { XyzIconButton } from "@/components/app-sidebar";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
-import { VaultToggles } from "@/components/vault-toggles";
+import { VaultSwitcher } from "@/components/vault-switcher";
 // Tooltip import removed — FAB tooltip no longer needed
 import { apiRequest } from "@/lib/queryClient";
 import { deleteSessionTree } from "@/lib/session-deletion";
@@ -859,7 +859,7 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
             className="flex shrink-0 items-center justify-center"
             style={{ width: `${transcriptPanelWidth}px` }}
           >
-            <VaultToggles />
+            <VaultSwitcher />
           </div>
           <div className="flex flex-1 items-center justify-end gap-2 px-2">
             <ConnectionsIndicator />
