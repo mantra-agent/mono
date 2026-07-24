@@ -57,6 +57,19 @@ export async function registerCognitionRoutes(app: Express) {
     }
   });
 
+  // Catalog of agent tools a persona bundle can toggle. Core tools are marked so
+  // the editor can render them as always-on; an empty bundle loads all tools.
+  app.get("/api/personas/tool-catalog", async (_req, res) => {
+    log.debug("GET /api/personas/tool-catalog");
+    try {
+      const { getToolCatalog } = await import("../tool-registry");
+      res.json(getToolCatalog());
+    } catch (error: any) {
+      log.error("GET /api/personas/tool-catalog error:", error?.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   const createPersonaSchema = z.object({
     name: z.string().min(1).max(100),
     description: z.string().max(1000).optional(),

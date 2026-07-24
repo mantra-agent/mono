@@ -1758,6 +1758,79 @@ export function getToolSchemas(): ToolSchema[] {
   return cachedSchemas;
 }
 
+/**
+ * Always-loaded core tools. Available to every persona regardless of its tool
+ * bundle, because they are the minimum set required to communicate, orient,
+ * reason, remember, and manage work. Persona tool bundles are additive on top of
+ * this core; they never remove a core tool. `orient` is deliberately core: it is
+ * the escape hatch that lets any persona switch mode, so no bundle can ever trap
+ * the agent without a needed tool.
+ */
+export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "converse",
+  "orient",
+  "question",
+  "cognition",
+  "observe",
+  "memory",
+  "goals",
+  "tasks",
+  "people",
+  "library",
+  "session",
+  "tools",
+]);
+
+/**
+ * Gate a tool-schema list by a persona's tool bundle.
+ *
+ * Semantics mirror persona context bundles: an empty (or absent) bundle means
+ * "no gating" — every tool passes through, preserving today's behavior so no
+ * existing persona regresses. A non-empty bundle scopes the model's tools to the
+ * always-on core plus the bundle's explicit inclusions. This is a separate axis
+ * from authority filtering (which decides what a session is *allowed* to call);
+ * this decides what the active *mode* loads, to keep the per-call tool budget lean.
+ */
+export function filterToolsForPersonaBundle<T extends { name: string }>(
+  schemas: T[],
+  bundle: string[] | null | undefined,
+): T[] {
+  if (!bundle || bundle.length === 0) return schemas;
+  const included = new Set(bundle);
+  return schemas.filter(schema => CORE_TOOL_NAMES.has(schema.name) || included.has(schema.name));
+}
+
+export interface ToolCatalogEntry {
+  name: string;
+  description: string;
+  category: string;
+  isCore: boolean;
+}
+
+/** First sentence (or a bounded prefix) of a tool description, for compact catalog labels. */
+function toolSummaryLine(description: string): string {
+  const trimmed = (description || "").trim();
+  const period = trimmed.indexOf(". ");
+  const firstSentence = period > 0 ? trimmed.slice(0, period + 1) : trimmed;
+  return firstSentence.length > 160 ? `${firstSentence.slice(0, 157).trimEnd()}…` : firstSentence;
+}
+
+/**
+ * Catalog of agent tools a persona bundle can toggle, for the persona editor.
+ * Core tools are marked so the UI can render them as always-on. Skill/bridge
+ * tools are included by the same TOOLS source; the editor decides presentation.
+ */
+export function getToolCatalog(): ToolCatalogEntry[] {
+  return Object.entries(TOOLS)
+    .map(([name, meta]) => ({
+      name,
+      description: toolSummaryLine(meta.description),
+      category: normalizeCategory(meta.category),
+      isCore: CORE_TOOL_NAMES.has(name),
+    }))
+    .sort((a, b) => (a.isCore === b.isCore ? a.name.localeCompare(b.name) : a.isCore ? -1 : 1));
+}
+
 export async function generateToolsMd(): Promise<string> {
   const tools = await getToolRegistry();
 
