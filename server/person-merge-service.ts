@@ -833,29 +833,10 @@ export async function performPersonMerge(
       mergedAt: new Date(),
     });
 
-    const sourceMemberships = await tx
-      .select({ vaultId: personVaultMemberships.vaultId })
-      .from(personVaultMemberships)
-      .where(
-        combineWithWritableScope(
-          principal,
-          personVaultMembershipScope,
-          eq(personVaultMemberships.personId, sourceId),
-        ),
-      );
-    if (sourceMemberships.length > 0) {
-      await tx.insert(personVaultMemberships)
-        .values(sourceMemberships.map(({ vaultId }) => ({
-          personId: targetId,
-          vaultId,
-          scope: "user",
-          ownerUserId: owner.userId,
-          accountId: owner.accountId,
-          createdByUserId: owner.userId,
-        })))
-        .onConflictDoNothing();
-    }
-
+    // Person merge is target-authoritative for vault membership: the survivor
+    // keeps exactly its own curated vault set. Source memberships are discarded
+    // (the source Person row is deleted below, cascading its membership rows via
+    // the personId FK), so a merge can never resurrect a vault the user removed.
     await repointReferences(
       tx,
       principal,
@@ -875,10 +856,19 @@ export async function performPersonMerge(
     await tx.delete(persons).where(
       writablePersonPredicate(principal, eq(persons.id, sourceId)),
     );
-    merged.person.vaultIds = [...new Set([
-      ...(merged.person.vaultIds || []),
-      ...sourceMemberships.map(({ vaultId }) => vaultId),
-    ])].sort();
+    const survivorMemberships = await tx
+      .select({ vaultId: personVaultMemberships.vaultId })
+      .from(personVaultMemberships)
+      .where(
+        combineWithWritableScope(
+          principal,
+          personVaultMembershipScope,
+          eq(personVaultMemberships.personId, targetId),
+        ),
+      );
+    merged.person.vaultIds = [...new Set(
+      survivorMemberships.map(({ vaultId }) => vaultId),
+    )].sort();
 
     return {
       sourcePersonId: sourceId,
