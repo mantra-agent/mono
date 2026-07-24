@@ -21,6 +21,7 @@ import {
   vaultObjectKeyFromPrincipal,
   isVaultKey,
   VAULT_PREFIX,
+  resolveObjectKeyAcrossVaults,
 } from "./vault-keys";
 
 const log = createLogger("ObjectStorage");
@@ -221,8 +222,14 @@ export class ObjectStorageService {
   }
 
   // Gets the object entity file from the object path.
-  // Supports dual-read: tries vault-prefixed key first (if principal has activeVaultId),
-  // then falls back to legacy private/ key.
+  //
+  // Resolution walks the reader's vaults, not just the currently-active one.
+  // Objects live in whichever vault was active at write time, so binding reads to
+  // the active vault alone stranded objects whose home vault differs from it (the
+  // "image stopped rendering after switching vaults" failure). We try the active
+  // vault first, then every vault the reader can see, then the legacy `private/`
+  // key. Access is still gated by the ACL owner check at the route boundary, so
+  // resolving across the reader's visible vaults does not widen visibility.
   async getObjectEntityFile(objectPath: string, principal?: Principal | null): Promise<StorageObjectRef> {
     if (!objectPath.startsWith("/objects/")) {
       throw new ObjectNotFoundError();
@@ -233,26 +240,20 @@ export class ObjectStorageService {
       throw new ObjectNotFoundError();
     }
 
-    // Resolve principal for vault-aware lookup
+    // Resolve principal for vault-aware lookup. Active vault first (fast path),
+    // then every vault the reader can see; system/no-principal callers contribute
+    // no vaults and fall straight to the legacy key.
     const resolvedPrincipal = principal ?? getCurrentPrincipalOrSystem();
-    const vaultId = resolvedPrincipal?.activeVaultId;
+    const candidateVaults = [
+      resolvedPrincipal?.activeVaultId,
+      ...(resolvedPrincipal?.visibleVaultIds ?? []),
+    ];
 
-    // Try vault-prefixed key first
-    if (vaultId) {
-      const vaultKey = `${VAULT_PREFIX}${vaultId}/${entityId}`;
-      const vaultMeta = await storageBackend.headObject(vaultKey);
-      if (vaultMeta) {
-        return new StorageObjectRef(vaultKey, vaultMeta);
-      }
-    }
-
-    // Fall back to legacy key
-    const legacyKey = `${PRIVATE_PREFIX}${entityId}`;
-    const legacyMeta = await storageBackend.headObject(legacyKey);
-    if (!legacyMeta) {
+    const resolved = await resolveObjectKeyAcrossVaults(entityId, candidateVaults);
+    if (!resolved) {
       throw new ObjectNotFoundError();
     }
-    return new StorageObjectRef(legacyKey, legacyMeta);
+    return new StorageObjectRef(resolved.key, resolved.meta);
   }
 
   // Rewrites an absolute storage URL (e.g. a presigned PUT URL the client
