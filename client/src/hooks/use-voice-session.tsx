@@ -283,24 +283,73 @@ export function VoiceSessionProvider({ children }: { children: ReactNode }) {
   // the callback itself, so the second call is a hard no-op.
   const isStartingRef = useRef(false);
   const disconnectChimePlayedRef = useRef(false);
+  // Onset-grace timer and playing flag for the thinking-audio bed. This effect
+  // is the single producer of thinking-sound playback for BOTH the web synth and
+  // the native (WebView→RN bridge) synth, so delayed onset and instant barge-in
+  // kill are enforced once here rather than patched per surface.
+  const thinkingAudioGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const thinkingAudioPlayingRef = useRef(false);
 
   useEffect(() => {
-    const shouldPlayThinkingAudio = status === "active" && voiceThinking && agentMode !== "speaking";
+    // Grace period before the sound may fade in. Fast turns that resolve inside
+    // this window never play it at all, so the bed only signals a genuinely long
+    // "still processing" pause rather than firing on every turn.
+    const ONSET_GRACE_MS = 1000;
 
-    if (isNative) {
-      sendToNative({ type: "voice.thinkingAudio", active: shouldPlayThinkingAudio });
-      return;
-    }
+    const shouldPlayThinkingAudio =
+      status === "active" &&
+      voiceThinking &&
+      agentMode !== "speaking" &&
+      !userSpeaking;
+
+    const startPlayback = () => {
+      thinkingAudioPlayingRef.current = true;
+      if (isNative) {
+        sendToNative({ type: "voice.thinkingAudio", active: true });
+      } else {
+        startVoiceThinkingLoop();
+      }
+    };
+
+    const stopPlayback = (immediate: boolean) => {
+      if (thinkingAudioGraceTimerRef.current !== null) {
+        clearTimeout(thinkingAudioGraceTimerRef.current);
+        thinkingAudioGraceTimerRef.current = null;
+      }
+      if (!thinkingAudioPlayingRef.current) return;
+      thinkingAudioPlayingRef.current = false;
+      if (isNative) {
+        // Native stopThinkingAudioLoop() halts immediately, satisfying barge-in.
+        sendToNative({ type: "voice.thinkingAudio", active: false });
+      } else {
+        stopVoiceThinkingLoop({ immediate });
+      }
+    };
 
     if (shouldPlayThinkingAudio) {
-      startVoiceThinkingLoop();
+      // Already playing or already counting down — don't re-arm the grace timer.
+      if (thinkingAudioPlayingRef.current || thinkingAudioGraceTimerRef.current !== null) {
+        return;
+      }
+      thinkingAudioGraceTimerRef.current = setTimeout(() => {
+        thinkingAudioGraceTimerRef.current = null;
+        startPlayback();
+      }, ONSET_GRACE_MS);
       return;
     }
-    stopVoiceThinkingLoop();
-  }, [agentMode, isNative, status, voiceThinking]);
+
+    // User speech demands an instant kill; other stops (agent speaking, session
+    // ending) may use the gentler fade.
+    stopPlayback(userSpeaking);
+  }, [agentMode, isNative, status, voiceThinking, userSpeaking]);
 
   useEffect(() => () => {
-    stopVoiceThinkingLoop();
+    if (thinkingAudioGraceTimerRef.current !== null) {
+      clearTimeout(thinkingAudioGraceTimerRef.current);
+      thinkingAudioGraceTimerRef.current = null;
+    }
+    thinkingAudioPlayingRef.current = false;
+    stopVoiceThinkingLoop({ immediate: true });
     if (isNative) sendToNative({ type: "voice.thinkingAudio", active: false });
   }, [isNative]);
 
