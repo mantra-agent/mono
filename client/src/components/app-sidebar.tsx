@@ -222,7 +222,7 @@ function NavigationOrb({ status, onClick }: { status: string; onClick?: () => vo
       data-testid="button-sidebar-toggle"
     >
       <AgentOrb
-        state="idle"
+        state="listening"
         maxFrameRate={20}
         className="pointer-events-none absolute inset-0"
       />
