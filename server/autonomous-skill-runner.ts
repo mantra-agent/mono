@@ -884,7 +884,7 @@ export async function executeAutonomousSkillRun(
   try {
     const result = config.skillId === "council"
       ? await runCouncilPipeline(config, sessionId, options)
-      : await runSkillPipeline(config, sessionId, options);
+      : await runSkillPipeline(config, sessionId, options, authoritySkillId);
 
     if (result.status === "yielded") {
       const error = "Execution yielded under genuine capacity pressure. The parent may retry or resume this child.";
@@ -1134,7 +1134,8 @@ async function runCouncilPipeline(
 async function runSkillPipeline(
   config: SkillRunConfig,
   sessionId: string,
-  options: { preContext?: string; parentSessionId?: string; spawnReason?: string; spawnerTool?: string; spawnerSkillRun?: string; modelOverride?: string; sessionKeyOverride?: string; admissionTier?: AdmissionTier; lineageId?: string }
+  options: { preContext?: string; parentSessionId?: string; spawnReason?: string; spawnerTool?: string; spawnerSkillRun?: string; modelOverride?: string; sessionKeyOverride?: string; admissionTier?: AdmissionTier; lineageId?: string },
+  authoritySkillId: string | undefined,
 ): Promise<AutonomousRunResult> {
   const startTime = Date.now();
   const abortController = new AbortController();
