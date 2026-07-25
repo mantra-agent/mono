@@ -1327,10 +1327,12 @@ export const TOOLS: Record<string, ToolMeta> = {
         prompt_overlay: { type: "string", description: "Behavioral prompt overlay (for create_persona, update_persona)" },
         expression_tags: { type: "array", items: { type: "string" }, description: "Recommended expression tags (for create_persona, update_persona)" },
         cognitive_overrides: { type: "object", description: "Cognitive parameter overrides (for create_persona, update_persona)" },
+        context_sections: { type: "object", additionalProperties: { type: "boolean" }, description: "Persisted context section bundle mapping section IDs to enabled/disabled (for create_persona, update_persona)" },
+        tool_bundle: { type: "array", items: { type: "string" }, description: "Persisted non-core tool names loaded by this persona; empty means passthrough/all tools (for create_persona, update_persona)" },
       },
       required: ["action"],
     },
-    whenToUse: "When you want to set or query your emotional state or manage persona configurations. Use set_emotion when your cognitive state shifts. Use the `orient` tool to switch personas.",
+    whenToUse: "When you want to set or query your emotional state or manage persisted persona configuration, including context_sections and tool_bundle. Use set_emotion when your cognitive state shifts. Use the `orient` tool to switch personas.",
   },
   observe: {
     description: "Record an observation about your own cognition. Not what you thought, but what you notice about how you thought. What pattern fired? What gap appeared? What changed? What connection formed? What's now possible? 1-3 short sentences MAX. If it doesn't pass 'would this change how I act next time?', don't record it.",
