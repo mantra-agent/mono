@@ -87,6 +87,7 @@ import type {
   PageContext,
   SystemStepRecord,
   QuestionResponseMeta,
+  QuestionCancellationMeta,
 } from "@shared/models/chat";
 import { SYSTEM_STEP_META } from "@shared/event-catalog";
 
@@ -264,6 +265,8 @@ export interface ChatMessage {
   speaker?: { key?: string; label: string; personId?: string } | null;
   /** Structured response to an inline question tool call. */
   questionResponse?: QuestionResponseMeta;
+  /** Terminal cancellation marker for an inline question tool call. */
+  questionCancellation?: QuestionCancellationMeta;
   /** Canonical per-turn correlation ID for voice turns. */
   turnId?: string;
   /** Structural visibility discriminant — 'diagnostic' messages are hidden from chat */
@@ -2625,8 +2628,9 @@ export const ChatTurn = memo(function ChatTurn({
   compactReferences = false,
   suppressedEmailDraftIds,
   questionResponses,
-  latestQuestionToolCallId,
+  activeQuestionToolCallId,
   onQuestionSubmit,
+  onQuestionCancel,
   planOwnedChildBlocks,
   sessionTitleById,
   sessionStreams,
@@ -2638,8 +2642,9 @@ export const ChatTurn = memo(function ChatTurn({
   compactReferences?: boolean;
   suppressedEmailDraftIds?: string;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
-  latestQuestionToolCallId: string | null;
+  activeQuestionToolCallId: string | null;
   onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
+  onQuestionCancel?: () => Promise<boolean>;
   planOwnedChildBlocks?: Map<string, ChildSessionBlockMeta>;
   sessionTitleById?: Record<string, string>;
   sessionStreams?: SessionStreamMap;
@@ -2989,7 +2994,7 @@ export const ChatTurn = memo(function ChatTurn({
             ))}
             {questionPrompts
               .filter((prompt) =>
-                prompt.toolCallId === latestQuestionToolCallId ||
+                prompt.toolCallId === activeQuestionToolCallId ||
                 questionResponses?.has(prompt.toolCallId),
               )
               .map((prompt) => (
@@ -2998,6 +3003,7 @@ export const ChatTurn = memo(function ChatTurn({
                   prompt={prompt}
                   response={questionResponses?.get(prompt.toolCallId)}
                   onSubmit={onQuestionSubmit}
+                  onCancel={onQuestionCancel}
                 />
               ))}
             {planWidgetIds.map((id) => (

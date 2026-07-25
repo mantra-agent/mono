@@ -61,7 +61,9 @@ import {
   type MeetingSessionMeta,
   type MessageSpeakerMeta,
   type QuestionResponseMeta,
+  type QuestionCancellationMeta,
 } from "@shared/models/chat";
+import { getActiveQuestionToolCallId } from "@shared/question-prompt";
 import { BOOT_ID, db } from "../../db";
 import { and, eq, inArray, isNull, notInArray, sql as drizzleSql, type SQL } from "drizzle-orm";
 import { combineWithVisibleScope } from "../../scoped-storage";
@@ -2989,6 +2991,20 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           acceptedContent = resolvedResponse.content;
           acceptedQuestionResponse = resolvedResponse.response;
         }
+        // Answering in chat (a normal message, not a widget response) while an
+        // inline question is still awaiting supersedes that question. Stamp a
+        // cancellation marker on the superseding message so the widget resolves.
+        let acceptedQuestionCancellation: QuestionCancellationMeta | undefined;
+        if (!incomingQuestionResponse && !isGreeting && clientTurnId && acceptedContent.trim()) {
+          const priorMessages = await chatStorage.getMessagesBySession(sessionId);
+          const supersededToolCallId = getActiveQuestionToolCallId(priorMessages);
+          if (supersededToolCallId) {
+            acceptedQuestionCancellation = {
+              questionToolCallId: supersededToolCallId,
+              reason: "superseded_by_message",
+            };
+          }
+        }
         if (!isGreeting && clientTurnId) {
           const acceptance = await chatStorage.createUserMessageOnce(
             sessionId,
@@ -2996,6 +3012,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             clientTurnId,
             msgPageContext,
             acceptedQuestionResponse,
+            acceptedQuestionCancellation,
           );
           if (acceptance.outcome === "session_not_found") {
             return res.status(404).json({ error: "Session not found" });
@@ -3147,6 +3164,33 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         if (!res.headersSent) {
           res.status(500).json({ error: "Failed to send message" });
         }
+      }
+    },
+  );
+
+  app.post(
+    "/api/sessions/:id/question/cancel",
+    async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.params.id as string;
+        const session = await chatStorage.getSession(sessionId);
+        if (!session) {
+          return res.status(404).json({ error: "Session not found" });
+        }
+        // Explicit dismiss records a terminal cancellation marker without a
+        // message or a run. Idempotent: a no-op when nothing is awaiting.
+        const result = await chatStorage.recordQuestionCancellation(sessionId, "user_cancelled");
+        if (result.outcome === "session_not_found") {
+          return res.status(404).json({ error: "Session not found" });
+        }
+        res.json({
+          ok: true,
+          cancelled: result.outcome === "cancelled",
+          questionToolCallId: result.outcome === "cancelled" ? result.questionToolCallId : null,
+        });
+      } catch (error) {
+        chatLog.error("Error cancelling question:", error);
+        res.status(500).json({ error: "Failed to cancel question" });
       }
     },
   );

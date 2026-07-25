@@ -42,6 +42,7 @@ export interface SessionTranscriptSurfaceProps {
   compactReferences?: boolean;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
   onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
+  onQuestionCancel?: () => Promise<boolean>;
 }
 
 export function SessionTranscriptSurface({
@@ -74,6 +75,7 @@ export function SessionTranscriptSurface({
   compactReferences = false,
   questionResponses,
   onQuestionSubmit,
+  onQuestionCancel,
 }: SessionTranscriptSurfaceProps) {
   return (
     <div
@@ -155,6 +157,7 @@ export function SessionTranscriptSurface({
                 compactReferences={compactReferences}
                 questionResponses={questionResponses}
                 onQuestionSubmit={onQuestionSubmit}
+                onQuestionCancel={onQuestionCancel}
               />
             </div>
           </div>

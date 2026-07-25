@@ -24,9 +24,17 @@ export type QuestionValidationResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: string };
 
+export type QuestionCancelReason = "user_cancelled" | "superseded_by_message";
+
+export interface QuestionCancellationMeta {
+  questionToolCallId: string;
+  reason: QuestionCancelReason;
+}
+
 export interface QuestionLifecycleMessage {
   toolCalls?: unknown;
   questionResponse?: QuestionResponseMeta;
+  questionCancellation?: QuestionCancellationMeta;
 }
 
 export function getLatestQuestionToolCallId(
@@ -52,10 +60,12 @@ export function getActiveQuestionToolCallId(
 ): string | null {
   const latestToolCallId = getLatestQuestionToolCallId(messages);
   if (!latestToolCallId) return null;
-  const answered = messages.some(
-    (message) => message.questionResponse?.questionToolCallId === latestToolCallId,
+  const resolved = messages.some(
+    (message) =>
+      message.questionResponse?.questionToolCallId === latestToolCallId ||
+      message.questionCancellation?.questionToolCallId === latestToolCallId,
   );
-  return answered ? null : latestToolCallId;
+  return resolved ? null : latestToolCallId;
 }
 
 const MAX_QUESTION_LENGTH = 500;

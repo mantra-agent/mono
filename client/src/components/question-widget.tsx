@@ -74,16 +74,44 @@ export function QuestionWidget({
   prompt,
   response,
   onSubmit,
+  onCancel,
 }: {
   prompt: QuestionWidgetPrompt;
   response?: QuestionResponseMeta;
   onSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
+  onCancel?: () => Promise<boolean>;
 }) {
   const [selected, setSelected] = useState<string[]>(response?.selectedOptionIds ?? []);
   const [otherSelected, setOtherSelected] = useState(Boolean(response?.otherText));
   const [otherText, setOtherText] = useState(response?.otherText ?? "");
   const [submitting, setSubmitting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const cancel = async () => {
+    if (!onCancel) return;
+    setCancelling(true);
+    setError(null);
+    // Optimistically hide; the server marker keeps it dismissed across reloads.
+    setDismissed(true);
+    try {
+      const ok = await onCancel();
+      if (!ok) {
+        setDismissed(false);
+        setError("Could not dismiss.");
+      }
+    } catch (cancelError) {
+      setDismissed(false);
+      log.error("QUESTION_WIDGET:CANCEL_FAILED", {
+        toolCallId: prompt.toolCallId,
+        error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+      });
+      setError(cancelError instanceof Error ? cancelError.message : "Could not dismiss.");
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   useEffect(() => {
     if (!response) return;
@@ -168,7 +196,9 @@ export function QuestionWidget({
     );
   }
 
-  const controlsDisabled = submitting;
+  if (dismissed) return null;
+
+  const controlsDisabled = submitting || cancelling;
   return (
     <div className="-ml-10 border rounded-md border-border/60 bg-muted/20 my-1" data-testid={`question-widget-${prompt.toolCallId}`}>
       <div className="flex items-start gap-2 px-3 py-2 border-b border-border/40">
@@ -210,21 +240,33 @@ export function QuestionWidget({
           </div>
         )}
       </div>
-      <div className={cn(
-        "flex items-center gap-3 border-t border-border/40 px-3 py-2",
-        error ? "justify-between" : "justify-end",
-      )}>
-        {error && <p className="text-xs text-error">{error}</p>}
-        <Button
-          type="button"
-          size="sm"
-          className="bg-cta text-cta-foreground hover:bg-cta/90"
-          disabled={controlsDisabled}
-          onClick={submit}
-          data-testid={`button-answer-question-${prompt.toolCallId}`}
-        >
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Answer"}
-        </Button>
+      <div className="flex items-center justify-between gap-3 border-t border-border/40 px-3 py-2">
+        {error ? <p className="text-xs text-error">{error}</p> : <span />}
+        <div className="flex items-center gap-2">
+          {onCancel && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="text-muted-foreground hover:text-foreground"
+              disabled={controlsDisabled}
+              onClick={cancel}
+              data-testid={`button-cancel-question-${prompt.toolCallId}`}
+            >
+              {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : "Cancel"}
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            className="bg-cta text-cta-foreground hover:bg-cta/90"
+            disabled={controlsDisabled}
+            onClick={submit}
+            data-testid={`button-answer-question-${prompt.toolCallId}`}
+          >
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Answer"}
+          </Button>
+        </div>
       </div>
     </div>
   );

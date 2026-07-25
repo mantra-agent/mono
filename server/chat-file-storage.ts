@@ -21,6 +21,7 @@ import { createNamedSystemPrincipal, createUserPrincipalFromUser, resolveUserIde
 import { storage } from "./storage";
 import { normalizeSessionModelTierOverride } from "./session-model-tier-override";
 import { hasUnansweredQuestion } from "./question-response";
+import { getActiveQuestionToolCallId, type QuestionCancelReason } from "@shared/question-prompt";
 import type {
   AssistantMessageState,
   ChildSessionBlockMeta,
@@ -32,6 +33,7 @@ import type {
   ChatSession,
   PersonaSnapshot,
   QuestionResponseMeta,
+  QuestionCancellationMeta,
   SystemStepRecord,
 } from "@shared/models/chat";
 
@@ -308,6 +310,8 @@ export interface FileMessage {
   speaker?: MessageSpeakerMeta;
   /** Structured response to an inline question tool call. */
   questionResponse?: QuestionResponseMeta;
+  /** Terminal cancellation marker for an inline question tool call (explicit dismiss or superseded by a chat message). */
+  questionCancellation?: QuestionCancellationMeta;
   /** Replay-safe identity for a server-produced inline artifact message. */
   artifactKey?: string;
   /** Canonical per-turn correlation ID. Used for replay-safe user-message acceptance and voice turn pairing. */
@@ -1184,10 +1188,19 @@ export interface IChatFileStorage {
     clientTurnId: string,
     pageContext?: PageContext,
     questionResponse?: QuestionResponseMeta,
+    questionCancellation?: QuestionCancellationMeta,
   ): Promise<
     | { outcome: "created"; message: FileMessage }
     | { outcome: "duplicate"; message: FileMessage }
     | { outcome: "question_already_answered"; message: FileMessage }
+    | { outcome: "session_not_found" }
+  >;
+  recordQuestionCancellation(
+    sessionId: string,
+    reason: QuestionCancelReason,
+  ): Promise<
+    | { outcome: "cancelled"; questionToolCallId: string }
+    | { outcome: "no_active_question" }
     | { outcome: "session_not_found" }
   >;
   upsertVoiceUserMessage(
@@ -1937,6 +1950,7 @@ export const chatFileStorage: IChatFileStorage = {
     clientTurnId: string,
     pageContext?: PageContext,
     questionResponse?: QuestionResponseMeta,
+    questionCancellation?: QuestionCancellationMeta,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -1959,6 +1973,14 @@ export const chatFileStorage: IChatFileStorage = {
         }
       }
 
+      // Only stamp a supersession cancellation when the referenced question is
+      // still the active one — never re-cancel an already-resolved prompt.
+      const effectiveCancellation =
+        questionCancellation &&
+        getActiveQuestionToolCallId(data.messages) === questionCancellation.questionToolCallId
+          ? questionCancellation
+          : undefined;
+
       const now = new Date().toISOString();
       const message: FileMessage = {
         id: generateId(),
@@ -1974,12 +1996,49 @@ export const chatFileStorage: IChatFileStorage = {
         turnId: clientTurnId,
         ...(pageContext ? { pageContext } : {}),
         ...(questionResponse ? { questionResponse } : {}),
+        ...(effectiveCancellation ? { questionCancellation: effectiveCancellation } : {}),
       };
       data.messages.push(message);
       data.updatedAt = now;
       await writeConv(data);
       invalidateSessionsCache();
       return { outcome: "created" as const, message };
+    });
+  },
+
+  async recordQuestionCancellation(sessionId: string, reason: QuestionCancelReason) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) return { outcome: "session_not_found" as const };
+
+      const questionToolCallId = getActiveQuestionToolCallId(data.messages);
+      if (!questionToolCallId) {
+        return { outcome: "no_active_question" as const };
+      }
+
+      // A pure cancellation marker: a hidden, content-less lifecycle record that
+      // resolves the active question without a visible message or a run. The
+      // transcript and context assembly skip content-less cancellation markers.
+      const now = new Date().toISOString();
+      const message: FileMessage = {
+        id: generateId(),
+        sessionId,
+        role: "user",
+        content: "",
+        thinking: null,
+        toolCalls: null,
+        systemSteps: null,
+        model: null,
+        createdAt: now,
+        updatedAt: now,
+        visibility: "diagnostic",
+        questionCancellation: { questionToolCallId, reason },
+      };
+      data.messages.push(message);
+      data.updatedAt = now;
+      await writeConv(data);
+      invalidateSessionsCache();
+      return { outcome: "cancelled" as const, questionToolCallId };
     });
   },
 
