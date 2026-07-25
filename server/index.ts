@@ -549,6 +549,16 @@ app.use((req, res, next) => {
         process.stdout.write("\n__BOOT_COMPLETE__\n");
       } catch {}
 
+      import("./memory/document-search-indexes")
+        .then(({ startDocumentStoreSearchIndexMaintenance }) => {
+          startDocumentStoreSearchIndexMaintenance();
+        })
+        .catch((err) => {
+          serverLog.warn(
+            `document-store search index maintenance unavailable: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+
       // Worker-thread heartbeat (Task #995). Spawn a tiny worker that posts a
       // heartbeat every 1s. Forward each beat to the wrapper over IPC. If the
       // main thread is wedged by sync work, the worker keeps beating but the
