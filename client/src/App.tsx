@@ -279,10 +279,7 @@ function Router() {
         <Route path="/meetings" component={MeetingsPage} />
         <Route path="/meeting-recap/:token">
           {(params: { token?: string }) => (
-            <RecipientRecapPage
-              token={params.token ?? ""}
-              accessMode="authenticated_onboarding"
-            />
+            <RecipientRecapPage token={params.token ?? ""} />
           )}
         </Route>
         <Route path="/companies/:id" component={CompaniesPage} />
@@ -374,13 +371,9 @@ function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (location.startsWith("/recap/")) {
-    return (
-      <Suspense fallback={<PageFallback />}>
-        <Route path="/recap/:token">
-          {(params: { token?: string }) => <RecipientRecapPage token={params.token ?? ""} />}
-        </Route>
-      </Suspense>
-    );
+    const token = location.slice("/recap/".length);
+    window.location.replace(`/r/${encodeURIComponent(token)}`);
+    return <PageFallback />;
   }
 
   if (location === "/glasses") {

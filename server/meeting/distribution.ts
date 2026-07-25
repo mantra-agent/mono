@@ -34,10 +34,9 @@ import { formatInTimezone } from "../timezone";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { eventBus } from "../event-bus";
-import { eq, and, sql, SQL } from "drizzle-orm";
+import { eq, and, gt, isNull, or, sql, SQL } from "drizzle-orm";
 import type { Principal } from "../principal";
 import type { MeetingSessionMeta, MeetingRecapMeta } from "@shared/models/chat";
-import { getRuntimePublicBaseUrl } from "../runtime-identity";
 import { normalizeEmailAddress } from "../email-normalization";
 import { resolveOrCreateInvitedSubjectInTransaction } from "../invited-subject-service";
 import { peopleStorage } from "../people-storage";
@@ -64,28 +63,22 @@ const EMAIL_BODY_CHAR_LIMIT = 30_000;
 const RECIPIENT_ACCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 const APP_BASE_URL = "https://app.trymantra.ai";
 
-interface MintedCapabilityToken {
+interface RecipientEntryCapability {
   token: string;
   tokenHash: string;
-}
-
-interface RecipientAccessCapability extends MintedCapabilityToken {
   expiresAt: Date;
 }
 
-/** Single minting primitive for every per-recipient bearer token in recap flows. */
+/** Single minting primitive for the per-recipient recap entry capability. */
 function hashCapabilityToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function mintCapabilityToken(): MintedCapabilityToken {
+function createRecipientEntryCapability(): RecipientEntryCapability {
   const token = randomBytes(32).toString("base64url");
-  return { token, tokenHash: hashCapabilityToken(token) };
-}
-
-function createRecipientAccessCapability(): RecipientAccessCapability {
   return {
-    ...mintCapabilityToken(),
+    token,
+    tokenHash: hashCapabilityToken(token),
     expiresAt: new Date(Date.now() + RECIPIENT_ACCESS_TTL_MS),
   };
 }
@@ -93,15 +86,11 @@ function createRecipientAccessCapability(): RecipientAccessCapability {
 /**
  * Universal recap-onboarding entry. The app resolves current account state
  * before deciding whether this recipient belongs in login, recap, or FTUE.
- * Deliberately a separate capability from the recap access token so this URL
- * never carries meeting-content authority by itself.
+ * The token identifies the intended recipient but never authenticates them or
+ * grants recap content by itself.
  */
 function onboardingEntryUrl(token: string): string {
   return `${APP_BASE_URL}/r/${encodeURIComponent(token)}`;
-}
-
-function recipientRecapUrl(publicBaseUrl: string, token: string): string {
-  return `${publicBaseUrl.replace(/\/$/, "")}/recap/${encodeURIComponent(token)}`;
 }
 
 export type OnboardingTokenResolution =
@@ -134,7 +123,15 @@ async function resolveOnboardingTokenHash(
       users,
       sql`LOWER(BTRIM(${users.email})) = LOWER(BTRIM(${meetingRecapDistributions.attendeeEmail}))`,
     )
-    .where(eq(meetingRecapDistributions.onboardingTokenHash, tokenHash))
+    .where(and(
+      or(
+        eq(meetingRecapDistributions.onboardingTokenHash, tokenHash),
+        eq(meetingRecapDistributions.accessTokenHash, tokenHash),
+      ),
+      sql`${meetingRecapDistributions.status} IN ('draft_created', 'sent')`,
+      isNull(meetingRecapDistributions.accessRevokedAt),
+      gt(meetingRecapDistributions.accessExpiresAt, new Date()),
+    ))
     .limit(1);
 
   if (!resolved || !resolved.ownerUserId || !resolved.accountId) {
@@ -434,28 +431,15 @@ async function runDistribution(
   // Google event organizer describes event authorship, not Mantra authorship.
   const gmailAccountId = emailContext.senderAccount.id;
 
-  // 4. Every recipient receives a distinct capability because the granted work
-  // projection is subject-specific. A shared draft would collapse authority.
-  const publicBaseUrl = await getRuntimePublicBaseUrl();
-  if (!publicBaseUrl) {
-    await markDistributionBlocked(
-      sessionId,
-      attemptRecap,
-      principal,
-      attendees,
-      "Recipient recap links are unavailable for this deployment",
-      "public_url_unavailable",
-    );
-    return;
-  }
+  // 4. Every recipient receives a distinct entry capability. It identifies the
+  // intended recipient and meeting, but content still requires authentication.
   const subjectMeetingName = meeting.title?.trim() || recap.pageTitle?.replace(/^Meeting:\s*/i, "").trim() || "Our meeting";
   const subject = `Meeting recap: ${subjectMeetingName}`;
   const draftIds: string[] = [];
   const draftErrors: string[] = [];
 
   for (const attendee of attendees) {
-    const capability = createRecipientAccessCapability();
-    const onboarding = mintCapabilityToken();
+    const entryCapability = createRecipientEntryCapability();
     let distributionId: string | null = null;
     try {
       const owned = ownedInsertValues(principal, scopeColumns);
@@ -486,9 +470,8 @@ async function runDistribution(
             attendeeEmail: normalizedEmail,
             attendeeName: attendee.name ?? null,
             isMantraUser,
-            accessTokenHash: capability.tokenHash,
-            accessExpiresAt: capability.expiresAt,
-            onboardingTokenHash: onboarding.tokenHash,
+            accessExpiresAt: entryCapability.expiresAt,
+            onboardingTokenHash: entryCapability.tokenHash,
             sendMethod: "gmail_draft",
             status: "pending",
             ...owned,
@@ -505,8 +488,7 @@ async function runDistribution(
         attendee,
         emailContext.event,
         principal,
-        recipientRecapUrl(publicBaseUrl, capability.token),
-        onboardingEntryUrl(onboarding.token),
+        onboardingEntryUrl(entryCapability.token),
       );
       const draft = await emailDraftStorage.create(principal, {
         sessionId,
@@ -762,8 +744,7 @@ async function buildEmailContent(
   attendee: ResolvedAttendee,
   event: CalendarEvent,
   principal: Principal,
-  recipientUrl: string,
-  landingUrl: string,
+  recapEntryUrl: string,
 ): Promise<string> {
   if (!recap.pageId) throw new Error("Canonical recap page is missing");
 
@@ -811,8 +792,8 @@ async function buildEmailContent(
     ...sections.map((section) =>
       `**${section.title}**\n${section.items.map((item) => `- ${item}`).join("\n")}`,
     ),
-    `[Open your recap and assigned work](${recipientUrl})`,
-    `Sent with [Mantra](${landingUrl})`,
+    `[Open your recap and assigned work](${recapEntryUrl})`,
+    `Sent with [Mantra](${recapEntryUrl})`,
   ];
   const body = blocks.join("\n\n");
   if (body.length > EMAIL_BODY_CHAR_LIMIT) {

@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { invitedSubjects, meetingRecapDistributions, objectGrants, tasks, users } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import type {
@@ -38,25 +38,6 @@ type SecuritySubject =
 
 function hashCapabilityToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
-}
-
-async function resolveCapability(token: string): Promise<DistributionCapability | null> {
-  const normalizedToken = token.trim();
-  if (!normalizedToken || normalizedToken.length > 200) return null;
-  const [distribution] = await db.select({
-    sessionId: meetingRecapDistributions.sessionId,
-    ownerUserId: meetingRecapDistributions.ownerUserId,
-    accountId: meetingRecapDistributions.accountId,
-    attendeeEmail: meetingRecapDistributions.attendeeEmail,
-    accessExpiresAt: meetingRecapDistributions.accessExpiresAt,
-  }).from(meetingRecapDistributions).where(and(
-    eq(meetingRecapDistributions.accessTokenHash, hashCapabilityToken(normalizedToken)),
-    sql`${meetingRecapDistributions.status} IN ('draft_created', 'sent')`,
-    isNull(meetingRecapDistributions.accessRevokedAt),
-    gt(meetingRecapDistributions.accessExpiresAt, new Date()),
-  )).limit(1);
-  if (!distribution?.accessExpiresAt) return null;
-  return distribution as DistributionCapability;
 }
 
 async function resolveSecuritySubject(email: string): Promise<SecuritySubject | null> {
@@ -157,13 +138,6 @@ async function projectRecipientRecap(
   });
 }
 
-export async function getRecipientRecapProjection(
-  token: string,
-): Promise<RecipientRecapProjection | null> {
-  const capability = await resolveCapability(token);
-  return capability ? projectRecipientRecap(capability) : null;
-}
-
 export async function getAuthenticatedOnboardingRecapProjection(
   token: string,
   authenticatedEmail: string,
@@ -178,7 +152,10 @@ export async function getAuthenticatedOnboardingRecapProjection(
     attendeeEmail: meetingRecapDistributions.attendeeEmail,
     accessExpiresAt: meetingRecapDistributions.accessExpiresAt,
   }).from(meetingRecapDistributions).where(and(
-    eq(meetingRecapDistributions.onboardingTokenHash, hashCapabilityToken(normalizedToken)),
+    or(
+      eq(meetingRecapDistributions.onboardingTokenHash, hashCapabilityToken(normalizedToken)),
+      eq(meetingRecapDistributions.accessTokenHash, hashCapabilityToken(normalizedToken)),
+    ),
     sql`LOWER(BTRIM(${meetingRecapDistributions.attendeeEmail})) = ${normalizedEmail}`,
     sql`${meetingRecapDistributions.status} IN ('draft_created', 'sent')`,
     isNull(meetingRecapDistributions.accessRevokedAt),
