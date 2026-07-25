@@ -13,7 +13,7 @@ import {
   type CrossSessionMeta,
 } from "@/components/chat-shared";
 import type { QuestionResponseMeta } from "@shared/models/chat";
-import { getLatestQuestionToolCallId } from "@shared/question-prompt";
+import { getActiveQuestionToolCallId } from "@shared/question-prompt";
 import type { StreamingContent } from "@shared/streaming-types";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
@@ -66,6 +66,7 @@ interface MessageListProps {
   compactReferences?: boolean;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
   onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
+  onQuestionCancel?: () => Promise<boolean>;
 }
 
 type ListItem =
@@ -221,13 +222,15 @@ export function MessageList({
   compactReferences = false,
   questionResponses,
   onQuestionSubmit,
+  onQuestionCancel,
 }: MessageListProps) {
   const { layer } = useVisibilityLayer();
   const { childBlocks, crossMessages } = useLiveSessionBlocks(activeSession);
-  const latestQuestionToolCallId = useMemo(() => {
+  const activeQuestionToolCallId = useMemo(() => {
     const lifecycleMessages = messages.map((message) => ({
       toolCalls: message.toolCalls,
       questionResponse: message.questionResponse,
+      questionCancellation: message.questionCancellation,
     }));
     if (streaming.segments.length > 0) {
       lifecycleMessages.push({
@@ -235,9 +238,10 @@ export function MessageList({
           segment.type === "timeline" ? segment.steps : [],
         ),
         questionResponse: undefined,
+        questionCancellation: undefined,
       });
     }
-    return getLatestQuestionToolCallId(lifecycleMessages);
+    return getActiveQuestionToolCallId(lifecycleMessages);
   }, [messages, streaming.segments]);
   const liveDraftCreatedAtRef = useRef<{ id: string; anchorId: string | null; createdAt: string; ts: number } | null>(null);
   const previousStreamTargetTraceRef = useRef<string | null>(null);
@@ -365,6 +369,9 @@ export function MessageList({
   const items: ListItem[] = [];
   for (const msg of messages) {
     if (msg.questionResponse) continue;
+    // Hide content-less cancellation markers (explicit dismiss). A superseding
+    // chat message carries real content and still renders normally.
+    if (msg.questionCancellation && !(msg.content && msg.content.trim())) continue;
     if (msg.role === "assistant" && !msg.id.startsWith("draft-") && !hasRenderableAssistantPayload(msg)) continue;
     if (msg.role === "cross_session" && isOutgoingChildMessage(msg, activeSession)) continue;
     if (msg.role === "cross_session" && layer < 2) continue;
@@ -846,8 +853,9 @@ export function MessageList({
         compactReferences={compactReferences}
         suppressedEmailDraftIds={suppressed && suppressed.length > 0 ? suppressed.join("|") : undefined}
         questionResponses={questionResponses}
-        latestQuestionToolCallId={latestQuestionToolCallId}
+        activeQuestionToolCallId={activeQuestionToolCallId}
         onQuestionSubmit={onQuestionSubmit}
+        onQuestionCancel={onQuestionCancel}
         planOwnedChildBlocks={planOwnedChildBlocks}
         sessionTitleById={sessionTitleById}
         sessionStreams={sessionStreams}

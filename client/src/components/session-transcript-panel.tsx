@@ -49,7 +49,7 @@ import { SessionTranscriptSurface } from "@/components/session-transcript-surfac
 import type { ChatSession as Session } from "@shared/models/chat";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
 import { usePinnedScroll } from "@/hooks/use-pinned-scroll";
-import { useQuestionResponse } from "@/hooks/use-question-response";
+import { useQuestionResponse, useQuestionCancel } from "@/hooks/use-question-response";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
 import { ChatEmptyState } from "@/components/chat-empty-state";
 import {
@@ -438,6 +438,11 @@ export function SessionTranscriptPanel({
     toast,
   });
 
+  const cancelQuestion = useQuestionCancel({
+    sessionId: activeSession,
+    toast,
+  });
+
   const autoScrollEnabled = enableAutoScroll && !!activeSession && !msgsLoading;
   const { onScroll: handleScroll, onUserScrollIntent: handleUserScrollIntent, forcePin } = usePinnedScroll({
     containerRef: scrollContainerRef,
@@ -753,6 +758,7 @@ export function SessionTranscriptPanel({
         compactReferences={isWidget}
         questionResponses={questionResponses}
         onQuestionSubmit={submitQuestionResponse}
+        onQuestionCancel={cancelQuestion}
       />
     </div>
   );

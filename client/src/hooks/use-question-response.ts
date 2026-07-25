@@ -45,3 +45,38 @@ export function useQuestionResponse({
     }
   }, [sessionId, toast]);
 }
+
+export function useQuestionCancel({
+  sessionId,
+  toast,
+}: {
+  sessionId: string | null;
+  toast: ReturnType<typeof useToast>["toast"];
+}) {
+  return useCallback(async (): Promise<boolean> => {
+    if (!sessionId) return false;
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/question/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || "Failed to dismiss question");
+      }
+      emitSessionChanged(sessionId, "question-cancelled");
+      return true;
+    } catch (error) {
+      log.error("QUESTION_RESPONSE:CANCEL_FAILED", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      toast({
+        title: "Failed to dismiss question",
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+      return false;
+    }
+  }, [sessionId, toast]);
+}
