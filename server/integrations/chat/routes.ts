@@ -1266,7 +1266,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     );
   }
 
-  function compactHistoricalToolResultForExecutor(value: unknown): string {
+  function historicalToolResultForExecutor(value: unknown): string {
     const content = typeof value === "string" ? value : "";
     if (!content) return "";
 
@@ -1293,9 +1293,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         .join("\n");
     }
 
-    if (content.length <= 500) return content;
-    const lines = content.split("\n").length;
-    return `[Compacted historical tool result: ${lines} lines, ${content.length.toLocaleString()} chars] ${content.slice(0, 200)}...`;
+    return content;
   }
 
   type ConversationHistoryMessage = {
@@ -1479,25 +1477,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       durableCompactionAttempted =
         preRunConversationTokens > preRunCompactionThreshold;
       endTokens();
-
-      if (durableCompactionAttempted) {
-        const endRepair = beginSubStep("ctx_history_repair");
-        const repair = await chatStorage.repairOversizedContextPayloads(
-          sessionId,
-          { maxInlineTokens: 200, reason: "pre_run_context_pressure" },
-        );
-        if (repair.repaired) {
-          chatLog.warn(
-            `durableContextRepair applied sessionId=${sessionId} payloads=${repair.payloadsRepaired} tokens=${repair.tokensBefore}->${repair.tokensAfter}`,
-          );
-          existingMessages = await chatStorage.getMessagesBySession(sessionId);
-          rebuildConversationHistory(existingMessages);
-          preRunConversationTokens = estimateConversationTokens();
-          durableCompactionAttempted =
-            preRunConversationTokens > preRunCompactionThreshold;
-        }
-        endRepair();
-      }
 
       const endCompaction = durableCompactionAttempted
         ? beginSubStep("ctx_history_compact")
@@ -1706,7 +1685,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           const rawResultContent =
             typeof source.result === "string" ? source.result : "";
           const resultContent =
-            compactHistoricalToolResultForExecutor(rawResultContent);
+            historicalToolResultForExecutor(rawResultContent);
           contentBlocks.push({
             type: "tool_use",
             id: tcId,
@@ -1764,26 +1743,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     if (fullPreExecutorTokens > executorStage1Threshold) {
       durableCompactionAttempted = true;
       chatLog.warn(
-        `fullPreExecutorContextPressure sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${executorStage1Threshold}; repairing persisted tool payloads before executor`,
+        `fullPreExecutorContextPressure sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${executorStage1Threshold}; exact transcript preserved for executor working-set projection`,
       );
-      const repair = await chatStorage.repairOversizedContextPayloads(
-        sessionId,
-        { maxInlineTokens: 200, reason: "full_pre_executor_context_pressure" },
-      );
-      if (repair.repaired) {
-        chatLog.warn(
-          `fullPreExecutorContextRepair applied sessionId=${sessionId} payloads=${repair.payloadsRepaired} tokens=${repair.tokensBefore}->${repair.tokensAfter}`,
-        );
-        return buildChatHistory(
-          sessionId,
-          enrichedContent,
-          resolvedModel,
-          onProgress,
-          currentMessageIds,
-          callerGeneration,
-          contextBuildId,
-        );
-      }
     }
 
     chatLog.log(

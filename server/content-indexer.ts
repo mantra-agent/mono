@@ -54,6 +54,7 @@ export interface IndexedReference {
   objectStoragePath: string;
   byteCount: number;
   index: IndexData;
+  reused?: boolean;
 }
 
 export async function persistToObjectStorage(
@@ -342,6 +343,7 @@ export async function indexAndArchiveHeuristic(opts: IndexAndArchiveOptions): Pr
         objectStoragePath: existing.objectStoragePath,
         byteCount: existing.byteCount,
         index: existing.index,
+        reused: true,
       };
     }
   }
@@ -408,6 +410,7 @@ export async function indexAndArchiveHeuristic(opts: IndexAndArchiveOptions): Pr
           objectStoragePath: existing.objectStoragePath,
           byteCount: existing.byteCount,
           index: existing.index,
+          reused: true,
         };
       }
     }

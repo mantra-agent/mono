@@ -24,7 +24,8 @@ import { abortTrace } from "./abort-trace";
 import type { ExecutorStreamEvent, ModelProviderFailureInfo, PersonaSnapshot } from "@shared/models/chat";
 import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-storage";
 import { ModelProviderError, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
-import { maybeOffloadToolOutput } from "./tool-output-artifacts";
+import { estimateToolOutputSize } from "./tool-output-artifacts";
+import { CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS, projectImmediateToolResult, projectWorkingSet } from "./working-set-projector";
 import { buildContinuationCapsule, renderContinuationCapsule, type ContinuationCapsuleEntry } from "./continuation-capsule";
 
 function normalizeMcpToolName(name: string | undefined): string | undefined {
@@ -56,17 +57,24 @@ export interface ContentBlock {
 import type { ToolDefinition } from "@shared/models/tools";
 export type { ToolDefinition };
 
-export type ToolContinuation = "persona_switch" | "await_user" | "provider_system_tool";
+export type ToolContinuation = "persona_switch" | "await_user" | "provider_system_tool" | "working_set_refresh";
 
 export type ToolExecutorResult = {
+  /** Exact result for canonical transcript persistence and user-visible streaming. */
   result: string;
+  /** Optional ephemeral result returned only to the provider's current working set. */
+  providerResult?: string;
   error?: boolean;
   sideEffectOnly?: boolean;
   continuation?: ToolContinuation;
   normalizedArguments?: Record<string, unknown>;
 };
 
-export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<ToolExecutorResult>;
+export type ToolExecutor = (
+  name: string,
+  args: Record<string, unknown>,
+  context?: { toolCallId: string; order: number },
+) => Promise<ToolExecutorResult>;
 
 export type { ExecutorStreamEvent };
 export type StreamEvent = ExecutorStreamEvent;
@@ -791,6 +799,8 @@ interface RunIterationContext {
   diagnosticFailedToolCount: number;
   personaSwitchRequested?: { toolCallId: string };
   awaitUserRequested?: { toolCallId: string };
+  workingSetRefreshRequested?: { toolCallId: string };
+  currentCycleToolResultTokens: number;
   iterationToolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; order: number }>;
 }
 
@@ -1378,6 +1388,9 @@ export class AgentExecutor extends EventEmitter {
         if ((event.continuation === "await_user" || event.continuation === "provider_system_tool") && toolCallId) {
           ctx.awaitUserRequested = { toolCallId };
         }
+        if (event.continuation === "working_set_refresh" && toolCallId) {
+          ctx.workingSetRefreshRequested = { toolCallId };
+        }
         // Chronology: record tool entry pointing to resolvedToolCalls index
         ctx.segmentChronology.push({ s: "tool", i: toolIdx });
         ctx.publish("tool_result", { toolCallId, toolName: normalizedName, arguments: resolvedArgs, result: event.result, error: event.error ? event.result : undefined });
@@ -1569,24 +1582,24 @@ export class AgentExecutor extends EventEmitter {
     let continuation: ToolExecutorResult["continuation"];
 
     const processResult = async (tc: typeof toolCalls[0], toolResult: ToolExecutorResult, durationMs: number) => {
-      const boundedResult = await maybeOffloadToolOutput({
+      const canonicalArgs = toolResult.normalizedArguments ?? tc.input;
+      const immediateProjection = await projectImmediateToolResult({
         toolName: tc.name,
-        action: typeof tc.input.action === "string" ? tc.input.action : undefined,
-        sessionId: options.sessionId,
-        runId: ctx.runId,
+        toolArgs: canonicalArgs,
+        toolCallId: tc.id,
         result: toolResult.result,
         error: toolResult.error,
+        sessionId: options.sessionId,
+        runId: ctx.runId,
       });
-      const boundedToolResult = { ...toolResult, result: boundedResult };
-      const canonicalArgs = boundedToolResult.normalizedArguments ?? tc.input;
       const toolIdx = ctx.resolvedToolCalls.length;
-      ctx.resolvedToolCalls.push({ id: tc.id, name: tc.name, args: canonicalArgs, result: boundedToolResult.result, error: boundedToolResult.error, durationMs, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
+      ctx.resolvedToolCalls.push({ id: tc.id, name: tc.name, args: canonicalArgs, result: toolResult.result, error: toolResult.error, durationMs, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
       // Chronology: record tool entry pointing to resolvedToolCalls index
       ctx.segmentChronology.push({ s: "tool", i: toolIdx });
       sideEffectFlags.push(!!toolResult.sideEffectOnly);
       continuation = toolResult.continuation || continuation;
 
-      ctx.publish("tool_result", { toolCallId: tc.id, toolName: tc.name, arguments: canonicalArgs, result: boundedToolResult.result, error: boundedToolResult.error ? boundedToolResult.result : undefined });
+      ctx.publish("tool_result", { toolCallId: tc.id, toolName: tc.name, arguments: canonicalArgs, result: toolResult.result, error: toolResult.error ? toolResult.result : undefined });
       const toolStepStart = ctx.activeToolUseSteps.get(tc.id);
       if (toolStepStart) {
         ctx.activeToolUseSteps.delete(tc.id);
@@ -1595,12 +1608,12 @@ export class AgentExecutor extends EventEmitter {
       eventBus.publish({
         category: "tool",
         event: "agent.tool_result",
-        payload: { toolCallId: tc.id, toolName: tc.name, arguments: canonicalArgs, result: boundedToolResult.result, error: boundedToolResult.error, runId: ctx.runId, source: options.activity || "agent" },
+        payload: { toolCallId: tc.id, toolName: tc.name, arguments: canonicalArgs, result: toolResult.result, error: toolResult.error, runId: ctx.runId, source: options.activity || "agent" },
         runId: ctx.runId,
         sessionKey: options.sessionKey,
       });
 
-      return { type: "tool_result" as const, tool_use_id: tc.id, content: boundedToolResult.result, is_error: boundedToolResult.error };
+      return { type: "tool_result" as const, tool_use_id: tc.id, content: immediateProjection.providerResult, is_error: toolResult.error };
     };
 
     const toolExecLimit = pLimit(4);
@@ -2000,6 +2013,7 @@ export class AgentExecutor extends EventEmitter {
       diagnosticLastAssistantTextLength: 0,
       diagnosticHadToolErrors: false,
       diagnosticFailedToolCount: 0,
+      currentCycleToolResultTokens: 0,
       iterationToolCalls: [],
       segmentChronology: [],
       systemStepsData: [],
@@ -2107,6 +2121,7 @@ export class AgentExecutor extends EventEmitter {
     const resolvedToolCallsBeforeIteration = ctx.resolvedToolCalls.length;
     ctx.personaSwitchRequested = undefined;
     ctx.awaitUserRequested = undefined;
+    ctx.workingSetRefreshRequested = undefined;
     ctx.iterationToolCalls = [];
     log.verbose(() => `Iteration ${ctx.iteration + 1} starting, messageCount=${messages.length}, model=${modelString}`);
 
@@ -2269,27 +2284,44 @@ export class AgentExecutor extends EventEmitter {
       this.startResponsePhase(ctx, "llm_request_sent");
 
       const boundedToolExecutor = options.toolExecutor
-        ? async (name: string, args: Record<string, unknown>) => {
+        ? async (name: string, args: Record<string, unknown>, toolContext?: { toolCallId: string; order: number }) => {
             const execute = () => options.toolExecutor!(name, args);
             const result = toolTransfersExecutionToChild(name, args)
               ? await (await import("./run-admission")).admissionController.withSuspendedSlot(ctx.runId, execute)
               : await execute();
+            const callId = toolContext?.toolCallId || generateToolCallId();
+            const canonicalArgs = result.normalizedArguments ?? args;
+            const immediateProjection = await projectImmediateToolResult({
+              toolName: name,
+              toolArgs: canonicalArgs,
+              toolCallId: callId,
+              result: result.result,
+              error: result.error,
+              sessionId: options.sessionId,
+              runId: ctx.runId,
+            });
+            ctx.currentCycleToolResultTokens += estimateToolOutputSize(immediateProjection.providerResult).estimatedTokens;
+            const budgetReached = !result.error
+              && !result.continuation
+              && ctx.currentCycleToolResultTokens >= CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS;
             return {
               ...result,
-              result: await maybeOffloadToolOutput({
-                toolName: name,
-                action: typeof args.action === "string" ? args.action : undefined,
-                sessionId: options.sessionId,
-                runId: ctx.runId,
-                result: result.result,
-                error: result.error,
-              }),
+              providerResult: immediateProjection.providerResult,
+              continuation: budgetReached ? "working_set_refresh" as const : result.continuation,
             };
           }
         : undefined;
 
-      const pendingToolResultMessages = messages.filter(m => m.role === "tool_result").length;
-      log.debug(`agent.loop.model_request runId=${ctx.runId} sessionId=${options.sessionId || "none"} iteration=${ctx.iteration} pendingToolResults=${pendingToolResultMessages} messageCount=${messages.length}`);
+      const workingSet = await projectWorkingSet({
+        messages,
+        runId: ctx.runId,
+        sessionId: options.sessionId,
+        sessionKey: options.sessionKey,
+        source: options.activity || "agent",
+      });
+      const providerMessages = workingSet.messages;
+      const pendingToolResultMessages = providerMessages.filter(m => m.role === "tool_result").length;
+      log.debug(`agent.loop.model_request runId=${ctx.runId} sessionId=${options.sessionId || "none"} iteration=${ctx.iteration} pendingToolResults=${pendingToolResultMessages} messageCount=${providerMessages.length} workingSetOutcome=${workingSet.telemetry.outcome} projectedTokens=${workingSet.telemetry.tokensProjected}`);
       eventBus.publish({
         category: "agent",
         event: "agent.loop.model_request",
@@ -2298,7 +2330,8 @@ export class AgentExecutor extends EventEmitter {
           sessionId: options.sessionId || null,
           iteration: ctx.iteration,
           pendingToolResults: pendingToolResultMessages,
-          messageCount: messages.length,
+          messageCount: providerMessages.length,
+          workingSet: workingSet.telemetry,
           source: options.activity || "agent",
         },
         runId: ctx.runId,
@@ -2317,7 +2350,7 @@ export class AgentExecutor extends EventEmitter {
           activity: options.activity,
         },
         activity: options.activity,
-        messages: messages.map(m => ({ role: m.role as StreamMessage["role"], content: m.content, toolCallId: m.toolCallId, name: m.name })),
+        messages: providerMessages.map(m => ({ role: m.role as StreamMessage["role"], content: m.content, toolCallId: m.toolCallId, name: m.name })),
         tools: options.tools,
         toolExecutor: boundedToolExecutor,
         maxTokens,
@@ -2493,6 +2526,43 @@ export class AgentExecutor extends EventEmitter {
       };
     }
 
+    if (ctx.workingSetRefreshRequested) {
+      const iterationResults = ctx.resolvedToolCalls.slice(resolvedToolCallsBeforeIteration);
+      const resultsById = new Map(iterationResults.map((call) => [call.id, call]));
+      const orderedCalls = ctx.iterationToolCalls
+        .filter((call) => resultsById.has(call.id))
+        .sort((a, b) => a.order - b.order);
+      const assistantContent: ContentBlock[] = [];
+      if (cleanText) assistantContent.push({ type: "text", text: cleanText });
+      for (const call of orderedCalls) {
+        assistantContent.push({ type: "tool_use", id: call.id, name: call.name, input: call.args });
+      }
+      messages.push({ role: "assistant", content: assistantContent });
+      messages.push({
+        role: "tool_result",
+        content: orderedCalls.map((call) => {
+          const result = resultsById.get(call.id)!;
+          return {
+            type: "tool_result" as const,
+            tool_use_id: call.id,
+            content: result.result,
+            is_error: !!result.error,
+          };
+        }),
+      });
+      const toolCallId = ctx.workingSetRefreshRequested.toolCallId;
+      ctx.workingSetRefreshRequested = undefined;
+      ctx.currentCycleToolResultTokens = 0;
+      ctx.publish("tool_use_pause", { content: "" });
+      log.log(`working-set refresh boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} toolCallId=${toolCallId}`);
+      return {
+        finalContent: cleanText,
+        shouldContinue: true,
+        hasRunStage2,
+        continuationType: "tool_call",
+      };
+    }
+
     if (ctx.personaSwitchRequested) {
       const iterationResults = ctx.resolvedToolCalls.slice(resolvedToolCallsBeforeIteration);
       const resultsById = new Map(iterationResults.map((call) => [call.id, call]));
@@ -2586,6 +2656,16 @@ export class AgentExecutor extends EventEmitter {
           hasRunStage2,
           exitCause: "natural_stop",
           awaitUserRequested: true,
+        };
+      }
+      if (continuation === "working_set_refresh") {
+        ctx.currentCycleToolResultTokens = 0;
+        ctx.publish("tool_use_pause", { content: "" });
+        return {
+          finalContent: cleanText,
+          shouldContinue: true,
+          hasRunStage2,
+          continuationType: "tool_call",
         };
       }
 

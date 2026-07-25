@@ -1789,7 +1789,7 @@ export interface ChatCompletionStreamOptions {
   metadata?: InferenceMetadata;
   messages: StreamMessage[];
   tools?: ToolDefinition[];
-  toolExecutor?: (name: string, args: Record<string, unknown>) => Promise<{ result: string; error?: boolean; sideEffectOnly?: boolean; continuation?: import("./agent-executor").ToolContinuation }>;
+  toolExecutor?: (name: string, args: Record<string, unknown>, context?: { toolCallId: string; order: number }) => Promise<{ result: string; providerResult?: string; error?: boolean; sideEffectOnly?: boolean; continuation?: import("./agent-executor").ToolContinuation; normalizedArguments?: Record<string, unknown> }>;
   maxTokens?: number;
   temperature?: number;
   /** @deprecated Pass `thinking` instead. Kept for back-compat with existing callers. */
