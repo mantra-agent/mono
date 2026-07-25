@@ -12,7 +12,8 @@ import type {
 } from "@shared/inference-payload";
 
 const log = createLogger("inference-payload-capture");
-export const INFERENCE_PAYLOAD_RETENTION_LIMIT = 20;
+export const INFERENCE_PAYLOAD_LIST_LIMIT = 20;
+export const INFERENCE_PAYLOAD_RETENTION_LIMIT = 100;
 const INFERENCE_PAYLOAD_CAPTURE_VERSION = 2;
 
 export interface CaptureInferencePayloadInput {
@@ -280,7 +281,7 @@ export async function captureInferencePayload(input: CaptureInferencePayloadInpu
         }),
       ),
     );
-    log.debug(`captured provider payload id=${id} apiCallId=${input.apiCallId ?? "unlinked"} provider=${input.provider} boundary=${input.boundary} chars=${requestChars}`);
+    log.debug(`capture created captureId=${id} apiCallId=${input.apiCallId ?? "unlinked"} provider=${input.provider} boundary=${input.boundary} attempt=${input.attempt ?? 1} chars=${requestChars}`);
     return id;
   } catch (error) {
     const diagnostic = {
@@ -309,10 +310,10 @@ export async function captureInferencePayload(input: CaptureInferencePayloadInpu
 }
 
 export async function listInferencePayloadCaptures(
-  limit = INFERENCE_PAYLOAD_RETENTION_LIMIT,
+  limit = INFERENCE_PAYLOAD_LIST_LIMIT,
 ): Promise<InferencePayloadCaptureSummary[]> {
   const principal = requireCurrentUserPrincipal();
-  const boundedLimit = Math.max(1, Math.min(limit, INFERENCE_PAYLOAD_RETENTION_LIMIT));
+  const boundedLimit = Math.max(1, Math.min(limit, INFERENCE_PAYLOAD_LIST_LIMIT));
   const visible = visibleScopePredicate(principal, {
     scope: inferencePayloadCaptures.scope,
     ownerUserId: inferencePayloadCaptures.ownerUserId,
@@ -360,8 +361,12 @@ export async function getInferencePayloadCapture(id: string): Promise<InferenceP
       eq(inferencePayloadCaptures.accountId, principal.accountId),
     ))
     .limit(1);
-  if (!result) return null;
+  if (!result) {
+    log.debug(`capture fetch unavailable captureId=${id}`);
+    return null;
+  }
   const { capture, usage } = result;
+  log.debug(`capture fetch succeeded captureId=${id} apiCallId=${capture.apiCallId ?? "unlinked"} usageStatus=${usageStatus(usage?.metadata) ?? "unavailable"}`);
   return {
     ...toSummary(capture, usage),
     request: decodeProviderRequest(capture.request),
