@@ -125,6 +125,9 @@ function nestedNumber(record: Record<string, unknown>, paths: string[][]): numbe
 }
 
 function providerInputTokens(capture: InferencePayloadCapture): number | null {
+  if (capture.providerUsage?.semantics === "per_call" && capture.providerUsage.inputTokens !== null) {
+    return capture.providerUsage.inputTokens;
+  }
   return nestedNumber(capture.metadata, [
     ["inputTokens"],
     ["promptTokens"],
@@ -211,29 +214,30 @@ function buildPromptAccounting(capture: InferencePayloadCapture): PromptAccounti
   const baseSections = requestSections(capture.request);
   const estimatedRequestTokens = Math.max(1, Math.round(capture.requestChars / 4));
   const reportedInputTokens = providerInputTokens(capture);
-  const payloadTokens = reportedInputTokens === null
+  const exactInputAvailable = capture.providerUsage?.semantics === "per_call"
+    && capture.providerUsage.inputTokens !== null;
+  const capturedComponentTotal = reportedInputTokens === null
     ? estimatedRequestTokens
     : Math.min(reportedInputTokens, estimatedRequestTokens);
-  const allocations = allocateTokens(baseSections.map((section) => section.value), payloadTokens);
+  const allocations = allocateTokens(baseSections.map((section) => section.value), capturedComponentTotal);
   const sections: PromptSection[] = baseSections.map((section, index) => ({
     ...section,
     tokenCount: allocations[index] ?? 0,
   }));
-
-  if (reportedInputTokens !== null && reportedInputTokens > estimatedRequestTokens) {
+  if (reportedInputTokens !== null && reportedInputTokens > capturedComponentTotal) {
     sections.push({
-      id: "provider-overhead",
-      title: "Provider / SDK Overhead",
+      id: "provider-unattributed",
+      title: "Provider / SDK / Unattributed",
       value: null,
       kind: "overhead",
-      tokenCount: reportedInputTokens - estimatedRequestTokens,
+      tokenCount: reportedInputTokens - capturedComponentTotal,
     });
   }
 
   return {
     sections,
     totalTokens: sections.reduce((sum, section) => sum + section.tokenCount, 0),
-    source: reportedInputTokens === null ? "estimated" : "provider",
+    source: exactInputAvailable ? "provider" : "estimated",
   };
 }
 
@@ -611,7 +615,7 @@ function ToolSection({ value }: { value: unknown }) {
 
 function SectionBody({ section }: { section: PromptSection }) {
   if (section.kind === "overhead") {
-    return <div className="rounded-md bg-muted/30 p-3 text-sm text-muted-foreground">Provider-reported input tokens outside the captured request object.</div>;
+    return <div className="rounded-md bg-muted/30 p-3 text-sm text-muted-foreground">Aggregate provider input not attributable to captured components without claiming provider tokenizer precision.</div>;
   }
   if (section.kind === "markdown" && typeof section.value === "string") return <MarkdownContent value={section.value} />;
   if (section.kind === "html" && typeof section.value === "string") return <HtmlContent value={section.value} />;
@@ -629,7 +633,7 @@ function PromptSectionBlock({ section, defaultOpen = false }: { section: PromptS
         <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
         <span>{section.title}</span>
         <span className="ml-auto shrink-0 font-normal normal-case tracking-normal tabular-nums text-muted-foreground">
-          {formatTokens(section.tokenCount)} tokens
+          {formatTokens(section.tokenCount)} estimated tokens
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent>
@@ -648,7 +652,10 @@ function PromptCaptureSections({ capture }: { capture: InferencePayloadCapture }
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span className="font-mono">{capture.provider} / {capture.model}</span>
-        <span className="tabular-nums">{formatTokens(accounting.totalTokens)} input tokens</span>
+        <span className="tabular-nums">
+          {formatTokens(accounting.totalTokens)} {accounting.source === "provider" ? "provider input tokens" : "estimated input tokens"}
+        </span>
+        <span>{accounting.source === "provider" ? "Component allocations are estimated" : "Character-based estimate"}</span>
       </div>
       {capture.completeness === "legacy_incomplete" && (
         <div className="flex items-center gap-2 rounded-md border border-warning/40 px-3 py-2 text-xs text-warning" data-testid="legacy-capture-warning">
@@ -673,7 +680,13 @@ function captureLabel(capture: InferencePayloadCaptureSummary): string {
 
 export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
   usePageHeader({ title: "Context", skip: !!embedded });
-  const [selectedCaptureId, setSelectedCaptureId] = useState("");
+  const [selectedCaptureId, setSelectedCaptureId] = useState(() => new URLSearchParams(window.location.search).get("capture") || "");
+
+  useEffect(() => {
+    const syncSelection = () => setSelectedCaptureId(new URLSearchParams(window.location.search).get("capture") || "");
+    window.addEventListener("popstate", syncSelection);
+    return () => window.removeEventListener("popstate", syncSelection);
+  }, []);
 
   const capturesQuery = useQuery<InferencePayloadCaptureListResponse>({
     queryKey: ["/api/context/inference-calls"],
@@ -687,10 +700,22 @@ export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
 
   useEffect(() => {
     const captures = capturesQuery.data?.captures ?? [];
-    if (captures.length > 0 && !captures.some((capture) => capture.id === selectedCaptureId)) {
+    if (captures.length === 0) return;
+    const requestedCapture = new URLSearchParams(window.location.search).get("capture");
+    if (requestedCapture && !captures.some((capture) => capture.id === requestedCapture)) return;
+    if (!captures.some((capture) => capture.id === selectedCaptureId)) {
       setSelectedCaptureId(captures[0].id);
     }
   }, [capturesQuery.data?.captures, selectedCaptureId]);
+
+  const selectCapture = (captureId: string) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", "context");
+    params.set("capture", captureId);
+    window.history.pushState(null, "", `/brain?${params.toString()}`);
+    window.dispatchEvent(new Event("popstate"));
+    setSelectedCaptureId(captureId);
+  };
 
   const captureQuery = useQuery<InferencePayloadCapture>({
     queryKey: ["/api/context/inference-calls", selectedCaptureId],
@@ -706,7 +731,7 @@ export default function ContextPage({ embedded }: { embedded?: boolean } = {}) {
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden" data-testid="context-page">
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Select value={selectedCaptureId} onValueChange={setSelectedCaptureId}>
+          <Select value={selectedCaptureId} onValueChange={selectCapture}>
             <SelectTrigger className="min-w-0 sm:w-[520px]" data-testid="select-inference-call">
               <SelectValue placeholder="Select a recent inference call" />
             </SelectTrigger>

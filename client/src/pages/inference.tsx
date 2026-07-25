@@ -32,6 +32,8 @@ import {
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { createReferenceRef } from "@shared/references";
 
 interface InferenceCall {
   id: number;
@@ -49,6 +51,8 @@ interface InferenceCall {
   stopReason: string | null;
   sessionKey: string | null;
   sessionId: number | null;
+  chatSessionId: string | null;
+  captureId: string | null;
   requestContent: string | null;
   responseContent: string | null;
   promptName?: string;
@@ -209,13 +213,21 @@ function InferenceListItem({
   onSelect: () => void;
 }) {
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors rounded-md ${
         isSelected
           ? "bg-primary/10 border border-primary/30"
           : "hover:bg-muted/50 border border-transparent"
       }`}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
       data-testid={`button-select-call-${call.id}`}
     >
       {call.isActive ? (
@@ -231,8 +243,17 @@ function InferenceListItem({
         {call.activityType}
       </Badge>
 
-      <span className="text-xs text-muted-foreground truncate min-w-0 flex-1" data-testid={`text-profile-${call.id}`}>
-        {call.promptName || call.profile || "unknown"}
+      <span className="flex min-w-0 flex-1 items-center gap-1 text-xs text-muted-foreground" data-testid={`text-profile-${call.id}`}>
+        <span className="truncate">{call.promptName || call.profile || "unknown"}</span>
+        {call.chatSessionId && (
+          <span onClick={(event) => event.stopPropagation()} className="shrink-0">
+            <ReferenceRenderer
+              refValue={createReferenceRef({ type: "session", id: call.chatSessionId, metadata: { label: "Session" } })}
+              surface="simple-chip"
+              className="mx-0"
+            />
+          </span>
+        )}
       </span>
 
       {call.isActive ? (
@@ -254,7 +275,7 @@ function InferenceListItem({
           </span>
         </>
       )}
-    </button>
+    </div>
   );
 }
 
@@ -491,12 +512,17 @@ function DetailPanel({ call, onClose }: { call: InferenceCall; onClose: () => vo
                 <span className="text-muted-foreground block mb-0.5">Elapsed</span>
                 <span className="text-info">{formatElapsed(new Date(call.timestamp).getTime())}</span>
               </div>
-              {call.sessionKey && (
-                <div>
-                  <span className="text-muted-foreground block mb-0.5">Session</span>
+              {call.chatSessionId ? (
+                <div className="col-span-2">
+                  <span className="text-muted-foreground block mb-0.5">Source Session</span>
+                  <ReferenceRenderer refValue={createReferenceRef({ type: "session", id: call.chatSessionId })} />
+                </div>
+              ) : call.sessionKey ? (
+                <div className="col-span-2">
+                  <span className="text-muted-foreground block mb-0.5">Session Key</span>
                   <span className="font-mono text-xs">{call.sessionKey}</span>
                 </div>
-              )}
+              ) : null}
             </div>
 
             <div>
@@ -557,12 +583,17 @@ function DetailPanel({ call, onClose }: { call: InferenceCall; onClose: () => vo
                   <span className="text-muted-foreground block mb-0.5">Timestamp</span>
                   <span>{formatTimestamp(call.timestamp)}</span>
                 </div>
-                {call.sessionKey && (
+                {call.chatSessionId ? (
                   <div className="col-span-2">
-                    <span className="text-muted-foreground block mb-0.5">Session</span>
+                    <span className="text-muted-foreground block mb-0.5">Source Session</span>
+                    <ReferenceRenderer refValue={createReferenceRef({ type: "session", id: call.chatSessionId })} />
+                  </div>
+                ) : call.sessionKey ? (
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground block mb-0.5">Session Key</span>
                     <span className="font-mono text-xs">{call.sessionKey}</span>
                   </div>
-                )}
+                ) : null}
               </div>
 
               {detailLoading && (showInput || showOutput) && (
@@ -708,6 +739,8 @@ export default function InferencePage({ embedded }: { embedded?: boolean }) {
       stopReason: null,
       sessionKey: run.sessionKey || null,
       sessionId: null,
+      chatSessionId: run.sessionId || null,
+      captureId: null,
       requestContent: run.requestContent || null,
       responseContent: null,
       runId: run.runId,

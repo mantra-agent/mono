@@ -52,6 +52,8 @@ import {
 import { useTimezone } from "@/hooks/use-timezone";
 import { getApiCallErrorText, shouldShowApiCallResponse } from "@/lib/api-call-diagnostics";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { createReferenceRef } from "@shared/references";
 
 interface SummaryData {
   totalCalls: number;
@@ -109,6 +111,7 @@ interface ApiCallRow {
   costTotal: number;
   sessionKey: string | null;
   sessionId: number | null;
+  captureId: string | null;
   requestContent: string | null;
   responseContent: string | null;
   durationMs: number | null;
@@ -135,7 +138,7 @@ interface CallsResponse {
 
 type GroupBy = "tier" | "activity" | "prompt" | "hierarchy";
 
-interface HierarchyInferenceCall { id: number; timestamp: string; provider: string; model: string; profile: string | null; inputTokens: number; outputTokens: number; totalTokens: number; costTotal: number; durationMs: number | null; runId: string | null; }
+interface HierarchyInferenceCall { id: number; timestamp: string; provider: string; model: string; profile: string | null; inputTokens: number; outputTokens: number; totalTokens: number; costTotal: number; durationMs: number | null; runId: string | null; captureId: string | null; }
 interface HierarchySession { sessionKey: string; sessionId: number | null; sessionTitle: string | null; chatSessionId: string | null; cost: number; calls: number; inputTokens: number; outputTokens: number; inferenceCalls: HierarchyInferenceCall[]; }
 interface HierarchyPrompt { prompt: string; cost: number; calls: number; inputTokens: number; outputTokens: number; sessions: HierarchySession[]; }
 interface HierarchyActivity { activity: string; cost: number; calls: number; inputTokens: number; outputTokens: number; prompts: HierarchyPrompt[]; }
@@ -472,14 +475,20 @@ function HierarchyBreakdown({ data }: { data?: HierarchyResponse }) {
                                             {expandedSessions.has(`${promptKey}:${s.sessionKey}`) && (
                                               <div className="ml-5 border-l border-border/10 pl-3 space-y-0.5">
                                                 {s.inferenceCalls.map((call) => {
-                                                  const callTokens = call.totalTokens || call.inputTokens + call.outputTokens;
                                                   return (
                                                     <div key={call.id} className={`grid ${gridCols} gap-x-2 items-center py-0.5 px-1`}>
-                                                      <span className="text-xs text-muted-foreground truncate" title={`${call.provider}/${call.model}`}>
-                                                        #{call.id} · {shortenModel(call.model)}
+                                                      <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground" title={`${call.provider}/${call.model}`}>
+                                                        <span className="truncate">#{call.id} · {shortenModel(call.model)}</span>
+                                                        {call.captureId ? (
+                                                          <ReferenceRenderer
+                                                            refValue={createReferenceRef({ type: "inference_context", id: call.captureId, metadata: { label: "Context" } })}
+                                                            surface="simple-chip"
+                                                            className="mx-0 shrink-0"
+                                                          />
+                                                        ) : <span className="shrink-0 text-muted-foreground/60">Context unavailable</span>}
                                                       </span>
                                                       <span className="text-right tabular-nums text-xs">1</span>
-                                                      <span className="text-right tabular-nums text-xs">{formatTokens(callTokens)}</span>
+                                                      <span className="text-right tabular-nums text-xs" title="Provider input → output tokens">{formatTokens(call.inputTokens)}→{formatTokens(call.outputTokens)}</span>
                                                       <span className="text-right tabular-nums text-xs text-muted-foreground">—</span>
                                                       <span className="text-right tabular-nums text-xs">{formatCost(call.costTotal)}</span>
                                                     </div>
@@ -1118,6 +1127,17 @@ export default function Performance({ embedded }: { embedded?: boolean }) {
                     <span className="text-xs text-muted-foreground">Cache Read</span>
                     <p className="text-sm font-mono">{selectedCall.cacheReadTokens?.toLocaleString()}</p>
                   </div>
+                )}
+                {selectedCall.captureId && (
+                  <div className="col-span-2">
+                    <span className="text-xs text-muted-foreground">Provider Context</span>
+                    <p className="text-sm">
+                      <ReferenceRenderer refValue={createReferenceRef({ type: "inference_context", id: selectedCall.captureId, metadata: { label: "Context" } })} />
+                    </p>
+                  </div>
+                )}
+                {!selectedCall.captureId && (
+                  <div className="col-span-2 text-xs text-muted-foreground">Context unavailable for this legacy attempt.</div>
                 )}
                 {(selectedCall.cacheWriteTokens || 0) > 0 && (
                   <div>

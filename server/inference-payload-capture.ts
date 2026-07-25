@@ -5,7 +5,7 @@ import { createLogger } from "./log";
 import { safeStringify, safeTruncate } from "./utils/safe-stringify";
 import { getCurrentPrincipal, requireCurrentUserPrincipal } from "./principal-context";
 import { ownedInsertValues, visibleScopePredicate } from "./scoped-storage";
-import { inferencePayloadCaptures } from "@shared/schema";
+import { apiCallRecords, inferencePayloadCaptures } from "@shared/schema";
 import type {
   InferencePayloadCapture,
   InferencePayloadCaptureSummary,
@@ -29,6 +29,7 @@ export interface CaptureInferencePayloadInput {
   metadata?: Record<string, unknown>;
   sessionId?: string | null;
   source?: string | null;
+  apiCallId?: number | null;
 }
 
 interface EncodedProviderRequest {
@@ -156,7 +157,46 @@ function captureVersion(metadata: Record<string, unknown>): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
-function toSummary(row: typeof inferencePayloadCaptures.$inferSelect): InferencePayloadCaptureSummary {
+type CaptureRow = typeof inferencePayloadCaptures.$inferSelect;
+type UsageRow = Pick<typeof apiCallRecords.$inferSelect,
+  "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens" | "totalTokens" | "metadata"
+> | null;
+
+function usageStatus(metadata: Record<string, unknown> | null | undefined): "dispatched" | "success" | "error" | "aborted" | "partial" | null {
+  const value = metadata?.status;
+  return value === "dispatched" || value === "success" || value === "error" || value === "aborted" || value === "partial"
+    ? value
+    : null;
+}
+
+function usageSemantics(metadata: Record<string, unknown> | null | undefined): "per_call" | "cumulative_provider_session" | "unknown" | null {
+  const value = metadata?.usageSemantics;
+  return value === "per_call" || value === "cumulative_provider_session" || value === "unknown" ? value : null;
+}
+
+function metadataInteger(metadata: Record<string, unknown> | null | undefined, key: string): number | null {
+  const tokenAccounting = metadata?.tokenAccounting;
+  const value = tokenAccounting && typeof tokenAccounting === "object"
+    ? (tokenAccounting as Record<string, unknown>)[key]
+    : undefined;
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : null;
+}
+
+function toProviderUsage(usage: UsageRow): InferencePayloadCaptureSummary["providerUsage"] {
+  if (!usage) return null;
+  return {
+    inputTokens: usageStatus(usage.metadata) === "dispatched" ? null : usage.inputTokens,
+    outputTokens: usageStatus(usage.metadata) === "dispatched" ? null : usage.outputTokens,
+    cacheReadTokens: usage.cacheReadTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    reasoningTokens: metadataInteger(usage.metadata, "reasoningTokens"),
+    totalTokens: usageStatus(usage.metadata) === "dispatched" ? null : usage.totalTokens,
+    status: usageStatus(usage.metadata),
+    semantics: usageSemantics(usage.metadata),
+  };
+}
+
+function toSummary(row: CaptureRow, usage: UsageRow = null): InferencePayloadCaptureSummary {
   const version = captureVersion(row.metadata);
   return {
     id: row.id,
@@ -169,6 +209,8 @@ function toSummary(row: typeof inferencePayloadCaptures.$inferSelect): Inference
     source: row.source,
     attempt: row.attempt,
     requestChars: row.requestChars,
+    apiCallId: row.apiCallId,
+    providerUsage: toProviderUsage(usage),
     captureVersion: version,
     completeness: version === INFERENCE_PAYLOAD_CAPTURE_VERSION ? "complete" : "legacy_incomplete",
   };
@@ -213,6 +255,7 @@ export async function captureInferencePayload(input: CaptureInferencePayloadInpu
             requestChars,
             excludedSensitiveFields: input.excludedSensitiveFields ?? [],
             residualLimitation: input.residualLimitation ?? null,
+            apiCallId: input.apiCallId ?? null,
             attempt: input.attempt ?? 1,
             metadata: {
               ...(input.metadata ?? {}),
@@ -237,7 +280,7 @@ export async function captureInferencePayload(input: CaptureInferencePayloadInpu
         }),
       ),
     );
-    log.debug(`captured provider payload id=${id} provider=${input.provider} boundary=${input.boundary} chars=${requestChars}`);
+    log.debug(`captured provider payload id=${id} apiCallId=${input.apiCallId ?? "unlinked"} provider=${input.provider} boundary=${input.boundary} chars=${requestChars}`);
     return id;
   } catch (error) {
     const diagnostic = {
@@ -247,6 +290,7 @@ export async function captureInferencePayload(input: CaptureInferencePayloadInpu
       activity: input.activity ?? null,
       sessionId: input.sessionId ?? null,
       attempt: input.attempt ?? 1,
+      apiCallId: input.apiCallId ?? null,
       ambientTransaction: hasAmbientDatabaseTransaction(),
       errorChain: captureDatabaseErrorChain(error),
     };
@@ -275,8 +319,14 @@ export async function listInferencePayloadCaptures(
     accountId: inferencePayloadCaptures.accountId,
   });
   const rows = await db
-    .select()
+    .select({ capture: inferencePayloadCaptures, usage: apiCallRecords })
     .from(inferencePayloadCaptures)
+    .leftJoin(apiCallRecords, and(
+      eq(inferencePayloadCaptures.apiCallId, apiCallRecords.id),
+      eq(apiCallRecords.scope, "user"),
+      eq(apiCallRecords.ownerUserId, principal.userId),
+      eq(apiCallRecords.accountId, principal.accountId),
+    ))
     .where(and(
       visible,
       eq(inferencePayloadCaptures.ownerUserId, principal.userId),
@@ -284,7 +334,7 @@ export async function listInferencePayloadCaptures(
     ))
     .orderBy(desc(inferencePayloadCaptures.capturedAt), desc(inferencePayloadCaptures.id))
     .limit(boundedLimit);
-  return rows.map(toSummary);
+  return rows.map(({ capture, usage }) => toSummary(capture, usage));
 }
 
 export async function getInferencePayloadCapture(id: string): Promise<InferencePayloadCapture | null> {
@@ -294,9 +344,15 @@ export async function getInferencePayloadCapture(id: string): Promise<InferenceP
     ownerUserId: inferencePayloadCaptures.ownerUserId,
     accountId: inferencePayloadCaptures.accountId,
   });
-  const [row] = await db
-    .select()
+  const [result] = await db
+    .select({ capture: inferencePayloadCaptures, usage: apiCallRecords })
     .from(inferencePayloadCaptures)
+    .leftJoin(apiCallRecords, and(
+      eq(inferencePayloadCaptures.apiCallId, apiCallRecords.id),
+      eq(apiCallRecords.scope, "user"),
+      eq(apiCallRecords.ownerUserId, principal.userId),
+      eq(apiCallRecords.accountId, principal.accountId),
+    ))
     .where(and(
       eq(inferencePayloadCaptures.id, id),
       scope,
@@ -304,16 +360,17 @@ export async function getInferencePayloadCapture(id: string): Promise<InferenceP
       eq(inferencePayloadCaptures.accountId, principal.accountId),
     ))
     .limit(1);
-  if (!row) return null;
+  if (!result) return null;
+  const { capture, usage } = result;
   return {
-    ...toSummary(row),
-    request: decodeProviderRequest(row.request),
+    ...toSummary(capture, usage),
+    request: decodeProviderRequest(capture.request),
     evidence: {
-      authority: row.authority,
-      observableBoundary: row.observableBoundary,
-      excludedSensitiveFields: row.excludedSensitiveFields,
-      residualLimitation: row.residualLimitation,
+      authority: capture.authority,
+      observableBoundary: capture.observableBoundary,
+      excludedSensitiveFields: capture.excludedSensitiveFields,
+      residualLimitation: capture.residualLimitation,
     },
-    metadata: row.metadata,
+    metadata: capture.metadata,
   };
 }

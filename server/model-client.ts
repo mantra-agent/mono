@@ -21,6 +21,7 @@ import { runWithPrincipal } from "./principal-context";
 import { resolveSessionModelTierOverride } from "./session-model-tier-override";
 import { safeStringify } from "./utils/safe-stringify";
 import { captureInferencePayload } from "./inference-payload-capture";
+import { beginProviderAttempt, createProviderAttemptTracker, type ProviderAttemptTracker } from "./provider-attempt";
 import { redactSensitiveText } from "./sensitive-data-redaction";
 
 let _openaiClient: OpenAI | null = null;
@@ -341,6 +342,8 @@ export interface ChatCompletionOptions {
   thinking?: import("./thinking-config").ResolvedThinking;
   /** Dedicated one-shot Claude CLI lane. Only named latency-critical calls may opt in. */
   warmPoolLane?: "orientation";
+  /** Internal canonical provider-attempt tracker. Never supplied by feature callers. */
+  providerAttemptTracker?: ProviderAttemptTracker;
 }
 
 export type InferenceStatus = "success" | "error" | "aborted" | "partial";
@@ -368,10 +371,26 @@ async function captureProviderDispatch(
   model: string,
   boundary: string,
   request: unknown,
-  options: Pick<ChatCompletionOptions | ChatCompletionStreamOptions, "activity" | "metadata">,
+  options: Pick<ChatCompletionOptions | ChatCompletionStreamOptions, "activity" | "metadata" | "routingDecision" | "providerAttemptTracker">,
   attempt = 1,
-): Promise<void> {
-  await captureInferencePayload({
+): Promise<string | null> {
+  const tracker = options.providerAttemptTracker ?? createProviderAttemptTracker();
+  const apiCallId = await beginProviderAttempt({
+    tracker,
+    provider,
+    model,
+    profile: options.routingDecision?.tier ?? "unknown",
+    attempt,
+    metadata: {
+      activity: options.activity ?? options.metadata?.activity,
+      source: options.metadata?.source,
+      runId: options.metadata?.runId,
+      sessionId: options.metadata?.sessionId,
+      sessionKey: options.metadata?.sessionKey,
+      requestId: options.metadata?.requestId,
+    },
+  });
+  const captureId = await captureInferencePayload({
     provider,
     model,
     activity: options.activity ?? options.metadata?.activity ?? null,
@@ -388,7 +407,9 @@ async function captureProviderDispatch(
     },
     sessionId: options.metadata?.sessionId ?? null,
     source: options.metadata?.source ?? null,
+    apiCallId,
   });
+  return captureId;
 }
 
 export interface ChatCompletionResult {
@@ -489,11 +510,13 @@ async function recordInference(params: {
   error?: Record<string, unknown>;
   latency?: { providerTtftMs?: number | null; firstSdkEventMs?: number | null; firstThinkingMs?: number | null };
   signal?: AbortSignal;
+  apiCallId?: number;
 }): Promise<void> {
   try {
     const { logApiCall } = await import("./cost-tracker");
     const meta = params.metadata;
     await logApiCall({
+      apiCallId: params.apiCallId,
       startTime: params.startTime,
       profile: params.routing.tier,
       provider: params.routing.provider,
@@ -618,24 +641,26 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
   const start = Date.now();
   const requestContent = buildRequestContent(options.messages);
   let result: ChatCompletionResult | undefined;
+  const providerAttemptTracker = createProviderAttemptTracker();
+  const attemptOptions = { ...options, providerAttemptTracker };
 
   if (!options.metadata) log.warn(`chatCompletion missing metadata provider=${provider} model=${model} activity=${activity}`);
   log.debug(`chatCompletion provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} source=${routing.source} configHash=${routing.configHash} messages=${msgCount} maxTokens=${options.maxTokens ?? "default"} jsonMode=${!!options.jsonMode}`);
 
   try {
     result = provider === "anthropic"
-      ? await anthropicCompletion(model, { ...options, routingDecision: routing })
+      ? await anthropicCompletion(model, { ...attemptOptions, routingDecision: routing })
       : provider === "claude-cli"
-        ? await claudeCliCompletion(model, { ...options, routingDecision: routing })
+        ? await claudeCliCompletion(model, { ...attemptOptions, routingDecision: routing })
         : provider === "openai-subscription"
-          ? await openaiSubscriptionCompletion(model, options)
-          : await openaiCompletion(model, { ...options, routingDecision: routing });
+          ? await openaiSubscriptionCompletion(model, { ...attemptOptions, routingDecision: routing })
+          : await openaiCompletion(model, { ...attemptOptions, routingDecision: routing });
 
     result = { ...result, metadata: { ...(result.metadata || {}), routing: auditRouting(routing), trackedAtBoundary: true } };
     const elapsed = Date.now() - start;
     const usage = result.usage;
     log.debug(`chatCompletion done in ${elapsed}ms provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash} prompt=${usage?.promptTokens ?? "?"} completion=${usage?.completionTokens ?? "?"} total=${usage?.totalTokens ?? "?"}`);
-    await recordInference({ startTime: start, routing, metadata: options.metadata, status: "success", usage, requestContent, responseContent: result.content, signal: options.signal });
+    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status: "success", usage, requestContent, responseContent: result.content, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
     return result;
   } catch (err: any) {
     const elapsed = Date.now() - start;
@@ -662,7 +687,7 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
           reasoningTokens: err.providerFailure.usage.reasoningTokens,
         }
       : undefined;
-    await recordInference({ startTime: start, routing, metadata: options.metadata, status, usage: result?.usage || providerUsage, requestContent, responseContent: result?.content, error: errorMetadata, signal: options.signal });
+    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status, usage: result?.usage || providerUsage, requestContent, responseContent: result?.content, error: errorMetadata, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
     throw enrichModelError(err, routing, options.metadata);
   }
 }
@@ -1871,7 +1896,8 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     await import("./thinking-config");
   const resolvedThinking = options.thinking
     ?? resolveThinkingConfig(model, thinkingBudgetToTier(options.thinkingBudget));
-  const optionsWithResolved: ChatCompletionStreamOptions = { ...options, thinking: resolvedThinking };
+  const providerAttemptTracker = createProviderAttemptTracker();
+  const optionsWithResolved: ChatCompletionStreamOptions = { ...options, thinking: resolvedThinking, providerAttemptTracker };
   const thinkingDesc = describeResolvedThinking(resolvedThinking);
 
   if (!options.metadata) log.warn(`chatCompletionStream missing metadata provider=${provider} model=${model} activity=${activity}`);
@@ -2001,6 +2027,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       firstThinkingMs: firstThinkingAt !== null ? firstThinkingAt - t0 : null,
     },
     signal: options.signal,
+    apiCallId: providerAttemptTracker.current?.apiCallId,
   });
   } catch (err: unknown) {
     const status: InferenceStatus = isAbortError(err, options.signal) ? "aborted" : (responseContent ? "partial" : "error");
@@ -2020,6 +2047,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
         firstThinkingMs: firstThinkingAt !== null ? firstThinkingAt - t0 : null,
       },
       signal: options.signal,
+      apiCallId: providerAttemptTracker.current?.apiCallId,
     });
     throw enrichModelError(err, routing, options.metadata);
   }

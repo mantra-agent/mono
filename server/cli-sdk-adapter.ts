@@ -13,6 +13,7 @@ import { getModel } from "./model-registry";
 import { getSecretSync } from "./secrets-store";
 import { thinkingConfigKey } from "./thinking-config";
 import { captureInferencePayload } from "./inference-payload-capture";
+import { beginProviderAttempt, createProviderAttemptTracker } from "./provider-attempt";
 
 const log = createLogger("cli-sdk-adapter");
 
@@ -1199,6 +1200,22 @@ export async function* cliSdkStream(
       }
     }
     handoffDoneAt = Date.now();
+    const providerAttemptTracker = options.providerAttemptTracker ?? createProviderAttemptTracker();
+    const apiCallId = await beginProviderAttempt({
+      tracker: providerAttemptTracker,
+      provider: "claude-cli",
+      model,
+      profile: options.routingDecision?.tier ?? options.routingTier ?? "unknown",
+      attempt: 1,
+      metadata: {
+        activity: options.metadata?.activity ?? options.activity,
+        source: options.metadata?.source,
+        runId: options.metadata?.runId ?? options.runId,
+        sessionId: options.metadata?.sessionId ?? options.convId,
+        sessionKey: options.metadata?.sessionKey,
+        requestId: options.metadata?.requestId,
+      },
+    });
     await captureInferencePayload({
       provider: "claude-cli",
       model,
@@ -1241,6 +1258,7 @@ export async function* cliSdkStream(
       },
       sessionId: options.metadata?.sessionId ?? options.convId ?? null,
       source: options.metadata?.source ?? null,
+      apiCallId,
     });
     if (poolEligible) {
       const startupFn = (await sdkModulePromise as unknown as { startup?: SdkStartupFn }).startup;

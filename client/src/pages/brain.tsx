@@ -47,6 +47,12 @@ export default function BrainPage() {
     setActiveTab(p.tab);
   }, [location, readUrlParams]);
 
+  useEffect(() => {
+    const syncFromHistory = () => setActiveTab(readUrlParams().tab);
+    window.addEventListener("popstate", syncFromHistory);
+    return () => window.removeEventListener("popstate", syncFromHistory);
+  }, [readUrlParams]);
+
   usePageHeader({
     title: "Brain",
     tabs: brainTabs,

@@ -5,6 +5,7 @@ import { getSectionsForCallType, SPINE_SECTIONS, getAllSectionIds } from "./cont
 import { getInferencePayloadCapture, INFERENCE_PAYLOAD_RETENTION_LIMIT, listInferencePayloadCaptures } from "./inference-payload-capture";
 import type { ContextCallType, LlmMode, ContextRequest } from "../shared/context-spine";
 import { createLogger } from "./log";
+import { requireAuth } from "./auth";
 
 const log = createLogger("ContextRoutes");
 
@@ -20,6 +21,7 @@ const VALID_LLM_MODES: LlmMode[] = ["text", "voice"];
 // Captured inference payload routes below read only concrete provider-bound calls.
 
 export function registerContextRoutes(app: Express) {
+  app.use("/api/context", requireAuth);
   app.get("/api/context/preview", async (req, res) => {
     try {
       const callType = (req.query.callType as ContextCallType) || "full";
