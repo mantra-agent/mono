@@ -130,7 +130,10 @@ export function extractSuccessfulToolInvocations(messages: FileMessage[]): Set<s
   for (const m of messages) {
     if (!Array.isArray(m.toolCalls)) continue;
     for (const tc of m.toolCalls as ToolCallInfo[]) {
-      if (tc && typeof tc.toolName === "string" && tc.status === "done") invoked.add(tc.toolName);
+      if (!tc || typeof tc.toolName !== "string" || tc.status !== "done") continue;
+      invoked.add(tc.toolName);
+      const action = tc.arguments?.action;
+      if (typeof action === "string" && action.trim()) invoked.add(`${tc.toolName}:${action.trim()}`);
     }
   }
   return invoked;
@@ -138,13 +141,16 @@ export function extractSuccessfulToolInvocations(messages: FileMessage[]): Set<s
 
 export function evaluateDeterministicItem(item: ChecklistItem, invokedTools: Set<string>): CheckResult | null {
   if (item?.kind !== "tool_invoked" || typeof item.tool !== "string") return null;
-  const passed = invokedTools.has(item.tool);
+  const action = typeof item.action === "string" && item.action.trim() ? item.action.trim() : null;
+  const invocation = action ? `${item.tool}:${action}` : item.tool;
+  const passed = invokedTools.has(invocation);
+  const label = action ? `tool action "${invocation}"` : `tool "${item.tool}"`;
   return {
     check: item.check,
     passed,
     evidence: passed
-      ? `Deterministic: tool "${item.tool}" had a successful invocation.`
-      : `Deterministic: no successful invocation of tool "${item.tool}" in this run.`,
+      ? `Deterministic: ${label} had a successful invocation.`
+      : `Deterministic: no successful invocation of ${label} in this run.`,
   };
 }
 

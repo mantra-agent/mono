@@ -2,6 +2,7 @@ import type { Principal } from "./principal";
 import { getCurrentPrincipal } from "./principal-context";
 import { getSideEffectTier } from "./autonomy-tiers";
 import { principalHasPermission, type Permission } from "./permissions";
+import { CANONICAL_SCAN_SKILL_ID } from "./skill-identities";
 
 export type ToolInvocationOrigin =
   | "interactive"
@@ -18,6 +19,8 @@ export interface AgentAuthorityContext {
   origin?: ToolInvocationOrigin;
   trustedDelegation?: TrustedEngineeringDelegation;
   activity?: string;
+  /** Canonical DB skill row ID, resolved by the autonomous runner. Never model-provided. */
+  skillId?: string;
   sessionId?: string;
   sessionKey?: string;
 }
@@ -48,6 +51,13 @@ const MODEL_FORBIDDEN_ACTIONS: Record<string, ReadonlySet<string>> = {
   platforms: new Set(["create_connection"]),
   railway: new Set(["redeploy", "restart"]),
   expo: new Set(["cancel"]),
+};
+
+const AUTONOMOUS_SKILL_EXTERNAL_EFFECT_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = {
+  // The canonical scan skill is only a model-facing wrapper around the same
+  // deterministic scanner scheduled timers call directly. No other skill may
+  // acquire this network/external-feed capability.
+  [CANONICAL_SCAN_SKILL_ID]: new Set(["news:scan"]),
 };
 
 const INTERNAL_EXTERNAL_EFFECT_ALLOWLIST = new Set([
@@ -159,7 +169,10 @@ export function authorizeToolInvocation(
     const wildcardKey = `${toolName}:*`;
     const trustedEngineeringWrite = isTrustedEngineeringDelegation(context)
       && ENGINEERING_WRITE_ACTIONS[toolName]?.has(action || "");
-    if (!trustedEngineeringWrite && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(key) && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(wildcardKey)) {
+    const skillScopedEffect = origin === "autonomous"
+      && typeof context.skillId === "string"
+      && AUTONOMOUS_SKILL_EXTERNAL_EFFECT_ALLOWLIST[context.skillId]?.has(key);
+    if (!trustedEngineeringWrite && !skillScopedEffect && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(key) && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(wildcardKey)) {
       return { allowed: false, reason: "autonomous_external_effect_blocked" };
     }
   }

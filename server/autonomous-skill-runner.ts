@@ -433,7 +433,9 @@ async function findFailedDeterministicChecks(sessionId: string, skillName: strin
     const failed: string[] = [];
     for (const item of checklist) {
       const result = evaluateDeterministicItem(item, invoked);
-      if (result && !result.passed && typeof item.tool === "string") failed.push(item.tool);
+      if (result && !result.passed && typeof item.tool === "string") {
+        failed.push(`${item.tool}${typeof item.action === "string" ? `:${item.action}` : ""}`);
+      }
     }
     return failed;
   } catch (err) {
@@ -480,13 +482,14 @@ function getSkillTools(
   activity: ActivityId,
   sessionKey: string,
   sessionId: string,
+  authoritySkillId?: string,
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation,
 ): {
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   toolExecutor: (name: string, args: Record<string, unknown>) => Promise<{ result: string; error: boolean }>;
 } {
   const { filterToolSchemasForAuthority } = require("./agent-authority") as typeof import("./agent-authority");
-  const authority = { origin: "autonomous" as const, trustedDelegation, activity, sessionKey, sessionId };
+  const authority = { origin: "autonomous" as const, trustedDelegation, activity, skillId: authoritySkillId, sessionKey, sessionId };
   const allToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), authority);
   const tools = allToolDefs.map((t: AgentToolDefinition) => ({
     name: t.name,
@@ -658,6 +661,7 @@ export async function executeAutonomousSkillRun(
 
   let addToMemory = true;
   let resolvedSessionType: "autonomous" | "agent" | null = null;
+  let authoritySkillId: string | undefined;
   let resolvedPersona: import("./skill-persona-service").SkillPersonaResolution | null = null;
   if (!isSkillless) {
     logger.log(`[SkillChat] phase=skill-lookup — resolving skill record for "${skillId}" (config.skillId="${config.skillId}")`);
@@ -666,6 +670,7 @@ export async function executeAutonomousSkillRun(
       if (!skillRecord && skillId !== config.skillId) skillRecord = await storage.getSkillByName(skillId!);
       if (!skillRecord) skillRecord = await storage.getSkill(skillId!);
       if (skillRecord) {
+        authoritySkillId = skillRecord.id;
         if (skillRecord.addToMemory === false) {
           addToMemory = false;
         }
@@ -956,8 +961,8 @@ export async function executeAutonomousSkillRun(
     // point — so every launch path (timer, tool, hook) inherits the verdict.
     let runStatus: "succeeded" | "degraded" | "failed" = result.status === "succeeded" ? "succeeded" : "failed";
     let failedToolChecks: string[] = [];
-    if (runStatus === "succeeded" && skillId) {
-      failedToolChecks = await findFailedDeterministicChecks(sessionId, skillId);
+    if (runStatus === "succeeded" && config.skillId) {
+      failedToolChecks = await findFailedDeterministicChecks(sessionId, config.skillId);
       if (failedToolChecks.length > 0) runStatus = "degraded";
     }
     const terminalFailureReason = runStatus === "failed"
@@ -969,6 +974,14 @@ export async function executeAutonomousSkillRun(
       logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status: ${e instanceof Error ? e.message : String(e)}`);
     });
     if (runStatus === "degraded") {
+      if (await conversationExists(sessionId)) {
+        await chatFileStorage.setEndReason(sessionId, terminalFailureReason || "tool_coverage_failed").catch((e: unknown) => {
+          logger.error(`[SkillChat] [${sessionId}] Failed to reconcile degraded endReason: ${e instanceof Error ? e.message : String(e)}`);
+        });
+        await chatFileStorage.setErrorSeverity(sessionId, "warn").catch((e: unknown) => {
+          logger.error(`[SkillChat] [${sessionId}] Failed to reconcile degraded errorSeverity: ${e instanceof Error ? e.message : String(e)}`);
+        });
+      }
       logger.warn(`[SkillChat] [${sessionId}] Run degraded — deterministic checklist tool checks failed: ${failedToolChecks.join(", ")}`);
       eventBus.publish({
         category: "skill",
@@ -1189,7 +1202,7 @@ async function runSkillPipeline(
       sessionKey,
     });
     const trustedDelegation = options.planId ? "plan" : options.workflowRunId ? "workflow" : undefined;
-    const { tools, toolExecutor } = getSkillTools(config.activity, sessionKey, sessionId, trustedDelegation);
+    const { tools, toolExecutor } = getSkillTools(config.activity, sessionKey, sessionId, authoritySkillId, trustedDelegation);
 
     let toolCallCount = 0;
     const toolCallLog: Array<{ name: string; action?: string; error?: boolean; result?: string }> = [];
@@ -1433,7 +1446,7 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
       : conv.spawnerTool === "session.spawn_child.engineering"
         ? "child" as const
         : undefined;
-  const { tools, toolExecutor } = getSkillTools(ACTIVITY_WORK, sessionKey, sessionId, trustedDelegation);
+  const { tools, toolExecutor } = getSkillTools(ACTIVITY_WORK, sessionKey, sessionId, undefined, trustedDelegation);
 
   let finalStatus: "succeeded" | "failed" = "succeeded";
   let finalSummary = "Child session response completed";

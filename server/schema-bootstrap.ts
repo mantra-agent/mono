@@ -3541,6 +3541,7 @@ export async function runSchemaBootstrap(
       migrateSkillRenames,
       migrateLegacyPromptOverrides,
       migrateSkillProcessToToolBased,
+      migrateCanonicalScanToolGate,
       deprecateRetiredBuiltinSkills,
       migrateSkillProcessUpdates,
       migrateAutonomyCanonicalMeetingPrep,
@@ -3554,6 +3555,7 @@ export async function runSchemaBootstrap(
     await migrateLegacySkillPersonaPreferences();
     await migrateLegacyPromptOverrides();
     await migrateSkillProcessToToolBased();
+    await migrateCanonicalScanToolGate();
     await deprecateRetiredBuiltinSkills();
     await migrateSkillProcessUpdates();
     await migrateAutonomyCanonicalMeetingPrep();

@@ -152,7 +152,7 @@ function withPeopleSummaryStatus(
 async function validateChecklistToolRefs(checklist: unknown): Promise<string | null> {
   if (!Array.isArray(checklist)) return null;
   const deterministic = checklist.filter(
-    (item): item is { check?: unknown; kind?: unknown; tool?: unknown } =>
+    (item): item is { check?: unknown; kind?: unknown; tool?: unknown; action?: unknown } =>
       !!item && typeof item === "object" && (item as { kind?: unknown }).kind === "tool_invoked",
   );
   if (deterministic.length === 0) return null;
@@ -168,6 +168,23 @@ async function validateChecklistToolRefs(checklist: unknown): Promise<string | n
   if (unknown.length > 0) {
     return `Unknown tool name(s) in deterministic checklist items: ${unknown.join(", ")}. Use tools(action=list) for valid names.`;
   }
+  const { getToolSchemas } = await import("./tool-registry");
+  const schemas = new Map(getToolSchemas().map((schema) => [schema.name, schema]));
+  const invalidActions = deterministic.flatMap((item) => {
+    if (item.action === undefined) return [];
+    if (typeof item.action !== "string" || !item.action.trim()) {
+      return [`${String(item.tool)}:(missing action)`];
+    }
+    const tool = (item.tool as string).trim();
+    const action = item.action.trim();
+    const actionSchema = schemas.get(tool)?.parameters?.properties?.action;
+    return Array.isArray(actionSchema?.enum) && actionSchema.enum.includes(action)
+      ? []
+      : [`${tool}:${action}`];
+  });
+  if (invalidActions.length > 0) {
+    return `Unknown tool action(s) in deterministic checklist items: ${invalidActions.join(", ")}. Use tools(action=get) for valid actions.`;
+  }
   return null;
 }
 
@@ -182,10 +199,13 @@ function formatChecklistForXyz(checklist: unknown): string {
     return "Checklist: (no structured checklist defined — scorer will fall back to default checks)";
   }
   const lines = checklist.map((item: unknown, i: number) => {
-    const obj = (item ?? {}) as { check?: unknown; weight?: unknown };
+    const obj = (item ?? {}) as { check?: unknown; weight?: unknown; kind?: unknown; tool?: unknown; action?: unknown };
     const text = typeof obj.check === "string" ? obj.check : JSON.stringify(item);
     const weight = typeof obj.weight === "number" ? obj.weight : 1;
-    return `${i + 1}. ${text} (w:${weight})`;
+    const deterministic = obj.kind === "tool_invoked" && typeof obj.tool === "string"
+      ? `, requires:${obj.tool}${typeof obj.action === "string" ? `:${obj.action}` : ""}`
+      : "";
+    return `${i + 1}. ${text} (w:${weight}${deterministic})`;
   });
   return `Checklist (${checklist.length} weighted items used by the scorer):\n${lines.join("\n")}`;
 }
@@ -7374,9 +7394,9 @@ ${lines.join("\n")}` };
           if (skill.whenToUse) parts.push(`\nWhen To Use:\n${skill.whenToUse}`);
           if (skill.outputSpec) parts.push(`Output Spec:\n${skill.outputSpec}`);
           const deterministicTools = Array.isArray(skill.checklist)
-            ? (skill.checklist as Array<{ kind?: unknown; tool?: unknown }>)
+            ? (skill.checklist as Array<{ kind?: unknown; tool?: unknown; action?: unknown }>)
                 .filter((c) => !!c && c.kind === "tool_invoked" && typeof c.tool === "string")
-                .map((c) => c.tool as string)
+                .map((c) => `${c.tool}${typeof c.action === "string" ? `:${c.action}` : ""}`)
             : [];
           if (deterministicTools.length > 0) {
             parts.push(`Deterministic tool checks (from checklist): ${deterministicTools.join(", ")} — a run without a successful invocation of each terminates degraded.`);

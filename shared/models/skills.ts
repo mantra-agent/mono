@@ -35,6 +35,9 @@ export interface ChecklistItem {
   /** Tool name for kind "tool_invoked". Validated against the unified tool
    * registry at the skills tool write boundary. */
   tool?: string;
+  /** Optional action discriminator for kind "tool_invoked". When present, the
+   * run must successfully invoke this exact tool action, not merely the tool. */
+  action?: string;
 }
 
 export interface CheckResult {
@@ -53,6 +56,7 @@ export const checklistItemSchema = z.object({
   weight: z.number().optional(),
   kind: z.enum(checklistKinds).optional(),
   tool: z.string().min(1).optional(),
+  action: z.string().min(1).optional(),
 }).refine((item) => item.kind !== "tool_invoked" || typeof item.tool === "string", {
   message: 'checklist items with kind "tool_invoked" require a tool name',
 });
