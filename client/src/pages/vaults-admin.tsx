@@ -36,6 +36,7 @@ import { useVaults, type Vault } from "@/hooks/use-vaults";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
 import { VaultMigrationControls } from "@/components/vault-migration-controls";
+import { DEFAULT_VAULT_COLOR, VAULT_COLOR_PALETTE } from "@shared/models/vaults";
 
 const log = createLogger("VaultsAdmin");
 
@@ -45,28 +46,22 @@ interface OpportunitySummary {
   vaultId: string | null;
 }
 
-// ── Color palette (muted tones matching DESIGN.md) ─────────────────────────
-
-const VAULT_COLORS = [
-  { value: "#828A96", label: "Slate" },
-  { value: "#6E8B74", label: "Sage" },
-  { value: "#7B8CDE", label: "Periwinkle" },
-  { value: "#C4956A", label: "Amber" },
-  { value: "#B07BAC", label: "Mauve" },
-  { value: "#6BA3B5", label: "Teal" },
-  { value: "#C27878", label: "Rose" },
-  { value: "#9B9B6F", label: "Olive" },
-];
-
-function ColorDot({ color, selected, onClick }: { color: string; selected: boolean; onClick: () => void }) {
+function ColorDot({ color, label, selected, onClick }: { color: string; label: string; selected: boolean; onClick: () => void }) {
+  const isWhite = color.toUpperCase() === "#FFFFFF";
   return (
     <button
       type="button"
       onClick={onClick}
       className={`h-6 w-6 rounded-full border-2 transition-all ${
-        selected ? "border-foreground scale-110" : "border-transparent hover:border-muted-foreground/40"
+        selected
+          ? "border-foreground scale-110"
+          : isWhite
+            ? "border-muted-foreground/40 hover:border-muted-foreground/70"
+            : "border-transparent hover:border-muted-foreground/40"
       }`}
       style={{ backgroundColor: color }}
+      aria-label={label}
+      title={label}
     />
   );
 }
@@ -75,7 +70,7 @@ function ColorDot({ color, selected, onClick }: { color: string; selected: boole
 
 function CreateVaultDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [name, setName] = useState("");
-  const [color, setColor] = useState(VAULT_COLORS[0].value);
+  const [color, setColor] = useState(DEFAULT_VAULT_COLOR);
   const { toast } = useToast();
 
   const createMutation = useMutation({
@@ -87,7 +82,7 @@ function CreateVaultDialog({ open, onOpenChange }: { open: boolean; onOpenChange
       queryClient.invalidateQueries({ queryKey: ["/api/vaults"] });
       toast({ title: "Vault created", description: `"${name}" is ready.` });
       setName("");
-      setColor(VAULT_COLORS[0].value);
+      setColor(DEFAULT_VAULT_COLOR);
       onOpenChange(false);
     },
     onError: (err) => {
@@ -118,8 +113,8 @@ function CreateVaultDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           <div>
             <label className="text-sm font-medium text-foreground">Color</label>
             <div className="mt-1.5 flex gap-2">
-              {VAULT_COLORS.map((c) => (
-                <ColorDot key={c.value} color={c.value} selected={color === c.value} onClick={() => setColor(c.value)} />
+              {VAULT_COLOR_PALETTE.map((c) => (
+                <ColorDot key={c.value} color={c.value} label={c.label} selected={color === c.value} onClick={() => setColor(c.value)} />
               ))}
             </div>
           </div>
@@ -140,7 +135,7 @@ function CreateVaultDialog({ open, onOpenChange }: { open: boolean; onOpenChange
 
 function RenameDialog({ vault, open, onOpenChange }: { vault: Vault; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [newName, setNewName] = useState(vault.name);
-  const [newColor, setNewColor] = useState(vault.color || VAULT_COLORS[0].value);
+  const [newColor, setNewColor] = useState(vault.color || DEFAULT_VAULT_COLOR);
   const { toast } = useToast();
 
   const renameMutation = useMutation({
@@ -178,8 +173,8 @@ function RenameDialog({ vault, open, onOpenChange }: { vault: Vault; open: boole
           <div>
             <label className="text-sm font-medium text-foreground">Color</label>
             <div className="mt-1.5 flex gap-2">
-              {VAULT_COLORS.map((c) => (
-                <ColorDot key={c.value} color={c.value} selected={newColor === c.value} onClick={() => setNewColor(c.value)} />
+              {VAULT_COLOR_PALETTE.map((c) => (
+                <ColorDot key={c.value} color={c.value} label={c.label} selected={newColor === c.value} onClick={() => setNewColor(c.value)} />
               ))}
             </div>
           </div>
@@ -333,7 +328,7 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
         </button>
         <div
           className="h-3 w-3 shrink-0 rounded-full"
-          style={{ backgroundColor: vault.color || "#828A96" }}
+          style={{ backgroundColor: vault.color || DEFAULT_VAULT_COLOR }}
           aria-hidden="true"
         />
         <span className="min-w-0 flex-1 truncate font-medium text-foreground">{vault.name}</span>
