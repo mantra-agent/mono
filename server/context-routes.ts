@@ -2,7 +2,7 @@
 import type { Express } from "express";
 import { contextBuilder } from "./context-builder";
 import { getSectionsForCallType, SPINE_SECTIONS, getAllSectionIds } from "./context-spine-config";
-import { getInferencePayloadCapture, INFERENCE_PAYLOAD_RETENTION_LIMIT, listInferencePayloadCaptures } from "./inference-payload-capture";
+import { getInferencePayloadCapture, INFERENCE_PAYLOAD_LIST_LIMIT, listInferencePayloadCaptures } from "./inference-payload-capture";
 import type { ContextCallType, LlmMode, ContextRequest } from "../shared/context-spine";
 import { createLogger } from "./log";
 import { requireAuth } from "./auth";
@@ -102,9 +102,9 @@ export function registerContextRoutes(app: Express) {
 
   app.get("/api/context/inference-calls", async (req, res) => {
     try {
-      const requested = Number.parseInt(String(req.query.limit ?? INFERENCE_PAYLOAD_RETENTION_LIMIT), 10);
-      const captures = await listInferencePayloadCaptures(Number.isFinite(requested) ? requested : INFERENCE_PAYLOAD_RETENTION_LIMIT);
-      res.json({ captures, retentionLimit: INFERENCE_PAYLOAD_RETENTION_LIMIT });
+      const requested = Number.parseInt(String(req.query.limit ?? INFERENCE_PAYLOAD_LIST_LIMIT), 10);
+      const captures = await listInferencePayloadCaptures(Number.isFinite(requested) ? requested : INFERENCE_PAYLOAD_LIST_LIMIT);
+      res.json({ captures, retentionLimit: INFERENCE_PAYLOAD_LIST_LIMIT });
     } catch (err: any) {
       log.error("inference payload list error:", err);
       res.status(err?.status || 500).json({ error: err.message });
