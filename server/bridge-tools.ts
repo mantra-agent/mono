@@ -4515,12 +4515,86 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     if (action === "search") {
+      const startedAt = performance.now();
       const query = args.query?.trim();
       if (!query) return { result: "Missing 'query' parameter for search", error: true };
-      const { searchSessionSummaries } = await import("./chat-file-storage");
+      const importStartedAt = performance.now();
+      let importMs = 0;
       const limit = Math.min(args.limit || 10, 50);
-      const matches = await searchSessionSummaries(query, 24 * 30, limit);
-      return { result: safeStringify({ query, total: matches.length, items: matches.map(s => ({ id: s.id, title: s.title, updatedAt: s.updatedAt, snippet: s.snippet.slice(0, 200) })) }, { label: "bridge.session.search" }) };
+      let diagnosticsStatus: "success" | "failure" = "failure";
+      let diagnosticsSource: "target" | "legacy" | undefined;
+      let resultCount = 0;
+      let totalCount = 0;
+      let queryBuildMs = 0;
+      let resultDbMs = 0;
+      let countDbMs = 0;
+      let snippetHydrationMs = 0;
+      let searchTotalMs = 0;
+      let handlerPhase: "import" | "search" | "formatting" = "import";
+      try {
+        const { searchSessionSummaries } = await import("./chat-file-storage");
+        importMs = performance.now() - importStartedAt;
+        handlerPhase = "search";
+        const matches = await searchSessionSummaries(query, 24 * 30, limit, diagnostics => {
+          diagnosticsStatus = diagnostics.status;
+          diagnosticsSource = diagnostics.source;
+          resultCount = diagnostics.resultCount;
+          totalCount = diagnostics.totalCount;
+          queryBuildMs = diagnostics.queryBuildMs;
+          resultDbMs = diagnostics.resultDbMs;
+          countDbMs = diagnostics.countDbMs;
+          snippetHydrationMs = diagnostics.snippetHydrationMs;
+          searchTotalMs = diagnostics.totalMs;
+        });
+        handlerPhase = "formatting";
+        const formattingStartedAt = performance.now();
+        const result = safeStringify({ query, total: matches.length, items: matches.map(s => ({ id: s.id, title: s.title, updatedAt: s.updatedAt, snippet: s.snippet.slice(0, 200) })) }, { label: "bridge.session.search" });
+        const formattingMs = performance.now() - formattingStartedAt;
+        const totalMs = performance.now() - startedAt;
+        toolExec.debug("Session search timing", {
+          status: diagnosticsStatus,
+          phase: handlerPhase,
+          source: diagnosticsSource,
+          queryLength: query.length,
+          limit,
+          resultCount,
+          totalCount,
+          candidateDbMs: 0,
+          queryBuildMs: Number(queryBuildMs.toFixed(2)),
+          resultDbMs: Number(resultDbMs.toFixed(2)),
+          countDbMs: Number(countDbMs.toFixed(2)),
+          snippetHydrationMs: Number(snippetHydrationMs.toFixed(2)),
+          importMs: Number(importMs.toFixed(2)),
+          formattingMs: Number(formattingMs.toFixed(2)),
+          otherMs: Number(Math.max(0, totalMs - importMs - searchTotalMs - formattingMs).toFixed(2)),
+          totalMs: Number(totalMs.toFixed(2)),
+        });
+        return { result };
+      } catch (error) {
+        const totalMs = performance.now() - startedAt;
+        if (handlerPhase === "import") {
+          importMs = performance.now() - importStartedAt;
+        }
+        toolExec.debug("Session search timing", {
+          status: diagnosticsStatus,
+          phase: handlerPhase,
+          source: diagnosticsSource,
+          queryLength: query.length,
+          limit,
+          resultCount,
+          totalCount,
+          candidateDbMs: 0,
+          queryBuildMs: Number(queryBuildMs.toFixed(2)),
+          resultDbMs: Number(resultDbMs.toFixed(2)),
+          countDbMs: Number(countDbMs.toFixed(2)),
+          snippetHydrationMs: Number(snippetHydrationMs.toFixed(2)),
+          importMs: Number(importMs.toFixed(2)),
+          formattingMs: 0,
+          otherMs: Number(Math.max(0, totalMs - importMs - searchTotalMs).toFixed(2)),
+          totalMs: Number(totalMs.toFixed(2)),
+        });
+        throw error;
+      }
     }
 
     if (action === "get_messages") {
