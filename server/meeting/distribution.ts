@@ -40,6 +40,8 @@ import type { MeetingSessionMeta, MeetingRecapMeta } from "@shared/models/chat";
 import { getRuntimePublicBaseUrl } from "../runtime-identity";
 import { normalizeEmailAddress } from "../email-normalization";
 import { resolveOrCreateInvitedSubjectInTransaction } from "../invited-subject-service";
+import { peopleStorage } from "../people-storage";
+import { runWithPrincipal } from "../principal-context";
 import { resolveMeetingTransportSession } from "./owner-principal";
 
 const log = createLogger("MeetingDistribution");
@@ -391,9 +393,6 @@ async function runDistribution(
   // 2. Resolve the exact calendar event and its connected source account.
   // Gmail sends as the authenticated account; array order is never sender authority.
   const emailContext = await resolveMeetingEmailContext(meeting);
-  const attendees = emailContext
-    ? await resolveRecipients(meeting, emailContext.event, emailContext.senderAccount.email)
-    : [];
 
   if (!emailContext) {
     log.warn(`Meeting calendar source account could not be resolved for session ${sessionId}; blocking distribution`);
@@ -408,15 +407,21 @@ async function runDistribution(
     return;
   }
 
+  const attendees = await resolveRecipients(
+    meeting,
+    emailContext.event,
+    emailContext.senderAccount.email,
+    principal,
+  );
   if (attendees.length === 0) {
-    log.warn(`No calendar invitees resolved for session ${sessionId}; blocking distribution`);
+    log.warn(`No eligible meeting recipients resolved for session ${sessionId}; blocking distribution`);
     await markDistributionBlocked(
       sessionId,
       attemptRecap,
       principal,
       [],
-      "Meeting invitees could not be resolved from the calendar event",
-      "calendar_invitees_not_resolved",
+      "No eligible recipients with email addresses were found in the calendar event or assigned meeting participants",
+      "meeting_recipients_not_resolved",
     );
     return;
   }
@@ -655,13 +660,16 @@ async function resolveMeetingEmailContext(
 }
 
 /**
- * Resolve recap recipients from the exact calendar event invitee list.
- * Linked People enrich display names, while the event remains email authority.
+ * Resolve recap recipients from every owner-authorized identity source.
+ * Calendar invitees remain authoritative for their own addresses. Manual
+ * speaker assignments contribute the assigned Person's first valid stored
+ * email, which covers shared-room attendees discovered after the event.
  */
 async function resolveRecipients(
   meeting: MeetingSessionMeta,
   event: CalendarEvent,
   senderEmail: string,
+  principal: Principal,
 ): Promise<ResolvedAttendee[]> {
   const emailMap = new Map<string, ResolvedAttendee>();
   for (const invitee of event.attendees ?? []) {
@@ -709,6 +717,38 @@ async function resolveRecipients(
       name: event.organizer?.displayName?.trim() || undefined,
     });
   }
+
+  const assignedPersonIds = [...new Set(
+    meeting.participants
+      .filter((participant) => participant.identitySource === "manual" && participant.personId)
+      .map((participant) => participant.personId!),
+  )];
+  await runWithPrincipal(principal, async () => {
+    for (const personId of assignedPersonIds) {
+      const person = await peopleStorage.getPerson(personId);
+      if (!person) {
+        log.warn(`Assigned meeting Person is no longer visible personId=${personId}`);
+        continue;
+      }
+      const normalized = person.contactInfo
+        .filter((contact) => contact.type === "email")
+        .map((contact) => contact.value.trim().toLowerCase())
+        .find(isValidEmail);
+      if (!normalized) {
+        log.warn(`Assigned meeting Person has no valid email personId=${personId}`);
+        continue;
+      }
+      const existing = emailMap.get(normalized);
+      if (existing) {
+        existing.name = person.name.trim() || existing.name;
+      } else {
+        emailMap.set(normalized, {
+          email: normalized,
+          name: person.name.trim() || undefined,
+        });
+      }
+    }
+  });
 
   emailMap.delete(senderEmail.trim().toLowerCase());
   return [...emailMap.values()];
