@@ -32,6 +32,102 @@ export interface LandscapeScanResult {
   message: string;
 }
 
+type CurationHandoffOutcome = "complete" | "partial" | "unmatched" | "contradiction";
+
+interface CurationHandoffAccounting {
+  outcome: CurationHandoffOutcome;
+  counts: {
+    candidate: number;
+    rawBufferedEntries: number;
+    buffered: number;
+    duplicateBufferedEntries: number;
+    eligible: number;
+    applied: number;
+    skipped: number;
+    unmatched: number;
+    decisionFieldAssignments: number;
+    signalRowUpserts: number;
+  };
+  ids: {
+    candidate: string[];
+    buffered: string[];
+    eligible: string[];
+    applied: string[];
+    skipped: string[];
+    unmatched: string[];
+    unexpectedApplied: string[];
+  };
+}
+
+const MAX_CURATION_HANDOFF_LOG_IDS = 20;
+
+function sortedBoundedIds(ids: Iterable<string>): string[] {
+  return [...ids].sort().slice(0, MAX_CURATION_HANDOFF_LOG_IDS);
+}
+
+function setDifference(left: Set<string>, right: Set<string>): Set<string> {
+  return new Set([...left].filter(id => !right.has(id)));
+}
+
+function setIntersection(left: Set<string>, right: Set<string>): Set<string> {
+  return new Set([...left].filter(id => right.has(id)));
+}
+
+function accountForCurationHandoff(input: {
+  candidateFingerprints: Set<string>;
+  bufferedDecisions: CurationDecision[];
+  appliedFingerprints: Set<string>;
+  decisionFieldAssignments: number;
+  signalRowUpserts: number;
+}): CurationHandoffAccounting {
+  const bufferedFingerprints = new Set(input.bufferedDecisions.map(decision => decision.fingerprint));
+  const eligibleFingerprints = new Set(
+    [...bufferedFingerprints].filter(fingerprint => input.candidateFingerprints.has(fingerprint)),
+  );
+  const observedAppliedFingerprints = new Set(input.appliedFingerprints);
+  const appliedFingerprints = setIntersection(observedAppliedFingerprints, eligibleFingerprints);
+  const skippedFingerprints = setDifference(eligibleFingerprints, appliedFingerprints);
+  const unmatchedFingerprints = setDifference(bufferedFingerprints, input.candidateFingerprints);
+  const unexpectedAppliedFingerprints = setDifference(observedAppliedFingerprints, eligibleFingerprints);
+  const duplicateBufferedEntries = input.bufferedDecisions.length - bufferedFingerprints.size;
+  const contradictory = unexpectedAppliedFingerprints.size > 0
+    || appliedFingerprints.size > eligibleFingerprints.size
+    || appliedFingerprints.size > bufferedFingerprints.size
+    || duplicateBufferedEntries < 0;
+  const outcome: CurationHandoffOutcome = contradictory
+    ? "contradiction"
+    : appliedFingerprints.size === 0
+      ? "unmatched"
+      : skippedFingerprints.size > 0 || unmatchedFingerprints.size > 0 || duplicateBufferedEntries > 0
+        ? "partial"
+        : "complete";
+
+  return {
+    outcome,
+    counts: {
+      candidate: input.candidateFingerprints.size,
+      rawBufferedEntries: input.bufferedDecisions.length,
+      buffered: bufferedFingerprints.size,
+      duplicateBufferedEntries,
+      eligible: eligibleFingerprints.size,
+      applied: appliedFingerprints.size,
+      skipped: skippedFingerprints.size,
+      unmatched: unmatchedFingerprints.size,
+      decisionFieldAssignments: input.decisionFieldAssignments,
+      signalRowUpserts: input.signalRowUpserts,
+    },
+    ids: {
+      candidate: sortedBoundedIds(input.candidateFingerprints),
+      buffered: sortedBoundedIds(bufferedFingerprints),
+      eligible: sortedBoundedIds(eligibleFingerprints),
+      applied: sortedBoundedIds(appliedFingerprints),
+      skipped: sortedBoundedIds(skippedFingerprints),
+      unmatched: sortedBoundedIds(unmatchedFingerprints),
+      unexpectedApplied: sortedBoundedIds(unexpectedAppliedFingerprints),
+    },
+  };
+}
+
 async function loadDomainSkillNames(): Promise<string[]> {
   try {
     const skills = await database.select({ name: execSkills.name, skillType: execSkills.skillType })
@@ -284,6 +380,8 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
 
     // ── Skill-based curation ───────────────────────────────────────
     let skillDecisions: Map<string, CurationDecision> | null = null;
+    let bufferedSkillDecisions: CurationDecision[] = [];
+    let skillCandidateFingerprints = new Set<string>();
     if (selectedCandidates.length > 0) {
       try {
         // Serialize candidates with article text for the skill
@@ -314,7 +412,10 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
             };
           }),
         );
-        const validPayloads = candidatePayloads.filter(Boolean);
+        const validPayloads = candidatePayloads.filter(
+          (payload): payload is NonNullable<typeof payload> => payload !== null,
+        );
+        skillCandidateFingerprints = new Set(validPayloads.map(payload => payload.fingerprint));
 
         log.log(`scan: invoking curate skill for ${validPayloads.length} candidates`);
         // Declare an active consumer so batch_curate can hand off truthfully and
@@ -329,8 +430,9 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
 
           const decisions = consumerUserId ? await readAndClearCurationBuffer(consumerUserId) : null;
           if (decisions && decisions.length > 0) {
+            bufferedSkillDecisions = decisions;
             skillDecisions = new Map(decisions.map(d => [d.fingerprint, d]));
-            log.log(`scan: skill buffered ${decisions.length} curation decisions`);
+            log.log(`scan: skill buffered ${decisions.length} curation decision entries`);
           } else {
             log.warn("scan: skill buffered no curation decisions, falling back to per-candidate curation");
           }
@@ -342,7 +444,9 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       }
     }
 
-    let appliedSkillDecisions = 0;
+    const appliedSkillDecisionFingerprints = new Set<string>();
+    let skillDecisionFieldAssignments = 0;
+    let signalRowUpserts = 0;
     for (const { raw, scored, fingerprint } of scoredSignals) {
       const selection = selectionByFingerprint.get(fingerprint);
       let curated: adapters.CuratedSignal;
@@ -350,7 +454,8 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       if (selection && skillDecisions?.has(fingerprint)) {
         // Use skill decision
         const decision = skillDecisions.get(fingerprint)!;
-        appliedSkillDecisions++;
+        appliedSkillDecisionFingerprints.add(fingerprint);
+        skillDecisionFieldAssignments++;
         const isRelevant = decision.isRelevant && decision.score >= 0.45;
         curated = {
           ...scored,
@@ -416,6 +521,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         status,
       });
 
+      signalRowUpserts++;
       diagnostics.recordPersisted(raw.sourceId);
 
       if (suppressedAsDuplicate && eventDuplicate) {
@@ -441,14 +547,23 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
     }
 
     // ── Curation handoff observability ──────────────────────────────
-    // The honest signal for whether the skill curation path earns its keep:
-    // how many buffered decisions actually landed on signal rows this scan.
-    const bufferedCurationCount = skillDecisions?.size ?? 0;
-    if (bufferedCurationCount > 0) {
-      if (appliedSkillDecisions === 0) {
-        log.error(`scan: buffered ${bufferedCurationCount} curation decisions but applied 0 to signal rows — handoff consumed nothing (stale or mismatched fingerprints)`);
+    // Fingerprint sets own candidate/decision identity. Row upserts and field assignments
+    // remain separate operation counts because neither is a count of unique decisions.
+    if (bufferedSkillDecisions.length > 0) {
+      const accounting = accountForCurationHandoff({
+        candidateFingerprints: skillCandidateFingerprints,
+        bufferedDecisions: bufferedSkillDecisions,
+        appliedFingerprints: appliedSkillDecisionFingerprints,
+        decisionFieldAssignments: skillDecisionFieldAssignments,
+        signalRowUpserts,
+      });
+      const detail = JSON.stringify(accounting);
+      if (accounting.outcome === "complete") {
+        log.info(`scan: curation handoff complete ${detail}`);
+      } else if (accounting.outcome === "partial") {
+        log.warn(`scan: curation handoff partial ${detail}`);
       } else {
-        log.info(`scan: applied ${appliedSkillDecisions}/${bufferedCurationCount} buffered curation decisions to signal rows`);
+        log.error(`scan: curation handoff ${accounting.outcome} ${detail}`);
       }
     }
 
