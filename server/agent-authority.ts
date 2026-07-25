@@ -3,6 +3,7 @@ import { getCurrentPrincipal } from "./principal-context";
 import { getSideEffectTier } from "./autonomy-tiers";
 import { principalHasPermission, type Permission } from "./permissions";
 import { CANONICAL_SCAN_SKILL_ID } from "./skill-identities";
+import { isWorkflowStageAction } from "./workflows/stage-capability";
 
 export type ToolInvocationOrigin =
   | "interactive"
@@ -151,6 +152,10 @@ export function authorizeToolInvocation(
     return { allowed: false, reason: "timer_attention_owned_by_scheduler" };
   }
 
+  if (toolName === "workflows" && context.trustedDelegation === "workflow" && !isWorkflowStageAction(action)) {
+    return { allowed: false, reason: "workflow_stage_action_required" };
+  }
+
   if (repositoryScratchWrite && !isSessionOwnedRepositoryPath(args.path, context.sessionId)) {
     return { allowed: false, reason: "session_owned_repository_required" };
   }
@@ -169,10 +174,13 @@ export function authorizeToolInvocation(
     const wildcardKey = `${toolName}:*`;
     const trustedEngineeringWrite = isTrustedEngineeringDelegation(context)
       && ENGINEERING_WRITE_ACTIONS[toolName]?.has(action || "");
+    const trustedWorkflowStageAction = context.trustedDelegation === "workflow"
+      && toolName === "workflows"
+      && isWorkflowStageAction(action);
     const skillScopedEffect = origin === "autonomous"
       && typeof context.skillId === "string"
       && AUTONOMOUS_SKILL_EXTERNAL_EFFECT_ALLOWLIST[context.skillId]?.has(key);
-    if (!trustedEngineeringWrite && !skillScopedEffect && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(key) && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(wildcardKey)) {
+    if (!trustedEngineeringWrite && !trustedWorkflowStageAction && !skillScopedEffect && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(key) && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(wildcardKey)) {
       return { allowed: false, reason: "autonomous_external_effect_blocked" };
     }
   }

@@ -1223,7 +1223,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
 
   workflows: {
-    description: "Manage reusable workflow templates and workflow runs. Actions: list_templates, get_template, list_runs, get_run, create_run, start_run, pause_run, resume_run, cancel_run, start_stage_attempt, complete_stage_attempt, attach_artifact, capture_publish_stage_evidence, capture_acceptance_evidence, capture_calibration_evidence, approve_gate, reject_gate.",
+    description: "Manage reusable workflow templates and workflow runs. When creating a run, preserve the user’s requested outcome and constraints; do not translate the request into a prescribed architecture or add adjacent work. Actions: list_templates, get_template, list_runs, get_run, create_run, start_run, pause_run, resume_run, cancel_run, start_stage_attempt, complete_stage_attempt, attach_artifact, capture_publish_stage_evidence, capture_acceptance_evidence, capture_calibration_evidence, approve_gate, reject_gate.",
     category: "execution",
     parameters: {
       type: "object",
@@ -1234,7 +1234,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         runId: { type: "string", description: "Workflow run ID" },
         workflowRunId: { type: "string", description: "Workflow run ID (alias for attach_artifact and evidence actions)" },
         title: { type: "string", description: "Workflow run title (for create_run) or artifact title (for attach_artifact)" },
-        objective: { type: "string", description: "Workflow objective (for create_run)" },
+        objective: { type: "string", description: "Workflow objective (for create_run). Preserve the user’s requested outcome and constraints verbatim in substance; do not prescribe architecture, widen scope, or add adjacent improvements." },
         status: { type: "string", description: "Status filter or run status" },
         stageKey: { type: "string", description: "Stage key for start_stage_attempt" },
         attemptId: { type: "number", description: "Stage attempt ID for complete_stage_attempt" },

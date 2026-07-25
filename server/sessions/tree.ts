@@ -68,6 +68,8 @@ export interface SpawnChildSessionOptions {
   /** Durable workflow ownership metadata for workflow stage children. */
   workflowRunId?: string;
   workflowStageAttemptId?: number;
+  /** Internal lifecycle hook awaited before the child assembles context or receives tools. */
+  onSessionCreated?: (sessionId: string) => void | Promise<void>;
 }
 
 export interface SpawnChildSessionResult {
@@ -408,7 +410,7 @@ export async function spawnChildSession(
 ): Promise<SpawnChildSessionResult> {
   const model = options.model ?? options.skillId;
   if (!model && !options.preContext) throw new Error("spawnChildSession: either `model` (skill identifier) or `preContext` is required");
-  const { spawnReason, spawnerTool, spawnerSkillRun, preContext, waitForCompletion, modelOverride, sessionKeyOverride, titleOverride, personaName, admissionTier, lineageId, hookTriggerId, hookTriggerName, planId, stepId, attemptId, attemptNumber, planPageRef, workflowRunId, workflowStageAttemptId } = options;
+  const { spawnReason, spawnerTool, spawnerSkillRun, preContext, waitForCompletion, modelOverride, sessionKeyOverride, titleOverride, personaName, admissionTier, lineageId, hookTriggerId, hookTriggerName, planId, stepId, attemptId, attemptNumber, planPageRef, workflowRunId, workflowStageAttemptId, onSessionCreated } = options;
 
   const { executeAutonomousSkillRun } = await import("../autonomous-skill-runner");
 
@@ -458,7 +460,8 @@ export async function spawnChildSession(
       planPageRef,
       workflowRunId,
       workflowStageAttemptId,
-      onSessionCreated: (id: string) => {
+      onSessionCreated: async (id: string) => {
+        await onSessionCreated?.(id);
         clearTimeout(timer);
         resolveSession(id);
       },
