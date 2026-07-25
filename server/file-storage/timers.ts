@@ -1,6 +1,6 @@
 import { db, pool } from "../db";
 import { timers, responsibilityRuns } from "@shared/schema";
-import { and, eq, desc, count, ilike, or, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, desc, count, ilike, or, isNotNull, isNull, gte, lte, inArray, sql } from "drizzle-orm";
 import { getSetting, setSetting } from "../system-settings";
 import { TTLCache } from "../utils/ttl-cache";
 import type {
@@ -363,6 +363,94 @@ export class FileTimerStorage {
       ownership.scope === "user" ? eq(responsibilityRuns.ownerUserId, ownership.ownerUserId) : and(isNull(responsibilityRuns.ownerUserId), isNull(responsibilityRuns.accountId))!,
     ));
     if ((result.rowCount ?? 0) === 0) throw new Error(`timer run update missed: timerId=${timer.id} runId=${runId}`);
+  }
+
+  async getDeferredRunsForScheduler(
+    reasons: string[],
+    intendedAfter: Date,
+    completedBefore: Date,
+    maxRetryCount: number,
+    limit = 100,
+  ): Promise<TimerRun[]> {
+    if (reasons.length === 0) return [];
+    const boundedLimit = Math.max(1, Math.min(limit, 500));
+    const scanLimit = Math.min(5_000, boundedLimit * 20);
+    const result = await db
+      .select({
+        runId: responsibilityRuns.runId,
+        responsibilityId: responsibilityRuns.responsibilityId,
+        scheduleId: responsibilityRuns.scheduleId,
+        status: responsibilityRuns.status,
+        startedAt: responsibilityRuns.startedAt,
+        completedAt: responsibilityRuns.completedAt,
+        durationMs: responsibilityRuns.durationMs,
+        sessionId: responsibilityRuns.sessionId,
+        trigger: responsibilityRuns.trigger,
+        intendedFireAt: responsibilityRuns.intendedFireAt,
+        scheduledSlotStart: responsibilityRuns.scheduledSlotStart,
+        scheduledSlotEnd: responsibilityRuns.scheduledSlotEnd,
+        error: responsibilityRuns.error,
+        metadata: responsibilityRuns.metadata,
+      })
+      .from(responsibilityRuns)
+      .innerJoin(timers, eq(timers.id, responsibilityRuns.responsibilityId))
+      .where(and(
+        eq(responsibilityRuns.status, "deferred"),
+        eq(responsibilityRuns.trigger, "scheduled"),
+        inArray(responsibilityRuns.error, reasons),
+        gte(responsibilityRuns.intendedFireAt, intendedAfter),
+        lte(responsibilityRuns.completedAt, completedBefore),
+        sql`CASE
+          WHEN jsonb_typeof(${responsibilityRuns.metadata}->'retryCount') = 'number'
+            THEN CAST(${responsibilityRuns.metadata}->>'retryCount' AS integer)
+          ELSE 0
+        END < ${maxRetryCount}`,
+        eq(timers.enabled, true),
+        validSchedulerTimerPredicate(),
+      ))
+      .orderBy(desc(responsibilityRuns.intendedFireAt))
+      .limit(scanLimit);
+
+    const newestBySchedule = new Map<string, TimerRun>();
+    for (const row of result) {
+      const run = rowToRun(row);
+      const key = run.timerId + ":" + run.scheduleId;
+      if (!newestBySchedule.has(key)) newestBySchedule.set(key, run);
+    }
+    return Array.from(newestBySchedule.values()).slice(0, boundedLimit);
+  }
+
+  async claimDeferredRunForRetry(
+    timer: Timer,
+    runId: string,
+    metadata: TimerRun["metadata"],
+  ): Promise<boolean> {
+    const ownership = ownershipForTimer(timer);
+    const ownershipPredicate = ownership.scope === "user"
+      ? and(
+          eq(responsibilityRuns.scope, "user"),
+          eq(responsibilityRuns.ownerUserId, ownership.ownerUserId),
+          eq(responsibilityRuns.accountId, ownership.accountId),
+        )
+      : and(
+          eq(responsibilityRuns.scope, "system"),
+          isNull(responsibilityRuns.ownerUserId),
+          isNull(responsibilityRuns.accountId),
+        )!;
+    const result = await db.update(responsibilityRuns).set({
+      status: "running",
+      startedAt: new Date(),
+      completedAt: null,
+      durationMs: null,
+      error: null,
+      metadata: metadata ?? null,
+    }).where(and(
+      eq(responsibilityRuns.runId, runId),
+      eq(responsibilityRuns.responsibilityId, timer.id),
+      eq(responsibilityRuns.status, "deferred"),
+      ownershipPredicate,
+    ));
+    return (result.rowCount ?? 0) === 1;
   }
 
   /**
