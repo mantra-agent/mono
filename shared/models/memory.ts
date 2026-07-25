@@ -97,6 +97,11 @@ export type InsertWorkspaceDocument = z.infer<
   typeof insertWorkspaceDocumentSchema
 >;
 
+export const DOCUMENT_STORE_CHAT_SEARCH_INDEXES = {
+  title: "idx_document_store_chat_title_trgm_v1",
+  content: "idx_document_store_chat_content_trgm_v1",
+} as const;
+
 export const documentStoreDocuments = pgTable(
   "document_store_documents",
   {
@@ -156,6 +161,16 @@ export const documentStoreDocuments = pgTable(
     index("idx_document_store_source_row").on(table.sourceTable, table.sourceRowId),
     index("idx_document_store_path").on(table.path),
     index("idx_document_store_updated_at").on(table.updatedAt),
+    index(DOCUMENT_STORE_CHAT_SEARCH_INDEXES.title)
+      .using("gin", sql`${table.title} gin_trgm_ops`)
+      .where(
+        sql`${table.documentType} = 'chat' AND coalesce((${table.metadata}->>'messageCount')::int, 0) > 0`,
+      ),
+    index(DOCUMENT_STORE_CHAT_SEARCH_INDEXES.content)
+      .using("gist", sql`${table.content} gist_trgm_ops(siglen=64)`)
+      .where(
+        sql`${table.documentType} = 'chat' AND coalesce((${table.metadata}->>'messageCount')::int, 0) > 0`,
+      ),
     index("idx_document_store_migration_key").on(table.migrationKey),
     index("idx_document_store_source_hashes").on(
       table.sourceContentHash,

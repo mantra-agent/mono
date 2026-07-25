@@ -251,6 +251,8 @@ Named markdown files for durable reference knowledge:
 
 After independent activation, `document_store_documents` is the only read/write authority. The persisted epoch removes the forward mirror and installs database guards rejecting any future `memory_entries(layer='workspace')` mutation. Archived workspace rows remain untouched until a separately approved retention deletion. Do not add legacy workspace fallbacks or bypass writes. Small indexed metadata mutations use `patchDocumentMetadata(...)` so they follow the active write authority without requiring a full document read; callers must remain principal-scoped and must not use this path to bypass content invariants.
 
+Exact chat-session substring search remains title-or-complete-content `ILIKE`; never replace it with token-only full-text retrieval or an unbounded in-memory scan. Search result hydration must reuse the matched authorized document payload rather than issue one follow-up document query per result. `DOCUMENT_STORE_CHAT_SEARCH_INDEXES` owns the partial title/content trigram index identities: GIN for short, comparatively stable titles; GiST for the complete chat blob rewritten on every turn. `document-search-indexes.ts` converges those derived indexes concurrently after readiness under one cross-replica advisory lock, so heavy index construction cannot delay boot or block ordinary document writes.
+
 ## When Working Here
 
 - **Embeddings are 1536-dimensional** (OpenAI text-embedding-3-small). All vector operations use this dimension.

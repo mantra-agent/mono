@@ -3663,6 +3663,7 @@ export async function searchSessionSummaries(
           .select({
             docId: documentStoreDocuments.documentId,
             title: documentStoreDocuments.title,
+            content: documentStoreDocuments.content,
             metadata: documentStoreDocuments.metadata,
             updatedAt: documentStoreDocuments.updatedAt,
           })
@@ -3672,7 +3673,7 @@ export async function searchSessionSummaries(
               principal,
               targetChatDocumentScopeColumns,
               and(
-                eq(documentStoreDocuments.documentType, "chat"),
+                sql`${documentStoreDocuments.documentType} = 'chat'`,
                 sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text) >= ${cutoff.toISOString()}`,
                 sql`coalesce((${documentStoreDocuments.metadata}->>'messageCount')::int, 0) > 0`,
                 or(
@@ -3688,6 +3689,7 @@ export async function searchSessionSummaries(
           .select({
             docId: memoryEntries.sourceId,
             title: memoryEntries.title,
+            content: memoryEntries.content,
             metadata: memoryEntries.metadata,
             updatedAt: memoryEntries.processedAt,
           })
@@ -3711,6 +3713,7 @@ export async function searchSessionSummaries(
     return buildSessionSummaries(rows.filter((row): row is {
       docId: string;
       title: string | null;
+      content: string;
       metadata: unknown;
       updatedAt: Date | null;
     } => Boolean(row.docId)));
@@ -3724,6 +3727,7 @@ async function buildSessionSummaries(
   docs: Array<{
     docId: string;
     title: string | null;
+    content?: string;
     metadata: unknown;
     updatedAt?: Date | null;
   }>,
@@ -3735,7 +3739,16 @@ async function buildSessionSummaries(
     snippet: string;
   }> = [];
   for (const doc of docs) {
-    const data = await readConv(doc.docId);
+    let data: SessionData | null = null;
+    if (doc.content !== undefined) {
+      try {
+        data = JSON.parse(doc.content) as SessionData;
+      } catch (err) {
+        log.warn(`buildSessionSummaries parse error id=${doc.docId}:`, err);
+      }
+    } else {
+      data = await readConv(doc.docId);
+    }
     if (!data || data.messages.length === 0) continue;
     const userMessages = data.messages
       .filter((m) => m.role === "user")
