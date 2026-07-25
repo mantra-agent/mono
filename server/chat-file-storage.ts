@@ -3704,21 +3704,46 @@ export async function getRecentSessionSummaries(
   }
 }
 
+export type SessionSearchDiagnostics = {
+  status: "success" | "failure";
+  queryBuildMs: number;
+  resultDbMs: number;
+  countDbMs: number;
+  snippetHydrationMs: number;
+  totalMs: number;
+  resultCount: number;
+  totalCount: number;
+  source: "target" | "legacy";
+};
+
 export async function searchSessionSummaries(
   query: string,
   sinceHours = 24,
   maxResults = 50,
+  onDiagnostics?: (diagnostics: SessionSearchDiagnostics) => void,
 ): Promise<
   Array<{ id: string; title: string; updatedAt: string; snippet: string }>
 > {
+  const startedAt = performance.now();
   const trimmed = query.trim();
   if (!trimmed) return [];
 
+  let queryBuildMs = 0;
+  let resultDbMs = 0;
+  let snippetHydrationMs = 0;
+  let resultDbStartedAt: number | undefined;
+  let snippetHydrationStartedAt: number | undefined;
+  let source: SessionSearchDiagnostics["source"] = targetReadsEnabled() ? "target" : "legacy";
+
   try {
+    const queryBuildStartedAt = performance.now();
     const cutoff = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
     const searchPattern = `%${trimmed}%`;
     const principal = getCurrentPrincipalOrSystem();
-    const rows = await targetReadsEnabled()
+    queryBuildMs = performance.now() - queryBuildStartedAt;
+
+    resultDbStartedAt = performance.now();
+    const rows = source === "target"
       ? await buildTargetSessionSearchQuery(
           principal,
           cutoff.toISOString(),
@@ -3749,15 +3774,50 @@ export async function searchSessionSummaries(
           )
           .orderBy(desc(sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text)`))
           .limit(Math.max(1, Math.min(maxResults, 100)));
+    resultDbMs = performance.now() - resultDbStartedAt;
+    resultDbStartedAt = undefined;
 
-    return buildSessionSummaries(rows.filter((row): row is {
+    snippetHydrationStartedAt = performance.now();
+    const summaries = await buildSessionSummaries(rows.filter((row): row is {
       docId: string;
       title: string | null;
       content: string;
       metadata: unknown;
       updatedAt: Date | null;
     } => Boolean(row.docId)));
+    snippetHydrationMs = performance.now() - snippetHydrationStartedAt;
+    snippetHydrationStartedAt = undefined;
+    onDiagnostics?.({
+      status: "success",
+      queryBuildMs,
+      resultDbMs,
+      countDbMs: 0,
+      snippetHydrationMs,
+      totalMs: performance.now() - startedAt,
+      resultCount: summaries.length,
+      totalCount: summaries.length,
+      source,
+    });
+    return summaries;
   } catch (err) {
+    const failedAt = performance.now();
+    if (resultDbStartedAt !== undefined) {
+      resultDbMs = failedAt - resultDbStartedAt;
+    }
+    if (snippetHydrationStartedAt !== undefined) {
+      snippetHydrationMs = failedAt - snippetHydrationStartedAt;
+    }
+    onDiagnostics?.({
+      status: "failure",
+      queryBuildMs,
+      resultDbMs,
+      countDbMs: 0,
+      snippetHydrationMs,
+      totalMs: performance.now() - startedAt,
+      resultCount: 0,
+      totalCount: 0,
+      source,
+    });
     log.warn("searchSessionSummaries error:", err);
     return [];
   }
