@@ -15538,7 +15538,9 @@ const cognitionTools: Record<string, ToolHandler> = {
           description: a.description,
           promptOverlay: a.prompt_overlay || a.promptOverlay,
           expressionTags: a.expression_tags || a.expressionTags,
-          cognitiveOverrides: a.cognitive_overrides || a.cognitiveOverrides,
+          cognitiveOverrides: a.cognitive_overrides ?? a.cognitiveOverrides,
+          contextSections: a.context_sections ?? a.contextSections,
+          toolBundle: a.tool_bundle ?? a.toolBundle,
         });
         return { result: `Persona created: ${persona.name} (id=${persona.id})` };
       },
@@ -15551,7 +15553,9 @@ const cognitionTools: Record<string, ToolHandler> = {
           description: a.description,
           promptOverlay: a.prompt_overlay || a.promptOverlay,
           expressionTags: a.expression_tags || a.expressionTags,
-          cognitiveOverrides: a.cognitive_overrides || a.cognitiveOverrides,
+          cognitiveOverrides: a.cognitive_overrides ?? a.cognitiveOverrides,
+          contextSections: a.context_sections ?? a.contextSections,
+          toolBundle: a.tool_bundle ?? a.toolBundle,
         });
         if (!updated) return { result: `Persona ${a.id} not found`, error: true };
         return { result: `Persona updated: ${updated.name} (id=${updated.id})` };
