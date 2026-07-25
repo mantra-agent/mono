@@ -55,7 +55,6 @@ async function ensureSearchIndex(
     CREATE INDEX CONCURRENTLY IF NOT EXISTS "${definition.name}"
     ON document_store_documents USING ${definition.method} (${definition.expression})
     WHERE document_type = 'chat'
-      AND coalesce((metadata->>'messageCount')::int, 0) > 0
   `);
 
   if (await readIndexValidity(client, definition.name) !== true) {
@@ -87,6 +86,33 @@ export async function ensureDocumentStoreSearchIndexes(): Promise<EnsureOutcome>
     for (const indexName of RETIRED_DOCUMENT_STORE_CHAT_SEARCH_INDEXES) {
       log.info(`dropping retired concurrent index ${indexName}`);
       await client.query(`DROP INDEX CONCURRENTLY IF EXISTS "${indexName}"`);
+    }
+
+    // Verify the planner actually uses the trigram index for session search.
+    // EXPLAIN WITHOUT ANALYZE — inspects the plan only, never executes the query.
+    // Makes "index actually used" observable, not merely "index built".
+    try {
+      const planResult = await client.query<Record<string, string>>(
+        `EXPLAIN SELECT document_id FROM document_store_documents
+         WHERE document_type = 'chat'
+           AND coalesce((metadata->>'messageCount')::int, 0) > 0
+           AND (title ILIKE $1 OR content ILIKE $1)
+         LIMIT 50`,
+        ["%zqxjkw%"],
+      );
+      const planText = planResult.rows
+        .map((row) => row["QUERY PLAN"])
+        .filter((line) => typeof line === "string")
+        .join("\n");
+      if (planText.includes("Seq Scan on document_store_documents")) {
+        log.warn(`session search plan NOT using trigram index (seq scan): ${planText}`);
+      } else {
+        log.info("session search plan verified: uses trigram index");
+      }
+    } catch (error) {
+      log.warn(
+        `session search plan verification skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
 
     log.info("document-store chat substring indexes ready");
