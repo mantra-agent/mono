@@ -114,7 +114,9 @@ function requiresPermission(
 }
 
 function isTrustedEngineeringDelegation(context: AgentAuthorityContext): boolean {
-  return context.origin === "interactive"
+  const userInteractiveTransport = context.origin === "interactive"
+    || (context.origin === "voice" && Boolean(context.sessionId));
+  return userInteractiveTransport
     || context.trustedDelegation === "plan"
     || context.trustedDelegation === "workflow"
     || context.trustedDelegation === "child";
