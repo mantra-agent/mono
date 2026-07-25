@@ -57,7 +57,7 @@ export interface ContentBlock {
 import type { ToolDefinition } from "@shared/models/tools";
 export type { ToolDefinition };
 
-export type ToolContinuation = "persona_switch" | "await_user" | "provider_system_tool" | "working_set_refresh";
+export type ToolContinuation = "persona_switch" | "tool_schema_refresh" | "await_user" | "provider_system_tool" | "working_set_refresh";
 
 export type ToolExecutorResult = {
   /** Exact result for canonical transcript persistence and user-visible streaming. */
@@ -115,12 +115,15 @@ export interface ExecutorRunOptions {
   voiceSessionId?: string;
   /** Outer Diagnostic span created before context assembly. */
   diagnosticTurnId?: string;
-  /** Refresh prompt, routing, and visible identity after orient changes the session persona. */
+  /** Refresh prompt, routing, visible identity, and callable schemas after orient changes the session persona. */
   refreshAfterPersonaSwitch?: () => Promise<{
     routingDecision: ModelRoutingDecision;
     systemPrompt: string;
+    tools: ToolDefinition[];
     persona?: PersonaSnapshot;
   }>;
+  /** Resolve one authority-allowed tool schema after tools.get requests progressive hydration. */
+  refreshToolSchema?: (toolName: string) => Promise<ToolDefinition | null>;
 }
 
 function toolTransfersExecutionToChild(name: string, args: Record<string, unknown>): boolean {
@@ -798,6 +801,7 @@ interface RunIterationContext {
   diagnosticHadToolErrors: boolean;
   diagnosticFailedToolCount: number;
   personaSwitchRequested?: { toolCallId: string };
+  toolSchemaRefreshRequested?: { toolCallId: string; toolName: string };
   awaitUserRequested?: { toolCallId: string };
   workingSetRefreshRequested?: { toolCallId: string };
   currentCycleToolResultTokens: number;
@@ -1384,6 +1388,12 @@ export class AgentExecutor extends EventEmitter {
         }
         if (event.continuation === "persona_switch" && toolCallId) {
           ctx.personaSwitchRequested = { toolCallId };
+        }
+        if (event.continuation === "tool_schema_refresh" && toolCallId) {
+          const requestedTool = typeof resolvedArgs.tool === "string" ? resolvedArgs.tool.trim() : "";
+          if (requestedTool) {
+            ctx.toolSchemaRefreshRequested = { toolCallId, toolName: requestedTool };
+          }
         }
         if ((event.continuation === "await_user" || event.continuation === "provider_system_tool") && toolCallId) {
           ctx.awaitUserRequested = { toolCallId };
@@ -2116,10 +2126,20 @@ export class AgentExecutor extends EventEmitter {
     chatCompletionStream: typeof import("./model-client")["chatCompletionStream"],
     contextLimit: number,
     hasRunStage2: boolean,
-  ): Promise<{ finalContent: string; shouldContinue: boolean; hasRunStage2: boolean; exitCause?: "natural_stop" | "aborted" | "circuit_breaker"; continuationType?: "tool_call" | "max_tokens"; personaSwitchRequested?: boolean; awaitUserRequested?: boolean }> {
+  ): Promise<{
+    finalContent: string;
+    shouldContinue: boolean;
+    hasRunStage2: boolean;
+    exitCause?: "natural_stop" | "aborted" | "circuit_breaker";
+    continuationType?: "tool_call" | "max_tokens";
+    personaSwitchRequested?: boolean;
+    toolSchemaRefreshRequested?: { toolCallId: string; toolName: string };
+    awaitUserRequested?: boolean;
+  }> {
     const iterStartTime = Date.now();
     const resolvedToolCallsBeforeIteration = ctx.resolvedToolCalls.length;
     ctx.personaSwitchRequested = undefined;
+    ctx.toolSchemaRefreshRequested = undefined;
     ctx.awaitUserRequested = undefined;
     ctx.workingSetRefreshRequested = undefined;
     ctx.iterationToolCalls = [];
@@ -2526,6 +2546,43 @@ export class AgentExecutor extends EventEmitter {
       };
     }
 
+    if (ctx.toolSchemaRefreshRequested) {
+      const iterationResults = ctx.resolvedToolCalls.slice(resolvedToolCallsBeforeIteration);
+      const resultsById = new Map(iterationResults.map((call) => [call.id, call]));
+      const orderedCalls = ctx.iterationToolCalls
+        .filter((call) => resultsById.has(call.id))
+        .sort((a, b) => a.order - b.order);
+      const assistantContent: ContentBlock[] = [];
+      if (cleanText) assistantContent.push({ type: "text", text: cleanText });
+      for (const call of orderedCalls) {
+        assistantContent.push({ type: "tool_use", id: call.id, name: call.name, input: call.args });
+      }
+      messages.push({ role: "assistant", content: assistantContent });
+      messages.push({
+        role: "tool_result",
+        content: orderedCalls.map((call) => {
+          const result = resultsById.get(call.id)!;
+          return {
+            type: "tool_result" as const,
+            tool_use_id: call.id,
+            content: result.result,
+            is_error: !!result.error,
+          };
+        }),
+      });
+      const request = ctx.toolSchemaRefreshRequested;
+      ctx.toolSchemaRefreshRequested = undefined;
+      ctx.publish("tool_use_pause", { content: "" });
+      log.log(`tool-schema refresh boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} toolCallId=${request.toolCallId} tool=${request.toolName}`);
+      return {
+        finalContent: cleanText,
+        shouldContinue: true,
+        hasRunStage2,
+        continuationType: "tool_call",
+        toolSchemaRefreshRequested: request,
+      };
+    }
+
     if (ctx.workingSetRefreshRequested) {
       const iterationResults = ctx.resolvedToolCalls.slice(resolvedToolCallsBeforeIteration);
       const resultsById = new Map(iterationResults.map((call) => [call.id, call]));
@@ -2647,6 +2704,27 @@ export class AgentExecutor extends EventEmitter {
           continuationType: "tool_call",
           personaSwitchRequested: true,
         };
+      }
+      if (continuation === "tool_schema_refresh") {
+        const schemaCall = unresolvedToolCalls.find((call) =>
+          call.name === "tools" &&
+          call.input.action === "get" &&
+          typeof call.input.tool === "string" &&
+          call.input.tool.trim().length > 0
+        );
+        if (schemaCall) {
+          ctx.publish("tool_use_pause", { content: "" });
+          return {
+            finalContent: cleanText,
+            shouldContinue: true,
+            hasRunStage2,
+            continuationType: "tool_call",
+            toolSchemaRefreshRequested: {
+              toolCallId: schemaCall.id,
+              toolName: String(schemaCall.input.tool).trim(),
+            },
+          };
+        }
       }
       if (continuation === "await_user" || continuation === "provider_system_tool") {
         ctx.publish("tool_use_pause", { content: "" });
@@ -2828,6 +2906,34 @@ export class AgentExecutor extends EventEmitter {
         }
         hasRunStage2 = result.hasRunStage2;
 
+        if (result.toolSchemaRefreshRequested) {
+          if (!options.refreshToolSchema) {
+            throw new Error("Tool schema hydration requested, but no refresh handler is configured");
+          }
+          const requestedTool = result.toolSchemaRefreshRequested.toolName;
+          const schema = await options.refreshToolSchema(requestedTool);
+          if (!schema) {
+            throw new Error(`Tool schema unavailable after successful documentation lookup: ${requestedTool}`);
+          }
+          const existingTools = options.tools ?? [];
+          const existingIndex = existingTools.findIndex((tool) => tool.name === schema.name);
+          if (existingIndex >= 0) {
+            existingTools[existingIndex] = schema;
+          } else {
+            existingTools.push(schema);
+          }
+          ctx.publish("system_step", {
+            step: "tool_schema_refresh",
+            status: "done",
+            detail: schema.name,
+            metadata: {
+              tool: schema.name,
+              toolCount: existingTools.length,
+            },
+          });
+          log.log(`tool schema hydrated runId=${runId} sessionId=${options.sessionId || "none"} tool=${schema.name} toolCount=${existingTools.length}`);
+        }
+
         if (result.personaSwitchRequested) {
           if (!options.refreshAfterPersonaSwitch) {
             throw new Error("Persona changed mid-turn, but no continuation refresh handler is configured");
@@ -2853,6 +2959,7 @@ export class AgentExecutor extends EventEmitter {
           const systemMessage: ExecutorMessage = { role: "system", content: refreshed.systemPrompt };
           if (systemIndex >= 0) messages[systemIndex] = systemMessage;
           else messages.unshift(systemMessage);
+          options.tools = [...refreshed.tools];
           ctx.modelString = modelString;
           ctx.resolvedModel = modelString;
           ctx.resolvedProvider = routingDecision.provider;
@@ -2877,7 +2984,7 @@ export class AgentExecutor extends EventEmitter {
               tier: routingTier,
             },
           });
-          log.log(`persona switch applied runId=${runId} sessionId=${options.sessionId || "none"} persona=${refreshed.persona?.name || "unknown"} model=${previousModel}->${modelString} tier=${routingTier}`);
+          log.log(`persona switch applied runId=${runId} sessionId=${options.sessionId || "none"} persona=${refreshed.persona?.name || "unknown"} model=${previousModel}->${modelString} tier=${routingTier} toolCount=${options.tools.length}`);
         }
 
         if (!result.shouldContinue) {

@@ -1308,6 +1308,36 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     archiveDownloadable?: boolean;
   };
 
+  async function resolveAuthorityToolDefinitions(sessionId: string): Promise<ToolDefinition[]> {
+    const { filterToolSchemasForAuthority } = await import("../../agent-authority");
+    return filterToolSchemasForAuthority(getToolDefinitions(), {
+      origin: "interactive",
+      sessionId,
+    }).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }));
+  }
+
+  async function resolveInteractiveToolSet(sessionId: string): Promise<{
+    definitions: ToolDefinition[];
+    authorityCount: number;
+    personaName: string;
+    bundleCount: number;
+  }> {
+    const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId);
+    const { filterToolsForPersonaBundle } = await import("../../tool-registry");
+    const { resolveSessionPersona } = await import("../../session-persona");
+    const activePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
+    return {
+      definitions: filterToolsForPersonaBundle(authorityDefinitions, activePersona?.toolBundle),
+      authorityCount: authorityDefinitions.length,
+      personaName: activePersona?.name ?? "none",
+      bundleCount: activePersona?.toolBundle?.length ?? 0,
+    };
+  }
+
   async function buildChatHistory(
     sessionId: string,
     enrichedContent: string,
@@ -1513,23 +1543,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     onProgress?.("ctx_history", "done", Date.now() - histStart);
 
-    const { filterToolSchemasForAuthority } = await import("../../agent-authority");
-    const { filterToolsForPersonaBundle } = await import("../../tool-registry");
-    const { resolveSessionPersona } = await import("../../session-persona");
-    // Two independent gates compose here: authority decides what this session is
-    // ALLOWED to call; the active persona's tool bundle decides what this MODE loads.
-    // An empty bundle passes everything through (today's behavior), so gating is
-    // dormant until a persona is deliberately given a bundle.
-    const authorityScopedDefs = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "interactive", sessionId });
-    const activePersona = await resolveSessionPersona(sessionId, { persistFallback: false });
-    const allToolDefs = filterToolsForPersonaBundle(authorityScopedDefs, activePersona?.toolBundle);
-    const toolDefs: ToolDefinition[] = allToolDefs.map((t) => ({
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    }));
+    // Authority decides what this session may call; persona configuration chooses
+    // the initial working set. Long-tail schemas remain loadable through tools.get.
+    const interactiveToolSet = await resolveInteractiveToolSet(sessionId);
+    const toolDefs = interactiveToolSet.definitions;
     chatLog.log(
-      `tools loaded count=${allToolDefs.length} authorityCount=${authorityScopedDefs.length} persona=${activePersona?.name ?? "none"} bundle=${activePersona?.toolBundle?.length ?? 0} sessionId=${sessionId}`,
+      `tools loaded count=${toolDefs.length} authorityCount=${interactiveToolSet.authorityCount} persona=${interactiveToolSet.personaName} bundle=${interactiveToolSet.bundleCount} sessionId=${sessionId}`,
     );
 
     const contextBuildStart = Date.now();
@@ -1549,9 +1568,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const context = await assembleContext({
       profile: "chat",
       conversationHistory,
-      toolDefinitions: allToolDefs.map((t) => ({
-        name: t.name,
-        description: t.description,
+      toolDefinitions: toolDefs.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
       })),
       model: resolvedModel,
       sessionId,
@@ -1785,6 +1804,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     routingTier?: string,
     diagnosticTurnId?: string,
     refreshAfterPersonaSwitch?: Parameters<typeof agentExecutor.run>[0]["refreshAfterPersonaSwitch"],
+    refreshToolSchema?: Parameters<typeof agentExecutor.run>[0]["refreshToolSchema"],
   ): Promise<ExecutorRunResult> {
     const toolExecutor = async (name: string, args: Record<string, any>) => {
       const shouldTrackPersonaChange = name === "orient" && typeof args.persona !== "undefined";
@@ -1826,6 +1846,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       onEvent,
       diagnosticTurnId,
       refreshAfterPersonaSwitch,
+      refreshToolSchema,
     });
   }
 
@@ -2376,10 +2397,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
         }
 
+        const refreshedToolSet = await resolveInteractiveToolSet(sessionId);
         const refreshedContext = await assembleContext({
           profile: "chat",
           conversationHistory,
-          toolDefinitions: getToolDefinitions().map((tool) => ({
+          toolDefinitions: refreshedToolSet.definitions.map((tool) => ({
             name: tool.name,
             description: tool.description,
           })),
@@ -2401,8 +2423,19 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         return {
           routingDecision,
           systemPrompt: refreshedContext.systemPrompt,
+          tools: refreshedToolSet.definitions,
           persona,
         };
+      };
+
+      const refreshToolSchema: NonNullable<Parameters<typeof agentExecutor.run>[0]["refreshToolSchema"]> = async (toolName) => {
+        chatRunLifecycle.assertCurrent(lease);
+        const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId);
+        const schema = authorityDefinitions.find((tool) => tool.name === toolName) ?? null;
+        chatLog.log(
+          `tool schema hydration requested tool=${toolName} allowed=${!!schema} authorityCount=${authorityDefinitions.length} sessionId=${sessionId}`,
+        );
+        return schema;
       };
 
       const result = await executeChatAgent(
@@ -2435,6 +2468,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         chatRoutingTier,
         diagnosticTurnId,
         refreshAfterPersonaSwitch,
+        refreshToolSchema,
       );
       if (assistantDraftCheckpointPending) {
         clearTimeout(assistantDraftCheckpointPending);

@@ -310,12 +310,12 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   tools: {
-    description: "Look up detailed tool documentation — list all tools or get full docs for a specific tool/action.",
-    whenToUse: "When you need to recall what tools are available, what actions they support, or what parameters a specific tool requires.",
-    example: 'List all: { "action": "list" }\nGet details: { "action": "get", "tool": "scratch" }',
+    description: "Discover the tools allowed under current execution authority and progressively load their callable schemas during interactive runs.",
+    whenToUse: "When a needed tool is absent from the current callable set or you need its actions and parameters. Call get with the exact tool name; success means its callable schema is available on the next step of this run.",
+    example: 'List all: { "action": "list" }\nLoad Companies: { "action": "get", "tool": "companies" }',
     actions: {
-      list: { description: "List all available tools with a short description of each." },
-      get: { description: "Get full documentation for a specific tool including actions, parameters, when to use, and examples.", requiredParams: ["tool"] },
+      list: { description: "List authority-allowed tools with a short description of each; listing does not hydrate every schema." },
+      get: { description: "Return full documentation and, in interactive chat, hydrate the exact authority-allowed tool schema for the current run.", requiredParams: ["tool"] },
     },
   },
 };
