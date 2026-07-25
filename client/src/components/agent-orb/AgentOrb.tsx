@@ -21,7 +21,6 @@ const log = createLogger('AgentOrb');
 const MAX_DPR = 1.5;
 const DODECAHEDRON_DETAIL = 0;
 const HALO_SCALE = 1.38;
-const RESTING_TILT = new THREE.Euler(0.32, -0.38, 0.08);
 
 function qualitySteps(maxFrameRate: number): number {
   if (maxFrameRate <= 20) return 12;
@@ -113,7 +112,6 @@ export function AgentOrb({
       blending: THREE.AdditiveBlending,
     });
     const fieldMesh = new THREE.Mesh(fieldGeometry, fieldMaterial);
-    scene.add(fieldMesh);
 
     const orbUniforms = {
       uTime: { value: 0 },
@@ -147,10 +145,9 @@ export function AgentOrb({
       blending: THREE.AdditiveBlending,
     });
     const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
-    const shellGroup = new THREE.Group();
-    shellGroup.rotation.copy(RESTING_TILT);
-    shellGroup.add(orbMesh, edgeLines);
-    scene.add(shellGroup);
+    const bodyGroup = new THREE.Group();
+    bodyGroup.add(fieldMesh, orbMesh, edgeLines);
+    scene.add(bodyGroup);
 
     const haloUniforms = {
       uIntensity: { value: 1.0 },
@@ -259,23 +256,20 @@ export function AgentOrb({
       orbUniforms.uBreathPhase.value = breath;
 
       const visualMotion = visuals.flowSpeed + visuals.swirlSpeed * 0.55 + visuals.attractorStrength * 0.18;
-      fieldMesh.rotation.y = anim.time * visualMotion * 0.18;
-      fieldMesh.rotation.x = Math.sin(anim.time * visualMotion * 0.42) * visuals.flowStrength * 0.08;
-      const shellTurn = anim.time * (0.035 + visualMotion * 0.055);
-      shellGroup.rotation.x = RESTING_TILT.x + Math.sin(shellTurn * 0.72) * (0.05 + visuals.flowStrength * 0.09);
-      shellGroup.rotation.y = RESTING_TILT.y + shellTurn;
-      shellGroup.rotation.z = RESTING_TILT.z + Math.sin(shellTurn * 0.48) * (0.035 + visuals.swirlAmount * 0.08);
-      haloMesh.rotation.x = shellGroup.rotation.x * 0.72;
-      haloMesh.rotation.y = -shellGroup.rotation.y * 0.42;
-      haloMesh.rotation.z = -shellGroup.rotation.z * 0.58;
+      bodyGroup.rotation.y = anim.time * visualMotion * 0.18;
+      bodyGroup.rotation.x = Math.sin(anim.time * visualMotion * 0.42) * visuals.flowStrength * 0.08;
+      bodyGroup.rotation.z = 0;
+      haloMesh.rotation.x = bodyGroup.rotation.x * 0.72;
+      haloMesh.rotation.y = -bodyGroup.rotation.y * 0.42;
+      haloMesh.rotation.z = -bodyGroup.rotation.z * 0.58;
 
       const thinkingPulse = visuals.attractorStrength * (0.012 + 0.01 * Math.sin(anim.time * visuals.breathSpeed));
       const scalePulse = 1.0 + audio * visuals.pulseStrength * 0.08 + thinkingPulse;
       const fieldResolveScale = 0.28 + voiceEntranceProgress * 0.72;
+      bodyGroup.scale.setScalar(scalePulse);
       fieldMesh.scale.setScalar(
-        fieldResolveScale * scalePulse * (1.0 + breath * 0.03),
+        fieldResolveScale * (1.0 + breath * 0.03),
       );
-      shellGroup.scale.setScalar(scalePulse);
       edgeMaterial.opacity = Math.min(
         0.42,
         (0.16 + visuals.rimIntensity * 0.08 + audio * visuals.audioReactivity * 0.12)
@@ -324,8 +318,8 @@ export function AgentOrb({
       cancelScheduledFrame();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       resizeObserver.disconnect();
-      scene.remove(fieldMesh, shellGroup, haloMesh);
-      shellGroup.remove(orbMesh, edgeLines);
+      scene.remove(bodyGroup, haloMesh);
+      bodyGroup.remove(fieldMesh, orbMesh, edgeLines);
       fieldMaterial.dispose();
       orbMaterial.dispose();
       edgeMaterial.dispose();
