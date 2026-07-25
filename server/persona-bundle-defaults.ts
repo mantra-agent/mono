@@ -183,7 +183,28 @@ const PERSONA_TOOL_BUNDLES: Record<string, string[]> = {
   Router: ["router"],
 };
 
-export const CANONICAL_PERSONA_NAMES = Object.freeze(Object.keys(PERSONA_TOOL_BUNDLES));
+export interface PersonaBundleCoverage {
+  outcome: "complete" | "degraded";
+  missingDefaults: string[];
+  unusedDefaults: string[];
+}
+
+export function inspectPersonaBundleCoverage(seedNames: readonly string[]): PersonaBundleCoverage {
+  const configuredNames = new Set([
+    ...Object.keys(PERSONA_CONTEXT_SECTIONS),
+    ...Object.keys(PERSONA_TOOL_BUNDLES),
+  ]);
+  const seedNameSet = new Set(seedNames);
+  const missingDefaults = seedNames.filter((name) => !hasPersonaBundleDefaults(name));
+  const unusedDefaults = [...configuredNames].filter((name) => !seedNameSet.has(name));
+  return {
+    outcome: missingDefaults.length === 0 && unusedDefaults.length === 0
+      ? "complete"
+      : "degraded",
+    missingDefaults,
+    unusedDefaults,
+  };
+}
 
 export function hasPersonaBundleDefaults(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(PERSONA_CONTEXT_SECTIONS, name)
@@ -191,9 +212,9 @@ export function hasPersonaBundleDefaults(name: string): boolean {
 }
 
 export function contextSectionsForPersona(name: string): Record<string, boolean> {
-  return PERSONA_CONTEXT_SECTIONS[name] ?? DEFAULT_CONTEXT_SECTIONS;
+  return { ...(PERSONA_CONTEXT_SECTIONS[name] ?? DEFAULT_CONTEXT_SECTIONS) };
 }
 
 export function toolBundleForPersona(name: string): string[] {
-  return PERSONA_TOOL_BUNDLES[name] ?? PERSONA_TOOL_BUNDLES.Default;
+  return [...(PERSONA_TOOL_BUNDLES[name] ?? PERSONA_TOOL_BUNDLES.Default)];
 }
