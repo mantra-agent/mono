@@ -124,7 +124,11 @@ export async function registerCognitionRoutes(app: Express) {
           .status(400)
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
-      const updated = await personaStorage.update(id, parsed.data);
+      // Editing a seed copy-on-writes into the caller's own persona row so the
+      // save lands on an editable copy instead of failing against a read-only seed.
+      const owned = await personaStorage.ensureOwnedCopy(id);
+      if (!owned) return res.status(404).json({ error: "Persona not found" });
+      const updated = await personaStorage.update(owned.id, parsed.data);
       if (!updated) return res.status(403).json({ error: "Persona is read-only or not found" });
       res.json(updated);
     } catch (error: any) {

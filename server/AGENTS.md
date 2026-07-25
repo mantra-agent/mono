@@ -4,6 +4,8 @@
 
 `SEED_PERSONAS` in `server/file-storage/persona-storage.ts` is the authoritative identity catalog. Persona `context_sections` and `tool_bundle` are persisted configuration owned by each persona row and mutated only through principal-scoped `PersonaStorage` APIs/tools. Boot reconciliation may maintain seed identity, overlay, icon, tier, and routing metadata; it must never define, inherit, version, or rewrite bundle values. Empty tool bundles preserve the passthrough contract.
 
+A user session must never be bound to, or edit, a read-only seed. `PersonaStorage.ensureOwnedCopy(id)` is the canonical copy-on-write materialization: for a user principal it resolves an ordinary global seed (even one already shadowed by the user's copy) to that user's own lineage copy, creating it if needed; system principals and system seeds are returned unchanged. Orientation persona selection, the `cognition.update_persona` tool, and the persona editor PUT route all fork through it, and `activate()` shares the same copy shape via `insertOwnedCopy`. Seeds carry empty bundles; a user configures their copy as data.
+
 
 Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, architecture, and repository constraints. Root `CODING.md` is mandatory and authoritative for engineering workflow, Coding Task Gate, git policy, verification, and final reporting. This file adds local constraints only. Load this file before touching files under `server/`. For UI/product-facing work, also load root `DESIGN.md`. If instructions conflict, follow root `AGENTS.md` for principles/architecture and root `CODING.md` for procedure unless Ray explicitly overrides.
 
