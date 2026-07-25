@@ -4662,6 +4662,9 @@ export async function runSchemaBootstrap(
       CREATE TABLE IF NOT EXISTS api_calls (
         id SERIAL PRIMARY KEY,
         timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        scope TEXT NOT NULL DEFAULT 'system',
+        owner_user_id TEXT,
+        account_id TEXT,
         model TEXT NOT NULL,
         provider TEXT NOT NULL,
         profile TEXT,
@@ -4682,9 +4685,27 @@ export async function runSchemaBootstrap(
         metadata JSONB DEFAULT '{}'
       )
     `);
-    await pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_api_calls_timestamp ON api_calls(timestamp)`,
-    );
+    await pool.query(`ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'system'`);
+    await pool.query(`ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
+    await pool.query(`ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS account_id TEXT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_api_calls_timestamp ON api_calls(timestamp)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_api_calls_owner_timestamp ON api_calls(owner_user_id, account_id, timestamp DESC)`);
+    await pool.query(`
+      DO $migration$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'api_calls_ownership_contract'
+            AND conrelid = 'api_calls'::regclass
+        ) THEN
+          ALTER TABLE api_calls
+          ADD CONSTRAINT api_calls_ownership_contract CHECK (
+            (scope = 'user' AND owner_user_id IS NOT NULL AND account_id IS NOT NULL)
+            OR (scope = 'system' AND owner_user_id IS NULL AND account_id IS NULL)
+          ) NOT VALID;
+        END IF;
+      END $migration$
+    `);
   });
 
   await heal("drop api_calls content columns (moved to S3)", async () => {
@@ -6349,14 +6370,31 @@ export async function runSchemaBootstrap(
         request_chars INTEGER NOT NULL,
         excluded_sensitive_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
         residual_limitation TEXT,
+        api_call_id INTEGER,
         attempt INTEGER NOT NULL DEFAULT 1,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         session_id TEXT,
         source TEXT
       )
     `);
+    await pool.query(`ALTER TABLE inference_payload_captures ADD COLUMN IF NOT EXISTS api_call_id INTEGER`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_inference_payload_owner_captured ON inference_payload_captures(owner_user_id, account_id, captured_at DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_inference_payload_session ON inference_payload_captures(session_id, captured_at DESC)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_inference_payload_api_call ON inference_payload_captures(api_call_id) WHERE api_call_id IS NOT NULL`);
+    await pool.query(`
+      DO $migration$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'inference_payload_captures_api_call_fk'
+            AND conrelid = 'inference_payload_captures'::regclass
+        ) THEN
+          ALTER TABLE inference_payload_captures
+          ADD CONSTRAINT inference_payload_captures_api_call_fk
+          FOREIGN KEY (api_call_id) REFERENCES api_calls(id) ON DELETE SET NULL NOT VALID;
+        END IF;
+      END $migration$
+    `);
   });
 
   await heal("calendar event people uniqueness", async () => {

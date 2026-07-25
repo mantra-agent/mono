@@ -1,5 +1,6 @@
 import { pool } from "../db";
 import type { ApiCall, InsertApiCall } from "@shared/schema";
+import { getCurrentPrincipal } from "../principal-context";
 import { createLogger } from "../log";
 import { getSetting } from "../system-settings";
 import { storageBackend, PRIVATE_PREFIX } from "../object_storage/objectStorage";
@@ -13,6 +14,10 @@ const S3_PREFIX = `${PRIVATE_PREFIX}inference/`;
 interface ApiCallRow extends QueryResultRow {
   id: number;
   timestamp: Date;
+  scope: "user" | "system";
+  owner_user_id: string | null;
+  account_id: string | null;
+  capture_id?: string | null;
   model: string;
   provider: string;
   profile: string | null;
@@ -127,6 +132,9 @@ function rowToApiCall(row: ApiCallRow): ApiCall {
   return {
     id: row.id,
     timestamp: row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp),
+    scope: row.scope || "system",
+    ownerUserId: row.owner_user_id ?? null,
+    accountId: row.account_id ?? null,
     provider: row.provider || "",
     model: row.model || "",
     profile: row.profile ?? null,
@@ -140,6 +148,7 @@ function rowToApiCall(row: ApiCallRow): ApiCall {
     costTotal: row.cost_total ?? 0,
     sessionKey: row.session_key ?? null,
     sessionId: row.session_id ?? null,
+    captureId: row.capture_id ?? null,
     requestContent: null,
     responseContent: null,
     durationMs: row.duration_ms ?? null,
@@ -152,6 +161,9 @@ function rowToApiCallLight(row: ApiCallRow): Omit<ApiCall, 'requestContent' | 'r
   return {
     id: row.id,
     timestamp: row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp),
+    scope: row.scope || "system",
+    ownerUserId: row.owner_user_id ?? null,
+    accountId: row.account_id ?? null,
     provider: row.provider || "",
     model: row.model || "",
     profile: row.profile ?? null,
@@ -165,38 +177,67 @@ function rowToApiCallLight(row: ApiCallRow): Omit<ApiCall, 'requestContent' | 'r
     costTotal: row.cost_total ?? 0,
     sessionKey: row.session_key ?? null,
     sessionId: row.session_id ?? null,
+    captureId: row.capture_id ?? null,
     durationMs: row.duration_ms ?? null,
     stopReason: row.stop_reason ?? null,
     metadata: row.metadata ?? null,
   };
 }
 
-function buildSinceQuery(baseQuery: string, since: Date | undefined): { query: string; params: Array<Date | number> } {
-  const params: Array<Date | number> = [];
-  let query = baseQuery;
+function currentOwnership(): { scope: "user" | "system"; ownerUserId: string | null; accountId: string | null } {
+  const principal = getCurrentPrincipal();
+  if (principal?.actorType === "user" && principal.userId && principal.accountId) {
+    return { scope: "user", ownerUserId: principal.userId, accountId: principal.accountId };
+  }
+  if (principal?.actorType === "system") {
+    return { scope: "system", ownerUserId: null, accountId: null };
+  }
+  throw new Error("Explicit user or system principal required for inference audit access");
+}
+
+function ownershipClause(alias = "api_calls", startIndex = 1): { clause: string; params: string[] } {
+  const ownership = currentOwnership();
+  if (ownership.scope === "system") return { clause: `${alias}.scope = 'system'`, params: [] };
+  return {
+    clause: `${alias}.scope = 'user' AND ${alias}.owner_user_id = ${startIndex} AND ${alias}.account_id = ${startIndex + 1}`,
+    params: [ownership.ownerUserId!, ownership.accountId!],
+  };
+}
+
+function buildSinceQuery(baseQuery: string, since: Date | undefined): { query: string; params: Array<Date | number | string> } {
+  const ownership = ownershipClause("api_calls");
+  const params: Array<Date | number | string> = [...ownership.params];
+  let query = `${baseQuery} WHERE ${ownership.clause}`;
   if (since) {
     params.push(since);
-    query += ` WHERE timestamp >= $${params.length}`;
+    query += ` AND timestamp >= ${params.length}`;
   }
   return { query, params };
 }
 
 function buildWhereParams(since: Date | undefined, params: Array<Date | string | number>): string {
-  if (!since) return "";
-  params.push(since);
-  return `WHERE timestamp >= $${params.length}`;
+  const ownership = ownershipClause("api_calls", params.length + 1);
+  params.push(...ownership.params);
+  let where = `WHERE ${ownership.clause}`;
+  if (since) {
+    params.push(since);
+    where += ` AND timestamp >= ${params.length}`;
+  }
+  return where;
 }
 
 export class FileApiCallStorage {
   async createApiCall(call: InsertApiCall): Promise<ApiCall> {
     return enqueueWrite(async () => {
+      const ownership = currentOwnership();
       const result = await pool.query<ApiCallRow>(
-        `INSERT INTO api_calls (timestamp, model, provider, profile, input_tokens, output_tokens,
+        `INSERT INTO api_calls (timestamp, scope, owner_user_id, account_id, model, provider, profile, input_tokens, output_tokens,
           cache_read_tokens, cache_write_tokens, total_tokens, cost_input, cost_output, cost_total,
           session_key, session_id, duration_ms, stop_reason, metadata)
-        VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        VALUES (NOW(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
         RETURNING *`,
         [
+          ownership.scope, ownership.ownerUserId, ownership.accountId,
           call.model, call.provider, call.profile ?? null,
           call.inputTokens ?? 0, call.outputTokens ?? 0,
           call.cacheReadTokens ?? null, call.cacheWriteTokens ?? null,
@@ -230,11 +271,44 @@ export class FileApiCallStorage {
     });
   }
 
+  async settleApiCall(id: number, call: InsertApiCall): Promise<ApiCall | undefined> {
+    return enqueueWrite(async () => {
+      const ownership = ownershipClause("api_calls", 18);
+      const result = await pool.query<ApiCallRow>(
+        `UPDATE api_calls
+         SET model = $1, provider = $2, profile = $3,
+             input_tokens = $4, output_tokens = $5, cache_read_tokens = $6, cache_write_tokens = $7,
+             total_tokens = $8, cost_input = $9, cost_output = $10, cost_total = $11,
+             session_key = $12, session_id = $13, duration_ms = $14, stop_reason = $15,
+             metadata = $16
+         WHERE id = $17 AND ${ownership.clause}
+         RETURNING *, (
+           SELECT id FROM inference_payload_captures capture
+           WHERE capture.api_call_id = api_calls.id
+           LIMIT 1
+         ) AS capture_id`,
+        [
+          call.model, call.provider, call.profile ?? null,
+          call.inputTokens ?? 0, call.outputTokens ?? 0,
+          call.cacheReadTokens ?? null, call.cacheWriteTokens ?? null,
+          call.totalTokens ?? 0, call.costInput ?? 0, call.costOutput ?? 0, call.costTotal ?? 0,
+          call.sessionKey ?? null, call.sessionId ?? null,
+          call.durationMs ?? null, call.stopReason ?? null,
+          call.metadata ? JSON.stringify(call.metadata) : null,
+          id,
+          ...ownership.params,
+        ],
+      );
+      return result.rows[0] ? rowToApiCall(result.rows[0]) : undefined;
+    });
+  }
+
   async getApiCalls(limit = 50, offset = 0, since?: Date): Promise<ApiCall[]> {
     const { query: baseQuery, params } = buildSinceQuery(
-      `SELECT id, timestamp, model, provider, profile, input_tokens, output_tokens,
+      `SELECT id, timestamp, scope, owner_user_id, account_id, model, provider, profile, input_tokens, output_tokens,
         cache_read_tokens, cache_write_tokens, total_tokens, cost_input, cost_output, cost_total,
-        session_key, session_id, duration_ms, stop_reason, metadata
+        session_key, session_id, duration_ms, stop_reason, metadata,
+        (SELECT capture.id FROM inference_payload_captures capture WHERE capture.api_call_id = api_calls.id LIMIT 1) AS capture_id
         FROM api_calls`,
       since
     );
@@ -251,7 +325,13 @@ export class FileApiCallStorage {
   }
 
   async getApiCall(id: number): Promise<ApiCall | undefined> {
-    const result = await pool.query<ApiCallRow>(`SELECT * FROM api_calls WHERE id = $1`, [id]);
+    const ownership = ownershipClause("api_calls", 2);
+    const result = await pool.query<ApiCallRow>(`
+      SELECT api_calls.*,
+        (SELECT capture.id FROM inference_payload_captures capture WHERE capture.api_call_id = api_calls.id LIMIT 1) AS capture_id
+      FROM api_calls
+      WHERE api_calls.id = $1 AND ${ownership.clause}
+    `, [id, ...ownership.params]);
     if (result.rows.length === 0) {
       log.log(`getApiCall id=${id} not-found`);
       return undefined;
@@ -466,23 +546,27 @@ export class FileApiCallStorage {
   }
 
   async getTotalApiCallCount(): Promise<number> {
-    const result = await pool.query<CountRow>(`SELECT COUNT(*)::int AS cnt FROM api_calls`);
+    const ownership = ownershipClause("api_calls");
+    const result = await pool.query<CountRow>(`SELECT COUNT(*)::int AS cnt FROM api_calls WHERE ${ownership.clause}`, ownership.params);
     return result.rows[0]?.cnt ?? 0;
   }
 
   async getApiCallsBySession(sessionKey: string): Promise<Omit<ApiCall, 'requestContent' | 'responseContent'>[]> {
+    const ownership = ownershipClause("api_calls", 2);
     const result = await pool.query<ApiCallRow>(
-      `SELECT id, timestamp, model, provider, profile, input_tokens, output_tokens,
+      `SELECT id, timestamp, scope, owner_user_id, account_id, model, provider, profile, input_tokens, output_tokens,
         cache_read_tokens, cache_write_tokens, total_tokens, cost_input, cost_output, cost_total,
-        session_key, session_id, duration_ms, stop_reason, metadata
-      FROM api_calls WHERE session_key = $1 ORDER BY timestamp ASC`,
-      [sessionKey]
+        session_key, session_id, duration_ms, stop_reason, metadata,
+        (SELECT capture.id FROM inference_payload_captures capture WHERE capture.api_call_id = api_calls.id LIMIT 1) AS capture_id
+      FROM api_calls WHERE session_key = $1 AND ${ownership.clause} ORDER BY timestamp ASC`,
+      [sessionKey, ...ownership.params]
     );
     return result.rows.map(rowToApiCallLight);
   }
 
 
   async getTokenUsageByRunId(runId: string): Promise<TokenUsageSummary> {
+    const ownership = ownershipClause("api_calls", 2);
     const result = await pool.query<SessionAggRow>(
       `SELECT COUNT(*)::int AS calls,
         COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
@@ -490,14 +574,15 @@ export class FileApiCallStorage {
         COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
         COALESCE(SUM(cost_total), 0) AS cost,
         COALESCE(MAX(input_tokens), 0)::int AS peak_input_tokens
-      FROM api_calls WHERE metadata->>'runId' = $1`,
-      [runId]
+      FROM api_calls WHERE metadata->>'runId' = $1 AND ${ownership.clause}`,
+      [runId, ...ownership.params]
     );
     return this.rowToTokenUsage(result.rows[0]);
   }
 
   async getTokenUsageByChatSession(sessionId: string, sessionKey?: string | null): Promise<TokenUsageSummary> {
     const keys = Array.from(new Set([sessionKey, sessionKey || `dashboard:${sessionId}`, `dashboard:${sessionId}`, sessionId].filter(Boolean))) as string[];
+    const ownership = ownershipClause("api_calls", 3);
     const result = await pool.query<SessionAggRow>(
       `SELECT COUNT(*)::int AS calls,
         COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
@@ -506,8 +591,9 @@ export class FileApiCallStorage {
         COALESCE(SUM(cost_total), 0) AS cost,
         COALESCE(MAX(input_tokens), 0)::int AS peak_input_tokens
       FROM api_calls
-      WHERE session_key = ANY($1::text[]) OR metadata->>'sessionId' = $2`,
-      [keys, sessionId]
+      WHERE (session_key = ANY($1::text[]) OR metadata->>'sessionId' = $2)
+        AND ${ownership.clause}`,
+      [keys, sessionId, ...ownership.params]
     );
     return this.rowToTokenUsage(result.rows[0]);
   }
@@ -525,7 +611,8 @@ export class FileApiCallStorage {
 
   async getApiCallContent(id: number): Promise<{ requestContent: string | null; responseContent: string | null } | undefined> {
     // Verify the call exists
-    const exists = await pool.query<{ id: number }>(`SELECT id FROM api_calls WHERE id = $1`, [id]);
+    const ownership = ownershipClause("api_calls", 2);
+    const exists = await pool.query<{ id: number }>(`SELECT id FROM api_calls WHERE id = $1 AND ${ownership.clause}`, [id, ...ownership.params]);
     if (exists.rows.length === 0) return undefined;
 
     // Fetch content from S3
@@ -549,6 +636,7 @@ export class FileApiCallStorage {
   }
 
   async getTokenUsageBySession(sessionKey: string): Promise<TokenUsageSummary> {
+    const ownership = ownershipClause("api_calls", 2);
     const result = await pool.query<SessionAggRow>(
       `SELECT COUNT(*)::int AS calls,
         COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
@@ -556,8 +644,8 @@ export class FileApiCallStorage {
         COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
         COALESCE(SUM(cost_total), 0) AS cost,
         COALESCE(MAX(input_tokens), 0)::int AS peak_input_tokens
-      FROM api_calls WHERE session_key = $1`,
-      [sessionKey]
+      FROM api_calls WHERE session_key = $1 AND ${ownership.clause}`,
+      [sessionKey, ...ownership.params]
     );
     return this.rowToTokenUsage(result.rows[0]);
   }

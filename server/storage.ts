@@ -79,6 +79,7 @@ export interface IStorage {
   getUserCount(): Promise<number>;
 
   createApiCall(call: InsertApiCall): Promise<ApiCall>;
+  settleApiCall(id: number, call: InsertApiCall): Promise<ApiCall | undefined>;
   getApiCalls(limit?: number, offset?: number, since?: Date): Promise<ApiCall[]>;
   getApiCall(id: number): Promise<ApiCall | undefined>;
   getApiCallSummary(since?: Date): Promise<{
@@ -256,6 +257,10 @@ export class HybridStorage implements IStorage {
 
   async createApiCall(call: InsertApiCall): Promise<ApiCall> {
     return fileApiCallStorage.createApiCall(call);
+  }
+
+  async settleApiCall(id: number, call: InsertApiCall): Promise<ApiCall | undefined> {
+    return fileApiCallStorage.settleApiCall(id, call);
   }
 
   async getApiCalls(limit = 50, offset = 0, since?: Date): Promise<ApiCall[]> {

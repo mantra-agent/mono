@@ -15,6 +15,7 @@ import {
   MessageSquare,
   MessagesSquare,
   MessageCircle,
+  FileJson2,
   PenLine,
   Radio,
   Rss,
@@ -134,6 +135,11 @@ const registry: Record<string, RegistryEntry> = {
     Icon: MessagesSquare,
     fallbackLabel: ref => metadataString(ref, "label") || `Session ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/session?c=${encodeURIComponent(ref.id)}`,
+  },
+  inference_context: {
+    Icon: FileJson2,
+    fallbackLabel: ref => metadataString(ref, "label") || `Context ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/brain?tab=context&capture=${encodeURIComponent(ref.id)}`,
   },
   plan: {
     Icon: Route,

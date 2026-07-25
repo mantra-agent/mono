@@ -17,6 +17,7 @@ import { getSetting, setSetting } from "../system-settings";
 import { runWithPrincipal } from "../principal-context";
 import { createNamedSystemPrincipal } from "../principal";
 import { requirePermission } from "../permissions";
+import { requireAuth } from "../auth";
 import { listModelConnectors, reorderModelConnectors, updateModelConnector } from "../model-connectors";
 import { claudeCliTierMappingsSchema, modelTierMappingsSchema, openAITierMappingsSchema } from "@shared/model-connectors";
 
@@ -192,6 +193,7 @@ async function buildSkillMaps(): Promise<{ promptActivityMap: Map<string, string
 }
 
 export async function registerInferenceRoutes(app: Express, serverStartTime: Date) {
+  app.use(["/api/performance", "/api/inference"], requireAuth);
   app.get("/api/performance/summary", async (req, res) => {
     try {
       const period = req.query.period as string || "all";
@@ -348,6 +350,8 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
           activityType,
           promptName,
           runId: typeof meta?.runId === "string" ? meta.runId : null,
+          chatSessionId: typeof meta?.sessionId === "string" ? meta.sessionId : null,
+          captureId: call.captureId ?? null,
           requestContent: null as string | null,
           responseContent: null as string | null,
         };
@@ -449,6 +453,8 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         tier,
         activityType,
         promptName,
+        chatSessionId: typeof metadataObject(call.metadata)?.sessionId === "string" ? metadataObject(call.metadata)?.sessionId : null,
+        captureId: call.captureId ?? null,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -737,7 +743,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
 
       const filteredCalls = await storage.getApiCalls(100000, 0, since);
 
-      interface CallBucket { id: number; timestamp: string; provider: string; model: string; profile: string | null; inputTokens: number; outputTokens: number; totalTokens: number; costTotal: number; durationMs: number | null; runId: string | null; }
+      interface CallBucket { id: number; timestamp: string; provider: string; model: string; profile: string | null; inputTokens: number; outputTokens: number; totalTokens: number; costTotal: number; durationMs: number | null; runId: string | null; captureId: string | null; }
       interface SessionBucket { sessionKey: string; sessionId: number | null; cost: number; calls: number; inputTokens: number; outputTokens: number; callsList: CallBucket[]; }
       interface PromptBucket { prompt: string; cost: number; calls: number; inputTokens: number; outputTokens: number; sessions: Map<string, SessionBucket>; }
       interface ActivityBucket { activity: string; cost: number; calls: number; inputTokens: number; outputTokens: number; prompts: Map<string, PromptBucket>; }
@@ -811,6 +817,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
           costTotal: cost,
           durationMs: c.durationMs ?? null,
           runId: typeof meta?.runId === "string" ? meta.runId : null,
+          captureId: c.captureId ?? null,
         });
       }
 

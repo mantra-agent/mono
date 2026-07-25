@@ -314,6 +314,9 @@ export interface Issue {
 export type InsertIssue = z.infer<typeof insertIssueSchema>;
 
 export const insertApiCallSchema = z.object({
+  scope: z.enum(["user", "system"]).default("system"),
+  ownerUserId: z.string().nullable().optional(),
+  accountId: z.string().nullable().optional(),
   provider: z.string(),
   model: z.string(),
   profile: z.string().nullable().optional(),
@@ -327,6 +330,7 @@ export const insertApiCallSchema = z.object({
   costTotal: z.number().default(0),
   sessionKey: z.string().nullable().optional(),
   sessionId: z.number().nullable().optional(),
+  captureId: z.string().uuid().nullable().optional(),
   requestContent: z.string().nullable().optional(),
   responseContent: z.string().nullable().optional(),
   durationMs: z.number().nullable().optional(),
@@ -337,6 +341,9 @@ export const insertApiCallSchema = z.object({
 export interface ApiCall {
   id: number;
   timestamp: Date;
+  scope: "user" | "system";
+  ownerUserId: string | null;
+  accountId: string | null;
   provider: string;
   model: string;
   profile: string | null;
@@ -350,6 +357,7 @@ export interface ApiCall {
   costTotal: number;
   sessionKey: string | null;
   sessionId: number | null;
+  captureId: string | null;
   requestContent: string | null;
   responseContent: string | null;
   durationMs: number | null;
@@ -357,6 +365,33 @@ export interface ApiCall {
   metadata?: Record<string, unknown> | null;
 }
 export type InsertApiCall = z.infer<typeof insertApiCallSchema>;
+
+export const apiCallRecords = pgTable("api_calls", {
+  id: serial("id").primaryKey(),
+  timestamp: timestamp("timestamp", { withTimezone: false }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  scope: text("scope").notNull().default("system"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  model: text("model").notNull(),
+  provider: text("provider").notNull(),
+  profile: text("profile"),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  cacheReadTokens: integer("cache_read_tokens"),
+  cacheWriteTokens: integer("cache_write_tokens"),
+  totalTokens: integer("total_tokens").notNull().default(0),
+  costInput: real("cost_input").notNull().default(0),
+  costOutput: real("cost_output").notNull().default(0),
+  costTotal: real("cost_total").notNull().default(0),
+  sessionKey: text("session_key"),
+  sessionId: integer("session_id"),
+  durationMs: integer("duration_ms"),
+  stopReason: text("stop_reason"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`),
+}, (table) => [
+  index("idx_api_calls_timestamp").on(table.timestamp),
+  index("idx_api_calls_owner_timestamp").on(table.ownerUserId, table.accountId, table.timestamp),
+]);
 
 export const inferencePayloadCaptures = pgTable("inference_payload_captures", {
   id: uuid("id").primaryKey(),
@@ -375,6 +410,7 @@ export const inferencePayloadCaptures = pgTable("inference_payload_captures", {
   requestChars: integer("request_chars").notNull(),
   excludedSensitiveFields: jsonb("excluded_sensitive_fields").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   residualLimitation: text("residual_limitation"),
+  apiCallId: integer("api_call_id"),
   attempt: integer("attempt").notNull().default(1),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   sessionId: text("session_id"),
@@ -382,6 +418,7 @@ export const inferencePayloadCaptures = pgTable("inference_payload_captures", {
 }, (table) => [
   index("idx_inference_payload_owner_captured").on(table.ownerUserId, table.accountId, table.capturedAt),
   index("idx_inference_payload_session").on(table.sessionId, table.capturedAt),
+  uniqueIndex("uq_inference_payload_api_call").on(table.apiCallId).where(sql`${table.apiCallId} IS NOT NULL`),
 ]);
 
 export type InferencePayloadCaptureRow = typeof inferencePayloadCaptures.$inferSelect;

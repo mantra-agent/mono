@@ -11,7 +11,7 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { wellnessActivities } from "@shared/models/health";
-import { emailMessages, planExecutions, workflowRuns } from "@shared/schema";
+import { emailMessages, inferencePayloadCaptures, planExecutions, workflowRuns } from "@shared/schema";
 import { decisionsStorage } from "./decisions-storage";
 import { and, desc, eq, or } from "drizzle-orm";
 import { getEvent, listAllEvents } from "./google-calendar";
@@ -97,6 +97,20 @@ export function registerReferenceRoutes(app: Express) {
             case "session": {
               const session = await chatFileStorage.getSession(id);
               if (session) results[key] = session.title || "Untitled session";
+              break;
+            }
+            case "inference_context": {
+              const captureScope = { scope: inferencePayloadCaptures.scope, ownerUserId: inferencePayloadCaptures.ownerUserId, accountId: inferencePayloadCaptures.accountId };
+              const rows = await db
+                .select({ capturedAt: inferencePayloadCaptures.capturedAt, model: inferencePayloadCaptures.model })
+                .from(inferencePayloadCaptures)
+                .where(combineWithVisibleScope(principal, captureScope, and(
+                  eq(inferencePayloadCaptures.id, id),
+                  eq(inferencePayloadCaptures.ownerUserId, principal.userId || ""),
+                  eq(inferencePayloadCaptures.accountId, principal.accountId || ""),
+                )))
+                .limit(1);
+              if (rows[0]) results[key] = `Context · ${rows[0].model}`;
               break;
             }
             case "plan": {

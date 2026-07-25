@@ -14,10 +14,17 @@ let dailyInitPromise: Promise<void> | null = null;
 
 async function initializeDailyFromDb(dateStr: string): Promise<void> {
   try {
+    const principal = (await import("./principal-context")).getCurrentPrincipal();
+    const scopeSql = principal?.actorType === "user" && principal.userId && principal.accountId
+      ? "scope = 'user' AND owner_user_id = $2 AND account_id = $3"
+      : principal?.actorType === "system"
+        ? "scope = 'system'"
+        : null;
+    if (!scopeSql) throw new Error("Explicit user or system principal required for daily inference totals");
     const result = await pool.query(
       `SELECT COUNT(*)::int AS cnt, COALESCE(SUM(cost_total), 0) AS total_cost
-       FROM api_calls WHERE DATE(timestamp) = $1`,
-      [dateStr]
+       FROM api_calls WHERE DATE(timestamp) = $1 AND ${scopeSql}`,
+      principal?.actorType === "user" ? [dateStr, principal.userId, principal.accountId] : [dateStr]
     );
     const row = result.rows[0];
     dailyCallCount = row?.cnt || 0;
@@ -76,6 +83,7 @@ async function ensureDailyInitialized(): Promise<void> {
 }
 
 export async function logApiCall(params: {
+  apiCallId?: number;
   sessionKey?: string;
   sessionId?: string;
   runId?: string;
@@ -103,7 +111,7 @@ export async function logApiCall(params: {
   // the time we get here, we drop the insert rather than orphan a DB connection
   // beyond the run's drain window. Inserts that have already been issued ride out
   // their own pg statement_timeout.
-  if (params.signal?.aborted) {
+  if (params.signal?.aborted && !params.apiCallId) {
     return;
   }
   try {
@@ -132,7 +140,7 @@ export async function logApiCall(params: {
 
     log.log(`logApiCall provider=${provider} model=${model} profile=${params.profile || "unknown"} inputTokens=${inputTokens} outputTokens=${outputTokens} cacheReadTokens=${cacheReadTokens} cacheWriteTokens=${cacheWriteTokens} totalTokens=${totalTokens} cost=$${costTotal.toFixed(6)} duration=${durationMs}ms dailyTotal=$${dailyTotalCost.toFixed(4)} dailyCalls=${dailyCallCount}`);
 
-    await storage.createApiCall({
+    const persistedCall = {
       provider,
       model,
       profile: params.profile || "unknown",
@@ -156,18 +164,26 @@ export async function logApiCall(params: {
           ...(typeof params.metadata?.tokenAccounting === "object" && params.metadata?.tokenAccounting !== null
             ? params.metadata.tokenAccounting as Record<string, unknown>
             : {}),
-          inputTokens,
-          outputTokens,
-          totalTokens,
-          cacheReadTokens,
-          cacheWriteTokens,
+          inputTokens: params.usage ? inputTokens : null,
+          outputTokens: params.usage ? outputTokens : null,
+          totalTokens: params.usage ? totalTokens : null,
+          cacheReadTokens: params.usage ? cacheReadTokens : null,
+          cacheWriteTokens: params.usage ? cacheWriteTokens : null,
           reasoningTokens: params.usage?.reasoningTokens ?? null,
           visibleOutputTokens: params.usage?.visibleOutputTokens ?? null,
           usageSemantics,
         },
         usageSemantics,
       },
-    });
+    };
+    if (params.apiCallId) {
+      const settled = await storage.settleApiCall(params.apiCallId, persistedCall);
+      if (!settled) {
+        log.warn(`api_call settlement unavailable apiCallId=${params.apiCallId} provider=${provider} model=${model}`);
+      }
+    } else {
+      await storage.createApiCall(persistedCall);
+    }
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     const errorStack = err instanceof Error ? err.stack : undefined;

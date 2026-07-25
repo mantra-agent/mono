@@ -9,6 +9,7 @@ export const REFERENCE_TYPES = [
   "milestone",
   "meeting",
   "session",
+  "inference_context",
   "plan",
   "workflow",
 

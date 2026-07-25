@@ -11,6 +11,17 @@ export interface InferencePayloadCaptureSummary {
   source: string | null;
   attempt: number;
   requestChars: number;
+  apiCallId: number | null;
+  providerUsage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    cacheReadTokens: number | null;
+    cacheWriteTokens: number | null;
+    reasoningTokens: number | null;
+    totalTokens: number | null;
+    status: "dispatched" | "success" | "error" | "aborted" | "partial" | null;
+    semantics: "per_call" | "cumulative_provider_session" | "unknown" | null;
+  } | null;
   captureVersion: number | null;
   completeness: InferencePayloadCaptureCompleteness;
 }
