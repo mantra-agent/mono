@@ -1,8 +1,8 @@
 # Authority
 
-## Persona bundle defaults
+## Persona catalog and bundle defaults
 
-`server/persona-bundle-defaults.ts` is the single source of curated context-section and non-core tool defaults for canonical personas. `PersonaStorage.seedDefaults()` owns replay-safe initialization: seed rows track the current defaults, existing user copies inherit only into empty bundle fields once via `bundle_defaults_version`, and subsequent user edits remain authoritative. Unknown/custom personas preserve the empty-tool-bundle passthrough contract.
+`SEED_PERSONAS` in `server/file-storage/persona-storage.ts` is the authoritative identity catalog. `server/persona-bundle-defaults.ts` configures curated context-section and non-core tool defaults for those identities; its keys never create personas. `PersonaStorage.seedDefaults()` owns replay-safe initialization: seed rows track the current defaults, existing user copies inherit only into empty bundle fields once via `bundle_defaults_version`, and subsequent user edits remain authoritative. Missing or unused bundle configuration is an observable degraded condition with safe defaults, never a reason to reject service startup. Unknown/custom personas preserve the empty-tool-bundle passthrough contract.
 
 
 Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, architecture, and repository constraints. Root `CODING.md` is mandatory and authoritative for engineering workflow, Coding Task Gate, git policy, verification, and final reporting. This file adds local constraints only. Load this file before touching files under `server/`. For UI/product-facing work, also load root `DESIGN.md`. If instructions conflict, follow root `AGENTS.md` for principles/architecture and root `CODING.md` for procedure unless Ray explicitly overrides.
