@@ -4,6 +4,8 @@ import {
   RETIRED_DOCUMENT_STORE_CHAT_SEARCH_INDEXES,
 } from "@shared/models/memory";
 import { createLogger } from "../log";
+import type { Principal } from "../principal";
+import { buildTargetSessionSearchQuery } from "./session-search-query";
 
 const log = createLogger("DocumentSearchIndexes");
 
@@ -26,6 +28,20 @@ const SEARCH_INDEXES = [
 ] as const;
 
 type EnsureOutcome = "ready" | "busy";
+
+const PLAN_VERIFICATION_PRINCIPAL: Principal = {
+  actorType: "user",
+  userId: "plan-verification-user",
+  accountId: "plan-verification-account",
+  role: "owner",
+  scopes: ["user:read"],
+  permissions: [],
+  isAdmin: false,
+  impersonation: null,
+  source: "session",
+  visibleVaultIds: ["plan-verification-vault"],
+  activeVaultId: "plan-verification-vault",
+};
 
 async function readIndexValidity(
   client: PoolClient,
@@ -88,30 +104,39 @@ export async function ensureDocumentStoreSearchIndexes(): Promise<EnsureOutcome>
       await client.query(`DROP INDEX CONCURRENTLY IF EXISTS "${indexName}"`);
     }
 
-    // Verify the planner actually uses the trigram index for session search.
-    // EXPLAIN WITHOUT ANALYZE — inspects the plan only, never executes the query.
-    // Makes "index actually used" observable, not merely "index built".
+    // Explain the exact canonical production query shape without executing it.
+    // Runtime search and this probe share one builder so verification cannot drift.
     try {
+      const cutoffIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
+      const productionQuery = buildTargetSessionSearchQuery(
+        PLAN_VERIFICATION_PRINCIPAL,
+        cutoffIso,
+        "%production%",
+        50,
+      ).toSQL();
       const planResult = await client.query<Record<string, string>>(
-        `EXPLAIN SELECT document_id FROM document_store_documents
-         WHERE document_type = 'chat'
-           AND coalesce((metadata->>'messageCount')::int, 0) > 0
-           AND (title ILIKE $1 OR content ILIKE $1)
-         LIMIT 50`,
-        ["%zqxjkw%"],
+        `EXPLAIN ${productionQuery.sql}`,
+        productionQuery.params,
       );
       const planText = planResult.rows
         .map((row) => row["QUERY PLAN"])
         .filter((line) => typeof line === "string")
         .join("\n");
-      if (planText.includes("Seq Scan on document_store_documents")) {
-        log.warn(`session search plan NOT using trigram index (seq scan): ${planText}`);
+      const missingIndexes = SEARCH_INDEXES
+        .map((definition) => definition.name)
+        .filter((indexName) => !planText.includes(indexName));
+      if (missingIndexes.length > 0) {
+        log.warn(
+          `session search plan missing trigram indexes indexes=${missingIndexes.join(",")}: ${planText}`,
+        );
       } else {
-        log.info("session search plan verified: uses trigram index");
+        log.info(
+          `session search plan verified indexes=${SEARCH_INDEXES.map((definition) => definition.name).join(",")}`,
+        );
       }
     } catch (error) {
       log.warn(
-        `session search plan verification skipped: ${error instanceof Error ? error.message : String(error)}`,
+        `session search plan verification failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
