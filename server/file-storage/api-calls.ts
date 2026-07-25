@@ -198,8 +198,10 @@ function currentOwnership(): { scope: "user" | "system"; ownerUserId: string | n
 function ownershipClause(alias = "api_calls", startIndex = 1): { clause: string; params: string[] } {
   const ownership = currentOwnership();
   if (ownership.scope === "system") return { clause: `${alias}.scope = 'system'`, params: [] };
+  const ownerParam = "$" + startIndex;
+  const accountParam = "$" + (startIndex + 1);
   return {
-    clause: `${alias}.scope = 'user' AND ${alias}.owner_user_id = ${startIndex} AND ${alias}.account_id = ${startIndex + 1}`,
+    clause: `${alias}.scope = 'user' AND ${alias}.owner_user_id = ${ownerParam} AND ${alias}.account_id = ${accountParam}`,
     params: [ownership.ownerUserId!, ownership.accountId!],
   };
 }
