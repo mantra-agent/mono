@@ -138,34 +138,87 @@ function compareMeetingRichness(left: MeetingSessionSnapshot, right: MeetingSess
   return left.session.id.localeCompare(right.session.id);
 }
 
-function canonicalCompletedMeetingSnapshots(snapshots: MeetingSessionSnapshot[]): MeetingSessionSnapshot[] {
-  const canonicalByIdentity = new Map<string, MeetingSessionSnapshot>();
-  const passthrough: MeetingSessionSnapshot[] = [];
-  let collapsedCount = 0;
+const DUPLICATE_START_TOLERANCE_MS = 10 * 60 * 1000;
 
-  for (const snapshot of snapshots) {
-    const identity = resolvedMeetingIdentity(snapshot.session);
-    if (snapshot.session.meeting?.botStatus !== "ended" || !identity) {
-      passthrough.push(snapshot);
-      continue;
+function normalizedMeetingTitle(session: FileSession): string | null {
+  const title = session.meeting?.title?.trim().toLowerCase().replace(/\s+/g, " ");
+  return title || null;
+}
+
+function meetingTimeRange(session: FileSession): { start: number; end: number } | null {
+  const meeting = session.meeting;
+  const start = parseDate(meeting?.eventStart)
+    ?? parseDate(meeting?.startedAt)
+    ?? parseDate(session.createdAt);
+  if (start === null) return null;
+  const end = parseDate(meeting?.endedAt) ?? start + DUPLICATE_START_TOLERANCE_MS;
+  return { start, end: Math.max(start, end) };
+}
+
+function isTerminalMeeting(session: FileSession): boolean {
+  const status = session.meeting?.botStatus;
+  return status === "ended" || status === "failed";
+}
+
+function representsSameMeeting(left: MeetingSessionSnapshot, right: MeetingSessionSnapshot): boolean {
+  const leftIdentity = resolvedMeetingIdentity(left.session);
+  const rightIdentity = resolvedMeetingIdentity(right.session);
+  if (leftIdentity && rightIdentity && leftIdentity === rightIdentity) return true;
+  const hasFailedAttempt = left.session.meeting?.botStatus === "failed"
+    || right.session.meeting?.botStatus === "failed";
+  if (leftIdentity && rightIdentity && !hasFailedAttempt) return false;
+
+  const leftTitle = normalizedMeetingTitle(left.session);
+  const rightTitle = normalizedMeetingTitle(right.session);
+  if (!leftTitle || leftTitle !== rightTitle) return false;
+
+  const leftRange = meetingTimeRange(left.session);
+  const rightRange = meetingTimeRange(right.session);
+  if (!leftRange || !rightRange) return false;
+  if (Math.abs(leftRange.start - rightRange.start) > DUPLICATE_START_TOLERANCE_MS) return false;
+  return leftRange.start <= rightRange.end && rightRange.start <= leftRange.end;
+}
+
+function canonicalCompletedMeetingSnapshots(snapshots: MeetingSessionSnapshot[]): MeetingSessionSnapshot[] {
+  const candidates = snapshots
+    .filter(snapshot => isTerminalMeeting(snapshot.session))
+    .sort((left, right) => compareMeetingRichness(right, left));
+  const passthrough = snapshots.filter(snapshot => !isTerminalMeeting(snapshot.session));
+  const canonical: MeetingSessionSnapshot[] = [];
+  const canonicalIdentities = new Set<string>();
+  const canonicalByTitleBucket = new Map<string, MeetingSessionSnapshot[]>();
+
+  for (const candidate of candidates) {
+    const identity = resolvedMeetingIdentity(candidate.session);
+    if (identity && canonicalIdentities.has(identity)) continue;
+
+    const title = normalizedMeetingTitle(candidate.session);
+    const range = meetingTimeRange(candidate.session);
+    const startBucket = range ? Math.floor(range.start / DUPLICATE_START_TOLERANCE_MS) : null;
+    const nearby = title && startBucket !== null
+      ? [-1, 0, 1].flatMap(offset => canonicalByTitleBucket.get(`${title}\u0000${startBucket + offset}`) ?? [])
+      : [];
+    if (nearby.some(current => representsSameMeeting(candidate, current))) continue;
+
+    canonical.push(candidate);
+    if (identity) canonicalIdentities.add(identity);
+    if (title && startBucket !== null) {
+      const key = `${title}\u0000${startBucket}`;
+      const bucket = canonicalByTitleBucket.get(key) ?? [];
+      bucket.push(candidate);
+      canonicalByTitleBucket.set(key, bucket);
     }
-    const current = canonicalByIdentity.get(identity);
-    if (!current) {
-      canonicalByIdentity.set(identity, snapshot);
-      continue;
-    }
-    collapsedCount += 1;
-    if (compareMeetingRichness(snapshot, current) > 0) canonicalByIdentity.set(identity, snapshot);
   }
 
+  const collapsedCount = candidates.length - canonical.length;
   if (collapsedCount > 0) {
-    log.debug("Collapsed duplicate resolved meeting sessions", {
+    log.debug("Collapsed duplicate terminal meeting sessions", {
       candidateCount: snapshots.length,
-      canonicalCount: canonicalByIdentity.size + passthrough.length,
+      canonicalCount: canonical.length + passthrough.length,
       collapsedCount,
     });
   }
-  return [...canonicalByIdentity.values(), ...passthrough];
+  return [...canonical, ...passthrough];
 }
 
 async function hydrateMeetingSessions(): Promise<MeetingSessionSnapshot[]> {
