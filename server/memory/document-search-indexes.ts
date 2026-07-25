@@ -1,5 +1,8 @@
 import type { PoolClient } from "pg";
-import { DOCUMENT_STORE_CHAT_SEARCH_INDEXES } from "@shared/models/memory";
+import {
+  DOCUMENT_STORE_CHAT_SEARCH_INDEXES,
+  RETIRED_DOCUMENT_STORE_CHAT_SEARCH_INDEXES,
+} from "@shared/models/memory";
 import { createLogger } from "../log";
 
 const log = createLogger("DocumentSearchIndexes");
@@ -17,8 +20,8 @@ const SEARCH_INDEXES = [
   },
   {
     name: DOCUMENT_STORE_CHAT_SEARCH_INDEXES.content,
-    method: "GIST",
-    expression: "content gist_trgm_ops(siglen=64)",
+    method: "GIN",
+    expression: "content gin_trgm_ops",
   },
 ] as const;
 
@@ -79,6 +82,11 @@ export async function ensureDocumentStoreSearchIndexes(): Promise<EnsureOutcome>
 
     for (const definition of SEARCH_INDEXES) {
       await ensureSearchIndex(client, definition);
+    }
+
+    for (const indexName of RETIRED_DOCUMENT_STORE_CHAT_SEARCH_INDEXES) {
+      log.info(`dropping retired concurrent index ${indexName}`);
+      await client.query(`DROP INDEX CONCURRENTLY IF EXISTS "${indexName}"`);
     }
 
     log.info("document-store chat substring indexes ready");

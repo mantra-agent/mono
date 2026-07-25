@@ -99,8 +99,12 @@ export type InsertWorkspaceDocument = z.infer<
 
 export const DOCUMENT_STORE_CHAT_SEARCH_INDEXES = {
   title: "idx_document_store_chat_title_trgm_v1",
-  content: "idx_document_store_chat_content_trgm_v1",
+  content: "idx_document_store_chat_content_trgm_v2",
 } as const;
+
+export const RETIRED_DOCUMENT_STORE_CHAT_SEARCH_INDEXES = [
+  "idx_document_store_chat_content_trgm_v1",
+] as const;
 
 export const documentStoreDocuments = pgTable(
   "document_store_documents",
@@ -167,7 +171,7 @@ export const documentStoreDocuments = pgTable(
         sql`${table.documentType} = 'chat' AND coalesce((${table.metadata}->>'messageCount')::int, 0) > 0`,
       ),
     index(DOCUMENT_STORE_CHAT_SEARCH_INDEXES.content)
-      .using("gist", sql`${table.content} gist_trgm_ops(siglen=64)`)
+      .using("gin", sql`${table.content} gin_trgm_ops`)
       .where(
         sql`${table.documentType} = 'chat' AND coalesce((${table.metadata}->>'messageCount')::int, 0) > 0`,
       ),
