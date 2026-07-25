@@ -3714,11 +3714,15 @@ export async function searchSessionSummaries(
   const trimmed = query.trim();
   if (!trimmed) return [];
 
+  const startedAt = performance.now();
+  let phase: "query" | "mapping" = "query";
   try {
     const cutoff = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
     const searchPattern = `%${trimmed}%`;
     const principal = getCurrentPrincipalOrSystem();
-    const rows = await targetReadsEnabled()
+    const targetReads = targetReadsEnabled();
+    const queryStartedAt = performance.now();
+    const rows = targetReads
       ? await buildTargetSessionSearchQuery(
           principal,
           cutoff.toISOString(),
@@ -3749,15 +3753,41 @@ export async function searchSessionSummaries(
           )
           .orderBy(desc(sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text)`))
           .limit(Math.max(1, Math.min(maxResults, 100)));
+    const queryMs = performance.now() - queryStartedAt;
 
-    return buildSessionSummaries(rows.filter((row): row is {
+    phase = "mapping";
+    const mappingStartedAt = performance.now();
+    const summaries = await buildSessionSummaries(rows.filter((row): row is {
       docId: string;
       title: string | null;
       content: string;
       metadata: unknown;
       updatedAt: Date | null;
     } => Boolean(row.docId)));
+    const mappingMs = performance.now() - mappingStartedAt;
+    const totalMs = performance.now() - startedAt;
+
+    log.debug("session search phases", {
+      queryLength: trimmed.length,
+      sinceHours,
+      limit: Math.max(1, Math.min(maxResults, 100)),
+      resultCount: summaries.length,
+      totalCount: summaries.length,
+      targetReads,
+      queryMs: Number(queryMs.toFixed(2)),
+      mappingMs: Number(mappingMs.toFixed(2)),
+      otherMs: Number(Math.max(0, totalMs - queryMs - mappingMs).toFixed(2)),
+      totalMs: Number(totalMs.toFixed(2)),
+    });
+    return summaries;
   } catch (err) {
+    log.debug("session search phases failed", {
+      phase,
+      queryLength: trimmed.length,
+      sinceHours,
+      limit: Math.max(1, Math.min(maxResults, 100)),
+      totalMs: Number((performance.now() - startedAt).toFixed(2)),
+    });
     log.warn("searchSessionSummaries error:", err);
     return [];
   }
