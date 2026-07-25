@@ -175,6 +175,8 @@ export const insertSignalSourceScanDiagnosticsSchema = createInsertSchema(signal
  */
 export interface RecentSignalDigestEntry {
   id: string;
+  /** Stable article identity shared by pre-insert scan candidates and persisted rows. */
+  fingerprint: string;
   title: string;
   curatedTitle: string | null;
   matchedTopics: string[];
