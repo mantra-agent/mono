@@ -1,4 +1,4 @@
-import { getSetting, setSetting } from "./system-settings";
+import { deleteSetting, getSetting, setSetting } from "./system-settings";
 
 /**
  * Producer/consumer handoff between the news `batch_curate` tool (producer) and
@@ -52,7 +52,7 @@ export async function markScanConsumerActive(userId: string, scanRunId: string):
 
 /** Consumer side: withdraw the marker once the scan has finished consuming. */
 export async function clearScanConsumer(userId: string): Promise<void> {
-  await setSetting(scanConsumerKey(userId), null);
+  await deleteSetting(scanConsumerKey(userId));
 }
 
 /** Producer side: is a fresh scan consumer present to apply buffered decisions? */
@@ -90,8 +90,8 @@ export async function readAndClearCurationBuffer(userId: string): Promise<Curati
   const key = curationBufferKey(userId);
   try {
     const results = await getSetting<CurationDecision[]>(key);
+    await deleteSetting(key);
     if (!results || !Array.isArray(results)) return null;
-    await setSetting(key, null);
     return results;
   } catch {
     return null;
