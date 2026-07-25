@@ -12,9 +12,11 @@ import { peopleStorage, type Person } from "../people-storage";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { visibleScopePredicate } from "../scoped-storage";
 
+export type MeetingNotesFilter = "any" | "with_notes" | "without_notes";
+
 export interface MeetingIndexFilter {
   query?: string;
-  hasNotes?: boolean;
+  notesFilter?: MeetingNotesFilter;
   startAfter?: string;
   startBefore?: string;
   limit?: number;
@@ -82,6 +84,15 @@ function meetingStart(session: FileSession): string | null {
   return session.meeting?.eventStart ?? session.meeting?.startedAt ?? session.createdAt ?? null;
 }
 
+function meetingTitle(session: FileSession): string {
+  return session.meeting?.title?.trim() || session.title;
+}
+
+function matchesNotesFilter(transcriptCount: number, notesFilter: MeetingNotesFilter | undefined): boolean {
+  if (!notesFilter || notesFilter === "any") return true;
+  return notesFilter === "with_notes" ? transcriptCount > 0 : transcriptCount === 0;
+}
+
 async function hydrateMeetingSessions(): Promise<MeetingSessionSnapshot[]> {
   const indexed = (await chatFileStorage.getAllSessions()).filter(session => session.type === "meeting");
   const hydrated: MeetingSessionSnapshot[] = [];
@@ -111,13 +122,17 @@ function completedSnapshots(snapshots: MeetingSessionSnapshot[], filter: Meeting
   return snapshots
     .filter(({ session, transcriptCount }) => {
       if (session.meeting?.botStatus !== "ended") return false;
-      if (filter.hasNotes !== undefined && (transcriptCount > 0) !== filter.hasNotes) return false;
+      if (!matchesNotesFilter(transcriptCount, filter.notesFilter)) return false;
       const start = parseDate(meetingStart(session) ?? undefined);
       if (startAfter !== null && (start === null || start < startAfter)) return false;
       if (startBefore !== null && (start === null || start >= startBefore)) return false;
       if (!query) return true;
-      const participantText = session.meeting.participants.map(participant => participant.label).join(" ");
-      return `${session.title} ${participantText}`.toLowerCase().includes(query);
+      const participantText = session.meeting.participants.flatMap(participant => [
+        participant.label,
+        participant.calendarEmail,
+        participant.transportEmail,
+      ]).filter(Boolean).join(" ");
+      return `${meetingTitle(session)} ${participantText}`.toLowerCase().includes(query);
     })
     .sort((left, right) => {
       const leftTime = parseDate(meetingStart(left.session) ?? undefined) ?? 0;
@@ -279,7 +294,7 @@ async function projectRecords(snapshots: MeetingSessionSnapshot[]): Promise<Meet
     const recap = artifacts.find(artifact => artifact.artifactKind === "recap");
     return {
       id: session.id,
-      title: session.meeting?.title?.trim() || session.title,
+      title: meetingTitle(session),
       startedAt: meetingStart(session),
       endedAt: session.meeting?.endedAt ?? null,
       platform: session.meeting?.platform ?? null,
