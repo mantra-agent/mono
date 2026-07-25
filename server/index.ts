@@ -559,6 +559,19 @@ app.use((req, res, next) => {
           );
         });
 
+      // Account-specific Library integrity repair runs only after readiness.
+      // It is exact-match, replay-safe, and cannot become a universal service
+      // dependency while repairing one diagnosed cross-owner hierarchy edge.
+      import("./migrations/detach-cross-owner-library-child")
+        .then(({ detachDiagnosedCrossOwnerLibraryChild }) =>
+          detachDiagnosedCrossOwnerLibraryChild(),
+        )
+        .catch((err) => {
+          serverLog.warn(
+            `[post-ready] cross-owner Library child repair failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+
       // Worker-thread heartbeat (Task #995). Spawn a tiny worker that posts a
       // heartbeat every 1s. Forward each beat to the wrapper over IPC. If the
       // main thread is wedged by sync work, the worker keeps beating but the
