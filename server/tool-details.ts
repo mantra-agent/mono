@@ -254,7 +254,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       get_metadata: { description: "Get full metadata for a calendar event including linked tasks, people, and artifacts.", requiredParams: ["googleEventId", "accountId", "calendarId"] },
       link_artifact: { description: "Link an explicit non-preparation Library artifact to a meeting. Use set_metadata with agendaLibraryPageId for preparation. Legacy agenda/brief calls may only claim or resolve the same canonical page and never replace it.", requiredParams: ["metadataId", "libraryPageId", "artifactKind"], optionalParams: ["title", "source"] },
       unlink_artifact: { description: "Remove a Library artifact link from a calendar event by link record ID.", requiredParams: ["linkId"] },
-      records: { description: "List completed meeting sessions from the canonical meeting index with participants, note evidence, and linked pages.", optionalParams: ["query", "hasNotes", "startAfter", "startBefore", "limit", "offset"] },
+      records: { description: "List completed meeting sessions from the canonical meeting index with participants, note evidence, and linked pages. Searches all meetings unless notesFilter is explicitly with_notes or without_notes.", optionalParams: ["query", "notesFilter", "startAfter", "startBefore", "limit", "offset"] },
       count: { description: "Return exact completed meeting, meetings-with-notes, transcript fragment, and ready-recap counts." },
       get: { description: "Get one canonical completed or attempted meeting session by ID.", requiredParams: ["meetingId"] },
     },

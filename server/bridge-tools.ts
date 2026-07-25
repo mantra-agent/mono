@@ -10299,9 +10299,14 @@ ${refs}` : ""),
       unlink_artifact: (a) => bridgeHandlers.unlink_artifact_meeting(a),
       records: async (a) => {
         const { listCompletedMeetings } = await import("./meetings/meeting-index");
+        const notesFilter = a.notesFilter === "with_notes" || a.notesFilter === "without_notes" || a.notesFilter === "any"
+          ? a.notesFilter
+          : a.hasNotes === true
+            ? "with_notes"
+            : "any";
         const result = await listCompletedMeetings({
           query: typeof a.query === "string" ? a.query : undefined,
-          hasNotes: typeof a.hasNotes === "boolean" ? a.hasNotes : undefined,
+          notesFilter,
           startAfter: typeof a.startAfter === "string" ? a.startAfter : undefined,
           startBefore: typeof a.startBefore === "string" ? a.startBefore : undefined,
           limit: typeof a.limit === "number" ? a.limit : undefined,

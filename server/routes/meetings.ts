@@ -6,13 +6,15 @@ import {
   listCompletedMeetings,
   meetingRecordToSimpleFeedItem,
   type MeetingIndexFilter,
+  type MeetingNotesFilter,
 } from "../meetings/meeting-index";
 
 const log = createLogger("MeetingsRoutes");
 
-function optionalBoolean(value: unknown): boolean | undefined {
-  if (value === "true" || value === true) return true;
-  if (value === "false" || value === false) return false;
+function optionalNotesFilter(notesFilter: unknown, legacyHasNotes: unknown): MeetingNotesFilter | undefined {
+  if (notesFilter === "any" || notesFilter === "with_notes" || notesFilter === "without_notes") return notesFilter;
+  if (legacyHasNotes === "true" || legacyHasNotes === true) return "with_notes";
+  if (legacyHasNotes === "false" || legacyHasNotes === false) return "without_notes";
   return undefined;
 }
 
@@ -25,7 +27,7 @@ function optionalNumber(value: unknown): number | undefined {
 function filterFromQuery(req: Request): MeetingIndexFilter {
   return {
     query: typeof req.query.query === "string" ? req.query.query : undefined,
-    hasNotes: optionalBoolean(req.query.hasNotes),
+    notesFilter: optionalNotesFilter(req.query.notesFilter, req.query.hasNotes),
     startAfter: typeof req.query.startAfter === "string" ? req.query.startAfter : undefined,
     startBefore: typeof req.query.startBefore === "string" ? req.query.startBefore : undefined,
     limit: optionalNumber(req.query.limit),
