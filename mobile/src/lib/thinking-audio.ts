@@ -31,6 +31,7 @@ const PULSE_TRAINS: PulseTrain[] = [
 
 let sound: Audio.Sound | null = null;
 let loadingPromise: Promise<Audio.Sound> | null = null;
+let playbackRequestVersion = 0;
 
 function writeString(view: DataView, offset: number, value: string) {
   for (let index = 0; index < value.length; index += 1) {
@@ -143,20 +144,27 @@ async function getSound(): Promise<Audio.Sound> {
 }
 
 export async function startThinkingAudioLoop(): Promise<void> {
+  const requestVersion = ++playbackRequestVersion;
   try {
     const activeSound = await getSound();
+    if (requestVersion !== playbackRequestVersion) return;
     await activeSound.setStatusAsync({
       isLooping: true,
       volume: PLAYBACK_VOLUME,
       positionMillis: 0,
     });
+    if (requestVersion !== playbackRequestVersion) return;
     await activeSound.playAsync();
+    if (requestVersion !== playbackRequestVersion) {
+      await activeSound.stopAsync();
+    }
   } catch (error) {
     Logger.warn(LOG_TAG, 'Failed to start thinking audio', { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
 export async function stopThinkingAudioLoop(): Promise<void> {
+  playbackRequestVersion += 1;
   try {
     const activeSound = sound;
     if (!activeSound) return;
@@ -167,6 +175,7 @@ export async function stopThinkingAudioLoop(): Promise<void> {
 }
 
 export async function unloadThinkingAudioLoop(): Promise<void> {
+  playbackRequestVersion += 1;
   try {
     const activeSound = sound;
     sound = null;
