@@ -106,6 +106,7 @@ export async function beginProviderAttempt(input: BeginProviderAttemptInput): Pr
       stopReason: null,
       metadata,
     });
+    log.debug(`provider attempt created apiCallId=${call.id} provider=${input.provider} model=${input.model} attempt=${input.attempt} sessionIdentity=${input.metadata?.sessionId ? "session" : input.metadata?.sessionKey ? "session_key" : input.metadata?.runId ? "run" : "source"}`);
     input.tracker.current = {
       apiCallId: call.id,
       startTime,

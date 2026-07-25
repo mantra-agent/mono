@@ -11,6 +11,16 @@ const log = createLogger("StoreApiCalls");
 const INFERENCE_DEBUG_KEY = "system.inference_debug";
 const S3_PREFIX = `${PRIVATE_PREFIX}inference/`;
 
+function captureIdProjection(apiCallAlias = "api_calls"): string {
+  return `(SELECT capture.id
+    FROM inference_payload_captures capture
+    WHERE capture.api_call_id = ${apiCallAlias}.id
+      AND capture.scope = ${apiCallAlias}.scope
+      AND capture.owner_user_id IS NOT DISTINCT FROM ${apiCallAlias}.owner_user_id
+      AND capture.account_id IS NOT DISTINCT FROM ${apiCallAlias}.account_id
+    LIMIT 1)`;
+}
+
 interface ApiCallRow extends QueryResultRow {
   id: number;
   timestamp: Date;
@@ -282,11 +292,7 @@ export class FileApiCallStorage {
              session_key = $12, session_id = $13, duration_ms = $14, stop_reason = $15,
              metadata = $16
          WHERE id = $17 AND ${ownership.clause}
-         RETURNING *, (
-           SELECT id FROM inference_payload_captures capture
-           WHERE capture.api_call_id = api_calls.id
-           LIMIT 1
-         ) AS capture_id`,
+         RETURNING *, ${captureIdProjection()} AS capture_id`,
         [
           call.model, call.provider, call.profile ?? null,
           call.inputTokens ?? 0, call.outputTokens ?? 0,
@@ -299,7 +305,13 @@ export class FileApiCallStorage {
           ...ownership.params,
         ],
       );
-      return result.rows[0] ? rowToApiCall(result.rows[0]) : undefined;
+      if (!result.rows[0]) {
+        log.warn(`settleApiCall unavailable id=${id}`);
+        return undefined;
+      }
+      const settled = rowToApiCall(result.rows[0]);
+      log.debug(`settleApiCall id=${id} captureId=${settled.captureId ?? "unlinked"} inputTokens=${settled.inputTokens} outputTokens=${settled.outputTokens}`);
+      return settled;
     });
   }
 
@@ -308,7 +320,7 @@ export class FileApiCallStorage {
       `SELECT id, timestamp, scope, owner_user_id, account_id, model, provider, profile, input_tokens, output_tokens,
         cache_read_tokens, cache_write_tokens, total_tokens, cost_input, cost_output, cost_total,
         session_key, session_id, duration_ms, stop_reason, metadata,
-        (SELECT capture.id FROM inference_payload_captures capture WHERE capture.api_call_id = api_calls.id LIMIT 1) AS capture_id
+        ${captureIdProjection()} AS capture_id
         FROM api_calls`,
       since
     );
@@ -328,7 +340,7 @@ export class FileApiCallStorage {
     const ownership = ownershipClause("api_calls", 2);
     const result = await pool.query<ApiCallRow>(`
       SELECT api_calls.*,
-        (SELECT capture.id FROM inference_payload_captures capture WHERE capture.api_call_id = api_calls.id LIMIT 1) AS capture_id
+        ${captureIdProjection()} AS capture_id
       FROM api_calls
       WHERE api_calls.id = $1 AND ${ownership.clause}
     `, [id, ...ownership.params]);
