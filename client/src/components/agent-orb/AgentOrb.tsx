@@ -19,9 +19,9 @@ import {
 
 const log = createLogger('AgentOrb');
 const MAX_DPR = 1.5;
-const SPHERE_DETAIL = [48, 36] as const;
-const FIELD_DETAIL = [24, 18] as const;
-const HALO_SCALE = 1.35;
+const DODECAHEDRON_DETAIL = 0;
+const HALO_SCALE = 1.38;
+const RESTING_TILT = new THREE.Euler(0.32, -0.38, 0.08);
 
 function qualitySteps(maxFrameRate: number): number {
   if (maxFrameRate <= 20) return 12;
@@ -82,8 +82,9 @@ export function AgentOrb({
     camera.position.set(0, 0, 4);
     camera.lookAt(0, 0, 0);
 
-    const fieldGeometry = new THREE.SphereGeometry(1, ...FIELD_DETAIL);
-    const shellGeometry = new THREE.SphereGeometry(1, ...SPHERE_DETAIL);
+    const shellGeometry = new THREE.DodecahedronGeometry(1, DODECAHEDRON_DETAIL);
+    const edgeGeometry = new THREE.EdgesGeometry(shellGeometry, 1);
+    const fieldGeometry = shellGeometry.clone();
 
     const fieldUniforms = {
       uTime: { value: 0 },
@@ -138,7 +139,18 @@ export function AgentOrb({
       side: THREE.FrontSide,
     });
     const orbMesh = new THREE.Mesh(shellGeometry, orbMaterial);
-    scene.add(orbMesh);
+    const edgeMaterial = new THREE.LineBasicMaterial({
+      color: 0x1a9bdb,
+      transparent: true,
+      opacity: 0.24,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+    const shellGroup = new THREE.Group();
+    shellGroup.rotation.copy(RESTING_TILT);
+    shellGroup.add(orbMesh, edgeLines);
+    scene.add(shellGroup);
 
     const haloUniforms = {
       uIntensity: { value: 1.0 },
@@ -249,8 +261,13 @@ export function AgentOrb({
       const visualMotion = visuals.flowSpeed + visuals.swirlSpeed * 0.55 + visuals.attractorStrength * 0.18;
       fieldMesh.rotation.y = anim.time * visualMotion * 0.18;
       fieldMesh.rotation.x = Math.sin(anim.time * visualMotion * 0.42) * visuals.flowStrength * 0.08;
-      orbMesh.rotation.z = anim.time * visuals.swirlSpeed * 0.045;
-      haloMesh.rotation.z = -anim.time * visuals.swirlSpeed * 0.025;
+      const shellTurn = anim.time * (0.035 + visualMotion * 0.055);
+      shellGroup.rotation.x = RESTING_TILT.x + Math.sin(shellTurn * 0.72) * (0.05 + visuals.flowStrength * 0.09);
+      shellGroup.rotation.y = RESTING_TILT.y + shellTurn;
+      shellGroup.rotation.z = RESTING_TILT.z + Math.sin(shellTurn * 0.48) * (0.035 + visuals.swirlAmount * 0.08);
+      haloMesh.rotation.x = shellGroup.rotation.x * 0.72;
+      haloMesh.rotation.y = -shellGroup.rotation.y * 0.42;
+      haloMesh.rotation.z = -shellGroup.rotation.z * 0.58;
 
       const thinkingPulse = visuals.attractorStrength * (0.012 + 0.01 * Math.sin(anim.time * visuals.breathSpeed));
       const scalePulse = 1.0 + audio * visuals.pulseStrength * 0.08 + thinkingPulse;
@@ -258,7 +275,12 @@ export function AgentOrb({
       fieldMesh.scale.setScalar(
         fieldResolveScale * scalePulse * (1.0 + breath * 0.03),
       );
-      orbMesh.scale.setScalar(scalePulse);
+      shellGroup.scale.setScalar(scalePulse);
+      edgeMaterial.opacity = Math.min(
+        0.42,
+        (0.16 + visuals.rimIntensity * 0.08 + audio * visuals.audioReactivity * 0.12)
+          * visuals.dimming,
+      );
       haloUniforms.uIntensity.value = visuals.rimIntensity * (
         1.0 + audio * visuals.audioReactivity * 0.5 + visuals.attractorStrength * 0.08 * (1.0 + Math.sin(anim.time * visuals.breathSpeed))
       );
@@ -302,11 +324,14 @@ export function AgentOrb({
       cancelScheduledFrame();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       resizeObserver.disconnect();
-      scene.remove(fieldMesh, orbMesh, haloMesh);
+      scene.remove(fieldMesh, shellGroup, haloMesh);
+      shellGroup.remove(orbMesh, edgeLines);
       fieldMaterial.dispose();
       orbMaterial.dispose();
+      edgeMaterial.dispose();
       haloMaterial.dispose();
       fieldGeometry.dispose();
+      edgeGeometry.dispose();
       shellGeometry.dispose();
       renderer.renderLists.dispose();
       renderer.dispose();
@@ -332,8 +357,9 @@ export function AgentOrb({
       />
       {webGlFailed && (
         <div
-          className="absolute left-1/2 top-1/2 aspect-square w-[42%] -translate-x-1/2 -translate-y-1/2 rounded-full"
+          className="absolute left-1/2 top-1/2 aspect-square w-[42%] -translate-x-1/2 -translate-y-1/2"
           style={{
+            clipPath: 'polygon(50% 0%, 79% 9%, 96% 34%, 96% 66%, 79% 91%, 50% 100%, 21% 91%, 4% 66%, 4% 34%, 21% 9%)',
             background: 'radial-gradient(circle, rgba(26,163,230,0.12) 0%, rgba(5,45,76,0.28) 48%, rgba(26,163,230,0.65) 73%, rgba(26,163,230,0.08) 77%, transparent 80%)',
             boxShadow: '0 0 56px rgba(26,163,230,0.28)',
           }}
