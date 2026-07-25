@@ -199,7 +199,7 @@ function ownershipClause(alias = "api_calls", startIndex = 1): { clause: string;
   const ownership = currentOwnership();
   if (ownership.scope === "system") return { clause: `${alias}.scope = 'system'`, params: [] };
   return {
-    clause: `${alias}.scope = 'user' AND ${alias}.owner_user_id = ${startIndex} AND ${alias}.account_id = ${startIndex + 1}`,
+    clause: `${alias}.scope = 'user' AND ${alias}.owner_user_id = $${startIndex} AND ${alias}.account_id = $${startIndex + 1}`,
     params: [ownership.ownerUserId!, ownership.accountId!],
   };
 }
@@ -210,7 +210,7 @@ function buildSinceQuery(baseQuery: string, since: Date | undefined): { query: s
   let query = `${baseQuery} WHERE ${ownership.clause}`;
   if (since) {
     params.push(since);
-    query += ` AND timestamp >= ${params.length}`;
+    query += ` AND timestamp >= $${params.length}`;
   }
   return { query, params };
 }
@@ -221,7 +221,7 @@ function buildWhereParams(since: Date | undefined, params: Array<Date | string |
   let where = `WHERE ${ownership.clause}`;
   if (since) {
     params.push(since);
-    where += ` AND timestamp >= ${params.length}`;
+    where += ` AND timestamp >= $${params.length}`;
   }
   return where;
 }
