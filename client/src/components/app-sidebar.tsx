@@ -199,7 +199,6 @@ export const navTree = navSections.flatMap((section) =>
 export const navItems = navTree;
 
 const statusRingColors: Record<string, string> = {
-  running: "ring-cta/40",
   stopped: "ring-neutral/30",
   starting: "ring-warning/40",
   restarting: "ring-warning/40",
@@ -216,7 +215,7 @@ function NavigationOrb({ status, onClick }: { status: string; onClick?: () => vo
         onClick?.();
       }}
       className={cn(
-        "relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer select-none items-center justify-center overflow-hidden rounded-md border border-cta bg-background p-0 transition-colors hover:border-active",
+        "relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer select-none items-center justify-center overflow-hidden rounded-md border border-transparent bg-background p-0 transition-colors hover:border-active",
         statusRingColors[status] && `ring-1 ${statusRingColors[status]}`,
       )}
       aria-label="Open main navigation"
