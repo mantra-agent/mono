@@ -3,19 +3,31 @@ import Logger from './logger';
 
 const LOG_TAG = 'ThinkingAudio';
 const SAMPLE_RATE = 22050;
-// Percussive "chk-a-chk-chk" bed mirroring the web synth character: short noise
-// transients with a faint tonal tint, washed in a light algorithmic reverb. Two
-// groups per loop so a long think doesn't read as one short bar repeating.
-const GROUP_OFFSETS = [0, 0.085, 0.235, 0.345];
-const HIT_GAINS = [0.9, 0.45, 0.85, 0.7];
-const GROUP_SECONDS = 0.95;
-const GROUP_COUNT = 2;
-const TONE_HZ = [349.23, 392, 415.3, 392];
-// The quiet grace hit ("a") sits a fifth up for a hint of movement.
-const HIT_TONE_FIFTH = 1.5;
-const DURATION_SECONDS = GROUP_SECONDS * GROUP_COUNT;
+const LOOP_SECONDS = 1.9;
+const TONE_HZ = 240;
+const OUTPUT_PEAK = 0.62;
+// Ray's listening calibration: the cue should sit at roughly one quarter of the
+// perceived voice level, not compete with the response that follows it.
+const PLAYBACK_VOLUME = 0.07;
 const TWO_PI = Math.PI * 2;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+type PulseTrain = {
+  start: number;
+  interval: number;
+  count: number;
+  gain: number;
+  decay: number;
+};
+
+// Three interlocking delay trains use one pitch throughout. Their uneven clocks
+// create a quiet polyrhythm while each train recedes rather than resolving into
+// a melody. The final gap lets the loop breathe before it starts again.
+const PULSE_TRAINS: PulseTrain[] = [
+  { start: 0, interval: 0.115, count: 5, gain: 1, decay: 0.63 },
+  { start: 0.34, interval: 0.173, count: 4, gain: 0.52, decay: 0.68 },
+  { start: 1.02, interval: 0.127, count: 4, gain: 0.38, decay: 0.64 },
+];
 
 let sound: Audio.Sound | null = null;
 let loadingPromise: Promise<Audio.Sound> | null = null;
@@ -41,96 +53,47 @@ function encodeBase64(bytes: Uint8Array): string {
   return output;
 }
 
-type Hit = { start: number; gain: number; toneHz: number };
+type Pulse = { start: number; gain: number };
 
-function buildHitSchedule(): Hit[] {
-  const hits: Hit[] = [];
-  for (let group = 0; group < GROUP_COUNT; group += 1) {
-    const groupStart = group * GROUP_SECONDS;
-    const toneBase = TONE_HZ[group % TONE_HZ.length];
-    GROUP_OFFSETS.forEach((offset, index) => {
-      hits.push({
-        start: groupStart + offset,
-        gain: HIT_GAINS[index],
-        toneHz: index === 1 ? toneBase * HIT_TONE_FIFTH : toneBase,
-      });
-    });
-  }
-  return hits;
+function buildPulseSchedule(): Pulse[] {
+  return PULSE_TRAINS.flatMap((train) =>
+    Array.from({ length: train.count }, (_, index) => ({
+      start: train.start + index * train.interval,
+      gain: train.gain * train.decay ** index,
+    })),
+  );
 }
 
-/** Dry percussive bed: colored-noise transients plus faint tonal ticks, no reverb. */
-function renderDryBed(frameCount: number): Float32Array {
-  const dry = new Float32Array(frameCount);
-  const hits = buildHitSchedule();
-  let noiseLp = 0;
+/** Smooth same-tone pulses with no noise layer, pitch movement, or bit-crushed transient. */
+function renderPulseBed(frameCount: number): Float32Array {
+  const bed = new Float32Array(frameCount);
+  const pulses = buildPulseSchedule();
+
   for (let index = 0; index < frameCount; index += 1) {
-    const t = index / SAMPLE_RATE;
-    // One-pole lowpass over white noise dulls the hiss toward a "chk".
-    const white = Math.random() * 2 - 1;
-    noiseLp += 0.35 * (white - noiseLp);
-    const colored = noiseLp * 1.6;
+    const time = index / SAMPLE_RATE;
     let sample = 0;
-    for (const hit of hits) {
-      const local = t - hit.start;
-      if (local < 0 || local > 0.16) continue;
-      const attack = Math.min(1, local / 0.004);
-      const decay = Math.exp(-local / 0.045);
-      const env = attack * decay;
-      const tone = Math.sin(TWO_PI * hit.toneHz * t);
-      sample += (colored * 0.5 + tone * 0.16) * env * hit.gain;
+
+    for (const pulse of pulses) {
+      const local = time - pulse.start;
+      if (local < 0 || local > 0.3) continue;
+
+      const attack = Math.min(1, local / 0.012);
+      const release = Math.min(1, (0.3 - local) / 0.06);
+      const decay = Math.exp(-local / 0.082);
+      const envelope = attack * Math.max(0, release) * decay;
+      const fundamental = Math.sin(TWO_PI * TONE_HZ * local);
+      const softOvertone = Math.sin(TWO_PI * TONE_HZ * 2 * local) * 0.045;
+      sample += (fundamental + softOvertone) * envelope * pulse.gain;
     }
-    dry[index] = sample;
-  }
-  return dry;
-}
 
-// Compact Schroeder reverb (4 parallel combs → 2 series allpass) gives the bed
-// its atmospheric tail without a bundled asset or a costly convolution.
-function combFilter(input: Float32Array, size: number, feedback: number, damp: number): Float32Array {
-  const out = new Float32Array(input.length);
-  const buffer = new Float32Array(size);
-  let index = 0;
-  let store = 0;
-  for (let i = 0; i < input.length; i += 1) {
-    const output = buffer[index];
-    store = output * (1 - damp) + store * damp;
-    buffer[index] = input[i] + store * feedback;
-    out[i] = output;
-    index += 1;
-    if (index >= size) index = 0;
+    bed[index] = sample;
   }
-  return out;
-}
 
-function allpassFilter(input: Float32Array, size: number, feedback: number): Float32Array {
-  const out = new Float32Array(input.length);
-  const buffer = new Float32Array(size);
-  let index = 0;
-  for (let i = 0; i < input.length; i += 1) {
-    const buffered = buffer[index];
-    out[i] = -input[i] + buffered;
-    buffer[index] = input[i] + buffered * feedback;
-    index += 1;
-    if (index >= size) index = 0;
-  }
-  return out;
-}
-
-function applyReverb(input: Float32Array): Float32Array {
-  const combTunings = [558, 594, 638, 678];
-  const wet = new Float32Array(input.length);
-  for (const size of combTunings) {
-    const combed = combFilter(input, size, 0.78, 0.25);
-    for (let i = 0; i < wet.length; i += 1) wet[i] += combed[i] * 0.25;
-  }
-  let out = wet;
-  for (const size of [112, 278]) out = allpassFilter(out, size, 0.5);
-  return out;
+  return bed;
 }
 
 function buildThinkingLoopDataUri(): string {
-  const frameCount = Math.floor(SAMPLE_RATE * DURATION_SECONDS);
+  const frameCount = Math.floor(SAMPLE_RATE * LOOP_SECONDS);
   const dataSize = frameCount * 2;
   const buffer = new ArrayBuffer(44 + dataSize);
   const view = new DataView(buffer);
@@ -149,32 +112,14 @@ function buildThinkingLoopDataUri(): string {
   writeString(view, 36, 'data');
   view.setUint32(40, dataSize, true);
 
-  const dry = renderDryBed(frameCount);
-
-  // Run the reverb over the dry bed plus a tail, then wrap the decaying tail back
-  // into the head so the loop is seamless.
-  const tailFrames = Math.floor(SAMPLE_RATE * 1.2);
-  const extended = new Float32Array(frameCount + tailFrames);
-  extended.set(dry, 0);
-  const wetExtended = applyReverb(extended);
-  const wet = new Float32Array(frameCount);
-  for (let i = 0; i < wetExtended.length; i += 1) {
-    wet[i % frameCount] += wetExtended[i];
-  }
-
-  // Mix dry + wet, then normalize to safe headroom so transients never clip.
-  const mixed = new Float32Array(frameCount);
+  const samples = renderPulseBed(frameCount);
   let peak = 0;
-  for (let i = 0; i < frameCount; i += 1) {
-    const value = dry[i] * 0.9 + wet[i] * 0.5;
-    mixed[i] = value;
-    const magnitude = Math.abs(value);
-    if (magnitude > peak) peak = magnitude;
-  }
-  const normalize = peak > 0 ? 0.82 / peak : 1;
-  for (let i = 0; i < frameCount; i += 1) {
-    const clamped = Math.max(-1, Math.min(1, mixed[i] * normalize));
-    view.setInt16(44 + i * 2, Math.round(clamped * 32767), true);
+  for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+  const normalize = peak > 0 ? OUTPUT_PEAK / peak : 1;
+
+  for (let index = 0; index < frameCount; index += 1) {
+    const clamped = Math.max(-1, Math.min(1, samples[index] * normalize));
+    view.setInt16(44 + index * 2, Math.round(clamped * 32767), true);
   }
 
   return `data:audio/wav;base64,${encodeBase64(new Uint8Array(buffer))}`;
@@ -186,7 +131,7 @@ async function getSound(): Promise<Audio.Sound> {
 
   loadingPromise = Audio.Sound.createAsync(
     { uri: buildThinkingLoopDataUri() },
-    { isLooping: true, shouldPlay: false, volume: 0.28 },
+    { isLooping: true, shouldPlay: false, volume: PLAYBACK_VOLUME },
   ).then(({ sound: created }) => {
     sound = created;
     return created;
@@ -200,7 +145,11 @@ async function getSound(): Promise<Audio.Sound> {
 export async function startThinkingAudioLoop(): Promise<void> {
   try {
     const activeSound = await getSound();
-    await activeSound.setStatusAsync({ isLooping: true, volume: 0.28, positionMillis: 0 });
+    await activeSound.setStatusAsync({
+      isLooping: true,
+      volume: PLAYBACK_VOLUME,
+      positionMillis: 0,
+    });
     await activeSound.playAsync();
   } catch (error) {
     Logger.warn(LOG_TAG, 'Failed to start thinking audio', { error: error instanceof Error ? error.message : String(error) });
