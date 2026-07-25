@@ -11,6 +11,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import { documentStoreIndependentWritesEnabled } from "./memory/document-store-cutover";
 import { targetReadsEnabled } from "./memory/document-storage";
+import { buildTargetSessionSearchQuery } from "./memory/session-search-query";
 import { generateId } from "./file-storage/utils";
 import { createLogger } from "./log";
 import { markSessionDeleted } from "./chat-journal";
@@ -3718,32 +3719,12 @@ export async function searchSessionSummaries(
     const searchPattern = `%${trimmed}%`;
     const principal = getCurrentPrincipalOrSystem();
     const rows = await targetReadsEnabled()
-      ? await db
-          .select({
-            docId: documentStoreDocuments.documentId,
-            title: documentStoreDocuments.title,
-            content: documentStoreDocuments.content,
-            metadata: documentStoreDocuments.metadata,
-            updatedAt: documentStoreDocuments.updatedAt,
-          })
-          .from(documentStoreDocuments)
-          .where(
-            combineWithVisibleScope(
-              principal,
-              targetChatDocumentScopeColumns,
-              and(
-                sql`${documentStoreDocuments.documentType} = 'chat'`,
-                sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text) >= ${cutoff.toISOString()}`,
-                sql`coalesce((${documentStoreDocuments.metadata}->>'messageCount')::int, 0) > 0`,
-                or(
-                  ilike(documentStoreDocuments.title, searchPattern),
-                  ilike(documentStoreDocuments.content, searchPattern),
-                ),
-              ),
-            ),
-          )
-          .orderBy(desc(sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text)`))
-          .limit(Math.max(1, Math.min(maxResults, 100)))
+      ? await buildTargetSessionSearchQuery(
+          principal,
+          cutoff.toISOString(),
+          searchPattern,
+          maxResults,
+        )
       : await db
           .select({
             docId: memoryEntries.sourceId,
