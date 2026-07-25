@@ -5,6 +5,7 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { BUILTIN_SKILL_DEFAULTS } from "./skill-defaults";
 import * as fs from "fs";
 import * as path from "path";
+import { CANONICAL_SCAN_SKILL_ID } from "./skill-identities";
 
 const log = createLogger("SkillSeed");
 
@@ -388,6 +389,44 @@ export async function verifyRequiredSkills(): Promise<void> {
     log.error(`Missing required skills (${missing.length}): ${missing.join(", ")}`);
   } else {
     log.debug(`All ${required.length} required skills verified`);
+  }
+}
+
+export async function migrateCanonicalScanToolGate(): Promise<void> {
+  const [existing] = await db
+    .select({
+      id: skills.id,
+      version: skills.version,
+      process: skills.process,
+      checklist: skills.checklist,
+    })
+    .from(skills)
+    .where(and(eq(skills.id, CANONICAL_SCAN_SKILL_ID), eq(skills.name, "scan")));
+  if (!existing || compareSkillVersions(existing.version, "1.2") !== -1) return;
+  if (!existing.process.includes('Call `news(action: "scan")` immediately.')) {
+    log.warn(`Skipped canonical scan tool-gate migration from ${existing.version}: expected news.scan contract was not found`);
+    return;
+  }
+  const checklist = Array.isArray(existing.checklist) ? [...existing.checklist] as Array<Record<string, unknown>> : [];
+  const requiredCheck = "Calls news.scan without an independent scan-run preflight";
+  const requiredIndex = checklist.findIndex((item) => item?.check === requiredCheck);
+  if (requiredIndex < 0) {
+    log.warn(`Skipped canonical scan tool-gate migration from ${existing.version}: expected checklist item was not found`);
+    return;
+  }
+  checklist[requiredIndex] = {
+    ...checklist[requiredIndex],
+    kind: "tool_invoked",
+    tool: "news",
+    action: "scan",
+  };
+  const updated = await db
+    .update(skills)
+    .set({ checklist, version: "1.2", updatedAt: new Date() })
+    .where(and(eq(skills.id, existing.id), eq(skills.version, existing.version)))
+    .returning({ id: skills.id });
+  if (updated.length > 0) {
+    log.info(`Migrated canonical scan skill ${existing.version} → 1.2 with deterministic news.scan terminal gate`);
   }
 }
 
