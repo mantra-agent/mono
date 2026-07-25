@@ -24,6 +24,7 @@ import type { Principal } from "./principal";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
+  rowWritableByPrincipal,
 } from "./scoped-storage";
 
 const log = createLogger("LibraryMove");
@@ -130,6 +131,47 @@ function snapshotKey(rows: SubtreeRow[]): string {
     .map((row) => `${row.id}:${row.parentId ?? "<root>"}:${row.vaultId ?? "<none>"}`)
     .sort()
     .join("|");
+}
+
+interface RejectedSubtreePageDiagnostic {
+  id: string;
+  title: string;
+  parentId: string | null;
+  depth: number;
+  scope: string;
+  vaultId: string | null;
+  ownerMatchesPrincipal: boolean;
+  accountMatchesPrincipal: boolean;
+  vaultVisibleToPrincipal: boolean;
+  writableByPrincipal: boolean;
+}
+
+function rejectedSubtreePageDiagnostics(
+  principal: Principal,
+  subtree: SubtreeRow[],
+  rejectedIds: Set<string>,
+): RejectedSubtreePageDiagnostic[] {
+  return subtree
+    .filter((row) => rejectedIds.has(row.id))
+    .map((row) => ({
+      id: row.id,
+      title: row.title,
+      parentId: row.parentId,
+      depth: row.depth,
+      scope: row.scope,
+      vaultId: row.vaultId,
+      ownerMatchesPrincipal: Boolean(
+        principal.userId && row.ownerUserId === principal.userId,
+      ),
+      accountMatchesPrincipal: Boolean(
+        principal.accountId && row.accountId === principal.accountId,
+      ),
+      vaultVisibleToPrincipal:
+        row.vaultId === null ||
+        principal.visibleVaultIds.length === 0 ||
+        principal.visibleVaultIds.includes(row.vaultId),
+      writableByPrincipal: rowWritableByPrincipal(principal, row),
+    }));
 }
 
 async function readSubtree(tx: DrizzleTx, pageId: string): Promise<SubtreeRow[]> {
@@ -330,6 +372,27 @@ export async function moveLibraryPage(
         .from(libraryPages)
         .where(writablePages(principal, inArray(libraryPages.id, pageIds)));
       if (writableRows.length !== subtree.length) {
+        const writableIds = new Set(writableRows.map((row) => row.id));
+        const rejectedIds = new Set(pageIds.filter((id) => !writableIds.has(id)));
+        const rejectedPages = rejectedSubtreePageDiagnostics(
+          principal,
+          subtree,
+          rejectedIds,
+        );
+        log.warn("Library subtree contains pages outside the principal's writable scope", {
+          rootPageId: input.pageId,
+          rootTitle: root.title,
+          subtreeCount: subtree.length,
+          writableCount: writableRows.length,
+          rejectedCount: rejectedPages.length,
+          rejectedPages,
+          principalActorType: principal.actorType,
+          principalHasUserId: Boolean(principal.userId),
+          principalHasAccountId: Boolean(principal.accountId),
+          principalVisibleVaultIds: principal.visibleVaultIds,
+          destinationVaultId: requestedDestinationVaultId,
+          destinationParentId: input.destinationParentId,
+        });
         throw clientError(403, "The complete Library subtree must be visible and writable");
       }
       if (isProtectedPage(root)) {
