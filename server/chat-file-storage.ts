@@ -3714,10 +3714,19 @@ export async function searchSessionSummaries(
   const trimmed = query.trim();
   if (!trimmed) return [];
 
+  const startedAt = performance.now();
+  const limit = Math.max(1, Math.min(maxResults, 100));
+  let phase: "other_handler" | "rows_db" | "mapping_snippet" = "other_handler";
+  let phaseStartedAt = startedAt;
+  let rowsDbMs = 0;
+  let mappingSnippetMs = 0;
+
   try {
     const cutoff = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
     const searchPattern = `%${trimmed}%`;
     const principal = getCurrentPrincipalOrSystem();
+    phase = "rows_db";
+    phaseStartedAt = performance.now();
     const rows = await targetReadsEnabled()
       ? await buildTargetSessionSearchQuery(
           principal,
@@ -3748,17 +3757,53 @@ export async function searchSessionSummaries(
             ),
           )
           .orderBy(desc(sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text)`))
-          .limit(Math.max(1, Math.min(maxResults, 100)));
+          .limit(limit);
+    rowsDbMs = performance.now() - phaseStartedAt;
 
-    return buildSessionSummaries(rows.filter((row): row is {
+    phase = "mapping_snippet";
+    phaseStartedAt = performance.now();
+    const results = await buildSessionSummaries(rows.filter((row): row is {
       docId: string;
       title: string | null;
       content: string;
       metadata: unknown;
       updatedAt: Date | null;
     } => Boolean(row.docId)));
-  } catch (err) {
-    log.warn("searchSessionSummaries error:", err);
+    mappingSnippetMs = performance.now() - phaseStartedAt;
+
+    const totalMs = performance.now() - startedAt;
+    log.debug("session.search.timing_complete", {
+      queryLength: trimmed.length,
+      limit,
+      resultCount: results.length,
+      totalCount: results.length,
+      rowsDbMs,
+      countDbMs: 0,
+      mappingSnippetMs,
+      otherHandlerMs: Math.max(0, totalMs - rowsDbMs - mappingSnippetMs),
+      totalMs,
+    });
+    return results;
+  } catch {
+    const failedAt = performance.now();
+    if (phase === "rows_db") {
+      rowsDbMs = failedAt - phaseStartedAt;
+    } else if (phase === "mapping_snippet") {
+      mappingSnippetMs = failedAt - phaseStartedAt;
+    }
+    const totalMs = failedAt - startedAt;
+    log.debug("session.search.timing_failure", {
+      phase,
+      queryLength: trimmed.length,
+      limit,
+      resultCount: 0,
+      totalCount: 0,
+      rowsDbMs,
+      countDbMs: 0,
+      mappingSnippetMs,
+      otherHandlerMs: Math.max(0, totalMs - rowsDbMs - mappingSnippetMs),
+      totalMs,
+    });
     return [];
   }
 }
