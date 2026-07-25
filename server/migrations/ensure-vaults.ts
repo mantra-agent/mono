@@ -1,3 +1,4 @@
+import { LEGACY_VAULT_COLOR_MIGRATIONS, PERSONAL_VAULT_COLOR } from "@shared/models/vaults";
 import { pool } from "../db";
 import { createLogger } from "../log";
 
@@ -204,15 +205,47 @@ export async function ensureVaults(): Promise<void> {
     // The Personal vault is the default vault for each account.
     const { rowCount: createdCount } = await pool.query(`
       INSERT INTO vaults (account_id, name, icon, color, position, is_default)
-      SELECT a.id, 'Personal', 'P', '#828A96', 0, true
+      SELECT a.id, 'Personal', 'P', $1, 0, true
       FROM accounts a
       WHERE NOT EXISTS (
         SELECT 1 FROM vaults v
         WHERE v.account_id = a.id AND v.is_default = true
       )
-    `);
+    `, [PERSONAL_VAULT_COLOR]);
     if (createdCount && createdCount > 0) {
       log.log(`Created ${createdCount} Personal vault(s)`);
+    }
+
+    // Personal is the neutral default partition. Converge only Personal vaults
+    // still carrying the retired product default; explicit custom choices stay.
+    const retiredPersonalColor = LEGACY_VAULT_COLOR_MIGRATIONS[0].from;
+    const { rowCount: migratedPersonalColorCount } = await pool.query(`
+      UPDATE vaults
+      SET color = $1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE name = 'Personal'
+        AND is_default = true
+        AND upper(color) = upper($2)
+        AND color IS DISTINCT FROM $1
+    `, [PERSONAL_VAULT_COLOR, retiredPersonalColor]);
+    if (migratedPersonalColorCount && migratedPersonalColorCount > 0) {
+      log.log(`Migrated ${migratedPersonalColorCount} Personal vault color(s) to white`);
+    }
+
+    // Converge only the exact retired product defaults. User-authored custom
+    // colors are deliberately outside this migration and remain untouched.
+    const legacyColors = LEGACY_VAULT_COLOR_MIGRATIONS.map(({ from }) => from);
+    const brandColors = LEGACY_VAULT_COLOR_MIGRATIONS.map(({ to }) => to);
+    const { rowCount: migratedColorCount } = await pool.query(`
+      UPDATE vaults
+      SET color = migration.to_color,
+          updated_at = CURRENT_TIMESTAMP
+      FROM unnest($1::text[], $2::text[]) AS migration(from_color, to_color)
+      WHERE upper(vaults.color) = upper(migration.from_color)
+        AND vaults.color IS DISTINCT FROM migration.to_color
+    `, [legacyColors, brandColors]);
+    if (migratedColorCount && migratedColorCount > 0) {
+      log.log(`Migrated ${migratedColorCount} vault color(s) to the brand palette`);
     }
 
     // ── 5. Backfill vault_id on all owned rows ─────────────────────

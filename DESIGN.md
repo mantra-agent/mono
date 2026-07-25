@@ -217,6 +217,7 @@ Audit finding: the client currently has many semantic background usages (`bg-pri
 
 - Existing `cat-*` tokens are legacy audit targets. Remove or remap them during page-by-page cleanup.
 - Only introduce a category hue when the user must distinguish that type pre-attentively and the distinction cannot be carried by structure or text.
+- Vault identity is a bounded exception because color carries persistent partition context across surfaces. Every vault picker and renderer must source the canonical luminous brand family from `VAULT_COLOR_PALETTE` in `shared/models/vaults.ts`; do not create local vault swatches. Full white is the semantic default for Personal; generic new vaults begin on brand blue. Persisted custom vault colors remain valid.
 
 ### Color rules
 

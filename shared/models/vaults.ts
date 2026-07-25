@@ -11,6 +11,44 @@ import {
 import { sql } from "drizzle-orm";
 
 /**
+ * Canonical vault identity palette.
+ *
+ * Vault colors are persisted values because they identify user-defined data
+ * partitions across surfaces. Keep every picker and default sourced here.
+ * The family shares the Mantra brand's luminous saturation and is tuned for
+ * the product's black canvas without becoming neon.
+ */
+export const VAULT_COLOR_PALETTE = [
+  { value: "#FFFFFF", label: "White" },
+  { value: "#21A6E8", label: "Sky" },
+  { value: "#35C9BD", label: "Aqua" },
+  { value: "#4FD17B", label: "Mint" },
+  { value: "#A8D957", label: "Lime" },
+  { value: "#F2B84B", label: "Gold" },
+  { value: "#F07A68", label: "Coral" },
+  { value: "#E46C9F", label: "Rose" },
+  { value: "#9A78EB", label: "Violet" },
+] as const;
+
+/** Generic user-created vaults start on the brand blue. */
+export const DEFAULT_VAULT_COLOR = VAULT_COLOR_PALETTE[1].value;
+
+/** Personal is the neutral identity partition, represented by full white. */
+export const PERSONAL_VAULT_COLOR = VAULT_COLOR_PALETTE[0].value;
+
+/** Known product defaults from the retired muted palette. Custom colors are untouched. */
+export const LEGACY_VAULT_COLOR_MIGRATIONS = [
+  { from: "#828A96", to: VAULT_COLOR_PALETTE[0].value },
+  { from: "#6BA3B5", to: VAULT_COLOR_PALETTE[1].value },
+  { from: "#6E8B74", to: VAULT_COLOR_PALETTE[2].value },
+  { from: "#9B9B6F", to: VAULT_COLOR_PALETTE[3].value },
+  { from: "#C4956A", to: VAULT_COLOR_PALETTE[4].value },
+  { from: "#C27878", to: VAULT_COLOR_PALETTE[5].value },
+  { from: "#B07BAC", to: VAULT_COLOR_PALETTE[6].value },
+  { from: "#7B8CDE", to: VAULT_COLOR_PALETTE[7].value },
+] as const;
+
+/**
  * Vaults — data partitions within a user's account.
  *
  * Every user-owned row carries a vault_id. The scoped-storage boundary
