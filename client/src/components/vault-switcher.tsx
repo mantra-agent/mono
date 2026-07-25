@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
 import { useVaults } from "@/hooks/use-vaults";
 import {
   Popover,
@@ -20,7 +19,7 @@ const FALLBACK_COLOR = "hsl(var(--muted-foreground))";
 /**
  * Top-bar vault control: one button that IS the active vault.
  *
- * - Button body shows the active vault's color swatch + name.
+ * - Button body shows the active vault's name in its vault color.
  * - A row of small colored dots along the bottom represents the OTHER visible
  *   vaults (one dot each, in vault color). Pure indicators; the whole button
  *   opens the dropdown.
@@ -56,7 +55,7 @@ export function VaultSwitcher() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="group flex flex-col items-center justify-center gap-0.5 rounded-md px-2 py-1 transition-colors hover:bg-muted/50"
+          className="flex flex-col items-center justify-center gap-0.5 rounded-md px-2 py-1 transition-colors hover:bg-muted/50"
           aria-label={`Active vault: ${activeVault.name}${
             otherVisible.length > 0
               ? `, ${otherVisible.length} other vault${otherVisible.length === 1 ? "" : "s"} visible`
@@ -64,15 +63,11 @@ export function VaultSwitcher() {
           }`}
           data-testid="vault-switcher-trigger"
         >
-          <span className="flex items-center gap-1.5">
-            <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ backgroundColor: activeVault.color ?? FALLBACK_COLOR }}
-            />
-            <span className="max-w-[140px] truncate text-xs font-medium text-foreground">
-              {activeVault.name}
-            </span>
-            <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[state=open]:rotate-180" />
+          <span
+            className="max-w-[140px] truncate text-xs font-medium"
+            style={{ color: activeVault.color ?? FALLBACK_COLOR }}
+          >
+            {activeVault.name}
           </span>
           {(shownDots.length > 0 || overflow > 0) && (
             <span
@@ -122,10 +117,11 @@ export function VaultSwitcher() {
                 data-testid={`vault-switcher-name-${vault.id}`}
               >
                 <span
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: vault.color ?? FALLBACK_COLOR }}
-                />
-                <span className="truncate text-sm text-foreground">{vault.name}</span>
+                  className="truncate text-sm"
+                  style={{ color: vault.color ?? FALLBACK_COLOR }}
+                >
+                  {vault.name}
+                </span>
                 {active && (
                   <span className="ml-auto shrink-0 text-2xs uppercase tracking-wider text-muted-foreground">
                     Active
