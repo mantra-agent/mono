@@ -1482,14 +1482,14 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   tools: {
-    description: "Look up detailed tool documentation — list all tools or get full docs for a specific tool/action.",
+    description: "Discover authority-allowed tools and load callable schemas on demand. `list` summarizes allowed tools; interactive `get` returns full docs and hydrates that tool into the current run.",
     category: "system",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "get"], description: "list = summary of all tools; get = detailed docs for one tool" },
-        tool: { type: "string", description: "Tool name (for get)" },
+        action: { type: "string", enum: ["list", "get"], description: "list = summarize authority-allowed tools; get = return full docs and, in interactive chat, load one allowed callable schema" },
+        tool: { type: "string", description: "Exact tool name to document and load (for get)" },
       },
       required: ["action"],
     },
@@ -1764,10 +1764,10 @@ export function getToolSchemas(): ToolSchema[] {
 /**
  * Always-loaded core tools. Available to every persona regardless of its tool
  * bundle, because they are the minimum set required to communicate, orient,
- * reason, remember, and manage work. Persona tool bundles are additive on top of
- * this core; they never remove a core tool. `orient` is deliberately core: it is
- * the escape hatch that lets any persona switch mode, so no bundle can ever trap
- * the agent without a needed tool.
+ * reason, remember, manage work, and progressively load long-tail schemas.
+ * Persona tool bundles are additive on top of this core; they never remove a core
+ * tool. `tools` hydrates one authority-allowed schema for the current interactive
+ * run, while `orient` can replace the whole initial working set by switching mode.
  */
 export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "converse",
@@ -1789,10 +1789,11 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
  *
  * Semantics mirror persona context bundles: an empty (or absent) bundle means
  * "no gating" — every tool passes through, preserving today's behavior so no
- * existing persona regresses. A non-empty bundle scopes the model's tools to the
- * always-on core plus the bundle's explicit inclusions. This is a separate axis
- * from authority filtering (which decides what a session is *allowed* to call);
- * this decides what the active *mode* loads, to keep the per-call tool budget lean.
+ * existing persona regresses. A non-empty bundle defines the initial model tool
+ * set as the always-on core plus explicit inclusions. This is separate from
+ * authority filtering (what a session is *allowed* to call): interactive
+ * `tools.get` may progressively hydrate one authority-allowed schema for the
+ * current run without mutating the persona bundle.
  */
 export function filterToolsForPersonaBundle<T extends { name: string }>(
   schemas: T[],

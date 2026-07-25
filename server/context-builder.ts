@@ -2061,7 +2061,7 @@ async function resolveTools(request: ContextRequest): Promise<string> {
   const mode = request.llmMode;
   const preamble = mode === "voice"
     ? "Tools are available. In voice mode, prefer simple tool calls and concise responses."
-    : "Tools are available through callable schemas. Do not rely on boot context as a tool manual; call `tools` with action `get` for detailed documentation when needed.";
+    : "The current persona provides an initial callable tool set. If a needed tool is absent, call `tools` with action `get` and its exact name; when authority allows it, the full schema loads for the next step of this run.";
 
   return [
     preamble,
@@ -2076,7 +2076,7 @@ async function resolveTools(request: ContextRequest): Promise<string> {
     "- Canonical persisted grammar is `@type:id`. Supported types are page, person, goal, task, project, milestone, meeting, decision, wellness_activity, priority, file, news, web_article, x_item, reddit_post, rss_item, and pr. Use the registry/parser rather than hard-coded partial lists when generating or rendering references.",
     "- `#` is a composer/search trigger for references, especially work items; selected mentions still insert canonical `@type:id` text. Do not treat `#goal`/`#task` as the persisted reference grammar unless the shared parser explicitly supports it.",
     "- Prefer canonical `@type:id` syntax over legacy `[page:slug]` / `[person:id]` / `[goal:id]` / `[spec:slug]` / `Intention ID: <id>` forms. Legacy syntax is compatibility only.",
-    "- Detailed tool schemas and action parameters are already available at the tool boundary; retrieve prose docs with tools.get only when necessary.",
+    "- Do not infer that a tool is unavailable merely because its schema is absent from the initial set. Use `tools.get` to verify authority and load that exact callable schema for the current interactive run.",
   ].join("\n");
 }
 

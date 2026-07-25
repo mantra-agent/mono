@@ -100,7 +100,12 @@ export type ToolHandler = (args: Record<string, any>) => Promise<{
   continuation?: import("./agent-executor").ToolContinuation;
   normalizedArguments?: Record<string, unknown>;
 }>;
-type ToolHandlerResult = { result: string; error?: boolean; data?: Record<string, unknown> };
+type ToolHandlerResult = {
+  result: string;
+  error?: boolean;
+  data?: Record<string, unknown>;
+  continuation?: import("./agent-executor").ToolContinuation;
+};
 
 const PEOPLE_AGENDA_SURFACE_LIMIT = 3;
 
@@ -10338,11 +10343,16 @@ ${refs}` : ""),
     if (!action) return { result: "Missing action parameter. Available: list, get", error: true };
 
     if (action === "list") {
-      const { TOOLS } = await import("./tool-registry");
-      const lines = Object.entries(TOOLS).map(([name, meta]) =>
-        `- **${name}** (${meta.category}): ${meta.description.slice(0, 80)}...`
+      const { getToolSchemas } = await import("./tool-registry");
+      const { filterToolSchemasForAuthority } = await import("./agent-authority");
+      const schemas = filterToolSchemasForAuthority(
+        getToolSchemas(),
+        args._authorityContext || {},
       );
-      return { result: `Available tools (${lines.length}):\n${lines.join("\n")}` };
+      const lines = schemas.map((schema) =>
+        `- **${schema.name}** (${schema.category}): ${schema.description.slice(0, 80)}...`
+      );
+      return { result: `Authority-allowed tools (${lines.length}):\n${lines.join("\n")}` };
     }
 
     if (action === "get") {
@@ -10389,7 +10399,16 @@ ${refs}` : ""),
         detail += `\n\n(Detailed docs unavailable: ${msg})`;
       }
 
-      return { result: detail };
+      const supportsRunHydration =
+        args._authorityContext?.origin === "interactive" &&
+        typeof args._sessionId === "string" &&
+        args._sessionId.length > 0;
+      return supportsRunHydration
+        ? {
+            result: `${detail}\n\nThe complete callable schema for \`${toolName}\` is now loaded for this run. You may call it directly on the next step.`,
+            continuation: "tool_schema_refresh",
+          }
+        : { result: detail };
     }
 
     return { result: `Unknown tools action: ${action}. Available: list, get`, error: true };
