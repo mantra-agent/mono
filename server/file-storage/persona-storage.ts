@@ -784,33 +784,7 @@ class PersonaStorageClass {
         return activated ? rowToEntry(activated) : null;
       }
 
-      const maxSort = (await this.list()).reduce(
-        (max, p) => Math.max(max, p.sortOrder),
-        0,
-      );
-      const [copy] = await db
-        .insert(personas)
-        .values({
-          name: target.name,
-          description: target.description,
-          icon: target.icon,
-          promptOverlay: target.promptOverlay,
-          expressionTags: target.expressionTags,
-          cognitiveOverrides: target.cognitiveOverrides,
-          semanticTier: target.semanticTier,
-          contextSections: target.contextSections,
-          toolBundle: target.toolBundle,
-          isDefault: false,
-          isActive: true,
-          sortOrder: maxSort + 1,
-          source: "user",
-          templatePersonaId: target.id,
-          ...ownedInsertValues(principal, personaScopeColumns),
-          createdByUserId: principal.userId ?? undefined,
-          updatedByUserId: principal.userId ?? undefined,
-        })
-        .returning();
-      this.invalidateCache();
+      const copy = await this.insertOwnedCopy(target, { isActive: true });
       log.log(
         "activate template id=" +
           id +
@@ -819,7 +793,7 @@ class PersonaStorageClass {
           " name=" +
           target.name,
       );
-      return rowToEntry(copy);
+      return copy;
     }
     await db
       .update(personas)
@@ -838,6 +812,113 @@ class PersonaStorageClass {
     this.invalidateCache();
     log.log("activate id=" + id + " name=" + target.name);
     return this.get(id);
+  }
+
+  /**
+   * Insert a user-owned copy of a seed/global template for the current principal.
+   * Shared by activation and customization so the copy shape lives in exactly one
+   * place. Callers decide whether the copy starts active.
+   */
+  private async insertOwnedCopy(
+    target: PersonaEntry,
+    opts: { isActive: boolean },
+  ): Promise<PersonaEntry> {
+    const principal = getCurrentPrincipalOrSystem();
+    const maxSort = (await this.list()).reduce(
+      (max, p) => Math.max(max, p.sortOrder),
+      0,
+    );
+    const [copy] = await db
+      .insert(personas)
+      .values({
+        name: target.name,
+        description: target.description,
+        icon: target.icon,
+        promptOverlay: target.promptOverlay,
+        expressionTags: target.expressionTags,
+        cognitiveOverrides: target.cognitiveOverrides,
+        semanticTier: target.semanticTier,
+        contextSections: target.contextSections,
+        toolBundle: target.toolBundle,
+        isDefault: false,
+        isActive: opts.isActive,
+        sortOrder: maxSort + 1,
+        source: "user",
+        templatePersonaId: target.id,
+        ...ownedInsertValues(principal, personaScopeColumns),
+        createdByUserId: principal.userId ?? undefined,
+        updatedByUserId: principal.userId ?? undefined,
+      })
+      .returning();
+    this.invalidateCache();
+    return rowToEntry(copy);
+  }
+
+  /**
+   * Resolve the user-owned persona for a persona id, materializing a copy from an
+   * ordinary seed/global template when the caller has none yet. This is the
+   * canonical "customize this persona" mutation: a user session must never be bound
+   * to a read-only seed, because a seed cannot carry the user's context/tool bundle
+   * configuration.
+   *
+   * - An already user-owned (visible) persona is returned unchanged.
+   * - System principals and non-forkable system seeds are returned unchanged, so
+   *   autonomous flows keep using seeds directly.
+   * - An ordinary global seed — even one already shadowed by this user's copy — is
+   *   resolved to (creating if needed) the principal's lineage copy.
+   * - Returns null only when the id resolves to nothing forkable or visible.
+   */
+  async ensureOwnedCopy(id: number): Promise<PersonaEntry | null> {
+    const visible = await this.get(id);
+    const principal = getCurrentPrincipalOrSystem();
+
+    if (visible && visible.source === "user") return visible;
+    if (visible && (principal.actorType === "system" || visible.isSystem)) return visible;
+
+    // The template is either the visible seed, or a seed that is no longer
+    // selectable because this principal already forked it (shadowed in list()).
+    let template: PersonaEntry | null =
+      visible && visible.source === "seed" ? visible : null;
+    if (!template) {
+      const [row] = await db
+        .select()
+        .from(personas)
+        .where(
+          and(
+            eq(personas.id, id),
+            eq(personas.scope, "global"),
+            eq(personas.source, "seed"),
+            eq(personas.isSystem, false),
+          ),
+        )
+        .limit(1);
+      template = row ? rowToEntry(row) : null;
+    }
+    if (!template) return visible;
+
+    const [existingCopy] = await db
+      .select()
+      .from(personas)
+      .where(
+        combineWithWritableScope(
+          principal,
+          personaScopeColumns,
+          eq(personas.templatePersonaId, template.id),
+        ),
+      )
+      .limit(1);
+    if (existingCopy) return rowToEntry(existingCopy);
+
+    const copy = await this.insertOwnedCopy(template, { isActive: false });
+    log.log(
+      "ensureOwnedCopy templateId=" +
+        template.id +
+        " copyId=" +
+        copy.id +
+        " name=" +
+        template.name,
+    );
+    return copy;
   }
 
   async delete(id: number): Promise<{ success: boolean; error?: string }> {

@@ -4366,14 +4366,20 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const pinnedPersona = pinnedSession.personaId ? await personaStorage.get(pinnedSession.personaId) : null;
         results.push(`Persona is pinned by the user${pinnedPersona ? ` to ${pinnedPersona.name}` : ""} for this session; not switching to ${resolvedPersona.name}. If the user wants a different persona, they can pick one (or Auto) from the persona icon.`);
       } else {
+        // A user session must bind to the user's own persona row, never a read-only
+        // seed. Selecting a seed materializes (or reuses) the user's copy so it can
+        // carry context/tool bundle configuration. System principals keep the seed.
+        const { personaStorage } = await import("./file-storage/persona-storage");
+        const owned = await personaStorage.ensureOwnedCopy(resolvedPersona.id);
+        const targetId = owned?.id ?? resolvedPersona.id;
         const { setSessionPersona, setSessionPersonaIfUnset } = await import("./session-persona");
         const selection = preserveExisting
-          ? await setSessionPersonaIfUnset(sessionId, resolvedPersona.id)
+          ? await setSessionPersonaIfUnset(sessionId, targetId)
           : null;
         const activated = preserveExisting
           ? selection?.persona ?? null
-          : await setSessionPersona(sessionId, resolvedPersona.id);
-        if (!activated) return { result: `Persona with id ${resolvedPersona.id} not found`, error: true };
+          : await setSessionPersona(sessionId, targetId);
+        if (!activated) return { result: `Persona with id ${targetId} not found`, error: true };
         if (!preserveExisting || selection?.applied) {
           eventBus.publish({
             category: "agent",
@@ -15548,7 +15554,11 @@ const cognitionTools: Record<string, ToolHandler> = {
       update_persona: async (a) => {
         if (!a.id) return { result: "Missing persona id", error: true };
         const { personaStorage } = await import("./file-storage/persona-storage");
-        const updated = await personaStorage.update(Number(a.id), {
+        // Editing a seed copy-on-writes into the user's own persona row, so the
+        // edit lands on an editable copy rather than failing against a read-only seed.
+        const owned = await personaStorage.ensureOwnedCopy(Number(a.id));
+        if (!owned) return { result: `Persona ${a.id} not found`, error: true };
+        const updated = await personaStorage.update(owned.id, {
           name: a.name,
           description: a.description,
           promptOverlay: a.prompt_overlay || a.promptOverlay,
@@ -15557,7 +15567,7 @@ const cognitionTools: Record<string, ToolHandler> = {
           contextSections: a.context_sections ?? a.contextSections,
           toolBundle: a.tool_bundle ?? a.toolBundle,
         });
-        if (!updated) return { result: `Persona ${a.id} not found`, error: true };
+        if (!updated) return { result: `Persona ${a.id} is read-only or not found`, error: true };
         return { result: `Persona updated: ${updated.name} (id=${updated.id})` };
       },
     };
