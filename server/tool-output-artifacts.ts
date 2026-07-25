@@ -127,43 +127,71 @@ export function formatToolOutputRef(ref: ToolOutputRef): string {
   return lines.join("\n");
 }
 
-export async function maybeOffloadToolOutput(args: {
+export interface EnsureToolOutputArchiveResult {
+  outcome: "created" | "reused" | "failed";
+  ref?: ToolOutputRef;
+  formattedRef?: string;
+  size: ToolOutputSize;
+}
+
+interface ToolOutputArchiveArgs {
   toolName: string;
   action?: string;
   sessionId?: string;
   runId?: string;
+  toolCallId?: string;
   result: string;
-  error?: boolean;
-  policy?: Partial<ToolOutputPolicy>;
-}): Promise<string> {
-  if (process.env.TOOL_OUTPUT_ARTIFACTS_ENABLED === "false") return args.result;
-  if (args.error) return args.result;
-  if (isToolOutputRefString(args.result)) return args.result;
+  operationKey?: string;
+  maxPreviewChars?: number;
+}
 
-  const policy = { ...DEFAULT_TOOL_OUTPUT_POLICY, ...(args.policy || {}) };
+export function extractToolOutputRef(value: string): { refId: string; formattedRef: string } | null {
+  if (!isToolOutputRefString(value)) return null;
+  const match = value.match(/\[ref:([^\]]+)\]/);
+  return match ? { refId: match[1], formattedRef: value } : null;
+}
+
+export async function ensureToolOutputArchived(args: ToolOutputArchiveArgs): Promise<EnsureToolOutputArchiveResult> {
   const size = estimateToolOutputSize(args.result);
-  const shouldOffload = size.contentType === "binary" || size.estimatedTokens > policy.maxInlineTokens || size.chars > policy.maxInlineChars;
-  if (!shouldOffload) return args.result;
+  const existing = extractToolOutputRef(args.result);
+  if (existing) {
+    return {
+      outcome: "reused",
+      ref: {
+        kind: "tool_output_ref",
+        refId: existing.refId,
+        toolName: args.toolName,
+        action: args.action,
+        createdAt: new Date().toISOString(),
+        contentType: size.contentType,
+        size,
+        preview: "",
+        affordances: ["read_section", "paginate", "download"],
+      },
+      formattedRef: existing.formattedRef,
+      size,
+    };
+  }
 
-  const preview = createToolOutputPreview(args.result, size.contentType, policy.maxPreviewChars);
-  const sourceLabel = [args.toolName, args.action, args.sessionId, args.runId].filter(Boolean).join("/") || args.toolName;
+  const preview = createToolOutputPreview(args.result, size.contentType, args.maxPreviewChars);
+  const sourceLabel = [args.toolName, args.action, args.sessionId, args.runId, args.toolCallId].filter(Boolean).join("/") || args.toolName;
 
   try {
     const { indexAndArchiveHeuristic } = await import("./content-indexer");
-    const ref = await indexAndArchiveHeuristic({
+    const archived = await indexAndArchiveHeuristic({
       content: args.result,
       sourceType: "tool_output",
       sourceLabel,
+      operationKey: args.operationKey,
     });
-
-    if (!ref) {
-      log.error(`tool output archival failed tool=${args.toolName} action=${args.action || ""} sessionId=${args.sessionId || ""} runId=${args.runId || ""} chars=${size.chars}; returning bounded preview with full content unavailable`);
-      return `${preview}\n\n[Tool output exceeded inline budget (${size.chars.toLocaleString()} chars) but archival failed; full content unavailable in transcript.]`;
+    if (!archived) {
+      log.error(`tool_output.archive_failed tool=${args.toolName} action=${args.action || ""} toolCallId=${args.toolCallId || ""} sessionId=${args.sessionId || ""} runId=${args.runId || ""} chars=${size.chars}`);
+      return { outcome: "failed", size };
     }
 
-    const toolRef: ToolOutputRef = {
+    const ref: ToolOutputRef = {
       kind: "tool_output_ref",
-      refId: ref.id,
+      refId: archived.id,
       toolName: args.toolName,
       action: args.action,
       createdAt: new Date().toISOString(),
@@ -176,15 +204,35 @@ export async function maybeOffloadToolOutput(args: {
       },
       preview,
       affordances: ["read_section", "paginate", "download"],
-      sections: mapSections(ref.index.sections) || sectionToolOutput(args.result, size.contentType),
+      sections: mapSections(archived.index.sections) || sectionToolOutput(args.result, size.contentType),
     };
-
-    log.log(`tool_output.offloaded tool=${args.toolName} action=${args.action || ""} refId=${ref.id} chars=${size.chars} estimatedTokens=${size.estimatedTokens} sessionId=${args.sessionId || ""} runId=${args.runId || ""}`);
-    return formatToolOutputRef(toolRef);
+    const outcome = archived.reused ? "reused" : "created";
+    log.log(`tool_output.archived outcome=${outcome} tool=${args.toolName} action=${args.action || ""} toolCallId=${args.toolCallId || ""} refId=${archived.id} chars=${size.chars} estimatedTokens=${size.estimatedTokens} sessionId=${args.sessionId || ""} runId=${args.runId || ""}`);
+    return { outcome, ref, formattedRef: formatToolOutputRef(ref), size };
   } catch (err) {
-    log.error(`tool output archival exception tool=${args.toolName} action=${args.action || ""} sessionId=${args.sessionId || ""} runId=${args.runId || ""} chars=${size.chars}: ${err instanceof Error ? err.message : String(err)}`);
-    return `${preview}\n\n[Tool output exceeded inline budget (${size.chars.toLocaleString()} chars) but archival failed; full content unavailable in transcript.]`;
+    log.error(`tool_output.archive_exception tool=${args.toolName} action=${args.action || ""} toolCallId=${args.toolCallId || ""} sessionId=${args.sessionId || ""} runId=${args.runId || ""} chars=${size.chars}: ${err instanceof Error ? err.message : String(err)}`);
+    return { outcome: "failed", size };
   }
+}
+
+export async function maybeOffloadToolOutput(args: ToolOutputArchiveArgs & {
+  error?: boolean;
+  policy?: Partial<ToolOutputPolicy>;
+}): Promise<string> {
+  if (process.env.TOOL_OUTPUT_ARTIFACTS_ENABLED === "false") return args.result;
+  if (args.error) return args.result;
+  if (isToolOutputRefString(args.result)) return args.result;
+
+  const policy = { ...DEFAULT_TOOL_OUTPUT_POLICY, ...(args.policy || {}) };
+  const size = estimateToolOutputSize(args.result);
+  const shouldOffload = size.contentType === "binary" || size.estimatedTokens > policy.maxInlineTokens || size.chars > policy.maxInlineChars;
+  if (!shouldOffload) return args.result;
+
+  const archived = await ensureToolOutputArchived({ ...args, maxPreviewChars: policy.maxPreviewChars });
+  if (archived.formattedRef) return archived.formattedRef;
+
+  const preview = createToolOutputPreview(args.result, size.contentType, policy.maxPreviewChars);
+  return `${preview}\n\n[Tool output exceeded inline budget (${size.chars.toLocaleString()} chars) but archival failed; full content unavailable in transcript.]`;
 }
 
 export function sectionToolOutput(value: unknown, contentType: ToolOutputContentType): ToolOutputRef["sections"] {

@@ -946,7 +946,7 @@ function createMcpTools(
         };
         const heartbeat = setInterval(() => emitKeepalive(`tool_exec_active:${def.name}`), HEARTBEAT_INTERVAL_MS);
         try {
-          const result = await toolExecutor(def.name, args);
+          const result = await toolExecutor(def.name, args, { toolCallId: callId, order: invocationOrder });
           toolResultQueue.push({
             type: "tool_result_resolved",
             toolCallId: callId,
@@ -968,7 +968,7 @@ function createMcpTools(
             notifyToolEvent?.();
           }
           return {
-            content: [{ type: "text" as const, text: result.result }],
+            content: [{ type: "text" as const, text: result.providerResult ?? result.result }],
             isError: result.error || false,
           };
         } catch (err: unknown) {

@@ -316,14 +316,19 @@ Tool execution flows through exactly one owner per invocation, determined at run
 Tool handlers may return an internal continuation discriminant when ordinary post-tool model continuation would violate the interaction contract. `persona_switch` interrupts the old provider query, refreshes context/model/persona, and continues the same run. `await_user` interrupts the provider query after persisting the tool call, then ends the run successfully so a later user message starts a new turn. For Question continuations, the newest valid Question call is the session's single active clarification and supersedes older unanswered calls by transcript chronology; no independently mutable question-status flag exists. A handler may return `normalizedArguments` when its domain validator canonicalizes model input. Both execution ownership modes must use those arguments for the resolved call, authoritative stream, diagnostics, and persistence so consumers never reconcile raw and canonical representations. The SDK adapter waits for observed tool executions and correlation IDs to settle before interrupting and closing the iterator. Do not emulate either boundary with prompt instructions, side-effect-only classification, or client state.
 
 ### Tool Output Artifact Layer
-`tool-output-artifacts.ts` enforces the context-budget invariant for tool results. `AgentExecutor` wraps the active `toolExecutor` before SDK handoff and also bounds executor-owned fallback results before they are persisted, streamed, or appended as `tool_result` blocks. Results over the configured inline budget are stored through `indexed_content`/object storage using heuristic indexing, and the transcript receives a compact archived-output reference plus preview. Context reconstruction must treat those references as opaque unless the model explicitly calls `indexed_content` to read a section.
+`tool-output-artifacts.ts` owns the single archive boundary for tool results. `ensureToolOutputArchived(...)` stores exact bytes through principal-scoped `indexed_content`/object storage and supports replay-safe ref reuse; legacy oversized-output callers delegate to it.
+
+`working-set-projector.ts` derives AgentExecutor's ephemeral provider working set from the exact canonical transcript. It preserves errors, incomplete/current interactions, and the newest completed pairs exactly; older consumed successful results may become concise v1 action receipts only after durable archival and meaningful savings. Receipts retain bounded redacted important arguments, mutation/object references, outcome, and the `indexed_content/read_section` ref. SDK-owned tool execution keeps exact `result` distinct from optional `providerResult`, and a controlled refresh restarts provider context around the cumulative current-cycle budget. Never persist a provider receipt in place of exact tool evidence, mutate saved history to relieve provider pressure, or add a second archive/retrieval system.
 
 Environment knobs:
-- `TOOL_OUTPUT_ARTIFACTS_ENABLED=false` disables the layer for rollback.
+- `TOOL_OUTPUT_ARTIFACTS_ENABLED=false` disables legacy inline offload for rollback; working-set eviction still fails closed unless exact archival succeeds.
 - `TOOL_OUTPUT_INLINE_TOKEN_BUDGET` default `8000`.
 - `TOOL_OUTPUT_MAX_INLINE_CHARS` default `32000`.
 - `TOOL_OUTPUT_PREVIEW_CHAR_BUDGET` default `4000`.
 - `TOOL_OUTPUT_FORCE_ARTIFACT_TOKEN_BUDGET` default `20000`.
+- `WORKING_SET_EXACT_TOOL_PAIRS` default `2`.
+- `WORKING_SET_PROJECTED_SAVINGS_FLOOR_TOKENS` default `8000`.
+- `WORKING_SET_TOOL_RESULT_CYCLE_BUDGET_TOKENS` default `20000`.
 
 ### Delegated Engineering Children
 
