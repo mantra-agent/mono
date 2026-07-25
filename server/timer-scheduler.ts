@@ -108,6 +108,19 @@ const TIMER_JITTER_MAX_MS = 2_000;
 // queue wait). Anything further is treated as an early/late fire (bug, clock
 // jump, manual replay).
 const EARLY_FIRE_TOLERANCE_MS = 60_000;
+// Admission deferrals are transient, durable scheduled-slot state. Retry the
+// same run row every five minutes for up to 24 hours; the storage claim is
+// atomic across replicas and the skill runner's single-flight guard prevents
+// overlap with a concurrent manual or scheduled launch of the same skill.
+const DEFERRED_RETRY_DELAY_MS = 5 * 60 * 1000;
+const DEFERRED_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_DEFERRED_RETRY_COUNT = Math.ceil(
+  DEFERRED_RETRY_WINDOW_MS / DEFERRED_RETRY_DELAY_MS,
+);
+const DEFERRED_RETRY_REASONS = [
+  "admission_deferred_or_already_running",
+  "admission_timeout",
+];
 
 // Pure function so we can unit-test the slot guard's decision without standing
 // up the full scheduler + storage. Exported for tests; do not use elsewhere
@@ -231,11 +244,12 @@ class TimerScheduler {
     }
     await this.fireBootReminders();
     await this.rescheduleAll();
+    await this.retryDeferredRuns();
 
     this.checkInterval = setInterval(() => {
-      this.rescheduleAll().catch((err: unknown) => {
+      this.maintainSchedules().catch((err: unknown) => {
         log.error(
-          `reschedule error:`,
+          `scheduler maintenance error:`,
           err instanceof Error ? err.message : String(err),
         );
       });
@@ -251,6 +265,11 @@ class TimerScheduler {
       this.checkInterval = null;
     }
     log.log(`Stopped`);
+  }
+
+  private async maintainSchedules(): Promise<void> {
+    await this.rescheduleAll();
+    await this.retryDeferredRuns();
   }
 
   async rescheduleAll(): Promise<void> {
@@ -306,6 +325,163 @@ class TimerScheduler {
         const entry = this.timers.get(key);
         if (entry) entry.cancel();
         this.timers.delete(key);
+      }
+    });
+  }
+
+  private async retryDeferredRuns(): Promise<void> {
+    if (!this.started || this.globalPaused) return;
+    const now = Date.now();
+    const deferredRuns = await withQueryAttributionAsync(
+      "timer-scheduler",
+      () => timerStorage.getDeferredRunsForScheduler(
+        DEFERRED_RETRY_REASONS,
+        new Date(now - DEFERRED_RETRY_WINDOW_MS),
+        new Date(now - DEFERRED_RETRY_DELAY_MS),
+        MAX_DEFERRED_RETRY_COUNT,
+        100,
+      ),
+    );
+
+    for (const run of deferredRuns) {
+      const timer = await withQueryAttributionAsync("timer-scheduler", () =>
+        timerStorage.getForScheduler(run.timerId),
+      );
+      if (!timer?.enabled) continue;
+      if (!timer.schedules.some((candidate) => candidate.id === run.scheduleId)) {
+        continue;
+      }
+      const recentRuns = await withQueryAttributionAsync(
+        "timer-scheduler",
+        () => timerStorage.getRunsForScheduler(timer, 100),
+      );
+      const deferredSlotEnd =
+        run.scheduledSlotEnd ?? run.intendedFireAt ?? run.startedAt;
+      if (
+        recentRuns.some(
+          (candidate) =>
+            candidate.trigger === "scheduled" &&
+            candidate.scheduleId === run.scheduleId &&
+            candidate.status === "success" &&
+            (candidate.scheduledSlotEnd ?? candidate.intendedFireAt ?? candidate.startedAt) >=
+              deferredSlotEnd,
+        )
+      ) {
+        continue;
+      }
+
+      const retryCount =
+        typeof run.metadata?.retryCount === "number" &&
+        Number.isFinite(run.metadata.retryCount)
+          ? run.metadata.retryCount
+          : 0;
+      const metadata: TimerRun["metadata"] = {
+        ...(run.metadata ?? {}),
+        retryCount: retryCount + 1,
+        lastRetryAt: new Date(now).toISOString(),
+      };
+      const claimed = await withQueryAttributionAsync("timer-scheduler", () =>
+        timerStorage.claimDeferredRunForRetry(timer, run.id, metadata),
+      );
+      if (!claimed) continue;
+
+      eventBus.publish({
+        category: "timer",
+        event: "timer.run.retry",
+        payload: {
+          runId: run.id,
+          timerId: run.timerId,
+          name: timer.name,
+          retryCount: retryCount + 1,
+          reason: run.error,
+        },
+      });
+      log.log(
+        `retrying deferred "${timer.name}" runId=${run.id} retryCount=${retryCount + 1} reason=${run.error}`,
+      );
+      this.enqueueDeferredTimerExecution(timer, run, metadata);
+    }
+  }
+
+  private enqueueDeferredTimerExecution(
+    timer: Timer,
+    run: TimerRun,
+    metadata: TimerRun["metadata"],
+  ): void {
+    const queuedAt = Date.now();
+    this.executionQueue = this.executionQueue.then(async () => {
+      if (this.lastExecutionEndedAt > 0) {
+        const cooldown = STAGGER_DELAY_MS - (Date.now() - this.lastExecutionEndedAt);
+        if (cooldown > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, cooldown));
+        }
+      }
+      this.inFlightCount++;
+      try {
+        await this.executeExistingTimerRun(timer, run, metadata);
+      } catch (err: unknown) {
+        log.error(
+          `deferred retry error timer=${timer.id} runId=${run.id}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      } finally {
+        this.inFlightCount--;
+        this.lastExecutionEndedAt = Date.now();
+        const waitMs = Date.now() - queuedAt;
+        if (waitMs > 100) {
+          log.debug(
+            `[TimerScheduler] deferred retry "${timer.name}" settled after ${waitMs}ms queue+execution`,
+          );
+        }
+      }
+    });
+  }
+
+  private async executeExistingTimerRun(
+    timer: Timer,
+    run: TimerRun,
+    metadata: TimerRun["metadata"],
+  ): Promise<void> {
+    const startedAt = new Date().toISOString();
+    const retryRun: TimerRun = {
+      ...run,
+      status: "running",
+      startedAt,
+      completedAt: undefined,
+      durationMs: undefined,
+      error: undefined,
+      metadata,
+    };
+    const executionPrincipal = await this.resolveExecutionPrincipal(timer);
+    await runWithPrincipal(executionPrincipal, async () => {
+      eventBus.publish({
+        category: "timer",
+        event: "timer.run.start",
+        payload: {
+          runId: retryRun.id,
+          timerId: timer.id,
+          name: timer.name,
+          type: timer.type,
+          trigger: retryRun.trigger,
+          metadata,
+          retry: true,
+        },
+      });
+      try {
+        const result = await this.executeTimerHandler(timer, retryRun);
+        await this.finalizeTimerRun(timer, retryRun, startedAt, result);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        const handlerResult: TimerHandlerResult =
+          errorMessage === "admission_timeout"
+            ? {
+                outcome: "deferred",
+                reason: "admission_timeout",
+                output: { error: "admission_timeout: another autonomous run is active" },
+              }
+            : { outcome: "failed", error: errorStack || errorMessage };
+        await this.finalizeTimerRun(timer, retryRun, startedAt, handlerResult);
       }
     });
   }
