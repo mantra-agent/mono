@@ -293,6 +293,14 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
             if (!entry) return null;
             const { raw, scored } = entry;
             const readable = await adapters.fetchReadableArticleText(raw.url, 4000);
+            const recentSurfaced = adapters.excludeSignalFromRecentDigest(
+              { fingerprint: selection.fingerprint },
+              recentDedupDigest,
+            ).map(entry => ({
+              id: entry.id,
+              label: entry.curatedTitle || entry.title,
+              topics: entry.matchedTopics.slice(0, 8),
+            }));
             return {
               fingerprint: selection.fingerprint,
               url: raw.url,
@@ -302,6 +310,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
               heuristicScore: scored.relevanceScore,
               heuristicTags: scored.relevanceTags,
               articleText: readable.text || "",
+              recentSurfaced,
             };
           }),
         );
@@ -314,14 +323,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         if (consumerUserId) await markScanConsumerActive(consumerUserId, scanRun.id);
         try {
           await executeAutonomousSkillRun("curate", {
-            preContext: JSON.stringify({
-              candidates: validPayloads,
-              recentSurfaced: recentDedupDigest.map(entry => ({
-                id: entry.id,
-                label: entry.curatedTitle || entry.title,
-                topics: entry.matchedTopics.slice(0, 8),
-              })),
-            }),
+            preContext: JSON.stringify({ candidates: validPayloads }),
             spawnReason: "curate-scan",
           });
 
@@ -363,7 +365,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         };
       } else if (selection && !skillDecisions) {
         // Fallback: skill failed entirely, use per-candidate curation
-        curated = await adapters.curateSignalCandidate(scored, interestGraph, recentDedupDigest);
+        curated = await adapters.curateSignalCandidate(scored, { fingerprint }, interestGraph, recentDedupDigest);
       } else {
         // Not a selected candidate — uncurated
         curated = {
@@ -383,7 +385,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       // same event (identical thesis set + 2+ shared topics) as a signal already surfaced or
       // dismissed within the trailing 72h. The curator's soft duplicateOfId is a fallback link.
       const eventDuplicate = adapters.findRecentEventDuplicate(
-        { matchedTopics: curated.matchedTopics, matchingTheses: curated.matchingTheses },
+        { fingerprint, matchedTopics: curated.matchedTopics, matchingTheses: curated.matchingTheses },
         recentDedupDigest,
       );
       const duplicateOfSignalId = eventDuplicate?.entry.id ?? curated.duplicateOfSignalId ?? null;

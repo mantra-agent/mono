@@ -186,6 +186,26 @@ export interface EventDuplicateMatch {
   sameThesisSet: boolean;
 }
 
+export interface SignalDedupIdentity {
+  id?: string | null;
+  fingerprint: string;
+}
+
+/**
+ * Exclude the subject signal from persisted duplicate candidates before any model
+ * exposure or overlap scoring. New scan candidates have no row id yet, so the
+ * fingerprint is the stable identity shared by pre-insert and persisted forms.
+ */
+export function excludeSignalFromRecentDigest(
+  subject: SignalDedupIdentity,
+  digest: RecentSignalDigestEntry[],
+): RecentSignalDigestEntry[] {
+  return digest.filter(entry =>
+    !(entry.fingerprint === subject.fingerprint
+      || Boolean(subject.id && entry.id === subject.id)),
+  );
+}
+
 function normalizedSet(values: string[]): Set<string> {
   const set = new Set<string>();
   for (const value of values) {
@@ -219,7 +239,7 @@ function sharedCount(a: Set<string>, b: Set<string>): number {
  * the strongest topic overlap wins so the log names the most defensible primary.
  */
 export function findRecentEventDuplicate(
-  candidate: { matchedTopics: string[]; matchingTheses: string[] },
+  candidate: SignalDedupIdentity & { matchedTopics: string[]; matchingTheses: string[] },
   digest: RecentSignalDigestEntry[],
   minSharedTopics: number = 2,
 ): EventDuplicateMatch | null {
@@ -228,7 +248,7 @@ export function findRecentEventDuplicate(
   if (candidateTheses.size === 0) return null;
 
   let best: EventDuplicateMatch | null = null;
-  for (const entry of digest) {
+  for (const entry of excludeSignalFromRecentDigest(candidate, digest)) {
     const entryTheses = normalizedSet(entry.matchingTheses);
     if (!setsEqual(candidateTheses, entryTheses)) continue;
     const shared = sharedCount(candidateTopics, normalizedSet(entry.matchedTopics));
@@ -1309,7 +1329,13 @@ function fallbackCuratedTitle(_signal: ScoredSignal): string | null {
   return null;
 }
 
-export async function curateSignalCandidate(signal: ScoredSignal, interestGraph: InterestTopic[], recentDigest: RecentSignalDigestEntry[] = []): Promise<CuratedSignal> {
+export async function curateSignalCandidate(
+  signal: ScoredSignal,
+  identity: SignalDedupIdentity,
+  interestGraph: InterestTopic[],
+  recentDigest: RecentSignalDigestEntry[] = [],
+): Promise<CuratedSignal> {
+  const eligibleRecentDigest = excludeSignalFromRecentDigest(identity, recentDigest);
   const readable = await fetchReadableArticleText(signal.url);
   const articleText = readable.text || signal.snippet || signal.title;
   const topicContext = interestGraph
@@ -1317,12 +1343,12 @@ export async function curateSignalCandidate(signal: ScoredSignal, interestGraph:
     .map(t => `${t.tag} (${t.source}, weight ${t.weight.toFixed(2)})`)
     .join("; ");
   // Compact recent-history context so the curator can flag same-event resurfacing.
-  const recentContext = recentDigest.slice(0, 25).map(entry => ({
+  const recentContext = eligibleRecentDigest.slice(0, 25).map(entry => ({
     id: entry.id,
     label: entry.curatedTitle || entry.title,
     topics: entry.matchedTopics.slice(0, 8),
   }));
-  const recentIds = new Set(recentDigest.map(entry => entry.id));
+  const recentIds = new Set(eligibleRecentDigest.map(entry => entry.id));
 
   try {
     const { chatCompletion } = await import("./model-client");

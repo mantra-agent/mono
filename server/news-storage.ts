@@ -438,6 +438,7 @@ export class SignalStorage {
       const cutoff = new Date(Date.now() - withinHours * 60 * 60 * 1000);
       const rows = await db.select({
         id: signalItems.id,
+        fingerprint: signalItems.fingerprint,
         title: signalItems.title,
         curatedTitle: signalItems.curatedTitle,
         matchedTopics: signalItems.matchedTopics,
@@ -452,6 +453,7 @@ export class SignalStorage {
         .limit(limit);
       return rows.map(row => ({
         id: row.id,
+        fingerprint: row.fingerprint,
         title: row.title,
         curatedTitle: row.curatedTitle ?? null,
         matchedTopics: row.matchedTopics ?? [],
