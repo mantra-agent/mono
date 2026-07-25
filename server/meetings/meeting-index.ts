@@ -11,6 +11,9 @@ import { buildEmailPersonContextMap, meetingInteractionContext, meetingPersonSum
 import { peopleStorage, type Person } from "../people-storage";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { visibleScopePredicate } from "../scoped-storage";
+import { createLogger } from "../log";
+
+const log = createLogger("MeetingIndex");
 
 export type MeetingNotesFilter = "any" | "with_notes" | "without_notes";
 
@@ -93,6 +96,78 @@ function matchesNotesFilter(transcriptCount: number, notesFilter: MeetingNotesFi
   return notesFilter === "with_notes" ? transcriptCount > 0 : transcriptCount === 0;
 }
 
+function resolvedMeetingIdentity(session: FileSession): string | null {
+  const meeting = session.meeting;
+  const accountId = meeting?.calendarAccountId?.trim();
+  const calendarId = meeting?.calendarId?.trim();
+  const providerEventId = meeting?.providerEventId?.trim();
+  if (!accountId || !calendarId || !providerEventId) return null;
+  return `${accountId}\u0000${calendarId}\u0000${providerEventId}`;
+}
+
+function populated(value: unknown): number {
+  return value === undefined || value === null || value === "" ? 0 : 1;
+}
+
+function meetingRichness(snapshot: MeetingSessionSnapshot): number {
+  const meeting = snapshot.session.meeting!;
+  const recap = meeting.recap;
+  const participantCount = new Set(meeting.participants.map(participantIdentity)).size;
+  const recapStatusScore = recap?.status === "ready" ? 2 : recap?.status === "generating" ? 1 : 0;
+  const distributionScore = recap?.distributionStatus === "ready"
+    ? 2
+    : recap?.distributionStatus === "drafting" || recap?.distributionStatus === "pending" ? 1 : 0;
+
+  return snapshot.transcriptCount
+    + participantCount
+    + (recap?.draftIds?.length ?? 0) * 2
+    + (recap?.interactionsLogged ?? 0)
+    + populated(recap?.pageId) * 3
+    + recapStatusScore
+    + distributionScore
+    + populated(meeting.agendaPage?.id)
+    + populated(meeting.recognition)
+    + populated(meeting.botId);
+}
+
+function compareMeetingRichness(left: MeetingSessionSnapshot, right: MeetingSessionSnapshot): number {
+  const scoreDifference = meetingRichness(left) - meetingRichness(right);
+  if (scoreDifference !== 0) return scoreDifference;
+  const updatedDifference = (parseDate(left.session.updatedAt) ?? 0) - (parseDate(right.session.updatedAt) ?? 0);
+  if (updatedDifference !== 0) return updatedDifference;
+  return left.session.id.localeCompare(right.session.id);
+}
+
+function canonicalCompletedMeetingSnapshots(snapshots: MeetingSessionSnapshot[]): MeetingSessionSnapshot[] {
+  const canonicalByIdentity = new Map<string, MeetingSessionSnapshot>();
+  const passthrough: MeetingSessionSnapshot[] = [];
+  let collapsedCount = 0;
+
+  for (const snapshot of snapshots) {
+    const identity = resolvedMeetingIdentity(snapshot.session);
+    if (snapshot.session.meeting?.botStatus !== "ended" || !identity) {
+      passthrough.push(snapshot);
+      continue;
+    }
+    const current = canonicalByIdentity.get(identity);
+    if (!current) {
+      canonicalByIdentity.set(identity, snapshot);
+      continue;
+    }
+    collapsedCount += 1;
+    if (compareMeetingRichness(snapshot, current) > 0) canonicalByIdentity.set(identity, snapshot);
+  }
+
+  if (collapsedCount > 0) {
+    log.debug("Collapsed duplicate resolved meeting sessions", {
+      candidateCount: snapshots.length,
+      canonicalCount: canonicalByIdentity.size + passthrough.length,
+      collapsedCount,
+    });
+  }
+  return [...canonicalByIdentity.values(), ...passthrough];
+}
+
 async function hydrateMeetingSessions(): Promise<MeetingSessionSnapshot[]> {
   const indexed = (await chatFileStorage.getAllSessions()).filter(session => session.type === "meeting");
   const hydrated: MeetingSessionSnapshot[] = [];
@@ -111,7 +186,7 @@ async function hydrateMeetingSessions(): Promise<MeetingSessionSnapshot[]> {
     for (const item of resolved) if (item) hydrated.push(item);
   }
 
-  return hydrated;
+  return canonicalCompletedMeetingSnapshots(hydrated);
 }
 
 function completedSnapshots(snapshots: MeetingSessionSnapshot[], filter: MeetingIndexFilter): MeetingSessionSnapshot[] {
