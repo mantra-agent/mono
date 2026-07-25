@@ -518,7 +518,7 @@ export async function executeAutonomousSkillRun(
     spawnReason?: string;
     spawnerTool?: string;
     spawnerSkillRun?: string;
-    onSessionCreated?: (sessionId: string) => void;
+    onSessionCreated?: (sessionId: string) => void | Promise<void>;
     /**
      * Optional explicit model identifier (e.g. "anthropic/claude-opus-4-6").
      * When set, the agent executor pins to this model instead of routing by
@@ -813,7 +813,7 @@ export async function executeAutonomousSkillRun(
   }
 
   if (options.onSessionCreated) {
-    options.onSessionCreated(sessionId);
+    await options.onSessionCreated(sessionId);
   }
 
   if (options.parentSessionId) {

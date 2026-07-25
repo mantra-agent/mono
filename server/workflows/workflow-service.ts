@@ -194,6 +194,7 @@ type WorkflowStageInputContext = {
   previousFailurePacket?: unknown;
   retryContext?: WorkflowRetryContext;
   relevantArtifacts: WorkflowArtifactBrief[];
+  originatingRequest?: string;
   entryCriteria?: string[];
   exitCriteria?: string[];
   evidenceRequirements?: string[];
@@ -282,6 +283,15 @@ function attemptArtifacts(detail: WorkflowRunDetail, attemptId: number): Workflo
       url: artifact.url,
       summary: artifact.summary,
     }));
+}
+
+function originatingRequest(detail: WorkflowRunDetail): string | undefined {
+  const artifact = detail.artifacts.find((candidate) => candidate.kind === "originating_request");
+  const metadata = artifact?.metadata && typeof artifact.metadata === "object"
+    ? artifact.metadata as Record<string, unknown>
+    : {};
+  const content = typeof metadata.content === "string" ? metadata.content.trim() : "";
+  return content || undefined;
 }
 
 function workflowResultEvent(result: string): string {
@@ -379,8 +389,8 @@ function buildRetryContext(detail: WorkflowRunDetail, stageKey: string, stageTit
 }
 
 const BUILD_STAGE_PURPOSES: Record<string, string> = {
-  scope: "Define the implementation design and its success conditions against the target product, environment, and governing context.",
-  design_review: "Find defects, omissions, unjustified complexity, and governing-context violations in the proposed design before implementation begins.",
+  scope: "Design the smallest coherent change that satisfies the originating request. Expand only when repository evidence proves the narrower design cannot preserve a named invariant.",
+  design_review: "Find defects, omissions, unsupported scope expansion, unjustified complexity, and governing-context violations before implementation begins.",
   implement: "Implement the approved design completely, preserve its constraints, and produce build and change evidence.",
   code_review: "Find defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation and every affected system. This is an implementation review, not merely a code or build check.",
   acceptance: "Confirm the deployed system boots successfully and does what the approved specification says it must do in the target environment.",
@@ -434,6 +444,7 @@ async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: strin
     previousFailurePacket,
     retryContext,
     relevantArtifacts: stageArtifacts(detail, stageKey),
+    originatingRequest: originatingRequest(detail),
     entryCriteria: stageDef.entryCriteria,
     exitCriteria: stageDef.exitCriteria,
     evidenceRequirements: stageDef.evidenceRequirements,
@@ -469,13 +480,17 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
     "",
     `Work adversarially against this purpose. Do not let completed prior work, a passing build, or lifecycle progress substitute for the judgment this stage exists to make.`,
     "",
+    `## Originating Request`,
+    context.originatingRequest || "No separate originating request was captured; use the objective below without expanding it.",
+    "The request is the scope authority. The workflow objective may clarify the desired outcome, but it cannot prescribe or widen the solution beyond what the request and repository evidence require.",
+    "",
     `## Workflow Objective`,
     context.objective || "No objective recorded.",
   ];
 
   if (context.governingArtifacts?.length) {
     lines.push("", "## Governing Context");
-    lines.push("Before doing stage work, load each relevant environment-linked artifact below with the Library tool. These pages are authoritative. Apply their contents directly rather than restating or guessing their rules. Do not proceed until they are loaded.");
+    lines.push("Load a governing artifact when the originating request or repository evidence implicates the domain it governs. Apply loaded rules directly, but do not broaden the design merely because a linked artifact exists.");
     for (const artifact of context.governingArtifacts) {
       lines.push(`- ${artifact.kind}: @page:${artifact.libraryPageId} (${artifact.title})`);
     }
@@ -636,6 +651,15 @@ async function spawnWorkflowStageChild(parentSessionId: string, detail: Workflow
     workflowRunId: detail.run.id,
     workflowStageAttemptId: inputContext.stageAttemptId,
     personaName,
+    onSessionCreated: async (sessionId) => {
+      await linkWorkflowSession({
+        workflowRunId: detail.run.id,
+        stageAttemptId: inputContext.stageAttemptId,
+        sessionId,
+        role: "stage_attempt",
+        spawnReason,
+      });
+    },
   });
   return result.sessionId;
 }
@@ -720,14 +744,16 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
   stages: [
     {
       key: "scope", title: "Design", position: 0, autonomyMode: "autonomous", persona: "Architect",
-      evidenceRequirements: ["A durable specification artifact (`kind: spec`) containing the complete implementation design, success conditions, target truth, verification path, and terminal state, grounded in the loaded governing context."],
+      entryCriteria: ["Start from the originating request. Inspect only enough repository and runtime evidence to identify the failed invariant and the smallest coherent repair."],
+      evidenceRequirements: ["A durable specification artifact (`kind: spec`) that names the smallest coherent implementation, success conditions, target truth, verification path, and terminal state. Any expansion beyond the request must cite the repository evidence and invariant that require it."],
+      exitCriteria: ["The design satisfies the request without speculative systems, migrations, abstractions, or adjacent improvements."],
       allowedTransitions: [{ toStageKey: "design_review", on: "pass" }, { toStageKey: "scope", on: "fail" }, { toStageKey: null, on: "blocked" }],
     },
     {
       key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review", persona: "Architect",
-      entryCriteria: ["Inspect the proposed design, the current user-visible artifact or system, and every loaded governing artifact relevant to the design."],
-      evidenceRequirements: ["Find and report material defects, omissions, unjustified complexity, and governing-context violations. Require structural cures before passing."],
-      exitCriteria: ["Pass only when the proposed design is coherent, complete, and compliant with the loaded governing context."],
+      entryCriteria: ["Compare the proposed design directly with the originating request, relevant repository evidence, and only the governing artifacts implicated by that change."],
+      evidenceRequirements: ["Find and report material defects, omissions, unsupported scope expansion, unjustified complexity, and governing-context violations. Require structural cures before passing."],
+      exitCriteria: ["Pass only when every material component is necessary to satisfy the originating request or preserve a repository-proven invariant. Reject speculative systems and adjacent improvements."],
       allowedTransitions: [{ toStageKey: "implement", on: "pass" }, { toStageKey: "scope", on: "fail" }],
     },
     {
@@ -998,6 +1024,45 @@ export async function getWorkflowEnvironmentTruth(runIdOrEnvironmentId: string |
   };
 }
 
+export type WorkflowStageCapability = {
+  workflowRunId: string;
+  stageAttemptId: number;
+  stageKey: string;
+  status: string;
+};
+
+export async function resolveWorkflowStageCapability(sessionId: string): Promise<WorkflowStageCapability | null> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) return null;
+  const [row] = await db
+    .select({
+      workflowRunId: workflowSessions.workflowRunId,
+      stageAttemptId: workflowSessions.stageAttemptId,
+      stageKey: workflowStageAttempts.stageKey,
+      status: workflowStageAttempts.status,
+    })
+    .from(workflowSessions)
+    .innerJoin(workflowStageAttempts, and(
+      eq(workflowStageAttempts.workflowRunId, workflowSessions.workflowRunId),
+      eq(workflowStageAttempts.id, workflowSessions.stageAttemptId),
+    ))
+    .where(and(
+      visible(sessionScopeColumns, and(
+        eq(workflowSessions.sessionId, normalizedSessionId),
+        eq(workflowSessions.role, "stage_attempt"),
+      )),
+      visible(attemptScopeColumns),
+    ))
+    .limit(1);
+  if (!row || row.stageAttemptId === null) return null;
+  return {
+    workflowRunId: row.workflowRunId,
+    stageAttemptId: row.stageAttemptId,
+    stageKey: row.stageKey,
+    status: row.status,
+  };
+}
+
 async function assertWorkflowCreationSessionsCanOrchestrate(sessionIds: Array<string | undefined>): Promise<void> {
   const normalizedSessionIds = [...new Set(sessionIds.map((id) => id?.trim()).filter((id): id is string => Boolean(id)))];
   if (normalizedSessionIds.length === 0) return;
@@ -1080,6 +1145,29 @@ export async function createWorkflowRun(input: {
   });
 
   if (input.parentSessionId) await linkWorkflowSession({ workflowRunId: id, sessionId: input.parentSessionId, role: "parent" });
+  const requestSourceSessionId = input.createdBySessionId || input.parentSessionId;
+  if (requestSourceSessionId) {
+    const messages = await chatFileStorage.getMessagesBySession(requestSourceSessionId);
+    const requestMessage = [...messages].reverse().find((message) => message.role === "user" && message.content.trim());
+    if (requestMessage) {
+      await attachWorkflowArtifact({
+        workflowRunId: id,
+        kind: "originating_request",
+        title: "Originating user request",
+        refType: "session_message",
+        refId: `${requestSourceSessionId}:${requestMessage.id}`,
+        summary: "The user request that authorizes and bounds this workflow.",
+        metadata: {
+          content: requestMessage.content,
+          sessionId: requestSourceSessionId,
+          messageId: requestMessage.id,
+          createdAt: requestMessage.createdAt,
+        },
+        createdBySessionId: requestSourceSessionId,
+        render: false,
+      });
+    }
+  }
   await recordTransition({ workflowRunId: id, fromStageKey: null, toStageKey: firstStage?.key || null, trigger: "system", reason: "run_created", createdBySessionId: input.createdBySessionId, render: false });
   const created = await getWorkflowRun(id);
   if (!created) throw new Error(`Workflow run disappeared after create: ${id}`);

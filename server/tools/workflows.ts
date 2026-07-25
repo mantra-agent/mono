@@ -13,11 +13,13 @@ import {
   listWorkflowTemplates,
   pauseWorkflowRun,
   rejectWorkflowGate,
+  resolveWorkflowStageCapability,
   resumeWorkflowRun,
   seedBuildWorkflowTemplate,
   startStageAttempt,
   startWorkflowRun,
 } from "../workflows/workflow-service";
+import { isWorkflowStageAction } from "../workflows/stage-capability";
 
 type ToolHandlerResult = { result: string; error?: boolean };
 
@@ -29,6 +31,24 @@ export async function handleWorkflows(args: Record<string, any>): Promise<ToolHa
   try {
     await seedBuildWorkflowTemplate();
     const action = String(args.action || "list_runs");
+    const callingSessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
+    const stageCapability = callingSessionId
+      ? await resolveWorkflowStageCapability(callingSessionId)
+      : null;
+    if (stageCapability && !isWorkflowStageAction(action)) {
+      throw new Error(`Workflow stage session ${callingSessionId} cannot perform orchestration action ${action}; complete its assigned stage instead.`);
+    }
+    if (stageCapability) {
+      args = {
+        ...args,
+        id: stageCapability.workflowRunId,
+        runId: stageCapability.workflowRunId,
+        workflowRunId: stageCapability.workflowRunId,
+        attemptId: stageCapability.stageAttemptId,
+        stageAttemptId: stageCapability.stageAttemptId,
+        createdBySessionId: callingSessionId,
+      };
+    }
     switch (action) {
       case "list_templates": return json(await listWorkflowTemplates({ type: args.type, status: args.status, limit: args.limit }));
       case "get_template": return json(await getWorkflowTemplate(String(args.templateId || args.id || "")));

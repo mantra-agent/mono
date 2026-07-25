@@ -60,6 +60,9 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   session: { default: 0, actions: { send_message: 1 } },
   settings: { default: 1, actions: { get: 0 } },
   system: { default: 0, actions: { create_issue: 1 } },
+  workflows: { default: 2, actions: {
+    list_templates: 0, get_template: 0, list_runs: 0, get_run: 0,
+  } },
   railway: { default: 2, actions: {
     status: 0, deployments: 0, logs: 0, build_logs: 0, list_variables: 0,
   }},
