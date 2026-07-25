@@ -8,8 +8,6 @@ import { resolvePersonaIcon } from "@/lib/persona-icons";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -53,7 +51,11 @@ export function AgentPersonaControl({ sessionId, persona }: AgentPersonaControlP
   const PersonaIcon = resolvePersonaIcon(persona?.icon);
   const personaLabel = persona?.name || "Legacy persona unknown";
   const radioValue = pinned && activePersonaId != null ? String(activePersonaId) : "auto";
-  const tooltipLabel = pinned ? `${personaLabel} · pinned by you` : `${personaLabel} · Auto`;
+  // The message snapshot is historical; session pin state is current. Only show
+  // the current pin when this turn's persona still matches the pinned persona.
+  const tooltipLabel = pinned && persona?.id === activePersonaId
+    ? `${personaLabel} · pinned by you`
+    : personaLabel;
 
   const mutation = useMutation({
     mutationFn: async (nextPersonaId: number | null) => {
@@ -109,10 +111,6 @@ export function AgentPersonaControl({ sessionId, persona }: AgentPersonaControlP
         </TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="start" className="w-56">
-        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-          Persona for this conversation
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
         <DropdownMenuRadioGroup
           value={radioValue}
           onValueChange={(value) => {
@@ -123,10 +121,7 @@ export function AgentPersonaControl({ sessionId, persona }: AgentPersonaControlP
         >
           <DropdownMenuRadioItem value="auto" className="gap-2">
             <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="flex flex-col">
-              <span>Auto</span>
-              <span className="text-[10px] text-muted-foreground">Agent switches by context</span>
-            </span>
+            <span>Auto</span>
           </DropdownMenuRadioItem>
           {(personas ?? []).map((p) => {
             const Icon = resolvePersonaIcon(p.icon);
