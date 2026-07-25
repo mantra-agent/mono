@@ -5308,7 +5308,6 @@ export async function runSchemaBootstrap(
     // in the self-heal path before seeding. Defaults mirror shared/models/cognition.ts.
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS context_sections JSONB DEFAULT '{}'::jsonb`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS tool_bundle JSONB DEFAULT '[]'::jsonb`);
-    await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS bundle_defaults_version INTEGER NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE personas DROP CONSTRAINT IF EXISTS personas_name_key`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_personas_global_name_unique ON personas (LOWER(name)) WHERE scope = 'global'`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_personas_user_name_unique ON personas (owner_user_id, LOWER(name)) WHERE scope = 'user' AND owner_user_id IS NOT NULL`);
