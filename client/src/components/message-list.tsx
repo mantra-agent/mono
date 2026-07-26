@@ -67,6 +67,7 @@ interface MessageListProps {
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
   onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
   onQuestionCancel?: () => Promise<boolean>;
+  historical?: boolean;
 }
 
 type ListItem =
@@ -223,10 +224,14 @@ export function MessageList({
   questionResponses,
   onQuestionSubmit,
   onQuestionCancel,
+  historical = false,
 }: MessageListProps) {
   const { layer } = useVisibilityLayer();
-  const { childBlocks, crossMessages } = useLiveSessionBlocks(activeSession);
+  const liveBlocks = useLiveSessionBlocks(historical ? null : activeSession);
+  const childBlocks = historical ? [] : liveBlocks.childBlocks;
+  const crossMessages = historical ? [] : liveBlocks.crossMessages;
   const activeQuestionToolCallId = useMemo(() => {
+    if (historical) return null;
     const lifecycleMessages = messages.map((message) => ({
       toolCalls: message.toolCalls,
       questionResponse: message.questionResponse,
@@ -242,7 +247,7 @@ export function MessageList({
       });
     }
     return getActiveQuestionToolCallId(lifecycleMessages);
-  }, [messages, streaming.segments]);
+  }, [historical, messages, streaming.segments]);
   const liveDraftCreatedAtRef = useRef<{ id: string; anchorId: string | null; createdAt: string; ts: number } | null>(null);
   const previousStreamTargetTraceRef = useRef<string | null>(null);
   const finalizedTurnRenderKeysRef = useRef<{
@@ -276,6 +281,7 @@ export function MessageList({
 
   const hasLive = childBlocks.length > 0 || crossMessages.length > 0;
   if (
+    !historical &&
     messages.length === 0 &&
     !isSessionStreaming &&
     !pendingTurn &&
@@ -843,6 +849,40 @@ export function MessageList({
     }
     const suppressed = draftIdsByMessageId.get(msg.id)?.filter((id) => emailDraftOwnerByDraftId.get(id) !== msg.id);
     const renderKey = finalizedTurnRenderKeysRef.current.byMessageId.get(msg.id) ?? msg.id;
+    const renderArchivedMessages = (archivedMessages: Message[]) => {
+      const archivedQuestionResponses = new Map(questionResponses ?? []);
+      for (const archivedMessage of archivedMessages) {
+        if (archivedMessage.questionResponse) {
+          archivedQuestionResponses.set(
+            archivedMessage.questionResponse.questionToolCallId,
+            archivedMessage.questionResponse,
+          );
+        }
+      }
+      return (
+        <div className="space-y-6 pb-2">
+          <MessageList
+            messages={archivedMessages}
+            streaming={{ ...streaming, segments: [], source: null, turnId: null }}
+            isSessionStreaming={false}
+            runActive={false}
+            msgsLoading={false}
+            activeSession={activeSession}
+            sessionKey={sessionKey}
+            voiceActive={false}
+            voiceStatus="idle"
+            voiceTranscript={[]}
+            sessionTitleById={sessionTitleById}
+            sessionStreams={sessionStreams}
+            compactReferences={compactReferences}
+            questionResponses={archivedQuestionResponses}
+            onQuestionSubmit={onQuestionSubmit}
+            onQuestionCancel={onQuestionCancel}
+            historical
+          />
+        </div>
+      );
+    };
     return (
       <ChatTurn
         key={renderKey}
@@ -859,6 +899,7 @@ export function MessageList({
         planOwnedChildBlocks={planOwnedChildBlocks}
         sessionTitleById={sessionTitleById}
         sessionStreams={sessionStreams}
+        renderArchivedMessages={renderArchivedMessages}
       />
     );
   };
