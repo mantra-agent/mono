@@ -1477,8 +1477,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
     try {
       const endTokens = beginSubStep("ctx_history_tokens");
-      const { runBetweenTurnCompaction, estimateTokens } =
-        await import("../../agent-context");
+      const {
+        runBetweenTurnCompaction,
+        estimateTokens,
+        getBetweenTurnCompactionThreshold,
+      } = await import("../../agent-context");
       const { getContextWindow } = await import("../../model-registry");
       const bareModel = (resolvedModel || "").includes("/")
         ? (resolvedModel || "").split("/").slice(1).join("/")
@@ -1503,7 +1506,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         }, 0);
 
       preRunConversationTokens = estimateConversationTokens();
-      preRunCompactionThreshold = Math.floor(convBudget * 0.6);
+      preRunCompactionThreshold = getBetweenTurnCompactionThreshold(convBudget);
       durableCompactionAttempted =
         preRunConversationTokens > preRunCompactionThreshold;
       endTokens();

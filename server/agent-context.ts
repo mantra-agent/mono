@@ -103,6 +103,18 @@ function truncateConversationHistory(
 }
 
 const BETWEEN_TURN_COMPACTION_THRESHOLD = 0.6;
+const BETWEEN_TURN_COMPACTION_TOKEN_CEILING = 60_000;
+
+export function getBetweenTurnCompactionThreshold(conversationBudget: number): number {
+  return Math.max(
+    0,
+    Math.min(
+      Math.floor(conversationBudget * BETWEEN_TURN_COMPACTION_THRESHOLD),
+      BETWEEN_TURN_COMPACTION_TOKEN_CEILING,
+    ),
+  );
+}
+
 type CompactableHistoryMessage = {
   role: string;
   content: string;
@@ -168,7 +180,7 @@ export async function runBetweenTurnCompaction(
     totalTokens += estimateHistoryTokens(msg);
   }
 
-  const threshold = Math.floor(conversationBudget * BETWEEN_TURN_COMPACTION_THRESHOLD);
+  const threshold = getBetweenTurnCompactionThreshold(conversationBudget);
   if (totalTokens <= threshold) {
     return { outcome: "below_threshold" };
   }
