@@ -12,7 +12,6 @@ import type { ContentBlock, ExecutorMessage } from "./agent-executor";
 
 const log = createLogger("WorkingSetProjector");
 
-const EXACT_COMPLETED_PAIR_COUNT = Math.max(2, Number(process.env.WORKING_SET_EXACT_TOOL_PAIRS || 2));
 const PROJECTED_SAVINGS_FLOOR_TOKENS = Number(process.env.WORKING_SET_PROJECTED_SAVINGS_FLOOR_TOKENS || 8_000);
 export const CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS = Number(process.env.WORKING_SET_TOOL_RESULT_CYCLE_BUDGET_TOKENS || 20_000);
 const RECEIPT_ARGUMENT_BYTES = 1_200;
@@ -21,6 +20,7 @@ const MUTATION_ACTION_PATTERN = /^(create|update|delete|remove|add|merge|set|com
 
 interface CompletedToolInteraction {
   resultMessageIndex: number;
+  consumed: boolean;
   toolUse: ContentBlock;
   result: ContentBlock;
 }
@@ -33,7 +33,7 @@ export interface WorkingSetProjectionTelemetry {
   tokensProjected: number;
   charsProjected: number;
   pairsProjected: number;
-  exactPairsPreserved: number;
+  unconsumedPairsPreserved: number;
   archiveRefsCreated: number;
   archiveRefsReused: number;
   receiptsRehydratable: number;
@@ -68,6 +68,7 @@ function estimateMessagesTokens(messages: ExecutorMessage[]): number {
 function collectCompletedInteractions(messages: ExecutorMessage[]): CompletedToolInteraction[] {
   const toolUses = new Map<string, ContentBlock>();
   const completed: CompletedToolInteraction[] = [];
+  const lastAssistantMessageIndex = messages.findLastIndex((message) => message.role === "assistant");
 
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex];
@@ -87,6 +88,7 @@ function collectCompletedInteractions(messages: ExecutorMessage[]): CompletedToo
       if (!use) continue;
       completed.push({
         resultMessageIndex: messageIndex,
+        consumed: lastAssistantMessageIndex > messageIndex,
         toolUse: use,
         result: block,
       });
@@ -185,7 +187,8 @@ export async function projectWorkingSet(args: {
 }): Promise<{ messages: ExecutorMessage[]; telemetry: WorkingSetProjectionTelemetry }> {
   const tokensBefore = estimateMessagesTokens(args.messages);
   const completed = collectCompletedInteractions(args.messages);
-  const candidates = completed.slice(0, Math.max(0, completed.length - EXACT_COMPLETED_PAIR_COUNT));
+  const candidates = completed.filter((interaction) => interaction.consumed);
+  const unconsumedPairsPreserved = completed.length - candidates.length;
   const candidateTokens = candidates.reduce((sum, interaction) => sum + estimateToolOutputSize(interaction.result.content || "").estimatedTokens, 0);
   const hasOversizedCandidate = candidates.some((interaction) =>
     estimateToolOutputSize(interaction.result.content || "").estimatedTokens > PROJECTED_SAVINGS_FLOOR_TOKENS,
@@ -201,7 +204,7 @@ export async function projectWorkingSet(args: {
         tokensProjected: 0,
         charsProjected: 0,
         pairsProjected: 0,
-        exactPairsPreserved: Math.min(completed.length, EXACT_COMPLETED_PAIR_COUNT),
+        unconsumedPairsPreserved,
         archiveRefsCreated: 0,
         archiveRefsReused: 0,
         receiptsRehydratable: 0,
@@ -252,7 +255,7 @@ export async function projectWorkingSet(args: {
     tokensProjected: Math.max(0, tokensBefore - tokensAfter),
     charsProjected,
     pairsProjected,
-    exactPairsPreserved: Math.min(completed.length, EXACT_COMPLETED_PAIR_COUNT),
+    unconsumedPairsPreserved,
     archiveRefsCreated: refsCreated,
     archiveRefsReused: refsReused,
     receiptsRehydratable: pairsProjected,
