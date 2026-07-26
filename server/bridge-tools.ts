@@ -4531,6 +4531,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       let snippetHydrationMs = 0;
       let searchTotalMs = 0;
       let handlerPhase: "import" | "search" | "formatting" = "import";
+      const emitSearchTiming = (timing: {
+        status: "success" | "failure";
+        totalMs: number;
+        [key: string]: unknown;
+      }): void => {
+        const observable = timing.status === "failure" || timing.totalMs >= 1_000 || Math.random() < 0.01;
+        const write = observable ? toolExec.info : toolExec.debug;
+        write("Session search timing", timing);
+      };
       try {
         const { searchSessionSummaries } = await import("./chat-file-storage");
         importMs = performance.now() - importStartedAt;
@@ -4551,7 +4560,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const result = safeStringify({ query, total: matches.length, items: matches.map(s => ({ id: s.id, title: s.title, updatedAt: s.updatedAt, snippet: s.snippet.slice(0, 200) })) }, { label: "bridge.session.search" });
         const formattingMs = performance.now() - formattingStartedAt;
         const totalMs = performance.now() - startedAt;
-        toolExec.debug("Session search timing", {
+        emitSearchTiming({
           status: diagnosticsStatus,
           phase: handlerPhase,
           source: diagnosticsSource,
@@ -4575,7 +4584,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         if (handlerPhase === "import") {
           importMs = performance.now() - importStartedAt;
         }
-        toolExec.debug("Session search timing", {
+        emitSearchTiming({
           status: diagnosticsStatus,
           phase: handlerPhase,
           source: diagnosticsSource,
