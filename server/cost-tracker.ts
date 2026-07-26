@@ -89,6 +89,7 @@ export async function logApiCall(params: {
   runId?: string;
   requestContent?: string;
   responseContent?: string;
+  stopReason?: string;
   startTime: number;
   profile?: string;
   model?: string;
@@ -157,7 +158,7 @@ export async function logApiCall(params: {
       requestContent: (params.requestContent || "")?.slice(0, 50000),
       responseContent: params.responseContent?.slice(0, 50000),
       durationMs,
-      stopReason: null,
+      stopReason: params.stopReason ?? null,
       metadata: {
         ...(params.metadata ?? {}),
         tokenAccounting: {

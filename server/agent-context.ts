@@ -103,7 +103,7 @@ function truncateConversationHistory(
 }
 
 const BETWEEN_TURN_COMPACTION_THRESHOLD = 0.6;
-const BETWEEN_TURN_COMPACTION_TOKEN_CEILING = 60_000;
+const BETWEEN_TURN_COMPACTION_TOKEN_CEILING = 100_000;
 
 export function getBetweenTurnCompactionThreshold(conversationBudget: number): number {
   return Math.max(

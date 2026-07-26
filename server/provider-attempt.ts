@@ -63,6 +63,49 @@ async function settleSupersededAttempt(tracker: ProviderAttemptTracker): Promise
   }
 }
 
+export async function settleRetryingProviderAttempt(
+  tracker: ProviderAttemptTracker,
+  params: {
+    error: Record<string, unknown>;
+    usage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+      cacheReadTokens?: number;
+      reasoningTokens?: number;
+    };
+    stopReason?: string;
+    termination?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const current = tracker.current;
+  if (!current) return;
+  tracker.current = null;
+  try {
+    const { logApiCall } = await import("./cost-tracker");
+    await logApiCall({
+      apiCallId: current.apiCallId,
+      startTime: current.startTime,
+      profile: current.profile,
+      provider: current.provider,
+      model: current.model,
+      sessionId: current.sessionId,
+      runId: current.runId,
+      sessionKey: current.sessionKey,
+      usage: params.usage,
+      stopReason: params.stopReason,
+      metadata: {
+        ...current.metadata,
+        status: "error",
+        error: params.error,
+        termination: params.termination,
+      },
+    });
+  } catch (error) {
+    log.warn(`failed to settle retrying api_call apiCallId=${current.apiCallId} provider=${current.provider} model=${current.model} error=${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export async function beginProviderAttempt(input: BeginProviderAttemptInput): Promise<number | null> {
   await settleSupersededAttempt(input.tracker);
   const startTime = Date.now();
