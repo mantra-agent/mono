@@ -560,16 +560,19 @@ app.use((req, res, next) => {
         });
 
       // Account-specific Library integrity repair runs only after readiness.
-      // It is exact-match, replay-safe, and cannot become a universal service
-      // dependency while repairing one diagnosed cross-owner hierarchy edge.
+      // Its own runner emits registration, attempt, outcome, retry, and
+      // terminal evidence while keeping this exact repair off global readiness.
       import("./migrations/detach-cross-owner-library-child")
-        .then(({ detachDiagnosedCrossOwnerLibraryChild }) =>
-          detachDiagnosedCrossOwnerLibraryChild(),
-        )
+        .then(({ startDiagnosedCrossOwnerLibraryChildRepair }) => {
+          startDiagnosedCrossOwnerLibraryChildRepair();
+        })
         .catch((err) => {
-          serverLog.warn(
-            `[post-ready] cross-owner Library child repair failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          serverLog.error("post-ready Library integrity repair module failed to load", {
+            event: "library_integrity_repair.module_load_failed",
+            repairKey: "library:detach-cross-owner-child:33162f5f",
+            errorName: err instanceof Error ? err.name : "UnknownError",
+            errorMessage: err instanceof Error ? err.message : String(err),
+          });
         });
 
       // Worker-thread heartbeat (Task #995). Spawn a tiny worker that posts a
