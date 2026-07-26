@@ -178,6 +178,13 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_source_row ON document_store_documents(source_table, source_row_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_path ON document_store_documents(path)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_updated_at ON document_store_documents(updated_at)`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uk_document_store_meeting_occurrence
+    ON document_store_documents(owner_user_id, account_id, ((metadata->'meeting'->>'occurrenceKey')))
+    WHERE document_type = 'chat'
+      AND metadata->>'type' = 'meeting'
+      AND NULLIF(metadata->'meeting'->>'occurrenceKey', '') IS NOT NULL
+  `);
 
   const additiveColumns = [
     ["source_memory_entry_id", "INTEGER"],

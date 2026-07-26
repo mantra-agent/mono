@@ -68,56 +68,92 @@ export async function joinMeetingByUrl(opts: {
   const { createMeetingRecognitionLaunchPlan, meetingRecognitionLaunchMeta } = await import("./stt");
   const recognitionLaunch = createMeetingRecognitionLaunchPlan(identity.speakerPolicy);
   const { chatStorage } = await import("../integrations/chat/storage");
-  const session = await chatStorage.createMeetingSession(title, {
-    title,
-    platform,
-    participants: identity.participants,
-    botStatus: "dialing",
-    meetingUrl: identity.meetingUrl,
-    agenda: identity.agenda,
-    agendaPage: identity.agendaPage,
-    calendarAccountId: identity.calendarAccountId,
-    calendarId: identity.calendarId,
-    providerEventId: identity.providerEventId,
-    eventStart: identity.eventStart,
-    eventEnd: identity.eventEnd,
-    resolutionSource: identity.resolutionSource,
-    speakerPolicy: recognitionLaunch.mode === "shared_room"
-      ? identity.speakerPolicy
-      : { mode: "participant_streams" },
-    ...meetingRecognitionLaunchMeta(recognitionLaunch),
-    participationPolicy: opts.joinMode === "note_taking" ? "listen_only" : "auto",
-  });
 
-  const failSession = async (message: string): Promise<never> => {
+  const joinOccurrence = async (): Promise<MeetingJoinResult> => {
+    const existing = identity.occurrenceKey
+      ? await chatStorage.findMeetingSessionForOccurrence({
+          occurrenceKey: identity.occurrenceKey,
+          calendarAccountId: identity.calendarAccountId,
+          calendarId: identity.calendarId,
+          providerEventId: identity.providerEventId,
+        })
+      : null;
+    if (existing?.meeting?.botId && ["dialing", "in_lobby", "live", "leaving"].includes(existing.meeting.botStatus)) {
+      log.info("meeting occurrence join replay reused active session", {
+        sessionId: existing.id,
+        botStatus: existing.meeting.botStatus,
+      });
+      return { sessionId: existing.id, botId: existing.meeting.botId, platform, title: existing.meeting.title || existing.title };
+    }
+
+    const meetingPatch = {
+      title,
+      platform,
+      participants: existing?.meeting?.participants.length ? existing.meeting.participants : identity.participants,
+      botStatus: "dialing" as const,
+      meetingUrl: identity.meetingUrl,
+      agenda: identity.agenda,
+      agendaPage: identity.agendaPage,
+      occurrenceKey: identity.occurrenceKey,
+      calendarAccountId: identity.calendarAccountId,
+      calendarId: identity.calendarId,
+      providerEventId: identity.providerEventId,
+      eventStart: identity.eventStart,
+      eventEnd: identity.eventEnd,
+      resolutionSource: identity.resolutionSource,
+      speakerPolicy: recognitionLaunch.mode === "shared_room"
+        ? identity.speakerPolicy
+        : { mode: "participant_streams" as const },
+      ...meetingRecognitionLaunchMeta(recognitionLaunch),
+      participationPolicy: opts.joinMode === "note_taking" ? "listen_only" as const : "auto" as const,
+    };
+    const session = existing
+      ? await chatStorage.updateMeetingMeta(existing.id, {
+          ...meetingPatch,
+          statusDetail: "Reconnecting Mantra to the meeting…",
+          endedAt: undefined,
+        }) ?? existing
+      : await chatStorage.createMeetingSession(title, meetingPatch);
+
+    const failSession = async (message: string): Promise<never> => {
+      await chatStorage.updateMeetingMeta(session.id, {
+        botStatus: "failed",
+        statusDetail: message,
+        endedAt: new Date().toISOString(),
+      });
+      throw new MeetingJoinError(message, session.id);
+    };
+
+    let dispatch: { botId: string; outputMediaUrl: string };
+    try {
+      dispatch = await createMeetingRecallBot({
+        sessionId: session.id,
+        meetingUrl,
+        recognitionLaunch,
+      });
+    } catch (err) {
+      return failSession(err instanceof Error ? err.message : String(err));
+    }
+
     await chatStorage.updateMeetingMeta(session.id, {
-      botStatus: "failed",
-      statusDetail: message,
-      endedAt: new Date().toISOString(),
+      botId: dispatch.botId,
+      outputMediaUrl: dispatch.outputMediaUrl,
     });
-    throw new MeetingJoinError(message, session.id);
+    const { syncMeetingVisualizerBotStatus } = await import("./output-media");
+    syncMeetingVisualizerBotStatus(session.id, "dialing");
+    log.info("meeting occurrence bot dispatched", {
+      sessionId: session.id,
+      botId: dispatch.botId,
+      platform,
+      reusedSession: Boolean(existing),
+    });
+
+    return { sessionId: session.id, botId: dispatch.botId, platform, title };
   };
 
-  let dispatch: { botId: string; outputMediaUrl: string };
-  try {
-    dispatch = await createMeetingRecallBot({
-      sessionId: session.id,
-      meetingUrl,
-      recognitionLaunch,
-    });
-  } catch (err) {
-    return failSession(err instanceof Error ? err.message : String(err));
-  }
-
-  await chatStorage.updateMeetingMeta(session.id, {
-    botId: dispatch.botId,
-    outputMediaUrl: dispatch.outputMediaUrl,
-  });
-  const { syncMeetingVisualizerBotStatus } = await import("./output-media");
-  syncMeetingVisualizerBotStatus(session.id, "dialing");
-  log.log(`Bot ${dispatch.botId} dispatched to ${platform} meeting "${title}" (session ${session.id})`);
-
-  return { sessionId: session.id, botId: dispatch.botId, platform, title };
+  if (!identity.occurrenceKey) return joinOccurrence();
+  const { withMeetingOccurrenceLock } = await import("./locks");
+  return withMeetingOccurrenceLock(identity.occurrenceKey, joinOccurrence);
 }
 
 /**

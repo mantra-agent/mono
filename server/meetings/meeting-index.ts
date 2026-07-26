@@ -83,12 +83,39 @@ function parseDate(value: string | undefined): number | null {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
+const MANUAL_BINDING_EARLY_TOLERANCE_MS = 15 * 60_000;
+const MANUAL_BINDING_LATE_TOLERANCE_MS = 30 * 60_000;
+
+function hasCredibleCalendarBinding(session: FileSession): boolean {
+  const meeting = session.meeting;
+  if (!meeting?.calendarAccountId || !meeting.calendarId || !meeting.providerEventId) return false;
+  if (meeting.resolutionSource !== "manual_url_match") return true;
+  const actualStart = parseDate(meeting.startedAt) ?? parseDate(session.createdAt);
+  const eventStart = parseDate(meeting.eventStart);
+  const eventEnd = parseDate(meeting.eventEnd) ?? eventStart;
+  return actualStart !== null
+    && eventStart !== null
+    && actualStart >= eventStart - MANUAL_BINDING_EARLY_TOLERANCE_MS
+    && actualStart <= Math.max(eventStart, eventEnd ?? eventStart) + MANUAL_BINDING_LATE_TOLERANCE_MS;
+}
+
 function meetingStart(session: FileSession): string | null {
-  return session.meeting?.eventStart ?? session.meeting?.startedAt ?? session.createdAt ?? null;
+  return hasCredibleCalendarBinding(session)
+    ? session.meeting?.eventStart ?? session.meeting?.startedAt ?? session.createdAt ?? null
+    : session.meeting?.startedAt ?? session.createdAt ?? null;
 }
 
 function meetingTitle(session: FileSession): string {
-  return session.meeting?.title?.trim() || session.title;
+  return hasCredibleCalendarBinding(session)
+    ? session.meeting?.title?.trim() || session.title
+    : session.title.trim() || session.meeting?.title?.trim() || "Meeting";
+}
+
+function projectedParticipants(session: FileSession): MeetingParticipant[] {
+  const participants = session.meeting?.participants ?? [];
+  return hasCredibleCalendarBinding(session)
+    ? participants
+    : participants.filter(participant => participant.identitySource !== "calendar");
 }
 
 function matchesNotesFilter(transcriptCount: number, notesFilter: MeetingNotesFilter | undefined): boolean {
@@ -97,12 +124,11 @@ function matchesNotesFilter(transcriptCount: number, notesFilter: MeetingNotesFi
 }
 
 function resolvedMeetingIdentity(session: FileSession): string | null {
-  const meeting = session.meeting;
-  const accountId = meeting?.calendarAccountId?.trim();
-  const calendarId = meeting?.calendarId?.trim();
-  const providerEventId = meeting?.providerEventId?.trim();
-  if (!accountId || !calendarId || !providerEventId) return null;
-  return `${accountId}\u0000${calendarId}\u0000${providerEventId}`;
+  if (!hasCredibleCalendarBinding(session)) return null;
+  const occurrenceKey = session.meeting?.occurrenceKey?.trim();
+  if (occurrenceKey) return occurrenceKey;
+  const meeting = session.meeting!;
+  return `google:${meeting.calendarAccountId}\u0000${meeting.calendarId}\u0000${meeting.providerEventId}`;
 }
 
 function populated(value: unknown): number {
@@ -138,58 +164,9 @@ function compareMeetingRichness(left: MeetingSessionSnapshot, right: MeetingSess
   return left.session.id.localeCompare(right.session.id);
 }
 
-const DUPLICATE_START_TOLERANCE_MS = 10 * 60 * 1000;
-
-function normalizedMeetingTitle(session: FileSession): string | null {
-  const title = session.meeting?.title?.trim().toLowerCase().replace(/\s+/g, " ");
-  return title || null;
-}
-
-function meetingTimeRange(session: FileSession): { start: number; end: number } | null {
-  const meeting = session.meeting;
-  const start = parseDate(meeting?.eventStart)
-    ?? parseDate(meeting?.startedAt)
-    ?? parseDate(session.createdAt);
-  if (start === null) return null;
-  const end = parseDate(meeting?.endedAt) ?? start + DUPLICATE_START_TOLERANCE_MS;
-  return { start, end: Math.max(start, end) };
-}
-
 function isTerminalMeeting(session: FileSession): boolean {
   const status = session.meeting?.botStatus;
   return status === "ended" || status === "failed";
-}
-
-function hasCapturedMeetingEvidence(snapshot: MeetingSessionSnapshot): boolean {
-  const meeting = snapshot.session.meeting!;
-  const recap = meeting.recap;
-  return snapshot.transcriptCount > 0
-    || meeting.participants.length > 0
-    || recap?.status === "ready"
-    || populated(recap?.pageId) > 0
-    || (recap?.interactionsLogged ?? 0) > 0
-    || (recap?.draftIds?.length ?? 0) > 0;
-}
-
-function representsSameMeeting(left: MeetingSessionSnapshot, right: MeetingSessionSnapshot): boolean {
-  const leftIdentity = resolvedMeetingIdentity(left.session);
-  const rightIdentity = resolvedMeetingIdentity(right.session);
-  if (leftIdentity && rightIdentity && leftIdentity === rightIdentity) return true;
-  const hasWeakAttempt = left.session.meeting?.botStatus === "failed"
-    || right.session.meeting?.botStatus === "failed"
-    || !hasCapturedMeetingEvidence(left)
-    || !hasCapturedMeetingEvidence(right);
-  if (leftIdentity && rightIdentity && !hasWeakAttempt) return false;
-
-  const leftTitle = normalizedMeetingTitle(left.session);
-  const rightTitle = normalizedMeetingTitle(right.session);
-  if (!leftTitle || leftTitle !== rightTitle) return false;
-
-  const leftRange = meetingTimeRange(left.session);
-  const rightRange = meetingTimeRange(right.session);
-  if (!leftRange || !rightRange) return false;
-  if (Math.abs(leftRange.start - rightRange.start) > DUPLICATE_START_TOLERANCE_MS) return false;
-  return leftRange.start <= rightRange.end && rightRange.start <= leftRange.end;
 }
 
 function canonicalCompletedMeetingSnapshots(snapshots: MeetingSessionSnapshot[]): MeetingSessionSnapshot[] {
@@ -199,28 +176,12 @@ function canonicalCompletedMeetingSnapshots(snapshots: MeetingSessionSnapshot[])
   const passthrough = snapshots.filter(snapshot => !isTerminalMeeting(snapshot.session));
   const canonical: MeetingSessionSnapshot[] = [];
   const canonicalIdentities = new Set<string>();
-  const canonicalByTitleBucket = new Map<string, MeetingSessionSnapshot[]>();
 
   for (const candidate of candidates) {
     const identity = resolvedMeetingIdentity(candidate.session);
     if (identity && canonicalIdentities.has(identity)) continue;
-
-    const title = normalizedMeetingTitle(candidate.session);
-    const range = meetingTimeRange(candidate.session);
-    const startBucket = range ? Math.floor(range.start / DUPLICATE_START_TOLERANCE_MS) : null;
-    const nearby = title && startBucket !== null
-      ? [-1, 0, 1].flatMap(offset => canonicalByTitleBucket.get(`${title}\u0000${startBucket + offset}`) ?? [])
-      : [];
-    if (nearby.some(current => representsSameMeeting(candidate, current))) continue;
-
     canonical.push(candidate);
     if (identity) canonicalIdentities.add(identity);
-    if (title && startBucket !== null) {
-      const key = `${title}\u0000${startBucket}`;
-      const bucket = canonicalByTitleBucket.get(key) ?? [];
-      bucket.push(candidate);
-      canonicalByTitleBucket.set(key, bucket);
-    }
   }
 
   const collapsedCount = candidates.length - canonical.length;
@@ -268,7 +229,7 @@ function completedSnapshots(snapshots: MeetingSessionSnapshot[], filter: Meeting
       if (startAfter !== null && (start === null || start < startAfter)) return false;
       if (startBefore !== null && (start === null || start >= startBefore)) return false;
       if (!query) return true;
-      const participantText = session.meeting.participants.flatMap(participant => [
+      const participantText = projectedParticipants(session).flatMap(participant => [
         participant.label,
         participant.calendarEmail,
         participant.transportEmail,
@@ -288,7 +249,9 @@ function countsFor(snapshots: MeetingSessionSnapshot[]): MeetingIndexCounts {
     completedMeetingCount: completed.length,
     completedMeetingsWithNotesCount: completed.filter(item => item.transcriptCount > 0).length,
     transcriptFragmentCount: completed.reduce((sum, item) => sum + item.transcriptCount, 0),
-    recapReadyCount: completed.filter(({ session }) => session.meeting?.recap?.status === "ready").length,
+    recapReadyCount: completed.filter(({ session }) =>
+      hasCredibleCalendarBinding(session) && session.meeting?.recap?.status === "ready"
+    ).length,
   };
 }
 
@@ -313,7 +276,7 @@ function projectParticipants(
   const seen = new Set<string>();
   const projected: MeetingIndexParticipant[] = [];
 
-  for (const participant of session.meeting?.participants ?? []) {
+  for (const participant of projectedParticipants(session)) {
     const identity = participantIdentity(participant);
     if (!identity || seen.has(identity)) continue;
     seen.add(identity);
@@ -336,7 +299,7 @@ function projectParticipants(
 async function artifactMapForSessions(sessions: FileSession[]): Promise<Map<string, MeetingIndexArtifact[]>> {
   const identities = sessions.flatMap(session => {
     const meeting = session.meeting;
-    if (!meeting?.providerEventId || !meeting.calendarAccountId || !meeting.calendarId) return [];
+    if (!hasCredibleCalendarBinding(session) || !meeting?.providerEventId || !meeting.calendarAccountId || !meeting.calendarId) return [];
     return [{
       sessionId: session.id,
       googleEventId: meeting.providerEventId,
@@ -363,10 +326,14 @@ async function artifactMapForSessions(sessions: FileSession[]): Promise<Map<stri
     linkedByMetadataId.set(artifact.metadataId, list);
   }
 
-  const directPageIds = Array.from(new Set(sessions.flatMap(session => [
-    session.meeting?.agendaPage?.id,
-    session.meeting?.recap?.pageId,
-  ].filter((id): id is string => Boolean(id)))));
+  const directPageIds = Array.from(new Set(sessions.flatMap(session => {
+    const meeting = session.meeting;
+    if (!meeting) return [];
+    return [
+      hasCredibleCalendarBinding(session) ? meeting.agendaPage?.id : undefined,
+      hasCredibleCalendarBinding(session) ? meeting.recap?.pageId : undefined,
+    ].filter((id): id is string => Boolean(id));
+  })));
   const directPages = directPageIds.length === 0 ? [] : await db
     .select({
       id: libraryPages.id,
@@ -392,12 +359,14 @@ async function artifactMapForSessions(sessions: FileSession[]): Promise<Map<stri
   for (const session of sessions) {
     const artifacts: MeetingIndexArtifact[] = [];
     const meeting = session.meeting!;
-    if (meeting.providerEventId && meeting.calendarAccountId && meeting.calendarId) {
+    if (hasCredibleCalendarBinding(session) && meeting.providerEventId && meeting.calendarAccountId && meeting.calendarId) {
       const meta = metadataByKey.get(makeMetaKey(meeting.providerEventId, meeting.calendarAccountId, meeting.calendarId));
       if (meta) artifacts.push(...(linkedByMetadataId.get(meta.id) ?? []));
     }
     for (const direct of [
-      meeting.agendaPage?.id ? { id: meeting.agendaPage.id, kind: "agenda", source: "meeting_session" } : null,
+      hasCredibleCalendarBinding(session) && meeting.agendaPage?.id
+        ? { id: meeting.agendaPage.id, kind: "agenda", source: "meeting_session" }
+        : null,
       meeting.recap?.pageId ? { id: meeting.recap.pageId, kind: "recap", source: "meeting_recap" } : null,
     ]) {
       if (!direct) continue;
@@ -442,7 +411,7 @@ async function projectRecords(snapshots: MeetingSessionSnapshot[]): Promise<Meet
       botStatus: session.meeting?.botStatus ?? "unknown",
       transcriptCount,
       hasNotes: transcriptCount > 0,
-      recapStatus: session.meeting?.recap?.status ?? null,
+      recapStatus: hasCredibleCalendarBinding(session) ? session.meeting?.recap?.status ?? null : null,
       summary: recap?.summary ?? recap?.oneLiner ?? null,
       participants: projectParticipants(session, peopleById, peopleByEmail),
       artifacts,

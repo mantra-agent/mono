@@ -1214,6 +1214,12 @@ export interface IChatFileStorage {
     meeting: MeetingSessionMeta,
     sessionKey?: string,
   ): Promise<FileSession>;
+  findMeetingSessionForOccurrence(input: {
+    occurrenceKey: string;
+    calendarAccountId?: string;
+    calendarId?: string;
+    providerEventId?: string;
+  }): Promise<FileSession | null>;
   updateMeetingMeta(
     sessionId: string,
     patch: Partial<MeetingSessionMeta>,
@@ -2041,6 +2047,44 @@ export const chatFileStorage: IChatFileStorage = {
       invalidateSessionsCache();
       return { outcome: "cancelled" as const, questionToolCallId };
     });
+  },
+
+  async findMeetingSessionForOccurrence(input) {
+    const normalized = input.occurrenceKey.trim();
+    if (!normalized) return null;
+    await targetReadsEnabled();
+    const legacyIdentity = input.calendarAccountId && input.calendarId && input.providerEventId
+      ? and(
+          sql`COALESCE(${documentStoreDocuments.metadata}->'meeting'->>'occurrenceKey', '') = ''`,
+          sql`${documentStoreDocuments.metadata}->'meeting'->>'calendarAccountId' = ${input.calendarAccountId}`,
+          sql`${documentStoreDocuments.metadata}->'meeting'->>'calendarId' = ${input.calendarId}`,
+          sql`${documentStoreDocuments.metadata}->'meeting'->>'providerEventId' = ${input.providerEventId}`,
+        )
+      : undefined;
+    const rows = await db
+      .select({ documentId: documentStoreDocuments.documentId })
+      .from(documentStoreDocuments)
+      .where(combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        targetChatDocumentScopeColumns,
+        and(
+          eq(documentStoreDocuments.documentType, "chat"),
+          sql`${documentStoreDocuments.metadata}->>'type' = 'meeting'`,
+          legacyIdentity
+            ? or(sql`${documentStoreDocuments.metadata}->'meeting'->>'occurrenceKey' = ${normalized}`, legacyIdentity)
+            : sql`${documentStoreDocuments.metadata}->'meeting'->>'occurrenceKey' = ${normalized}`,
+        ),
+      ))
+      .limit(2);
+    if (rows.length > 1) {
+      log.error("meeting occurrence uniqueness invariant violated", {
+        occurrenceKey: normalized,
+        sessionCount: rows.length,
+      });
+      throw new Error("Multiple meeting sessions already exist for this calendar occurrence");
+    }
+    if (!rows[0]) return null;
+    return (await chatFileStorage.getSession(rows[0].documentId)) ?? null;
   },
 
   async createMeetingSession(

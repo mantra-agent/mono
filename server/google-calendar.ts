@@ -39,7 +39,11 @@ export interface CalendarEvent {
   created?: string;
   updated?: string;
   organizer?: { email: string; displayName?: string; self?: boolean };
+  /** RFC5545 identity shared by attendee copies and recurring instances. */
+  iCalUID?: string;
   recurringEventId?: string;
+  /** Immutable occurrence identity within a recurring series, even after moves. */
+  originalStartTime?: { dateTime?: string; date?: string; timeZone?: string };
   colorId?: string;
 }
 
@@ -294,7 +298,13 @@ function mapEvent(ev: any, calendarId: string, accountId: string, accountEmail: 
       displayName: ev.organizer.displayName || undefined,
       self: ev.organizer.self || undefined,
     } : undefined,
+    iCalUID: ev.iCalUID || undefined,
     recurringEventId: ev.recurringEventId || undefined,
+    originalStartTime: ev.originalStartTime ? {
+      dateTime: ev.originalStartTime.dateTime || undefined,
+      date: ev.originalStartTime.date || undefined,
+      timeZone: ev.originalStartTime.timeZone || undefined,
+    } : undefined,
     colorId: ev.colorId || undefined,
   };
 }
