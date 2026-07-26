@@ -806,6 +806,14 @@ The affected assets are A02 personal memory, A03 durable agent state, A07 audit 
 
 Controls: DATA-01, AGENT-02, AGENT-05, OBS-01, REC-02. Threats addressed: cross-tenant event insertion, replay amplification, arbitrary-weight memory poisoning, passive-use feedback loops, and sensitive-content leakage in logs. Rollback is the merged PR revert; the additive event tables may remain inert. Residual risk: P0 records typed strength events but does not yet activate a strength projection in retrieval. That controlled activation belongs to the next orthogonal-dimensions phase.
 
+## 11.18 Plan and Workflow child retry fencing, July 25, 2026
+
+A03 durable orchestration state, A04 autonomous mutation authority, and A08 availability/cost cross F05 and B11 when a parent monitor times out, loses, or observes a prematurely failed child session. The confirmed defect allowed the parent to request abort, project the child as failed, and start a successor while `AgentExecutor` could still own the prior mutating run. This enabled duplicate People/profile mutations, contradictory audit entries, replay amplification, and false terminal state.
+
+**Closed in source.** `child-session-monitor.ts` is the single abort-and-confirm boundary: it waits through the executor's bounded drain budget until no matching active run remains, serializes monitor settlement, and returns `termination_unconfirmed` when liveness cannot be disproven. Plans pause and Workflows block without retry on that outcome. Plan automatic retry, manual resume, and abandoned-child closure reuse the same fence. Principal, Plan lease, attempt ownership, and tool authorization are unchanged.
+
+Controls: AGENT-04, OBS-01, DATA-01, REC-02. Owner: Agent Runtime / Orchestration. Severity: high. Rollback is the merged PR revert. Residual risk: an uncooperative child can force a fail-closed pause/block requiring later recovery, but cannot authorize an overlapping retry.
+
 ## 11.17 Principal-scoped DOCX attachment reads, July 22, 2026
 
 Uploaded DOCX files are A02/S2 data crossing F07/B07 and B10 from private object storage into a model-invoked read tool. The prior DOCX reader accepted only workspace paths, so canonical attachment paths failed even when upload and ACL state were valid. A naive repair using public URLs or direct raw storage keys would create an IDOR and disclosure risk.
