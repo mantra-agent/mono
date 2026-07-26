@@ -2,6 +2,10 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import type { NativeToWebVoiceMessage } from '../lib/voice-bridge';
 import Config from '../config';
 import Logger from '../lib/logger';
+import {
+  createVoiceInputActivityDetector,
+  VOICE_INPUT_SAMPLE_INTERVAL_MS,
+} from '@shared/voice-input-activity';
 
 const LOG_TAG = 'VoiceSession';
 
@@ -40,6 +44,7 @@ interface SDKConversationHook {
   isListening: boolean;
   message: string | undefined;
   sendUserActivity: () => void;
+  getInputVolume: () => number;
 }
 
 interface ElevenLabsModule {
@@ -180,6 +185,8 @@ function VoiceSessionInner({
 }) {
   const [error, setError] = useState<string | null>(null);
   const listenersRef = useRef<Set<VoiceEventListener>>(new Set());
+  const inputActivityDetectorRef = useRef(createVoiceInputActivityDetector());
+  const lastInputActivityRef = useRef<boolean | null>(true);
 
   const emit = useCallback((event: NativeToWebVoiceMessage) => {
     for (const listener of listenersRef.current) {
@@ -240,6 +247,35 @@ function VoiceSessionInner({
       }
     },
   });
+
+  useEffect(() => {
+    if (conversation.status !== 'connected') {
+      inputActivityDetectorRef.current.reset();
+      lastInputActivityRef.current = true;
+      return;
+    }
+
+    emit({ type: 'voice.inputActivity', active: true });
+    let cancelled = false;
+    const interval = setInterval(() => {
+      let level = 0;
+      try {
+        level = conversation.getInputVolume();
+      } catch {
+        level = 0;
+      }
+      if (cancelled) return;
+      const active = inputActivityDetectorRef.current.sample(level);
+      if (active === lastInputActivityRef.current) return;
+      lastInputActivityRef.current = active;
+      emit({ type: 'voice.inputActivity', active });
+    }, VOICE_INPUT_SAMPLE_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [conversation, conversation.status, emit]);
 
   // ------- Apply pending config from lazy-load -------
 

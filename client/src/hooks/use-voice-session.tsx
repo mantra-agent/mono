@@ -7,6 +7,10 @@ import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-syn
 import { stripExpressionTags } from "@/components/chat-shared";
 import { Conversation } from "@elevenlabs/client";
 import type { AgentVisualState } from "@shared/agent-visualizer";
+import {
+  createVoiceInputActivityDetector,
+  VOICE_INPUT_SAMPLE_INTERVAL_MS,
+} from "@shared/voice-input-activity";
 import { createLogger } from "@/lib/logger";
 import { buildDisconnectReason } from "@/lib/ws-close-codes";
 import {
@@ -232,6 +236,7 @@ export function VoiceSessionProvider({
   const [voiceThinking, setVoiceThinking] = useState(false);
   const [activeVoiceToolCount, setActiveVoiceToolCount] = useState(0);
   const [userSpeaking, setUserSpeaking] = useState(false);
+  const [nativeInputActivityAvailable, setNativeInputActivityAvailable] = useState(false);
   const [transcript, setTranscript] = useState<VoiceTranscriptEntry[]>([]);
   const [userComposition, setUserComposition] = useState("");
   const [transcriptSessionId, setTranscriptSessionId] = useState<string | null>(null);
@@ -295,6 +300,7 @@ export function VoiceSessionProvider({
   // kill are enforced once here rather than patched per surface.
   const thinkingAudioGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const thinkingAudioPlayingRef = useRef(false);
+  const inputActivityDetectorRef = useRef(createVoiceInputActivityDetector());
 
   useEffect(() => {
     // Grace period before the sound may fade in. Fast turns that resolve inside
@@ -306,7 +312,8 @@ export function VoiceSessionProvider({
       status === "active" &&
       voiceThinking &&
       agentMode !== "speaking" &&
-      !userSpeaking;
+      !userSpeaking &&
+      (!isNative || nativeInputActivityAvailable);
 
     const startPlayback = () => {
       thinkingAudioPlayingRef.current = true;
@@ -339,6 +346,15 @@ export function VoiceSessionProvider({
       }
       thinkingAudioGraceTimerRef.current = setTimeout(() => {
         thinkingAudioGraceTimerRef.current = null;
+        if (
+          status !== "active"
+          || !voiceThinking
+          || agentMode === "speaking"
+          || userSpeaking
+          || (isNative && !nativeInputActivityAvailable)
+        ) {
+          return;
+        }
         startPlayback();
       }, ONSET_GRACE_MS);
       return;
@@ -347,7 +363,38 @@ export function VoiceSessionProvider({
     // User speech demands an instant kill; other stops (agent speaking, session
     // ending) may use the gentler fade.
     stopPlayback(userSpeaking);
-  }, [agentMode, isNative, status, voiceThinking, userSpeaking]);
+  }, [agentMode, isNative, nativeInputActivityAvailable, status, voiceThinking, userSpeaking]);
+
+  useEffect(() => {
+    if (isNative || status !== "active" || isMuted) {
+      if (isMuted || status !== "active") {
+        inputActivityDetectorRef.current.reset();
+        setUserSpeaking(false);
+      }
+      return;
+    }
+
+    setUserSpeaking(true);
+    let cancelled = false;
+    const interval = window.setInterval(() => {
+      const conversation = conversationRef.current;
+      if (!conversation) return;
+      let level = 0;
+      try {
+        level = conversation.getInputVolume();
+      } catch {
+        level = 0;
+      }
+      if (cancelled) return;
+      const active = inputActivityDetectorRef.current.sample(level);
+      setUserSpeaking((current) => current === active ? current : active);
+    }, VOICE_INPUT_SAMPLE_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [isMuted, isNative, status]);
 
   useEffect(() => () => {
     if (thinkingAudioGraceTimerRef.current !== null) {
@@ -377,6 +424,8 @@ export function VoiceSessionProvider({
   const resetEphemeralVoiceState = useCallback((options?: { clearTranscript?: boolean }) => {
     agentModeRef.current = "listening";
     setAgentMode("listening");
+    inputActivityDetectorRef.current.reset();
+    setNativeInputActivityAvailable(false);
     setUserSpeaking(false);
     setVoiceThinking(false);
     activeVoiceToolIdsRef.current.clear();
@@ -919,12 +968,16 @@ export function VoiceSessionProvider({
             log.debug("VOICE:NATIVE:MODE_CHANGE", { mode: newMode });
             phoneDiag("mode_change", { mode: newMode });
             setAgentMode(newMode);
-            setUserSpeaking(false);
             if (newMode === "speaking") {
               setVoiceThinking(false);
               activeVoiceToolIdsRef.current.clear();
               setActiveVoiceToolCount(0);
             }
+            break;
+          }
+          case "voice.inputActivity": {
+            setNativeInputActivityAvailable(true);
+            setUserSpeaking(msg.active);
             break;
           }
           case "voice.userTranscript": {
@@ -1084,6 +1137,7 @@ export function VoiceSessionProvider({
         lastActivityRef.current = Date.now();
         log.debug("VOICE:MESSAGE", { source: message.source, messageLength: message.message?.length || 0 });
         if (message.source === "user" || message.source === "user_edited") {
+          inputActivityDetectorRef.current.corroborate();
           setUserSpeaking(true);
           // ElevenLabs onMessage is the finalized user-transcript boundary.
           // Committed transcript history remains server-owned via voice_user_transcript.
@@ -1119,6 +1173,7 @@ export function VoiceSessionProvider({
         const tentative = getTentativeUserTranscript(debugEvent);
         if (!tentative) return;
         lastActivityRef.current = Date.now();
+        inputActivityDetectorRef.current.corroborate();
         setUserSpeaking(true);
         setUserComposition(tentative.text);
         if (!firstUserSpeechFiredRef.current) {
@@ -1143,7 +1198,6 @@ export function VoiceSessionProvider({
         log.debug("VOICE:MODE_CHANGE", { mode: mode.mode });
         phoneDiag("mode_change", { mode: mode.mode });
         setAgentMode(newMode);
-        setUserSpeaking(false);
         if (newMode === "speaking") {
           setVoiceThinking(false);
           activeVoiceToolIdsRef.current.clear();

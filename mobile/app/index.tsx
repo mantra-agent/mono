@@ -244,7 +244,10 @@ export default function PrimaryScreen() {
   useEffect(() => {
     const unsubscribe = voiceSession.addBridgeListener((event) => {
       Logger.debug(LOG_TAG, 'Forwarding voice event to WebView', { type: event.type });
-      if (event.type === 'voice.modeChange' && event.mode === 'speaking') {
+      if (
+        (event.type === 'voice.modeChange' && event.mode === 'speaking')
+        || (event.type === 'voice.inputActivity' && event.active)
+      ) {
         void stopThinkingAudioLoop();
       }
       if (event.type === 'voice.disconnected' || event.type === 'voice.error') {
@@ -318,6 +321,7 @@ export default function PrimaryScreen() {
         break;
 
       case 'voice.userActivity':
+        void stopThinkingAudioLoop();
         voiceSession.sendUserActivity();
         break;
 

@@ -3,31 +3,10 @@ import Logger from './logger';
 
 const LOG_TAG = 'ThinkingAudio';
 const SAMPLE_RATE = 22050;
-const LOOP_SECONDS = 1.9;
-const TONE_HZ = 240;
-const OUTPUT_PEAK = 0.62;
-// Ray's listening calibration: the cue should sit at roughly one quarter of the
-// perceived voice level, not compete with the response that follows it.
-const PLAYBACK_VOLUME = 0.07;
-const TWO_PI = Math.PI * 2;
+const LOOP_SECONDS = 5.3;
+const OUTPUT_PEAK = 0.32;
+const PLAYBACK_VOLUME = 0.018;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-type PulseTrain = {
-  start: number;
-  interval: number;
-  count: number;
-  gain: number;
-  decay: number;
-};
-
-// Three interlocking delay trains use one pitch throughout. Their uneven clocks
-// create a quiet polyrhythm while each train recedes rather than resolving into
-// a melody. The final gap lets the loop breathe before it starts again.
-const PULSE_TRAINS: PulseTrain[] = [
-  { start: 0, interval: 0.115, count: 5, gain: 1, decay: 0.63 },
-  { start: 0.34, interval: 0.173, count: 4, gain: 0.52, decay: 0.68 },
-  { start: 1.02, interval: 0.127, count: 4, gain: 0.38, decay: 0.64 },
-];
 
 let sound: Audio.Sound | null = null;
 let loadingPromise: Promise<Audio.Sound> | null = null;
@@ -54,43 +33,33 @@ function encodeBase64(bytes: Uint8Array): string {
   return output;
 }
 
-type Pulse = { start: number; gain: number };
-
-function buildPulseSchedule(): Pulse[] {
-  return PULSE_TRAINS.flatMap((train) =>
-    Array.from({ length: train.count }, (_, index) => ({
-      start: train.start + index * train.interval,
-      gain: train.gain * train.decay ** index,
-    })),
-  );
+function createNoiseSample(randomState: { value: number }): number {
+  randomState.value = (randomState.value * 1664525 + 1013904223) >>> 0;
+  return randomState.value / 0xffffffff * 2 - 1;
 }
 
-/** Smooth same-tone pulses with no noise layer, pitch movement, or bit-crushed transient. */
-function renderPulseBed(frameCount: number): Float32Array {
-  const bed = new Float32Array(frameCount);
-  const pulses = buildPulseSchedule();
+/** Dense, band-limited noise with no pitch, pulse, meter, or emotional contour. */
+function renderNeutralNoise(frameCount: number): Float32Array {
+  const samples = new Float32Array(frameCount);
+  const randomState = { value: 0x4d414e54 };
+  let fastAverage = 0;
+  let slowAverage = 0;
+  let peak = 0;
 
   for (let index = 0; index < frameCount; index += 1) {
-    const time = index / SAMPLE_RATE;
-    let sample = 0;
-
-    for (const pulse of pulses) {
-      const local = time - pulse.start;
-      if (local < 0 || local > 0.3) continue;
-
-      const attack = Math.min(1, local / 0.012);
-      const release = Math.min(1, (0.3 - local) / 0.06);
-      const decay = Math.exp(-local / 0.082);
-      const envelope = attack * Math.max(0, release) * decay;
-      const fundamental = Math.sin(TWO_PI * TONE_HZ * local);
-      const softOvertone = Math.sin(TWO_PI * TONE_HZ * 2 * local) * 0.045;
-      sample += (fundamental + softOvertone) * envelope * pulse.gain;
-    }
-
-    bed[index] = sample;
+    const white = createNoiseSample(randomState);
+    fastAverage += (white - fastAverage) * 0.23;
+    slowAverage += (white - slowAverage) * 0.025;
+    const sample = fastAverage - slowAverage;
+    samples[index] = sample;
+    peak = Math.max(peak, Math.abs(sample));
   }
 
-  return bed;
+  const normalize = peak > 0 ? OUTPUT_PEAK / peak : 1;
+  for (let index = 0; index < frameCount; index += 1) {
+    samples[index] *= normalize;
+  }
+  return samples;
 }
 
 function buildThinkingLoopDataUri(): string {
@@ -113,13 +82,9 @@ function buildThinkingLoopDataUri(): string {
   writeString(view, 36, 'data');
   view.setUint32(40, dataSize, true);
 
-  const samples = renderPulseBed(frameCount);
-  let peak = 0;
-  for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
-  const normalize = peak > 0 ? OUTPUT_PEAK / peak : 1;
-
+  const samples = renderNeutralNoise(frameCount);
   for (let index = 0; index < frameCount; index += 1) {
-    const clamped = Math.max(-1, Math.min(1, samples[index] * normalize));
+    const clamped = Math.max(-1, Math.min(1, samples[index]));
     view.setInt16(44 + index * 2, Math.round(clamped * 32767), true);
   }
 
@@ -168,6 +133,7 @@ export async function stopThinkingAudioLoop(): Promise<void> {
   try {
     const activeSound = sound;
     if (!activeSound) return;
+    await activeSound.setVolumeAsync(0);
     await activeSound.stopAsync();
   } catch (error) {
     Logger.warn(LOG_TAG, 'Failed to stop thinking audio', { error: error instanceof Error ? error.message : String(error) });
