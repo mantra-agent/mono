@@ -21,7 +21,7 @@ import { runWithPrincipal } from "./principal-context";
 import { resolveSessionModelTierOverride } from "./session-model-tier-override";
 import { safeStringify } from "./utils/safe-stringify";
 import { captureInferencePayload } from "./inference-payload-capture";
-import { beginProviderAttempt, createProviderAttemptTracker, type ProviderAttemptTracker } from "./provider-attempt";
+import { beginProviderAttempt, createProviderAttemptTracker, settleRetryingProviderAttempt, type ProviderAttemptTracker } from "./provider-attempt";
 import { redactSensitiveText } from "./sensitive-data-redaction";
 
 let _openaiClient: OpenAI | null = null;
@@ -142,6 +142,14 @@ interface CodexResponsesRequest {
   stream?: boolean;
 }
 
+interface OpenAIResponsesUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  input_tokens_details?: { cached_tokens?: number };
+  output_tokens_details?: { reasoning_tokens?: number };
+}
+
 interface CodexResponsesChunk {
   type: string;
   sequence_number?: number;
@@ -154,11 +162,11 @@ interface CodexResponsesChunk {
   param?: string | null;
   output?: Array<{ type: string; id?: string; content?: Array<{ type: string; text?: string }> }>;
   item?: { type?: string; id?: string; name?: string; call_id?: string; arguments?: string };
-  usage?: { input_tokens: number; output_tokens: number; total_tokens: number; input_tokens_details?: { cached_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } };
+  usage?: OpenAIResponsesUsage;
   response?: {
     id?: string;
     status?: string;
-    usage?: { input_tokens: number; output_tokens: number; total_tokens: number; input_tokens_details?: { cached_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } };
+    usage?: OpenAIResponsesUsage;
     error?: { code?: string; message?: string; type?: string };
     incomplete_details?: { reason?: string } | null;
   };
@@ -417,6 +425,8 @@ export interface ChatCompletionResult {
   model: string;
   provider: string;
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number; visibleOutputTokens?: number };
+  stopReason?: string;
+  termination?: Record<string, unknown>;
   toolCalls?: Array<{ id: string; name: string; arguments: Record<string, any> }>;
   metadata?: Record<string, unknown>;
 }
@@ -509,6 +519,8 @@ async function recordInference(params: {
   responseContent?: string;
   error?: Record<string, unknown>;
   latency?: { providerTtftMs?: number | null; firstSdkEventMs?: number | null; firstThinkingMs?: number | null };
+  stopReason?: string;
+  termination?: Record<string, unknown>;
   signal?: AbortSignal;
   apiCallId?: number;
 }): Promise<void> {
@@ -527,6 +539,7 @@ async function recordInference(params: {
       sessionKey: meta?.sessionKey || meta?.sessionId || meta?.runId || meta?.source || "system",
       requestContent: params.requestContent,
       responseContent: params.responseContent,
+      stopReason: params.stopReason,
       signal: params.signal,
       metadata: {
         ...(meta || {}),
@@ -545,6 +558,7 @@ async function recordInference(params: {
         routing: auditRouting(params.routing),
         error: params.error,
         latency: params.latency,
+        termination: params.termination,
         trackedAtBoundary: true,
       },
     });
@@ -660,7 +674,7 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
     const elapsed = Date.now() - start;
     const usage = result.usage;
     log.debug(`chatCompletion done in ${elapsed}ms provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash} prompt=${usage?.promptTokens ?? "?"} completion=${usage?.completionTokens ?? "?"} total=${usage?.totalTokens ?? "?"}`);
-    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status: "success", usage, requestContent, responseContent: result.content, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
+    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status: "success", usage, requestContent, responseContent: result.content, stopReason: result.stopReason, termination: result.termination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
     return result;
   } catch (err: any) {
     const elapsed = Date.now() - start;
@@ -687,7 +701,9 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
           reasoningTokens: err.providerFailure.usage.reasoningTokens,
         }
       : undefined;
-    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status, usage: result?.usage || providerUsage, requestContent, responseContent: result?.content, error: errorMetadata, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
+    const providerStopReason = err instanceof ModelProviderError ? providerFailureStopReason(err.providerFailure) : undefined;
+    const providerTermination = err instanceof ModelProviderError ? providerFailureTerminationMetadata(err.providerFailure) : undefined;
+    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status, usage: result?.usage || providerUsage, requestContent, responseContent: result?.content, error: errorMetadata, stopReason: providerStopReason, termination: providerTermination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
     throw enrichModelError(err, routing, options.metadata);
   }
 }
@@ -1365,6 +1381,116 @@ function responsesProviderFailure(
   });
 }
 
+function responsesUsageInfo(usage: OpenAIResponsesUsage | undefined): ModelProviderFailureInfo["usage"] | undefined {
+  if (!usage) return undefined;
+  return {
+    inputTokens: usage.input_tokens || 0,
+    outputTokens: usage.output_tokens || 0,
+    totalTokens: usage.total_tokens || 0,
+    cacheReadTokens: usage.input_tokens_details?.cached_tokens ?? 0,
+    reasoningTokens: usage.output_tokens_details?.reasoning_tokens ?? 0,
+  };
+}
+
+function responsesTerminationMetadata(chunk: CodexResponsesChunk | undefined): Record<string, unknown> | undefined {
+  if (!chunk) return undefined;
+  const usage = responsesUsageInfo(chunk.response?.usage || chunk.usage);
+  return {
+    eventType: chunk.type,
+    responseId: sanitizeProviderDiagnostic(chunk.response?.id) ?? null,
+    responseStatus: sanitizeProviderDiagnostic(chunk.response?.status) ?? null,
+    incompleteReason: sanitizeProviderDiagnostic(chunk.response?.incomplete_details?.reason) ?? null,
+    sequenceNumber: chunk.sequence_number ?? null,
+    usage: usage ?? null,
+  };
+}
+
+function responsesIncompleteAttemptError(
+  chunk: CodexResponsesChunk,
+  context: {
+    clientRequestId: string;
+    providerRequestId?: string;
+    status: number;
+    diagnostics: Partial<ModelProviderFailure>;
+  },
+): ModelProviderAttemptError {
+  const incompleteReason = sanitizeProviderDiagnostic(chunk.response?.incomplete_details?.reason) || "unknown";
+  return new ModelProviderAttemptError({
+    kind: "provider_failed",
+    retryable: true,
+    status: context.status,
+    message: `response.incomplete:${incompleteReason}`,
+    clientRequestId: context.clientRequestId,
+    providerRequestId: context.providerRequestId,
+    phase: "protocol",
+    diagnostics: {
+      ...context.diagnostics,
+      eventType: chunk.type,
+      responseId: sanitizeProviderDiagnostic(chunk.response?.id),
+      responseStatus: sanitizeProviderDiagnostic(chunk.response?.status) || "incomplete",
+      sequenceNumber: chunk.sequence_number,
+      incompleteReason,
+      providerMessage: `response.incomplete:${incompleteReason}`,
+      providerEventFields: Object.keys(chunk).sort(),
+      providerResponseFields: chunk.response ? Object.keys(chunk.response).sort() : undefined,
+      usage: responsesUsageInfo(chunk.response?.usage || chunk.usage),
+    },
+  });
+}
+
+function responsesCompletedEmptyAttemptError(
+  chunk: CodexResponsesChunk | undefined,
+  context: {
+    clientRequestId: string;
+    providerRequestId?: string;
+    status: number;
+    diagnostics: Partial<ModelProviderFailure>;
+  },
+): ModelProviderAttemptError {
+  return new ModelProviderAttemptError({
+    kind: "protocol_invalid",
+    retryable: true,
+    status: context.status,
+    message: "response.completed_without_output_text",
+    clientRequestId: context.clientRequestId,
+    providerRequestId: context.providerRequestId,
+    phase: "protocol",
+    diagnostics: {
+      ...context.diagnostics,
+      eventType: chunk?.type || "response.completed",
+      responseId: sanitizeProviderDiagnostic(chunk?.response?.id),
+      responseStatus: sanitizeProviderDiagnostic(chunk?.response?.status) || "completed",
+      sequenceNumber: chunk?.sequence_number,
+      providerMessage: "response.completed_without_output_text",
+      providerEventFields: chunk ? Object.keys(chunk).sort() : undefined,
+      providerResponseFields: chunk?.response ? Object.keys(chunk.response).sort() : undefined,
+      usage: responsesUsageInfo(chunk?.response?.usage || chunk?.usage),
+    },
+  });
+}
+
+function providerFailureStopReason(failure: ModelProviderAttemptError | ModelProviderFailure): string {
+  const diagnostics = failure instanceof ModelProviderAttemptError ? failure.diagnostics : failure;
+  if (diagnostics?.responseStatus === "incomplete" || diagnostics?.eventType === "response.incomplete") {
+    return `incomplete:${diagnostics.incompleteReason || "unknown"}`;
+  }
+  if (failure.kind === "protocol_invalid") return "protocol_invalid";
+  return failure.kind;
+}
+
+function providerFailureTerminationMetadata(failure: ModelProviderAttemptError | ModelProviderFailure): Record<string, unknown> {
+  const diagnostics = failure instanceof ModelProviderAttemptError ? failure.diagnostics : failure;
+  return {
+    eventType: diagnostics?.eventType ?? null,
+    responseId: diagnostics?.responseId ?? null,
+    responseStatus: diagnostics?.responseStatus ?? null,
+    incompleteReason: diagnostics?.incompleteReason ?? null,
+    sequenceNumber: diagnostics?.sequenceNumber ?? null,
+    providerRequestId: failure.providerRequestId ?? null,
+    usage: diagnostics?.usage ?? null,
+  };
+}
+
 function openaiSdkAttemptError(err: unknown, clientRequestId: string): ModelProviderAttemptError {
   const sdkError = err as {
     status?: number;
@@ -1487,7 +1613,8 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
       }
 
       let content = "";
-      let streamUsage: { input_tokens: number; output_tokens: number; total_tokens: number; input_tokens_details?: { cached_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } } | undefined;
+      let streamUsage: OpenAIResponsesUsage | undefined;
+      let terminalEvent: CodexResponsesChunk | undefined;
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -1587,7 +1714,10 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
             status: response.status,
             diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
           });
-          else if (chunk.type === "response.completed" || chunk.type === "response.incomplete") terminalEventSeen = true;
+          else if (chunk.type === "response.completed" || chunk.type === "response.incomplete") {
+            terminalEvent = chunk;
+            terminalEventSeen = true;
+          }
         }
         if (protocolFailure) break;
       }
@@ -1604,7 +1734,23 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
           diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
         });
       }
-      if (!content) log.warn(`openai-subscription completion: empty content for model=${codexModel}`);
+      const terminalUsage = terminalEvent?.response?.usage || terminalEvent?.usage || streamUsage;
+      if (terminalEvent?.type === "response.incomplete") {
+        throw responsesIncompleteAttemptError(terminalEvent, {
+          clientRequestId: scope.clientRequestId,
+          providerRequestId: response.headers.get("x-request-id") || undefined,
+          status: response.status,
+          diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
+        });
+      }
+      if (!content.trim()) {
+        throw responsesCompletedEmptyAttemptError(terminalEvent, {
+          clientRequestId: scope.clientRequestId,
+          providerRequestId: response.headers.get("x-request-id") || undefined,
+          status: response.status,
+          diagnostics: codexFailureDiagnostics(scope, progress, terminalEventSeen, response),
+        });
+      }
       if (attempt > 0) {
         log.warn(
           `codex completion recovered after retry attempts=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} ` +
@@ -1616,19 +1762,29 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
         content,
         model,
         provider: "openai-subscription",
-        usage: streamUsage ? {
-          promptTokens: streamUsage.input_tokens,
-          completionTokens: streamUsage.output_tokens,
-          totalTokens: streamUsage.total_tokens,
-          cacheReadTokens: streamUsage.input_tokens_details?.cached_tokens ?? 0,
-          reasoningTokens: streamUsage.output_tokens_details?.reasoning_tokens ?? 0,
-          visibleOutputTokens: streamUsage.output_tokens - (streamUsage.output_tokens_details?.reasoning_tokens ?? 0),
+        usage: terminalUsage ? {
+          promptTokens: terminalUsage.input_tokens,
+          completionTokens: terminalUsage.output_tokens,
+          totalTokens: terminalUsage.total_tokens,
+          cacheReadTokens: terminalUsage.input_tokens_details?.cached_tokens ?? 0,
+          reasoningTokens: terminalUsage.output_tokens_details?.reasoning_tokens ?? 0,
+          visibleOutputTokens: terminalUsage.output_tokens - (terminalUsage.output_tokens_details?.reasoning_tokens ?? 0),
         } : undefined,
+        stopReason: "end_turn",
+        termination: responsesTerminationMetadata(terminalEvent),
       };
     } catch (err: any) {
       if (parentSignal?.aborted || (isAbortError(err, scope.signal) && !scope.timedOut())) throw new CodexAbortedError();
       if (!(err instanceof ModelProviderAttemptError)) throw err;
       lastAttemptError = err;
+      if (err.retryable && attempt < CODEX_COMPLETION_MAX_ATTEMPTS - 1) {
+        await settleRetryingProviderAttempt(options.providerAttemptTracker ?? createProviderAttemptTracker(), {
+          error: serializeModelError(err),
+          usage: err.diagnostics?.usage,
+          stopReason: providerFailureStopReason(err),
+          termination: providerFailureTerminationMetadata(err),
+        });
+      }
       log.debug(
         `codex completion attempt failed attempt=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} model=${codexModel} ` +
         `phase=${err.phase} status=${err.status || 0} elapsedMs=${Date.now() - scope.startedAt} ` +
