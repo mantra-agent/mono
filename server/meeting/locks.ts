@@ -10,7 +10,7 @@ const log = createLogger("MeetingLocks");
  * mutually exclusive for the same meeting, so a recovery attempt can never
  * race a departure into two conflicting bot lifecycles.
  */
-function meetingLockKey(namespace: "transport" | "occurrence", identity: string): bigint {
+function meetingLockKey(namespace: "transport" | "occurrence" | "native", identity: string): bigint {
   const hash = createHash("sha256").update(`meeting-${namespace}:${identity}`).digest();
   let key = 0n;
   for (let index = 0; index < 8; index += 1) {
@@ -21,7 +21,7 @@ function meetingLockKey(namespace: "transport" | "occurrence", identity: string)
 
 /** Serialize transport-control mutations for one meeting across processes. */
 async function withMeetingLock<T>(
-  namespace: "transport" | "occurrence",
+  namespace: "transport" | "occurrence" | "native",
   identity: string,
   operation: () => Promise<T>,
 ): Promise<T> {
@@ -53,4 +53,13 @@ export function withMeetingOccurrenceLock<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   return withMeetingLock("occurrence", occurrenceKey, operation);
+}
+
+/** Serialize native meeting creation for one owner-provided idempotency key. */
+export function withNativeMeetingCreationLock<T>(
+  ownerUserId: string,
+  idempotencyKey: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withMeetingLock("native", `${ownerUserId}:${idempotencyKey}`, operation);
 }

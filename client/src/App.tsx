@@ -25,6 +25,7 @@ import { useDataSync } from "@/hooks/use-data-sync";
 import { ClientPresenceProvider } from "@/hooks/use-client-presence";
 import { ExecutorStatusProvider } from "@/hooks/use-executor-status";
 import { FocusSessionProvider, useFocusSession } from "@/hooks/use-focus-session";
+import { NativeMeetingTranscriptionProvider } from "@/hooks/use-native-meeting-transcription";
 import { FocusContextProvider } from "@/hooks/use-focus-context";
 import { TaskModalProvider } from "@/contexts/task-modal-context";
 import { FocusWidget } from "@/components/focus-widget";
@@ -477,13 +478,15 @@ function AppShell() {
         <MyelinationProvider>
           <ExecutorStatusProvider>
             <FocusSessionProvider>
-              <FocusContextProvider>
-              <TaskModalProvider>
-              <SidebarProvider style={style as React.CSSProperties} forceMobile={mobileSurfaceActive} defaultOpen={false}>
-                <AppLayout mobileSurfaceActive={mobileSurfaceActive} previewRouteOwnsCanvas={previewRouteOwnsCanvas} />
-              </SidebarProvider>
-              </TaskModalProvider>
-              </FocusContextProvider>
+              <NativeMeetingTranscriptionProvider>
+                <FocusContextProvider>
+                <TaskModalProvider>
+                <SidebarProvider style={style as React.CSSProperties} forceMobile={mobileSurfaceActive} defaultOpen={false}>
+                  <AppLayout mobileSurfaceActive={mobileSurfaceActive} previewRouteOwnsCanvas={previewRouteOwnsCanvas} />
+                </SidebarProvider>
+                </TaskModalProvider>
+                </FocusContextProvider>
+              </NativeMeetingTranscriptionProvider>
             </FocusSessionProvider>
           </ExecutorStatusProvider>
         </MyelinationProvider>

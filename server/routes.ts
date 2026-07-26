@@ -109,6 +109,37 @@ export async function registerRoutes(
       const handler = app.locals.recallMeetingAudioUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
       if (!handler) { wsLog.warn("Recall participant audio upgrade handler unavailable"); socket.destroy(); }
       else handler(request, socket, head);
+    } else if (pathname === "/ws/native-meeting-audio") {
+      resolveUserPrincipalForSessionRequest(request)
+        .then((principal) => {
+          if (!principal || principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+            socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+          const origin = request.headers.origin;
+          const host = request.headers["x-forwarded-host"]?.toString().split(",")[0]?.trim() || request.headers.host;
+          if (origin && host && new URL(origin).host !== host) {
+            socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+          const handler = app.locals.nativeMeetingAudioUpgrade as ((request: IncomingMessage & { nativeMeetingPrincipal?: Principal }, socket: typeof socket, head: Buffer) => void) | undefined;
+          if (!handler) {
+            wsLog.warn("Native meeting audio upgrade handler unavailable");
+            socket.destroy();
+            return;
+          }
+          (request as IncomingMessage & { nativeMeetingPrincipal?: Principal }).nativeMeetingPrincipal = principal;
+          handler(request, socket, head);
+        })
+        .catch((error) => {
+          wsLog.error("native meeting audio upgrade authentication failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+        });
     } else if (pathname === "/ws/meeting-visualizer") {
       const handler = app.locals.meetingVisualizerUpgrade as ((request: IncomingMessage, socket: typeof socket, head: Buffer) => void) | undefined;
       if (!handler) { wsLog.warn("Meeting visualizer upgrade handler unavailable"); socket.destroy(); }

@@ -802,6 +802,8 @@ export type MeetingResolutionSource =
 export interface MeetingSessionMeta {
   title?: string;
   platform?: string;
+  /** Transport owner for lifecycle isolation. Legacy/provider-backed sessions default to Recall. */
+  transport?: "recall" | "native";
   participants: MeetingParticipant[];
   botStatus: MeetingBotStatus;
   startedAt?: string;
@@ -849,7 +851,7 @@ export interface MeetingSessionMeta {
   /** Canonical recognition boundary telemetry. Recall transcript webhooks remain the explicit fallback. */
   sttProvider?: string;
   sttModel?: string;
-  sttSource?: "recall_participant_audio" | "recall_transcript_webhook";
+  sttSource?: "recall_participant_audio" | "recall_transcript_webhook" | "native_microphone";
   sttFallback?: boolean;
   sttStatus?: "active" | "fallback" | "inactive";
   sttStatusDetail?: string;

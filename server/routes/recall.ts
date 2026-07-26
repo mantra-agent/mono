@@ -41,7 +41,7 @@ export type MeetingIngestFn = (event: {
   stt?: {
     provider: string;
     model: string;
-    source: "recall_participant_audio" | "recall_transcript_webhook";
+    source: "recall_participant_audio" | "recall_transcript_webhook" | "native_microphone";
     fallback: boolean;
   };
 }) => Promise<

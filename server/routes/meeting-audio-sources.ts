@@ -61,6 +61,11 @@ export function registerMeetingAudioSourceRoutes(app: Express): void {
       }
 
       try {
+        const session = await chatStorage.getSession(sessionId);
+        if (session?.meeting?.transport === "native") {
+          res.status(409).json({ error: "Native transcription always uses shared-room recognition" });
+          return;
+        }
         const result = await chatStorage.setMeetingAudioSourcePolicy(
           sessionId,
           sourceKey,

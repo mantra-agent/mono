@@ -426,7 +426,7 @@ export function MeetingSpeakerAssignments({
               {participant ? (
                 <SpeakerState participant={participant} stream={row.stream} />
               ) : null}
-              {meeting.botStatus === "live" && row.stream ? (
+              {meeting.botStatus === "live" && meeting.transport !== "native" && row.stream ? (
                 <div className="flex items-center px-1 sm:pr-2">
                   <AudioSourcePolicyControl
                     sessionId={sessionId}

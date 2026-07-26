@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Loader2, Plus } from "lucide-react";
 import type { SimpleFeedItem } from "@shared/models/simple";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
 import { SimpleWidgetRenderer } from "@/components/home/home-widget-renderer";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
 
 interface MeetingCounts {
   completedMeetingCount: number;
@@ -19,9 +21,10 @@ interface MeetingsResponse {
   counts: MeetingCounts;
 }
 
-type MeetingGroup = "This Week" | "This Month" | "Earlier";
+type MeetingGroup = "Active" | "This Week" | "This Month" | "Earlier";
 
 function groupFor(item: SimpleFeedItem): MeetingGroup {
+  if (item.status === "active") return "Active";
   const value = item.anchorTime ?? item.actionTime;
   if (!value) return "Earlier";
   const date = new Date(value);
@@ -37,10 +40,12 @@ export default function MeetingsPage() {
   const [search, setSearch] = useState("");
   usePageHeader({ title: "Meetings" });
   const query = search.trim();
-  const endpoint = `/api/meetings/records?limit=100${query ? `&query=${encodeURIComponent(query)}` : ""}`;
+  const endpoint = `/api/meetings/records?limit=100&includeActive=true${query ? `&query=${encodeURIComponent(query)}` : ""}`;
   const { data, isLoading, error } = useQuery<MeetingsResponse>({ queryKey: [endpoint] });
+  const nativeTranscription = useNativeMeetingTranscription();
   const groups = useMemo(() => {
     const result: Record<MeetingGroup, SimpleFeedItem[]> = {
+      Active: [],
       "This Week": [],
       "This Month": [],
       Earlier: [],
@@ -60,6 +65,18 @@ export default function MeetingsPage() {
             clearTestId="button-clear-meeting-search"
             ariaLabel="Search completed meetings"
           />
+          <button
+            type="button"
+            onClick={() => void nativeTranscription.start()}
+            disabled={nativeTranscription.isStarting}
+            className="flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80 disabled:opacity-50"
+            data-testid="button-new-transcription"
+          >
+            {nativeTranscription.isStarting
+              ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+              : <Plus className="h-3.5 w-3.5 shrink-0" />}
+            <span>{nativeTranscription.isStarting ? "Starting…" : "New Transcription"}</span>
+          </button>
           <div className="px-2 py-1 text-xs text-muted-foreground">
             {data
               ? `${data.counts.completedMeetingsWithNotesCount} with notes · ${data.counts.completedMeetingCount} completed`

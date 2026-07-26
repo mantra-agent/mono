@@ -1220,6 +1220,7 @@ export interface IChatFileStorage {
     calendarId?: string;
     providerEventId?: string;
   }): Promise<FileSession | null>;
+  findNativeMeetingSessionByIdempotencyKey(idempotencyKey: string): Promise<FileSession | null>;
   updateMeetingMeta(
     sessionId: string,
     patch: Partial<MeetingSessionMeta>,
@@ -2083,6 +2084,36 @@ export const chatFileStorage: IChatFileStorage = {
         sessionCount: rows.length,
       });
       throw new Error("Multiple meeting sessions already exist for this calendar occurrence");
+    }
+    if (!rows[0]) return null;
+    return (await chatFileStorage.getSession(rows[0].documentId)) ?? null;
+  },
+
+  async findNativeMeetingSessionByIdempotencyKey(idempotencyKey: string) {
+    const normalized = idempotencyKey.trim();
+    if (!normalized) return null;
+    await targetReadsEnabled();
+    const sessionKey = `meeting-native:${normalized}`;
+    const rows = await db
+      .select({ documentId: documentStoreDocuments.documentId })
+      .from(documentStoreDocuments)
+      .where(combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        targetChatDocumentScopeColumns,
+        and(
+          eq(documentStoreDocuments.documentType, "chat"),
+          sql`${documentStoreDocuments.metadata}->>'type' = 'meeting'`,
+          sql`${documentStoreDocuments.metadata}->>'sessionKey' = ${sessionKey}`,
+          sql`${documentStoreDocuments.metadata}->'meeting'->>'transport' = 'native'`,
+        ),
+      ))
+      .limit(2);
+    if (rows.length > 1) {
+      log.error("native meeting idempotency invariant violated", {
+        idempotencyKeyLength: normalized.length,
+        sessionCount: rows.length,
+      });
+      throw new Error("Multiple native meeting sessions exist for one idempotency key");
     }
     if (!rows[0]) return null;
     return (await chatFileStorage.getSession(rows[0].documentId)) ?? null;

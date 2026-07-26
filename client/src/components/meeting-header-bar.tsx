@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
+import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
 import { createLogger } from "@/lib/logger";
 import type { MeetingSessionMeta, MeetingBotStatus } from "@shared/models/chat";
 import { createReferenceRef } from "@shared/references";
@@ -119,6 +120,7 @@ export function MeetingHeaderBar({
     : null;
   const banner = STATUS_BANNER[meeting.botStatus];
   const { toast } = useToast();
+  const nativeTranscription = useNativeMeetingTranscription();
 
   const isListenOnly = meeting.participationPolicy === "listen_only";
   const toggleListenMode = useMutation({
@@ -157,6 +159,7 @@ export function MeetingHeaderBar({
     },
     onSuccess: () => {
       if (!sessionId) return;
+      if (meeting.transport === "native") nativeTranscription.stopLocalCapture(sessionId);
       queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
     },
@@ -253,6 +256,7 @@ export function MeetingHeaderBar({
   // Reconnect is meaningful whenever there is a join URL and the bot is either
   // live (recover recognition in place) or gone (leave/rejoin on this session).
   const canReset =
+    meeting.transport !== "native" &&
     !!meeting.meetingUrl &&
     ["live", "leaving", "denied", "failed", "ended"].includes(meeting.botStatus);
   const busy = toggleListenMode.isPending || leaveMeeting.isPending || resetMeeting.isPending;
