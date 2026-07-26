@@ -3335,7 +3335,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     stt?: {
       provider: string;
       model: string;
-      source: "recall_participant_audio" | "recall_transcript_webhook";
+      source: "recall_participant_audio" | "recall_transcript_webhook" | "native_microphone";
       fallback: boolean;
     };
   }): Promise<
@@ -3599,6 +3599,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   registerRecallRoutes(app, { ingestMeetingEvent });
   const { registerMeetingSTTAudioTransport } = await import("../../meeting/stt");
   app.locals.recallMeetingAudioUpgrade = registerMeetingSTTAudioTransport({ ingestMeetingEvent });
+  const { registerNativeMeetingAudioTransport } = await import("../../meeting/native-audio");
+  app.locals.nativeMeetingAudioUpgrade = registerNativeMeetingAudioTransport({ ingestMeetingEvent });
 
   // M0 dev loopback transport — POST attributed transcript text into a
   // meeting session through the canonical ingest path.

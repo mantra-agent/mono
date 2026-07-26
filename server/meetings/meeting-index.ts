@@ -216,14 +216,19 @@ async function hydrateMeetingSessions(): Promise<MeetingSessionSnapshot[]> {
   return canonicalCompletedMeetingSnapshots(hydrated);
 }
 
-function completedSnapshots(snapshots: MeetingSessionSnapshot[], filter: MeetingIndexFilter): MeetingSessionSnapshot[] {
+function searchableSnapshots(
+  snapshots: MeetingSessionSnapshot[],
+  filter: MeetingIndexFilter,
+  includeActive: boolean,
+): MeetingSessionSnapshot[] {
   const query = filter.query?.trim().toLowerCase() ?? "";
   const startAfter = parseDate(filter.startAfter);
   const startBefore = parseDate(filter.startBefore);
 
   return snapshots
     .filter(({ session, transcriptCount }) => {
-      if (session.meeting?.botStatus !== "ended") return false;
+      const meetingActive = ["dialing", "in_lobby", "live", "leaving"].includes(session.meeting?.botStatus ?? "");
+      if (session.meeting?.botStatus !== "ended" && !(includeActive && meetingActive)) return false;
       if (!matchesNotesFilter(transcriptCount, filter.notesFilter)) return false;
       const start = parseDate(meetingStart(session) ?? undefined);
       if (startAfter !== null && (start === null || start < startAfter)) return false;
@@ -425,7 +430,23 @@ export async function listCompletedMeetings(filter: MeetingIndexFilter = {}): Pr
   counts: MeetingIndexCounts;
 }> {
   const snapshots = await hydrateMeetingSessions();
-  const filtered = completedSnapshots(snapshots, filter);
+  const filtered = searchableSnapshots(snapshots, filter, false);
+  const offset = boundedInteger(filter.offset, 0, 100_000);
+  const limit = boundedInteger(filter.limit, 50, 100) || 50;
+  return {
+    meetings: await projectRecords(filtered.slice(offset, offset + limit)),
+    total: filtered.length,
+    counts: countsFor(snapshots),
+  };
+}
+
+export async function listMeetingsForPage(filter: MeetingIndexFilter = {}): Promise<{
+  meetings: MeetingIndexRecord[];
+  total: number;
+  counts: MeetingIndexCounts;
+}> {
+  const snapshots = await hydrateMeetingSessions();
+  const filtered = searchableSnapshots(snapshots, filter, true);
   const offset = boundedInteger(filter.offset, 0, 100_000);
   const limit = boundedInteger(filter.limit, 50, 100) || 50;
   return {
@@ -481,7 +502,7 @@ export function meetingRecordToSimpleFeedItem(
     section,
     widgetType: "meeting",
     title: meeting.title,
-    status: "completed",
+    status: meeting.botStatus === "ended" ? "completed" : "active",
     priority: index,
     sourceRefs: [sourceRef],
     references: sourceRefsToReferenceRefs([sourceRef]),

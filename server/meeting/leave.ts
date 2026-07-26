@@ -38,6 +38,35 @@ export async function requestMeetingBotLeave(
       return { outcome: "not_leaveable", session: claim.session };
     }
 
+    if (claim.session.meeting?.transport === "native") {
+      const ended = await chatStorage.updateMeetingMeta(sessionId, {
+        botStatus: "ended",
+        endedAt: new Date().toISOString(),
+        statusDetail: "Transcription ended",
+        recognition: claim.session.meeting.recognition
+          ? {
+              ...claim.session.meeting.recognition,
+              status: "inactive",
+              streams: claim.session.meeting.recognition.streams.map((stream) => ({
+                ...stream,
+                status: stream.status === "excluded" ? "excluded" : "closed",
+                detail: undefined,
+              })),
+            }
+          : undefined,
+        sttStatus: "inactive",
+        sttStatusDetail: "Transcription ended",
+      });
+      if (!ended) return { outcome: "failed", error: "Native meeting session disappeared" };
+      import("./recap")
+        .then(({ finalizeMeetingSession }) => finalizeMeetingSession(sessionId))
+        .catch((error) => log.error(
+          `native meeting finalization kickoff failed sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        ));
+      log.info(`native meeting ended sessionId=${sessionId}`);
+      return { outcome: "requested", session: ended };
+    }
+
     const botId = claim.session.meeting?.botId;
     if (!botId) {
       await chatStorage.restoreMeetingLeave(
