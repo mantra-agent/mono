@@ -160,13 +160,26 @@ function isTerminalMeeting(session: FileSession): boolean {
   return status === "ended" || status === "failed";
 }
 
+function hasCapturedMeetingEvidence(snapshot: MeetingSessionSnapshot): boolean {
+  const meeting = snapshot.session.meeting!;
+  const recap = meeting.recap;
+  return snapshot.transcriptCount > 0
+    || meeting.participants.length > 0
+    || recap?.status === "ready"
+    || populated(recap?.pageId) > 0
+    || (recap?.interactionsLogged ?? 0) > 0
+    || (recap?.draftIds?.length ?? 0) > 0;
+}
+
 function representsSameMeeting(left: MeetingSessionSnapshot, right: MeetingSessionSnapshot): boolean {
   const leftIdentity = resolvedMeetingIdentity(left.session);
   const rightIdentity = resolvedMeetingIdentity(right.session);
   if (leftIdentity && rightIdentity && leftIdentity === rightIdentity) return true;
-  const hasFailedAttempt = left.session.meeting?.botStatus === "failed"
-    || right.session.meeting?.botStatus === "failed";
-  if (leftIdentity && rightIdentity && !hasFailedAttempt) return false;
+  const hasWeakAttempt = left.session.meeting?.botStatus === "failed"
+    || right.session.meeting?.botStatus === "failed"
+    || !hasCapturedMeetingEvidence(left)
+    || !hasCapturedMeetingEvidence(right);
+  if (leftIdentity && rightIdentity && !hasWeakAttempt) return false;
 
   const leftTitle = normalizedMeetingTitle(left.session);
   const rightTitle = normalizedMeetingTitle(right.session);
