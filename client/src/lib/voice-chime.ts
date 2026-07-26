@@ -7,7 +7,7 @@ type ThinkingLoop = {
   stopped: boolean;
 };
 
-const THINKING_MASTER_GAIN = 0.15;
+const THINKING_MASTER_GAIN = 0.42;
 const THINKING_TEXTURE_GAIN = 0.14;
 const THINKING_BUFFER_SECONDS = 4;
 

@@ -5,7 +5,7 @@ const LOG_TAG = 'ThinkingAudio';
 const SAMPLE_RATE = 22050;
 const LOOP_SECONDS = 5.3;
 const OUTPUT_PEAK = 0.32;
-const PLAYBACK_VOLUME = 0.018;
+const PLAYBACK_VOLUME = 0.055;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 let sound: Audio.Sound | null = null;
