@@ -2056,6 +2056,7 @@ export const chatFileStorage: IChatFileStorage = {
     const legacyIdentity = input.calendarAccountId && input.calendarId && input.providerEventId
       ? and(
           sql`COALESCE(${documentStoreDocuments.metadata}->'meeting'->>'occurrenceKey', '') = ''`,
+          sql`${documentStoreDocuments.metadata}->'meeting'->>'resolutionSource' = 'calendar_auto_join'`,
           sql`${documentStoreDocuments.metadata}->'meeting'->>'calendarAccountId' = ${input.calendarAccountId}`,
           sql`${documentStoreDocuments.metadata}->'meeting'->>'calendarId' = ${input.calendarId}`,
           sql`${documentStoreDocuments.metadata}->'meeting'->>'providerEventId' = ${input.providerEventId}`,
