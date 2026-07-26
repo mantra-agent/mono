@@ -38,10 +38,51 @@ interface CompactionArchiveV1 {
   entries: CompactionArchiveEntry[];
 }
 
-interface PublicTranscriptTurn {
-  role: "user" | "assistant";
+export interface PublicCompactionMessage {
+  id: string;
+  sessionId: string;
+  role: string;
   content: string;
+  thinking: string | null;
+  toolCalls: unknown;
+  systemSteps: unknown[] | null;
+  model: string | null;
+  createdAt: string;
+  [key: string]: unknown;
 }
+
+const PUBLIC_RECORD_ROLES = new Set([
+  "user",
+  "assistant",
+  "system_prompt",
+  "child_session_block",
+  "cross_session",
+  "system_notice",
+]);
+
+const PUBLIC_RECORD_FIELDS = [
+  "updatedAt",
+  "cost",
+  "apiCallCount",
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+  "segmentChronology",
+  "isError",
+  "crossSession",
+  "childSession",
+  "pageContext",
+  "assistantState",
+  "assistantRunId",
+  "voice",
+  "persona",
+  "speaker",
+  "questionResponse",
+  "questionCancellation",
+  "artifactKey",
+  "turnId",
+  "visibility",
+] as const;
 
 export type CompactionArchiveLoader = (
   archiveRefId: string,
@@ -143,12 +184,49 @@ function archiveEntries(content: string): CompactionArchiveEntry[] {
   return parseStructuredArchive(content)?.entries ?? parseLegacyArchive(content);
 }
 
-async function expandArchive(
+function projectArchivedMessage(
+  entry: CompactionArchiveMessageEntry,
+  archiveSessionId: string,
+  archiveCreatedAt: string,
+  ordinal: number,
+): PublicCompactionMessage | null {
+  const record = entry.record && typeof entry.record === "object"
+    ? entry.record as Record<string, unknown>
+    : null;
+  const role = typeof record?.role === "string" ? record.role : entry.publicRole;
+  if (!role || !PUBLIC_RECORD_ROLES.has(role)) return null;
+
+  const content = typeof record?.content === "string" ? record.content : entry.content;
+  const projected: PublicCompactionMessage = {
+    id: typeof record?.id === "string"
+      ? record.id
+      : `archive-${archiveSessionId}-${archiveCreatedAt}-${ordinal}`,
+    sessionId: typeof record?.sessionId === "string" ? record.sessionId : archiveSessionId,
+    role,
+    content,
+    thinking: typeof record?.thinking === "string"
+      ? record.thinking
+      : typeof entry.thinking === "string"
+        ? entry.thinking
+        : null,
+    toolCalls: record?.toolCalls ?? entry.toolCalls ?? null,
+    systemSteps: Array.isArray(record?.systemSteps) ? record.systemSteps : null,
+    model: typeof record?.model === "string" ? record.model : null,
+    createdAt: typeof record?.createdAt === "string" ? record.createdAt : archiveCreatedAt,
+  };
+
+  for (const field of PUBLIC_RECORD_FIELDS) {
+    if (record?.[field] !== undefined) projected[field] = record[field];
+  }
+  return projected;
+}
+
+async function expandArchiveMessages(
   archiveRefId: string,
   loadArchive: CompactionArchiveLoader,
   visited: Set<string>,
   depth: number,
-): Promise<PublicTranscriptTurn[]> {
+): Promise<PublicCompactionMessage[]> {
   if (depth > 32 || visited.has(archiveRefId)) {
     throw new CompactionArchiveUnavailableError("Compaction archive chain is invalid");
   }
@@ -160,11 +238,14 @@ async function expandArchive(
     );
   }
 
-  const turns: PublicTranscriptTurn[] = [];
-  for (const entry of archiveEntries(content)) {
+  const structured = parseStructuredArchive(content);
+  const archiveSessionId = structured?.sessionId || "archived-session";
+  const archiveCreatedAt = structured?.createdAt || new Date(0).toISOString();
+  const messages: PublicCompactionMessage[] = [];
+  for (const [ordinal, entry] of archiveEntries(content).entries()) {
     if (entry.kind === "archive") {
-      turns.push(
-        ...(await expandArchive(
+      messages.push(
+        ...(await expandArchiveMessages(
           entry.archiveRefId,
           loadArchive,
           visited,
@@ -173,32 +254,48 @@ async function expandArchive(
       );
       continue;
     }
-    if (entry.publicRole && entry.content.trim()) {
-      turns.push({ role: entry.publicRole, content: entry.content.trim() });
-    }
+    const message = projectArchivedMessage(
+      entry,
+      archiveSessionId,
+      archiveCreatedAt,
+      ordinal,
+    );
+    if (message) messages.push(message);
   }
-  return turns;
+  return messages;
+}
+
+export async function loadPublicCompactionMessages(
+  archiveRefId: string,
+  loadArchive: CompactionArchiveLoader,
+): Promise<PublicCompactionMessage[]> {
+  const messages = await expandArchiveMessages(
+    archiveRefId,
+    loadArchive,
+    new Set<string>(),
+    0,
+  );
+  if (messages.length === 0) {
+    throw new CompactionArchiveUnavailableError(
+      "Compaction archive contains no user-visible conversation",
+    );
+  }
+  return messages;
 }
 
 export async function renderCompactionTranscript(
   archiveRefId: string,
   loadArchive: CompactionArchiveLoader,
 ): Promise<string> {
-  const turns = await expandArchive(
-    archiveRefId,
-    loadArchive,
-    new Set<string>(),
-    0,
-  );
-  if (turns.length === 0) {
-    throw new CompactionArchiveUnavailableError(
-      "Compaction archive contains no user-visible conversation",
-    );
-  }
-  return turns
-    .map((turn) => {
-      const label = turn.role === "user" ? "User" : "Agent";
-      return `## ${label}\n\n${turn.content}`;
+  const messages = await loadPublicCompactionMessages(archiveRefId, loadArchive);
+  return messages
+    .map((message) => {
+      const label = message.role === "user"
+        ? "User"
+        : message.role === "assistant"
+          ? "Agent"
+          : "Conversation event";
+      return `## ${label}\n\n${message.content}`;
     })
     .join("\n\n");
 }
