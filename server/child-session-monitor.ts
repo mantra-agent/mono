@@ -6,6 +6,7 @@
 
 import { createLogger } from "./log";
 import { eventBus } from "./event-bus";
+import { POST_ABORT_DRAIN_GRACE_MS } from "./timeout";
 
 const log = createLogger("child-session-monitor");
 
@@ -14,13 +15,19 @@ const log = createLogger("child-session-monitor");
 export const IDLE_POLL_INTERVAL_MS = 5_000;
 /** After this many consecutive poll errors, the monitor rejects */
 export const MAX_CONSECUTIVE_POLL_ERRORS = 5;
+/**
+ * Abort first, then allow the executor's own bounded drain plus one poll margin
+ * to prove the child is no longer capable of mutating state.
+ */
+export const CHILD_TERMINATION_CONFIRM_TIMEOUT_MS = POST_ABORT_DRAIN_GRACE_MS + IDLE_POLL_INTERVAL_MS;
 
 // ─── MonitorResult discriminated union ───────────────────────────────
 
 export type MonitorResult =
   | { status: "completed"; output: string }
   | { status: "failed"; reason: FailureReason; message: string }
-  | { status: "idle_timeout"; idleMinutes: number; abortingComponent: string; message: string };
+  | { status: "idle_timeout"; idleMinutes: number; abortingComponent: string; message: string }
+  | { status: "termination_unconfirmed"; abortReason: "idle_timeout" | "cancelled"; waitedMs: number; message: string };
 
 export type FailureReason =
   | "child_session_failed"
@@ -37,6 +44,38 @@ async function failChildSessionClosed(sessionId: string, endReason: string): Pro
     log.warn(
       `[monitor] Failed to mark child session ${sessionId} failed after ${endReason}: ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+}
+
+export async function abortAndConfirmChildTermination(
+  sessionId: string,
+  abortReason: "idle_timeout" | "cancelled",
+): Promise<{ confirmed: boolean; waitedMs: number }> {
+  const startedAt = Date.now();
+  try {
+    const { agentExecutor } = await import("./agent-executor");
+    const abortedRuns = agentExecutor.abortByChatSessionId(sessionId, abortReason);
+    const deadline = startedAt + CHILD_TERMINATION_CONFIRM_TIMEOUT_MS;
+
+    while (agentExecutor.hasActiveRunForSession(sessionId) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(250, deadline - Date.now()))));
+    }
+
+    const waitedMs = Date.now() - startedAt;
+    const confirmed = !agentExecutor.hasActiveRunForSession(sessionId);
+    const logMessage =
+      `[monitor] Child termination ${confirmed ? "confirmed" : "unconfirmed"} session=${sessionId} ` +
+      `abortReason=${abortReason} abortedRuns=${abortedRuns} waitedMs=${waitedMs}`;
+    if (confirmed) log.debug(logMessage);
+    else log.error(logMessage);
+    return { confirmed, waitedMs };
+  } catch (err) {
+    const waitedMs = Date.now() - startedAt;
+    log.error(
+      `[monitor] Child termination check failed session=${sessionId} abortReason=${abortReason} ` +
+      `waitedMs=${waitedMs}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { confirmed: false, waitedMs };
   }
 }
 
@@ -64,12 +103,23 @@ export async function monitorChildSession(
   let consecutivePollErrors = 0;
 
   return new Promise<MonitorResult>((resolve) => {
+    let settling = false;
     const pollTimer = setInterval(async () => {
+      if (settling) return;
       try {
         // Check if parent was aborted
         if (abortSignal?.aborted) {
-          cleanup();
-          agentExecutor.abortByChatSessionId(sessionId, "cancelled");
+          if (!beginSettlement()) return;
+          const termination = await abortAndConfirmChildTermination(sessionId, "cancelled");
+          if (!termination.confirmed) {
+            resolve({
+              status: "termination_unconfirmed",
+              abortReason: "cancelled",
+              waitedMs: termination.waitedMs,
+              message: `Parent execution was aborted, but child session ${sessionId} remained active after the bounded termination wait`,
+            });
+            return;
+          }
           await failChildSessionClosed(sessionId, "cancelled");
           resolve({ status: "failed", reason: "aborted", message: "Parent execution was aborted" });
           return;
@@ -77,7 +127,17 @@ export async function monitorChildSession(
 
         const session = await chatFileStorage.getSession(sessionId);
         if (!session) {
-          cleanup();
+          if (!beginSettlement()) return;
+          const termination = await abortAndConfirmChildTermination(sessionId, "cancelled");
+          if (!termination.confirmed) {
+            resolve({
+              status: "termination_unconfirmed",
+              abortReason: "cancelled",
+              waitedMs: termination.waitedMs,
+              message: `Child session ${sessionId} was not found, but its active executor could not be terminated`,
+            });
+            return;
+          }
           resolve({ status: "failed", reason: "child_session_not_found", message: `Child session ${sessionId} not found` });
           return;
         }
@@ -127,7 +187,7 @@ export async function monitorChildSession(
         // Check completion states. The child session row's status is the
         // lifecycle source of truth.
         if (sessionStatus === "saved") {
-          cleanup();
+          if (!beginSettlement()) return;
           const output = await readFinalAssistantOutput(sessionId);
           const completedOutput = output || "Completed successfully";
           eventBus.publish({
@@ -144,7 +204,17 @@ export async function monitorChildSession(
           return;
         }
         if (sessionStatus === "failed") {
-          cleanup();
+          if (!beginSettlement()) return;
+          const termination = await abortAndConfirmChildTermination(sessionId, "cancelled");
+          if (!termination.confirmed) {
+            resolve({
+              status: "termination_unconfirmed",
+              abortReason: "cancelled",
+              waitedMs: termination.waitedMs,
+              message: `Child session ${sessionId} was marked failed, but its active executor could not be terminated`,
+            });
+            return;
+          }
           const failure = await readChildFailureMessage(sessionId);
           resolve({
             status: "failed",
@@ -159,11 +229,20 @@ export async function monitorChildSession(
         const idleMs = Date.now() - lastActivityAt;
         const effectiveTimeout = idleTimeoutMs + IDLE_POLL_INTERVAL_MS;
         if (idleMs >= effectiveTimeout) {
-          cleanup();
+          if (!beginSettlement()) return;
           const idleMinutes = Math.round(idleMs / 60000);
           const message = `Child session monitor saw no session or executor activity for ${idleMinutes}m`;
           log.warn(`[monitor] Session ${sessionId} idle for ${idleMinutes}m — aborting with idle_timeout`);
-          agentExecutor.abortByChatSessionId(sessionId, "idle_timeout");
+          const termination = await abortAndConfirmChildTermination(sessionId, "idle_timeout");
+          if (!termination.confirmed) {
+            resolve({
+              status: "termination_unconfirmed",
+              abortReason: "idle_timeout",
+              waitedMs: termination.waitedMs,
+              message: `${message}, and the child remained active after the bounded termination wait`,
+            });
+            return;
+          }
           await failChildSessionClosed(sessionId, "idle_timeout");
           resolve({ status: "idle_timeout", idleMinutes, abortingComponent: "child-session-monitor", message });
           return;
@@ -176,7 +255,17 @@ export async function monitorChildSession(
 
         // Reject after too many consecutive poll errors
         if (consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
-          cleanup();
+          if (!beginSettlement()) return;
+          const termination = await abortAndConfirmChildTermination(sessionId, "cancelled");
+          if (!termination.confirmed) {
+            resolve({
+              status: "termination_unconfirmed",
+              abortReason: "cancelled",
+              waitedMs: termination.waitedMs,
+              message: `${MAX_CONSECUTIVE_POLL_ERRORS} consecutive poll errors, and child termination could not be confirmed`,
+            });
+            return;
+          }
           await failChildSessionClosed(sessionId, "poll_errors_exceeded");
           resolve({
             status: "failed",
@@ -188,8 +277,11 @@ export async function monitorChildSession(
       }
     }, IDLE_POLL_INTERVAL_MS);
 
-    function cleanup() {
+    function beginSettlement(): boolean {
+      if (settling) return false;
+      settling = true;
       clearInterval(pollTimer);
+      return true;
     }
   });
 }
