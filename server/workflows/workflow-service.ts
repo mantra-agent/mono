@@ -734,6 +734,24 @@ async function monitorWorkflowChild(
       });
       break;
     }
+    case "termination_unconfirmed": {
+      log.error(
+        `[monitor] Workflow child ${childSessionId} termination unconfirmed after ${result.waitedMs}ms ` +
+        `for ${stageTitle} #${attemptNumber}; blocking without retry`,
+      );
+      await completeStageAttempt(runId, attemptId, {
+        result: "blocked",
+        outputSummary: truncateOutput(result.message, 500),
+        failureContext: {
+          reason: "termination_unconfirmed",
+          abortReason: result.abortReason,
+          waitedMs: result.waitedMs,
+          message: result.message,
+          source: "child-session-monitor",
+        },
+      });
+      break;
+    }
   }
 }
 

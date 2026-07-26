@@ -28,6 +28,7 @@ import {
   type PlanStatus,
 } from "./lib/plan-utils";
 import {
+  abortAndConfirmChildTermination,
   monitorChildSession,
   readFinalAssistantOutput,
   truncateOutput,
@@ -537,7 +538,18 @@ planId,
             log.warn(`[${planId}] Step ${stepIndex + 1} retrying after idle_timeout (attempt ${attempt}/${maxRetries})`);
             // Reset step to pending for retry, but first close the abandoned child
             // session so the retry attempt cannot leave an active duplicate.
-            await closeAbandonedChildSessionBlock(originSessionId, childSessionId, errorMsg, lastDuration);
+            const childClosed = await closeAbandonedChildSessionBlock(originSessionId, childSessionId, errorMsg, lastDuration);
+            if (!childClosed) {
+              return await failStepFinal(
+                planId,
+                step,
+                stepIndex,
+                lastDuration,
+                childSessionId,
+                `${errorMsg}. Retry is fenced because child termination could not be confirmed.`,
+                attemptCount,
+              );
+            }
             await updatePlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId, status: "failed", error: errorMsg, durationSeconds: lastDuration, completedAt: new Date() });
             await transitionStep(planId, step.id, "running", "failed",
               { error: errorMsg, completedAt: new Date(), durationSeconds: lastDuration, sessionId: childSessionId },
@@ -558,6 +570,22 @@ planId,
             `${errorMsg} (failed after ${maxRetries} attempts)`, attemptCount);
         }
 
+        case "termination_unconfirmed": {
+          const errorMsg = `${result.message}. Retry is fenced because the prior child may still mutate state.`;
+          log.error(
+            `[${planId}] Step ${stepIndex + 1} child termination unconfirmed after ${result.waitedMs}ms; pausing without retry`,
+          );
+          return await failStepFinal(
+            planId,
+            step,
+            stepIndex,
+            lastDuration,
+            childSessionId,
+            errorMsg,
+            attemptCount,
+          );
+        }
+
         case "failed": {
           // Distinct log per failure reason (Violation #5 fix)
           log.warn(`[${planId}] Step ${stepIndex + 1} failed [${result.reason}]: ${result.message}`);
@@ -570,7 +598,18 @@ planId,
 
           if (attempt < maxRetries) {
             log.warn(`[${planId}] Step ${stepIndex + 1} retrying after ${result.reason} (attempt ${attempt}/${maxRetries})`);
-            await closeAbandonedChildSessionBlock(originSessionId, childSessionId, result.message, lastDuration);
+            const childClosed = await closeAbandonedChildSessionBlock(originSessionId, childSessionId, result.message, lastDuration);
+            if (!childClosed) {
+              return await failStepFinal(
+                planId,
+                step,
+                stepIndex,
+                lastDuration,
+                childSessionId,
+                `${result.message}. Retry is fenced because child termination could not be confirmed.`,
+                attemptCount,
+              );
+            }
             await updatePlanStepAttempt({ planId, stepId: step.id, attemptNumber: attemptCount, childSessionId, status: "failed", error: result.message, durationSeconds: lastDuration, completedAt: new Date() });
             await transitionStep(planId, step.id, "running", "failed",
               { error: result.message, completedAt: new Date(), durationSeconds: lastDuration, sessionId: childSessionId },
@@ -640,8 +679,16 @@ async function closeAbandonedChildSessionBlock(
   childSessionId: string | null | undefined,
   error: string,
   durationSeconds?: number | null,
-): Promise<void> {
-  if (!childSessionId) return;
+): Promise<boolean> {
+  if (!childSessionId) return true;
+
+  const termination = await abortAndConfirmChildTermination(childSessionId, "cancelled");
+  if (!termination.confirmed) {
+    log.error(
+      `[child-block] Refusing to close child ${childSessionId}: executor remained active after ${termination.waitedMs}ms`,
+    );
+    return false;
+  }
 
   try {
     const { chatFileStorage } = await import("./chat-file-storage");
@@ -676,6 +723,8 @@ async function closeAbandonedChildSessionBlock(
       `[child-block] Failed to mark abandoned spawn ${childSessionId} failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+
+  return true;
 }
 
 async function failStepFinal(
@@ -773,12 +822,22 @@ export async function preparePlanForResume(planId: string): Promise<PlanResumeRe
   let firstGateResolved = false;
   for (const step of steps) {
     if (step.status === "failed") {
-      await closeAbandonedChildSessionBlock(
+      const childClosed = await closeAbandonedChildSessionBlock(
         plan.originSessionId,
         step.sessionId,
         step.error || "Reset by resumePlan",
         step.durationSeconds,
       );
+      if (!childClosed) {
+        return {
+          ready: false,
+          planId,
+          status: currentStatus,
+          recovered,
+          totalSteps: steps.length,
+          error: `Cannot resume while child session ${step.sessionId} may still be active`,
+        };
+      }
       await transitionStep(planId, step.id, "failed", "pending", {
         error: null, sessionId: null, durationSeconds: null,
         startedAt: null, completedAt: null,
@@ -793,12 +852,22 @@ export async function preparePlanForResume(planId: string): Promise<PlanResumeRe
       }
       // Leave subsequent gates intact — executor will stop at them
     } else if (step.status === "running") {
-      await closeAbandonedChildSessionBlock(
+      const childClosed = await closeAbandonedChildSessionBlock(
         plan.originSessionId,
         step.sessionId,
         "Reset by resumePlan",
         step.durationSeconds,
       );
+      if (!childClosed) {
+        return {
+          ready: false,
+          planId,
+          status: currentStatus,
+          recovered,
+          totalSteps: steps.length,
+          error: `Cannot resume while child session ${step.sessionId} may still be active`,
+        };
+      }
       await transitionStep(planId, step.id, "running", "failed", {
         error: "Reset by resumePlan", completedAt: new Date(),
       }, "resumePlan running→failed");
