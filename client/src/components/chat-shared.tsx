@@ -15,6 +15,7 @@ import {
   memo,
   createContext,
   useContext,
+  type ReactNode,
 } from "react";
 import { Link } from "wouter";
 import { formatCost, formatTokens } from "@/lib/format-utils";
@@ -2358,181 +2359,98 @@ export function ThinkingTimer({ startTime }: { startTime: number }) {
   );
 }
 
-function cleanCompactionSummary(content: string): string {
-  return content
-    .replace(/^\[Session Compaction\]\s*/i, "")
-    .replace(/Summary of \d+ earlier messages:\s*/i, "")
-    .replace(/\n\n\[Full original messages archived[\s\S]*?\]\s*$/i, "")
-    .trim();
+interface CompactionBoundaryProps {
+  message: ChatMessage;
+  renderArchivedMessages?: (messages: ChatMessage[]) => ReactNode;
 }
 
 function CompactionBoundary({
   message,
-  stripTags,
-}: {
-  message: ChatMessage;
-  stripTags: boolean;
-}) {
+  renderArchivedMessages,
+}: CompactionBoundaryProps) {
   const [expanded, setExpanded] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const { toast } = useToast();
   const meta = message.compaction;
   const replaced = meta?.replacedMessageCount;
-  const kept = meta?.keptMessageCount;
-  const summary = meta?.summary || cleanCompactionSummary(message.content);
-  const capsule = meta?.capsule;
-  // Narrative summaries are the primary artifact; the sectioned capsule view
-  // remains for fallback/legacy markers produced without a narrative.
-  const showCapsuleView = !!capsule && meta?.summaryKind !== "narrative";
-  const tokensSaved = meta?.tokensSaved;
-  const capsuleSections = capsule
-    ? [
-        { label: "Actions completed", values: capsule.actions },
-        { label: "Systems touched", values: capsule.systemsTouched },
-        { label: "Decisions", values: capsule.decisions },
-        { label: "State changes", values: capsule.stateChanges },
-        { label: "Failures and blockers", values: capsule.failures },
-        { label: "Open loops", values: capsule.openLoops },
-        { label: "References", values: capsule.references },
-      ].filter((section) => section.values.length > 0)
-    : [];
-
-  const downloadOriginalConversation = useCallback(async () => {
-    if (!meta?.archiveRefId || meta.archiveDownloadable !== true || downloading) return;
-    setDownloading(true);
-    try {
+  const canShowEarlierMessages = Boolean(meta?.archiveRefId && renderArchivedMessages);
+  const archiveQuery = useQuery<{ messages: ChatMessage[] }>({
+    queryKey: [
+      "/api/sessions",
+      message.sessionId,
+      "compactions",
+      message.id,
+      "messages",
+    ],
+    queryFn: async () => {
       const response = await apiRequest(
         "GET",
-        `/api/sessions/${encodeURIComponent(message.sessionId)}/compactions/${encodeURIComponent(message.id)}/download`,
+        `/api/sessions/${encodeURIComponent(message.sessionId)}/compactions/${encodeURIComponent(message.id)}/messages`,
       );
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition") || "";
-      const filename = disposition.match(/filename="([^"]+)"/i)?.[1]
-        || "compacted-conversation.md";
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      log.warn("Compaction conversation download failed", {
-        sessionId: message.sessionId,
-        markerId: message.id,
-        error,
-      });
-      toast({
-        variant: "destructive",
-        title: "Download unavailable",
-        description: "The archived conversation could not be retrieved.",
-      });
-    } finally {
-      setDownloading(false);
-    }
-  }, [downloading, message.id, message.sessionId, meta?.archiveDownloadable, meta?.archiveRefId, toast]);
+      return response.json();
+    },
+    enabled: expanded && canShowEarlierMessages,
+    staleTime: Infinity,
+  });
+  const earlierMessages = archiveQuery.data?.messages ?? [];
+  const label = typeof replaced === "number"
+    ? `${replaced} earlier ${replaced === 1 ? "message" : "messages"}`
+    : "Earlier conversation";
 
   return (
     <div
-      className="flex justify-center"
+      className="w-full"
       data-testid={`message-compaction-marker-${message.id}`}
     >
-      <div className="w-full max-w-3xl rounded-xl border border-border/70 bg-muted/30 px-4 py-3 text-sm shadow-sm">
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 text-left"
-          onClick={() => setExpanded(!expanded)}
-          data-testid={`button-toggle-compaction-${message.id}`}
-        >
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
-            <Database className="h-3.5 w-3.5 text-primary" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="font-medium text-foreground">
-              Earlier conversation compacted
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {typeof replaced === "number"
-                ? `${replaced} messages compacted`
-                : "Earlier turns compacted"}
-              {typeof kept === "number"
-                ? ` · ${kept} recent messages kept live`
-                : ""}
-              {typeof tokensSaved === "number" && tokensSaved > 0
-                ? ` · ~${tokensSaved.toLocaleString()} tokens saved`
-                : ""}
-              {meta?.archiveRefId ? " · original archived" : ""}
-            </div>
-          </div>
-          <ChevronRight
-            className={cn(
-              "h-4 w-4 text-muted-foreground transition-transform",
-              expanded && "rotate-90",
-            )}
-          />
-        </button>
-        {expanded && (
-          <div className="mt-3 border-t border-border/60 pt-3">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {showCapsuleView ? "Continuation state" : "Compaction summary"}
-            </div>
-            {showCapsuleView && capsule ? (
-              <div className="space-y-3 text-sm">
-                {capsule.initiator && (
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground">Initiator</div>
-                    <MarkdownContent content={capsule.initiator} stripTags={stripTags} />
-                  </div>
-                )}
-                {capsule.objective && (
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground">Objective</div>
-                    <MarkdownContent content={capsule.objective} stripTags={stripTags} />
-                  </div>
-                )}
-                {capsuleSections.map((section) => (
-                  <div key={section.label}>
-                    <div className="text-xs font-medium text-muted-foreground">{section.label}</div>
-                    <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
-                      <MarkdownContent
-                        content={section.values.map((value) => `- ${value}`).join("\n")}
-                        stripTags={stripTags}
-                      />
-                    </div>
-                  </div>
-                ))}
-                {capsule.resumePoint && (
-                  <div>
-                    <div className="text-xs font-medium text-muted-foreground">Resume point</div>
-                    <MarkdownContent content={capsule.resumePoint} stripTags={stripTags} />
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
-                <MarkdownContent content={summary} stripTags={stripTags} />
-              </div>
-            )}
-            {meta?.archiveRefId && meta.archiveDownloadable === true && (
-              <button
-                type="button"
-                onClick={downloadOriginalConversation}
-                disabled={downloading}
-                className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-cta transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-50"
-                aria-label="Download original conversation"
-                data-testid={`button-download-compaction-${message.id}`}
-              >
-                {downloading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Download className="h-3.5 w-3.5" />
-                )}
-                {downloading ? "Preparing download…" : "Download original conversation"}
-              </button>
-            )}
+      <div id={`compaction-history-${message.id}`}>
+        {expanded && archiveQuery.isLoading && (
+          <div className="flex min-h-24 items-center justify-center" aria-live="polite">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            <span className="sr-only">Loading earlier conversation</span>
           </div>
         )}
+        {expanded && archiveQuery.isError && (
+          <div className="py-4 text-center text-sm text-muted-foreground" role="status">
+            Earlier conversation unavailable. {" "}
+            <button
+              type="button"
+              className="font-medium text-cta hover:text-active"
+              onClick={() => archiveQuery.refetch()}
+            >
+              Try again
+            </button>
+          </div>
+        )}
+        {expanded && earlierMessages.length > 0 && renderArchivedMessages?.(earlierMessages)}
+      </div>
+
+      <div className="flex min-h-11 items-center gap-3 py-1">
+        <div className="h-px flex-1 bg-border/60" aria-hidden="true" />
+        <button
+          type="button"
+          className="group inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => canShowEarlierMessages && setExpanded((value) => !value)}
+          disabled={!canShowEarlierMessages}
+          aria-expanded={canShowEarlierMessages ? expanded : undefined}
+          aria-controls={`compaction-history-${message.id}`}
+          data-testid={`button-toggle-compaction-${message.id}`}
+        >
+          <History className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>{expanded ? "Earlier conversation ends here" : label}</span>
+          {canShowEarlierMessages && (
+            <span className="font-medium text-cta group-hover:text-active">
+              {expanded ? "Hide" : "Show"}
+            </span>
+          )}
+          {canShowEarlierMessages && (
+            <ChevronRight
+              className={cn(
+                "h-3.5 w-3.5 transition-transform",
+                expanded && "rotate-90",
+              )}
+              aria-hidden="true"
+            />
+          )}
+        </button>
+        <div className="h-px flex-1 bg-border/60" aria-hidden="true" />
       </div>
     </div>
   );
@@ -2634,6 +2552,7 @@ export const ChatTurn = memo(function ChatTurn({
   planOwnedChildBlocks,
   sessionTitleById,
   sessionStreams,
+  renderArchivedMessages,
 }: {
   message: ChatMessage;
   isLast: boolean;
@@ -2648,6 +2567,7 @@ export const ChatTurn = memo(function ChatTurn({
   planOwnedChildBlocks?: Map<string, ChildSessionBlockMeta>;
   sessionTitleById?: Record<string, string>;
   sessionStreams?: SessionStreamMap;
+  renderArchivedMessages?: (messages: ChatMessage[]) => ReactNode;
 }) {
   const isUser = message.role === "user";
   const isSystemPrompt = message.role === "system_prompt";
@@ -2831,7 +2751,12 @@ export const ChatTurn = memo(function ChatTurn({
   });
 
   if (message.model === "compaction-marker") {
-    return <CompactionBoundary message={message} stripTags={shouldStripTags} />;
+    return (
+      <CompactionBoundary
+        message={message}
+        renderArchivedMessages={renderArchivedMessages}
+      />
+    );
   }
 
   if (isSystemPrompt) {

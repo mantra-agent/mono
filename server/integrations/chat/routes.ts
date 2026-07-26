@@ -712,6 +712,68 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   });
 
   app.get(
+    "/api/sessions/:id/compactions/:markerId/messages",
+    async (req: Request, res: Response) => {
+      const sessionId = req.params.id as string;
+      const markerId = req.params.markerId as string;
+      try {
+        const principal = getPrincipal(req);
+        if (!principal) {
+          return res.status(401).json({ error: "Authentication required" });
+        }
+        const session = await chatStorage.getSession(sessionId);
+        if (!session) {
+          return res.status(404).json({ error: "Session not found" });
+        }
+        const messages = await chatStorage.getMessagesBySession(sessionId);
+        const marker = messages.find(
+          (message) =>
+            message.id === markerId &&
+            message.model === "compaction-marker" &&
+            message.compaction?.archiveRefId,
+        );
+        if (!marker?.compaction?.archiveRefId) {
+          return res.status(404).json({ error: "Earlier conversation unavailable" });
+        }
+
+        const [{ loadPublicCompactionMessages }, { readVisibleIndexedContent }] =
+          await Promise.all([
+            import("../../compaction-archive"),
+            import("../../content-indexer"),
+          ]);
+        const archivedMessages = await loadPublicCompactionMessages(
+          marker.compaction.archiveRefId,
+          async (refId) => {
+            const result = await readVisibleIndexedContent({
+              id: refId,
+              sourceType: "compaction",
+            });
+            return result?.content ?? null;
+          },
+        );
+
+        res.setHeader("Cache-Control", "private, no-store");
+        return res.status(200).json({ messages: archivedMessages });
+      } catch (error) {
+        const unavailable =
+          error instanceof Error &&
+          error.name === "CompactionArchiveUnavailableError";
+        if (unavailable) {
+          chatLog.warn(
+            `compaction transcript unavailable sessionId=${sessionId} markerId=${markerId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return res.status(404).json({ error: "Earlier conversation unavailable" });
+        }
+        chatLog.error(
+          `compaction transcript failed sessionId=${sessionId} markerId=${markerId}:`,
+          error,
+        );
+        return res.status(500).json({ error: "Failed to load earlier conversation" });
+      }
+    },
+  );
+
+  app.get(
     "/api/sessions/:id/compactions/:markerId/download",
     async (req: Request, res: Response) => {
       const sessionId = req.params.id as string;
