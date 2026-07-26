@@ -57,6 +57,7 @@ process.on("unhandledRejection", (reason) => {
 import { addObjectAclsTable } from "./migrations/add-object-acls";
 import { ensureVaults } from "./migrations/ensure-vaults";
 import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
+import { runDiagnosedCrossOwnerLibraryChildRepair } from "./migrations/detach-cross-owner-library-child";
 
 const objectAclsMigrationReady = addObjectAclsTable();
 const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
@@ -560,17 +561,10 @@ app.use((req, res, next) => {
         });
 
       // Account-specific Library integrity repair runs only after readiness.
-      // It is exact-match, replay-safe, and cannot become a universal service
-      // dependency while repairing one diagnosed cross-owner hierarchy edge.
-      import("./migrations/detach-cross-owner-library-child")
-        .then(({ detachDiagnosedCrossOwnerLibraryChild }) =>
-          detachDiagnosedCrossOwnerLibraryChild(),
-        )
-        .catch((err) => {
-          serverLog.warn(
-            `[post-ready] cross-owner Library child repair failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
+      // It is exact-match, replay-safe, bounded, and cannot become a universal
+      // service dependency while repairing one diagnosed hierarchy edge.
+      serverLog.info("[post-ready] registering cross-owner Library child repair");
+      void runDiagnosedCrossOwnerLibraryChildRepair();
 
       // Worker-thread heartbeat (Task #995). Spawn a tiny worker that posts a
       // heartbeat every 1s. Forward each beat to the wrapper over IPC. If the
