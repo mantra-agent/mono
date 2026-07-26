@@ -103,6 +103,12 @@ export interface VoiceBridgeAgentTranscript {
   sequence?: number;
 }
 
+/** Native microphone activity derived from the live WebRTC input level. */
+export interface VoiceBridgeInputActivity {
+  type: 'voice.inputActivity';
+  active: boolean;
+}
+
 /** Status updates for the native voice session lifecycle. */
 export interface VoiceBridgeStatus {
   type: 'voice.status';
@@ -122,6 +128,7 @@ export type NativeToWebVoiceMessage =
   | VoiceBridgeModeChange
   | VoiceBridgeUserTranscript
   | VoiceBridgeAgentTranscript
+  | VoiceBridgeInputActivity
   | VoiceBridgeStatus
   | VoiceBridgeHostState;
 
@@ -129,7 +136,11 @@ export type NativeToWebVoiceMessage =
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Type guard: is this a voice bridge message from the web? */
+/** Type guard: accept only the canonical web-to-native voice command set. */
 export function isWebToNativeVoiceMessage(msg: { type?: string }): msg is WebToNativeVoiceMessage {
-  return typeof msg.type === 'string' && msg.type.startsWith('voice.');
+  return msg.type === 'voice.start'
+    || msg.type === 'voice.end'
+    || msg.type === 'voice.mute'
+    || msg.type === 'voice.userActivity'
+    || msg.type === 'voice.thinkingAudio';
 }

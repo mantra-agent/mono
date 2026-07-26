@@ -99,6 +99,11 @@ export interface VoiceBridgeAgentTranscript {
   sequence?: number;
 }
 
+export interface VoiceBridgeInputActivity {
+  type: 'voice.inputActivity';
+  active: boolean;
+}
+
 export interface VoiceBridgeStatus {
   type: 'voice.status';
   status: 'connecting' | 'active' | 'ending' | 'idle';
@@ -116,6 +121,7 @@ export type NativeToWebVoiceMessage =
   | VoiceBridgeModeChange
   | VoiceBridgeUserTranscript
   | VoiceBridgeAgentTranscript
+  | VoiceBridgeInputActivity
   | VoiceBridgeStatus
   | VoiceBridgeHostState;
 
@@ -160,6 +166,17 @@ export function sendToNative(msg: WebToNativeVoiceMessage): void {
 
 export type NativeVoiceMessageHandler = (msg: NativeToWebVoiceMessage) => void;
 
+const NATIVE_TO_WEB_VOICE_TYPES = new Set<NativeToWebVoiceMessage['type']>([
+  'voice.connected',
+  'voice.disconnected',
+  'voice.error',
+  'voice.modeChange',
+  'voice.userTranscript',
+  'voice.agentTranscript',
+  'voice.inputActivity',
+  'voice.status',
+  'voice.hostState',
+]);
 const NATIVE_VOICE_EVENT = 'native-voice';
 
 /**
@@ -171,7 +188,11 @@ export function onNativeMessage(handler: NativeVoiceMessageHandler): () => void 
     const messageEvent = event as MessageEvent;
     try {
       const data = typeof messageEvent.data === 'string' ? JSON.parse(messageEvent.data) : messageEvent.data;
-      if (data && typeof data.type === 'string' && data.type.startsWith('voice.')) {
+      if (
+        data
+        && typeof data.type === 'string'
+        && NATIVE_TO_WEB_VOICE_TYPES.has(data.type as NativeToWebVoiceMessage['type'])
+      ) {
         log.debug('Received from native', { type: data.type });
         handler(data as NativeToWebVoiceMessage);
       }
