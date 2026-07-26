@@ -322,16 +322,15 @@ Persona `tool_bundle` selects the initial callable working set; it is a context 
 ### Tool Output Artifact Layer
 `tool-output-artifacts.ts` owns the single archive boundary for tool results. `ensureToolOutputArchived(...)` stores exact bytes through principal-scoped `indexed_content`/object storage and supports replay-safe ref reuse; legacy oversized-output callers delegate to it.
 
-`working-set-projector.ts` derives AgentExecutor's ephemeral provider working set from the exact canonical transcript. It preserves errors, incomplete/current interactions, and every completed interaction until a later assistant message proves the model consumed it; only consumed successful results may become concise v1 action receipts after durable archival and meaningful savings. Receipts retain bounded redacted important arguments, mutation/object references, outcome, and the `indexed_content/read_section` ref. SDK-owned tool execution keeps exact `result` distinct from optional `providerResult`, and a controlled refresh restarts provider context around the cumulative current-cycle budget. Never persist a provider receipt in place of exact tool evidence, mutate saved history to relieve provider pressure, or add a second archive/retrieval system.
+`working-set-projector.ts` is AgentExecutor's model-facing tool-evidence boundary. It must preserve exact in-run tool results: a later assistant message proves observation in one inference, not semantic consumption by future stateless inferences. Large results may be archived as exact sidecars for recovery and diagnostics, but archival must not replace provider-visible evidence with a receipt until an explicit semantic working-set contract can prove that evidence was superseded, deliberately released, or preserved in an adequate synthesis. Never persist a provider receipt in place of exact tool evidence, mutate saved history to relieve provider pressure, or add a second archive/retrieval system.
 
 Environment knobs:
-- `TOOL_OUTPUT_ARTIFACTS_ENABLED=false` disables legacy inline offload for rollback; working-set eviction still fails closed unless exact archival succeeds.
+- `TOOL_OUTPUT_ARTIFACTS_ENABLED=false` disables legacy inline offload for rollback.
 - `TOOL_OUTPUT_INLINE_TOKEN_BUDGET` default `8000`.
 - `TOOL_OUTPUT_MAX_INLINE_CHARS` default `32000`.
 - `TOOL_OUTPUT_PREVIEW_CHAR_BUDGET` default `4000`.
 - `TOOL_OUTPUT_FORCE_ARTIFACT_TOKEN_BUDGET` default `20000`.
-- `WORKING_SET_EXACT_TOOL_PAIRS` default `2`.
-- `WORKING_SET_PROJECTED_SAVINGS_FLOOR_TOKENS` default `8000`.
+- `WORKING_SET_ARCHIVE_SIDECAR_TOKEN_FLOOR` default `8000`; legacy `WORKING_SET_PROJECTED_SAVINGS_FLOOR_TOKENS` remains a compatibility fallback.
 - `WORKING_SET_TOOL_RESULT_CYCLE_BUDGET_TOKENS` default `20000`.
 
 ### Delegated Engineering Children
