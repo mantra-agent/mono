@@ -810,7 +810,10 @@ export interface MeetingSessionMeta {
   botId?: string;
   /** Original meeting join URL (Zoom/Meet). */
   meetingUrl?: string;
-  /** Durable identity of the exact calendar event when confidently resolved. */
+  /** Provider-independent identity of the real calendar occurrence. For recurring
+   * events this combines iCalUID with the immutable original start time. */
+  occurrenceKey?: string;
+  /** Provider coordinates for fetching the exact connected-calendar copy. */
   calendarAccountId?: string;
   calendarId?: string;
   providerEventId?: string;

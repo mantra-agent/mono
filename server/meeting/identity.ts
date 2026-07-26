@@ -12,6 +12,8 @@ import { peopleStorage, type Person } from "../people-storage";
 const log = createLogger("MeetingIdentityResolver");
 const LOOKBACK_MS = 12 * 60 * 60_000;
 const LOOKAHEAD_MS = 8 * 60 * 60_000;
+const URL_MATCH_EARLY_TOLERANCE_MS = 15 * 60_000;
+const URL_MATCH_LATE_TOLERANCE_MS = 30 * 60_000;
 const MAX_EVENTS = 100;
 import { extractMeetingUrl } from "./join";
 
@@ -19,6 +21,9 @@ export interface ExplicitMeetingEventIdentity {
   accountId: string;
   calendarId: string;
   providerEventId: string;
+  iCalUID?: string;
+  recurringEventId?: string;
+  originalStartTime?: string;
   eventStart?: string;
   eventEnd?: string;
   title?: string;
@@ -33,6 +38,7 @@ export interface ResolvedMeetingIdentity {
   title: string;
   agenda?: string;
   agendaPage?: Pick<MeetingAgendaPage, "id" | "title" | "slug">;
+  occurrenceKey?: string;
   calendarAccountId?: string;
   calendarId?: string;
   providerEventId?: string;
@@ -56,7 +62,10 @@ export function normalizeMeetingUrl(value: string): string {
     const url = new URL(value.trim());
     const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
     let pathname = url.pathname.replace(/\/+$/, "");
-    if (hostname === "meet.google.com") pathname = pathname.toLowerCase();
+    if (hostname === "meet.google.com") {
+      pathname = pathname.toLowerCase();
+      return `${hostname}${pathname}`;
+    }
     return `${hostname}${pathname}${url.search}`;
   } catch {
     return value.trim().toLowerCase().replace(/\/+$/, "");
@@ -71,6 +80,20 @@ export function meetingUrlForEvent(event: CalendarEvent): string | null {
     event.hangoutLink,
     event.conferenceEntryPoints?.join("\n"),
   );
+}
+
+export function calendarOccurrenceKey(event: CalendarEvent): string {
+  const occurrenceStart = event.originalStartTime?.dateTime
+    || event.originalStartTime?.date
+    || (!event.recurringEventId ? undefined : event.start.dateTime || event.start.date);
+  if (event.iCalUID) return occurrenceStart ? `ical:${event.iCalUID}\u0000${occurrenceStart}` : `ical:${event.iCalUID}`;
+  return `google:${event.accountId}\u0000${event.calendarId}\u0000${event.id}`;
+}
+
+function explicitOccurrenceKey(event: ExplicitMeetingEventIdentity): string {
+  const occurrenceStart = event.originalStartTime || (event.recurringEventId ? event.eventStart : undefined);
+  if (event.iCalUID) return occurrenceStart ? `ical:${event.iCalUID}\u0000${occurrenceStart}` : `ical:${event.iCalUID}`;
+  return `google:${event.accountId}\u0000${event.calendarId}\u0000${event.providerEventId}`;
 }
 
 function eventDateTime(value: CalendarEvent["start"] | CalendarEvent["end"]): string | undefined {
@@ -199,6 +222,7 @@ async function fromEvent(
     title: event.summary?.trim() || fallbackTitle,
     agenda: fallbackAgenda || resolvedAgenda,
     ...(agendaPage ? { agendaPage: { id: agendaPage.id, title: agendaPage.title, slug: agendaPage.slug } } : {}),
+    occurrenceKey: calendarOccurrenceKey(event),
     calendarAccountId: event.accountId,
     calendarId: event.calendarId,
     providerEventId: event.id,
@@ -239,6 +263,7 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
       title: input.explicitEvent.title?.trim() || title,
       agenda: explicitAgenda || metadataAgenda,
       ...(agendaPage ? { agendaPage: { id: agendaPage.id, title: agendaPage.title, slug: agendaPage.slug } } : {}),
+      occurrenceKey: explicitOccurrenceKey(input.explicitEvent),
       calendarAccountId: input.explicitEvent.accountId,
       calendarId: input.explicitEvent.calendarId,
       providerEventId: input.explicitEvent.providerEventId,
@@ -267,15 +292,20 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
   const matchingEvents = events.filter((event) => {
     if (event.status === "cancelled") return false;
     const eventUrl = meetingUrlForEvent(event);
-    return !!eventUrl && normalizeMeetingUrl(eventUrl) === normalizedTarget;
+    if (!eventUrl || normalizeMeetingUrl(eventUrl) !== normalizedTarget) return false;
+    const start = new Date(eventDateTime(event.start) ?? 0).getTime();
+    const end = new Date(eventDateTime(event.end) ?? eventDateTime(event.start) ?? 0).getTime();
+    return Number.isFinite(start)
+      && now.getTime() >= start - URL_MATCH_EARLY_TOLERANCE_MS
+      && now.getTime() <= Math.max(start, end) + URL_MATCH_LATE_TOLERANCE_MS;
   });
-  const nearestMatch = matchingEvents.sort((left, right) => {
-    const leftTime = new Date(eventDateTime(left.start) ?? 0).getTime();
-    const rightTime = new Date(eventDateTime(right.start) ?? 0).getTime();
-    return Math.abs(leftTime - now.getTime()) - Math.abs(rightTime - now.getTime());
-  })[0];
-  if (nearestMatch) {
-    return fromEvent(nearestMatch, meetingUrl, title, agenda, "manual_url_match");
+  if (matchingEvents.length === 1) {
+    return fromEvent(matchingEvents[0], meetingUrl, title, agenda, "manual_url_match");
+  }
+  if (matchingEvents.length > 1) {
+    log.warn("Ambiguous reusable meeting URL remained unbound", {
+      candidateCount: matchingEvents.length,
+    });
   }
 
   return { meetingUrl, title, agenda, resolutionSource: "unresolved_url", participants: [], speakerPolicy: { mode: "participant_streams" } };

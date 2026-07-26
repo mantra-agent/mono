@@ -10,8 +10,8 @@ const log = createLogger("MeetingLocks");
  * mutually exclusive for the same meeting, so a recovery attempt can never
  * race a departure into two conflicting bot lifecycles.
  */
-function transportLockKey(sessionId: string): bigint {
-  const hash = createHash("sha256").update(`meeting-transport:${sessionId}`).digest();
+function meetingLockKey(namespace: "transport" | "occurrence", identity: string): bigint {
+  const hash = createHash("sha256").update(`meeting-${namespace}:${identity}`).digest();
   let key = 0n;
   for (let index = 0; index < 8; index += 1) {
     key = (key << 8n) | BigInt(hash[index]);
@@ -20,12 +20,13 @@ function transportLockKey(sessionId: string): bigint {
 }
 
 /** Serialize transport-control mutations for one meeting across processes. */
-export async function withMeetingTransportLock<T>(
-  sessionId: string,
+async function withMeetingLock<T>(
+  namespace: "transport" | "occurrence",
+  identity: string,
   operation: () => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
-  const key = transportLockKey(sessionId);
+  const key = meetingLockKey(namespace, identity);
   try {
     await client.query("SELECT pg_advisory_lock($1::bigint)", [key.toString()]);
     return await operation();
@@ -33,8 +34,23 @@ export async function withMeetingTransportLock<T>(
     try {
       await client.query("SELECT pg_advisory_unlock($1::bigint)", [key.toString()]);
     } catch {
-      log.warn(`failed to release transport lock sessionId=${sessionId}`);
+      log.warn(`failed to release meeting lock namespace=${namespace}`);
     }
     client.release();
   }
+}
+
+export function withMeetingTransportLock<T>(
+  sessionId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withMeetingLock("transport", sessionId, operation);
+}
+
+/** Serialize calendar occurrence get-or-create and Recall dispatch across replicas. */
+export function withMeetingOccurrenceLock<T>(
+  occurrenceKey: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withMeetingLock("occurrence", occurrenceKey, operation);
 }
