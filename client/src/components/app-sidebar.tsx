@@ -118,7 +118,8 @@ const navSections: NavSection[] = [
     label: "Business",
     defaultOpen: false,
     items: [
-      { title: "Model", url: "/business/model", icon: LineChart },
+      { title: "Model", url: "/business/model", icon: LineChart, permission: "system:read" },
+      { title: "Roles", url: "/business/roles", icon: Briefcase, permission: "system:read" },
     ],
   },
   {

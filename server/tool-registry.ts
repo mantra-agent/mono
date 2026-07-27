@@ -474,6 +474,28 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  jobs: {
+    description: "Manage admin-only job role definitions used by future hiring plans and P&L headcount costs. Actions: list, get, create, update, delete. Every field is available to query and edit: title, description, team, annual salary minimum/maximum, target annual performance or bonus compensation as a percentage of base salary, and equity share count.",
+    category: "work",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "get", "create", "update", "delete"], description: "Action to perform" },
+        id: { type: "string", description: "Job role ID (required for get/update/delete)" },
+        query: { type: "string", description: "Optional title, description, or team search for list" },
+        limit: { type: "number", description: "Maximum roles to return for list (default 100, max 200)" },
+        title: { type: "string", description: "Job title (required for create; optional sparse patch for update)" },
+        description: { type: "string", description: "Job description" },
+        team: { type: "string", enum: ["Executive", "Product", "Engineering", "Design", "Go-to-Market", "Customer Success", "Operations", "Finance", "People"], description: "Canonical seeded Team" },
+        annualSalaryMin: { type: "number", description: "Annual base salary range minimum in whole dollars" },
+        annualSalaryMax: { type: "number", description: "Annual base salary range maximum in whole dollars" },
+        targetBonusPercent: { type: "number", description: "Target annual performance or bonus compensation as a percentage of base salary" },
+        equityShareCount: { type: "number", description: "Equity share count" },
+        clearFields: { type: "array", items: { type: "string", enum: ["description"] }, description: "Fields to explicitly clear during update. Currently supports description." },
+      },
+      required: ["action"],
+    },
+  },
   companies: {
     description: "Manage companies and company membership. Actions: list, get, create, update, delete, add_person, remove_person, add_opportunity, remove_opportunity. Use canonical @company:id references.",
     category: "communication",
@@ -1986,6 +2008,7 @@ function buildExampleJson(toolName: string, params: { type: string; properties: 
   const examples: Record<string, Record<string, any>> = {
     goals: { action: "list" },
     people: { action: "list" },
+    jobs: { action: "list" },
     gmail: { action: "recent" },
     create_task: { title: "YOUR_TASK_TITLE" },
     complete_task: { title: "TASK_TITLE_TO_COMPLETE" },

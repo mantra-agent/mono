@@ -34,6 +34,7 @@ export * from "./models/platforms";
 export * from "./models/vaults";
 export * from "./models/communications";
 export * from "./models/browser-telemetry";
+export * from "./models/job-roles";
 
 
 export const mobileStartupTelemetry = pgTable("mobile_startup_telemetry", {
@@ -792,6 +793,36 @@ export const financialModels = pgTable("financial_models", {
 ]);
 
 export type FinancialModelRow = typeof financialModels.$inferSelect;
+
+// ── Job Roles (headcount cost inputs) ────────────────────────────
+// Account-owned role definitions. Hiring plans will reference these stable
+// IDs instead of copying compensation assumptions into the financial model.
+export const jobRoles = pgTable("job_roles", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  normalizedTitle: text("normalized_title").notNull(),
+  description: text("description").notNull().default(""),
+  team: text("team").notNull(),
+  annualSalaryMin: integer("annual_salary_min").notNull().default(0),
+  annualSalaryMax: integer("annual_salary_max").notNull().default(0),
+  targetBonusPercent: real("target_bonus_percent").notNull().default(0),
+  equityShareCount: integer("equity_share_count").notNull().default(0),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  createdByUserId: text("created_by_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_job_roles_scope_owner").on(table.scope, table.ownerUserId),
+  index("idx_job_roles_account_team_title").on(table.accountId, table.team, table.normalizedTitle),
+  uniqueIndex("uq_job_roles_account_title").on(table.accountId, table.normalizedTitle).where(sql`account_id IS NOT NULL`),
+  check("job_roles_salary_range", sql`${table.annualSalaryMin} >= 0 AND ${table.annualSalaryMax} >= ${table.annualSalaryMin}`),
+  check("job_roles_bonus_range", sql`${table.targetBonusPercent} >= 0 AND ${table.targetBonusPercent} <= 1000`),
+  check("job_roles_equity_range", sql`${table.equityShareCount} >= 0`),
+]);
+
+export type JobRoleRow = typeof jobRoles.$inferSelect;
 
 // ── Persons ───────────────────────────────────────────────────────
 export const persons = pgTable("persons", {

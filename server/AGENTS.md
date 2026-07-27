@@ -9,6 +9,10 @@ A user session must never be bound to, or edit, a read-only seed. `PersonaStorag
 
 Root `AGENTS.md` is mandatory and authoritative for Engineering Principles, architecture, and repository constraints. Root `CODING.md` is mandatory and authoritative for engineering workflow, Coding Task Gate, git policy, verification, and final reporting. This file adds local constraints only. Load this file before touching files under `server/`. For UI/product-facing work, also load root `DESIGN.md`. If instructions conflict, follow root `AGENTS.md` for principles/architecture and root `CODING.md` for procedure unless Ray explicitly overrides.
 
+## Jobs and headcount planning boundary
+
+`job_roles` is the account-owned source of truth for reusable role and compensation definitions. `JobRoleStorage` is the only ordinary mutation boundary for UI, REST, and the `jobs` tool; hiring plans must reference stable role IDs rather than copy role compensation into the financial model. The Team vocabulary is the shared seeded `JOB_TEAMS` list. Reads require `system:read`, writes require `system:write`, and every query retains principal account scope.
+
 ## Work storage boundary
 
 Project milestones are first-class rows in `milestones`, keyed by `(project_id, id)` because numeric milestone IDs are project-local and tasks pair `project_id` with `milestone_id`. `FileProjectStorage` is the canonical read/write boundary: it hydrates the stable `Project.milestones` response shape from scoped rows, inherits milestone ownership from the writable parent project, and serializes per-project replacement/ID allocation. Production boot must converge parent Project Vault anchors before `milestone-schema.ts`, then repair the canonical table before accepting requests. Deprecated `projects.milestones` JSON is first-adoption input only; a durable marker prevents later replay or resurrection. After adoption it is rollback-only and runtime code must never read or write it.
