@@ -73,6 +73,11 @@ export async function backfillLongTitles(options?: { batchDelayMs?: number }): P
 
 export async function logMemoryDiagnostics(): Promise<void> {
   try {
+    const { legacyMemoryQuarantineApplied } = await import("./legacy-memory-quarantine");
+    if (await legacyMemoryQuarantineApplied()) {
+      log.debug("legacy memory diagnostics skipped; memory_entries is quarantined");
+      return;
+    }
     const layerCounts = await db
       .select({ layer: memoryEntries.layer, count: sql<number>`count(*)::int` })
       .from(memoryEntries)

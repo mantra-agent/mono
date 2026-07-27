@@ -55,6 +55,13 @@ const CGROUP_MEMORY_LIMIT_PATHS = [
   "/sys/fs/cgroup/memory/memory.limit_in_bytes",
 ] as const;
 const BOOT_COMPLETE_MARKER = "__BOOT_COMPLETE__";
+// Allowlisted, bounded planned-restart reasons. Each is a child that has
+// durably prepared a next-boot transition and exits cleanly through the
+// application shutdown coordinator. Free-text reasons are never honored.
+const PLANNED_RESTART_REASONS = new Set<string>([
+  "stage_document_store_activation",
+  "stage_legacy_memory_quarantine",
+]);
 const PREV_BOOT_ID_FILE = path.join("/tmp", "watchdog-prev-boot-id");
 const CHILD_PATH = "dist/index.mjs";
 const WRAPPER_ID = `${process.env.RAILWAY_REPLICA_ID || process.env.HOSTNAME || "local"}:${process.pid}:${Date.now().toString(36)}`;
@@ -617,7 +624,7 @@ function startChild() {
     } else if (msg.type === "worker_dead") {
       workerDeadReason = typeof msg.reason === "string" ? msg.reason : "unknown";
       log.error(`Worker canary dead — reason=${workerDeadReason}; awaiting child exit`);
-    } else if (msg.type === "planned_restart" && msg.reason === "stage_document_store_activation") {
+    } else if (msg.type === "planned_restart" && typeof msg.reason === "string" && PLANNED_RESTART_REASONS.has(msg.reason)) {
       plannedRestartReason = msg.reason;
       log.info(`Planned child restart requested — reason=${plannedRestartReason}; awaiting clean child exit`);
     }
@@ -669,7 +676,7 @@ function startChild() {
     }
 
     if (evidence.terminationKind === "clean") {
-      if (plannedRestartReason === "stage_document_store_activation") {
+      if (plannedRestartReason !== null && PLANNED_RESTART_REASONS.has(plannedRestartReason)) {
         restartCount++;
         const backoff = getBackoffMs();
         logLifecycle("restart_decision", {
