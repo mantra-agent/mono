@@ -205,7 +205,9 @@ export async function runBetweenTurnCompaction(
   const { buildCompactionSnapshot, isCommittedContextMessage } = await import(
     "./compaction-snapshot"
   );
-  const snapshot = buildCompactionSnapshot(sessionId, docMessages);
+  const snapshot = buildCompactionSnapshot(sessionId, docMessages, {
+    retentionTokenBudget: threshold,
+  });
   if (!snapshot) return { outcome: "below_threshold" };
   const removed = [...snapshot.removedMessages];
   const boundaryIndex = removed.length;
