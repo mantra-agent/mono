@@ -1072,14 +1072,17 @@ function startDeferredBackgroundServices(): void {
     bootTracker.completePhase("background_services");
     bootTracker.markReady();
 
+    const { getRuntimeIdentity } = await import("./runtime-identity");
+    const runtimeIdentity = await getRuntimeIdentity();
+
     try {
-      const { getRuntimeIdentity } = await import("./runtime-identity");
-      const runtimeIdentity = await getRuntimeIdentity();
       const { requestStageDocumentStoreActivationAfterReadiness } = await import(
         "./memory/stage-document-store-activation"
       );
-      const documentOutcome = await requestStageDocumentStoreActivationAfterReadiness(runtimeIdentity);
-      if (documentOutcome === "restart_requested") {
+      const outcome = await requestStageDocumentStoreActivationAfterReadiness(
+        runtimeIdentity,
+      );
+      if (outcome === "restart_requested") {
         await shutdownApplication({
           terminationKind: "clean",
           cause: "stage_document_store_activation",
@@ -1087,13 +1090,23 @@ function startDeferredBackgroundServices(): void {
           signal: null,
         });
         process.exit(0);
+        return;
       }
+    } catch (error) {
+      serverLog.error(
+        `stage document-store activation rollout failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
 
-      const { applyStageLegacyMemoryQuarantine } = await import(
+    try {
+      const { requestStageLegacyMemoryQuarantineAfterReadiness } = await import(
         "./memory/stage-legacy-memory-quarantine-operation"
       );
-      const quarantineOutcome = await applyStageLegacyMemoryQuarantine(runtimeIdentity);
-      if (quarantineOutcome.outcome === "restart_requested") {
+      const outcome = await requestStageLegacyMemoryQuarantineAfterReadiness(
+        runtimeIdentity,
+      );
+      if (outcome === "restart_requested") {
         await shutdownApplication({
           terminationKind: "clean",
           cause: "stage_legacy_memory_quarantine",
@@ -1104,7 +1117,7 @@ function startDeferredBackgroundServices(): void {
       }
     } catch (error) {
       serverLog.error(
-        `stage storage transition rollout failed: ${error instanceof Error ? error.message : String(error)}`,
+        `stage legacy-memory quarantine rollout failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   });

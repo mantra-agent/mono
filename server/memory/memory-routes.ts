@@ -1699,51 +1699,6 @@ async function handleBackfillLongTitles(
   sendRetiredLegacyMemoryRoute(res, "/api/memory/backfill-long-titles", "Legacy long-title maintenance is retired. vNext claim titles are generated at extraction.");
 }
 
-// ---------------------------------------------------------------------------
-// Stage legacy-memory quarantine (supervised, stage env #11 only)
-// ---------------------------------------------------------------------------
-
-async function handleLegacyQuarantineStatus(_req: Request, res: Response): Promise<void> {
-  try {
-    const { getLegacyMemoryQuarantineStatus } = await import("./legacy-memory-quarantine");
-    res.json(await getLegacyMemoryQuarantineStatus());
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
-}
-
-async function handleLegacyQuarantinePrepare(_req: Request, res: Response): Promise<void> {
-  try {
-    const { getRuntimeIdentity } = await import("../runtime-identity");
-    const { prepareStageLegacyMemoryQuarantine } = await import("./stage-legacy-memory-quarantine-operation");
-    const outcome = await prepareStageLegacyMemoryQuarantine(await getRuntimeIdentity());
-    res.status(outcome.outcome === "prepared" ? 200 : 409).json(outcome);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
-}
-
-async function handleLegacyQuarantineApply(_req: Request, res: Response): Promise<void> {
-  try {
-    const { getRuntimeIdentity } = await import("../runtime-identity");
-    const { applyStageLegacyMemoryQuarantine } = await import("./stage-legacy-memory-quarantine-operation");
-    const outcome = await applyStageLegacyMemoryQuarantine(await getRuntimeIdentity());
-    if (outcome.outcome === "restart_requested") {
-      res.status(200).json(outcome);
-      // The supervised wrapper already received the planned-restart request.
-      // Exit cleanly through the graceful-shutdown coordinator so the next boot
-      // comes up quarantine-aware.
-      setTimeout(() => {
-        try { process.kill(process.pid, "SIGTERM"); } catch { /* shutdown best-effort */ }
-      }, 250).unref();
-      return;
-    }
-    res.status(409).json(outcome);
-  } catch (error: unknown) {
-    res.status(500).json({ error: errorMessage(error) });
-  }
-}
-
 export function registerMemoryRoutes(app: Express) {
   app.use("/api/memory", requireAuth);
   app.post("/api/memory/retention-purge/dry-run", requirePermission("system:write"), handleRetentionPurgeDryRun);
@@ -1839,7 +1794,4 @@ export function registerMemoryRoutes(app: Express) {
     handleDeleteEntityLink,
   );
   app.post("/api/memory/backfill-long-titles", handleBackfillLongTitles);
-  app.get("/api/memory/legacy-quarantine/status", requirePermission("system:read"), handleLegacyQuarantineStatus);
-  app.post("/api/memory/legacy-quarantine/prepare", requirePermission("system:write"), handleLegacyQuarantinePrepare);
-  app.post("/api/memory/legacy-quarantine/apply", requirePermission("system:write"), handleLegacyQuarantineApply);
 }

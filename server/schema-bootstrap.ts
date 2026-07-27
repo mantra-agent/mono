@@ -544,26 +544,25 @@ export async function runSchemaBootstrap(
   // schema. Every legacy convergence path below is skipped so boot never
   // recreates, mutates, or reconnects those tables. This gate reads PostgreSQL,
   // never an environment variable, and defaults to disabled.
-  const { legacyMemoryQuarantineApplied } = await import("./memory/legacy-memory-quarantine");
+  const {
+    ensureLegacyMemoryQuarantineStateTable,
+    legacyMemoryQuarantineApplied,
+    LEGACY_MEMORY_QUARANTINE_TABLES,
+  } = await import("./memory/legacy-memory-quarantine");
+  await ensureLegacyMemoryQuarantineStateTable();
   const legacyMemoryQuarantined = await legacyMemoryQuarantineApplied();
   if (legacyMemoryQuarantined) {
     log("legacy memory quarantine applied; skipping legacy memory convergence", "migration");
   }
-  const legacyMemoryTableNames = new Set([
-    "memory_entries",
-    "memory_sources",
-    "memory_links",
-    "memory_transitions",
-    "memory_content_blocks",
-    "memory_events",
-    "memory_entity_links",
-  ]);
-  await ensureBaselineTables(
-    reason,
-    legacyMemoryQuarantined
-      ? baselineTables.filter((table) => !legacyMemoryTableNames.has(getTableConfig(table).name))
-      : baselineTables,
-  );
+  const activeBaselineTables = legacyMemoryQuarantined
+    ? baselineTables.filter(
+        (table) =>
+          !new Set<string>(LEGACY_MEMORY_QUARANTINE_TABLES).has(
+            getTableConfig(table).name,
+          ),
+      )
+    : baselineTables;
+  await ensureBaselineTables(reason, activeBaselineTables);
   await ensureVoiceSessionActiveSchema(pool);
   await ensureDocumentStoreDocumentsSchema(pool);
   await ensureTimerOwnershipSchema(pool);

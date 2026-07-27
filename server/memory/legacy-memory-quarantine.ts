@@ -58,7 +58,10 @@ interface QuarantineStateRow {
 export interface LegacyMemoryColumnInventory {
   name: string;
   dataType: string;
+  udtName: string;
   ordinalPosition: number;
+  nullable: boolean;
+  defaultValue: string | null;
 }
 
 export interface LegacyMemoryForeignKey {
@@ -88,6 +91,14 @@ export interface LegacyMemoryArchiveManifest {
   outboundForeignKeys: LegacyMemoryForeignKey[];
   inboundForeignKeys: LegacyMemoryForeignKey[];
   totalRows: number;
+  postgresVersion: string;
+  runtimeIdentity: {
+    platformEnvironmentId: number | null;
+    environmentName: string;
+    gitCommit: string | null;
+    dbHost: string | null;
+  };
+  independentDocumentStore: boolean;
   archiveSha256: string;
   archiveByteLength: number;
 }
@@ -98,6 +109,7 @@ export interface LegacyMemoryArchive {
 }
 
 let appliedCache: boolean | null = null;
+let appliedAtBoot: boolean | null = null;
 
 function quoteIdent(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
@@ -172,17 +184,18 @@ async function readState(
 export async function legacyMemoryQuarantineApplied(): Promise<boolean> {
   if (appliedCache) return true;
   try {
-    const ledger = await pool.query<{ present: boolean }>(
-      `SELECT to_regclass('public.legacy_memory_quarantine_state') IS NOT NULL AS present`,
-    );
-    if (!ledger.rows[0]?.present) return false;
     const state = await readState(pool);
     appliedCache = state?.applied === true;
   } catch {
     // Missing state table before bootstrap means not-yet-quarantined.
     appliedCache = false;
   }
+  if (appliedAtBoot === null) appliedAtBoot = appliedCache;
   return appliedCache;
+}
+
+export function legacyMemoryQuarantineWasAppliedAtBoot(): boolean {
+  return appliedAtBoot === true;
 }
 
 export async function getLegacyMemoryQuarantineStatus(): Promise<{
@@ -264,6 +277,26 @@ export async function computeLegacyMemoryClosure(client: PoolClient): Promise<{
   inboundForeignKeys: LegacyMemoryForeignKey[];
 }> {
   const allowlist = new Set<string>(LEGACY_MEMORY_QUARANTINE_TABLES);
+  const tables = await client.query<{ table_name: string }>(
+    `SELECT table_name
+     FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_name LIKE 'memory\\_%' ESCAPE '\\'
+     ORDER BY table_name`,
+  );
+  const unclassified = tables.rows
+    .map((row) => row.table_name)
+    .filter(
+      (table) =>
+        table !== "memory_observations" &&
+        !table.startsWith("memory_vnext_") &&
+        !allowlist.has(table),
+    );
+  if (unclassified.length > 0) {
+    throw new Error(
+      `Unclassified public memory tables block quarantine: ${unclassified.join(",")}`,
+    );
+  }
   const foreignKeys = await loadForeignKeys(client);
 
   // The closure is memory_entries plus every table that references a table
@@ -319,9 +352,13 @@ async function loadTableInventory(
   const columns = await client.query<{
     column_name: string;
     data_type: string;
+    udt_name: string;
     ordinal_position: number;
+    is_nullable: "YES" | "NO";
+    column_default: string | null;
   }>(
-    `SELECT column_name, data_type, ordinal_position
+    `SELECT column_name, data_type, udt_name, ordinal_position,
+            is_nullable, column_default
      FROM information_schema.columns
      WHERE table_schema = 'public' AND table_name = $1
      ORDER BY ordinal_position`,
@@ -350,7 +387,10 @@ async function loadTableInventory(
     columns: columns.rows.map((c) => ({
       name: c.column_name,
       dataType: c.data_type,
+      udtName: c.udt_name,
       ordinalPosition: c.ordinal_position,
+      nullable: c.is_nullable === "YES",
+      defaultValue: c.column_default,
     })),
     rowCount: Number(countRes.rows[0]?.cnt ?? 0),
     indexes: indexes.rows.map((r) => r.indexdef),
@@ -372,7 +412,7 @@ async function appendTableRowsJsonl(
   const selectExprs = inventory.columns
     .map((col) => {
       if (col.dataType === "USER-DEFINED" || col.dataType === "ARRAY") {
-        // pgvector renders as USER-DEFINED; arrays via ARRAY. Render exact text.
+        // pgvector and arrays are preserved as PostgreSQL text literals.
         return `${quoteIdent(col.name)}::text AS ${quoteIdent(col.name)}`;
       }
       return quoteIdent(col.name);
@@ -383,17 +423,28 @@ async function appendTableRowsJsonl(
     : inventory.columns[0]?.name;
   const orderClause = orderColumn ? `ORDER BY ${quoteIdent(orderColumn)}` : "";
 
-  const res = await client.query(
-    `SELECT ${selectExprs} FROM public.${quoteIdent(inventory.table)} ${orderClause}`,
+  const cursorName = `legacy_archive_${inventory.table}`;
+  await client.query(
+    `DECLARE ${quoteIdent(cursorName)} NO SCROLL CURSOR FOR SELECT ${selectExprs} FROM public.${quoteIdent(inventory.table)} ${orderClause}`,
   );
-  for (const row of res.rows) {
-    const ordered: Record<string, unknown> = {};
-    for (const col of inventory.columns) {
-      ordered[col.name] = (row as Record<string, unknown>)[col.name] ?? null;
+  try {
+    while (true) {
+      const res = await client.query(
+        `FETCH FORWARD 250 FROM ${quoteIdent(cursorName)}`,
+      );
+      if (res.rows.length === 0) break;
+      for (const row of res.rows) {
+        const ordered: Record<string, unknown> = {};
+        for (const col of inventory.columns) {
+          ordered[col.name] = (row as Record<string, unknown>)[col.name] ?? null;
+        }
+        parts.push(
+          JSON.stringify({ __table: inventory.table, row: ordered }),
+        );
+      }
     }
-    parts.push(
-      JSON.stringify({ __table: inventory.table, row: ordered }),
-    );
+  } finally {
+    await client.query(`CLOSE ${quoteIdent(cursorName)}`);
   }
 }
 
@@ -413,6 +464,23 @@ export async function buildLegacyMemoryArchive(
     inventories.push(await loadTableInventory(client, table));
   }
   const totalRows = inventories.reduce((sum, inv) => sum + inv.rowCount, 0);
+  const postgresVersionResult = await client.query<{ version: string }>(
+    "SHOW server_version",
+  );
+  const { getRuntimeIdentity } = await import("../runtime-identity");
+  const runtimeIdentity = await getRuntimeIdentity();
+  const { documentStoreIndependentWritesEnabled } = await import(
+    "./document-store-cutover"
+  );
+  const independentDocumentStore =
+    await documentStoreIndependentWritesEnabled();
+  const runtimeEvidence = {
+    platformEnvironmentId: runtimeIdentity.platformEnvironmentId,
+    environmentName: runtimeIdentity.environmentName,
+    gitCommit: runtimeIdentity.gitCommit,
+    dbHost: runtimeIdentity.dbHost,
+  };
+  const postgresVersion = postgresVersionResult.rows[0]?.version ?? "unknown";
 
   const parts: string[] = [];
   // Ordinal 0: catalog inventory line.
@@ -427,6 +495,9 @@ export async function buildLegacyMemoryArchive(
       outboundForeignKeys,
       inboundForeignKeys,
       totalRows,
+      postgresVersion,
+      runtimeIdentity: runtimeEvidence,
+      independentDocumentStore,
     }),
   );
   // Rows, table by table in allowlist order.
@@ -447,6 +518,9 @@ export async function buildLegacyMemoryArchive(
     outboundForeignKeys,
     inboundForeignKeys,
     totalRows,
+    postgresVersion,
+    runtimeIdentity: runtimeEvidence,
+    independentDocumentStore,
     archiveSha256,
     archiveByteLength: body.byteLength,
   };
@@ -458,23 +532,34 @@ export async function buildLegacyMemoryArchive(
 // Rollback SQL
 // ---------------------------------------------------------------------------
 
-export function buildRollbackSql(): string {
-  const statements: string[] = ["BEGIN;"];
+export function buildRollbackSql(
+  inboundForeignKeys: LegacyMemoryForeignKey[],
+): string {
+  const statements: string[] = [
+    "BEGIN;",
+    "SET LOCAL lock_timeout = '5s';",
+    `ALTER TABLE legacy_memory_quarantine_state DISABLE TRIGGER trg_legacy_memory_quarantine_monotonic;`,
+  ];
   for (const table of LEGACY_MEMORY_QUARANTINE_TABLES) {
     statements.push(
       `ALTER TABLE ${quoteIdent(LEGACY_MEMORY_QUARANTINE_SCHEMA)}.${quoteIdent(table)} SET SCHEMA public;`,
+    );
+  }
+  for (const fk of inboundForeignKeys) {
+    statements.push(
+      `ALTER TABLE public.${quoteIdent(fk.referencingTable)} ADD CONSTRAINT ${quoteIdent(fk.constraintName)} ${fk.definition};`,
     );
   }
   statements.push(
     `UPDATE legacy_memory_quarantine_state SET applied = FALSE, applied_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE cutover_key = '${LEGACY_MEMORY_QUARANTINE_KEY}';`,
   );
   statements.push(
+    `ALTER TABLE legacy_memory_quarantine_state ENABLE TRIGGER trg_legacy_memory_quarantine_monotonic;`,
+  );
+  statements.push(
     `DROP SCHEMA IF EXISTS ${quoteIdent(LEGACY_MEMORY_QUARANTINE_SCHEMA)};`,
   );
   statements.push("COMMIT;");
-  // Note: reverting the monotonic-applied flag requires temporarily disabling
-  // trg_legacy_memory_quarantine_monotonic; the operator runs this as a
-  // deliberate break-glass recovery, documented in SECURITY.md.
   return statements.join("\n");
 }
 
@@ -516,22 +601,41 @@ export async function prepareLegacyMemoryQuarantine(): Promise<{
     client.release();
   }
 
-  const objectKey = `${LEGACY_MEMORY_ARCHIVE_PREFIX}${LEGACY_MEMORY_QUARANTINE_KEY}-${archive.manifest.archiveSha256}.jsonl`;
+  const archivePrefix = `${LEGACY_MEMORY_ARCHIVE_PREFIX}${archive.manifest.archiveSha256}/`;
+  const objectKey = `${archivePrefix}archive.jsonl`;
+  const manifestKey = `${archivePrefix}manifest.json`;
+  const checksumKey = `${archivePrefix}files.sha256`;
+  const manifestBody = Buffer.from(
+    `${JSON.stringify(archive.manifest, null, 2)}\n`,
+    "utf8",
+  );
+  const checksumBody = Buffer.from(
+    `${archive.manifest.archiveSha256}  archive.jsonl\n`,
+    "utf8",
+  );
   await storageBackend.putObject(objectKey, archive.body, {
     contentType: "application/x-ndjson; charset=utf-8",
   });
+  await storageBackend.putObject(manifestKey, manifestBody, {
+    contentType: "application/json; charset=utf-8",
+  });
+  await storageBackend.putObject(checksumKey, checksumBody, {
+    contentType: "text/plain; charset=utf-8",
+  });
 
-  // Read-back verification: exact byte hash must match.
-  const [readBack, objectMetadata] = await Promise.all([
+  // Read-back verification: exact archive, manifest, and checksum bytes must
+  // match what this process produced before prepared state can be persisted.
+  const [readBack, manifestReadBack, checksumReadBack] = await Promise.all([
     storageBackend.getObjectBuffer(objectKey),
-    storageBackend.headObject(objectKey),
+    storageBackend.getObjectBuffer(manifestKey),
+    storageBackend.getObjectBuffer(checksumKey),
   ]);
   const readBackSha256 = createHash("sha256").update(readBack).digest("hex");
   if (
-    !objectMetadata ||
-    objectMetadata.contentLength !== archive.body.byteLength ||
     readBack.byteLength !== archive.body.byteLength ||
-    readBackSha256 !== archive.manifest.archiveSha256
+    readBackSha256 !== archive.manifest.archiveSha256 ||
+    !manifestReadBack.equals(manifestBody) ||
+    !checksumReadBack.equals(checksumBody)
   ) {
     throw new Error(
       `Legacy memory archive read-back verification failed: expected ${archive.manifest.archiveSha256} (${archive.body.byteLength} bytes), got ${readBackSha256} (${readBack.byteLength} bytes)`,
@@ -579,7 +683,7 @@ export async function prepareLegacyMemoryQuarantine(): Promise<{
 
 /**
  * Move the exact allowlisted legacy closure into the quarantine schema in one
- * transaction, preserving all foreign keys by PostgreSQL object identity, and persist
+ * transaction, dropping only inbound FKs from active public tables, and persist
  * the applied epoch plus the exact reverse SQL. Requires a verified prepared
  * archive. Does not drop any table.
  */
@@ -601,9 +705,62 @@ export async function applyLegacyMemoryQuarantine(): Promise<{
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SET LOCAL lock_timeout = '5s'");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-      "legacy_memory_quarantine_v1",
+      LEGACY_MEMORY_QUARANTINE_KEY,
     ]);
+
+    const transactionState = await readState(client);
+    if (transactionState?.applied) {
+      await client.query("COMMIT");
+      appliedCache = true;
+      return {
+        applied: true,
+        movedTables: [],
+        droppedInboundForeignKeys: [],
+        rollbackSql: transactionState.rollback_sql ?? "",
+      };
+    }
+    if (!transactionState?.archive_sha256 || !transactionState.manifest) {
+      throw new Error(
+        "Legacy memory quarantine requires a verified prepared archive before apply",
+      );
+    }
+
+    const lockList = LEGACY_MEMORY_QUARANTINE_TABLES.map(
+      (table) => `public.${quoteIdent(table)}`,
+    ).join(", ");
+    await client.query(`LOCK TABLE ${lockList} IN ACCESS EXCLUSIVE MODE`);
+    const currentTransactionId = await client.query<{ pid: number }>(
+      "SELECT pg_backend_pid() AS pid",
+    );
+    const activeLegacyWriters = await client.query<{ count: string }>(
+      `SELECT COUNT(DISTINCT l.pid)::bigint AS count
+       FROM pg_locks l
+       JOIN pg_class c ON c.oid = l.relation
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND c.relname = ANY($1::text[])
+         AND l.pid <> $2
+         AND l.granted
+         AND l.mode IN ('RowExclusiveLock', 'ShareRowExclusiveLock', 'ExclusiveLock', 'AccessExclusiveLock')`,
+      [
+        [...LEGACY_MEMORY_QUARANTINE_TABLES],
+        currentTransactionId.rows[0]?.pid ?? -1,
+      ],
+    );
+    if (Number(activeLegacyWriters.rows[0]?.count ?? 0) > 0) {
+      throw new Error(
+        "Legacy memory quarantine blocked because another process still holds a legacy write lock",
+      );
+    }
+
+    const archive = await buildLegacyMemoryArchive(client);
+    if (archive.manifest.archiveSha256 !== transactionState.archive_sha256) {
+      throw new Error(
+        "Legacy memory archive became stale before apply; prepare a fresh verified snapshot",
+      );
+    }
 
     const { closure, inboundForeignKeys } =
       await computeLegacyMemoryClosure(client);
@@ -615,8 +772,16 @@ export async function applyLegacyMemoryQuarantine(): Promise<{
       `CREATE SCHEMA IF NOT EXISTS ${quoteIdent(LEGACY_MEMORY_QUARANTINE_SCHEMA)}`,
     );
 
-    // Move each allowlisted table. Internal and inbound foreign keys follow by
-    // OID, preserving the exact catalog relationship without reconstruction.
+    // Drop inbound FKs from active public tables so quarantine leaves no
+    // reconnecting edge back into the canonical legacy closure.
+    for (const fk of inboundForeignKeys) {
+      await client.query(
+        `ALTER TABLE public.${quoteIdent(fk.referencingTable)} DROP CONSTRAINT IF EXISTS ${quoteIdent(fk.constraintName)}`,
+      );
+    }
+
+    // Move each allowlisted table. Intra-closure FKs follow by OID and remain
+    // valid inside the quarantine schema.
     for (const table of LEGACY_MEMORY_QUARANTINE_TABLES) {
       await client.query(
         `ALTER TABLE public.${quoteIdent(table)} SET SCHEMA ${quoteIdent(LEGACY_MEMORY_QUARANTINE_SCHEMA)}`,
@@ -636,7 +801,7 @@ export async function applyLegacyMemoryQuarantine(): Promise<{
       );
     }
 
-    const rollbackSql = buildRollbackSql();
+    const rollbackSql = buildRollbackSql(inboundForeignKeys);
 
     await client.query(
       `UPDATE legacy_memory_quarantine_state

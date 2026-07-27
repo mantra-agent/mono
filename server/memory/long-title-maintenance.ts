@@ -7,6 +7,14 @@ import { memoryEntryLightColumns, wrapLightEntry } from "./memory-storage";
 const log = createLogger("LongTitleMaintenance");
 
 export async function backfillLongTitles(options?: { batchDelayMs?: number }): Promise<{ updated: number; skipped: number; errors: string[] }> {
+  const { legacyMemoryQuarantineApplied } = await import(
+    "./legacy-memory-quarantine"
+  );
+  if (await legacyMemoryQuarantineApplied()) {
+    log.debug("long-title backfill skipped; memory_entries is quarantined");
+    return { updated: 0, skipped: 0, errors: [] };
+  }
+
   const WORD_COUNT_THRESHOLD = 5;
   const BATCH_DELAY_MS = options?.batchDelayMs ?? 500;
   const result = { updated: 0, skipped: 0, errors: [] as string[] };
