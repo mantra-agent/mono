@@ -83,10 +83,17 @@ export async function requestStageLegacyMemoryQuarantineAfterReadiness(
   const status = initialStatus;
   if (!status.preparedAt || !status.archiveSha256) {
     await prepareLegacyMemoryQuarantine();
+    // Request a supervised planned restart so the deployed binary self-converges
+    // to apply on the next fresh boot instead of waiting passively for an
+    // unrelated deployment. The apply branch below re-prepares and re-verifies
+    // the archive immediately before the SET SCHEMA move, so the prepare/apply
+    // split across restarts still guarantees destructive application only ever
+    // runs against a freshly verified snapshot.
+    await requestPlannedRestart();
     log.info(
-      "stage legacy memory quarantine prepared; apply deferred until a later fresh boot",
+      "stage legacy memory quarantine prepared; planned restart requested for apply on next boot",
     );
-    return "prepared";
+    return "restart_requested";
   }
 
   // A later boot always refreshes and re-verifies the archive immediately
