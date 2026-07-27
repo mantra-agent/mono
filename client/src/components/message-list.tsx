@@ -149,6 +149,22 @@ function hasRenderableAssistantPayload(msg: Message): boolean {
   return false;
 }
 
+type AssistantStreamIdentityRelation = "match" | "mismatch" | "unknown";
+
+function compareAssistantToDisplayedStream(
+  message: Message,
+  streaming: StreamingContent,
+): AssistantStreamIdentityRelation {
+  if (message.role !== "assistant" || message.id.startsWith("draft-")) return "unknown";
+  if (streaming.runId && message.assistantRunId) {
+    return streaming.runId === message.assistantRunId ? "match" : "mismatch";
+  }
+  if (streaming.turnId && message.turnId) {
+    return streaming.turnId === message.turnId ? "match" : "mismatch";
+  }
+  return "unknown";
+}
+
 
 function hasChildSessionId(meta: ChildSessionBlockMeta | null | undefined): meta is ChildSessionBlockMeta {
   return typeof meta?.childSessionId === "string" && meta.childSessionId.length > 0;
@@ -600,7 +616,22 @@ export function MessageList({
     hasRenderableStreamForTurn;
 
   const hiddenStreamingCheckpointIds: string[] = [];
-  const overlappingPersistedAssistant = persistedAssistantForStreamingTurn;
+  const identityMatchedPersistedAssistants = items.flatMap((item) =>
+    item.kind === "message" &&
+    compareAssistantToDisplayedStream(item.msg, effectiveStreaming) === "match"
+      ? [item.msg]
+      : [],
+  );
+  const legacyOverlappingPersistedAssistant = persistedAssistantForStreamingTurn &&
+    compareAssistantToDisplayedStream(persistedAssistantForStreamingTurn, effectiveStreaming) === "unknown"
+      ? persistedAssistantForStreamingTurn
+      : null;
+  const overlappingPersistedAssistants = identityMatchedPersistedAssistants.length > 0
+    ? identityMatchedPersistedAssistants
+    : legacyOverlappingPersistedAssistant
+      ? [legacyOverlappingPersistedAssistant]
+      : [];
+  const overlappingPersistedAssistant = overlappingPersistedAssistants.at(-1) ?? null;
   if (activeStreamingDraftId && overlappingPersistedAssistant) {
     // React identity follows the logical assistant turn, not its storage phase.
     // When persistence catches up, the finalized message updates the existing
@@ -618,17 +649,19 @@ export function MessageList({
       activeStreamingDraftId,
     );
   }
-  if (needsStreamingTarget && overlappingPersistedAssistant) {
+  if (needsStreamingTarget && overlappingPersistedAssistants.length > 0) {
     // During finalization the frozen stream intentionally overlaps the first
     // render containing its persisted replacement. Keep the existing live turn
-    // mounted for that commit and suppress the duplicate persisted message.
-    const persistedIndex = items.findIndex(
-      (item) => item.kind === "message" && item.msg.id === overlappingPersistedAssistant.id,
-    );
-    if (persistedIndex >= 0) {
-      hiddenStreamingCheckpointIds.push(overlappingPersistedAssistant.id);
-      items.splice(persistedIndex, 1);
-      if (persistedIndex < activeTurnUserItemIndex) activeTurnUserItemIndex -= 1;
+    // mounted for that commit and suppress every checkpoint carrying the same
+    // run/turn identity. Chronology is only the fallback for legacy messages
+    // without comparable identity.
+    const overlappingIds = new Set(overlappingPersistedAssistants.map((message) => message.id));
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (item.kind !== "message" || !overlappingIds.has(item.msg.id)) continue;
+      hiddenStreamingCheckpointIds.push(item.msg.id);
+      items.splice(i, 1);
+      if (i < activeTurnUserItemIndex) activeTurnUserItemIndex -= 1;
     }
   }
   if (needsStreamingTarget && activeTurnUserItemIndex >= 0) {
