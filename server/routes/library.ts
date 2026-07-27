@@ -196,7 +196,7 @@ export async function registerLibraryRoutes(app: Express) {
     // Legacy memory_entries may be quarantined into a separate schema; guard by
     // catalog presence so Library route boot never touches the quarantined table.
     await pool.query(
-      `DO $ BEGIN IF to_regclass('public.memory_entries') IS NOT NULL THEN EXECUTE 'ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT'; END IF; END $`,
+      `ALTER TABLE IF EXISTS public.memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
     );
 
     const { rows: sentinel } = await pool.query(`
