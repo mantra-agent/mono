@@ -1,3 +1,8 @@
+import {
+  renderVoiceThinkingTexture,
+  VOICE_THINKING_LOOP_SECONDS,
+} from "@shared/voice-thinking-texture";
+
 type ChimeNote = { freq: number; offset: number; duration: number; gain: number };
 
 type ThinkingLoop = {
@@ -8,8 +13,7 @@ type ThinkingLoop = {
 };
 
 const THINKING_MASTER_GAIN = 0.42;
-const THINKING_TEXTURE_GAIN = 0.14;
-const THINKING_BUFFER_SECONDS = 4;
+const THINKING_TEXTURE_PEAK = 0.14;
 
 let sharedVoiceAudioContext: AudioContext | null = null;
 let thinkingLoop: ThinkingLoop | null = null;
@@ -99,18 +103,14 @@ export function playDisconnectionChime(): void {
   ]);
 }
 
-function buildThinkingNoise(ctx: AudioContext): AudioBuffer {
-  const length = Math.max(1, Math.floor(ctx.sampleRate * THINKING_BUFFER_SECONDS));
+function buildThinkingTexture(ctx: AudioContext): AudioBuffer {
+  const length = Math.max(1, Math.floor(ctx.sampleRate * VOICE_THINKING_LOOP_SECONDS));
   const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  let smoothed = 0;
-
-  for (let index = 0; index < length; index += 1) {
-    const white = Math.random() * 2 - 1;
-    smoothed = (smoothed + white * 0.02) / 1.02;
-    data[index] = Math.max(-1, Math.min(1, smoothed * 3.5)) * THINKING_TEXTURE_GAIN;
-  }
-
+  buffer.copyToChannel(renderVoiceThinkingTexture({
+    sampleRate: ctx.sampleRate,
+    frameCount: length,
+    targetPeak: THINKING_TEXTURE_PEAK,
+  }), 0);
   return buffer;
 }
 
@@ -136,8 +136,8 @@ function closeThinkingLoop(loop: ThinkingLoop, immediate: boolean): void {
 }
 
 /**
- * Starts a neutral, non-melodic thinking texture. The caller owns onset and
- * speech gating; this producer owns one loop source and deterministic teardown.
+ * Starts the restrained polyrhythmic glass-and-air thinking texture. The caller
+ * owns onset and speech gating; this producer owns one loop source and teardown.
  */
 export function startVoiceThinkingLoop(): void {
   if (thinkingLoop) return;
@@ -148,26 +148,14 @@ export function startVoiceThinkingLoop(): void {
     void ctx.resume();
 
     const source = ctx.createBufferSource();
-    source.buffer = buildThinkingNoise(ctx);
+    source.buffer = buildThinkingTexture(ctx);
     source.loop = true;
-
-    const highpass = ctx.createBiquadFilter();
-    highpass.type = "highpass";
-    highpass.frequency.setValueAtTime(180, ctx.currentTime);
-    highpass.Q.setValueAtTime(0.5, ctx.currentTime);
-
-    const lowpass = ctx.createBiquadFilter();
-    lowpass.type = "lowpass";
-    lowpass.frequency.setValueAtTime(1100, ctx.currentTime);
-    lowpass.Q.setValueAtTime(0.55, ctx.currentTime);
 
     const master = ctx.createGain();
     master.gain.setValueAtTime(0, ctx.currentTime);
     master.gain.linearRampToValueAtTime(THINKING_MASTER_GAIN, ctx.currentTime + 0.18);
 
-    source.connect(highpass);
-    highpass.connect(lowpass);
-    lowpass.connect(master);
+    source.connect(master);
     master.connect(ctx.destination);
 
     const loop: ThinkingLoop = { ctx, master, source, stopped: false };
