@@ -35,7 +35,7 @@ async function createPage(title: string, parentId: string | null, placeholder: s
     contentSummary: `Opportunity artifact hierarchy page: ${title}`,
     tags: ["opportunity-artifact"],
   });
-  log.log(`created page "${title}" id=${page.id} parent=${parentId ?? "semantic"}`);
+  log.log(`created page "${title}" id=${page.id} parent=${parentId ?? "vault-root"}`);
   return { id: page.id, slug: page.slug };
 }
 
@@ -58,14 +58,17 @@ async function findChildByTitle(
 /** Resolve/create the Opportunities root through the vault-aware Library lifecycle. */
 async function ensureOpportunitiesRoot(): Promise<string> {
   const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-  const { ensureMantraLibraryVault, ensureVaultPage } = await import("./library-domain");
+  const { assertWritableVault, ensureVaultPage } = await import("./library-domain");
   const principal = getCurrentPrincipalOrSystem();
-  const vault = await ensureMantraLibraryVault(principal);
-  const existing = await findChildByTitle(null, "Opportunities", vault.vaultId);
+  if (!principal.activeVaultId) {
+    throw new Error("An active vault is required for opportunity artifacts");
+  }
+  const vaultId = await assertWritableVault(principal, principal.activeVaultId);
+  const existing = await findChildByTitle(null, "Opportunities", vaultId);
   if (existing) return existing.id;
   const root = await ensureVaultPage({
     principal,
-    vaultId: vault.vaultId,
+    vaultId,
     title: "Opportunities",
     parentId: null,
     structuralRole: "artifact",

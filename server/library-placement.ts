@@ -10,7 +10,7 @@ import type { Principal } from "./principal";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { extractJson } from "./utils/extract-json";
 
-export type LibraryPlacementOutcome = "placed" | "explicit_parent" | "explicit_vault" | "review_required";
+export type LibraryPlacementOutcome = "placed" | "explicit_parent" | "explicit_vault" | "vault_root" | "review_required";
 
 export interface LibrarySemanticPlacementInput {
   title: string;
@@ -26,7 +26,7 @@ export interface LibrarySemanticPlacementInput {
 export interface LibrarySemanticPlacementResult {
   outcome: LibraryPlacementOutcome;
   vaultId: string;
-  indexPageId: string;
+  indexPageId: string | null;
   parentId: string | null;
   parentTitle: string;
   structuralRole: LibraryStructuralRole;

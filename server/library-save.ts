@@ -1,15 +1,19 @@
-import { sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { acquireLibraryParentLocks, db } from "./db";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
-import { placeLibraryPageSemantically, type LibrarySemanticPlacementResult } from "./library-placement";
+import type { LibrarySemanticPlacementResult } from "./library-placement";
 import { markSourceChanged } from "./memory/vnext-source-queue";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
-import { ownedInsertValues } from "./scoped-storage";
+import { combineWithVisibleScope, ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { syncEmbeddedLibraryPageLinks } from "./library-link-graph";
 import { syncContentFields } from "@shared/markdown-tiptap";
-import type { LibraryStructuralRole } from "./library-domain";
+import {
+  assertWritableVault,
+  normalizeLibraryStructuralRole,
+  type LibraryStructuralRole,
+} from "./library-domain";
 
 export interface CreateFiledLibraryPageInput {
   title: string;
@@ -83,18 +87,83 @@ export function publishLibraryChanged(action: string, page?: { id?: string | nul
   });
 }
 
+async function resolveStandardLibraryPlacement(
+  input: CreateFiledLibraryPageInput,
+): Promise<LibrarySemanticPlacementResult> {
+  const principal = getCurrentPrincipalOrSystem();
+  const structuralRole = normalizeLibraryStructuralRole(
+    input.structuralRole,
+    "artifact",
+  );
+
+  if (input.explicitParentId) {
+    const [parent] = await db
+      .select({
+        id: libraryPages.id,
+        title: libraryPages.title,
+        vaultId: libraryPages.vaultId,
+      })
+      .from(libraryPages)
+      .where(
+        combineWithVisibleScope(
+          principal,
+          libraryScopeColumns,
+          and(
+            eq(libraryPages.id, input.explicitParentId),
+            isNull(libraryPages.deletedAt),
+          ),
+        ),
+      )
+      .limit(1);
+    if (!parent?.vaultId) {
+      throw Object.assign(new Error("Explicit Library parent is not visible"), {
+        status: 404,
+      });
+    }
+    return {
+      outcome: "explicit_parent",
+      vaultId: parent.vaultId,
+      indexPageId: null,
+      parentId: parent.id,
+      parentTitle: parent.title,
+      structuralRole,
+      confidence: 1,
+      reason: "Caller supplied an explicit parent in the standard Library hierarchy.",
+      lint: { requiresReview: false, code: "explicit_parent", message: null },
+      compatibility: { purpose: input.purpose ?? null },
+    };
+  }
+
+  const requestedVaultId =
+    input.explicitVaultId ??
+    principal.activeVaultId ??
+    (principal.visibleVaultIds.length === 1 ? principal.visibleVaultIds[0] : null);
+  if (!requestedVaultId) {
+    throw Object.assign(
+      new Error("Choose an active Vault before creating a Library page"),
+      { status: 400 },
+    );
+  }
+  const vaultId = await assertWritableVault(principal, requestedVaultId);
+  return {
+    outcome: input.explicitVaultId ? "explicit_vault" : "vault_root",
+    vaultId,
+    indexPageId: null,
+    parentId: null,
+    parentTitle: "Vault root",
+    structuralRole,
+    confidence: 1,
+    reason: input.explicitVaultId
+      ? "Caller supplied an explicit destination vault."
+      : "Saved at the current Vault root; automatic Library2 organization is disabled.",
+    lint: { requiresReview: false, code: "none", message: null },
+    compatibility: { purpose: input.purpose ?? null },
+  };
+}
+
 export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput): Promise<CreatedFiledLibraryPage> {
   const principal = getCurrentPrincipalOrSystem();
-  const filingResolution = await placeLibraryPageSemantically({
-    purpose: input.purpose ?? null,
-    pageContext: input.pageContext ?? null,
-    title: input.title,
-    contentSummary: input.contentSummary ?? input.markdown.slice(0, 500),
-    tags: input.tags ?? [],
-    structuralRole: input.structuralRole ?? null,
-    explicitParentId: input.explicitParentId ?? null,
-    explicitVaultId: input.explicitVaultId ?? null,
-  }, principal);
+  const filingResolution = await resolveStandardLibraryPlacement(input);
   const synced = syncContentFields({ markdown: input.markdown });
   const slugBase = slugifyLibraryTitle(input.title, "page");
   const slug = input.slugSuffix ? `${slugBase}-${input.slugSuffix}` : slugBase;

@@ -2092,18 +2092,15 @@ async function resolveSkills(): Promise<string> {
 async function resolveLibraryIndex(): Promise<string> {
   return `## Library Reference
 
-The Library is durable, searchable knowledge storage. It is organized by vault-aware semantic placement, not by artifact-purpose folders.
+The Library is durable, searchable knowledge storage organized through the existing Vault and parent-page hierarchy. Library2 Wiki/Index/Log organization is disabled.
 
 Use Library tools on demand:
-- query_index: read the Mantra vault Index first for documentary knowledge questions.
-- compile_library_page: integrate a Source or Artifact into the vault Wiki and refresh the Index.
-- search_library_pages/search: fallback when Index navigation is insufficient.
-- browse_tree/tree: inspect hierarchy only when the physical tree itself matters.
+- search_library_pages/search: find pages by title or content.
+- browse_tree/tree: inspect the existing hierarchy.
 - get_library_page: load full page content.
-- resolve_parent: preview the semantic placement outcome for a proposed page.
-- create_library_page/edit_library_page: create or modify durable artifacts. For create_library_page, provide title plus purpose/pageContext/contentSummary when available; purpose is compatibility context only. The save lifecycle determines vault, structural role, and meaningful location from explicit context and the vault Index. Ambiguous placement is saved with explicit review/lint metadata, not silently filed as final.
+- create_library_page/edit_library_page: create or modify durable artifacts. New pages use an explicit parent when supplied; otherwise they are saved at the active Vault root.
 
-When creating externally shareable artifacts, use a Library page rather than scratch. The Library save lifecycle owns placement and vNext source signaling.`;
+When creating externally shareable artifacts, use a Library page rather than scratch. Ordinary Library saves retain Vault scope, hierarchy, surfacing, links, and vNext source signaling without creating Wiki, Index, or Log pages.`;
 }
 
 function getContextWindowForModel(model: string): number {

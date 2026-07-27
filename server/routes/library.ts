@@ -1,5 +1,4 @@
 import type { Express } from "express";
-import type { Principal } from "../principal";
 import type { FieldDef } from "pg";
 import { db, pool, isSerializationConflict } from "../db";
 import { z } from "zod";
@@ -36,7 +35,7 @@ import {
   memoryEntries,
   memorySourceRefs,
 } from "@shared/models/memory";
-import { users, type MemoryEntry } from "@shared/schema";
+import type { MemoryEntry } from "@shared/schema";
 import {
   computeContentHash,
   memoryEntryLightColumns,
@@ -46,8 +45,8 @@ import { scheduleMemoryLinks } from "../memory/link-scheduling";
 import { searchVnextMemory } from "../memory/vnext-search";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
-import { createUserSessionPrincipal, getPrincipal } from "../principal";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
+import { getPrincipal } from "../principal";
+import { getCurrentPrincipalOrSystem } from "../principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -56,21 +55,10 @@ import {
 import { WORKSPACE_DIR } from "../paths";
 import { eventBus } from "../event-bus";
 import { markSourceChanged, registerSourceIfAbsent } from "../memory/vnext-source-queue";
-import {
-  ensureMantraLibraryVault,
-  normalizeLibraryStructuralRole,
-} from "../library-domain";
-import { getLibraryPageNeighbors, runLibraryLint, syncEmbeddedLibraryPageLinks } from "../library-link-graph";
-import { compileLibraryPageToMantraWiki, queryMantraLibraryIndex } from "../library-compiler";
+import { normalizeLibraryStructuralRole } from "../library-domain";
+import { getLibraryPageNeighbors, syncEmbeddedLibraryPageLinks } from "../library-link-graph";
 import { projectActiveLibraryReminders } from "../library-reminders";
 import { buildLibrarySurfaceSet } from "../library-save";
-import {
-  createLibrary2Placements,
-  deleteLibrary2Placement,
-  listLibrary2Destinations,
-  listLibrary2Placements,
-  suggestLibrary2Destination,
-} from "../library2-placement-service";
 
 const log = createLogger("InfoRoutes");
 
@@ -102,23 +90,6 @@ function principalOrThrow(req: any) {
   if (!principal)
     throw Object.assign(new Error("Authentication required"), { status: 401 });
   return principal;
-}
-
-async function resolveLibraryOperatorPrincipal(req: any, targetUserId?: string): Promise<Principal> {
-  const principal = principalOrThrow(req);
-  if (principal.actorType === "user") return principal;
-
-  if (principal.actorType !== "service" && !principal.isAdmin) {
-    throw Object.assign(new Error("User principal required"), { status: 403 });
-  }
-  if (!targetUserId) {
-    throw Object.assign(new Error("targetUserId is required for service Library operations"), { status: 400 });
-  }
-
-  const [user] = await db.select().from(users).where(eq(users.id, targetUserId)).limit(1);
-  if (!user) throw Object.assign(new Error("Target user not found"), { status: 404 });
-
-  return createUserSessionPrincipal(user);
 }
 
 function publishLibraryChanged(action: string, page?: { id?: string | null; title?: string | null; surface?: boolean | null; surfaceUntil?: Date | string | null }) {
@@ -519,109 +490,7 @@ export async function registerLibraryRoutes(app: Express) {
     );
   }
 
-  try {
-    const principal = getCurrentPrincipalOrSystem();
-    if (principal.accountId) {
-      await ensureMantraLibraryVault(principal);
-    }
-  } catch (e: any) {
-    log.warn(`[bootstrap] Mantra Library vault bootstrap skipped/failed: ${e.message}`);
-  }
-
-  // ─── Library2 placement lens ──────────────────────────────────────────
-
-  const library2SourceSchema = z.discriminatedUnion("type", [
-    z.object({ type: z.enum(["page", "section"]), pageId: z.string().min(1) }),
-    z.object({ type: z.literal("vault"), vaultId: z.string().min(1) }),
-  ]);
-
-  app.get("/api/library2/destinations", async (req, res) => {
-    try {
-      res.json(await listLibrary2Destinations(principalOrThrow(req)));
-    } catch (err: any) {
-      res.status(err.status ?? 500).json({ error: err.message });
-    }
-  });
-
-  app.get("/api/library2/placements", async (req, res) => {
-    try {
-      res.json(await listLibrary2Placements(principalOrThrow(req)));
-    } catch (err: any) {
-      res.status(err.status ?? 500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/library2/suggest", async (req, res) => {
-    try {
-      const input = z
-        .object({ source: library2SourceSchema })
-        .parse(req.body ?? {});
-      res.json(
-        await suggestLibrary2Destination(
-          input.source,
-          principalOrThrow(req),
-        ),
-      );
-    } catch (err: any) {
-      if (err.name === "ZodError") {
-        return res
-          .status(400)
-          .json({ error: "Invalid input", details: err.errors });
-      }
-      res.status(err.status ?? 500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/library2/placements", async (req, res) => {
-    try {
-      const input = z
-        .object({
-          source: library2SourceSchema,
-          vaultId: z.string().min(1),
-          destinationId: z.string().min(1).max(500),
-          importKey: z.string().min(8).max(1_000),
-        })
-        .parse(req.body ?? {});
-      const result = await createLibrary2Placements(
-        input,
-        principalOrThrow(req),
-      );
-      publishLibraryChanged("library2_import");
-      res.status(result.createdCount > 0 ? 201 : 200).json(result);
-    } catch (err: any) {
-      if (err.name === "ZodError") {
-        return res
-          .status(400)
-          .json({ error: "Invalid input", details: err.errors });
-      }
-      res.status(err.status ?? 500).json({ error: err.message });
-    }
-  });
-
-  app.delete("/api/library2/placements/:id", async (req, res) => {
-    try {
-      const result = await deleteLibrary2Placement(
-        req.params.id,
-        principalOrThrow(req),
-      );
-      publishLibraryChanged("library2_remove");
-      res.json(result);
-    } catch (err: any) {
-      res.status(err.status ?? 500).json({ error: err.message });
-    }
-  });
-
   // ─── Library Pages CRUD ───────────────────────────────────────────────
-
-  app.post("/api/library/vaults/mantra/ensure", async (req, res) => {
-    try {
-      const result = await ensureMantraLibraryVault(principalOrThrow(req));
-      res.json(result);
-    } catch (err: any) {
-      log.error(`Mantra Library vault ensure failed: ${err.message}`);
-      res.status(500).json({ error: err.message });
-    }
-  });
 
   app.get("/api/info/library", async (req, res) => {
     try {
@@ -868,43 +737,6 @@ export async function registerLibraryRoutes(app: Express) {
       const inbound = await getLibraryPageNeighbors([req.params.id], principal, 50);
       res.json({ outbound, neighbors: inbound });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/info/library/lint", async (req, res) => {
-    try {
-      const input = z.object({ repair: z.boolean().optional(), surfaceReport: z.boolean().optional() }).parse(req.body ?? {});
-      const report = await runLibraryLint(input, principalOrThrow(req));
-      publishLibraryChanged("lint", report.reportPageId ? { id: report.reportPageId, title: "Library Lint Report", surface: true } : undefined);
-      res.json(report);
-    } catch (err: any) {
-      if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/info/library/compile", async (req, res) => {
-    try {
-      const input = z.object({ id: z.string().min(1), targetUserId: z.string().optional() }).parse(req.body ?? {});
-      const principal = await resolveLibraryOperatorPrincipal(req, input.targetUserId);
-      const result = await runWithPrincipal(principal, () => compileLibraryPageToMantraWiki(input.id, principal));
-      publishLibraryChanged("compiled", { id: result.sourcePageId, title: result.sourceTitle });
-      res.json(result);
-    } catch (err: any) {
-      if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/info/library/index-query", async (req, res) => {
-    try {
-      const input = z.object({ query: z.string().min(1), targetUserId: z.string().optional() }).parse(req.body ?? {});
-      const principal = await resolveLibraryOperatorPrincipal(req, input.targetUserId);
-      const result = await runWithPrincipal(principal, () => queryMantraLibraryIndex(input.query, principal));
-      res.json(result);
-    } catch (err: any) {
-      if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
       res.status(500).json({ error: err.message });
     }
   });
