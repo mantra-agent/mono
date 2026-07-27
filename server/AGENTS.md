@@ -514,6 +514,7 @@ Gmail OAuth sync into a 7-table PostgreSQL cache, with triage classification, th
 - Import queue is a single JSON blob in `system_settings` — not concurrent-safe
 - **Triage-before-reconcile invariant:** Reconciliation must skip untriaged messages. If reconciliation sets isDone=true before triage runs, the message falls through both the triage pipeline and the Review tab permanently
 - **Review ≠ Inbox:** Review shows the full enriched thread history (for triage decisions). Inbox shows only actionable unreplied messages. These are separate concerns with separate filters
+- **Simple relationship visibility:** Home/Simple may surface a Person interaction only through principal-scoped People storage. Its email Inbox and Done projections must scope messages, enrichments, dismissals, thread aggregates, and references through the canonical sensitive owner/account/visible-Vault predicate. If a sender resolves to an owned Person, the email may surface only when that Person has a membership in a currently visible live Vault; unknown senders remain eligible through the email's own Vault scope. Simple feed cache identity includes the sorted visible-Vault set so one layout can never reuse another layout's feed.
 
 ---
 
