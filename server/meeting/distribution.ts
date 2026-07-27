@@ -28,7 +28,7 @@ import {
 } from "../scoped-storage";
 import { emailDraftStorage } from "../email-draft-storage";
 import { sendNotification } from "../notifications";
-import { listGmailAccounts, type GmailAccount } from "../gmail";
+import { listAvailableGmailSenderAccounts, type GmailAccount } from "../gmail";
 import type { CalendarEvent } from "../google-calendar";
 import { formatInTimezone } from "../timezone";
 import { chatStorage } from "../integrations/chat/storage";
@@ -271,6 +271,14 @@ export async function distributeRecap(
 
   return withDistributionLock(sessionId, async () => {
   try {
+    // Recipient-free drafts have no distribution row or capability. Their
+    // persisted recap draft IDs remain the replay-safe generation authority.
+    if (recap.distributionStatus === "ready" && recap.draftIds?.length) {
+      await surfaceRecapDraftsInline(sessionId, recap.draftIds);
+      log.debug(`Distribution already ready for session ${sessionId}; ensured inline draft surface`);
+      return;
+    }
+
     // Idempotency guard: drafted/sent work is immutable. Explicit retry only
     // clears failed rows so the same canonical path can recreate drafts.
     const existing = await db
@@ -387,19 +395,20 @@ async function runDistribution(
     recap: { ...attemptRecap, distributionStatus: "drafting", draftIds: [] },
   });
 
-  // 2. Resolve the exact calendar event and its connected source account.
-  // Gmail sends as the authenticated account; array order is never sender authority.
+  // 2. Resolve sender authority independently from optional Calendar evidence.
+  // Calendar may choose the default From account, but every available account
+  // remains selectable on the persisted draft.
   const emailContext = await resolveMeetingEmailContext(meeting);
 
   if (!emailContext) {
-    log.warn(`Meeting calendar source account could not be resolved for session ${sessionId}; blocking distribution`);
+    log.warn(`No available Gmail sender account for recap session ${sessionId}; blocking distribution`);
     await markDistributionBlocked(
       sessionId,
       attemptRecap,
       principal,
       [],
-      "Meeting calendar account is not connected to Gmail",
-      "calendar_account_not_connected",
+      "No connected Gmail account is currently available for sending",
+      "gmail_sender_not_available",
     );
     return;
   }
@@ -407,36 +416,70 @@ async function runDistribution(
   const attendees = await resolveRecipients(
     meeting,
     emailContext.event,
-    emailContext.senderAccount.email,
+    emailContext.defaultSenderAccount.email,
     principal,
   );
-  if (attendees.length === 0) {
-    log.warn(`No eligible meeting recipients resolved for session ${sessionId}; blocking distribution`);
-    await markDistributionBlocked(
-      sessionId,
-      attemptRecap,
-      principal,
-      [],
-      "No eligible recipients with email addresses were found in the calendar event or assigned meeting participants",
-      "meeting_recipients_not_resolved",
-    );
-    return;
-  }
 
   log.info(
-    `Distributing recap for session ${sessionId} from calendarAccount=${emailContext.senderAccount.id} to ${attendees.length} attendee(s)`,
+    `Preparing recap for session ${sessionId} from defaultAccount=${emailContext.defaultSenderAccount.id} for ${attendees.length} resolved recipient(s)`,
   );
 
-  // 3. The authenticated account that fetched this exact event is the sender.
-  // Google event organizer describes event authorship, not Mantra authorship.
-  const gmailAccountId = emailContext.senderAccount.id;
+  const gmailAccountId = emailContext.defaultSenderAccount.id;
 
-  // 4. Every recipient receives a distinct entry capability. It identifies the
-  // intended recipient and meeting, but content still requires authentication.
+  // 4. Every resolved recipient receives a distinct entry capability. When no
+  // recipient is known yet, create one ordinary unaddressed recap draft so the
+  // owner can choose recipients and sender rather than losing the draft.
   const subjectMeetingName = meeting.title?.trim() || recap.pageTitle?.replace(/^Meeting:\s*/i, "").trim() || "Our meeting";
   const subject = `Meeting recap: ${subjectMeetingName}`;
   const draftIds: string[] = [];
   const draftErrors: string[] = [];
+
+  if (attendees.length === 0) {
+    try {
+      const body = await buildEmailContent(
+        attemptRecap,
+        meeting,
+        undefined,
+        emailContext.event,
+        principal,
+        null,
+      );
+      const draft = await emailDraftStorage.create(principal, {
+        sessionId,
+        gmailAccountId,
+        to: [],
+        subject,
+        body,
+        bodyFormat: "markdown",
+      });
+      await chatStorage.updateMeetingMeta(sessionId, {
+        recap: { ...attemptRecap, distributionStatus: "ready", draftIds: [draft.id] },
+      });
+      await surfaceRecapDraftsInline(sessionId, [draft.id]);
+      eventBus.publish({
+        category: "agent",
+        event: "meeting:recap_distributed",
+        payload: { sessionId, draftCount: 1, attendeeCount: 0 },
+      });
+      log.info(`Recap draft prepared without recipients for session ${sessionId}`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await chatStorage.updateMeetingMeta(sessionId, {
+        recap: {
+          ...attemptRecap,
+          distributionStatus: "failed",
+          distributionError: detail.slice(0, 500),
+          draftIds: [],
+        },
+      });
+      eventBus.publish({
+        category: "agent",
+        event: "meeting:recap_distribution_failed",
+        payload: { sessionId, reason: "draft_not_created", attendeeCount: 0 },
+      });
+    }
+    return;
+  }
 
   for (const attendee of attendees) {
     const entryCapability = createRecipientEntryCapability();
@@ -603,42 +646,45 @@ interface ResolvedAttendee {
 }
 
 interface MeetingEmailContext {
-  event: CalendarEvent;
-  senderAccount: GmailAccount;
+  event: CalendarEvent | null;
+  defaultSenderAccount: GmailAccount;
+}
+
+async function resolveCalendarEvent(meeting: MeetingSessionMeta): Promise<CalendarEvent | null> {
+  if (!meeting.providerEventId || !meeting.calendarAccountId || !meeting.calendarId) return null;
+  try {
+    const { getEvent } = await import("../google-calendar");
+    return await getEvent(
+      meeting.calendarAccountId,
+      meeting.calendarId,
+      meeting.providerEventId,
+    );
+  } catch (error) {
+    log.warn(
+      `Meeting calendar context unavailable; continuing with editable recap draft: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
 }
 
 async function resolveMeetingEmailContext(
   meeting: MeetingSessionMeta,
 ): Promise<MeetingEmailContext | null> {
-  if (!meeting.providerEventId || !meeting.calendarAccountId || !meeting.calendarId) {
-    return null;
-  }
-  try {
-    const { getEvent } = await import("../google-calendar");
-    const event = await getEvent(
-      meeting.calendarAccountId,
-      meeting.calendarId,
-      meeting.providerEventId,
-    );
-    const accounts = await listGmailAccounts();
-    const accountEmail = event.accountEmail.trim().toLowerCase();
-    const senderAccount = accounts.find((account) => account.id === event.accountId)
-      || (accountEmail
-        ? accounts.find((account) => account.email.trim().toLowerCase() === accountEmail)
-        : undefined);
-    if (!senderAccount) {
-      log.warn(
-        `Calendar source account has no connected Gmail identity event=${event.id} calendarAccount=${event.accountId}`,
-      );
-      return null;
-    }
-    return { event, senderAccount };
-  } catch (error) {
-    log.warn(
-      `Meeting email context resolution failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return null;
-  }
+  const accounts = await listAvailableGmailSenderAccounts();
+  if (accounts.length === 0) return null;
+
+  const event = await resolveCalendarEvent(meeting);
+  const eventAccountEmail = event?.accountEmail.trim().toLowerCase();
+  const calendarDefault = event
+    ? accounts.find((account) => account.id === event.accountId)
+      || (eventAccountEmail
+        ? accounts.find((account) => account.email.trim().toLowerCase() === eventAccountEmail)
+        : undefined)
+    : undefined;
+  return {
+    event,
+    defaultSenderAccount: calendarDefault || accounts[0],
+  };
 }
 
 /**
@@ -649,12 +695,12 @@ async function resolveMeetingEmailContext(
  */
 async function resolveRecipients(
   meeting: MeetingSessionMeta,
-  event: CalendarEvent,
+  event: CalendarEvent | null,
   senderEmail: string,
   principal: Principal,
 ): Promise<ResolvedAttendee[]> {
   const emailMap = new Map<string, ResolvedAttendee>();
-  for (const invitee of event.attendees ?? []) {
+  for (const invitee of event?.attendees ?? []) {
     const normalized = invitee.email?.trim().toLowerCase();
     if (!normalized || !isValidEmail(normalized)) continue;
     emailMap.set(normalized, {
@@ -663,40 +709,42 @@ async function resolveRecipients(
     });
   }
 
-  try {
-    const { getMetadata, getLinkedPeople } = await import("../calendar-metadata");
-    const meta = await getMetadata(
-      meeting.providerEventId!,
-      meeting.calendarAccountId!,
-      meeting.calendarId!,
-    );
-    if (meta) {
-      const people = await getLinkedPeople(meta.id);
-      for (const person of people) {
-        const normalized = person.attendeeEmail?.trim().toLowerCase();
-        if (!normalized || !isValidEmail(normalized)) continue;
-        const existing = emailMap.get(normalized);
-        if (existing) {
-          existing.name = person.personName?.trim() || existing.name;
-        } else {
-          emailMap.set(normalized, {
-            email: normalized,
-            name: person.personName?.trim() || undefined,
-          });
+  if (event && meeting.providerEventId && meeting.calendarAccountId && meeting.calendarId) {
+    try {
+      const { getMetadata, getLinkedPeople } = await import("../calendar-metadata");
+      const meta = await getMetadata(
+        meeting.providerEventId,
+        meeting.calendarAccountId,
+        meeting.calendarId,
+      );
+      if (meta) {
+        const people = await getLinkedPeople(meta.id);
+        for (const person of people) {
+          const normalized = person.attendeeEmail?.trim().toLowerCase();
+          if (!normalized || !isValidEmail(normalized)) continue;
+          const existing = emailMap.get(normalized);
+          if (existing) {
+            existing.name = person.personName?.trim() || existing.name;
+          } else {
+            emailMap.set(normalized, {
+              email: normalized,
+              name: person.personName?.trim() || undefined,
+            });
+          }
         }
       }
+    } catch (error) {
+      log.warn(
+        `Calendar attendee enrichment failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-  } catch (error) {
-    log.warn(
-      `Calendar attendee enrichment failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
   }
 
-  const normalizedOrganizer = event.organizer?.email?.trim().toLowerCase();
+  const normalizedOrganizer = event?.organizer?.email?.trim().toLowerCase();
   if (normalizedOrganizer && isValidEmail(normalizedOrganizer) && !emailMap.has(normalizedOrganizer)) {
     emailMap.set(normalizedOrganizer, {
       email: normalizedOrganizer,
-      name: event.organizer?.displayName?.trim() || undefined,
+      name: event?.organizer?.displayName?.trim() || undefined,
     });
   }
 
@@ -741,10 +789,10 @@ async function resolveRecipients(
 async function buildEmailContent(
   recap: MeetingRecapMeta,
   meeting: MeetingSessionMeta,
-  attendee: ResolvedAttendee,
-  event: CalendarEvent,
+  attendee: ResolvedAttendee | undefined,
+  event: CalendarEvent | null,
   principal: Principal,
-  recapEntryUrl: string,
+  recapEntryUrl: string | null,
 ): Promise<string> {
   if (!recap.pageId) throw new Error("Canonical recap page is missing");
 
@@ -765,7 +813,7 @@ async function buildEmailContent(
   }
 
   const meetingName = meeting.title?.trim() || recap.pageTitle?.replace(/^Meeting:\s*/i, "").trim() || "Meeting";
-  const startedAt = new Date(meeting.startedAt ?? meeting.eventStart ?? event.start.dateTime ?? event.start.date ?? "");
+  const startedAt = new Date(meeting.startedAt ?? meeting.eventStart ?? event?.start.dateTime ?? event?.start.date ?? "");
   const timeLabel = Number.isNaN(startedAt.getTime())
     ? "Time unavailable"
     : `${formatInTimezone(startedAt, { hour: "numeric", minute: "2-digit", timeZoneName: "short" })} ${formatInTimezone(startedAt, { month: "short", day: "numeric", year: "numeric" })}`;
@@ -774,7 +822,7 @@ async function buildEmailContent(
     .filter((label): label is string => !!label)
     .filter((label, index, labels) => labels.indexOf(label) === index)
     .join(", ") || "Participants unavailable";
-  const greetingName = firstName(attendee.name);
+  const greetingName = firstName(attendee?.name);
   const greeting = greetingName ? `Hi ${greetingName},` : "Hi,";
 
   const summary = sectionContent(storedRecap, "Summary");
@@ -792,8 +840,12 @@ async function buildEmailContent(
     ...sections.map((section) =>
       `**${section.title}**\n${section.items.map((item) => `- ${item}`).join("\n")}`,
     ),
-    `[Open your recap and assigned work](${recapEntryUrl})`,
-    `Sent with [Mantra](${recapEntryUrl})`,
+    ...(recapEntryUrl
+      ? [
+          `[Open your recap and assigned work](${recapEntryUrl})`,
+          `Sent with [Mantra](${recapEntryUrl})`,
+        ]
+      : []),
   ];
   const body = blocks.join("\n\n");
   if (body.length > EMAIL_BODY_CHAR_LIMIT) {

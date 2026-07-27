@@ -16,6 +16,7 @@ import {
   deleteAccount,
   getAccountTokens,
   setAccountTokens,
+  resolvePermissions,
   type GoogleTokens,
 } from './connected-accounts';
 
@@ -47,6 +48,43 @@ export async function listGmailAccounts(): Promise<GmailAccount[]> {
     label: a.label,
     addedAt: a.addedAt.toISOString(),
   }));
+}
+
+/**
+ * Canonical sender-availability boundary for persisted drafts. Calendar state
+ * may choose a default account, but never grants or restricts Gmail authority.
+ */
+export async function listAvailableGmailSenderAccounts(): Promise<GmailAccount[]> {
+  const accounts = await listVisibleConnectedAccounts("google");
+  const available: GmailAccount[] = [];
+  for (const account of accounts) {
+    const permissions = resolvePermissions(account.permissions);
+    const [scopes, health] = await Promise.all([
+      getAccountScopes(account.accountId),
+      verifyAccountTokenHealth(account.accountId),
+    ]);
+    if (!permissions.gmailSend || !scopes.hasSend || !health.healthy) continue;
+    available.push({
+      id: account.accountId,
+      email: account.email || '',
+      label: account.label,
+      addedAt: account.addedAt.toISOString(),
+    });
+  }
+  return available.sort((left, right) =>
+    left.addedAt.localeCompare(right.addedAt) || left.id.localeCompare(right.id),
+  );
+}
+
+export async function assertAvailableGmailSenderAccount(accountId: string): Promise<GmailAccount> {
+  const account = (await listAvailableGmailSenderAccounts()).find((candidate) => candidate.id === accountId);
+  if (!account) {
+    throw Object.assign(
+      new Error("Selected Gmail account is unavailable for sending. Choose another connected account."),
+      { status: 400 },
+    );
+  }
+  return account;
 }
 
 export async function loadAccountTokens(accountId: string): Promise<GoogleTokens | null> {
@@ -620,7 +658,11 @@ export async function sendEmailFromDraft(draft: {
   threadId: string | null;
   inReplyTo: string | null;
 }) {
-  const { gmail, accountId } = await getReadClientAndAccountAuto(draft.gmailAccountId ?? undefined);
+  if (!draft.gmailAccountId) {
+    throw Object.assign(new Error("Choose a Gmail account before sending."), { status: 400 });
+  }
+  await assertAvailableGmailSenderAccount(draft.gmailAccountId);
+  const { gmail, accountId } = await getReadClientAndAccountAuto(draft.gmailAccountId);
 
   let replyContext: ReplyContext = { inReplyTo: draft.inReplyTo, references: draft.inReplyTo, quotedHistory: null };
   if (draft.threadId) {

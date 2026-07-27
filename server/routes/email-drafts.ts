@@ -111,6 +111,13 @@ export function registerEmailDraftRoutes(app: Express) {
       if (!principal) return res.status(401).json({ error: "Not authenticated" });
 
       const { gmailAccountId, to, cc, bcc, subject, body } = req.body;
+      if (gmailAccountId !== undefined) {
+        if (typeof gmailAccountId !== "string" || !gmailAccountId.trim()) {
+          return res.status(400).json({ error: "gmailAccountId must identify a connected Gmail account" });
+        }
+        const { assertAvailableGmailSenderAccount } = await import("../gmail");
+        await assertAvailableGmailSenderAccount(gmailAccountId);
+      }
       const draft = await emailDraftStorage.update(principal, req.params.id, {
         gmailAccountId,
         to,
