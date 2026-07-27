@@ -19,9 +19,19 @@ type NoisePacketOptions = {
   gain: number;
   lowCutoffHz: number;
   highCutoffHz: number;
-  holdRateHz: number;
   seed: number;
 };
+
+type CascadeStep = {
+  delaySeconds: number;
+  gainScale: number;
+};
+
+const CLICK_CASCADE: readonly CascadeStep[] = [
+  { delaySeconds: 0, gainScale: 1 },
+  { delaySeconds: 0.042, gainScale: 0.4 },
+  { delaySeconds: 0.092, gainScale: 0.17 },
+] as const;
 
 const TYPING_TAPS: readonly TypingTap[] = [
   { timeSeconds: 0.14, gain: 0.78 },
@@ -73,25 +83,24 @@ function addNoisePacket(
 ): void {
   const durationFrames = Math.max(1, Math.round(sampleRate * options.durationSeconds));
   const startFrame = Math.round(options.startSeconds * sampleRate) % samples.length;
-  const holdFrames = Math.max(1, Math.round(sampleRate / options.holdRateHz));
   const lowAlpha = smoothingAlpha(options.lowCutoffHz, sampleRate);
   const highAlpha = smoothingAlpha(options.highCutoffHz, sampleRate);
-  const releaseFrames = Math.max(1, Math.round(sampleRate * 0.014));
+  const releaseFrames = Math.max(1, Math.round(sampleRate * 0.008));
   let state = options.seed >>> 0;
-  let heldNoise = 0;
   let low = 0;
   let high = 0;
 
   for (let offset = 0; offset < durationFrames; offset += 1) {
-    if (offset % holdFrames === 0) [heldNoise, state] = nextNoise(state);
-    low += lowAlpha * (heldNoise - low);
-    high += highAlpha * (heldNoise - high);
+    let noise: number;
+    [noise, state] = nextNoise(state);
+    low += lowAlpha * (noise - low);
+    high += highAlpha * (noise - high);
 
     const time = offset / sampleRate;
-    const attackProgress = Math.min(1, time / 0.0035);
+    const attackProgress = Math.min(1, time / 0.0018);
     const attack = attackProgress * attackProgress * (3 - 2 * attackProgress);
     const release = Math.min(1, (durationFrames - offset) / releaseFrames);
-    const envelope = attack * release * Math.exp(-time * 38);
+    const envelope = attack * release * Math.exp(-time * 84);
     const frame = (startFrame + offset) % samples.length;
     samples[frame] += (high - low) * envelope * options.gain;
   }
@@ -104,25 +113,15 @@ function addTypingTap(
   tapIndex: number,
 ): void {
   const seed = (0x4d414e54 ^ Math.imul(tapIndex + 1, 0x9e3779b1)) >>> 0;
-  addNoisePacket(samples, sampleRate, {
-    startSeconds: tap.timeSeconds,
-    durationSeconds: 0.082,
-    gain: tap.gain,
-    lowCutoffHz: 320,
-    highCutoffHz: 2800,
-    holdRateHz: 9200,
-    seed,
-  });
-
-  const digitalOffset = 0.017 + (tapIndex % 4) * 0.002;
-  addNoisePacket(samples, sampleRate, {
-    startSeconds: tap.timeSeconds + digitalOffset,
-    durationSeconds: 0.046,
-    gain: tap.gain * 0.24,
-    lowCutoffHz: 1100,
-    highCutoffHz: 4600,
-    holdRateHz: 12800,
-    seed: seed ^ 0xa5a5a5a5,
+  CLICK_CASCADE.forEach((step) => {
+    addNoisePacket(samples, sampleRate, {
+      startSeconds: tap.timeSeconds + step.delaySeconds,
+      durationSeconds: 0.032,
+      gain: tap.gain * step.gainScale,
+      lowCutoffHz: 260,
+      highCutoffHz: 2400,
+      seed,
+    });
   });
 }
 
@@ -139,7 +138,7 @@ function normalizeTexture(samples: Float32Array, targetPeak: number): Float32Arr
 
   let peak = 0;
   for (let index = 0; index < samples.length; index += 1) {
-    samples[index] = Math.tanh((samples[index] - mean) * 1.08);
+    samples[index] -= mean;
     peak = Math.max(peak, Math.abs(samples[index]));
   }
 
@@ -149,9 +148,9 @@ function normalizeTexture(samples: Float32Array, targetPeak: number): Float32Arr
 }
 
 /**
- * Renders one seamless thinking loop as irregular clusters of soft broadband
- * taps. Each tap has a quieter pixel-like afterstroke, suggesting digital work
- * without oscillators, melody, a fixed beat, or a continuous drone.
+ * Renders one seamless thinking loop as irregular clusters of short, clean
+ * broadband taps. Two progressively quieter delayed copies give each click a
+ * restrained cascade without oscillators, melody, reverb, or a continuous bed.
  */
 export function renderVoiceThinkingTexture({
   sampleRate,
