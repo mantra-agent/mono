@@ -1,9 +1,10 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { acquireLibraryParentLocks, db } from "./db";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
 import type { LibrarySemanticPlacementResult } from "./library-placement";
 import { markSourceChanged } from "./memory/vnext-source-queue";
+import type { Principal } from "./principal";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
@@ -19,6 +20,14 @@ export interface CreateFiledLibraryPageInput {
   title: string;
   markdown: string;
   purpose?: string | null;
+  /**
+   * Deterministic canonical folder placement. When set and no explicit parent
+   * is supplied, the page is filed under the per-vault Plans/Workflows/Specs/
+   * Skills folder (get-or-created on demand). This is the single structural
+   * placement authority for the four canonical folders; it is independent of
+   * the retired Library2 Wiki/Index/Log metadata system.
+   */
+  canonicalFolder?: CanonicalVaultFolder | null;
   explicitParentId?: string | null;
   explicitVaultId?: string | null;
   pageContext?: string | null;
@@ -47,6 +56,81 @@ const libraryScopeColumns = {
   accountId: libraryPages.accountId,
   vaultId: libraryPages.vaultId,
 };
+
+export const CANONICAL_VAULT_FOLDERS = ["plans", "workflows", "specs", "skills"] as const;
+export type CanonicalVaultFolder = (typeof CANONICAL_VAULT_FOLDERS)[number];
+
+const CANONICAL_FOLDER_DEFS: Record<
+  CanonicalVaultFolder,
+  { title: string; tag: string; sortOrder: number; description: string }
+> = {
+  plans: { title: "Plans", tag: "canonical-folder-plans", sortOrder: 900, description: "Multi-step execution plans for this vault." },
+  workflows: { title: "Workflows", tag: "canonical-folder-workflows", sortOrder: 901, description: "Workflow run checkpoints and lifecycle artifacts for this vault." },
+  specs: { title: "Specs", tag: "canonical-folder-specs", sortOrder: 902, description: "Specifications and implementation designs for this vault." },
+  skills: { title: "Skills", tag: "canonical-folder-skills", sortOrder: 903, description: "Skill run outputs, logs, and artifacts for this vault." },
+};
+
+export function isCanonicalVaultFolder(value: unknown): value is CanonicalVaultFolder {
+  return typeof value === "string" && (CANONICAL_VAULT_FOLDERS as readonly string[]).includes(value);
+}
+
+/**
+ * Get-or-create the canonical folder page for `(vaultId, kind)` at the vault
+ * root, returning its page id. Identity is `(vault_id, root, folder tag)` under
+ * a transaction-scoped advisory lock so concurrent producers converge on one
+ * folder rather than forking duplicates. When duplicates already exist (e.g.
+ * hand-migrated history), the earliest is treated as canonical. This is a fresh
+ * deterministic placement authority for Plans/Workflows/Specs/Skills and does
+ * not reuse the retired Library2 metadata (Wiki/Index/Log) machinery.
+ */
+export async function ensureCanonicalVaultFolder(input: {
+  principal: Principal;
+  vaultId: string;
+  kind: CanonicalVaultFolder;
+}): Promise<string> {
+  const def = CANONICAL_FOLDER_DEFS[input.kind];
+  const lockKey = `library-canonical-folder:${input.vaultId}:${input.kind}`;
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+    const existing = await tx
+      .select({ id: libraryPages.id })
+      .from(libraryPages)
+      .where(
+        combineWithVisibleScope(
+          input.principal,
+          libraryScopeColumns,
+          and(
+            eq(libraryPages.vaultId, input.vaultId),
+            isNull(libraryPages.parentId),
+            sql`${def.tag} = ANY(${libraryPages.tags})`,
+          ),
+        ),
+      )
+      .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id))
+      .limit(1);
+    if (existing[0]) return existing[0].id;
+
+    const synced = syncContentFields({ markdown: `# ${def.title}\n\n${def.description}` });
+    const [created] = await tx
+      .insert(libraryPages)
+      .values({
+        title: def.title,
+        slug: slugifyLibraryTitle(def.title, input.kind),
+        content: synced.content,
+        plainTextContent: synced.plainTextContent,
+        parentId: null,
+        tags: ["folder", def.tag],
+        structuralRole: "artifact",
+        sortOrder: def.sortOrder,
+        ...ownedInsertValues(input.principal, libraryScopeColumns),
+        vaultId: input.vaultId,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .returning({ id: libraryPages.id });
+    log.info("Ensured canonical vault folder", { vaultId: input.vaultId, kind: input.kind, pageId: created.id });
+    return created.id;
+  });
+}
 
 export function slugifyLibraryTitle(title: string, fallback = "page"): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || fallback;
@@ -145,6 +229,24 @@ async function resolveStandardLibraryPlacement(
     );
   }
   const vaultId = await assertWritableVault(principal, requestedVaultId);
+
+  if (input.canonicalFolder) {
+    const def = CANONICAL_FOLDER_DEFS[input.canonicalFolder];
+    const parentId = await ensureCanonicalVaultFolder({ principal, vaultId, kind: input.canonicalFolder });
+    return {
+      outcome: "explicit_parent",
+      vaultId,
+      indexPageId: null,
+      parentId,
+      parentTitle: def.title,
+      structuralRole,
+      confidence: 1,
+      reason: `Filed under the canonical ${def.title} folder for this vault.`,
+      lint: { requiresReview: false, code: "none", message: null },
+      compatibility: { purpose: input.purpose ?? null },
+    };
+  }
+
   return {
     outcome: input.explicitVaultId ? "explicit_vault" : "vault_root",
     vaultId,

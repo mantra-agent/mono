@@ -511,6 +511,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         parentId: { type: ["string", "null"], description: "Destination parent page ID for update_library_page; null means the root of destinationVaultId" },
         destinationVaultId: { type: "string", description: "Explicit destination vault ID for update_library_page moves; required for cross-vault root moves" },
         purpose: { type: "string", description: "Optional source context retained for compatibility when creating a page" },
+        canonicalFolder: { type: "string", enum: ["plans", "workflows", "specs", "skills"], description: "File the new page under the canonical per-Vault folder (for create). Use 'specs' for specifications/implementation designs and 'skills' for skill run outputs, logs, and artifacts. Plans and Workflows are filed automatically by their producers. Ignored when parentId is supplied." },
         pageContext: { type: "string", description: "Optional originating app route retained for compatibility" },
         contentSummary: { type: "string", description: "Optional source summary retained for compatibility" },
         tags: { type: "array", items: { type: "string" }, description: "Tags for categorization (for create/update)" },
