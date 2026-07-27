@@ -4,6 +4,8 @@ import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { generateEmbeddings, generateEmbedding, isEmbeddingsAvailable, EMBEDDING_DIMENSIONS } from "./memory/embedding";
+import { createNamedSystemPrincipal } from "./principal";
+import { runWithPrincipal } from "./principal-context";
 
 const log = createLogger("CodeEmbed");
 
@@ -136,7 +138,7 @@ async function ensureTable(): Promise<void> {
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_code_embed_type ON code_embeddings(symbol_type)`);
 }
 
-export async function embedCodeSymbols(): Promise<void> {
+async function embedCodeSymbolsForCurrentPrincipal(): Promise<void> {
   if (!isEmbeddingsAvailable()) {
     log.warn("[CodeEmbed] Embeddings not available (no API key). Skipping code embedding.");
     _status = "error";
@@ -261,6 +263,13 @@ export async function embedCodeSymbols(): Promise<void> {
     _lastError = err instanceof Error ? err.message : String(err);
     log.error(`[CodeEmbed] embedCodeSymbols failed: ${_lastError}`);
   }
+}
+
+export function embedCodeSymbols(): Promise<void> {
+  return runWithPrincipal(
+    createNamedSystemPrincipal("code-embedding"),
+    embedCodeSymbolsForCurrentPrincipal,
+  );
 }
 
 export async function searchCodeSemantic(query: string, limit = 10): Promise<SemanticResult[]> {
