@@ -260,7 +260,7 @@ export async function moveCalendarMeetingAggregate(input: {
   }
   const destinationPrincipal = principalForVault(outer, input.destinationVaultId);
   await requireDestinationVault(destinationPrincipal, input.destinationVaultId);
-  return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+  const result = await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.MEETING_VAULT, String(input.metadataId));
       const [metadata] = await tx
         .select()
@@ -345,4 +345,10 @@ export async function moveCalendarMeetingAggregate(input: {
         return { metadata: updatedMetadata, nodePageId: node.id, sessionId: session?.id ?? null };
       });
     }));
+  // The meeting aggregate move writes calendar_event_metadata.vault_id directly,
+  // so it must invalidate the Infinity-TTL calendar metadata cache the same way
+  // every other metadata mutation does; otherwise stale reads revert the Vault.
+  const { invalidateCalendarCache } = await import("../calendar-metadata");
+  invalidateCalendarCache();
+  return result;
 }
