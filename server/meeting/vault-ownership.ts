@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { accounts, calendarEventArtifacts, calendarEventMetadata, calendarEventPeople, memberships } from "@shared/schema";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { accounts, calendarEventArtifacts, calendarEventMetadata, calendarEventPeople, memberships, users } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import { vaults } from "@shared/models/vaults";
 import type { CalendarEvent } from "../google-calendar";
@@ -12,7 +12,7 @@ import {
   runWithDatabaseTransaction,
 } from "../db";
 import { createLogger } from "../log";
-import type { Principal } from "../principal";
+import { createUserPrincipalFromUser, type Principal } from "../principal";
 import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
 import { combineWithSensitiveWritable } from "../sensitive-scope";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
@@ -148,14 +148,112 @@ async function ensureOrganizationalPage(input: {
 }
 
 export async function ensureMeetingsRoot(vaultId: string, principal = getCurrentPrincipalOrSystem()) {
-  return ensureOrganizationalPage({
-    id: meetingsRootPageId(vaultId),
-    title: "Meetings",
-    slug: `meetings-${vaultId}`,
-    vaultId,
-    parentId: null,
-    tags: ["system-folder", MEETINGS_ROOT_TAG],
-    principal,
+  const scopedPrincipal = principalForVault(principal, vaultId);
+  return runWithPrincipal(scopedPrincipal, async () => {
+    await requireDestinationVault(scopedPrincipal, vaultId);
+    const deterministicId = meetingsRootPageId(vaultId);
+    const content = syncContentFields({ markdown: "" });
+    return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.MEETING_VAULT, `root:${vaultId}`);
+      await acquireLibraryParentLocks(tx, [null, deterministicId]);
+      const candidates = await tx
+        .select()
+        .from(libraryPages)
+        .where(
+          combineWithWritableScope(
+            scopedPrincipal,
+            pageScopeColumns,
+            and(
+              eq(libraryPages.vaultId, vaultId),
+              isNull(libraryPages.parentId),
+              or(
+                eq(sql`lower(${libraryPages.title})`, "meetings"),
+                sql`${MEETINGS_ROOT_TAG} = ANY(${libraryPages.tags})`,
+              ),
+            ),
+          ),
+        )
+        .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id));
+
+      let canonical = candidates[0];
+      if (!canonical) {
+        const [created] = await tx
+          .insert(libraryPages)
+          .values({
+            id: deterministicId,
+            title: "Meetings",
+            slug: `meetings-${vaultId}`,
+            content: content.content,
+            plainTextContent: content.plainTextContent,
+            parentId: null,
+            tags: ["system-folder", MEETINGS_ROOT_TAG],
+            structuralRole: "meta",
+            ...ownedInsertValues(scopedPrincipal, pageScopeColumns),
+            vaultId,
+            createdByUserId: scopedPrincipal.userId,
+            updatedByUserId: scopedPrincipal.userId,
+          })
+          .returning();
+        canonical = created;
+      } else {
+        const nextTags = Array.from(new Set([...canonical.tags, "system-folder", MEETINGS_ROOT_TAG]));
+        const needsAdoption = canonical.title !== "Meetings"
+          || canonical.structuralRole !== "meta"
+          || nextTags.length !== canonical.tags.length;
+        if (needsAdoption) {
+          const [adopted] = await tx
+            .update(libraryPages)
+            .set({
+              title: "Meetings",
+              tags: nextTags,
+              structuralRole: "meta",
+              updatedAt: new Date(),
+              updatedByUserId: scopedPrincipal.userId,
+            })
+            .where(combineWithWritableScope(scopedPrincipal, pageScopeColumns, eq(libraryPages.id, canonical.id)))
+            .returning();
+          if (!adopted) throw clientError(409, "Existing Meetings root became unavailable");
+          canonical = adopted;
+          log.info("adopted existing Meetings root", { vaultId, pageId: canonical.id });
+        }
+      }
+
+      if (canonical.id !== deterministicId) {
+        const generated = candidates.find(candidate => candidate.id === deterministicId);
+        if (generated) {
+          await acquireLibraryParentLocks(tx, [canonical.id]);
+          await tx
+            .update(libraryPages)
+            .set({ parentId: canonical.id, updatedAt: new Date(), updatedByUserId: scopedPrincipal.userId })
+            .where(
+              combineWithWritableScope(
+                scopedPrincipal,
+                pageScopeColumns,
+                and(eq(libraryPages.vaultId, vaultId), eq(libraryPages.parentId, deterministicId)),
+              ),
+            );
+          await tx
+            .delete(libraryPages)
+            .where(
+              combineWithWritableScope(
+                scopedPrincipal,
+                pageScopeColumns,
+                and(
+                  eq(libraryPages.id, deterministicId),
+                  eq(libraryPages.vaultId, vaultId),
+                  sql`${MEETINGS_ROOT_TAG} = ANY(${libraryPages.tags})`,
+                ),
+              ),
+            );
+          log.warn("converged generated Meetings root into existing parent", {
+            vaultId,
+            canonicalPageId: canonical.id,
+            generatedPageId: deterministicId,
+          });
+        }
+      }
+      return canonical;
+    }));
   });
 }
 
@@ -204,45 +302,37 @@ export async function organizeMeetingLibraryPage(input: {
 }
 
 export async function ensureMeetingRootsForAllVaults(): Promise<void> {
-  const result = await db.execute(sql`
-    INSERT INTO library_pages (
-      id, title, slug, content, plain_text_content, parent_id, tags,
-      structural_role, scope, owner_user_id, account_id, vault_id,
-      created_by_user_id, updated_by_user_id, created_at, updated_at
-    )
-    SELECT
-      'meetings-root-' || md5(v.id),
-      'Meetings',
-      'meetings-' || v.id,
-      '{"type":"doc","content":[]}'::jsonb,
-      '',
-      NULL,
-      ARRAY['system-folder', 'meeting-root']::text[],
-      'meta',
-      'user',
-      COALESCE(a.owner_user_id, owner_membership.user_id),
-      v.account_id,
-      v.id,
-      COALESCE(a.owner_user_id, owner_membership.user_id),
-      COALESCE(a.owner_user_id, owner_membership.user_id),
-      CURRENT_TIMESTAMP,
-      CURRENT_TIMESTAMP
-    FROM vaults v
-    JOIN accounts a ON a.id = v.account_id
-    LEFT JOIN LATERAL (
-      SELECT m.user_id
-      FROM memberships m
-      WHERE m.account_id = v.account_id
-      ORDER BY CASE WHEN m.role = 'owner' THEN 0 ELSE 1 END, m.id
-      LIMIT 1
-    ) owner_membership ON TRUE
-    WHERE v.is_archived = FALSE
-      AND COALESCE(a.owner_user_id, owner_membership.user_id) IS NOT NULL
-    ON CONFLICT (id) DO NOTHING
-    RETURNING id
-  `);
-  const created = (result.rows ?? []).length;
-  if (created > 0) log.info("reserved Meetings roots converged", { created });
+  const rows = await db
+    .select({ vaultId: vaults.id, accountId: vaults.accountId, ownerUserId: accounts.ownerUserId })
+    .from(vaults)
+    .innerJoin(accounts, eq(accounts.id, vaults.accountId))
+    .where(eq(vaults.isArchived, false))
+    .orderBy(asc(vaults.id));
+  let converged = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    const fallbackMembership = row.ownerUserId
+      ? null
+      : (await db
+          .select({ userId: memberships.userId })
+          .from(memberships)
+          .where(eq(memberships.accountId, row.accountId))
+          .orderBy(sql`CASE WHEN ${memberships.role} = 'owner' THEN 0 ELSE 1 END`, asc(memberships.id))
+          .limit(1))[0];
+    const ownerUserId = row.ownerUserId ?? fallbackMembership?.userId ?? null;
+    const [owner] = ownerUserId
+      ? await db.select().from(users).where(eq(users.id, ownerUserId)).limit(1)
+      : [];
+    if (!owner) {
+      skipped += 1;
+      log.warn("Meetings root convergence skipped Vault without owning user", { vaultId: row.vaultId });
+      continue;
+    }
+    const principal = createUserPrincipalFromUser(owner, row.accountId);
+    await ensureMeetingsRoot(row.vaultId, principal);
+    converged += 1;
+  }
+  log.info("Meetings roots converged", { converged, skipped });
 }
 
 
