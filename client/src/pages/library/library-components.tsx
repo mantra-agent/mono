@@ -21,7 +21,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe, ChevronRight, RotateCcw,
+  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe, ChevronRight, RotateCcw, Pin,
 } from "lucide-react";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
@@ -86,7 +86,13 @@ function LinkedSessions({ slug }: { slug: string }) {
 }
 
 function ChildPages({ pageId, pages }: { pageId: string; pages: LibraryPage[] }) {
-  const children = useMemo(() => pages.filter((page) => page.parentId === pageId), [pageId, pages]);
+  const children = useMemo(() => {
+    const siblings = pages.filter((page) => page.parentId === pageId);
+    return [
+      ...siblings.filter((page) => page.isPinned),
+      ...siblings.filter((page) => !page.isPinned),
+    ];
+  }, [pageId, pages]);
 
   if (children.length === 0) return null;
 
@@ -116,6 +122,7 @@ interface LibraryPageEditorProps {
   selectedId: string;
   selectedPage: LibraryPageFull;
   pages: LibraryPage[];
+  onTogglePin: (id: string, isPinned: boolean) => void;
   onDeleteRequest?: (id: string) => void;
 }
 
@@ -123,6 +130,7 @@ export function LibraryPageEditor({
   selectedId,
   selectedPage,
   pages,
+  onTogglePin,
   onDeleteRequest,
 }: LibraryPageEditorProps) {
   const editorRef = useRef<RichTextEditorHandle>(null);
@@ -277,6 +285,13 @@ export function LibraryPageEditor({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(e) => e.preventDefault()}>
+              <DropdownMenuItem onClick={() => onTogglePin(selectedPage.id, !selectedPage.isPinned)} data-testid="menu-page-pin">
+                <Pin
+                  className={cn("h-3.5 w-3.5 mr-2", selectedPage.isPinned ? "text-foreground" : "text-muted-foreground")}
+                  {...(selectedPage.isPinned ? { fill: "currentColor" } : {})}
+                />
+                {selectedPage.isPinned ? "Unpin" : "Pin"}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setDetailsDialogOpen(true)} data-testid="menu-page-details">
                 <Info className="h-3.5 w-3.5 mr-2" /> Details
               </DropdownMenuItem>

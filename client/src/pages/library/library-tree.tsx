@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState, type MouseEvent } from "react";
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors,
   type DragStartEvent, type DragEndEvent, type DragOverEvent,
@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   Trash2, FileText, ChevronRight, Globe,
-  Download, FilePlus, MoreHorizontal, Sparkles, FolderInput,
+  Download, FilePlus, MoreHorizontal, Sparkles, FolderInput, Pin,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { TreeNode, FlatNode, DropPosition } from "./types";
@@ -53,7 +53,7 @@ export function isDescendant(tree: TreeNode[], parentId: string, childId: string
   return check(parent.children);
 }
 
-export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, dropTarget, expandedSet, toggleExpand, unreadIds, hasUnreadDescendantIds }: {
+export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, dropTarget, expandedSet, toggleExpand, unreadIds, hasUnreadDescendantIds }: {
   flatNode: FlatNode;
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -63,6 +63,7 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
   onDownload: (node: TreeNode) => void;
   onEnrich: (id: string) => void;
   onMove: (id: string) => void;
+  onTogglePin: (id: string, isPinned: boolean) => void;
   dropTarget: { id: string; position: DropPosition } | null;
   expandedSet: Set<string>;
   toggleExpand: (id: string) => void;
@@ -70,6 +71,7 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
   hasUnreadDescendantIds?: Set<string>;
 }) {
   const { node, depth } = flatNode;
+  const [iconHovered, setIconHovered] = useState(false);
   const hasChildren = node.children.length > 0;
   const isExpandable = hasChildren;
   const isExpanded = expandedSet.has(node.id);
@@ -96,6 +98,16 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
   const hasUnreadDescendant = !isUnread && (hasUnreadDescendantIds?.has(node.id) ?? false);
   const indentPx = Math.min(depth * INDENT_STEP_PX, MAX_INDENT_PX);
   const pageTooltip = node.oneLiner || node.summary || undefined;
+  const isPinned = !!node.isPinned;
+  const showPinIcon = isPinned || iconHovered;
+  const isIconInteractive = iconHovered || isPinned;
+
+  const handleIconClick = (event: MouseEvent) => {
+    if (!isIconInteractive) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onTogglePin(node.id, !isPinned);
+  };
 
   return (
     <div ref={setNodeRef} style={style} className="min-w-0">
@@ -128,12 +140,31 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
                   className="flex min-w-0 max-w-full flex-1 items-center gap-2 overflow-hidden pr-14 text-left text-sm focus-visible:outline-none"
                   aria-label={node.title || "Untitled"}
                 >
-                  <span className={cn(
-                    "relative flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground",
-                    isSelected && "text-foreground",
-                    isUnread && !isSelected && "text-foreground",
-                  )}>
-                    <PageEmoji emoji={node.emoji} size="xs" />
+                  <span
+                    className={cn(
+                      "relative flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground",
+                      isSelected && "text-foreground",
+                      isUnread && !isSelected && "text-foreground",
+                      isIconInteractive && "cursor-pointer",
+                    )}
+                    onMouseEnter={() => setIconHovered(true)}
+                    onMouseLeave={() => setIconHovered(false)}
+                    onClick={handleIconClick}
+                    onPointerDown={(event) => {
+                      if (isIconInteractive) event.stopPropagation();
+                    }}
+                    aria-label={isPinned ? "Unpin page" : "Pin page"}
+                    data-testid={`icon-area-library-${node.id}`}
+                  >
+                    {showPinIcon ? (
+                      <Pin
+                        className={cn("h-3.5 w-3.5 shrink-0 transition-colors", isPinned ? "text-foreground" : "text-muted-foreground")}
+                        {...(isPinned ? { fill: "currentColor" } : {})}
+                        data-testid={`icon-library-pin-${node.id}`}
+                      />
+                    ) : (
+                      <PageEmoji emoji={node.emoji} size="xs" />
+                    )}
                   </span>
                   <span className={cn(
                     "min-w-0 flex-1 truncate pr-6 text-sm",
@@ -192,6 +223,13 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
                   <TooltipContent side="top">Actions</TooltipContent>
                 </Tooltip>
                 <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(e) => e.preventDefault()}>
+                  <DropdownMenuItem onClick={() => onTogglePin(node.id, !isPinned)} data-testid={`menu-tree-pin-${node.id}`}>
+                    <Pin
+                      className={cn("h-3.5 w-3.5 mr-2", isPinned ? "text-foreground" : "text-muted-foreground")}
+                      {...(isPinned ? { fill: "currentColor" } : {})}
+                    />
+                    {isPinned ? "Unpin" : "Pin"}
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => onCreateChild(node.id)} data-testid={`menu-tree-add-page-${node.id}`}>
                     <FilePlus className="h-3.5 w-3.5 mr-2" /> Add Page
                   </DropdownMenuItem>
@@ -260,6 +298,7 @@ interface DndTreeProps {
   onDownload: (node: TreeNode) => void;
   onEnrich: (id: string) => void;
   onMove: (id: string) => void;
+  onTogglePin: (id: string, isPinned: boolean) => void;
   onReorder: (data: { id: string; parentId: string | null; sortOrder: number }) => void;
   toggleExpand: (id: string) => void;
   unreadIds?: Set<string>;
@@ -270,7 +309,7 @@ export function DndTree({
   treeData, flatNodes, flatNodeIds, flatNodeMap, selectedId,
   expandedIds, dragActiveId, dropTarget,
   onDragActiveIdChange, onDropTargetChange,
-  onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onReorder, toggleExpand,
+  onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onReorder, toggleExpand,
   unreadIds,
   hasUnreadDescendantIds,
 }: DndTreeProps) {
@@ -383,6 +422,7 @@ export function DndTree({
             onDownload={onDownload}
             onEnrich={onEnrich}
             onMove={onMove}
+            onTogglePin={onTogglePin}
             dropTarget={dropTarget}
             expandedSet={expandedIds}
             toggleExpand={toggleExpand}
