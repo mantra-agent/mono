@@ -29,6 +29,7 @@ const PUBLIC_RULES: ApiPolicyRule[] = [
   { classification: "public", exact: ["/api/auth/login", "/api/auth/logout", "/api/auth/setup", "/api/auth/register", "/api/auth/reset"], reason: "authentication and setup flow" },
   { classification: "public", pattern: /^\/api\/auth\/(?:invite|reset)\/[^/]+$/, reason: "single-use authentication capability redemption" },
   { classification: "public", prefixes: ["/api/voice/llm/"], reason: "voice provider callback ingress" },
+  { classification: "public", methods: ["POST"], exact: ["/api/voice/start", "/api/voice/diagnostic"], reason: "provisional onboarding voice start (auth enforced at route via requireAuthenticatedOrProvisionalVoice) and unauthenticated voice telemetry sink" },
   { classification: "public", prefixes: ["/api/objects/", "/objects"], methods: ["GET"], reason: "object read path with object ACL checks downstream" },
   { classification: "personal", prefixes: ["/api/uploads"], reason: "authenticated user upload path" },
   { classification: "personal", exact: ["/api/glasses/toast"], methods: ["POST"], reason: "authenticated app-to-glasses toast relay" },
