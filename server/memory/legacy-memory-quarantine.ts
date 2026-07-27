@@ -18,7 +18,8 @@ const log = createLogger("LegacyMemoryQuarantine");
  */
 
 export const LEGACY_MEMORY_QUARANTINE_KEY = "legacy_memory_v1";
-export const LEGACY_MEMORY_QUARANTINE_SCHEMA = "legacy_memory_quarantine";
+export const LEGACY_MEMORY_QUARANTINE_SCHEMA = "legacy_memory_archive";
+const RETIRED_LEGACY_MEMORY_QUARANTINE_SCHEMA = "legacy_memory_quarantine";
 export const LEGACY_MEMORY_ARCHIVE_PREFIX =
   "private/archives/legacy-memory/stage/env-11/";
 
@@ -198,6 +199,73 @@ export function legacyMemoryQuarantineWasAppliedAtBoot(): boolean {
   return appliedAtBoot === true;
 }
 
+export interface LegacyMemoryCatalogState {
+  publicTables: string[];
+  archiveTables: string[];
+  retiredQuarantineTables: string[];
+  missingTables: string[];
+  splitTables: string[];
+  unexpectedArchiveTables: string[];
+}
+
+export async function inspectLegacyMemoryCatalogState(
+  client: { query: typeof pool.query } = pool,
+): Promise<LegacyMemoryCatalogState> {
+  const result = await client.query<{ schema_name: string; table_name: string }>(
+    `SELECT n.nspname AS schema_name, c.relname AS table_name
+     FROM pg_class c
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relkind IN ('r', 'p')
+       AND n.nspname = ANY($1::text[])
+       AND c.relname = ANY($2::text[])
+     ORDER BY n.nspname, c.relname`,
+    [
+      [
+        "public",
+        LEGACY_MEMORY_QUARANTINE_SCHEMA,
+        RETIRED_LEGACY_MEMORY_QUARANTINE_SCHEMA,
+      ],
+      [...LEGACY_MEMORY_QUARANTINE_TABLES],
+    ],
+  );
+  const bySchema = new Map<string, Set<string>>();
+  for (const row of result.rows) {
+    const schemaTables = bySchema.get(row.schema_name) ?? new Set<string>();
+    schemaTables.add(row.table_name);
+    bySchema.set(row.schema_name, schemaTables);
+  }
+  const publicSet = bySchema.get("public") ?? new Set<string>();
+  const archiveSet = bySchema.get(LEGACY_MEMORY_QUARANTINE_SCHEMA) ?? new Set<string>();
+  const retiredSet =
+    bySchema.get(RETIRED_LEGACY_MEMORY_QUARANTINE_SCHEMA) ?? new Set<string>();
+  const allLocations = new Set<string>([
+    ...publicSet,
+    ...archiveSet,
+    ...retiredSet,
+  ]);
+  return {
+    publicTables: [...publicSet].sort(),
+    archiveTables: [...archiveSet].sort(),
+    retiredQuarantineTables: [...retiredSet].sort(),
+    missingTables: LEGACY_MEMORY_QUARANTINE_TABLES.filter(
+      (table) => !allLocations.has(table),
+    ),
+    splitTables: LEGACY_MEMORY_QUARANTINE_TABLES.filter(
+      (table) =>
+        Number(publicSet.has(table)) +
+          Number(archiveSet.has(table)) +
+          Number(retiredSet.has(table)) >
+        1,
+    ),
+    unexpectedArchiveTables: [...archiveSet]
+      .filter(
+        (table) =>
+          !(LEGACY_MEMORY_QUARANTINE_TABLES as readonly string[]).includes(table),
+      )
+      .sort(),
+  };
+}
+
 export async function getLegacyMemoryQuarantineStatus(): Promise<{
   applied: boolean;
   preparedAt: string | null;
@@ -206,8 +274,12 @@ export async function getLegacyMemoryQuarantineStatus(): Promise<{
   archiveSha256: string | null;
   rowCounts: Record<string, number> | null;
   hasRollbackSql: boolean;
+  catalog: LegacyMemoryCatalogState;
 }> {
-  const state = await readState(pool);
+  const [state, catalog] = await Promise.all([
+    readState(pool),
+    inspectLegacyMemoryCatalogState(),
+  ]);
   return {
     applied: state?.applied === true,
     preparedAt: state?.prepared_at ? new Date(state.prepared_at).toISOString() : null,
@@ -216,6 +288,7 @@ export async function getLegacyMemoryQuarantineStatus(): Promise<{
     archiveSha256: state?.archive_sha256 ?? null,
     rowCounts: state?.row_counts ?? null,
     hasRollbackSql: Boolean(state?.rollback_sql),
+    catalog,
   };
 }
 
@@ -297,45 +370,27 @@ export async function computeLegacyMemoryClosure(client: PoolClient): Promise<{
       `Unclassified public memory tables block quarantine: ${unclassified.join(",")}`,
     );
   }
-  const foreignKeys = await loadForeignKeys(client);
-
-  // The closure is memory_entries plus every table that references a table
-  // already in the closure (its dependents).
-  const closure = new Set<string>(["memory_entries"]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const fk of foreignKeys) {
-      if (closure.has(fk.referencedTable) && !closure.has(fk.referencingTable)) {
-        // Only dependents that are themselves legacy memory tables belong in
-        // the closure; a reference from an active table is an inbound edge.
-        if (allowlist.has(fk.referencingTable)) {
-          closure.add(fk.referencingTable);
-          changed = true;
-        }
-      }
-    }
-  }
-
-  const closureList = [...closure].sort();
+  const physicalTables = new Set(tables.rows.map((row) => row.table_name));
   const allowlistList = [...allowlist].sort();
-  const missing = allowlistList.filter((t) => !closure.has(t));
-  const unexpected = closureList.filter((t) => !allowlist.has(t));
-  if (missing.length > 0 || unexpected.length > 0) {
+  const missing = allowlistList.filter((table) => !physicalTables.has(table));
+  if (missing.length > 0) {
     throw new Error(
-      `Legacy memory closure mismatch: missing=[${missing.join(",")}] unexpected=[${unexpected.join(",")}]`,
+      `Legacy memory physical closure mismatch in public: missing=[${missing.join(",")}] unexpected=[]`,
     );
   }
 
+  const foreignKeys = await loadForeignKeys(client);
   const outboundForeignKeys = foreignKeys.filter(
-    (fk) => closure.has(fk.referencingTable) && closure.has(fk.referencedTable),
+    (fk) =>
+      allowlist.has(fk.referencingTable) && allowlist.has(fk.referencedTable),
   );
   const inboundForeignKeys = foreignKeys.filter(
-    (fk) => closure.has(fk.referencedTable) && !closure.has(fk.referencingTable),
+    (fk) =>
+      allowlist.has(fk.referencedTable) && !allowlist.has(fk.referencingTable),
   );
 
   return {
-    closure: closureList,
+    closure: allowlistList,
     outboundForeignKeys,
     inboundForeignKeys,
   };
@@ -681,6 +736,67 @@ export async function prepareLegacyMemoryQuarantine(): Promise<{
 // Apply
 // ---------------------------------------------------------------------------
 
+async function verifyPersistedLegacyMemoryArchive(
+  state: QuarantineStateRow,
+): Promise<void> {
+  if (!state.archive_object_path || !state.archive_sha256 || !state.manifest) {
+    throw new Error(
+      "Legacy memory quarantine requires complete archive ledger evidence before apply",
+    );
+  }
+  const manifest = state.manifest as unknown as LegacyMemoryArchiveManifest;
+  if (
+    manifest.archiveSha256 !== state.archive_sha256 ||
+    manifest.quarantineSchema !== LEGACY_MEMORY_QUARANTINE_SCHEMA ||
+    manifest.runtimeIdentity.platformEnvironmentId !== 11 ||
+    manifest.independentDocumentStore !== true
+  ) {
+    throw new Error(
+      "Legacy memory archive manifest does not match the canonical Stage quarantine contract",
+    );
+  }
+  const archivePrefix = state.archive_object_path.slice(
+    0,
+    state.archive_object_path.lastIndexOf("/") + 1,
+  );
+  const manifestKey = `${archivePrefix}manifest.json`;
+  const checksumKey = `${archivePrefix}files.sha256`;
+  const expectedManifestBody = Buffer.from(
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8",
+  );
+  const expectedChecksumBody = Buffer.from(
+    `${state.archive_sha256}  archive.jsonl\n`,
+    "utf8",
+  );
+  const [archiveBody, manifestBody, checksumBody, archiveHead] =
+    await Promise.all([
+      storageBackend.getObjectBuffer(state.archive_object_path),
+      storageBackend.getObjectBuffer(manifestKey),
+      storageBackend.getObjectBuffer(checksumKey),
+      storageBackend.headObject(state.archive_object_path),
+    ]);
+  const readbackSha256 = createHash("sha256")
+    .update(archiveBody)
+    .digest("hex");
+  if (
+    readbackSha256 !== state.archive_sha256 ||
+    archiveBody.byteLength !== manifest.archiveByteLength ||
+    archiveHead?.contentLength !== manifest.archiveByteLength ||
+    !manifestBody.equals(expectedManifestBody) ||
+    !checksumBody.equals(expectedChecksumBody)
+  ) {
+    throw new Error(
+      `Legacy memory persisted archive verification failed: expected ${state.archive_sha256} (${manifest.archiveByteLength} bytes), got ${readbackSha256} (${archiveBody.byteLength} bytes)`,
+    );
+  }
+  log.info("legacy memory persisted archive readback verified", {
+    archiveObjectPath: state.archive_object_path,
+    sha256: state.archive_sha256,
+    byteLength: archiveBody.byteLength,
+  });
+}
+
 /**
  * Move the exact allowlisted legacy closure into the quarantine schema in one
  * transaction, dropping only inbound FKs from active public tables, and persist
@@ -724,6 +840,21 @@ export async function applyLegacyMemoryQuarantine(): Promise<{
     if (!transactionState?.archive_sha256 || !transactionState.manifest) {
       throw new Error(
         "Legacy memory quarantine requires a verified prepared archive before apply",
+      );
+    }
+    await verifyPersistedLegacyMemoryArchive(transactionState);
+
+    const catalogBeforeApply = await inspectLegacyMemoryCatalogState(client);
+    if (
+      catalogBeforeApply.archiveTables.length > 0 ||
+      catalogBeforeApply.retiredQuarantineTables.length > 0 ||
+      catalogBeforeApply.missingTables.length > 0 ||
+      catalogBeforeApply.splitTables.length > 0 ||
+      catalogBeforeApply.publicTables.length !==
+        LEGACY_MEMORY_QUARANTINE_TABLES.length
+    ) {
+      throw new Error(
+        `Legacy memory catalog is not in the exact pre-apply state: ${JSON.stringify(catalogBeforeApply)}`,
       );
     }
 
@@ -798,6 +929,37 @@ export async function applyLegacyMemoryQuarantine(): Promise<{
     if (remaining.rows.length > 0) {
       throw new Error(
         `SET SCHEMA incomplete; still public: ${remaining.rows.map((r) => r.relname).join(",")}`,
+      );
+    }
+
+    const catalogAfterMove = await inspectLegacyMemoryCatalogState(client);
+    if (
+      catalogAfterMove.publicTables.length > 0 ||
+      catalogAfterMove.archiveTables.length !==
+        LEGACY_MEMORY_QUARANTINE_TABLES.length ||
+      catalogAfterMove.retiredQuarantineTables.length > 0 ||
+      catalogAfterMove.missingTables.length > 0 ||
+      catalogAfterMove.splitTables.length > 0 ||
+      catalogAfterMove.unexpectedArchiveTables.length > 0
+    ) {
+      throw new Error(
+        `Legacy memory catalog failed exact post-move validation: ${JSON.stringify(catalogAfterMove)}`,
+      );
+    }
+    const archivedCounts: Record<string, number> = {};
+    for (const table of LEGACY_MEMORY_QUARANTINE_TABLES) {
+      const countResult = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::bigint AS count FROM ${quoteIdent(LEGACY_MEMORY_QUARANTINE_SCHEMA)}.${quoteIdent(table)}`,
+      );
+      archivedCounts[table] = Number(countResult.rows[0]?.count ?? 0);
+    }
+    const expectedRowCounts = transactionState.row_counts ?? {};
+    const countMismatches = LEGACY_MEMORY_QUARANTINE_TABLES.filter(
+      (table) => archivedCounts[table] !== expectedRowCounts[table],
+    );
+    if (countMismatches.length > 0) {
+      throw new Error(
+        `Legacy memory archived row-count mismatch: tables=[${countMismatches.join(",")}]`,
       );
     }
 
