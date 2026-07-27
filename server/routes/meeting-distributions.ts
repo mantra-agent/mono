@@ -288,7 +288,10 @@ export function registerMeetingDistributionRoutes(app: Express): void {
         }
 
         log.info(`Distribution retry requested for session ${sessionId}`);
-        await distributeRecap(sessionId, meeting, recap, principal, { retryFailed: true });
+        await distributeRecap(sessionId, meeting, recap, principal, {
+          retryFailed: true,
+          promoteRecipientFreeDraft: recap.distributionStatus === "ready" && !!recap.draftIds?.length,
+        });
 
         const updated = await chatStorage.getSession(sessionId);
         res.json({ recap: updated?.meeting?.recap ?? recap });
