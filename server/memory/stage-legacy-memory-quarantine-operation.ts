@@ -60,7 +60,16 @@ export async function requestStageLegacyMemoryQuarantineAfterReadiness(
     );
     return "document_store_not_independent";
   }
-  if ((await getLegacyMemoryQuarantineStatus()).applied) {
+  const initialStatus = await getLegacyMemoryQuarantineStatus();
+  log.info("stage legacy memory quarantine catalog inspected", {
+    applied: initialStatus.applied,
+    preparedAt: initialStatus.preparedAt,
+    appliedAt: initialStatus.appliedAt,
+    archiveSha256: initialStatus.archiveSha256,
+    rowCounts: initialStatus.rowCounts,
+    catalog: initialStatus.catalog,
+  });
+  if (initialStatus.applied) {
     if (legacyMemoryQuarantineWasAppliedAtBoot()) {
       return "already_applied";
     }
@@ -71,7 +80,7 @@ export async function requestStageLegacyMemoryQuarantineAfterReadiness(
     return "restart_requested";
   }
 
-  const status = await getLegacyMemoryQuarantineStatus();
+  const status = initialStatus;
   if (!status.preparedAt || !status.archiveSha256) {
     await prepareLegacyMemoryQuarantine();
     log.info(
