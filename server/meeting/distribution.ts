@@ -212,12 +212,14 @@ export type RecapDistributionRecoveryOutcome =
   | "not_ready"
   | "not_failed"
   | "waiting_for_speaker_identity"
+  | "promotion_attempted"
   | "retried";
 
 /**
- * Recover a failed distribution after owner-authenticated speaker correction.
- * Wait for every stable speaker to have canonical identity so the first
- * successful draft cannot freeze partially corrected participant attribution.
+ * Retry a failed distribution or promote a recipient-free draft after
+ * owner-authenticated speaker correction. Wait for every stable speaker to
+ * have canonical identity so the first recipient-specific draft cannot freeze
+ * partially corrected participant attribution.
  */
 export async function recoverRecapDistributionAfterSpeakerResolution(
   sessionId: string,
@@ -226,16 +228,20 @@ export async function recoverRecapDistributionAfterSpeakerResolution(
 ): Promise<RecapDistributionRecoveryOutcome> {
   const recap = meeting.recap;
   if (!recap || recap.status !== "ready") return "not_ready";
-  if (recap.distributionStatus !== "blocked" && recap.distributionStatus !== "failed") {
-    return "not_failed";
-  }
+  const canRetryFailure = recap.distributionStatus === "blocked" || recap.distributionStatus === "failed";
+  const canPromoteRecipientFreeDraft = recap.distributionStatus === "ready" && !!recap.draftIds?.length;
+  if (!canRetryFailure && !canPromoteRecipientFreeDraft) return "not_failed";
+
   const hasUnresolvedStableSpeaker = meeting.participants.some(
     (participant) => !!participant.key && !participant.personId,
   );
   if (hasUnresolvedStableSpeaker) return "waiting_for_speaker_identity";
 
-  await distributeRecap(sessionId, meeting, recap, principal, { retryFailed: true });
-  return "retried";
+  await distributeRecap(sessionId, meeting, recap, principal, {
+    retryFailed: canRetryFailure,
+    promoteRecipientFreeDraft: canPromoteRecipientFreeDraft,
+  });
+  return canPromoteRecipientFreeDraft ? "promotion_attempted" : "retried";
 }
 
 export async function distributeRecap(
@@ -243,7 +249,7 @@ export async function distributeRecap(
   meeting: MeetingSessionMeta,
   recap: MeetingRecapMeta,
   principal: Principal,
-  options: { retryFailed?: boolean } = {},
+  options: { retryFailed?: boolean; promoteRecipientFreeDraft?: boolean } = {},
 ): Promise<void> {
   // CHANGE 3: Verify principal context is correct (trap ALS leaks)
   try {
@@ -272,8 +278,9 @@ export async function distributeRecap(
   return withDistributionLock(sessionId, async () => {
   try {
     // Recipient-free drafts have no distribution row or capability. Their
-    // persisted recap draft IDs remain the replay-safe generation authority.
-    if (recap.distributionStatus === "ready" && recap.draftIds?.length) {
+    // persisted recap draft IDs remain the replay-safe generation authority
+    // until owner-authenticated identity resolution explicitly promotes them.
+    if (recap.distributionStatus === "ready" && recap.draftIds?.length && !options.promoteRecipientFreeDraft) {
       await surfaceRecapDraftsInline(sessionId, recap.draftIds);
       log.debug(`Distribution already ready for session ${sessionId}; ensured inline draft surface`);
       return;
@@ -322,13 +329,22 @@ export async function distributeRecap(
         );
     }
 
-    await runDistribution(sessionId, meeting, recap, principal);
+    await runDistribution(
+      sessionId,
+      meeting,
+      recap,
+      principal,
+      options.promoteRecipientFreeDraft ? recap.draftIds ?? [] : [],
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.error(`Recap distribution outer failure for session ${sessionId}: ${msg}`);
+    const retainedDraftIds = options.promoteRecipientFreeDraft ? recap.draftIds ?? [] : [];
     await chatStorage
       .updateMeetingMeta(sessionId, {
-        recap: { ...recap, distributionStatus: "failed", distributionError: msg.slice(0, 500) },
+        recap: retainedDraftIds.length > 0
+          ? { ...recap, distributionStatus: "ready", draftIds: retainedDraftIds }
+          : { ...recap, distributionStatus: "failed", distributionError: msg.slice(0, 500) },
       })
       .catch((e) =>
         log.error(`Failed to persist distribution failure for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`),
@@ -383,6 +399,7 @@ async function runDistribution(
   meeting: MeetingSessionMeta,
   recap: MeetingRecapMeta,
   principal: Principal,
+  recipientFreeDraftIds: string[],
 ): Promise<void> {
   const {
     distributionError: _previousDistributionError,
@@ -401,6 +418,13 @@ async function runDistribution(
   const emailContext = await resolveMeetingEmailContext(meeting);
 
   if (!emailContext) {
+    if (recipientFreeDraftIds.length > 0) {
+      await chatStorage.updateMeetingMeta(sessionId, {
+        recap: { ...attemptRecap, distributionStatus: "ready", draftIds: recipientFreeDraftIds },
+      });
+      log.warn(`No available Gmail sender for recap promotion session ${sessionId}; retained recipient-free draft`);
+      return;
+    }
     log.warn(`No available Gmail sender account for recap session ${sessionId}; blocking distribution`);
     await markDistributionBlocked(
       sessionId,
@@ -424,7 +448,19 @@ async function runDistribution(
     `Preparing recap for session ${sessionId} from defaultAccount=${emailContext.defaultSenderAccount.id} for ${attendees.length} resolved recipient(s)`,
   );
 
-  const gmailAccountId = emailContext.defaultSenderAccount.id;
+  if (recipientFreeDraftIds.length > 0 && attendees.length === 0) {
+    await chatStorage.updateMeetingMeta(sessionId, {
+      recap: { ...attemptRecap, distributionStatus: "ready", draftIds: recipientFreeDraftIds },
+    });
+    await surfaceRecapDraftsInline(sessionId, recipientFreeDraftIds);
+    log.debug(`Recipient-free recap draft remains current for session ${sessionId}`);
+    return;
+  }
+
+  const recipientFreeDraft = recipientFreeDraftIds.length === 1
+    ? await emailDraftStorage.getById(principal, recipientFreeDraftIds[0])
+    : null;
+  const gmailAccountId = recipientFreeDraft?.gmailAccountId || emailContext.defaultSenderAccount.id;
 
   // 4. Every resolved recipient receives a distinct entry capability. When no
   // recipient is known yet, create one ordinary unaddressed recap draft so the
@@ -584,12 +620,14 @@ async function runDistribution(
       writableScopePredicate(principal, scopeColumns) as SQL,
     ));
     await chatStorage.updateMeetingMeta(sessionId, {
-      recap: {
-        ...attemptRecap,
-        distributionStatus: "failed",
-        distributionError: detail,
-        draftIds: [],
-      },
+      recap: recipientFreeDraftIds.length > 0
+        ? { ...attemptRecap, distributionStatus: "ready", draftIds: recipientFreeDraftIds }
+        : {
+            ...attemptRecap,
+            distributionStatus: "failed",
+            distributionError: detail,
+            draftIds: [],
+          },
     });
     eventBus.publish({
       category: "agent",
@@ -601,6 +639,12 @@ async function runDistribution(
   await chatStorage.updateMeetingMeta(sessionId, {
     recap: { ...attemptRecap, distributionStatus: "ready", draftIds },
   });
+
+  for (const draftId of recipientFreeDraftIds) {
+    await emailDraftStorage.discard(principal, draftId).catch((error) => {
+      log.warn(`Failed to discard promoted recipient-free recap draft ${draftId}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
 
   // 7. Surface the draft through the same canonical session-message
   // renderer used by Gmail draft and reply tool results.
@@ -689,9 +733,9 @@ async function resolveMeetingEmailContext(
 
 /**
  * Resolve recap recipients from every owner-authorized identity source.
- * Calendar invitees remain authoritative for their own addresses. Manual
- * speaker assignments contribute the assigned Person's first valid stored
- * email, which covers shared-room attendees discovered after the event.
+ * Calendar invitees remain authoritative for their own addresses. Any
+ * canonical Person-linked participant contributes that Person's first valid
+ * stored email, which covers native/shared-room attendees after assignment.
  */
 async function resolveRecipients(
   meeting: MeetingSessionMeta,
@@ -750,7 +794,7 @@ async function resolveRecipients(
 
   const assignedPersonIds = [...new Set(
     meeting.participants
-      .filter((participant) => participant.identitySource === "manual" && participant.personId)
+      .filter((participant) => participant.personId)
       .map((participant) => participant.personId!),
   )];
   await runWithPrincipal(principal, async () => {
@@ -818,10 +862,14 @@ async function buildEmailContent(
     ? "Time unavailable"
     : `${formatInTimezone(startedAt, { hour: "numeric", minute: "2-digit", timeZoneName: "short" })} ${formatInTimezone(startedAt, { month: "short", day: "numeric", year: "numeric" })}`;
   const participantLine = meeting.participants
-    .map((participant) => participant.displayName?.trim() || participant.email?.trim())
+    .map((participant) => participant.label.trim())
     .filter((label): label is string => !!label)
     .filter((label, index, labels) => labels.indexOf(label) === index)
-    .join(", ") || "Participants unavailable";
+    .join(", ");
+  const meetingDetails = [
+    `- Time: ${timeLabel}`,
+    ...(participantLine ? [`- Participants: ${participantLine}`] : []),
+  ].join("\n");
   const greetingName = firstName(attendee?.name);
   const greeting = greetingName ? `Hi ${greetingName},` : "Hi,";
 
@@ -835,7 +883,7 @@ async function buildEmailContent(
 
   const blocks = [
     greeting,
-    `**${meetingName}**\n- Time: ${timeLabel}\n- Participants: ${participantLine}`,
+    `**${meetingName}**\n${meetingDetails}`,
     summary,
     ...sections.map((section) =>
       `**${section.title}**\n${section.items.map((item) => `- ${item}`).join("\n")}`,
