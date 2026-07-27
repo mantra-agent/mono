@@ -1,5 +1,5 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
-import { db } from "./db";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { acquireLibraryParentLocks, db } from "./db";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
@@ -429,4 +429,85 @@ export async function ensureMantraLibraryVault(
     indexPageId: index.id,
     logPageId: logPage.id,
   };
+}
+
+/**
+ * Soft-delete (move to Trash) a Library page and its ENTIRE descendant subtree
+ * as one restorable unit. This is the single canonical mutation path for page
+ * deletion — every route, tool, and job that "deletes" a page must call this so
+ * the invariant lives in one place.
+ *
+ * Trash is a lifecycle state on `library_pages.deleted_at`, the single source of
+ * truth. Vault, parent, placements, and content are left untouched; only
+ * `deleted_at` is stamped, so the subtree can be restored later by clearing it.
+ *
+ * Derivation-first unit identity: every page in the cascade shares one
+ * `deleted_at` timestamp, and the trashed unit is fully reconstructable from
+ * (subtree root + shared `deleted_at`) via a `parent_id` descendant walk. A page
+ * already trashed by an earlier, separate deletion keeps its own earlier
+ * timestamp and is excluded here by the `deleted_at IS NULL` guard, so restoring
+ * this unit will not resurrect a separately-trashed child. That is why no
+ * `trashRootId`/`deletedBatchId` column is required.
+ */
+export async function softDeleteLibrarySubtree(
+  principal: Principal,
+  rootId: string,
+): Promise<{ trashedCount: number; trashedIds: string[] }> {
+  return db.transaction(async (tx) => {
+    const [root] = await tx
+      .select({ id: libraryPages.id, parentId: libraryPages.parentId })
+      .from(libraryPages)
+      .where(
+        combineWithWritableScope(
+          principal,
+          libraryScopeColumns,
+          eq(libraryPages.id, rootId),
+        ),
+      )
+      .limit(1);
+    if (!root) return { trashedCount: 0, trashedIds: [] };
+
+    // Serialize against concurrent reparent/reorder of the root's siblings,
+    // matching the advisory-lock discipline used by move/reorder.
+    await acquireLibraryParentLocks(tx, [root.parentId]);
+
+    // Gather the whole descendant subtree by parent_id. UNION (not UNION ALL)
+    // guarantees termination even if a cycle ever exists. IDs only — no content.
+    const subtree = await tx.execute(sql`
+      WITH RECURSIVE subtree AS (
+        SELECT id FROM library_pages WHERE id = ${rootId}
+        UNION
+        SELECT lp.id FROM library_pages lp
+        JOIN subtree s ON lp.parent_id = s.id
+      )
+      SELECT id FROM subtree
+    `);
+    const ids = (subtree.rows as Array<{ id: string }>).map((row) => row.id);
+    if (ids.length === 0) return { trashedCount: 0, trashedIds: [] };
+
+    // One shared deleted_at across the cascade, atomically. Writable-scoped so a
+    // user can only ever trash their own rows; deleted_at IS NULL preserves any
+    // child trashed earlier as its own separate unit.
+    const stamped = await tx
+      .update(libraryPages)
+      .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(
+        combineWithWritableScope(
+          principal,
+          libraryScopeColumns,
+          and(inArray(libraryPages.id, ids), isNull(libraryPages.deletedAt)),
+        ),
+      )
+      .returning({ id: libraryPages.id });
+
+    log.info("Soft-deleted Library subtree", {
+      rootId,
+      subtreeSize: ids.length,
+      trashedCount: stamped.length,
+    });
+    return {
+      trashedCount: stamped.length,
+      trashedIds: stamped.map((row) => row.id),
+    };
+  });
 }

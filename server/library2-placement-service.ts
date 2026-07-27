@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
   LIBRARY_PLACEMENT_INDEX_SECTIONS,
   libraryPages,
@@ -78,7 +78,8 @@ function requireUserPrincipal(
 }
 
 function visiblePages(principal: Principal, predicate?: SQL): SQL {
-  return combineWithVisibleScope(principal, pageScopeColumns, predicate);
+  const notTrashed = isNull(libraryPages.deletedAt);
+  return combineWithVisibleScope(principal, pageScopeColumns, predicate ? and(predicate, notTrashed) : notTrashed);
 }
 
 function visiblePlacements(principal: Principal, predicate?: SQL): SQL {

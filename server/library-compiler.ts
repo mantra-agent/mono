@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, asc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
 import { syncContentFields } from "@shared/markdown-tiptap";
 import { libraryPageLinks, libraryPages } from "@shared/models/info";
 import { db } from "./db";
@@ -96,7 +96,8 @@ interface CompilerResponse {
 }
 
 function visible(principal: Principal, predicate?: SQL): SQL {
-  return combineWithVisibleScope(principal, libraryScopeColumns, predicate);
+  const notTrashed = isNull(libraryPages.deletedAt);
+  return combineWithVisibleScope(principal, libraryScopeColumns, predicate ? and(predicate, notTrashed) : notTrashed);
 }
 
 function writable(principal: Principal, predicate?: SQL): SQL {

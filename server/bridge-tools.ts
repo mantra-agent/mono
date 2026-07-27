@@ -10816,7 +10816,7 @@ ${refs}` : ""),
     const action = args.action;
     const principal = getCurrentPrincipalOrSystem();
     const libScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
-    const visibleLib = (predicate?: SQL) => combineWithVisibleScope(principal, libScopeColumns, predicate);
+    const visibleLib = (predicate?: SQL) => combineWithVisibleScope(principal, libScopeColumns, predicate ? and(predicate, isNull(libraryPages.deletedAt)) : isNull(libraryPages.deletedAt));
     const writableLib = (predicate?: SQL) => combineWithWritableScope(principal, libScopeColumns, predicate);
 
     function publishLibraryChanged(action: string, page?: { id?: string | null; title?: string | null; surface?: boolean | null; surfaceUntil?: Date | string | null }) {
@@ -11300,23 +11300,22 @@ ${refs}` : ""),
       if (action === "delete_library_page" || action === "delete") {
         const id = args.id;
         if (!id) return { result: "Provide an id to delete.", error: true };
-        const byId = await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
-        const resolved = byId[0] || (await db.select({ id: libraryPages.id, parentId: libraryPages.parentId }).from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
+        const byId = await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(writableLib(eq(libraryPages.id, id)));
+        const resolved = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
         if (!resolved) return { result: `Library page "${id}" not found.`, error: true };
-        const resolvedId = resolved.id;
-        const parentIdOfPage = resolved.parentId;
         try {
-          const deleted = await db.transaction(async (tx) => {
-            await acquireLibraryParentLocks(tx, [parentIdOfPage]);
-            const [row] = await tx.delete(libraryPages).where(eq(libraryPages.id, resolvedId)).returning();
-            return row;
-          });
-          if (!deleted) return { result: `Library page "${id}" not found.`, error: true };
-          publishLibraryChanged("deleted", deleted);
-          return { result: `Library page "${deleted.title}" deleted.` };
+          // Soft-delete: stamp deleted_at across the page and its whole subtree.
+          // Rows remain with vault/parent/placements intact for later restore;
+          // every read path filters deleted_at IS NULL so it disappears everywhere.
+          const { softDeleteLibrarySubtree } = await import("./library-domain");
+          const { trashedCount } = await softDeleteLibrarySubtree(principal, resolved.id);
+          if (trashedCount === 0) return { result: `Library page "${id}" not found.`, error: true };
+          publishLibraryChanged("deleted", { id: resolved.id, title: resolved.title });
+          const subtreeNote = trashedCount > 1 ? ` (with ${trashedCount - 1} descendant page${trashedCount - 1 > 1 ? "s" : ""})` : "";
+          return { result: `Library page "${resolved.title}" moved to Trash${subtreeNote}.` };
         } catch (err: any) {
           if (isSerializationConflict(err)) {
-            toolExec.warn(`delete_library_page: serialization conflict (page=${resolvedId} parent=${parentIdOfPage}) — retryable: ${err.message}`);
+            toolExec.warn(`delete_library_page: serialization conflict (page=${resolved.id}) — retryable: ${err.message}`);
             return { result: `Library write conflicted with a concurrent reorder, please retry: ${err.message}`, error: true };
           }
           throw err;
