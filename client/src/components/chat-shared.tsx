@@ -1130,6 +1130,7 @@ const SYSTEM_STEP_ICONS: Record<string, typeof Brain> = {
   session_compaction: Brain,
   working_context_compression: AlertTriangle,
   first_token: Zap,
+  model_call_timing: Gauge,
   greeting: MessageSquare,
   signedUrl: Globe,
   voice_turn_boundary: Radio,
@@ -1252,11 +1253,14 @@ function SystemStepRow({
   const isSessionCompaction = name === "session_compaction";
   const isWorkingCompression =
     name === "working_context_compression" || step.type === "compacting";
+  const isModelTiming = name === "model_call_timing";
   const label = isSessionCompaction && isError
     ? "Session compaction failed"
     : isWorkingCompression && layer === 2
       ? "Context Compressed"
-      : meta?.label || name;
+      : isModelTiming
+        ? "Model timing"
+        : meta?.label || name;
   const showSystemDetail =
     !!step.systemStepDetail && (!isWorkingCompression || layer >= 3);
   const duration = getStepDuration(step);

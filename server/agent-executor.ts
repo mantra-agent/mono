@@ -770,6 +770,8 @@ interface RunIterationContext {
   backgroundWork: Set<Promise<void>>;
   llmCallStartTime?: number;
   llmConnectedTime?: number;
+  /** Wall-clock of the first visible output (thinking/text/tool) for this iteration. */
+  firstOutputTime?: number;
   llmRequestSentEmitted?: boolean;
   firstTokenEmitted?: boolean;
   llmConnectedEmitted?: boolean;
@@ -1079,6 +1081,7 @@ export class AgentExecutor extends EventEmitter {
     if (ctx.firstTokenEmitted || !ctx.llmCallStartTime) return;
     const occurredAt = Date.now();
     ctx.firstTokenEmitted = true;
+    ctx.firstOutputTime = occurredAt;
     if (!ctx.llmConnectedEmitted) {
       ctx.llmConnectedEmitted = true;
       ctx.llmConnectedTime = occurredAt;
@@ -1092,6 +1095,113 @@ export class AgentExecutor extends EventEmitter {
       parentId: this.responseParentId(ctx),
       detail: formatInputContextDetail(options.contextPressure),
       metadata: { ...options.contextPressure, outputType },
+    });
+  }
+
+  /**
+   * Persist the model call's timing breakdown as a single diagnostic step on
+   * every assistant message, for ALL providers/models/tiers. It reads the
+   * already-computed provider `cliTiming` split (Claude CLI path) and falls back
+   * to executor-tracked phase timestamps for other providers, so a slow
+   * first-token turn shows exactly where the time went: prefill, pool/queue,
+   * queue→first-event, thinking/pre-text, and decode. This is a read of existing
+   * spans/telemetry, not new phase instrumentation.
+   */
+  private emitModelCallTimingStep(ctx: RunIterationContext, modelSpanId: string): void {
+    if (!ctx.llmCallStartTime) return;
+    const meta = (ctx.iterationUsageMetadata ?? {}) as Record<string, unknown>;
+    const cli = (meta.cliTiming as Record<string, unknown> | undefined) ?? undefined;
+    const now = Date.now();
+    const start = ctx.llmCallStartTime;
+
+    const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+    const bool = (v: unknown): boolean | null => (typeof v === "boolean" ? v : null);
+
+    // Prefer the provider-computed breakdown; fall back to executor-tracked phase
+    // timestamps so the step is populated for every provider, not just the CLI.
+    const totalMs = num(cli?.totalMs) ?? now - start;
+    const preSdkMs = num(cli?.preSdkMs);
+    const poolAcquireMs = num(cli?.poolAcquireMs);
+    const sdkImportMs = num(cli?.sdkImportMs);
+    const firstEventAt = num(cli?.firstEventAt) ?? ctx.llmConnectedTime ?? null;
+    const firstTextAt = num(cli?.firstTextAt) ?? ctx.firstOutputTime ?? null;
+    const queueToFirstEventMs =
+      num(cli?.sdkToFirstEventMs) ?? (firstEventAt != null ? firstEventAt - start : null);
+    const firstEventToFirstTextMs =
+      num(cli?.firstEventToFirstTextMs) ??
+      (firstEventAt != null && firstTextAt != null ? firstTextAt - firstEventAt : null);
+    const ttftMs = num(cli?.totalTtftMs) ?? (firstTextAt != null ? firstTextAt - start : null);
+    const decodeMs = num(cli?.afterFirstTextMs) ?? (firstTextAt != null ? now - firstTextAt : null);
+
+    // Thinking timing — captured even when thinking is not persisted as visible
+    // content (closes the thinkingLen=0 blind spot).
+    const msToFirstThinkingDelta = num(cli?.msToFirstThinkingDelta);
+    const firstEventToFirstThinkingMs = num(cli?.firstEventToFirstThinkingMs);
+    const thinkingChars = num(cli?.thinkingChars) ?? ctx.iterationThinking.length;
+
+    // Streaming shape: did incremental deltas arrive, or did text come buffered
+    // in the terminal event? Decisive buffered-vs-incremental signal for a
+    // collapsed TTFT.
+    const sawStreamDeltas = bool(cli?.sawStreamDeltas);
+    const firstEventType = typeof cli?.firstEventType === "string" ? cli.firstEventType : null;
+
+    // Token-accounting semantics: mark cumulative-session counts so the UI does
+    // not present them as this-turn output.
+    const usageSemantics =
+      (meta.usageSemantics as string | undefined) ??
+      ((meta.tokenAccounting as Record<string, unknown> | undefined)?.usageSemantics as string | undefined) ??
+      "unknown";
+    const outputCumulative = usageSemantics === "cumulative_provider_session";
+
+    const fmt = (ms: number | null): string | null =>
+      ms == null ? null : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+
+    const detailParts: string[] = [];
+    const push = (labelText: string, ms: number | null) => {
+      const f = fmt(ms);
+      if (f) detailParts.push(`${labelText} ${f}`);
+    };
+    push("prefill", preSdkMs);
+    push("pool", poolAcquireMs);
+    push("queue→1st-event", queueToFirstEventMs);
+    push(thinkingChars > 0 ? "think→text" : "pre-text", firstEventToFirstTextMs);
+    push("decode", decodeMs);
+    const detail = `${fmt(totalMs)} total${detailParts.length ? " · " + detailParts.join(" · ") : ""}`;
+
+    ctx.publish("system_step", {
+      step: "model_call_timing",
+      status: "done",
+      stepId: modelSpanId,
+      elapsedMs: Math.max(0, Math.round(totalMs)),
+      selfTimeMs: Math.max(0, Math.round(totalMs)),
+      parentId: canonicalSystemStepId("llm_call", modelSpanId),
+      detail,
+      metadata: {
+        provider: ctx.resolvedProvider,
+        model: ctx.resolvedModel,
+        routingTier: ctx.routingTier,
+        totalMs,
+        ttftMs,
+        preSdkMs,
+        poolAcquireMs,
+        sdkImportMs,
+        queueToFirstEventMs,
+        firstEventToFirstTextMs,
+        decodeMs,
+        msToFirstThinkingDelta,
+        firstEventToFirstThinkingMs,
+        thinkingChars,
+        firstEventType,
+        sawStreamDeltas,
+        poolHit: bool(cli?.poolHit),
+        poolEligible: bool(cli?.poolEligible),
+        outputTokens: ctx.iterationUsage.outputTokens,
+        outputTokensAreCumulativeSession: outputCumulative,
+        usageSemantics,
+        tokenAccountingNote: outputCumulative
+          ? "Output/token counts are cumulative for the provider session, not this turn."
+          : undefined,
+      },
     });
   }
 
@@ -2423,6 +2533,7 @@ export class AgentExecutor extends EventEmitter {
         ctx.publish("system_step", { step: "thinking", status: responseStatus });
       }
 
+      this.emitModelCallTimingStep(ctx, modelSpanId);
       ctx.publish("system_step", { step: "llm_call", status: responseStatus, stepId: modelSpanId });
 
       ctx.lastStreamDiagnostics = {
