@@ -8,7 +8,7 @@ import Logger from './logger';
 const LOG_TAG = 'ThinkingAudio';
 const SAMPLE_RATE = 22050;
 const OUTPUT_PEAK = 0.32;
-const PLAYBACK_VOLUME = 0.055;
+const PLAYBACK_VOLUME = 0.044;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 let sound: Audio.Sound | null = null;
