@@ -1069,6 +1069,8 @@ export async function* cliSdkStream(
   let firstEventAt: number | null = null;
   let firstEventType: string | null = null;
   let firstTextAt: number | null = null;
+  let firstThinkingAt: number | null = null;
+  let thinkingChars = 0;
   let eventCount = 0;
   let fullText = "";
   let inputTokens = 0;
@@ -1109,7 +1111,11 @@ export async function* cliSdkStream(
     // Guard the win: warn loudly when the dedicated Haiku fast lane regresses past
     // 1.5s. The nested Orientation LLM phases expose the same breakdown in-product.
     const isHaiku = /haiku/i.test(model);
-    if (poolEligible && isHaiku && totalTtft !== null && totalTtft > 1500) {
+    if (totalTtft !== null && totalTtft > 30_000) {
+      log.warn(
+        `ttft_regression: model TTFT to first visible text exceeded 30s — ` + line,
+      );
+    } else if (poolEligible && isHaiku && totalTtft !== null && totalTtft > 1500) {
       log.warn(
         `ttft_regression: tool-free Haiku TTFT exceeded 1500ms — ` + line,
       );
@@ -1477,6 +1483,8 @@ export async function* cliSdkStream(
             const delta = sdkEvent.delta as { type?: string; thinking?: string; text?: string };
             if (delta?.type === "thinking_delta" && delta?.thinking) {
               sawStreamDeltas = true;
+              if (firstThinkingAt === null) firstThinkingAt = Date.now();
+              thinkingChars += delta.thinking.length;
               yield { type: "thinking_delta", content: delta.thinking };
             } else if (delta?.type === "text_delta" && delta?.text) {
               sawStreamDeltas = true;
@@ -1513,7 +1521,10 @@ export async function* cliSdkStream(
               };
             } else if (!sawStreamDeltas) {
               if (block.type === "thinking" && "thinking" in block && typeof (block as Record<string, unknown>).thinking === "string") {
-                yield { type: "thinking_delta", content: (block as Record<string, unknown>).thinking as string };
+                const thinkingText = (block as Record<string, unknown>).thinking as string;
+                if (firstThinkingAt === null) firstThinkingAt = Date.now();
+                thinkingChars += thinkingText.length;
+                yield { type: "thinking_delta", content: thinkingText };
               } else if (block.type === "text" && "text" in block && block.text) {
                 fullText += block.text;
                 if (firstTextAt === null) {
@@ -1638,6 +1649,11 @@ export async function* cliSdkStream(
           totalTtftMs: firstTextAt !== null ? firstTextAt - start : null,
           totalMs: elapsed,
           afterFirstTextMs: firstTextAt !== null ? doneAt - firstTextAt : null,
+          firstThinkingAt,
+          msToFirstThinkingDelta: firstThinkingAt !== null ? firstThinkingAt - start : null,
+          firstEventToFirstThinkingMs: firstEventAt !== null && firstThinkingAt !== null ? firstThinkingAt - firstEventAt : null,
+          thinkingChars,
+          sawStreamDeltas,
           firstEventType,
           poolKey: pKey || undefined,
           poolEligible,
