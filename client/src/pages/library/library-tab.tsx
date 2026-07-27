@@ -416,6 +416,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
   const restoreMutation = useApiMutation<string>({
     method: "POST",
     path: (id) => `/api/info/library/${id}/restore`,
+    body: () => null,
     invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library/trash"]],
     successMessage: (_result, pageId) => `${trashedPages.find((p) => p.id === pageId)?.title || "Page"} restored`,
     errorTitle: "Restore failed",
