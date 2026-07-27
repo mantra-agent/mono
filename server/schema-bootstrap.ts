@@ -1041,7 +1041,35 @@ export async function runSchemaBootstrap(
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_promotion_releases_environment_time ON environment_promotion_releases(environment_id, promoted_at DESC)`);
 
   const HEAL_BUDGET_MS = 2000;
+  // Pure-legacy `memory_entries`-closure heal blocks. Once the durable
+  // quarantine epoch is applied these tables live in `legacy_memory_archive`,
+  // so running them against `public` throws missing-relation errors that the
+  // quarantine acceptance contract prohibits. Skipping them by label keeps the
+  // legacy-convergence closure in one place (Encode Invariants in Structure).
+  // Mixed blocks that also touch active tables ("scoped core personal data
+  // columns", "generated column insert defaults", "core scoped table columns")
+  // and all `memory_vnext_*` blocks are intentionally excluded: they keep their
+  // own per-statement existence guards and must still run non-legacy DDL.
+  const LEGACY_MEMORY_HEAL_LABELS = new Set<string>([
+    "memory_events occurred_at default",
+    "memory processing-state columns",
+    "memory_sources table",
+    "memory_entries unique constraint",
+    "memory_entries timestamp defaults",
+    "memory_entries pinned column",
+    "memory_entries integration_stage column",
+    "memory_entries emotional_state_id column",
+    "backfill session memory titles",
+    "relationship_type migration",
+    "drop duplicate idx_memory_layer_source_sourceid",
+    "drop redundant idx_memory_layer",
+    "retire raw session memory rows from graph surfaces",
+    "HNSW vector index on memory_entries.embedding",
+  ]);
   const heal = async (label: string, fn: () => Promise<void>) => {
+    if (legacyMemoryQuarantined && LEGACY_MEMORY_HEAL_LABELS.has(label)) {
+      return;
+    }
     const start = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
