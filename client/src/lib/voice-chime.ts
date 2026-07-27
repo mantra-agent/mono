@@ -12,7 +12,7 @@ type ThinkingLoop = {
   stopped: boolean;
 };
 
-const THINKING_MASTER_GAIN = 0.42;
+const THINKING_MASTER_GAIN = 0.336;
 const THINKING_TEXTURE_PEAK = 0.14;
 
 let sharedVoiceAudioContext: AudioContext | null = null;
