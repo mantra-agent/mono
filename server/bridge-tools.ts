@@ -10809,14 +10809,15 @@ ${refs}` : ""),
   library: async (args) => {
     const { db } = await import("./db");
     const { libraryPages, libraryAnnotations, libraryPageLinks } = await import("@shared/models/info");
-    const { eq, desc, asc, ilike, or, and, isNull, sql } = await import("drizzle-orm");
+    const { eq, desc, asc, ilike, or, and, sql } = await import("drizzle-orm");
     const { getCurrentPrincipalOrSystem } = await import("./principal-context");
     const { combineWithVisibleScope, combineWithWritableScope, visibleScopePredicate } = await import("./scoped-storage");
+    const { libraryPageIsLive } = await import("./library-trash");
 
     const action = args.action;
     const principal = getCurrentPrincipalOrSystem();
     const libScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
-    const visibleLib = (predicate?: SQL) => combineWithVisibleScope(principal, libScopeColumns, predicate ? and(predicate, isNull(libraryPages.deletedAt)) : isNull(libraryPages.deletedAt));
+    const visibleLib = (predicate?: SQL) => combineWithVisibleScope(principal, libScopeColumns, predicate ? and(predicate, libraryPageIsLive()) : libraryPageIsLive());
     const writableLib = (predicate?: SQL) => combineWithWritableScope(principal, libScopeColumns, predicate);
 
     function publishLibraryChanged(action: string, page?: { id?: string | null; title?: string | null; surface?: boolean | null; surfaceUntil?: Date | string | null }) {
@@ -11304,9 +11305,9 @@ ${refs}` : ""),
         const resolved = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title }).from(libraryPages).where(writableLib(eq(libraryPages.slug, id))))[0];
         if (!resolved) return { result: `Library page "${id}" not found.`, error: true };
         try {
-          // Soft-delete: stamp deleted_at across the page and its whole subtree.
+          // Soft-delete: write a library_page_trash sidecar row across the page and its whole subtree.
           // Rows remain with vault/parent/placements intact for later restore;
-          // every read path filters deleted_at IS NULL so it disappears everywhere.
+          // every read path excludes pages with a sidecar row so it disappears everywhere.
           const { softDeleteLibrarySubtree } = await import("./library-domain");
           const { trashedCount } = await softDeleteLibrarySubtree(principal, resolved.id);
           if (trashedCount === 0) return { result: `Library page "${id}" not found.`, error: true };

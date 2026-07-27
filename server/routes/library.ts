@@ -24,6 +24,7 @@ import {
 import {
   infoNotes,
   libraryPages,
+  libraryPageTrash,
   libraryPageLinks,
   libraryAnnotations,
   libraryPageViews,
@@ -60,6 +61,7 @@ import {
   ensureMantraLibraryVault,
   normalizeLibraryStructuralRole,
 } from "../library-domain";
+import { libraryPageIsLive, libraryPageIsTrashed } from "../library-trash";
 import { getLibraryPageNeighbors, runLibraryLint, syncEmbeddedLibraryPageLinks } from "../library-link-graph";
 import { compileLibraryPageToMantraWiki, queryMantraLibraryIndex } from "../library-compiler";
 import { projectActiveLibraryReminders } from "../library-reminders";
@@ -137,10 +139,10 @@ function publishLibraryChanged(action: string, page?: { id?: string | null; titl
 }
 
 function visibleLibrary(req: any, predicate?: SQL): SQL {
-  // Trashed pages (deleted_at IS NOT NULL) are excluded from every read that
+  // Trashed pages (those with a library_page_trash row) are excluded from every read that
   // flows through this boundary — list, tree, single get, index, unread, and
   // search. Trash (a later step) reads with its own predicate.
-  const notTrashed = isNull(libraryPages.deletedAt);
+  const notTrashed = libraryPageIsLive();
   return combineWithVisibleScope(
     principalOrThrow(req),
     libraryScopeColumns,
@@ -157,11 +159,11 @@ function writableLibrary(req: any, predicate?: SQL): SQL {
 }
 
 // Trash read boundary: the inverse of visibleLibrary — only trashed pages
-// (deleted_at IS NOT NULL), still owner/account/vault scoped. Vault-visibility
+// (those with a library_page_trash row), still owner/account/vault scoped. Vault-visibility
 // (top-bar toggles) and vault-chip filtering are applied client-side over this
 // owner-scoped set, exactly like the live list/tree endpoints.
 function trashedLibrary(req: any, predicate?: SQL): SQL {
-  const trashed = isNotNull(libraryPages.deletedAt);
+  const trashed = libraryPageIsTrashed();
   return combineWithVisibleScope(
     principalOrThrow(req),
     libraryScopeColumns,
@@ -340,11 +342,14 @@ export async function registerLibraryRoutes(app: Express) {
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_library_pages_structural_role ON library_pages(structural_role)`,
     );
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS library_page_trash (
+        page_id TEXT PRIMARY KEY REFERENCES library_pages(id) ON DELETE CASCADE,
+        deleted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
     await pool.query(
-      `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
-    );
-    await pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_library_pages_deleted_at ON library_pages(deleted_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_library_page_trash_deleted_at ON library_page_trash(deleted_at)`,
     );
     await pool.query(
       `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
@@ -764,11 +769,12 @@ export async function registerLibraryRoutes(app: Express) {
           scope: libraryPages.scope,
           createdAt: libraryPages.createdAt,
           updatedAt: libraryPages.updatedAt,
-          deletedAt: libraryPages.deletedAt,
+          deletedAt: libraryPageTrash.deletedAt,
         })
         .from(libraryPages)
+        .innerJoin(libraryPageTrash, eq(libraryPageTrash.pageId, libraryPages.id))
         .where(trashedLibrary(req))
-        .orderBy(desc(libraryPages.deletedAt), asc(libraryPages.title));
+        .orderBy(desc(libraryPageTrash.deletedAt), asc(libraryPages.title));
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -851,7 +857,7 @@ export async function registerLibraryRoutes(app: Express) {
           libraryPages,
           eq(libraryPageLinks.sourcePageId, libraryPages.id),
         )
-        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, and(eq(libraryPageLinks.targetPageId, req.params.id), isNull(libraryPages.deletedAt))));
+        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, and(eq(libraryPageLinks.targetPageId, req.params.id), libraryPageIsLive())));
       res.json(links);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -864,7 +870,7 @@ export async function registerLibraryRoutes(app: Express) {
       const outbound = await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug, summary: libraryPages.summary, structuralRole: libraryPages.structuralRole })
         .from(libraryPageLinks)
         .innerJoin(libraryPages, eq(libraryPageLinks.targetPageId, libraryPages.id))
-        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, and(eq(libraryPageLinks.sourcePageId, req.params.id), isNull(libraryPages.deletedAt))));
+        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, and(eq(libraryPageLinks.sourcePageId, req.params.id), libraryPageIsLive())));
       const inbound = await getLibraryPageNeighbors([req.params.id], principal, 50);
       res.json({ outbound, neighbors: inbound });
     } catch (err: any) {
@@ -1198,9 +1204,10 @@ export async function registerLibraryRoutes(app: Express) {
         return res
           .status(403)
           .json({ error: "System folders cannot be deleted." });
-      // Soft-delete: stamp deleted_at across this page and its entire subtree.
-      // Rows stay in the DB with vault/parent/placements intact so a later Trash
-      // step can restore the unit; every read path filters deleted_at IS NULL.
+      // Soft-delete: write a library_page_trash sidecar row across this page and
+      // its entire subtree. Rows stay in the DB with vault/parent/placements
+      // intact so restore is a pure undelete; every read path excludes pages
+      // that have a sidecar row.
       const { softDeleteLibrarySubtree } = await import("../library-domain");
       const { trashedCount } = await softDeleteLibrarySubtree(
         principalOrThrow(req),
@@ -1217,7 +1224,7 @@ export async function registerLibraryRoutes(app: Express) {
 
   // Restore a trashed page (and its trashed subtree unit) back to the live
   // Library. Delegates to the canonical restoreLibrarySubtree mutation, which
-  // clears deleted_at across the unit and returns the root to its original
+  // removes the sidecar rows across the unit and returns the root to its original
   // parent (or the source vault root when that parent is gone).
   app.post("/api/info/library/:id/restore", async (req, res) => {
     try {
@@ -1250,7 +1257,7 @@ export async function registerLibraryRoutes(app: Express) {
   // see." The server independently constrains destruction to rows that are
   // actually trashed AND owned (trashedLibrary scope), then routes through the
   // canonical hardDeleteLibraryPages path, which additionally enforces writable
-  // scope and deleted_at IS NOT NULL.
+  // scope and the presence of a library_page_trash sidecar row.
   app.post("/api/info/library/trash/empty", async (req, res) => {
     try {
       const parsed = z

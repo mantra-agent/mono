@@ -13,9 +13,10 @@ import { libraryPages } from "@shared/models/info";
 import { wellnessActivities } from "@shared/models/health";
 import { emailMessages, inferencePayloadCaptures, planExecutions, workflowRuns } from "@shared/schema";
 import { decisionsStorage } from "./decisions-storage";
-import { and, desc, eq, isNull, or } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { getEvent, listAllEvents } from "./google-calendar";
 import { chatFileStorage } from "./chat-file-storage";
+import { libraryPageIsLive } from "./library-trash";
 
 const log = createLogger("ReferenceRoutes");
 
@@ -164,7 +165,7 @@ export function registerReferenceRoutes(app: Express) {
               const rows = await db
                 .select({ title: libraryPages.title })
                 .from(libraryPages)
-                .where(combineWithVisibleScope(principal, pageScope, and(or(...matchers), isNull(libraryPages.deletedAt))))
+                .where(combineWithVisibleScope(principal, pageScope, and(or(...matchers), libraryPageIsLive())))
                 .limit(1);
               if (rows[0]?.title) results[key] = rows[0].title;
               break;

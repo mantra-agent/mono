@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { acquireLibraryParentLocks, db } from "./db";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
@@ -10,7 +10,8 @@ import {
   ownedInsertValues,
 } from "./scoped-storage";
 import { syncContentFields } from "@shared/markdown-tiptap";
-import { libraryPages } from "@shared/models/info";
+import { libraryPageTrash, libraryPages } from "@shared/models/info";
+import { libraryPageIsLive, libraryPageIsTrashed } from "./library-trash";
 import { users } from "@shared/schema";
 import { vaults } from "@shared/models/vaults";
 
@@ -438,15 +439,16 @@ export async function ensureMantraLibraryVault(
  * deletion — every route, tool, and job that "deletes" a page must call this so
  * the invariant lives in one place.
  *
- * Trash is a lifecycle state on `library_pages.deleted_at`, the single source of
- * truth. Vault, parent, placements, and content are left untouched; only
- * `deleted_at` is stamped, so the subtree can be restored later by clearing it.
+ * Trash is a lifecycle sidecar row in `library_page_trash`, the single source
+ * of truth. Vault, parent, placements, and content are left untouched; deleting
+ * the sidecar row restores the page to the live Library.
  *
  * Derivation-first unit identity: every page in the cascade shares one
- * `deleted_at` timestamp, and the trashed unit is fully reconstructable from
- * (subtree root + shared `deleted_at`) via a `parent_id` descendant walk. A page
+ * `deleted_at` timestamp in the sidecar, and the trashed unit is fully
+ * reconstructable from (subtree root + shared timestamp) via a `parent_id`
+ * descendant walk. A page
  * already trashed by an earlier, separate deletion keeps its own earlier
- * timestamp and is excluded here by the `deleted_at IS NULL` guard, so restoring
+ * timestamp and is excluded here by the live-only guard, so restoring
  * this unit will not resurrect a separately-trashed child. That is why no
  * `trashRootId`/`deletedBatchId` column is required.
  */
@@ -462,7 +464,7 @@ export async function softDeleteLibrarySubtree(
         combineWithWritableScope(
           principal,
           libraryScopeColumns,
-          eq(libraryPages.id, rootId),
+          and(eq(libraryPages.id, rootId), libraryPageIsLive()),
         ),
       )
       .limit(1);
@@ -486,20 +488,42 @@ export async function softDeleteLibrarySubtree(
     const ids = (subtree.rows as Array<{ id: string }>).map((row) => row.id);
     if (ids.length === 0) return { trashedCount: 0, trashedIds: [] };
 
-    // One shared deleted_at across the cascade, atomically. Writable-scoped so a
-    // user can only ever trash their own rows; deleted_at IS NULL preserves any
-    // child trashed earlier as its own separate unit.
-    const stamped = await tx
-      .update(libraryPages)
-      .set({ deletedAt: sql`now()`, updatedAt: sql`now()` })
+    // Resolve the exact writable live subset before stamping one shared
+    // timestamp into the sidecar. A child trashed earlier as its own unit is
+    // absent from this set and keeps its original lifecycle row.
+    const liveWritable = await tx
+      .select({ id: libraryPages.id })
+      .from(libraryPages)
       .where(
         combineWithWritableScope(
           principal,
           libraryScopeColumns,
-          and(inArray(libraryPages.id, ids), isNull(libraryPages.deletedAt)),
+          and(inArray(libraryPages.id, ids), libraryPageIsLive()),
         ),
-      )
-      .returning({ id: libraryPages.id });
+      );
+    if (liveWritable.length === 0) {
+      return { trashedCount: 0, trashedIds: [] };
+    }
+
+    const deletedAt = new Date();
+    const stamped = await tx
+      .insert(libraryPageTrash)
+      .values(liveWritable.map((row) => ({ pageId: row.id, deletedAt })))
+      .onConflictDoNothing()
+      .returning({ id: libraryPageTrash.pageId });
+
+    if (stamped.length > 0) {
+      await tx
+        .update(libraryPages)
+        .set({ updatedAt: sql`now()` })
+        .where(
+          combineWithWritableScope(
+            principal,
+            libraryScopeColumns,
+            inArray(libraryPages.id, stamped.map((row) => row.id)),
+          ),
+        );
+    }
 
     log.info("Soft-deleted Library subtree", {
       rootId,
@@ -541,18 +565,19 @@ export async function restoreLibrarySubtree(
       .select({
         id: libraryPages.id,
         parentId: libraryPages.parentId,
-        deletedAt: libraryPages.deletedAt,
+        deletedAt: libraryPageTrash.deletedAt,
       })
       .from(libraryPages)
+      .innerJoin(libraryPageTrash, eq(libraryPageTrash.pageId, libraryPages.id))
       .where(
         combineWithWritableScope(
           principal,
           libraryScopeColumns,
-          and(eq(libraryPages.id, rootId), isNotNull(libraryPages.deletedAt)),
+          eq(libraryPages.id, rootId),
         ),
       )
       .limit(1);
-    if (!root || !root.deletedAt) return { restoredCount: 0, restoredIds: [] };
+    if (!root) return { restoredCount: 0, restoredIds: [] };
 
     // Serialize against concurrent reparent/reorder of the restore destination,
     // matching the advisory-lock discipline used by soft-delete/move/reorder.
@@ -564,11 +589,16 @@ export async function restoreLibrarySubtree(
     // so it stays trashed.
     const unit = await tx.execute(sql`
       WITH RECURSIVE unit AS (
-        SELECT id FROM library_pages WHERE id = ${rootId}
+        SELECT lp.id
+        FROM library_pages lp
+        JOIN library_page_trash lpt ON lpt.page_id = lp.id
+        WHERE lp.id = ${rootId} AND lpt.deleted_at = ${root.deletedAt}
         UNION
-        SELECT lp.id FROM library_pages lp
+        SELECT lp.id
+        FROM library_pages lp
         JOIN unit u ON lp.parent_id = u.id
-        WHERE lp.deleted_at = ${root.deletedAt}
+        JOIN library_page_trash lpt ON lpt.page_id = lp.id
+        WHERE lpt.deleted_at = ${root.deletedAt}
       )
       SELECT id FROM unit
     `);
@@ -589,7 +619,7 @@ export async function restoreLibrarySubtree(
             libraryScopeColumns,
             and(
               eq(libraryPages.id, root.parentId),
-              isNull(libraryPages.deletedAt),
+              libraryPageIsLive(),
             ),
           ),
         )
@@ -597,20 +627,38 @@ export async function restoreLibrarySubtree(
       if (!liveParent) rootParentFallback = true;
     }
 
-    // Clear deleted_at across the unit atomically. Writable-scoped so a user can
-    // only ever restore their own rows; deleted_at IS NOT NULL keeps this a pure
-    // undelete.
-    const restored = await tx
-      .update(libraryPages)
-      .set({ deletedAt: null, updatedAt: sql`now()` })
+    // Re-validate the exact writable unit, then delete only those lifecycle
+    // rows. Absence is the canonical live state.
+    const writableUnit = await tx
+      .select({ id: libraryPages.id })
+      .from(libraryPages)
       .where(
         combineWithWritableScope(
           principal,
           libraryScopeColumns,
-          and(inArray(libraryPages.id, ids), isNotNull(libraryPages.deletedAt)),
+          and(inArray(libraryPages.id, ids), libraryPageIsTrashed()),
         ),
-      )
-      .returning({ id: libraryPages.id });
+      );
+    const writableIds = writableUnit.map((row) => row.id);
+    const restored = writableIds.length > 0
+      ? await tx
+          .delete(libraryPageTrash)
+          .where(inArray(libraryPageTrash.pageId, writableIds))
+          .returning({ id: libraryPageTrash.pageId })
+      : [];
+
+    if (restored.length > 0) {
+      await tx
+        .update(libraryPages)
+        .set({ updatedAt: sql`now()` })
+        .where(
+          combineWithWritableScope(
+            principal,
+            libraryScopeColumns,
+            inArray(libraryPages.id, restored.map((row) => row.id)),
+          ),
+        );
+    }
 
     if (rootParentFallback) {
       await tx
@@ -654,14 +702,15 @@ export const LIBRARY_TRASH_RETENTION_DAYS = 30;
  * Blast-radius POLICY lives with each caller, never here:
  *   - Empty Trash passes the exact VISIBLE trashed set (top-bar vault toggles +
  *     active vault chip), re-validated by the route to trashed rows.
- *   - Auto-purge passes every page whose deleted_at crossed the retention
+ *   - Auto-purge passes every page whose sidecar deleted_at crossed the retention
  *     horizon, across all users and vaults, under a system principal.
  *
  * This function only ever destroys rows that are (a) in the id set it is given,
  * (b) writable by the principal (writable scope — a user can never destroy
  * another user's row; a system principal spans all owners), and (c) already
- * soft-deleted. The `deleted_at IS NOT NULL` guard is structural: the canonical
- * destruction path can never hard-delete a live page, regardless of caller.
+ * soft-deleted. The trashed-only guard (a library_page_trash row must exist) is
+ * structural: the canonical destruction path can never hard-delete a live page,
+ * regardless of caller.
  *
  * Cleanup, with no dangling references:
  *   - library_pages rows — FK ON DELETE CASCADE removes library_page_links,
@@ -696,7 +745,7 @@ export async function hardDeleteLibraryPages(
           libraryScopeColumns,
           and(
             inArray(libraryPages.id, batch),
-            isNotNull(libraryPages.deletedAt),
+            libraryPageIsTrashed(),
           ),
         ),
       )
@@ -729,8 +778,8 @@ export async function hardDeleteLibraryPages(
 }
 
 /**
- * Nightly auto-purge: permanently destroy every Library page whose deleted_at
- * crossed the {@link LIBRARY_TRASH_RETENTION_DAYS} horizon, across ALL users and
+ * Nightly auto-purge: permanently destroy every Library page whose sidecar
+ * deleted_at crossed the {@link LIBRARY_TRASH_RETENTION_DAYS} horizon, across ALL users and
  * ALL vaults, under an audited named system principal.
  *
  * CRITICAL distinction from Empty Trash: auto-purge has NO "visible set."
@@ -746,12 +795,10 @@ export async function purgeExpiredLibraryTrash(): Promise<{
   const systemPrincipal = createNamedSystemPrincipal("library-trash-purge");
   const expired = await db
     .select({ id: libraryPages.id })
-    .from(libraryPages)
+    .from(libraryPageTrash)
+    .innerJoin(libraryPages, eq(libraryPageTrash.pageId, libraryPages.id))
     .where(
-      and(
-        isNotNull(libraryPages.deletedAt),
-        sql`${libraryPages.deletedAt} < now() - (${LIBRARY_TRASH_RETENTION_DAYS} * interval '1 day')`,
-      ),
+      sql`${libraryPageTrash.deletedAt} < now() - (${LIBRARY_TRASH_RETENTION_DAYS} * interval '1 day')`,
     )
     .limit(HARD_DELETE_BATCH * 20);
   if (expired.length === 0) return { purgedCount: 0 };

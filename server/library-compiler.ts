@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, asc, eq, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { syncContentFields } from "@shared/markdown-tiptap";
 import { libraryPageLinks, libraryPages } from "@shared/models/info";
 import { db } from "./db";
@@ -20,6 +20,7 @@ import {
 } from "./scoped-storage";
 import { markSourceChanged, registerSourceIfAbsent } from "./memory/vnext-source-queue";
 import { getLibraryPageNeighbors, syncEmbeddedLibraryPageLinks } from "./library-link-graph";
+import { libraryPageIsLive } from "./library-trash";
 import {
   normalizeLibraryIndexCategory,
   parseLibraryIndexEntries,
@@ -96,7 +97,7 @@ interface CompilerResponse {
 }
 
 function visible(principal: Principal, predicate?: SQL): SQL {
-  const notTrashed = isNull(libraryPages.deletedAt);
+  const notTrashed = libraryPageIsLive();
   return combineWithVisibleScope(principal, libraryScopeColumns, predicate ? and(predicate, notTrashed) : notTrashed);
 }
 

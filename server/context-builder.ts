@@ -8,7 +8,7 @@ import { TTLCache } from "./utils/ttl-cache";
 import { sessionOutputBuffer } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import { parseReferenceText } from "@shared/reference-parser";
-import { sql, or, and, eq, desc, gte, inArray, isNull } from "drizzle-orm";
+import { sql, or, and, eq, desc, gte, inArray } from "drizzle-orm";
 import type {
   ContextCallType,
   ContextRequest,
@@ -46,6 +46,7 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { eventBus } from "./event-bus";
 import { combineWithVisibleScope } from "./scoped-storage";
+import { libraryPageIsLive } from "./library-trash";
 import { sanitizeSummary } from "./utils/sanitize-summary";
 import { isSessionOrientationEstablished } from "./session-orientation";
 import {
@@ -793,7 +794,7 @@ async function resolveRuleLinkedPages(ruleTexts: string[]): Promise<string> {
       accountId: libraryPages.accountId,
       vaultId: libraryPages.vaultId,
     },
-    and(inArray(libraryPages.id, pageIds), isNull(libraryPages.deletedAt)),
+    and(inArray(libraryPages.id, pageIds), libraryPageIsLive()),
   ));
 
   const pagesById = new Map(visiblePages.map((page) => [page.id, page]));

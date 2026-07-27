@@ -107,17 +107,9 @@ export const libraryPages = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
-    // Trash lifecycle state (single source of truth). NULL = live; a non-null
-    // timestamp means the page is soft-deleted. A page and its whole descendant
-    // subtree share one deleted_at when trashed as a unit, so the trashed unit
-    // is reconstructable from (subtree root + shared deleted_at) via a parent_id
-    // walk — no separate trashRootId/batch column is needed. Vault, parent, and
-    // placements are left untouched so the page is fully restorable.
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (table) => [
     index("idx_library_pages_page_id").on(table.pageId),
-    index("idx_library_pages_deleted_at").on(table.deletedAt),
     index("idx_library_pages_parent").on(table.parentId),
     index("idx_library_pages_slug").on(table.slug),
     index("idx_library_pages_session").on(table.createdBySessionId),
@@ -134,7 +126,6 @@ export const insertLibraryPageSchema = createInsertSchema(libraryPages)
     pageId: true,
     createdAt: true,
     updatedAt: true,
-    deletedAt: true,
   })
   .extend({
     title: z.string().default(""),
@@ -156,6 +147,31 @@ export const insertLibraryPageSchema = createInsertSchema(libraryPages)
 
 export type LibraryPage = typeof libraryPages.$inferSelect;
 export type InsertLibraryPage = z.infer<typeof insertLibraryPageSchema>;
+
+/**
+ * Canonical Library Trash lifecycle state. A row means the page is trashed;
+ * absence means live. A page and its descendant unit share one deleted_at,
+ * preserving derivation-first restore identity without consuming another
+ * physical attribute on the historically saturated library_pages table.
+ * Page ownership remains authoritative; this sidecar is never addressed without
+ * joining back to a principal-scoped page.
+ */
+export const libraryPageTrash = pgTable(
+  "library_page_trash",
+  {
+    pageId: text("page_id")
+      .primaryKey()
+      .references(() => libraryPages.id, { onDelete: "cascade" }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    index("idx_library_page_trash_deleted_at").on(table.deletedAt),
+  ],
+);
+
+export type LibraryPageTrash = typeof libraryPageTrash.$inferSelect;
 
 export const libraryPageLinks = pgTable(
   "library_page_links",
