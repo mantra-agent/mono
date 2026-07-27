@@ -3792,6 +3792,28 @@ export type SessionSearchDiagnostics = {
   source: "target" | "legacy";
 };
 
+export class SessionSearchError extends Error {
+  readonly kind: "timeout" | "unavailable";
+
+  constructor(kind: "timeout" | "unavailable") {
+    super(
+      kind === "timeout"
+        ? "Session search timed out. Please try again."
+        : "Session search is temporarily unavailable. Please try again.",
+    );
+    this.name = "SessionSearchError";
+    this.kind = kind;
+  }
+}
+
+function sessionSearchSqlState(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && /^[A-Z0-9]{5}$/.test(code)
+    ? code
+    : undefined;
+}
+
 export async function searchSessionSummaries(
   query: string,
   sinceHours = 24,
@@ -3894,8 +3916,16 @@ export async function searchSessionSummaries(
       totalCount: 0,
       source,
     });
-    log.warn("searchSessionSummaries error:", err);
-    return [];
+    const sqlState = sessionSearchSqlState(err);
+    const kind = sqlState === "57014" ? "timeout" : "unavailable";
+    log.error("session search failed", {
+      kind,
+      sqlState,
+      source,
+      resultDbMs: Number(resultDbMs.toFixed(2)),
+      totalMs: Number((performance.now() - startedAt).toFixed(2)),
+    });
+    throw new SessionSearchError(kind);
   }
 }
 
