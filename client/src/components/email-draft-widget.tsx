@@ -63,6 +63,8 @@ interface GmailAccount {
   id: string;
   email: string;
   label: string;
+  healthy?: boolean;
+  scopes?: { hasSend?: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +270,12 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
     enabled: !!draft && draft.status === "draft",
   });
 
-  const accounts = accountsData?.accounts ?? [];
+  const accounts = useMemo(
+    () => (accountsData?.accounts ?? []).filter(
+      (account) => account.healthy !== false && account.scopes?.hasSend !== false,
+    ),
+    [accountsData?.accounts],
+  );
 
   // Merged view: local edits overlay the server state
   const merged = useMemo(() => {
@@ -474,6 +481,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
   const isDiscarding = discardMutation.isPending;
   const isBusy = isSending || isDiscarding;
   const fromAccount = accounts.find((a) => a.id === merged.gmailAccountId);
+  const hasAvailableSender = accounts.length > 0 && !!fromAccount;
 
   return (
     <div className="border rounded-md border-border/60 bg-muted/20 my-1">
@@ -489,7 +497,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
       {/* Fields */}
       <div className="px-3 py-2 space-y-1.5">
         {/* From */}
-        {accounts.length > 0 && (
+        {accounts.length > 0 ? (
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground w-8 shrink-0">From</span>
             <Select
@@ -510,6 +518,11 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2 text-xs text-destructive">
+            <span className="w-8 shrink-0 text-muted-foreground">From</span>
+            <span>No Gmail account is currently available for sending.</span>
           </div>
         )}
 
@@ -593,7 +606,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
         <Button
           size="sm"
           onClick={() => sendMutation.mutate()}
-          disabled={isBusy || merged.to.length === 0}
+          disabled={isBusy || merged.to.length === 0 || !hasAvailableSender}
           className="gap-1.5"
         >
           {isSending ? (
