@@ -372,23 +372,20 @@ const TRASH_QUIET_ROW_CLASS = "px-2 py-1.5 text-sm text-muted-foreground";
 
 /**
  * One row in the trashed forest. Forest roots (depth 0) are the top-level
- * trashed entries — the thing that was deleted — and carry the source-vault chip
- * plus the Restore action (unit restore). Descendants render intact underneath
- * without their own restore/chip, matching the v1 "restore the whole unit"
- * behavior.
+ * trashed entries — the thing that was deleted — and carry the Restore action
+ * in the standard item ellipsis menu. Descendants render intact underneath
+ * without their own menu, matching the v1 "restore the whole unit" behavior.
  */
 function TrashNode({
   page,
   depth,
   childrenByParent,
-  vault,
   onRestore,
   restorePendingId,
 }: {
   page: LibraryPage;
   depth: number;
   childrenByParent: Map<string, LibraryPage[]>;
-  vault?: Vault;
   onRestore: (id: string) => void;
   restorePendingId: string | null;
 }) {
@@ -406,26 +403,26 @@ function TrashNode({
         {indentPx > 0 && <div className="shrink-0" style={{ width: indentPx }} aria-hidden="true" />}
         <PageEmoji emoji={page.emoji} size="xs" />
         <span className="min-w-0 flex-1 truncate">{page.title || "Untitled"}</span>
-        {isRoot && vault && (
-          <span
-            className="shrink-0 rounded-full bg-accent/60 px-1.5 py-0.5 text-[10px] font-medium"
-            style={{ color: vault.color ?? undefined }}
-            data-testid={`trash-node-vault-${page.id}`}
-          >
-            {vault.name}
-          </span>
-        )}
         {isRoot && (
-          <button
-            type="button"
-            onClick={() => onRestore(page.id)}
-            disabled={isRestoring}
-            className="flex shrink-0 items-center gap-1 rounded-md border border-border/40 bg-background px-1.5 py-0.5 text-xs opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-50"
-            data-testid={`button-trash-restore-${page.id}`}
-          >
-            {isRestoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-            Restore
-          </button>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                onClick={(event) => event.stopPropagation()}
+                disabled={isRestoring}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border/40 bg-background text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 disabled:opacity-50"
+                data-testid={`button-trash-menu-${page.id}`}
+                aria-label="Trashed page actions"
+              >
+                {isRestoring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(event) => event.preventDefault()}>
+              <DropdownMenuItem onClick={() => onRestore(page.id)} data-testid={`menu-trash-restore-${page.id}`}>
+                <RotateCcw className="mr-2 h-3.5 w-3.5" /> Restore
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
       {children.map((child) => (
@@ -446,8 +443,9 @@ function TrashNode({
  * TRASH section, pinned to the bottom of the Library sidebar. Lists trashed
  * pages with hierarchy preserved (trashed subtrees render intact), respects
  * top-bar vault visibility (pages whose source vault is toggled off are hidden),
- * shows source-vault chips, and supports filtering Trash by vault. Restore
- * returns a trashed unit to its origin.
+ * supports filtering Trash by vault, and places destructive/restorative actions
+ * in the same ellipsis menus as the rest of Library. Restore returns a trashed
+ * unit to its origin.
  */
 export function TrashSection({
   trashedPages,
@@ -525,36 +523,45 @@ export function TrashSection({
       className="mb-1 mt-2 min-w-0"
       data-testid="library-trash-section"
     >
-      <CollapsibleTrigger
-        className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
-        data-testid="button-trash-section"
-      >
-        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
-        <Trash2 className="h-3 w-3 shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-left">Trash</span>
-        {totalCount > 0 && <span className="shrink-0 tabular-nums">{totalCount}</span>}
-      </CollapsibleTrigger>
+      <div className="group relative min-w-0">
+        <CollapsibleTrigger
+          className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
+          data-testid="button-trash-section"
+        >
+          <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+          <Trash2 className="h-3 w-3 shrink-0" />
+          <span className="min-w-0 flex-1 truncate pr-6 text-left">Trash</span>
+        </CollapsibleTrigger>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              onClick={(event) => event.stopPropagation()}
+              disabled={emptyTrashPending}
+              className="absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-border/40 bg-background text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 disabled:opacity-50"
+              data-testid="button-trash-actions"
+              aria-label="Trash actions"
+            >
+              {emptyTrashPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(event) => event.preventDefault()}>
+            <DropdownMenuItem
+              onClick={() => setConfirmOpen(true)}
+              disabled={totalCount === 0}
+              className="text-destructive"
+              data-testid="menu-empty-trash"
+            >
+              <Trash2 className="mr-2 h-3.5 w-3.5" /> Empty Trash
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       <CollapsibleContent>
         {totalCount === 0 ? (
           <div className={TRASH_QUIET_ROW_CLASS}>Trash is empty.</div>
         ) : (
           <>
-            <div className="flex items-center justify-end px-2 py-1">
-              <button
-                type="button"
-                onClick={() => setConfirmOpen(true)}
-                disabled={emptyTrashPending}
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
-                data-testid="button-empty-trash"
-              >
-                {emptyTrashPending ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Trash2 className="h-3 w-3" />
-                )}
-                Empty Trash
-              </button>
-            </div>
             {chipVaultIds.length > 1 && (
               <div className="flex flex-wrap gap-1 px-2 py-1.5">
                 {chipVaultIds.map((vid) => {
@@ -585,7 +592,6 @@ export function TrashSection({
                 page={root}
                 depth={0}
                 childrenByParent={childrenByParent}
-                vault={vaultById.get(resolveVaultId(root.vaultId) ?? "")}
                 onRestore={onRestore}
                 restorePendingId={restorePendingId}
               />
