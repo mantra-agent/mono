@@ -462,7 +462,7 @@ async function loadTableInventory(
 async function appendTableRowsJsonl(
   client: PoolClient,
   inventory: LegacyMemoryTableInventory,
-  parts: string[],
+  chunks: Buffer[],
 ): Promise<void> {
   const selectExprs = inventory.columns
     .map((col) => {
@@ -493,8 +493,11 @@ async function appendTableRowsJsonl(
         for (const col of inventory.columns) {
           ordered[col.name] = (row as Record<string, unknown>)[col.name] ?? null;
         }
-        parts.push(
-          JSON.stringify({ __table: inventory.table, row: ordered }),
+        chunks.push(
+          Buffer.from(
+            `${JSON.stringify({ __table: inventory.table, row: ordered })}\n`,
+            "utf8",
+          ),
         );
       }
     }
@@ -537,30 +540,37 @@ export async function buildLegacyMemoryArchive(
   };
   const postgresVersion = postgresVersionResult.rows[0]?.version ?? "unknown";
 
-  const parts: string[] = [];
+  // The archive body is assembled as an ordered list of newline-terminated
+  // Buffer lines, then concatenated once. It is never joined into a single JS
+  // string: the legacy closure includes tens of thousands of rows whose exact
+  // `::text` embedding/array literals overflow V8's maximum string length.
+  const chunks: Buffer[] = [];
   // Ordinal 0: catalog inventory line.
-  parts.push(
-    JSON.stringify({
-      __section: "inventory",
-      cutoverKey: LEGACY_MEMORY_QUARANTINE_KEY,
-      quarantineSchema: LEGACY_MEMORY_QUARANTINE_SCHEMA,
-      allowlist: [...LEGACY_MEMORY_QUARANTINE_TABLES],
-      closure,
-      tables: inventories,
-      outboundForeignKeys,
-      inboundForeignKeys,
-      totalRows,
-      postgresVersion,
-      runtimeIdentity: runtimeEvidence,
-      independentDocumentStore,
-    }),
+  chunks.push(
+    Buffer.from(
+      `${JSON.stringify({
+        __section: "inventory",
+        cutoverKey: LEGACY_MEMORY_QUARANTINE_KEY,
+        quarantineSchema: LEGACY_MEMORY_QUARANTINE_SCHEMA,
+        allowlist: [...LEGACY_MEMORY_QUARANTINE_TABLES],
+        closure,
+        tables: inventories,
+        outboundForeignKeys,
+        inboundForeignKeys,
+        totalRows,
+        postgresVersion,
+        runtimeIdentity: runtimeEvidence,
+        independentDocumentStore,
+      })}\n`,
+      "utf8",
+    ),
   );
   // Rows, table by table in allowlist order.
   for (const inventory of inventories) {
-    await appendTableRowsJsonl(client, inventory, parts);
+    await appendTableRowsJsonl(client, inventory, chunks);
   }
 
-  const body = Buffer.from(parts.join("\n") + "\n", "utf8");
+  const body = Buffer.concat(chunks);
   const archiveSha256 = createHash("sha256").update(body).digest("hex");
 
   const manifest: LegacyMemoryArchiveManifest = {
@@ -761,10 +771,11 @@ async function verifyPersistedLegacyMemoryArchive(
   );
   const manifestKey = `${archivePrefix}manifest.json`;
   const checksumKey = `${archivePrefix}files.sha256`;
-  const expectedManifestBody = Buffer.from(
-    `${JSON.stringify(manifest, null, 2)}\n`,
-    "utf8",
-  );
+  // The checksum sidecar is deterministic text, so it is byte-verified. The
+  // manifest is compared by its authoritative integrity fields rather than raw
+  // bytes: the ledger stores it as JSONB, whose key order and number formatting
+  // are normalized, so a re-serialized copy would not byte-match the uploaded
+  // pretty-printed object even when the archive is intact.
   const expectedChecksumBody = Buffer.from(
     `${state.archive_sha256}  archive.jsonl\n`,
     "utf8",
@@ -776,6 +787,16 @@ async function verifyPersistedLegacyMemoryArchive(
       storageBackend.getObjectBuffer(checksumKey),
       storageBackend.headObject(state.archive_object_path),
     ]);
+  let uploadedManifest: LegacyMemoryArchiveManifest;
+  try {
+    uploadedManifest = JSON.parse(
+      manifestBody.toString("utf8"),
+    ) as LegacyMemoryArchiveManifest;
+  } catch (error) {
+    throw new Error(
+      `Legacy memory archive manifest object is unreadable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const readbackSha256 = createHash("sha256")
     .update(archiveBody)
     .digest("hex");
@@ -783,7 +804,8 @@ async function verifyPersistedLegacyMemoryArchive(
     readbackSha256 !== state.archive_sha256 ||
     archiveBody.byteLength !== manifest.archiveByteLength ||
     archiveHead?.contentLength !== manifest.archiveByteLength ||
-    !manifestBody.equals(expectedManifestBody) ||
+    uploadedManifest.archiveSha256 !== state.archive_sha256 ||
+    uploadedManifest.archiveByteLength !== manifest.archiveByteLength ||
     !checksumBody.equals(expectedChecksumBody)
   ) {
     throw new Error(
