@@ -29,8 +29,10 @@ type CascadeStep = {
 
 const CLICK_CASCADE: readonly CascadeStep[] = [
   { delaySeconds: 0, gainScale: 1 },
-  { delaySeconds: 0.042, gainScale: 0.4 },
-  { delaySeconds: 0.092, gainScale: 0.17 },
+  { delaySeconds: 0.034, gainScale: 0.42 },
+  { delaySeconds: 0.07, gainScale: 0.21 },
+  { delaySeconds: 0.108, gainScale: 0.1 },
+  { delaySeconds: 0.148, gainScale: 0.045 },
 ] as const;
 
 const TYPING_TAPS: readonly TypingTap[] = [
@@ -149,7 +151,7 @@ function normalizeTexture(samples: Float32Array, targetPeak: number): Float32Arr
 
 /**
  * Renders one seamless thinking loop as irregular clusters of short, clean
- * broadband taps. Two progressively quieter delayed copies give each click a
+ * broadband taps. Four progressively quieter delayed copies give each click a
  * restrained cascade without oscillators, melody, reverb, or a continuous bed.
  */
 export function renderVoiceThinkingTexture({
