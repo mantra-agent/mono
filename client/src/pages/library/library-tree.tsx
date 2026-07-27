@@ -12,10 +12,10 @@ import {
 import { cn } from "@/lib/utils";
 import {
   Trash2, FileText, ChevronRight, Globe,
-  Download, FilePlus, MoreHorizontal, Sparkles, FolderInput, Pin,
+  Download, FilePlus, Loader2, MessageSquare, MoreHorizontal, Sparkles, FolderInput, Pin,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { TreeNode, FlatNode, DropPosition } from "./types";
+import type { LibraryPage, TreeNode, FlatNode, DropPosition } from "./types";
 import { PageEmoji } from "./library-components";
 
 const MAX_INDENT_PX = 96;
@@ -53,7 +53,7 @@ export function isDescendant(tree: TreeNode[], parentId: string, childId: string
   return check(parent.children);
 }
 
-export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, dropTarget, expandedSet, toggleExpand, unreadIds, hasUnreadDescendantIds }: {
+export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, dropTarget, expandedSet, toggleExpand, unreadIds, hasUnreadDescendantIds }: {
   flatNode: FlatNode;
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -64,6 +64,8 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
   onEnrich: (id: string) => void;
   onMove: (id: string) => void;
   onTogglePin: (id: string, isPinned: boolean) => void;
+  onDiscuss: (page: LibraryPage) => void;
+  discussingPageId: string | null;
   dropTarget: { id: string; position: DropPosition } | null;
   expandedSet: Set<string>;
   toggleExpand: (id: string) => void;
@@ -223,6 +225,18 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
                   <TooltipContent side="top">Actions</TooltipContent>
                 </Tooltip>
                 <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(e) => e.preventDefault()}>
+                  <DropdownMenuItem
+                    disabled={discussingPageId !== null}
+                    onClick={() => onDiscuss(node)}
+                    data-testid={`menu-tree-discuss-${node.id}`}
+                  >
+                    {discussingPageId === node.id ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                    ) : (
+                      <MessageSquare className="h-3.5 w-3.5 mr-2" />
+                    )}
+                    Discuss
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => onTogglePin(node.id, !isPinned)} data-testid={`menu-tree-pin-${node.id}`}>
                     <Pin
                       className={cn("h-3.5 w-3.5 mr-2", isPinned ? "text-foreground" : "text-muted-foreground")}
@@ -299,6 +313,8 @@ interface DndTreeProps {
   onEnrich: (id: string) => void;
   onMove: (id: string) => void;
   onTogglePin: (id: string, isPinned: boolean) => void;
+  onDiscuss: (page: LibraryPage) => void;
+  discussingPageId: string | null;
   onReorder: (data: { id: string; parentId: string | null; sortOrder: number }) => void;
   toggleExpand: (id: string) => void;
   unreadIds?: Set<string>;
@@ -309,7 +325,7 @@ export function DndTree({
   treeData, flatNodes, flatNodeIds, flatNodeMap, selectedId,
   expandedIds, dragActiveId, dropTarget,
   onDragActiveIdChange, onDropTargetChange,
-  onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onReorder, toggleExpand,
+  onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, onReorder, toggleExpand,
   unreadIds,
   hasUnreadDescendantIds,
 }: DndTreeProps) {
@@ -423,6 +439,8 @@ export function DndTree({
             onEnrich={onEnrich}
             onMove={onMove}
             onTogglePin={onTogglePin}
+            onDiscuss={onDiscuss}
+            discussingPageId={discussingPageId}
             dropTarget={dropTarget}
             expandedSet={expandedIds}
             toggleExpand={toggleExpand}
