@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import {
   LIBRARY_PLACEMENT_INDEX_SECTIONS,
   libraryPages,
@@ -20,6 +20,7 @@ import {
 import { placeLibraryPageSemantically } from "./library-placement";
 import type { Principal } from "./principal";
 import { combineWithVisibleScope } from "./scoped-storage";
+import { libraryPageIsLive } from "./library-trash";
 
 const pageScopeColumns = {
   scope: libraryPages.scope,
@@ -78,7 +79,7 @@ function requireUserPrincipal(
 }
 
 function visiblePages(principal: Principal, predicate?: SQL): SQL {
-  const notTrashed = isNull(libraryPages.deletedAt);
+  const notTrashed = libraryPageIsLive();
   return combineWithVisibleScope(principal, pageScopeColumns, predicate ? and(predicate, notTrashed) : notTrashed);
 }
 

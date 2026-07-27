@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { parseReferenceText } from "@shared/reference-parser";
 import { libraryPageLinks, libraryPages } from "@shared/models/info";
 import { syncContentFields } from "@shared/markdown-tiptap";
 import { db } from "./db";
 import { ensureMantraLibraryVault } from "./library-domain";
+import { libraryPageIsLive } from "./library-trash";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
@@ -28,7 +29,7 @@ const LINT_DUPLICATE_GROUP_LIMIT = 50;
 const LINT_ISSUE_SAMPLE_LIMIT = 80;
 
 function visible(principal: Principal, predicate?: SQL): SQL {
-  const notTrashed = isNull(libraryPages.deletedAt);
+  const notTrashed = libraryPageIsLive();
   return combineWithVisibleScope(principal, pageScopeColumns, predicate ? and(predicate, notTrashed) : notTrashed);
 }
 
@@ -127,12 +128,12 @@ export async function getLibraryPageNeighbors(pageIds: string[], principal: Prin
   const outbound = await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug, summary: libraryPages.summary, structuralRole: libraryPages.structuralRole })
     .from(libraryPageLinks)
     .innerJoin(libraryPages, eq(libraryPageLinks.targetPageId, libraryPages.id))
-    .where(visibleLinks(principal, and(inArray(libraryPageLinks.sourcePageId, ids), isNull(libraryPages.deletedAt))))
+    .where(visibleLinks(principal, and(inArray(libraryPageLinks.sourcePageId, ids), libraryPageIsLive())))
     .limit(limit);
   const inbound = await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug, summary: libraryPages.summary, structuralRole: libraryPages.structuralRole })
     .from(libraryPageLinks)
     .innerJoin(libraryPages, eq(libraryPageLinks.sourcePageId, libraryPages.id))
-    .where(visibleLinks(principal, and(inArray(libraryPageLinks.targetPageId, ids), isNull(libraryPages.deletedAt))))
+    .where(visibleLinks(principal, and(inArray(libraryPageLinks.targetPageId, ids), libraryPageIsLive())))
     .limit(limit);
   const seen = new Set<string>();
   const rows: LibraryLinkNeighbor[] = [];

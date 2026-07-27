@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, type SQL } from "drizzle-orm";
+import { and, eq, inArray, type SQL } from "drizzle-orm";
 import { libraryPages } from "@shared/models/info";
 import { db } from "./db";
 import { ACTIVITY_FRAMING } from "./job-profiles";
@@ -9,6 +9,7 @@ import { chatCompletion } from "./model-client";
 import type { Principal } from "./principal";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { extractJson } from "./utils/extract-json";
+import { libraryPageIsLive } from "./library-trash";
 
 export type LibraryPlacementOutcome = "placed" | "explicit_parent" | "explicit_vault" | "review_required";
 
@@ -90,7 +91,7 @@ const GENERIC_TERMS = new Set([
 ]);
 
 function visible(principal: Principal, predicate: SQL) {
-  return combineWithVisibleScope(principal, libraryScopeColumns, and(predicate, isNull(libraryPages.deletedAt)));
+  return combineWithVisibleScope(principal, libraryScopeColumns, and(predicate, libraryPageIsLive()));
 }
 
 function normalizeTerm(term: string): string {
