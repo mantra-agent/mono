@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { acquireLibraryParentLocks, db } from "./db";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
@@ -508,6 +508,131 @@ export async function softDeleteLibrarySubtree(
     return {
       trashedCount: stamped.length,
       trashedIds: stamped.map((row) => row.id),
+    };
+  });
+}
+
+/**
+ * Restore a trashed page and its trashed subtree (the UNIT that was deleted
+ * together) back to the live Library. This is the single canonical mutation
+ * path for undeleting a page — every route or tool that "restores" a page must
+ * call this so the invariant lives in one place, mirroring
+ * softDeleteLibrarySubtree.
+ *
+ * Unit identity is derivation-first: the trashed unit is every page reachable
+ * from `rootId` by a parent_id walk that shares the root's `deleted_at`
+ * timestamp. A descendant trashed earlier as its own separate unit carries an
+ * earlier timestamp and is intentionally excluded, so restoring this unit never
+ * resurrects a separately-trashed child.
+ *
+ * Vault membership was never changed by soft-delete, so restore keeps each
+ * page's vault. Parentage is preserved for descendants (their parents restore
+ * with them). The unit root returns to its original parent only when that parent
+ * is still live and visible; if the original parent is missing or itself
+ * trashed, the root falls back to the source vault root (parent_id = NULL).
+ */
+export async function restoreLibrarySubtree(
+  principal: Principal,
+  rootId: string,
+): Promise<{ restoredCount: number; restoredIds: string[] }> {
+  return db.transaction(async (tx) => {
+    const [root] = await tx
+      .select({
+        id: libraryPages.id,
+        parentId: libraryPages.parentId,
+        deletedAt: libraryPages.deletedAt,
+      })
+      .from(libraryPages)
+      .where(
+        combineWithWritableScope(
+          principal,
+          libraryScopeColumns,
+          and(eq(libraryPages.id, rootId), isNotNull(libraryPages.deletedAt)),
+        ),
+      )
+      .limit(1);
+    if (!root || !root.deletedAt) return { restoredCount: 0, restoredIds: [] };
+
+    // Serialize against concurrent reparent/reorder of the restore destination,
+    // matching the advisory-lock discipline used by soft-delete/move/reorder.
+    await acquireLibraryParentLocks(tx, [root.parentId]);
+
+    // Gather the trashed unit: descendants reachable by parent_id that share the
+    // root's deleted_at. UNION (not UNION ALL) guarantees termination. A child
+    // trashed earlier as its own unit has a different timestamp and is excluded,
+    // so it stays trashed.
+    const unit = await tx.execute(sql`
+      WITH RECURSIVE unit AS (
+        SELECT id FROM library_pages WHERE id = ${rootId}
+        UNION
+        SELECT lp.id FROM library_pages lp
+        JOIN unit u ON lp.parent_id = u.id
+        WHERE lp.deleted_at = ${root.deletedAt}
+      )
+      SELECT id FROM unit
+    `);
+    const ids = (unit.rows as Array<{ id: string }>).map((row) => row.id);
+    if (ids.length === 0) return { restoredCount: 0, restoredIds: [] };
+
+    // Decide whether the unit root can return to its original parent. Keep it
+    // only when that parent is still live (not trashed) and visible to the
+    // principal; otherwise fall back to the source vault root.
+    let rootParentFallback = false;
+    if (root.parentId) {
+      const [liveParent] = await tx
+        .select({ id: libraryPages.id })
+        .from(libraryPages)
+        .where(
+          combineWithVisibleScope(
+            principal,
+            libraryScopeColumns,
+            and(
+              eq(libraryPages.id, root.parentId),
+              isNull(libraryPages.deletedAt),
+            ),
+          ),
+        )
+        .limit(1);
+      if (!liveParent) rootParentFallback = true;
+    }
+
+    // Clear deleted_at across the unit atomically. Writable-scoped so a user can
+    // only ever restore their own rows; deleted_at IS NOT NULL keeps this a pure
+    // undelete.
+    const restored = await tx
+      .update(libraryPages)
+      .set({ deletedAt: null, updatedAt: sql`now()` })
+      .where(
+        combineWithWritableScope(
+          principal,
+          libraryScopeColumns,
+          and(inArray(libraryPages.id, ids), isNotNull(libraryPages.deletedAt)),
+        ),
+      )
+      .returning({ id: libraryPages.id });
+
+    if (rootParentFallback) {
+      await tx
+        .update(libraryPages)
+        .set({ parentId: null, updatedAt: sql`now()` })
+        .where(
+          combineWithWritableScope(
+            principal,
+            libraryScopeColumns,
+            eq(libraryPages.id, rootId),
+          ),
+        );
+    }
+
+    log.info("Restored Library subtree", {
+      rootId,
+      unitSize: ids.length,
+      restoredCount: restored.length,
+      rootParentFallback,
+    });
+    return {
+      restoredCount: restored.length,
+      restoredIds: restored.map((row) => row.id),
     };
   });
 }

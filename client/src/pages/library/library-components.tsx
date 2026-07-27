@@ -11,7 +11,7 @@ import { downloadPageAsMarkdown } from "@/lib/editor-utils";
 import { markdownToTiptap, isValidTiptapDoc } from "@shared/markdown-tiptap";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/rich-text-editor";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
@@ -21,13 +21,16 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe,
+  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe, ChevronRight, RotateCcw,
 } from "lucide-react";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
 import type { JSONContent } from "@tiptap/core";
 import type { LibraryPage, LibraryPageFull, TreeNode } from "./types";
 import { useVisibleVaults } from "./use-vault-sections";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-header";
+import { useVaults, type Vault } from "@/hooks/use-vaults";
 
 
 const log = createLogger("LibraryComponents");
@@ -369,25 +372,215 @@ function PageLinkPickerDialog({ open, onOpenChange, query, onQueryChange, pages,
   );
 }
 
-export function DeletePageDialog({ open, onOpenChange, pageTitle, isPending, onConfirm }: {
-  open: boolean; onOpenChange: (open: boolean) => void; pageTitle: string; isPending: boolean; onConfirm: () => void;
+// ─── Trash ─────────────────────────────────────────────────────────────────
+
+const TRASH_INDENT_STEP_PX = 16;
+const TRASH_MAX_INDENT_PX = 96;
+const TRASH_QUIET_ROW_CLASS = "px-2 py-1.5 text-sm text-muted-foreground";
+
+/**
+ * One row in the trashed forest. Forest roots (depth 0) are the top-level
+ * trashed entries — the thing that was deleted — and carry the source-vault chip
+ * plus the Restore action (unit restore). Descendants render intact underneath
+ * without their own restore/chip, matching the v1 "restore the whole unit"
+ * behavior.
+ */
+function TrashNode({
+  page,
+  depth,
+  childrenByParent,
+  vault,
+  onRestore,
+  restorePendingId,
+}: {
+  page: LibraryPage;
+  depth: number;
+  childrenByParent: Map<string, LibraryPage[]>;
+  vault?: Vault;
+  onRestore: (id: string) => void;
+  restorePendingId: string | null;
 }) {
+  const children = childrenByParent.get(page.id) ?? [];
+  const indentPx = Math.min(depth * TRASH_INDENT_STEP_PX, TRASH_MAX_INDENT_PX);
+  const isRoot = depth === 0;
+  const isRestoring = restorePendingId === page.id;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Delete Page</DialogTitle>
-          <DialogDescription>Are you sure you want to delete "{pageTitle}"? This action cannot be undone.</DialogDescription>
-        </DialogHeader>
-        <DialogFooter className="gap-2 sm:gap-0">
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} data-testid="button-cancel-delete">Cancel</Button>
-          <Button variant="destructive" size="sm" disabled={isPending} data-testid="button-confirm-delete" onClick={onConfirm}>
-            {isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-            Delete
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <div className="min-w-0">
+      <div
+        className="group flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-sm text-muted-foreground"
+        data-testid={`trash-node-${page.id}`}
+      >
+        {indentPx > 0 && <div className="shrink-0" style={{ width: indentPx }} aria-hidden="true" />}
+        <PageEmoji emoji={page.emoji} size="xs" />
+        <span className="min-w-0 flex-1 truncate">{page.title || "Untitled"}</span>
+        {isRoot && vault && (
+          <span
+            className="shrink-0 rounded-full bg-accent/60 px-1.5 py-0.5 text-[10px] font-medium"
+            style={{ color: vault.color ?? undefined }}
+            data-testid={`trash-node-vault-${page.id}`}
+          >
+            {vault.name}
+          </span>
+        )}
+        {isRoot && (
+          <button
+            type="button"
+            onClick={() => onRestore(page.id)}
+            disabled={isRestoring}
+            className="flex shrink-0 items-center gap-1 rounded-md border border-border/40 bg-background px-1.5 py-0.5 text-xs opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-50"
+            data-testid={`button-trash-restore-${page.id}`}
+          >
+            {isRestoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+            Restore
+          </button>
+        )}
+      </div>
+      {children.map((child) => (
+        <TrashNode
+          key={child.id}
+          page={child}
+          depth={depth + 1}
+          childrenByParent={childrenByParent}
+          onRestore={onRestore}
+          restorePendingId={restorePendingId}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * TRASH section, pinned to the bottom of the Library sidebar. Lists trashed
+ * pages with hierarchy preserved (trashed subtrees render intact), respects
+ * top-bar vault visibility (pages whose source vault is toggled off are hidden),
+ * shows source-vault chips, and supports filtering Trash by vault. Restore
+ * returns a trashed unit to its origin.
+ */
+export function TrashSection({
+  trashedPages,
+  open,
+  onOpenChange,
+  onRestore,
+  restorePendingId,
+}: {
+  trashedPages: LibraryPage[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onRestore: (id: string) => void;
+  restorePendingId: string | null;
+}) {
+  const { resolveVaultId, isVaultEnabled } = useVisibleVaults();
+  const { vaults } = useVaults();
+  const [vaultFilter, setVaultFilter] = useState<string | null>(null);
+
+  const vaultById = useMemo(() => new Map(vaults.map((v) => [v.id, v])), [vaults]);
+
+  // Respect top-bar vault visibility first (drop trashed pages whose resolved
+  // vault is toggled off), then apply the optional in-Trash vault chip filter.
+  const visibleTrashed = useMemo(
+    () =>
+      trashedPages.filter((p) => {
+        const vid = resolveVaultId(p.vaultId);
+        if (!vid || !isVaultEnabled(vid)) return false;
+        if (vaultFilter && vid !== vaultFilter) return false;
+        return true;
+      }),
+    [trashedPages, resolveVaultId, isVaultEnabled, vaultFilter],
+  );
+
+  // Chip set: visible vaults that currently hold trashed pages (ignores the
+  // active chip filter so you can always switch/clear it).
+  const chipVaultIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of trashedPages) {
+      const vid = resolveVaultId(p.vaultId);
+      if (vid && isVaultEnabled(vid)) ids.add(vid);
+    }
+    return [...ids];
+  }, [trashedPages, resolveVaultId, isVaultEnabled]);
+
+  // Build the trashed forest: a page is a forest root when its parent is not in
+  // the visible trashed set (parent was live, separately trashed, or filtered
+  // out). Roots are the top-level entries Restore acts on.
+  const { roots, childrenByParent } = useMemo(() => {
+    const idSet = new Set(visibleTrashed.map((p) => p.id));
+    const byParent = new Map<string, LibraryPage[]>();
+    const rootList: LibraryPage[] = [];
+    for (const p of visibleTrashed) {
+      if (p.parentId && idSet.has(p.parentId)) {
+        const arr = byParent.get(p.parentId) ?? [];
+        arr.push(p);
+        byParent.set(p.parentId, arr);
+      } else {
+        rootList.push(p);
+      }
+    }
+    return { roots: rootList, childrenByParent: byParent };
+  }, [visibleTrashed]);
+
+  const totalCount = visibleTrashed.length;
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={onOpenChange}
+      className="mb-1 mt-2 min-w-0"
+      data-testid="library-trash-section"
+    >
+      <CollapsibleTrigger
+        className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
+        data-testid="button-trash-section"
+      >
+        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
+        <Trash2 className="h-3 w-3 shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-left">Trash</span>
+        {totalCount > 0 && <span className="shrink-0 tabular-nums">{totalCount}</span>}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        {totalCount === 0 ? (
+          <div className={TRASH_QUIET_ROW_CLASS}>Trash is empty.</div>
+        ) : (
+          <>
+            {chipVaultIds.length > 1 && (
+              <div className="flex flex-wrap gap-1 px-2 py-1.5">
+                {chipVaultIds.map((vid) => {
+                  const v = vaultById.get(vid);
+                  if (!v) return null;
+                  const active = vaultFilter === vid;
+                  return (
+                    <button
+                      key={vid}
+                      type="button"
+                      onClick={() => setVaultFilter(active ? null : vid)}
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-xs font-medium transition-colors",
+                        active ? "border-transparent bg-accent" : "border-border/50 hover:bg-accent/50",
+                      )}
+                      style={{ color: v.color ?? undefined }}
+                      data-testid={`trash-vault-chip-${vid}`}
+                    >
+                      {v.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {roots.map((root) => (
+              <TrashNode
+                key={root.id}
+                page={root}
+                depth={0}
+                childrenByParent={childrenByParent}
+                vault={vaultById.get(resolveVaultId(root.vaultId) ?? "")}
+                onRestore={onRestore}
+                restorePendingId={restorePendingId}
+              />
+            ))}
+          </>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { X, Plus, Loader2, Search, ChevronRight, MoreHorizontal, FilePlus } from "lucide-react";
 import type { JSONContent } from "@tiptap/core";
 import type { LibraryPage, LibraryPageFull, TreeNode, DropPosition } from "./types";
-import { LibraryPageEditor, EmptyLibraryState, DeletePageDialog, MovePageDialog, PageEmoji } from "./library-components";
+import { LibraryPageEditor, EmptyLibraryState, TrashSection, MovePageDialog, PageEmoji } from "./library-components";
 import { flattenTree, DndTree } from "./library-tree";
 import { useVaultSections } from "./use-vault-sections";
 import type { Vault } from "@/hooks/use-vaults";
@@ -25,6 +25,7 @@ const log = createLogger("LibraryTab");
 const SIDEBAR_WIDTH_KEY = "library-sidebar-width";
 const EXPANDED_IDS_KEY = "library-expanded-ids";
 const COLLAPSED_VAULTS_KEY = "library-collapsed-vault-ids";
+const TRASH_OPEN_KEY = "library-trash-open";
 const DEFAULT_SIDEBAR_WIDTH = 280;
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 480;
@@ -173,8 +174,11 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
   const [dragActiveId, setDragActiveId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; position: DropPosition } | null>(null);
   const expandedInitialized = useRef(false);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [treeMoveId, setTreeMoveId] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [trashOpen, setTrashOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem(TRASH_OPEN_KEY) === "1"; } catch { return false; }
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = localStorage.getItem(SIDEBAR_WIDTH_KEY);
@@ -204,6 +208,10 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
 
   const { data: treeData = [], isLoading: isTreeLoading } = useQuery<TreeNode[]>({
     queryKey: ["/api/info/library/tree"],
+  });
+
+  const { data: trashedPages = [] } = useQuery<LibraryPage[]>({
+    queryKey: ["/api/info/library/trash"],
   });
 
   const { data: unreadIdsList = [] } = useLibraryUnread();
@@ -261,6 +269,10 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
   useEffect(() => {
     localStorage.setItem(COLLAPSED_VAULTS_KEY, JSON.stringify([...collapsedVaultIds]));
   }, [collapsedVaultIds]);
+
+  useEffect(() => {
+    try { localStorage.setItem(TRASH_OPEN_KEY, trashOpen ? "1" : "0"); } catch { /* ignore */ }
+  }, [trashOpen]);
 
   const setVaultOpen = useCallback((vaultId: string, open: boolean) => {
     setCollapsedVaultIds(prev => {
@@ -387,14 +399,33 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
     },
   });
 
+  // Delete is now a one-click, reversible action: the page goes to Trash (no
+  // confirmation gate). Only the irreversible Empty Trash step is gated. Refresh
+  // the trash list so the deleted subtree appears there immediately.
   const deleteMutation = useApiMutation<string>({
     method: "DELETE",
     path: (id) => `/api/info/library/${id}`,
-    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"]],
-    successMessage: (pageId) => `${pages.find((page) => page.id === pageId)?.title || "Page"} deleted`,
+    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library/trash"]],
+    successMessage: (pageId) => `${pages.find((page) => page.id === pageId)?.title || "Page"} moved to Trash`,
     errorTitle: "Delete failed",
-    onSuccess: () => setSelectedId(null),
+    onSuccess: (_result, pageId) => {
+      setSelectedId((current) => (current === pageId ? null : current));
+    },
   });
+
+  const restoreMutation = useApiMutation<string>({
+    method: "POST",
+    path: (id) => `/api/info/library/${id}/restore`,
+    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library/trash"]],
+    successMessage: (_result, pageId) => `${trashedPages.find((p) => p.id === pageId)?.title || "Page"} restored`,
+    errorTitle: "Restore failed",
+    onSettled: () => setRestoringId(null),
+  });
+
+  const handleRestore = useCallback((id: string) => {
+    setRestoringId(id);
+    restoreMutation.mutate(id);
+  }, [restoreMutation]);
 
   const emojiMutation = useApiMutation<{ id: string; emoji: string | null }>({
     method: "PATCH",
@@ -441,7 +472,6 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
     }
   }, [selectedId, selectedPageFull]);
 
-  const deletePageToConfirm = deleteConfirmId ? pages.find(p => p.id === deleteConfirmId) : null;
   const selectedPage = pages.find(p => p.id === selectedId) || null;
   const isMobile = useIsMobile();
   const showLibEditor = isMobile && selectedId;
@@ -527,7 +557,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                       onSelect={selectPage}
                       onCreateChild={(parentId) => createMutation.mutate({ parentId })}
                       onSetEmoji={(id, emoji) => emojiMutation.mutate({ id, emoji })}
-                      onDelete={(id) => setDeleteConfirmId(id)}
+                      onDelete={(id) => deleteMutation.mutate(id)}
                       onDownload={handleTreeDownload}
                       onEnrich={(id) => enrichMutation.mutate(id)}
                       onMove={(id) => setTreeMoveId(id)}
@@ -561,7 +591,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                   onSelect={selectPage}
                   onCreateChild={(parentId) => createMutation.mutate({ parentId })}
                   onSetEmoji={(id, emoji) => emojiMutation.mutate({ id, emoji })}
-                  onDelete={(id) => setDeleteConfirmId(id)}
+                  onDelete={(id) => deleteMutation.mutate(id)}
                   onDownload={handleTreeDownload}
                   onEnrich={(id) => enrichMutation.mutate(id)}
                   onMove={(id) => setTreeMoveId(id)}
@@ -580,6 +610,13 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
               )}
             </>
           )}
+          <TrashSection
+            trashedPages={trashedPages}
+            open={trashOpen}
+            onOpenChange={setTrashOpen}
+            onRestore={handleRestore}
+            restorePendingId={restoringId}
+          />
         </ScrollArea>
       </div>
       {!isMobile && (
@@ -604,7 +641,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
               selectedId={selectedId}
               selectedPage={selectedPageFull}
               pages={pages}
-              onDeleteRequest={(id) => setDeleteConfirmId(id)}
+              onDeleteRequest={(id) => deleteMutation.mutate(id)}
             />
           )
         ) : (
@@ -613,18 +650,6 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
       </div>
       )}
 
-      <DeletePageDialog
-        open={!!deleteConfirmId}
-        onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}
-        pageTitle={deletePageToConfirm?.title || "Untitled"}
-        isPending={deleteMutation.isPending}
-        onConfirm={() => {
-          if (deleteConfirmId) {
-            deleteMutation.mutate(deleteConfirmId);
-            setDeleteConfirmId(null);
-          }
-        }}
-      />
       {treeMoveId && (() => {
         const movePage = pages.find(p => p.id === treeMoveId);
         if (!movePage) return null;
