@@ -172,6 +172,10 @@ async function readState(
 export async function legacyMemoryQuarantineApplied(): Promise<boolean> {
   if (appliedCache) return true;
   try {
+    const ledger = await pool.query<{ present: boolean }>(
+      `SELECT to_regclass('public.legacy_memory_quarantine_state') IS NOT NULL AS present`,
+    );
+    if (!ledger.rows[0]?.present) return false;
     const state = await readState(pool);
     appliedCache = state?.applied === true;
   } catch {
@@ -454,18 +458,11 @@ export async function buildLegacyMemoryArchive(
 // Rollback SQL
 // ---------------------------------------------------------------------------
 
-export function buildRollbackSql(
-  inboundForeignKeys: LegacyMemoryForeignKey[],
-): string {
+export function buildRollbackSql(): string {
   const statements: string[] = ["BEGIN;"];
   for (const table of LEGACY_MEMORY_QUARANTINE_TABLES) {
     statements.push(
       `ALTER TABLE ${quoteIdent(LEGACY_MEMORY_QUARANTINE_SCHEMA)}.${quoteIdent(table)} SET SCHEMA public;`,
-    );
-  }
-  for (const fk of inboundForeignKeys) {
-    statements.push(
-      `ALTER TABLE public.${quoteIdent(fk.referencingTable)} ADD CONSTRAINT ${quoteIdent(fk.constraintName)} ${fk.definition};`,
     );
   }
   statements.push(
@@ -525,9 +522,14 @@ export async function prepareLegacyMemoryQuarantine(): Promise<{
   });
 
   // Read-back verification: exact byte hash must match.
-  const readBack = await storageBackend.getObjectBuffer(objectKey);
+  const [readBack, objectMetadata] = await Promise.all([
+    storageBackend.getObjectBuffer(objectKey),
+    storageBackend.headObject(objectKey),
+  ]);
   const readBackSha256 = createHash("sha256").update(readBack).digest("hex");
   if (
+    !objectMetadata ||
+    objectMetadata.contentLength !== archive.body.byteLength ||
     readBack.byteLength !== archive.body.byteLength ||
     readBackSha256 !== archive.manifest.archiveSha256
   ) {
@@ -577,7 +579,7 @@ export async function prepareLegacyMemoryQuarantine(): Promise<{
 
 /**
  * Move the exact allowlisted legacy closure into the quarantine schema in one
- * transaction, dropping only inbound FKs from active public tables, and persist
+ * transaction, preserving all foreign keys by PostgreSQL object identity, and persist
  * the applied epoch plus the exact reverse SQL. Requires a verified prepared
  * archive. Does not drop any table.
  */
@@ -613,16 +615,8 @@ export async function applyLegacyMemoryQuarantine(): Promise<{
       `CREATE SCHEMA IF NOT EXISTS ${quoteIdent(LEGACY_MEMORY_QUARANTINE_SCHEMA)}`,
     );
 
-    // Drop inbound FKs from active public tables so quarantine leaves no
-    // reconnecting edge back into the canonical legacy closure.
-    for (const fk of inboundForeignKeys) {
-      await client.query(
-        `ALTER TABLE public.${quoteIdent(fk.referencingTable)} DROP CONSTRAINT IF EXISTS ${quoteIdent(fk.constraintName)}`,
-      );
-    }
-
-    // Move each allowlisted table. Intra-closure FKs follow by OID and remain
-    // valid inside the quarantine schema.
+    // Move each allowlisted table. Internal and inbound foreign keys follow by
+    // OID, preserving the exact catalog relationship without reconstruction.
     for (const table of LEGACY_MEMORY_QUARANTINE_TABLES) {
       await client.query(
         `ALTER TABLE public.${quoteIdent(table)} SET SCHEMA ${quoteIdent(LEGACY_MEMORY_QUARANTINE_SCHEMA)}`,
@@ -642,7 +636,7 @@ export async function applyLegacyMemoryQuarantine(): Promise<{
       );
     }
 
-    const rollbackSql = buildRollbackSql(inboundForeignKeys);
+    const rollbackSql = buildRollbackSql();
 
     await client.query(
       `UPDATE legacy_memory_quarantine_state
