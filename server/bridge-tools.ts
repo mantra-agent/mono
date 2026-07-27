@@ -4602,7 +4602,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           otherMs: Number(Math.max(0, totalMs - importMs - searchTotalMs).toFixed(2)),
           totalMs: Number(totalMs.toFixed(2)),
         });
-        throw error;
+        const { SessionSearchError } = await import("./chat-file-storage");
+        if (error instanceof SessionSearchError) {
+          return { result: error.message, error: true };
+        }
+        return {
+          result: "Session search is temporarily unavailable. Please try again.",
+          error: true,
+        };
       }
     }
 
