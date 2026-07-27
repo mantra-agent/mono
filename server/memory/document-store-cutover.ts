@@ -39,23 +39,32 @@ export async function documentStoreIndependentActivationRequested(): Promise<boo
   return state?.independent_activation_requested_at != null;
 }
 
-export async function requestIndependentDocumentStoreActivation(): Promise<void> {
+export type IndependentActivationRequestOutcome =
+  | "requested"
+  | "already_requested"
+  | "already_enabled";
+
+export async function requestIndependentDocumentStoreActivation(): Promise<IndependentActivationRequestOutcome> {
   const result = await pool.query(
     `UPDATE document_store_cutover_state
-     SET independent_activation_requested_at = COALESCE(independent_activation_requested_at, CURRENT_TIMESTAMP),
+     SET independent_activation_requested_at = CURRENT_TIMESTAMP,
          updated_at = CURRENT_TIMESTAMP
      WHERE cutover_key = $1
        AND shadow_writes_enabled = TRUE
        AND read_enabled = TRUE
-       AND independent_writes_enabled = FALSE`,
+       AND independent_writes_enabled = FALSE
+       AND independent_activation_requested_at IS NULL`,
     [DOCUMENT_STORE_CUTOVER_KEY],
   );
-  if (result.rowCount !== 1) {
-    const state = await readCutoverState(pool);
-    if (state?.independent_writes_enabled) return;
-    throw new Error("Independent activation request requires a reconciled document-store cutover");
+  if (result.rowCount === 1) {
+    log.info("independent document-store activation requested; restart required");
+    return "requested";
   }
-  log.info("independent document-store activation requested; restart required");
+
+  const state = await readCutoverState(pool);
+  if (state?.independent_writes_enabled) return "already_enabled";
+  if (state?.independent_activation_requested_at) return "already_requested";
+  throw new Error("Independent activation request requires a reconciled document-store cutover");
 }
 
 export async function enableIndependentDocumentStore(): Promise<void> {

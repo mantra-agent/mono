@@ -87,6 +87,7 @@ let prevBootId = "";
 let forwardedSignal: NodeJS.Signals | null = null;
 let pendingRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingChildTerminationReason: string | null = null;
+let plannedRestartReason: string | null = null;
 let workerDeadReason: string | null = null;
 let supervisorHealthToken = "";
 let previousExit: ChildExitEvidence | null = null;
@@ -537,6 +538,7 @@ function startChild() {
   consecutiveHealthFailures = 0;
   consecutivePoolDegraded = 0;
   forwardedSignal = null;
+  plannedRestartReason = null;
   workerDeadReason = null;
 
   const childEnv = {
@@ -605,6 +607,9 @@ function startChild() {
   //    can log the cause; the child also exits with WORKER_DEAD_EXIT_CODE
   //    immediately after so the existing exit-handler path triggers a
   //    restart.
+  //  - { type: "planned_restart", reason } — allowlisted, bounded handoff for
+  //    a child that has durably prepared a next-boot transition and will exit
+  //    cleanly through the application shutdown coordinator.
   child.on("message", (msg: any) => {
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "alive") {
@@ -612,6 +617,9 @@ function startChild() {
     } else if (msg.type === "worker_dead") {
       workerDeadReason = typeof msg.reason === "string" ? msg.reason : "unknown";
       log.error(`Worker canary dead — reason=${workerDeadReason}; awaiting child exit`);
+    } else if (msg.type === "planned_restart" && msg.reason === "stage_document_store_activation") {
+      plannedRestartReason = msg.reason;
+      log.info(`Planned child restart requested — reason=${plannedRestartReason}; awaiting clean child exit`);
     }
   });
 
@@ -661,6 +669,23 @@ function startChild() {
     }
 
     if (evidence.terminationKind === "clean") {
+      if (plannedRestartReason === "stage_document_store_activation") {
+        restartCount++;
+        const backoff = getBackoffMs();
+        logLifecycle("restart_decision", {
+          childBootId: evidence.bootId,
+          exitCode: code,
+          signal,
+          terminationKind: evidence.terminationKind,
+          restartCount,
+          restartDecision: "restart",
+          backoffMs: backoff,
+          reason: plannedRestartReason,
+        });
+        pendingRestartTimer = setTimeout(startChild, backoff);
+        return;
+      }
+
       logLifecycle("restart_decision", {
         childBootId: evidence.bootId,
         exitCode: code,
