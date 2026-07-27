@@ -617,7 +617,10 @@ function startChild() {
     } else if (msg.type === "worker_dead") {
       workerDeadReason = typeof msg.reason === "string" ? msg.reason : "unknown";
       log.error(`Worker canary dead — reason=${workerDeadReason}; awaiting child exit`);
-    } else if (msg.type === "planned_restart" && msg.reason === "stage_document_store_activation") {
+    } else if (
+      msg.type === "planned_restart" &&
+      (msg.reason === "stage_document_store_activation" || msg.reason === "stage_legacy_memory_quarantine")
+    ) {
       plannedRestartReason = msg.reason;
       log.info(`Planned child restart requested — reason=${plannedRestartReason}; awaiting clean child exit`);
     }
@@ -669,7 +672,10 @@ function startChild() {
     }
 
     if (evidence.terminationKind === "clean") {
-      if (plannedRestartReason === "stage_document_store_activation") {
+      if (
+        plannedRestartReason === "stage_document_store_activation" ||
+        plannedRestartReason === "stage_legacy_memory_quarantine"
+      ) {
         restartCount++;
         const backoff = getBackoffMs();
         logLifecycle("restart_decision", {

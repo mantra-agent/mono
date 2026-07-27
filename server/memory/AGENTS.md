@@ -1,6 +1,6 @@
 # Memory Architecture
 
-The memory subsystem is in staged retirement. vNext claims are the active semantic graph and the nightly sleep substrate. Legacy `memory_entries` tiers remain as compatibility/archive data while their readers migrate; automatic legacy propagation and maintenance launchers are disabled.
+The memory subsystem is in staged retirement. vNext claims are the active semantic graph and the nightly sleep substrate. Legacy `memory_entries` tiers remain archive-only while their readers migrate; automatic legacy propagation and maintenance launchers are disabled. Stage Platform Environment #11 additionally uses `legacy_memory_quarantine_runs` as the pre-bootstrap authority: after a private SHA-256-verified archive, the exact seven-table legacy closure moves to `legacy_memory_quarantine_20260727`, and boot/runtime code must skip rather than recreate or compatibility-read it. The transition is stage-only, replay-safe, reversible by `SET SCHEMA`, and never drops data.
 
 ## Core Tables
 

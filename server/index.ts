@@ -805,7 +805,12 @@ app.use((req, res, next) => {
         log(`[startup] memory listener registration failed: ${err.message}`, "boot");
       });
 
-      import("./memory/long-title-maintenance").then(async ({ logMemoryDiagnostics }) => {
+      import("./memory/legacy-memory-quarantine").then(async ({ isLegacyMemoryQuarantined }) => {
+        if (await isLegacyMemoryQuarantined()) {
+          log("[startup] legacy memory diagnostics skipped after quarantine", "boot");
+          return;
+        }
+        const { logMemoryDiagnostics } = await import("./memory/long-title-maintenance");
         await logMemoryDiagnostics();
         log("[startup] legacy memory diagnostics complete; maintenance writes disabled", "boot");
       }).catch((err) => {
@@ -1074,13 +1079,12 @@ function startDeferredBackgroundServices(): void {
 
     try {
       const { getRuntimeIdentity } = await import("./runtime-identity");
+      const runtimeIdentity = await getRuntimeIdentity();
       const { requestStageDocumentStoreActivationAfterReadiness } = await import(
         "./memory/stage-document-store-activation"
       );
-      const outcome = await requestStageDocumentStoreActivationAfterReadiness(
-        await getRuntimeIdentity(),
-      );
-      if (outcome === "restart_requested") {
+      const documentOutcome = await requestStageDocumentStoreActivationAfterReadiness(runtimeIdentity);
+      if (documentOutcome === "restart_requested") {
         await shutdownApplication({
           terminationKind: "clean",
           cause: "stage_document_store_activation",
@@ -1089,9 +1093,23 @@ function startDeferredBackgroundServices(): void {
         });
         process.exit(0);
       }
+
+      const { requestStageLegacyMemoryQuarantineAfterReadiness } = await import(
+        "./memory/legacy-memory-quarantine"
+      );
+      const quarantineOutcome = await requestStageLegacyMemoryQuarantineAfterReadiness(runtimeIdentity);
+      if (quarantineOutcome === "restart_requested") {
+        await shutdownApplication({
+          terminationKind: "clean",
+          cause: "stage_legacy_memory_quarantine",
+          exitCode: 0,
+          signal: null,
+        });
+        process.exit(0);
+      }
     } catch (error) {
       serverLog.error(
-        `stage document-store activation rollout failed: ${error instanceof Error ? error.message : String(error)}`,
+        `stage storage transition rollout failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   });

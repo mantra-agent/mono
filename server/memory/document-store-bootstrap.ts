@@ -12,6 +12,7 @@ import {
   ensureDocumentStoreMirror,
   setDocumentStoreReadCutover,
 } from "./document-store-cutover";
+import { isLegacyMemoryQuarantined } from "./legacy-memory-quarantine";
 
 const log = createLogger("DocumentStoreBootstrap");
 const ADVISORY_LOCK_KEY = "document_store_workspace_migration_v1";
@@ -22,6 +23,13 @@ const ADVISORY_LOCK_KEY = "document_store_workspace_migration_v1";
  * document consumer can run against a half-reconciled store.
  */
 export async function runDocumentStoreWorkspaceMigrationBootstrap(): Promise<void> {
+  if (await isLegacyMemoryQuarantined()) {
+    if (!(await documentStoreIndependentWritesEnabled())) {
+      throw new Error("Legacy memory is quarantined before independent document-store ownership");
+    }
+    log.info("document store bootstrap skipped after legacy memory quarantine");
+    return;
+  }
   const lockClient = await pool.connect();
   let lockAcquired = false;
   try {

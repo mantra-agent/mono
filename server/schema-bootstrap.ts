@@ -538,8 +538,21 @@ export async function runSchemaBootstrap(
   baselineTables: PgTable[] = [],
 ): Promise<void> {
   log(`schema bootstrap started (reason=${reason})`, "migration");
-  await ensureBaselineTables(reason, baselineTables);
   const { pool } = await import("./db");
+  const { isLegacyMemoryQuarantined } = await import("./memory/legacy-memory-quarantine");
+  const legacyMemoryQuarantined = await isLegacyMemoryQuarantined();
+  const activeBaselineTables = legacyMemoryQuarantined
+    ? baselineTables.filter((table) => ![
+        "memory_entries",
+        "memory_sources",
+        "memory_links",
+        "memory_transitions",
+        "memory_content_blocks",
+        "memory_events",
+        "memory_entity_links",
+      ].includes(getTableConfig(table).name))
+    : baselineTables;
+  await ensureBaselineTables(reason, activeBaselineTables);
   await ensureVoiceSessionActiveSchema(pool);
   await ensureDocumentStoreDocumentsSchema(pool);
   await ensureTimerOwnershipSchema(pool);
@@ -1017,8 +1030,31 @@ export async function runSchemaBootstrap(
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_promotion_releases_version ON environment_promotion_releases(environment_id, version)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_environment_promotion_releases_environment_time ON environment_promotion_releases(environment_id, promoted_at DESC)`);
 
+  const LEGACY_MEMORY_HEAL_LABELS = new Set([
+    "memory_events occurred_at default",
+    "memory_sources table",
+    "memory_entries unique constraint",
+    "memory_entries timestamp defaults",
+    "memory_entries pinned column",
+    "memory_entries integration_stage column",
+    "memory_entries emotional_state_id column",
+    "memory processing-state columns",
+    "relationship_type migration",
+    "retire raw session memory rows from graph surfaces",
+    "memory_entries claim type event→action migration",
+    "migrate embedding columns from 1536-dim to 384-dim (local model)",
+    "HNSW vector index on memory_entries.embedding",
+    "drop duplicate idx_memory_layer_source_sourceid",
+    "drop redundant idx_memory_layer",
+    "backfill session memory titles",
+    "strip legacy idea-tag zombies from checkin flaggedTasks",
+  ]);
   const HEAL_BUDGET_MS = 2000;
   const heal = async (label: string, fn: () => Promise<void>) => {
+    if (legacyMemoryQuarantined && LEGACY_MEMORY_HEAL_LABELS.has(label)) {
+      log(`auto-heal [${label}] skipped after legacy memory quarantine`, "migration");
+      return;
+    }
     const start = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -1213,41 +1249,43 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(conversation_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_scope_owner ON messages(scope, owner_user_id)`);
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS memory_entries (
-        id SERIAL PRIMARY KEY,
-        layer TEXT NOT NULL DEFAULT 'short',
-        integration_stage TEXT NOT NULL DEFAULT 'stage_0',
-        content TEXT NOT NULL,
-        summary TEXT,
-        content_hash TEXT,
-        embedding vector(1536),
-        source TEXT NOT NULL DEFAULT 'manual',
-        source_id TEXT,
-        scope TEXT NOT NULL DEFAULT 'user',
-        owner_user_id TEXT,
-        account_id TEXT,
-        created_by_user_id TEXT,
-        updated_by_user_id TEXT,
-        path TEXT,
-        title TEXT,
-        one_liner TEXT,
-        metadata JSONB DEFAULT '{}'::jsonb,
-        tags TEXT[] DEFAULT '{}'::text[],
-        graphed BOOLEAN DEFAULT false,
-        pinned BOOLEAN DEFAULT false,
-        created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        processed_at TIMESTAMPTZ(6),
-        processing_status TEXT NOT NULL DEFAULT 'idle',
-        processing_run_id TEXT,
-        processing_started_at TIMESTAMPTZ(6),
-        processing_error TEXT,
-        processing_updated_at TIMESTAMPTZ(6),
-        emotional_state_id INTEGER
-      )
-    `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_source_id ON memory_entries(source_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_scope_owner ON memory_entries(scope, owner_user_id)`);
+    if (!legacyMemoryQuarantined) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS memory_entries (
+          id SERIAL PRIMARY KEY,
+          layer TEXT NOT NULL DEFAULT 'short',
+          integration_stage TEXT NOT NULL DEFAULT 'stage_0',
+          content TEXT NOT NULL,
+          summary TEXT,
+          content_hash TEXT,
+          embedding vector(1536),
+          source TEXT NOT NULL DEFAULT 'manual',
+          source_id TEXT,
+          scope TEXT NOT NULL DEFAULT 'user',
+          owner_user_id TEXT,
+          account_id TEXT,
+          created_by_user_id TEXT,
+          updated_by_user_id TEXT,
+          path TEXT,
+          title TEXT,
+          one_liner TEXT,
+          metadata JSONB DEFAULT '{}'::jsonb,
+          tags TEXT[] DEFAULT '{}'::text[],
+          graphed BOOLEAN DEFAULT false,
+          pinned BOOLEAN DEFAULT false,
+          created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          processed_at TIMESTAMPTZ(6),
+          processing_status TEXT NOT NULL DEFAULT 'idle',
+          processing_run_id TEXT,
+          processing_started_at TIMESTAMPTZ(6),
+          processing_error TEXT,
+          processing_updated_at TIMESTAMPTZ(6),
+          emotional_state_id INTEGER
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_source_id ON memory_entries(source_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_scope_owner ON memory_entries(scope, owner_user_id)`);
+    }
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS library_pages (
@@ -1740,8 +1778,7 @@ export async function runSchemaBootstrap(
       "sessions",
       "messages",
       "workspace_documents",
-      "memory_entries",
-      "memory_entity_links",
+      ...(!legacyMemoryQuarantined ? ["memory_entries", "memory_entity_links"] : []),
       "info_notes",
       "library_pages",
       "library_page_links",
@@ -1780,9 +1817,11 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_messages_scope_owner ON messages(scope, owner_user_id)`,
     );
-    await pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_memory_scope_owner ON memory_entries(scope, owner_user_id)`,
-    );
+    if (!legacyMemoryQuarantined) {
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS idx_memory_scope_owner ON memory_entries(scope, owner_user_id)`,
+      );
+    }
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_ws_doc_scope_owner ON workspace_documents(scope, owner_user_id)`,
     );
@@ -1813,8 +1852,12 @@ export async function runSchemaBootstrap(
             UPDATE sessions SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE messages SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE workspace_documents SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
-            UPDATE memory_entries SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL AND layer <> 'workspace';
-            UPDATE memory_entity_links SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
+            IF to_regclass('public.memory_entries') IS NOT NULL THEN
+              UPDATE memory_entries SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL AND layer <> 'workspace';
+            END IF;
+            IF to_regclass('public.memory_entity_links') IS NOT NULL THEN
+              UPDATE memory_entity_links SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
+            END IF;
             UPDATE info_notes SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE library_pages SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE library_page_links SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
@@ -2352,9 +2395,11 @@ export async function runSchemaBootstrap(
     await pool.query(
       `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS summary TEXT`,
     );
-    await pool.query(
-      `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
-    );
+    if (!legacyMemoryQuarantined) {
+      await pool.query(
+        `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
+      );
+    }
   });
 
   await heal("library_pages created_by_session_id column", async () => {
@@ -2437,18 +2482,20 @@ export async function runSchemaBootstrap(
       `ALTER TABLE skills ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP`,
     );
 
-    await pool.query(
-      `ALTER TABLE memory_transitions ALTER COLUMN transitioned_at SET DEFAULT CURRENT_TIMESTAMP`,
-    );
+    if (!legacyMemoryQuarantined) {
+      await pool.query(
+        `ALTER TABLE memory_transitions ALTER COLUMN transitioned_at SET DEFAULT CURRENT_TIMESTAMP`,
+      );
 
-    await pool.query(
-      `UPDATE memory_links SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL`,
-    );
-    await pool.query(`
-      ALTER TABLE memory_links
-        ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP,
-        ALTER COLUMN created_at SET NOT NULL
-    `);
+      await pool.query(
+        `UPDATE memory_links SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL`,
+      );
+      await pool.query(`
+        ALTER TABLE memory_links
+          ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP,
+          ALTER COLUMN created_at SET NOT NULL
+      `);
+    }
 
     // --- signal_sources defaults ---
     await pool.query(
@@ -5009,8 +5056,7 @@ export async function runSchemaBootstrap(
       "sessions",
       "messages",
       "workspace_documents",
-      "memory_entries",
-      "memory_entity_links",
+      ...(!legacyMemoryQuarantined ? ["memory_entries", "memory_entity_links"] : []),
       "info_notes",
       "library_pages",
       "library_page_links",
