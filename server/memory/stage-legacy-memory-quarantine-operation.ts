@@ -4,6 +4,7 @@ import { documentStoreIndependentWritesEnabled } from "./document-store-cutover"
 import {
   applyLegacyMemoryQuarantine,
   getLegacyMemoryQuarantineStatus,
+  legacyMemoryQuarantineWasAppliedAtBoot,
   prepareLegacyMemoryQuarantine,
 } from "./legacy-memory-quarantine";
 
@@ -13,89 +14,81 @@ const MANTRA_WEB_STAGE_ENVIRONMENT_ID = 11;
 export const STAGE_LEGACY_MEMORY_QUARANTINE_RESTART_REASON =
   "stage_legacy_memory_quarantine";
 
-export type StageQuarantineGuard =
-  | { ok: true }
-  | { ok: false; reason: "not_stage" | "document_store_not_independent" | "already_applied" };
+export type StageLegacyMemoryQuarantineOutcome =
+  | "not_stage"
+  | "document_store_not_independent"
+  | "already_applied"
+  | "prepared"
+  | "restart_requested";
+
+async function requestPlannedRestart(): Promise<void> {
+  if (typeof process.send !== "function") {
+    throw new Error(
+      "Stage legacy memory quarantine requires the supervised process wrapper",
+    );
+  }
+  await new Promise<void>((resolve, reject) => {
+    process.send!(
+      {
+        type: "planned_restart",
+        reason: STAGE_LEGACY_MEMORY_QUARANTINE_RESTART_REASON,
+      },
+      (error) => (error ? reject(error) : resolve()),
+    );
+  });
+}
 
 /**
- * Every stage quarantine operation is gated on the canonical stage Platform
- * Environment (#11) and on the independent document store already owning
- * workspace writes, so the legacy `memory_entries` graph is quarantined only
- * after the workspace cutover no longer depends on it.
+ * One-time post-readiness stage rollout. Canonical Platform Environment #11
+ * and the durable independent-document-store epoch are hard preconditions.
+ * Every eligible invocation produces a fresh verified archive immediately
+ * before apply, then requests a supervised clean restart. Other environments
+ * and an already-applied epoch are pure no-ops.
  */
-async function guardStageQuarantine(
+export async function requestStageLegacyMemoryQuarantineAfterReadiness(
   runtimeIdentity: RuntimeIdentity,
-): Promise<StageQuarantineGuard> {
-  if (runtimeIdentity.platformEnvironmentId !== MANTRA_WEB_STAGE_ENVIRONMENT_ID) {
-    return { ok: false, reason: "not_stage" };
+): Promise<StageLegacyMemoryQuarantineOutcome> {
+  if (
+    runtimeIdentity.platformEnvironmentId !==
+    MANTRA_WEB_STAGE_ENVIRONMENT_ID
+  ) {
+    return "not_stage";
   }
   if (!(await documentStoreIndependentWritesEnabled())) {
-    return { ok: false, reason: "document_store_not_independent" };
+    log.warn(
+      "stage legacy memory quarantine blocked: document store is not independently authoritative",
+    );
+    return "document_store_not_independent";
   }
-  const status = await getLegacyMemoryQuarantineStatus();
-  if (status.applied) {
-    return { ok: false, reason: "already_applied" };
-  }
-  return { ok: true };
-}
-
-/**
- * Supervised prepare: build, upload, and verify the deterministic archive on
- * stage. Does not move any table.
- */
-export async function prepareStageLegacyMemoryQuarantine(
-  runtimeIdentity: RuntimeIdentity,
-): Promise<
-  | { outcome: "prepared"; archiveObjectPath: string; archiveSha256: string; totalRows: number; rowCounts: Record<string, number> }
-  | { outcome: "blocked"; reason: string }
-> {
-  const guard = await guardStageQuarantine(runtimeIdentity);
-  if (!guard.ok) {
-    log.info("stage legacy memory quarantine prepare blocked", { reason: guard.reason });
-    return { outcome: "blocked", reason: guard.reason };
-  }
-  const prepared = await prepareLegacyMemoryQuarantine();
-  return { outcome: "prepared", ...prepared };
-}
-
-/**
- * Supervised apply: prepare if needed, move the closure into the quarantine
- * schema, then request the one supervised planned restart so the next boot
- * comes up quarantine-aware. Requires the supervised process wrapper.
- */
-export async function applyStageLegacyMemoryQuarantine(
-  runtimeIdentity: RuntimeIdentity,
-): Promise<
-  | { outcome: "restart_requested"; movedTables: string[]; droppedInboundForeignKeys: string[]; rollbackSql: string }
-  | { outcome: "blocked"; reason: string }
-> {
-  const guard = await guardStageQuarantine(runtimeIdentity);
-  if (!guard.ok) {
-    log.info("stage legacy memory quarantine apply blocked", { reason: guard.reason });
-    return { outcome: "blocked", reason: guard.reason };
+  if ((await getLegacyMemoryQuarantineStatus()).applied) {
+    if (legacyMemoryQuarantineWasAppliedAtBoot()) {
+      return "already_applied";
+    }
+    await requestPlannedRestart();
+    log.info(
+      "stage legacy memory quarantine observed after boot; planned restart requested",
+    );
+    return "restart_requested";
   }
 
   const status = await getLegacyMemoryQuarantineStatus();
   if (!status.preparedAt || !status.archiveSha256) {
     await prepareLegacyMemoryQuarantine();
-  }
-
-  const applied = await applyLegacyMemoryQuarantine();
-
-  if (typeof process.send !== "function") {
-    throw new Error("Stage legacy memory quarantine apply requires the supervised process wrapper");
-  }
-  await new Promise<void>((resolve, reject) => {
-    process.send!(
-      { type: "planned_restart", reason: STAGE_LEGACY_MEMORY_QUARANTINE_RESTART_REASON },
-      (error) => (error ? reject(error) : resolve()),
+    log.info(
+      "stage legacy memory quarantine prepared; apply deferred until a later fresh boot",
     );
-  });
-  log.info("stage legacy memory quarantine applied; planned restart requested");
-  return {
-    outcome: "restart_requested",
+    return "prepared";
+  }
+
+  // A later boot always refreshes and re-verifies the archive immediately
+  // before apply. This makes destructive application impossible on the first
+  // deploy of a new execution path while still preventing stale snapshots.
+  await prepareLegacyMemoryQuarantine();
+  const applied = await applyLegacyMemoryQuarantine();
+  await requestPlannedRestart();
+  log.info("stage legacy memory quarantine applied; planned restart requested", {
+    appliedByThisProcess: applied.applied,
     movedTables: applied.movedTables,
-    droppedInboundForeignKeys: applied.droppedInboundForeignKeys,
-    rollbackSql: applied.rollbackSql,
-  };
+  });
+  return "restart_requested";
 }

@@ -22,6 +22,21 @@ const ADVISORY_LOCK_KEY = "document_store_workspace_migration_v1";
  * document consumer can run against a half-reconciled store.
  */
 export async function runDocumentStoreWorkspaceMigrationBootstrap(): Promise<void> {
+  const { legacyMemoryQuarantineApplied } = await import(
+    "./legacy-memory-quarantine"
+  );
+  if (await legacyMemoryQuarantineApplied()) {
+    if (!(await documentStoreIndependentWritesEnabled())) {
+      throw new Error(
+        "Legacy memory is quarantined but independent document-store ownership is absent",
+      );
+    }
+    log.info(
+      "document store independently authoritative; legacy workspace bootstrap skipped",
+    );
+    return;
+  }
+
   const lockClient = await pool.connect();
   let lockAcquired = false;
   try {
