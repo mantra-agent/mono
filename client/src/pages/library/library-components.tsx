@@ -9,6 +9,8 @@ import { useEditableContent } from "@/hooks/use-editable-content";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { downloadPageAsMarkdown } from "@/lib/editor-utils";
 import { markdownToTiptap, isValidTiptapDoc } from "@shared/markdown-tiptap";
+import { parseReferenceText } from "@shared/reference-parser";
+import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -53,32 +55,65 @@ interface LinkedSessionInfo {
   createdAt: string;
 }
 
-function LinkedSessions({ slug }: { slug: string }) {
-  const { data: sessions } = useQuery<LinkedSessionInfo[]>({
+function extractPageReferences(plainText: string, pages: LibraryPage[]): ReferenceRef[] {
+  const references = parseReferenceText(plainText)
+    .filter((part): part is { kind: "reference"; ref: ReferenceRef } => part.kind === "reference")
+    .map((part) => part.ref);
+
+  for (const title of extractWikiLinkTitles(plainText)) {
+    const page = pages.find((candidate) => candidate.title.toLowerCase() === title.toLowerCase());
+    if (page) references.push(createReferenceRef({ type: "page", id: page.slug }));
+  }
+
+  const seen = new Set<string>();
+  return references.filter((reference) => {
+    if (seen.has(reference.canonical)) return false;
+    seen.add(reference.canonical);
+    return true;
+  });
+}
+
+function PageLinks({ slug, plainText, pages }: { slug: string; plainText: string; pages: LibraryPage[] }) {
+  const { data: sessions = [] } = useQuery<LinkedSessionInfo[]>({
     queryKey: ["/api/library", slug, "sessions"],
     queryFn: () => fetch(`/api/library/${slug}/sessions`).then(r => r.json()),
     enabled: !!slug,
   });
 
-  if (!sessions?.length) return null;
+  const links = useMemo(() => {
+    const references = extractPageReferences(plainText, pages);
+    const seen = new Set(references.map((reference) => reference.canonical));
+
+    for (const session of sessions) {
+      const reference = createReferenceRef({
+        type: "session",
+        id: session.sessionId,
+        metadata: {
+          label: session.title || "Untitled",
+          href: `/session?c=${encodeURIComponent(session.sessionId)}`,
+        },
+      });
+      if (seen.has(reference.canonical)) continue;
+      seen.add(reference.canonical);
+      references.push(reference);
+    }
+
+    return references;
+  }, [pages, plainText, sessions]);
+
+  if (links.length === 0) return null;
 
   return (
-    <div className="border-t border-border/60 px-10 py-3 space-y-1.5" data-testid="linked-page-sessions">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Linked sessions</div>
-      <div className="space-y-1">
-        {sessions.map((s) => (
-          <div key={`${s.sessionId}-${s.createdAt}`} className="flex min-w-0 items-center" data-testid={`linked-session-${s.sessionId}`}>
-            <ReferenceRenderer
-              refValue={{
-                type: "session",
-                id: s.sessionId,
-                canonical: `@session:${s.sessionId}`,
-                metadata: { label: s.title || "Untitled", href: `/session?c=${encodeURIComponent(s.sessionId)}` },
-              }}
-              surface="chat-inline"
-              className="max-w-full"
-            />
-          </div>
+    <div className="border-t border-border/60 px-10 py-3 space-y-1.5" data-testid="library-page-links">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Links</div>
+      <div className="flex flex-col items-start gap-1.5">
+        {links.map((reference) => (
+          <ReferenceRenderer
+            key={reference.canonical}
+            refValue={reference}
+            surface="chat-inline"
+            className="max-w-full text-sm"
+          />
         ))}
       </div>
     </div>
@@ -110,7 +145,7 @@ function ChildPages({ pageId, pages }: { pageId: string; pages: LibraryPage[] })
               metadata: { label: page.title || "Untitled", href: `/info#library?page=${encodeURIComponent(page.slug)}` },
             }}
             surface="chat-inline"
-            className="max-w-full"
+            className="max-w-full text-sm"
           />
         ))}
       </div>
@@ -183,7 +218,7 @@ export function LibraryPageEditor({
   });
 
   const {
-    editTitle, editContent, isDirty, setIsDirty,
+    editTitle, editContent, editPlainText, isDirty, setIsDirty,
     handleContentChange, handleTitleChange: rawHandleTitleChange,
   } = useEditableContent({
     selectedId,
@@ -318,7 +353,7 @@ export function LibraryPageEditor({
       <div className="flex-1 flex flex-col overflow-hidden">
         <RichTextEditor ref={editorRef} key={selectedId} value={editContent} onChange={handleContentChange} placeholder="Write your page content here..." className="flex-1 overflow-hidden" data-testid="editor-library-content" onInsertLink={() => { setSpecPickerQuery(""); setSpecPickerOpen(true); }} plainTextFallback={selectedPage.plainTextContent || ""} onFocusChange={setBodyFocused} contentFooter={<>
           <ChildPages pageId={selectedPage.id} pages={pages} />
-          <LinkedSessions slug={selectedPage.slug} />
+          <PageLinks slug={selectedPage.slug} plainText={editPlainText} pages={pages} />
         </>} />
       </div>
       <PageLinkPickerDialog open={specPickerOpen} onOpenChange={setSpecPickerOpen} query={specPickerQuery} onQueryChange={setSpecPickerQuery} pages={pages} editorRef={editorRef} />
