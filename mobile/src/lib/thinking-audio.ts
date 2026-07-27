@@ -1,9 +1,12 @@
 import { Audio } from 'expo-av';
+import {
+  renderVoiceThinkingTexture,
+  VOICE_THINKING_LOOP_SECONDS,
+} from '@shared/voice-thinking-texture';
 import Logger from './logger';
 
 const LOG_TAG = 'ThinkingAudio';
 const SAMPLE_RATE = 22050;
-const LOOP_SECONDS = 5.3;
 const OUTPUT_PEAK = 0.32;
 const PLAYBACK_VOLUME = 0.055;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -33,37 +36,8 @@ function encodeBase64(bytes: Uint8Array): string {
   return output;
 }
 
-function createNoiseSample(randomState: { value: number }): number {
-  randomState.value = (randomState.value * 1664525 + 1013904223) >>> 0;
-  return randomState.value / 0xffffffff * 2 - 1;
-}
-
-/** Dense, band-limited noise with no pitch, pulse, meter, or emotional contour. */
-function renderNeutralNoise(frameCount: number): Float32Array {
-  const samples = new Float32Array(frameCount);
-  const randomState = { value: 0x4d414e54 };
-  let fastAverage = 0;
-  let slowAverage = 0;
-  let peak = 0;
-
-  for (let index = 0; index < frameCount; index += 1) {
-    const white = createNoiseSample(randomState);
-    fastAverage += (white - fastAverage) * 0.23;
-    slowAverage += (white - slowAverage) * 0.025;
-    const sample = fastAverage - slowAverage;
-    samples[index] = sample;
-    peak = Math.max(peak, Math.abs(sample));
-  }
-
-  const normalize = peak > 0 ? OUTPUT_PEAK / peak : 1;
-  for (let index = 0; index < frameCount; index += 1) {
-    samples[index] *= normalize;
-  }
-  return samples;
-}
-
 function buildThinkingLoopDataUri(): string {
-  const frameCount = Math.floor(SAMPLE_RATE * LOOP_SECONDS);
+  const frameCount = Math.floor(SAMPLE_RATE * VOICE_THINKING_LOOP_SECONDS);
   const dataSize = frameCount * 2;
   const buffer = new ArrayBuffer(44 + dataSize);
   const view = new DataView(buffer);
@@ -82,7 +56,11 @@ function buildThinkingLoopDataUri(): string {
   writeString(view, 36, 'data');
   view.setUint32(40, dataSize, true);
 
-  const samples = renderNeutralNoise(frameCount);
+  const samples = renderVoiceThinkingTexture({
+    sampleRate: SAMPLE_RATE,
+    frameCount,
+    targetPeak: OUTPUT_PEAK,
+  });
   for (let index = 0; index < frameCount; index += 1) {
     const clamped = Math.max(-1, Math.min(1, samples[index]));
     view.setInt16(44 + index * 2, Math.round(clamped * 32767), true);
