@@ -2,7 +2,16 @@ import type { SimpleAction, SimpleFeedItem, SimpleSection, SimpleSourceRef } fro
 import { fileTaskStorage } from "../file-storage/tasks";
 import { fileProjectStorage } from "../file-storage/projects";
 import { createLogger } from "../log";
-import { resolveMeetingJoinMode, type GoalIndexEntry, type CalendarEventMetadata } from "@shared/schema";
+import {
+  emailDismissals,
+  emailEnrichments,
+  emailMessages,
+  personEmails,
+  persons,
+  resolveMeetingJoinMode,
+  type GoalIndexEntry,
+  type CalendarEventMetadata,
+} from "@shared/schema";
 import { goalsService } from "../goals-service";
 import type { Task, Project, Milestone } from "@shared/models/work";
 import { formatHour, getWindowLabel, inRange } from "@shared/wellness-window";
@@ -18,10 +27,11 @@ import { ensurePeopleSurfaceStates, listPeopleSurfaceStates } from "./people-sur
 import { signalStorage } from "../news-storage";
 import type { SignalItem } from "@shared/models/signal";
 import { db } from "../db";
-import { emailMessages, emailEnrichments } from "@shared/schema";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { queryDistinctInteractionPeopleSeries } from "../interaction-activity";
+import { sensitiveVisiblePredicate } from "../sensitive-scope";
+import { visiblePersonPredicate } from "../person-vault-access";
 
 const log = createLogger("SimpleCollectors");
 
@@ -474,20 +484,65 @@ interface EmailReviewThread {
   doneAt?: string | null;
 }
 
+const emailMessageScopeColumns = {
+  ownerUserId: emailMessages.ownerUserId,
+  principalAccountId: emailMessages.principalAccountId,
+  vaultId: emailMessages.vaultId,
+};
+
+const emailEnrichmentScopeColumns = {
+  ownerUserId: emailEnrichments.ownerUserId,
+  principalAccountId: emailEnrichments.principalAccountId,
+  vaultId: emailEnrichments.vaultId,
+};
+
+const emailDismissalScopeColumns = {
+  ownerUserId: emailDismissals.ownerUserId,
+  principalAccountId: emailDismissals.principalAccountId,
+  vaultId: emailDismissals.vaultId,
+};
+
+function visibleEmailScopeCtes() {
+  const principal = getCurrentPrincipalOrSystem();
+  return {
+    messages: sensitiveVisiblePredicate(emailMessageScopeColumns, principal),
+    enrichments: sensitiveVisiblePredicate(emailEnrichmentScopeColumns, principal),
+    dismissals: sensitiveVisiblePredicate(emailDismissalScopeColumns, principal),
+    ownedPeople: and(
+      eq(persons.scope, "user"),
+      principal.userId ? eq(persons.ownerUserId, principal.userId) : sql`FALSE`,
+      principal.accountId ? eq(persons.accountId, principal.accountId) : sql`FALSE`,
+    )!,
+    visiblePeople: visiblePersonPredicate(principal),
+  };
+}
+
 async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
   try {
-    const principal = getCurrentPrincipalOrSystem();
-    const ownerConditions: string[] = [];
-    if (principal.actorType !== "system") {
-      if (principal.userId) ownerConditions.push(`em.owner_user_id = '${principal.userId}'`);
-      if (principal.accountId) ownerConditions.push(`em.principal_account_id = '${principal.accountId}'`);
-    }
-    const ownerWhere = ownerConditions.length > 0
-      ? `(${ownerConditions.join(" OR ")})`
-      : "TRUE";
-
-    const result = await db.execute(sql.raw(`
-      WITH latest_review_threads AS (
+    const scope = visibleEmailScopeCtes();
+    const result = await db.execute(sql`
+      WITH visible_messages AS (
+        SELECT * FROM ${emailMessages} WHERE ${scope.messages}
+      ),
+      visible_enrichments AS (
+        SELECT * FROM ${emailEnrichments} WHERE ${scope.enrichments}
+      ),
+      visible_dismissals AS (
+        SELECT * FROM ${emailDismissals} WHERE ${scope.dismissals}
+      ),
+      owned_person_emails AS (
+        SELECT ${personEmails.email} AS email
+        FROM ${personEmails}
+        INNER JOIN ${persons} ON ${persons.id} = ${personEmails.personId}
+        WHERE ${scope.ownedPeople}
+      ),
+      visible_person_emails AS (
+        SELECT ${personEmails.email} AS email
+        FROM ${personEmails}
+        INNER JOIN ${persons} ON ${persons.id} = ${personEmails.personId}
+        WHERE ${scope.visiblePeople}
+      ),
+      latest_review_threads AS (
         SELECT DISTINCT ON (em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id))
           em.id,
           em.provider,
@@ -501,24 +556,45 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
           em.triage_reason,
           ee.summary AS enrichment_summary,
           ee.actions AS enrichment_actions
-        FROM email_messages em
-        LEFT JOIN email_enrichments ee ON ee.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND ee.account_id = em.account_id
-        WHERE ${ownerWhere}
-          AND em.triage_status = 'triaged'
+        FROM visible_messages em
+        LEFT JOIN visible_enrichments ee
+          ON ee.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id)
+          AND ee.account_id = em.account_id
+        WHERE em.triage_status = 'triaged'
           AND em.is_done = false
           AND (em.snoozed_until IS NULL OR em.snoozed_until <= NOW())
-          AND EXISTS (SELECT 1 FROM email_enrichments ee2 WHERE ee2.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND ee2.account_id = em.account_id)
+          AND EXISTS (
+            SELECT 1 FROM visible_enrichments ee2
+            WHERE ee2.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id)
+              AND ee2.account_id = em.account_id
+          )
           AND NOT EXISTS (
-            SELECT 1 FROM email_dismissals ed
+            SELECT 1 FROM visible_dismissals ed
             WHERE ed.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id)
               AND ed.account_id = em.account_id
               AND ed.dismissed_at >= COALESCE(
-                (SELECT MAX(em2.date) FROM email_messages em2
+                (SELECT MAX(em2.date) FROM visible_messages em2
                  WHERE em2.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id)
                    AND em2.account_id = em.account_id
                    AND em2.direction = 'inbound'),
                 '1970-01-01'::timestamptz
               )
+          )
+          AND (
+            NOT EXISTS (
+              SELECT 1 FROM owned_person_emails ope
+              WHERE ope.email = LOWER(COALESCE(
+                SUBSTRING(em.from_address FROM '<([^>]+)>'),
+                BTRIM(em.from_address)
+              ))
+            )
+            OR EXISTS (
+              SELECT 1 FROM visible_person_emails vpe
+              WHERE vpe.email = LOWER(COALESCE(
+                SUBSTRING(em.from_address FROM '<([^>]+)>'),
+                BTRIM(em.from_address)
+              ))
+            )
           )
         ORDER BY em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id), em.date DESC
       )
@@ -532,9 +608,9 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
         rt.date::text,
         rt.triage_tier,
         rt.triage_reason,
-        (SELECT ARRAY_AGG(t.id ORDER BY t.date DESC) FROM email_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider) AS message_ids,
-        (SELECT COUNT(*) FROM email_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider) AS message_count,
-        (SELECT COUNT(*) FROM email_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider AND t.is_read = false) AS unread_count,
+        (SELECT ARRAY_AGG(t.id ORDER BY t.date DESC) FROM visible_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider) AS message_ids,
+        (SELECT COUNT(*) FROM visible_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider) AS message_count,
+        (SELECT COUNT(*) FROM visible_messages t WHERE t.provider_thread_id = rt.provider_thread_id AND t.account_id = rt.account_id AND t.provider = rt.provider AND t.is_read = false) AS unread_count,
         rt.enrichment_summary,
         rt.enrichment_actions
       FROM latest_review_threads rt
@@ -547,7 +623,7 @@ async function collectEmailReviewThreads(): Promise<EmailReviewThread[]> {
         END,
         rt.date DESC
       LIMIT ${EMAIL_INBOX_LIMIT}
-    `));
+    `);
 
     return (result.rows as any[]).map(row => ({
       id: row.id,
@@ -580,17 +656,26 @@ const EMAIL_DONE_LIMIT = 8;
  */
 async function collectEmailDoneToday(): Promise<EmailReviewThread[]> {
   try {
-    const principal = getCurrentPrincipalOrSystem();
-    const ownerConditions: string[] = [];
-    if (principal.actorType !== "system") {
-      if (principal.userId) ownerConditions.push(`em.owner_user_id = '${principal.userId}'`);
-      if (principal.accountId) ownerConditions.push(`em.principal_account_id = '${principal.accountId}'`);
-    }
-    const ownerWhere = ownerConditions.length > 0
-      ? `(${ownerConditions.join(" OR ")})`
-      : "TRUE";
-
-    const result = await db.execute(sql.raw(`
+    const scope = visibleEmailScopeCtes();
+    const result = await db.execute(sql`
+      WITH visible_messages AS (
+        SELECT * FROM ${emailMessages} WHERE ${scope.messages}
+      ),
+      visible_enrichments AS (
+        SELECT * FROM ${emailEnrichments} WHERE ${scope.enrichments}
+      ),
+      owned_person_emails AS (
+        SELECT ${personEmails.email} AS email
+        FROM ${personEmails}
+        INNER JOIN ${persons} ON ${persons.id} = ${personEmails.personId}
+        WHERE ${scope.ownedPeople}
+      ),
+      visible_person_emails AS (
+        SELECT ${personEmails.email} AS email
+        FROM ${personEmails}
+        INNER JOIN ${persons} ON ${persons.id} = ${personEmails.personId}
+        WHERE ${scope.visiblePeople}
+      )
       SELECT DISTINCT ON (em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id))
         em.id,
         COALESCE(em.provider_thread_id, em.provider_message_id) AS provider_thread_id,
@@ -604,16 +689,33 @@ async function collectEmailDoneToday(): Promise<EmailReviewThread[]> {
         em.done_at::text AS done_at,
         ee.summary AS enrichment_summary,
         ee.actions AS enrichment_actions
-      FROM email_messages em
-      LEFT JOIN email_enrichments ee ON ee.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id) AND ee.account_id = em.account_id
-      WHERE ${ownerWhere}
-        AND em.is_done = true
+      FROM visible_messages em
+      LEFT JOIN visible_enrichments ee
+        ON ee.provider_thread_id = COALESCE(em.provider_thread_id, em.provider_message_id)
+        AND ee.account_id = em.account_id
+      WHERE em.is_done = true
         AND em.done_reason = 'user_done'
         AND em.done_at IS NOT NULL
         AND (em.done_at AT TIME ZONE 'America/Chicago')::date = (NOW() AT TIME ZONE 'America/Chicago')::date
+        AND (
+          NOT EXISTS (
+            SELECT 1 FROM owned_person_emails ope
+            WHERE ope.email = LOWER(COALESCE(
+              SUBSTRING(em.from_address FROM '<([^>]+)>'),
+              BTRIM(em.from_address)
+            ))
+          )
+          OR EXISTS (
+            SELECT 1 FROM visible_person_emails vpe
+            WHERE vpe.email = LOWER(COALESCE(
+              SUBSTRING(em.from_address FROM '<([^>]+)>'),
+              BTRIM(em.from_address)
+            ))
+          )
+        )
       ORDER BY em.account_id, em.provider, COALESCE(em.provider_thread_id, em.provider_message_id), em.done_at DESC
       LIMIT ${EMAIL_DONE_LIMIT}
-    `));
+    `);
 
     return (result.rows as any[]).map(row => ({
       id: row.id,

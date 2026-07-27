@@ -5,6 +5,7 @@ import { chatCompletion } from "../model-client";
 import { ACTIVITY_FRAMING } from "../job-profiles";
 import { collectSimpleContext, type SimpleContextBundle } from "./collectors";
 import { validateSimpleFeed } from "./schema";
+import { getCurrentPrincipalOrSystem } from "../principal-context";
 
 const log = createLogger("SimpleFeed");
 const feedCache = new Map<string, SimpleFeed>();
@@ -30,10 +31,21 @@ function isCachedFeedCurrent(feed: SimpleFeed): boolean {
   return feedLocalDate(feed) === today;
 }
 
+function simpleFeedCacheKey(accountId?: string): string {
+  const principal = getCurrentPrincipalOrSystem();
+  const accountKey = accountId || principal.accountId || "__default__";
+  const visibleVaultKey = [...principal.visibleVaultIds].sort().join(",") || "no-visible-vaults";
+  return `${accountKey}::${visibleVaultKey}`;
+}
+
 export function invalidateSimpleFeedCache(accountId?: string): void {
   if (accountId) {
-    feedCache.delete(accountId);
-    feedGeneration.set(accountId, (feedGeneration.get(accountId) || 0) + 1);
+    const accountPrefix = `${accountId}::`;
+    for (const key of new Set([...feedCache.keys(), ...feedGeneration.keys()])) {
+      if (!key.startsWith(accountPrefix)) continue;
+      feedCache.delete(key);
+      feedGeneration.set(key, (feedGeneration.get(key) || 0) + 1);
+    }
     return;
   }
   feedCache.clear();
@@ -357,7 +369,7 @@ async function curateWithModel(bundle: SimpleContextBundle, fallback: SimpleFeed
 }
 
 export async function generateSimpleFeed(options: { refresh?: boolean; useModel?: boolean; accountId?: string } = {}): Promise<SimpleFeed> {
-  const cacheKey = options.accountId || "__default__";
+  const cacheKey = simpleFeedCacheKey(options.accountId);
   const cached = feedCache.get(cacheKey);
   if (!options.refresh && cached && isCachedFeedCurrent(cached)) return { ...cached, stale: true };
 
