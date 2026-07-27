@@ -136,10 +136,14 @@ function publishLibraryChanged(action: string, page?: { id?: string | null; titl
 }
 
 function visibleLibrary(req: any, predicate?: SQL): SQL {
+  // Trashed pages (deleted_at IS NOT NULL) are excluded from every read that
+  // flows through this boundary — list, tree, single get, index, unread, and
+  // search. Trash (a later step) reads with its own predicate.
+  const notTrashed = isNull(libraryPages.deletedAt);
   return combineWithVisibleScope(
     principalOrThrow(req),
     libraryScopeColumns,
-    predicate,
+    predicate ? and(predicate, notTrashed) : notTrashed,
   );
 }
 
@@ -321,6 +325,12 @@ export async function registerLibraryRoutes(app: Express) {
     );
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_library_pages_structural_role ON library_pages(structural_role)`,
+    );
+    await pool.query(
+      `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
+    );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_library_pages_deleted_at ON library_pages(deleted_at)`,
     );
     await pool.query(
       `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
@@ -793,7 +803,7 @@ export async function registerLibraryRoutes(app: Express) {
           libraryPages,
           eq(libraryPageLinks.sourcePageId, libraryPages.id),
         )
-        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, eq(libraryPageLinks.targetPageId, req.params.id)));
+        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, and(eq(libraryPageLinks.targetPageId, req.params.id), isNull(libraryPages.deletedAt))));
       res.json(links);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -806,7 +816,7 @@ export async function registerLibraryRoutes(app: Express) {
       const outbound = await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug, summary: libraryPages.summary, structuralRole: libraryPages.structuralRole })
         .from(libraryPageLinks)
         .innerJoin(libraryPages, eq(libraryPageLinks.targetPageId, libraryPages.id))
-        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, eq(libraryPageLinks.sourcePageId, req.params.id)));
+        .where(combineWithVisibleScope(principal, { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId }, and(eq(libraryPageLinks.sourcePageId, req.params.id), isNull(libraryPages.deletedAt))));
       const inbound = await getLibraryPageNeighbors([req.params.id], principal, 50);
       res.json({ outbound, neighbors: inbound });
     } catch (err: any) {
@@ -1131,7 +1141,7 @@ export async function registerLibraryRoutes(app: Express) {
   app.delete("/api/info/library/:id", async (req, res) => {
     try {
       const [page] = await db
-        .select({ id: libraryPages.id, tags: libraryPages.tags })
+        .select({ id: libraryPages.id, tags: libraryPages.tags, title: libraryPages.title })
         .from(libraryPages)
         .where(visibleLibrary(req, eq(libraryPages.id, req.params.id)));
       if (!page)
@@ -1140,13 +1150,17 @@ export async function registerLibraryRoutes(app: Express) {
         return res
           .status(403)
           .json({ error: "System folders cannot be deleted." });
-      const [deleted] = await db
-        .delete(libraryPages)
-        .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
-        .returning();
-      if (!deleted)
+      // Soft-delete: stamp deleted_at across this page and its entire subtree.
+      // Rows stay in the DB with vault/parent/placements intact so a later Trash
+      // step can restore the unit; every read path filters deleted_at IS NULL.
+      const { softDeleteLibrarySubtree } = await import("../library-domain");
+      const { trashedCount } = await softDeleteLibrarySubtree(
+        principalOrThrow(req),
+        page.id,
+      );
+      if (trashedCount === 0)
         return res.status(404).json({ error: "Library page not found" });
-      publishLibraryChanged("deleted", deleted);
+      publishLibraryChanged("deleted", { id: page.id, title: page.title });
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

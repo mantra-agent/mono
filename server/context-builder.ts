@@ -8,7 +8,7 @@ import { TTLCache } from "./utils/ttl-cache";
 import { sessionOutputBuffer } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import { parseReferenceText } from "@shared/reference-parser";
-import { sql, or, and, eq, desc, gte, inArray } from "drizzle-orm";
+import { sql, or, and, eq, desc, gte, inArray, isNull } from "drizzle-orm";
 import type {
   ContextCallType,
   ContextRequest,
@@ -793,7 +793,7 @@ async function resolveRuleLinkedPages(ruleTexts: string[]): Promise<string> {
       accountId: libraryPages.accountId,
       vaultId: libraryPages.vaultId,
     },
-    inArray(libraryPages.id, pageIds),
+    and(inArray(libraryPages.id, pageIds), isNull(libraryPages.deletedAt)),
   ));
 
   const pagesById = new Map(visiblePages.map((page) => [page.id, page]));

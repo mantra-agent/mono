@@ -107,9 +107,17 @@ export const libraryPages = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
+    // Trash lifecycle state (single source of truth). NULL = live; a non-null
+    // timestamp means the page is soft-deleted. A page and its whole descendant
+    // subtree share one deleted_at when trashed as a unit, so the trashed unit
+    // is reconstructable from (subtree root + shared deleted_at) via a parent_id
+    // walk — no separate trashRootId/batch column is needed. Vault, parent, and
+    // placements are left untouched so the page is fully restorable.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (table) => [
     index("idx_library_pages_page_id").on(table.pageId),
+    index("idx_library_pages_deleted_at").on(table.deletedAt),
     index("idx_library_pages_parent").on(table.parentId),
     index("idx_library_pages_slug").on(table.slug),
     index("idx_library_pages_session").on(table.createdBySessionId),
@@ -126,6 +134,7 @@ export const insertLibraryPageSchema = createInsertSchema(libraryPages)
     pageId: true,
     createdAt: true,
     updatedAt: true,
+    deletedAt: true,
   })
   .extend({
     title: z.string().default(""),
