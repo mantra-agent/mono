@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useFocusSession } from "@/hooks/use-focus-session";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { downloadPageAsMarkdown } from "@/lib/editor-utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -32,6 +33,15 @@ const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 480;
 
 const QUIET_ROW_CLASS = "px-2 py-1.5 text-sm text-muted-foreground";
+
+type CreatedSession = { id: string };
+
+function buildLibraryPageDiscussMessage(page: LibraryPage): string {
+  return [
+    `Let's discuss this Library page: **${page.title || "Untitled"}**`,
+    `Reference: @page:${page.slug}`,
+  ].join("\n");
+}
 
 function stablePartitionPinned(nodes: TreeNode[]): TreeNode[] {
   const withOrderedChildren = nodes.map((node) => ({
@@ -119,6 +129,8 @@ interface VaultTreeSectionProps {
   onEnrich: (id: string) => void;
   onMove: (id: string) => void;
   onTogglePin: (id: string, isPinned: boolean) => void;
+  onDiscuss: (page: LibraryPage) => void;
+  discussingPageId: string | null;
   onReorder: (data: { id: string; parentId: string | null; sortOrder: number }) => void;
   toggleExpand: (id: string) => void;
   unreadIds: Set<string>;
@@ -136,7 +148,7 @@ interface VaultTreeSectionProps {
  */
 function VaultTreeSection({
   vault, rootNodes, selectedId, expandedIds,
-  onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onReorder, toggleExpand,
+  onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, onReorder, toggleExpand,
   unreadIds, hasUnreadDescendantIds,
   open, onOpenChange, onAddPage,
 }: VaultTreeSectionProps) {
@@ -172,6 +184,8 @@ function VaultTreeSection({
             onEnrich={onEnrich}
             onMove={onMove}
             onTogglePin={onTogglePin}
+            onDiscuss={onDiscuss}
+            discussingPageId={discussingPageId}
             onReorder={onReorder}
             toggleExpand={toggleExpand}
             unreadIds={unreadIds}
@@ -239,6 +253,35 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
   });
 
   const { toast } = useToast();
+  const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
+  const discussMutation = useMutation({
+    mutationFn: async (page: LibraryPage) => {
+      const response = await apiRequest("POST", "/api/sessions", {
+        title: page.title.trim().slice(0, 80) || "Library Page",
+      });
+      const session: CreatedSession = await response.json();
+      await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
+        content: buildLibraryPageDiscussMessage(page),
+      });
+      return session;
+    },
+    onSuccess: (session) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      setSessionForRoute(route, session.id);
+      setWidgetOpen(true);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Could not start discussion",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+  const discussPage = useCallback((page: LibraryPage) => {
+    if (!discussMutation.isPending) discussMutation.mutate(page);
+  }, [discussMutation]);
+
   const pinMutation = useMutation({
     mutationFn: async ({ id, isPinned }: { id: string; isPinned: boolean }) => {
       const response = await apiRequest("PATCH", `/api/info/library/${id}`, { isPinned });
@@ -654,6 +697,8 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                       onEnrich={(id) => enrichMutation.mutate(id)}
                       onMove={(id) => setTreeMoveId(id)}
                       onTogglePin={handleTogglePin}
+                      onDiscuss={discussPage}
+                      discussingPageId={discussMutation.isPending ? discussMutation.variables?.id ?? null : null}
                       onReorder={(data) => reorderMutation.mutate({ ...data, destinationVaultId: section.vault.id })}
                       toggleExpand={toggleExpand}
                       unreadIds={unreadIds}
@@ -689,6 +734,8 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                   onEnrich={(id) => enrichMutation.mutate(id)}
                   onMove={(id) => setTreeMoveId(id)}
                   onTogglePin={handleTogglePin}
+                  onDiscuss={discussPage}
+                  discussingPageId={discussMutation.isPending ? discussMutation.variables?.id ?? null : null}
                   onReorder={(data) => {
                     const destinationVaultId = data.parentId
                       ? pages.find((candidate) => candidate.id === data.parentId)?.vaultId
@@ -738,6 +785,8 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
               selectedPage={selectedPageFull}
               pages={pages}
               onTogglePin={handleTogglePin}
+              onDiscuss={discussPage}
+              discussPending={discussMutation.isPending && discussMutation.variables?.id === selectedPageFull.id}
               onDeleteRequest={(id) => deleteMutation.mutate(id)}
             />
           )
