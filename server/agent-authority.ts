@@ -257,13 +257,66 @@ const SAFE_SHELL_COMMANDS = new Set([
 const FORBIDDEN_SHELL_TOKENS = /(?:\r|\n|;|`|\$\(|\$(?:\{|[A-Za-z0-9_?*#@!$-])|\|\||(?<!&)\&(?!&)|[<>~]|\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet|python|python3|node|deno|bun|perl|ruby|php|lua|env|printenv|eval|source)\b|\/(?:proc|sys|dev|root|home)\/|(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)|credentials?|secrets?)/i;
 const SAFE_SED_READ = /^sed\s+-n\s+(["'])(?:\d+)(?:,\d+)?p\1\s+(?:--\s+)?[^\s]+(?:\s+[^\s]+)*$/;
 
+/**
+ * Split a shell command into pipeline/sequence segments while honoring single and double
+ * quotes. Only UNQUOTED `|` and `&&` separate segments, so shell metacharacters inside a
+ * quoted argument — e.g. the alternation in `grep -iE "cli|model|adapter"` — are treated as
+ * literal data rather than being shredded into fake segments whose contents ("model",
+ * "adapter", …) then fail the command allowlist as if they were command names. Quoted content
+ * is never a command name. This keeps read-only inspection (grep with alternation is the most
+ * common idiom) working without loosening any destructive/forbidden-token protection.
+ */
+function splitShellSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    // A backslash escapes the next character in either state; consume both so an escaped
+    // quote can never flip quote tracking (fails safe toward blocking, never opening).
+    if (ch === "\\") {
+      current += ch;
+      if (i + 1 < command.length) {
+        current += command[i + 1];
+        i++;
+      }
+      continue;
+    }
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === "|") {
+      // Unquoted single pipe separates commands (`||` is already rejected upstream).
+      segments.push(current);
+      current = "";
+      continue;
+    }
+    if (ch === "&" && command[i + 1] === "&") {
+      segments.push(current);
+      current = "";
+      i++;
+      continue;
+    }
+    current += ch;
+  }
+  segments.push(current);
+  return segments.map((segment) => segment.trim()).filter(Boolean);
+}
+
 export function validateShellCommand(command: string): ToolAuthorityDecision {
   if (!command.trim()) return { allowed: false, reason: "empty_command" };
   if (FORBIDDEN_SHELL_TOKENS.test(command)) return { allowed: false, reason: "forbidden_shell_token" };
   if (/(?:^|[\s\"'=\\])\/(?!app(?:\/|$))/.test(command)) return { allowed: false, reason: "absolute_path_outside_workspace" };
   if (/(?:^|[\s/])\.\.(?:[\s/]|$)/.test(command)) return { allowed: false, reason: "path_traversal_blocked" };
 
-  const segments = command.split(/&&|\|/).map((segment) => segment.trim()).filter(Boolean);
+  const segments = splitShellSegments(command);
   if (segments.length === 0) return { allowed: false, reason: "empty_command" };
   for (const segment of segments) {
     const first = segment.match(/^([A-Za-z[\]]+)/)?.[1];
