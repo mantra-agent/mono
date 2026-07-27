@@ -117,8 +117,6 @@ interface LibraryPageEditorProps {
   selectedPage: LibraryPageFull;
   pages: LibraryPage[];
   onDeleteRequest?: (id: string) => void;
-  library2PlacementId?: string;
-  onRemoveFromLibrary2?: (placementId: string) => void;
 }
 
 export function LibraryPageEditor({
@@ -126,8 +124,6 @@ export function LibraryPageEditor({
   selectedPage,
   pages,
   onDeleteRequest,
-  library2PlacementId,
-  onRemoveFromLibrary2,
 }: LibraryPageEditorProps) {
   const editorRef = useRef<RichTextEditorHandle>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
@@ -293,11 +289,7 @@ export function LibraryPageEditor({
               <DropdownMenuItem onClick={() => downloadPageAsMarkdown(selectedPage.title, selectedPage.content, selectedPage.plainTextContent)} data-testid="menu-download-page">
                 <Download className="h-3.5 w-3.5 mr-2" /> Download
               </DropdownMenuItem>
-              {library2PlacementId && onRemoveFromLibrary2 ? (
-                <DropdownMenuItem onClick={() => onRemoveFromLibrary2(library2PlacementId)} data-testid="menu-remove-library2-placement">
-                  <Trash2 className="h-3.5 w-3.5 mr-2" /> Remove from Library2
-                </DropdownMenuItem>
-              ) : onDeleteRequest ? (
+              {onDeleteRequest ? (
                 <DropdownMenuItem onClick={() => onDeleteRequest(selectedPage.id)} className="text-destructive" data-testid="menu-delete-page">
                   <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
                 </DropdownMenuItem>
@@ -722,8 +714,6 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
     invalidateKeys: [
       ["/api/info/library"],
       ["/api/info/library/tree"],
-      ["/api/library2/placements"],
-      ["/api/library2/destinations"],
     ],
     successMessage: () => `${page.title || "Page"} moved`,
     errorTitle: "Move failed",

@@ -4,7 +4,7 @@ import { useVaults, type Vault } from "@/hooks/use-vaults";
 import type { LibraryPage, TreeNode } from "./types";
 
 /**
- * Shared, reusable vault-awareness for the Library sidebars (Library1 + Library2).
+ * Shared, reusable vault-awareness for the standard Library sidebar.
  *
  * Two derived views over the already-owner-scoped Library payload:
  *  - `useVisibleVaults()` resolves the toggled-on, non-archived vault set and the
