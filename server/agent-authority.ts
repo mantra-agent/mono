@@ -106,6 +106,7 @@ function requiresPermission(
 ): Permission | null {
   if (toolName === "hooks") return ["list", "get", "test"].includes(action || "") ? "system:read" : "system:write";
   if (toolName === "backup") return ["list", "get"].includes(action || "") ? "system:read" : "system:write";
+  if (toolName === "jobs") return ["list", "get"].includes(action || "") ? "system:read" : "system:write";
   if (isRepositoryScratchWrite(toolName, action, args)) return "build:write";
   if (!ENGINEERING_TOOLS.has(toolName)) return null;
   if (toolName === "shell") return "build:write";
