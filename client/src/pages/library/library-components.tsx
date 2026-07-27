@@ -23,7 +23,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe, ChevronRight, RotateCcw, Pin,
+  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe, ChevronRight, RotateCcw, Pin, MessageSquare,
 } from "lucide-react";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
@@ -158,6 +158,8 @@ interface LibraryPageEditorProps {
   selectedPage: LibraryPageFull;
   pages: LibraryPage[];
   onTogglePin: (id: string, isPinned: boolean) => void;
+  onDiscuss: (page: LibraryPage) => void;
+  discussPending: boolean;
   onDeleteRequest?: (id: string) => void;
 }
 
@@ -166,6 +168,8 @@ export function LibraryPageEditor({
   selectedPage,
   pages,
   onTogglePin,
+  onDiscuss,
+  discussPending,
   onDeleteRequest,
 }: LibraryPageEditorProps) {
   const editorRef = useRef<RichTextEditorHandle>(null);
@@ -320,6 +324,18 @@ export function LibraryPageEditor({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(e) => e.preventDefault()}>
+              <DropdownMenuItem
+                disabled={discussPending}
+                onClick={() => onDiscuss(selectedPage)}
+                data-testid="menu-page-discuss"
+              >
+                {discussPending ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                ) : (
+                  <MessageSquare className="h-3.5 w-3.5 mr-2" />
+                )}
+                Discuss
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onTogglePin(selectedPage.id, !selectedPage.isPinned)} data-testid="menu-page-pin">
                 <Pin
                   className={cn("h-3.5 w-3.5 mr-2", selectedPage.isPinned ? "text-foreground" : "text-muted-foreground")}
