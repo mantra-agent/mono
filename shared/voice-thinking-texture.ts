@@ -13,13 +13,12 @@ type TypingTap = {
   gain: number;
 };
 
-type NoisePacketOptions = {
+type MicroDropletOptions = {
   startSeconds: number;
   durationSeconds: number;
   gain: number;
-  lowCutoffHz: number;
-  highCutoffHz: number;
-  seed: number;
+  startFrequencyHz: number;
+  endFrequencyHz: number;
 };
 
 type CascadeStep = {
@@ -27,12 +26,12 @@ type CascadeStep = {
   gainScale: number;
 };
 
-const CLICK_CASCADE: readonly CascadeStep[] = [
+const DROPLET_CASCADE: readonly CascadeStep[] = [
   { delaySeconds: 0, gainScale: 1 },
-  { delaySeconds: 0.068, gainScale: 0.42 },
-  { delaySeconds: 0.14, gainScale: 0.21 },
-  { delaySeconds: 0.216, gainScale: 0.1 },
-  { delaySeconds: 0.296, gainScale: 0.045 },
+  { delaySeconds: 0.136, gainScale: 0.42 },
+  { delaySeconds: 0.28, gainScale: 0.21 },
+  { delaySeconds: 0.432, gainScale: 0.1 },
+  { delaySeconds: 0.592, gainScale: 0.045 },
 ] as const;
 
 const TYPING_TAPS: readonly TypingTap[] = [
@@ -98,43 +97,30 @@ const TYPING_TAPS: readonly TypingTap[] = [
   { timeSeconds: 8.25, gain: 0.62 },
 ] as const;
 
-function nextNoise(state: number): [number, number] {
-  const nextState = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-  return [nextState / 0x100000000 * 2 - 1, nextState];
-}
-
-function smoothingAlpha(cutoffHz: number, sampleRate: number): number {
-  const boundedCutoff = Math.max(1, Math.min(sampleRate * 0.45, cutoffHz));
-  return 1 - Math.exp(-TAU * boundedCutoff / sampleRate);
-}
-
-function addNoisePacket(
+function addMicroDroplet(
   samples: Float32Array,
   sampleRate: number,
-  options: NoisePacketOptions,
+  options: MicroDropletOptions,
 ): void {
   const durationFrames = Math.max(1, Math.round(sampleRate * options.durationSeconds));
   const startFrame = Math.round(options.startSeconds * sampleRate) % samples.length;
-  const lowAlpha = smoothingAlpha(options.lowCutoffHz, sampleRate);
-  const highAlpha = smoothingAlpha(options.highCutoffHz, sampleRate);
-  const releaseFrames = Math.max(1, Math.round(sampleRate * 0.008));
-  let state = options.seed >>> 0;
-  let low = 0;
-  let high = 0;
+  const releaseFrames = Math.max(1, Math.round(sampleRate * 0.006));
+  const glideRatio = options.endFrequencyHz / options.startFrequencyHz;
+  let phase = 0;
 
   for (let offset = 0; offset < durationFrames; offset += 1) {
-    let noise: number;
-    [noise, state] = nextNoise(state);
-    low += lowAlpha * (noise - low);
-    high += highAlpha * (noise - high);
-
     const time = offset / sampleRate;
-    const attackProgress = Math.min(1, time / 0.0018);
+    const progress = durationFrames > 1 ? offset / (durationFrames - 1) : 1;
+    const frequency = options.startFrequencyHz * Math.pow(glideRatio, progress);
+    phase += TAU * frequency / sampleRate;
+
+    const attackProgress = Math.min(1, time / 0.003);
     const attack = attackProgress * attackProgress * (3 - 2 * attackProgress);
-    const release = Math.min(1, (durationFrames - offset) / releaseFrames);
-    const envelope = attack * release * Math.exp(-time * 84);
+    const releaseProgress = Math.min(1, (durationFrames - offset) / releaseFrames);
+    const release = releaseProgress * releaseProgress * (3 - 2 * releaseProgress);
+    const envelope = attack * release * Math.exp(-time * 96);
     const frame = (startFrame + offset) % samples.length;
-    samples[frame] += (high - low) * envelope * options.gain;
+    samples[frame] += Math.sin(phase) * envelope * options.gain;
   }
 }
 
@@ -144,20 +130,23 @@ function addTypingTap(
   tap: TypingTap,
   tapIndex: number,
 ): void {
-  const seed = (0x4d414e54 ^ Math.imul(tapIndex + 1, 0x9e3779b1)) >>> 0;
-  CLICK_CASCADE.forEach((step) => {
-    addNoisePacket(samples, sampleRate, {
+  const startVariation = (Math.imul(tapIndex + 1, 0x9e3779b1) >>> 0) / 0x100000000;
+  const glideVariation = (Math.imul(tapIndex + 1, 0x45d9f3b) >>> 0) / 0x100000000;
+  const startFrequencyHz = 820 + startVariation * 280;
+  const endFrequencyHz = startFrequencyHz * (0.52 + glideVariation * 0.08);
+
+  DROPLET_CASCADE.forEach((step) => {
+    addMicroDroplet(samples, sampleRate, {
       startSeconds: tap.timeSeconds + step.delaySeconds,
-      durationSeconds: 0.032,
+      durationSeconds: 0.03,
       gain: tap.gain * step.gainScale,
-      lowCutoffHz: 260,
-      highCutoffHz: 2400,
-      seed,
+      startFrequencyHz,
+      endFrequencyHz,
     });
   });
 }
 
-function renderSoftDigitalTyping(samples: Float32Array, sampleRate: number): void {
+function renderDropletTyping(samples: Float32Array, sampleRate: number): void {
   TYPING_TAPS.forEach((tap, tapIndex) => {
     addTypingTap(samples, sampleRate, tap, tapIndex);
   });
@@ -181,8 +170,8 @@ function normalizeTexture(samples: Float32Array, targetPeak: number): Float32Arr
 
 /**
  * Renders one seamless thinking loop as dense, irregular clusters of short,
- * clean broadband taps. Four progressively quieter delayed copies make each
- * cascade distinct without oscillators, melody, reverb, or a continuous bed.
+ * rounded micro-droplets. Four progressively quieter delayed copies make each
+ * cascade distinct without reverb, a fixed pitch, or a continuous bed.
  */
 export function renderVoiceThinkingTexture({
   sampleRate,
@@ -193,6 +182,6 @@ export function renderVoiceThinkingTexture({
   if (!Number.isFinite(frameCount) || frameCount <= 0) return new Float32Array(0);
 
   const samples = new Float32Array(Math.floor(frameCount));
-  renderSoftDigitalTyping(samples, sampleRate);
+  renderDropletTyping(samples, sampleRate);
   return normalizeTexture(samples, Math.max(0, Math.min(1, targetPeak)));
 }
