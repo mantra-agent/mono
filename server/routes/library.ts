@@ -23,6 +23,7 @@ import {
 import {
   infoNotes,
   libraryPages,
+  libraryPagePins,
   libraryPageTrash,
   libraryPageLinks,
   libraryAnnotations,
@@ -57,6 +58,7 @@ import { WORKSPACE_DIR } from "../paths";
 import { eventBus } from "../event-bus";
 import { markSourceChanged, registerSourceIfAbsent } from "../memory/vnext-source-queue";
 import { normalizeLibraryStructuralRole } from "../library-domain";
+import { libraryPageIsPinned } from "../library-pin";
 import { libraryPageIsLive, libraryPageIsTrashed } from "../library-trash";
 import { getLibraryPageNeighbors, syncEmbeddedLibraryPageLinks } from "../library-link-graph";
 import { projectActiveLibraryReminders } from "../library-reminders";
@@ -314,6 +316,15 @@ export async function registerLibraryRoutes(app: Express) {
       `CREATE INDEX IF NOT EXISTS idx_library_pages_structural_role ON library_pages(structural_role)`,
     );
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS library_page_pins (
+        page_id TEXT PRIMARY KEY REFERENCES library_pages(id) ON DELETE CASCADE,
+        pinned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_library_page_pins_pinned_at ON library_page_pins(pinned_at)`,
+    );
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS library_page_trash (
         page_id TEXT PRIMARY KEY REFERENCES library_pages(id) ON DELETE CASCADE,
         deleted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -517,6 +528,7 @@ export async function registerLibraryRoutes(app: Express) {
         surfaceReason: libraryPages.surfaceReason,
         surfaceSection: libraryPages.surfaceSection,
         sortOrder: libraryPages.sortOrder,
+        isPinned: libraryPageIsPinned(),
         vaultId: libraryPages.vaultId,
         structuralRole: libraryPages.structuralRole,
         scope: libraryPages.scope,
@@ -565,6 +577,7 @@ export async function registerLibraryRoutes(app: Express) {
           surfaceUntil: libraryPages.surfaceUntil,
           surfaceReason: libraryPages.surfaceReason,
           surfaceSection: libraryPages.surfaceSection,
+          isPinned: libraryPageIsPinned(),
           vaultId: libraryPages.vaultId,
           structuralRole: libraryPages.structuralRole,
           scope: libraryPages.scope,
@@ -572,7 +585,7 @@ export async function registerLibraryRoutes(app: Express) {
         })
         .from(libraryPages)
         .where(visibleLibrary(req))
-        .orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title));
+        .orderBy(desc(libraryPageIsPinned()), asc(libraryPages.sortOrder), asc(libraryPages.title));
       const pages = await projectActiveLibraryReminders(rawPages);
 
       type PageWithChildren = (typeof pages)[number] & {
@@ -687,15 +700,46 @@ export async function registerLibraryRoutes(app: Express) {
   app.get("/api/info/library/:id", async (req, res) => {
     try {
       let page = null;
+      const detailColumns = {
+        id: libraryPages.id,
+        pageId: libraryPages.pageId,
+        title: libraryPages.title,
+        slug: libraryPages.slug,
+        content: libraryPages.content,
+        plainTextContent: libraryPages.plainTextContent,
+        parentId: libraryPages.parentId,
+        memoryEntryId: libraryPages.memoryEntryId,
+        oneLiner: libraryPages.oneLiner,
+        summary: libraryPages.summary,
+        tags: libraryPages.tags,
+        status: libraryPages.status,
+        emoji: libraryPages.emoji,
+        surface: libraryPages.surface,
+        surfaceUntil: libraryPages.surfaceUntil,
+        surfaceReason: libraryPages.surfaceReason,
+        surfaceSection: libraryPages.surfaceSection,
+        sortOrder: libraryPages.sortOrder,
+        isPinned: libraryPageIsPinned(),
+        createdBySessionId: libraryPages.createdBySessionId,
+        scope: libraryPages.scope,
+        ownerUserId: libraryPages.ownerUserId,
+        accountId: libraryPages.accountId,
+        vaultId: libraryPages.vaultId,
+        structuralRole: libraryPages.structuralRole,
+        createdByUserId: libraryPages.createdByUserId,
+        updatedByUserId: libraryPages.updatedByUserId,
+        createdAt: libraryPages.createdAt,
+        updatedAt: libraryPages.updatedAt,
+      };
       const byId = await db
-        .select()
+        .select(detailColumns)
         .from(libraryPages)
         .where(visibleLibrary(req, eq(libraryPages.id, req.params.id)));
       if (byId.length > 0) {
         page = byId[0];
       } else {
         const bySlug = await db
-          .select()
+          .select(detailColumns)
           .from(libraryPages)
           .where(visibleLibrary(req, eq(libraryPages.slug, req.params.id)));
         page = bySlug[0] || null;
@@ -877,6 +921,7 @@ export async function registerLibraryRoutes(app: Express) {
     status: z.string().nullable().optional(),
     emoji: z.string().nullable().optional(),
     structuralRole: z.enum(["source", "artifact", "wiki", "meta"]).optional(),
+    isPinned: z.boolean().optional(),
     linkPages: z.array(z.string()).optional(),
     ...librarySurfaceInput,
   });
@@ -928,11 +973,32 @@ export async function registerLibraryRoutes(app: Express) {
         setData.structuralRole = normalizeLibraryStructuralRole(updates.structuralRole);
       Object.assign(setData, buildLibrarySurfaceSet(updates));
 
+      if (updates.isPinned !== undefined) {
+        const [writablePage] = await db
+          .select({ id: libraryPages.id })
+          .from(libraryPages)
+          .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
+          .limit(1);
+        if (!writablePage)
+          return res.status(404).json({ error: "Library page not found" });
+
+        if (updates.isPinned) {
+          await db
+            .insert(libraryPagePins)
+            .values({ pageId: writablePage.id })
+            .onConflictDoNothing();
+        } else {
+          await db
+            .delete(libraryPagePins)
+            .where(eq(libraryPagePins.pageId, writablePage.id));
+        }
+      }
+
       const hasMetadataUpdates = Object.keys(setData).some(
         (key) => key !== "updatedAt",
       );
       let updated = movedPage;
-      if (hasMetadataUpdates || !movedPage) {
+      if (hasMetadataUpdates || (!movedPage && updates.isPinned === undefined)) {
         [updated] = await db
           .update(libraryPages)
           .set({
@@ -941,6 +1007,12 @@ export async function registerLibraryRoutes(app: Express) {
           })
           .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
           .returning();
+      } else if (!updated && updates.isPinned !== undefined) {
+        [updated] = await db
+          .select()
+          .from(libraryPages)
+          .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
+          .limit(1);
       }
       if (!updated)
         return res.status(404).json({ error: "Library page not found" });
@@ -983,7 +1055,7 @@ export async function registerLibraryRoutes(app: Express) {
       }
 
       publishLibraryChanged("updated", updated);
-      res.json(updated);
+      res.json(updates.isPinned === undefined ? updated : { ...updated, isPinned: updates.isPinned });
     } catch (err: any) {
       if (err.name === "ZodError")
         return res

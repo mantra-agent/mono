@@ -149,6 +149,26 @@ export type LibraryPage = typeof libraryPages.$inferSelect;
 export type InsertLibraryPage = z.infer<typeof insertLibraryPageSchema>;
 
 /**
+ * Canonical Library pin state. A row means the page is pinned; absence means
+ * unpinned. Page ownership remains authoritative, so this sidecar is never
+ * read or mutated without crossing a principal-scoped library_pages boundary.
+ */
+export const libraryPagePins = pgTable(
+  "library_page_pins",
+  {
+    pageId: text("page_id")
+      .primaryKey()
+      .references(() => libraryPages.id, { onDelete: "cascade" }),
+    pinnedAt: timestamp("pinned_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [index("idx_library_page_pins_pinned_at").on(table.pinnedAt)],
+);
+
+export type LibraryPagePin = typeof libraryPagePins.$inferSelect;
+
+/**
  * Canonical Library Trash lifecycle state. A row means the page is trashed;
  * absence means live. A page and its descendant unit share one deleted_at,
  * preserving derivation-first restore identity without consuming another

@@ -1,8 +1,9 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { downloadPageAsMarkdown } from "@/lib/editor-utils";
@@ -31,6 +32,27 @@ const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 480;
 
 const QUIET_ROW_CLASS = "px-2 py-1.5 text-sm text-muted-foreground";
+
+function stablePartitionPinned(nodes: TreeNode[]): TreeNode[] {
+  const withOrderedChildren = nodes.map((node) => ({
+    ...node,
+    children: stablePartitionPinned(node.children),
+  }));
+  return [
+    ...withOrderedChildren.filter((node) => node.isPinned),
+    ...withOrderedChildren.filter((node) => !node.isPinned),
+  ];
+}
+
+function patchPinnedTree(nodes: TreeNode[], id: string, isPinned: boolean): TreeNode[] {
+  return stablePartitionPinned(
+    nodes.map((node) => ({
+      ...node,
+      isPinned: node.id === id ? isPinned : node.isPinned,
+      children: patchPinnedTree(node.children, id, isPinned),
+    })),
+  );
+}
 
 /**
  * Vault section header: a collapsible disclosure trigger (mirroring the Session
@@ -96,6 +118,7 @@ interface VaultTreeSectionProps {
   onDownload: (node: TreeNode) => void;
   onEnrich: (id: string) => void;
   onMove: (id: string) => void;
+  onTogglePin: (id: string, isPinned: boolean) => void;
   onReorder: (data: { id: string; parentId: string | null; sortOrder: number }) => void;
   toggleExpand: (id: string) => void;
   unreadIds: Set<string>;
@@ -113,7 +136,7 @@ interface VaultTreeSectionProps {
  */
 function VaultTreeSection({
   vault, rootNodes, selectedId, expandedIds,
-  onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onReorder, toggleExpand,
+  onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onReorder, toggleExpand,
   unreadIds, hasUnreadDescendantIds,
   open, onOpenChange, onAddPage,
 }: VaultTreeSectionProps) {
@@ -148,6 +171,7 @@ function VaultTreeSection({
             onDownload={onDownload}
             onEnrich={onEnrich}
             onMove={onMove}
+            onTogglePin={onTogglePin}
             onReorder={onReorder}
             toggleExpand={toggleExpand}
             unreadIds={unreadIds}
@@ -213,6 +237,60 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
   const { data: trashedPages = [] } = useQuery<LibraryPage[]>({
     queryKey: ["/api/info/library/trash"],
   });
+
+  const { toast } = useToast();
+  const pinMutation = useMutation({
+    mutationFn: async ({ id, isPinned }: { id: string; isPinned: boolean }) => {
+      const response = await apiRequest("PATCH", `/api/info/library/${id}`, { isPinned });
+      return response.json() as Promise<LibraryPageFull>;
+    },
+    onMutate: async ({ id, isPinned }: { id: string; isPinned: boolean }) => {
+      const listKey = ["/api/info/library"];
+      const treeKey = ["/api/info/library/tree"];
+      const detailKey = ["/api/info/library", id];
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: listKey }),
+        queryClient.cancelQueries({ queryKey: treeKey }),
+        queryClient.cancelQueries({ queryKey: detailKey }),
+      ]);
+      const snapshot = {
+        list: queryClient.getQueryData<LibraryPage[]>(listKey),
+        tree: queryClient.getQueryData<TreeNode[]>(treeKey),
+        detail: queryClient.getQueryData<LibraryPageFull>(detailKey),
+      };
+      queryClient.setQueryData<LibraryPage[]>(listKey, (old) =>
+        old?.map((page) => page.id === id ? { ...page, isPinned } : page),
+      );
+      queryClient.setQueryData<TreeNode[]>(treeKey, (old) =>
+        old ? patchPinnedTree(old, id, isPinned) : old,
+      );
+      queryClient.setQueryData<LibraryPageFull>(detailKey, (old) =>
+        old ? { ...old, isPinned } : old,
+      );
+      return snapshot;
+    },
+    onError: (error: Error, input, snapshot) => {
+      if (snapshot) {
+        queryClient.setQueryData(["/api/info/library"], snapshot.list);
+        queryClient.setQueryData(["/api/info/library/tree"], snapshot.tree);
+        queryClient.setQueryData(["/api/info/library", input.id], snapshot.detail);
+      }
+      toast({
+        title: "Failed to toggle pin",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/info/library"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/info/library/tree"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/info/library", selectedId] });
+    },
+  });
+
+  const handleTogglePin = useCallback((id: string, isPinned: boolean) => {
+    pinMutation.mutate({ id, isPinned });
+  }, [pinMutation]);
 
   const { data: unreadIdsList = [] } = useLibraryUnread();
   const unreadIds = useMemo(() => new Set(unreadIdsList), [unreadIdsList]);
@@ -575,6 +653,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                       onDownload={handleTreeDownload}
                       onEnrich={(id) => enrichMutation.mutate(id)}
                       onMove={(id) => setTreeMoveId(id)}
+                      onTogglePin={handleTogglePin}
                       onReorder={(data) => reorderMutation.mutate({ ...data, destinationVaultId: section.vault.id })}
                       toggleExpand={toggleExpand}
                       unreadIds={unreadIds}
@@ -609,6 +688,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                   onDownload={handleTreeDownload}
                   onEnrich={(id) => enrichMutation.mutate(id)}
                   onMove={(id) => setTreeMoveId(id)}
+                  onTogglePin={handleTogglePin}
                   onReorder={(data) => {
                     const destinationVaultId = data.parentId
                       ? pages.find((candidate) => candidate.id === data.parentId)?.vaultId
@@ -657,6 +737,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
               selectedId={selectedId}
               selectedPage={selectedPageFull}
               pages={pages}
+              onTogglePin={handleTogglePin}
               onDeleteRequest={(id) => deleteMutation.mutate(id)}
             />
           )

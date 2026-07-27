@@ -1281,6 +1281,13 @@ export async function runSchemaBootstrap(
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_library_pages_slug ON library_pages(slug)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_library_pages_scope_owner ON library_pages(scope, owner_user_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS library_page_pins (
+        page_id TEXT PRIMARY KEY REFERENCES library_pages(id) ON DELETE CASCADE,
+        pinned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_library_page_pins_pinned_at ON library_page_pins(pinned_at)`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS timers (
