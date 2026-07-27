@@ -2456,6 +2456,20 @@ function CompactionBoundary({
         </button>
         <div className="h-px flex-1 bg-border/60" aria-hidden="true" />
       </div>
+
+      {meta?.summary?.trim() && (
+        <div
+          className="mx-4 mb-4 border-l border-border pl-4"
+          data-testid={`text-compaction-summary-${message.id}`}
+        >
+          <div className="mb-2 text-xs font-medium text-muted-foreground">
+            Conversation summary
+          </div>
+          <div className="text-sm text-foreground/90">
+            <MarkdownContent content={meta.summary} stripTags />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
