@@ -23,6 +23,8 @@ export interface LibraryPage {
   summary: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Trash lifecycle: null/absent = live, ISO timestamp = soft-deleted. */
+  deletedAt?: string | null;
 }
 
 export interface LibraryPageFull extends LibraryPage {

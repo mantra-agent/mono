@@ -11,6 +11,7 @@ import {
   or,
   ilike,
   isNull,
+  isNotNull,
   gt,
   gte,
   lt,
@@ -152,6 +153,19 @@ function writableLibrary(req: any, predicate?: SQL): SQL {
     principalOrThrow(req),
     libraryScopeColumns,
     predicate,
+  );
+}
+
+// Trash read boundary: the inverse of visibleLibrary — only trashed pages
+// (deleted_at IS NOT NULL), still owner/account/vault scoped. Vault-visibility
+// (top-bar toggles) and vault-chip filtering are applied client-side over this
+// owner-scoped set, exactly like the live list/tree endpoints.
+function trashedLibrary(req: any, predicate?: SQL): SQL {
+  const trashed = isNotNull(libraryPages.deletedAt);
+  return combineWithVisibleScope(
+    principalOrThrow(req),
+    libraryScopeColumns,
+    predicate ? and(predicate, trashed) : trashed,
   );
 }
 
@@ -727,6 +741,40 @@ export async function registerLibraryRoutes(app: Express) {
     }
   });
 
+  // Trash: flat list of the principal's trashed pages. Returned with parent_id
+  // and vault_id so the client rebuilds the trashed forest (subtrees render
+  // intact), shows source-vault chips, and applies top-bar vault visibility +
+  // in-Trash vault filtering. Registered before `/:id` so "trash" is not
+  // captured as a page id.
+  app.get("/api/info/library/trash", async (req, res) => {
+    try {
+      const rows = await db
+        .select({
+          id: libraryPages.id,
+          pageId: libraryPages.pageId,
+          title: libraryPages.title,
+          slug: libraryPages.slug,
+          parentId: libraryPages.parentId,
+          tags: libraryPages.tags,
+          emoji: libraryPages.emoji,
+          oneLiner: libraryPages.oneLiner,
+          summary: libraryPages.summary,
+          vaultId: libraryPages.vaultId,
+          structuralRole: libraryPages.structuralRole,
+          scope: libraryPages.scope,
+          createdAt: libraryPages.createdAt,
+          updatedAt: libraryPages.updatedAt,
+          deletedAt: libraryPages.deletedAt,
+        })
+        .from(libraryPages)
+        .where(trashedLibrary(req))
+        .orderBy(desc(libraryPages.deletedAt), asc(libraryPages.title));
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.patch("/api/info/library/:id/read", async (req, res) => {
     try {
       const pageId = req.params.id;
@@ -1162,6 +1210,32 @@ export async function registerLibraryRoutes(app: Express) {
         return res.status(404).json({ error: "Library page not found" });
       publishLibraryChanged("deleted", { id: page.id, title: page.title });
       res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Restore a trashed page (and its trashed subtree unit) back to the live
+  // Library. Delegates to the canonical restoreLibrarySubtree mutation, which
+  // clears deleted_at across the unit and returns the root to its original
+  // parent (or the source vault root when that parent is gone).
+  app.post("/api/info/library/:id/restore", async (req, res) => {
+    try {
+      const [page] = await db
+        .select({ id: libraryPages.id, title: libraryPages.title })
+        .from(libraryPages)
+        .where(trashedLibrary(req, eq(libraryPages.id, req.params.id)));
+      if (!page)
+        return res.status(404).json({ error: "Trashed Library page not found" });
+      const { restoreLibrarySubtree } = await import("../library-domain");
+      const { restoredCount } = await restoreLibrarySubtree(
+        principalOrThrow(req),
+        page.id,
+      );
+      if (restoredCount === 0)
+        return res.status(404).json({ error: "Trashed Library page not found" });
+      publishLibraryChanged("restored", { id: page.id, title: page.title });
+      res.json({ ok: true, restoredCount });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
