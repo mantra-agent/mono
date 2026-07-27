@@ -30,14 +30,18 @@ function newModelId(): string {
   return randomBytes(8).toString("hex");
 }
 
-function mapModel(row: typeof financialModels.$inferSelect): FinancialModel {
+function mapModel(row: typeof financialModels.$inferSelect, assumptions = normalizeAssumptions(row.assumptions)): FinancialModel {
   return {
     id: row.id,
     name: row.name,
-    assumptions: normalizeAssumptions(row.assumptions),
+    assumptions,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function needsNormalization(row: typeof financialModels.$inferSelect, normalized: ReturnType<typeof normalizeAssumptions>): boolean {
+  return JSON.stringify(row.assumptions) !== JSON.stringify(normalized);
 }
 
 export class BusinessModelStorage {
@@ -60,7 +64,23 @@ export class BusinessModelStorage {
    */
   async getOrCreate(): Promise<FinancialModel> {
     const existing = await this.firstVisible();
-    if (existing) return mapModel(existing);
+    if (existing) {
+      const principal = getCurrentPrincipalOrSystem();
+      const normalized = normalizeAssumptions(existing.assumptions);
+      if (needsNormalization(existing, normalized)) {
+        const rows = await db
+          .update(financialModels)
+          .set({ assumptions: normalized, updatedAt: new Date() })
+          .where(combineWithWritableScope(principal, modelScope, eq(financialModels.id, existing.id)))
+          .returning();
+        const updated = rows[0];
+        if (updated) {
+          log.info("normalized financial model assumptions", { modelId: updated.id, modelVersion: normalized.modelVersion });
+          return mapModel(updated, normalized);
+        }
+      }
+      return mapModel(existing, normalized);
+    }
 
     const principal = getCurrentPrincipalOrSystem();
     const now = new Date();
