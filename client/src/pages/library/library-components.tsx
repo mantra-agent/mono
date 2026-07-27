@@ -463,16 +463,21 @@ export function TrashSection({
   onOpenChange,
   onRestore,
   restorePendingId,
+  onEmptyTrash,
+  emptyTrashPending,
 }: {
   trashedPages: LibraryPage[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onRestore: (id: string) => void;
   restorePendingId: string | null;
+  onEmptyTrash: (ids: string[]) => void;
+  emptyTrashPending: boolean;
 }) {
   const { resolveVaultId, isVaultEnabled } = useVisibleVaults();
   const { vaults } = useVaults();
   const [vaultFilter, setVaultFilter] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const vaultById = useMemo(() => new Map(vaults.map((v) => [v.id, v])), [vaults]);
 
@@ -542,6 +547,22 @@ export function TrashSection({
           <div className={TRASH_QUIET_ROW_CLASS}>Trash is empty.</div>
         ) : (
           <>
+            <div className="flex items-center justify-end px-2 py-1">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(true)}
+                disabled={emptyTrashPending}
+                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                data-testid="button-empty-trash"
+              >
+                {emptyTrashPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3 w-3" />
+                )}
+                Empty Trash
+              </button>
+            </div>
             {chipVaultIds.length > 1 && (
               <div className="flex flex-wrap gap-1 px-2 py-1.5">
                 {chipVaultIds.map((vid) => {
@@ -580,6 +601,46 @@ export function TrashSection({
           </>
         )}
       </CollapsibleContent>
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(o) => {
+          if (!emptyTrashPending) setConfirmOpen(o);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Empty Trash</DialogTitle>
+            <DialogDescription>
+              Permanently delete {totalCount} {totalCount === 1 ? "page" : "pages"}? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirmOpen(false)}
+              disabled={emptyTrashPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                onEmptyTrash(visibleTrashed.map((p) => p.id));
+                setConfirmOpen(false);
+              }}
+              disabled={emptyTrashPending || totalCount === 0}
+              data-testid="button-confirm-empty-trash"
+            >
+              {emptyTrashPending ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              Delete {totalCount}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Collapsible>
   );
 }

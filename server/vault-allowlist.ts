@@ -47,6 +47,10 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
   // Backup — system-level data export needs to see all vaults
   "backup",
 
+  // Library trash 30-day auto-purge — nightly cross-vault maintenance that
+  // permanently destroys pages past the retention horizon for every user.
+  "library-trash-purge",
+
   // Brain export/import — full data portability
   "brain-export",
   "brain-import",

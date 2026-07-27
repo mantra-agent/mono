@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { acquireLibraryParentLocks, db } from "./db";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
+import { createNamedSystemPrincipal } from "./principal";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import {
   combineWithVisibleScope,
@@ -635,4 +636,134 @@ export async function restoreLibrarySubtree(
       restoredIds: restored.map((row) => row.id),
     };
   });
+}
+
+const HARD_DELETE_BATCH = 500;
+
+/**
+ * Retention horizon for the Library trash auto-purge. Pages soft-deleted longer
+ * ago than this are permanently destroyed by the nightly sweep.
+ */
+export const LIBRARY_TRASH_RETENTION_DAYS = 30;
+
+/**
+ * Canonical, irreversible hard-delete for Library pages. This is the SINGLE
+ * destruction path shared by the user-triggered Empty Trash action and the
+ * nightly 30-day auto-purge (DRY — the destruction logic exists exactly once).
+ *
+ * Blast-radius POLICY lives with each caller, never here:
+ *   - Empty Trash passes the exact VISIBLE trashed set (top-bar vault toggles +
+ *     active vault chip), re-validated by the route to trashed rows.
+ *   - Auto-purge passes every page whose deleted_at crossed the retention
+ *     horizon, across all users and vaults, under a system principal.
+ *
+ * This function only ever destroys rows that are (a) in the id set it is given,
+ * (b) writable by the principal (writable scope — a user can never destroy
+ * another user's row; a system principal spans all owners), and (c) already
+ * soft-deleted. The `deleted_at IS NOT NULL` guard is structural: the canonical
+ * destruction path can never hard-delete a live page, regardless of caller.
+ *
+ * Cleanup, with no dangling references:
+ *   - library_pages rows — FK ON DELETE CASCADE removes library_page_links,
+ *     library_placements, library_annotations, and library_page_views; self
+ *     parent_id and placement parent_page_id are ON DELETE SET NULL.
+ *   - vNext provenance for source_type='library_page' (queue rows + claim source
+ *     refs), retiring any claim orphaned by losing its final source.
+ *   - The legacy memory_entries mirror is retired and no longer maintained
+ *     (memory_entry_id is NULL for current pages), so it is intentionally not
+ *     touched here.
+ *
+ * @page references embedded in other pages' content are not FK rows; once the
+ * target page row is gone they resolve as unavailable at render time.
+ *
+ * Deletes are bounded and batched.
+ */
+export async function hardDeleteLibraryPages(
+  principal: Principal,
+  pageIds: string[],
+): Promise<{ deletedCount: number; deletedIds: string[] }> {
+  const uniqueIds = [...new Set(pageIds)].filter(Boolean);
+  if (uniqueIds.length === 0) return { deletedCount: 0, deletedIds: [] };
+
+  const deletedIds: string[] = [];
+  for (let i = 0; i < uniqueIds.length; i += HARD_DELETE_BATCH) {
+    const batch = uniqueIds.slice(i, i + HARD_DELETE_BATCH);
+    const deleted = await db
+      .delete(libraryPages)
+      .where(
+        combineWithWritableScope(
+          principal,
+          libraryScopeColumns,
+          and(
+            inArray(libraryPages.id, batch),
+            isNotNull(libraryPages.deletedAt),
+          ),
+        ),
+      )
+      .returning({ id: libraryPages.id });
+    for (const row of deleted) deletedIds.push(row.id);
+  }
+
+  if (deletedIds.length === 0) return { deletedCount: 0, deletedIds: [] };
+
+  // Tear down vNext provenance derived from these pages (queue rows + claim
+  // source refs + orphan claims), mirroring the canonical session-source
+  // removal. Isolated so a provenance-cleanup failure never resurrects the
+  // already-destroyed pages; the vNext lifecycle tolerates missing sources.
+  try {
+    const { removeLibraryPageSources } = await import(
+      "./memory/vnext-source-queue"
+    );
+    await removeLibraryPageSources(deletedIds, principal);
+  } catch (err) {
+    log.error(
+      `[hardDelete] vNext provenance cleanup failed for ${deletedIds.length} pages: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  log.info("Hard-deleted Library pages", {
+    requested: uniqueIds.length,
+    deletedCount: deletedIds.length,
+  });
+  return { deletedCount: deletedIds.length, deletedIds };
+}
+
+/**
+ * Nightly auto-purge: permanently destroy every Library page whose deleted_at
+ * crossed the {@link LIBRARY_TRASH_RETENTION_DAYS} horizon, across ALL users and
+ * ALL vaults, under an audited named system principal.
+ *
+ * CRITICAL distinction from Empty Trash: auto-purge has NO "visible set."
+ * Vault-visibility toggles are a UI-session concept, never page state, so the
+ * selection is strictly by age — there is no vault or visibility predicate. The
+ * destruction itself routes through the shared {@link hardDeleteLibraryPages}
+ * path. The sweep is idempotent (already-purged rows are gone) and batched, so
+ * concurrent per-user sleep cycles are safe.
+ */
+export async function purgeExpiredLibraryTrash(): Promise<{
+  purgedCount: number;
+}> {
+  const systemPrincipal = createNamedSystemPrincipal("library-trash-purge");
+  const expired = await db
+    .select({ id: libraryPages.id })
+    .from(libraryPages)
+    .where(
+      and(
+        isNotNull(libraryPages.deletedAt),
+        sql`${libraryPages.deletedAt} < now() - (${LIBRARY_TRASH_RETENTION_DAYS} * interval '1 day')`,
+      ),
+    )
+    .limit(HARD_DELETE_BATCH * 20);
+  if (expired.length === 0) return { purgedCount: 0 };
+
+  const { deletedCount } = await hardDeleteLibraryPages(
+    systemPrincipal,
+    expired.map((row) => row.id),
+  );
+  log.info("Library trash auto-purge complete", {
+    scanned: expired.length,
+    purgedCount: deletedCount,
+    retentionDays: LIBRARY_TRASH_RETENTION_DAYS,
+  });
+  return { purgedCount: deletedCount };
 }

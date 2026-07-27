@@ -147,6 +147,31 @@ export async function runFullSleepCycle(options?: { includeGSI?: boolean }): Pro
           log.error(`[Sleep] GSI computation failed: ${msg}`);
         }
       }
+
+      // Phase 4: Library trash 30-day auto-purge. Global maintenance under an
+      // audited system principal — permanently destroys pages past the retention
+      // horizon across ALL users and vaults, strictly by age (no visible-set /
+      // vault-toggle concept). Idempotent and batched, so concurrent per-user
+      // sleep cycles are safe. Independent of the memory-graph phases above.
+      if (globalController.signal.aborted) {
+        timedOut = true;
+        throw new Error("Global sleep cycle timeout");
+      }
+      await waitForBackpressure("library-trash-purge");
+      logPoolHealth("pre-library-trash-purge");
+      try {
+        const { purgeExpiredLibraryTrash } = await import("./library-domain");
+        phaseStart = Date.now();
+        const purge = await purgeExpiredLibraryTrash();
+        phaseDurations.libraryTrashPurge = Date.now() - phaseStart;
+        log.log(`[Sleep] Library trash auto-purge: purged=${purge.purgedCount}`);
+      } catch (purgeErr: unknown) {
+        phaseDurations.libraryTrashPurge = Date.now() - phaseStart;
+        const msg =
+          purgeErr instanceof Error ? purgeErr.message : String(purgeErr);
+        errors.push(`library-trash-purge: ${msg}`);
+        log.error(`[Sleep] Library trash auto-purge failed: ${msg}`);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("Global sleep cycle timeout")) {

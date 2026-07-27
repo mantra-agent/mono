@@ -1241,6 +1241,49 @@ export async function registerLibraryRoutes(app: Express) {
     }
   });
 
+  // Empty Trash: permanently hard-delete a set of trashed pages. This is the
+  // ONLY irreversible, user-triggered destruction endpoint, and the counted
+  // confirmation gate lives in the client. The blast radius is the EXACT visible
+  // trashed set the client is showing (top-bar vault toggles + active vault
+  // chip), passed as pageIds — pages in toggled-off vaults are never included by
+  // the client, so "you can only permanently destroy what you can currently
+  // see." The server independently constrains destruction to rows that are
+  // actually trashed AND owned (trashedLibrary scope), then routes through the
+  // canonical hardDeleteLibraryPages path, which additionally enforces writable
+  // scope and deleted_at IS NOT NULL.
+  app.post("/api/info/library/trash/empty", async (req, res) => {
+    try {
+      const parsed = z
+        .object({ pageIds: z.array(z.string().min(1)).max(5000) })
+        .parse(req.body ?? {});
+      if (parsed.pageIds.length === 0) {
+        return res.json({ ok: true, deletedCount: 0 });
+      }
+      // Re-validate the requested ids to this owner's trashed rows only.
+      const targets = await db
+        .select({ id: libraryPages.id })
+        .from(libraryPages)
+        .where(trashedLibrary(req, inArray(libraryPages.id, parsed.pageIds)));
+      const ids = targets.map((row) => row.id);
+      if (ids.length === 0) {
+        return res.json({ ok: true, deletedCount: 0 });
+      }
+      const { hardDeleteLibraryPages } = await import("../library-domain");
+      const { deletedCount } = await hardDeleteLibraryPages(
+        principalOrThrow(req),
+        ids,
+      );
+      publishLibraryChanged("purged");
+      res.json({ ok: true, deletedCount });
+    } catch (err: any) {
+      if (err.name === "ZodError")
+        return res
+          .status(400)
+          .json({ error: "Invalid input", details: err.errors });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ─── Share toggle ────────────────────────────────────────────────────
 
   app.patch("/api/info/library/:id/share", async (req, res) => {
