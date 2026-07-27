@@ -12,6 +12,7 @@ export interface EventMetadataRecord {
   googleEventId: string;
   accountId: string;
   calendarId: string;
+  vaultId: string | null;
   eventType: string | null;
   capacityType: string | null;
   notes: string | null;
@@ -55,12 +56,14 @@ export interface EventMetadataQueryData {
   metadata: EventMetadataRecord | null;
   people: LinkedPersonRef[];
   artifacts: LinkedArtifactRef[];
+  ownerVaultId: string | null;
 }
 
 const EMPTY_EVENT_METADATA: EventMetadataQueryData = {
   metadata: null,
   people: [],
   artifacts: [],
+  ownerVaultId: null,
 };
 
 export function eventMetadataQueryKey(
@@ -91,6 +94,7 @@ export function useEventMetadata(
         metadata: data.metadata ?? null,
         people: data.people ?? [],
         artifacts: data.artifacts ?? [],
+        ownerVaultId: data.ownerVaultId ?? data.metadata?.vaultId ?? null,
       };
     },
     enabled,

@@ -16,6 +16,7 @@ import { storage } from "../storage";
 export interface MeetingOwnerIdentity {
   ownerUserId: string;
   accountId: string;
+  vaultId?: string;
 }
 
 /**
@@ -44,13 +45,24 @@ export async function runWithMeetingOwnerIdentity<T>(
     if (current.userId !== identity.ownerUserId || current.accountId !== identity.accountId) {
       throw new Error("Meeting session is not owned by the current principal");
     }
-    return operation();
+    if (identity.vaultId && !current.visibleVaultIds.includes(identity.vaultId)) {
+      throw new Error("Meeting Vault is not visible to the current principal");
+    }
+    return identity.vaultId
+      ? runWithPrincipal({ ...current, activeVaultId: identity.vaultId, visibleVaultIds: [identity.vaultId] }, operation)
+      : operation();
   }
 
   const user = await storage.getUser(identity.ownerUserId);
   if (!user) throw new Error(`Meeting owner ${identity.ownerUserId} not found`);
+  const ownerPrincipal = createUserPrincipalFromUser(user, identity.accountId);
+  if (identity.vaultId && !ownerPrincipal.visibleVaultIds.includes(identity.vaultId)) {
+    throw new Error("Meeting Vault is not visible to its owner");
+  }
   return runWithPrincipal(
-    createUserPrincipalFromUser(user, identity.accountId),
+    identity.vaultId
+      ? { ...ownerPrincipal, activeVaultId: identity.vaultId, visibleVaultIds: [identity.vaultId] }
+      : ownerPrincipal,
     operation,
   );
 }
@@ -66,7 +78,7 @@ export async function runWithMeetingOwnerPrincipal<T>(
       `Meeting owner context is incomplete: ownerUserId=${ownerUserId ?? "none"} accountId=${accountId ?? "none"}`,
     );
   }
-  return runWithMeetingOwnerIdentity({ ownerUserId, accountId }, operation);
+  return runWithMeetingOwnerIdentity({ ownerUserId, accountId, vaultId: meeting.vaultId }, operation);
 }
 
 /** True when the authenticated user principal owns this meeting session. */

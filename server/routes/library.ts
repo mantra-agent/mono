@@ -780,6 +780,21 @@ export async function registerLibraryRoutes(app: Express) {
       const setData: Partial<typeof libraryPages.$inferInsert> & {
         updatedAt: Date;
       } = { updatedAt: new Date() };
+      const [existingPage] = await db
+        .select({ tags: libraryPages.tags })
+        .from(libraryPages)
+        .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
+        .limit(1);
+      if (!existingPage) return res.status(404).json({ error: "Library page not found" });
+      const systemManaged = existingPage.tags.includes("system-folder");
+      if (systemManaged && (
+        updates.title !== undefined
+        || updates.parentId !== undefined
+        || updates.tags !== undefined
+        || updates.structuralRole !== undefined
+      )) {
+        return res.status(403).json({ error: "System-managed Library structure cannot be renamed, moved, or reclassified." });
+      }
       if (updates.title !== undefined) {
         setData.title = updates.title;
         setData.slug = slugify(updates.title);
