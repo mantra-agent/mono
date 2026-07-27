@@ -29,7 +29,7 @@ function principalCacheKey(): string {
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
 }
 
-function invalidateCalendarCache(): void {
+export function invalidateCalendarCache(): void {
   _calendarCache.invalidateAll();
   eventBus.publish({ category: "system", event: "data:calendar_changed", payload: { source: "calendar_metadata" } });
 }
