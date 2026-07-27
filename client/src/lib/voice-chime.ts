@@ -136,8 +136,8 @@ function closeThinkingLoop(loop: ThinkingLoop, immediate: boolean): void {
 }
 
 /**
- * Starts the restrained polyrhythmic glass-and-air thinking texture. The caller
- * owns onset and speech gating; this producer owns one loop source and teardown.
+ * Starts the restrained soft-digital-typing texture. The caller owns onset and
+ * speech gating; this producer owns one loop source and teardown.
  */
 export function startVoiceThinkingLoop(): void {
   if (thinkingLoop) return;

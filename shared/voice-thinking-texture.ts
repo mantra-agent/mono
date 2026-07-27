@@ -8,113 +8,127 @@ export interface VoiceThinkingTextureOptions {
   targetPeak: number;
 }
 
-type RhythmLayer = {
-  intervalSeconds: number;
-  offsetSeconds: number;
+type TypingTap = {
+  timeSeconds: number;
   gain: number;
-  frequencyScale: number;
-  pattern: readonly number[];
 };
 
-const GLASS_FREQUENCIES = [560, 720, 930, 1210] as const;
-const RHYTHM_LAYERS: readonly RhythmLayer[] = [
-  {
-    intervalSeconds: 0.7,
-    offsetSeconds: 0,
-    gain: 0.34,
-    frequencyScale: 1,
-    pattern: [0, 1, 2, 1, 3, 2, 0, 2, 1, 3, 2, 1],
-  },
-  {
-    intervalSeconds: 0.84,
-    offsetSeconds: 0.28,
-    gain: 0.23,
-    frequencyScale: 1.08,
-    pattern: [2, 0, 1, 3, 1, 2, 0, 3, 2, 1],
-  },
+type NoisePacketOptions = {
+  startSeconds: number;
+  durationSeconds: number;
+  gain: number;
+  lowCutoffHz: number;
+  highCutoffHz: number;
+  holdRateHz: number;
+  seed: number;
+};
+
+const TYPING_TAPS: readonly TypingTap[] = [
+  { timeSeconds: 0.14, gain: 0.78 },
+  { timeSeconds: 0.32, gain: 0.64 },
+  { timeSeconds: 0.57, gain: 0.82 },
+  { timeSeconds: 0.73, gain: 0.58 },
+  { timeSeconds: 1.16, gain: 0.88 },
+  { timeSeconds: 1.34, gain: 0.67 },
+  { timeSeconds: 1.65, gain: 0.75 },
+  { timeSeconds: 1.88, gain: 0.62 },
+  { timeSeconds: 2.07, gain: 0.8 },
+  { timeSeconds: 2.52, gain: 0.71 },
+  { timeSeconds: 2.68, gain: 0.57 },
+  { timeSeconds: 2.97, gain: 0.84 },
+  { timeSeconds: 3.19, gain: 0.65 },
+  { timeSeconds: 3.72, gain: 0.9 },
+  { timeSeconds: 3.88, gain: 0.61 },
+  { timeSeconds: 4.14, gain: 0.76 },
+  { timeSeconds: 4.33, gain: 0.56 },
+  { timeSeconds: 4.62, gain: 0.81 },
+  { timeSeconds: 5.08, gain: 0.7 },
+  { timeSeconds: 5.25, gain: 0.59 },
+  { timeSeconds: 5.58, gain: 0.87 },
+  { timeSeconds: 5.76, gain: 0.63 },
+  { timeSeconds: 5.98, gain: 0.77 },
+  { timeSeconds: 6.44, gain: 0.83 },
+  { timeSeconds: 6.65, gain: 0.6 },
+  { timeSeconds: 6.82, gain: 0.72 },
+  { timeSeconds: 7.13, gain: 0.66 },
+  { timeSeconds: 7.62, gain: 0.86 },
+  { timeSeconds: 7.79, gain: 0.58 },
+  { timeSeconds: 8.08, gain: 0.74 },
 ] as const;
 
-function createPeriodicNoise(frameCount: number): Float32Array {
-  const noise = new Float32Array(frameCount);
-  let state = 0x4d414e54;
-  for (let index = 0; index < frameCount; index += 1) {
-    state = (state * 1664525 + 1013904223) >>> 0;
-    noise[index] = state / 0xffffffff * 2 - 1;
-  }
-  return noise;
+function nextNoise(state: number): [number, number] {
+  const nextState = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+  return [nextState / 0x100000000 * 2 - 1, nextState];
 }
 
-function circularMovingAverage(source: Float32Array, windowSize: number): Float32Array {
-  const length = source.length;
-  const size = Math.max(1, Math.min(length, Math.round(windowSize)));
-  const output = new Float32Array(length);
-  let sum = 0;
-
-  for (let index = length - size; index < length; index += 1) {
-    sum += source[index];
-  }
-  for (let index = 0; index < length; index += 1) {
-    sum += source[index] - source[(index - size + length) % length];
-    output[index] = sum / size;
-  }
-  return output;
+function smoothingAlpha(cutoffHz: number, sampleRate: number): number {
+  const boundedCutoff = Math.max(1, Math.min(sampleRate * 0.45, cutoffHz));
+  return 1 - Math.exp(-TAU * boundedCutoff / sampleRate);
 }
 
-function renderCircularAir(samples: Float32Array, sampleRate: number): void {
-  const noise = createPeriodicNoise(samples.length);
-  const fast = circularMovingAverage(noise, sampleRate / 2100);
-  const slow = circularMovingAverage(noise, sampleRate / 310);
-
-  for (let index = 0; index < samples.length; index += 1) {
-    const loopPhase = index / samples.length;
-    const breath = 0.72
-      + Math.sin(TAU * (loopPhase * 5 + 0.11)) * 0.16
-      + Math.sin(TAU * (loopPhase * 6 + 0.43)) * 0.1;
-    samples[index] = (fast[index] - slow[index]) * breath * 0.24;
-  }
-}
-
-function addGlassEvent(
+function addNoisePacket(
   samples: Float32Array,
   sampleRate: number,
-  startSeconds: number,
-  frequency: number,
-  gain: number,
-  phase: number,
+  options: NoisePacketOptions,
 ): void {
-  const durationFrames = Math.round(sampleRate * 0.56);
-  const startFrame = Math.round(startSeconds * sampleRate) % samples.length;
+  const durationFrames = Math.max(1, Math.round(sampleRate * options.durationSeconds));
+  const startFrame = Math.round(options.startSeconds * sampleRate) % samples.length;
+  const holdFrames = Math.max(1, Math.round(sampleRate / options.holdRateHz));
+  const lowAlpha = smoothingAlpha(options.lowCutoffHz, sampleRate);
+  const highAlpha = smoothingAlpha(options.highCutoffHz, sampleRate);
+  const releaseFrames = Math.max(1, Math.round(sampleRate * 0.014));
+  let state = options.seed >>> 0;
+  let heldNoise = 0;
+  let low = 0;
+  let high = 0;
 
   for (let offset = 0; offset < durationFrames; offset += 1) {
+    if (offset % holdFrames === 0) [heldNoise, state] = nextNoise(state);
+    low += lowAlpha * (heldNoise - low);
+    high += highAlpha * (heldNoise - high);
+
     const time = offset / sampleRate;
-    const attack = Math.min(1, time / 0.012);
-    const release = Math.min(1, (durationFrames - offset) / (sampleRate * 0.04));
-    const envelope = attack * release * Math.exp(-time * 7.2);
-    const glass = Math.sin(TAU * frequency * time + phase)
-      + Math.sin(TAU * frequency * 1.4142 * time + phase * 1.7) * 0.43
-      + Math.sin(TAU * frequency * 2.08 * time + phase * 0.61) * 0.2;
+    const attackProgress = Math.min(1, time / 0.0035);
+    const attack = attackProgress * attackProgress * (3 - 2 * attackProgress);
+    const release = Math.min(1, (durationFrames - offset) / releaseFrames);
+    const envelope = attack * release * Math.exp(-time * 38);
     const frame = (startFrame + offset) % samples.length;
-    samples[frame] += glass * envelope * gain;
+    samples[frame] += (high - low) * envelope * options.gain;
   }
 }
 
-function renderGlassLattices(samples: Float32Array, sampleRate: number): void {
-  const loopSeconds = samples.length / sampleRate;
-  RHYTHM_LAYERS.forEach((layer, layerIndex) => {
-    for (let eventIndex = 0; ; eventIndex += 1) {
-      const startSeconds = layer.offsetSeconds + eventIndex * layer.intervalSeconds;
-      if (startSeconds >= loopSeconds) break;
-      const pitchIndex = layer.pattern[eventIndex % layer.pattern.length];
-      const accent = 0.82 + ((eventIndex * 3 + layerIndex) % 5) * 0.045;
-      addGlassEvent(
-        samples,
-        sampleRate,
-        startSeconds,
-        GLASS_FREQUENCIES[pitchIndex] * layer.frequencyScale,
-        layer.gain * accent,
-        (eventIndex + layerIndex * 0.37) * 0.71,
-      );
-    }
+function addTypingTap(
+  samples: Float32Array,
+  sampleRate: number,
+  tap: TypingTap,
+  tapIndex: number,
+): void {
+  const seed = (0x4d414e54 ^ Math.imul(tapIndex + 1, 0x9e3779b1)) >>> 0;
+  addNoisePacket(samples, sampleRate, {
+    startSeconds: tap.timeSeconds,
+    durationSeconds: 0.082,
+    gain: tap.gain,
+    lowCutoffHz: 320,
+    highCutoffHz: 2800,
+    holdRateHz: 9200,
+    seed,
+  });
+
+  const digitalOffset = 0.017 + (tapIndex % 4) * 0.002;
+  addNoisePacket(samples, sampleRate, {
+    startSeconds: tap.timeSeconds + digitalOffset,
+    durationSeconds: 0.046,
+    gain: tap.gain * 0.24,
+    lowCutoffHz: 1100,
+    highCutoffHz: 4600,
+    holdRateHz: 12800,
+    seed: seed ^ 0xa5a5a5a5,
+  });
+}
+
+function renderSoftDigitalTyping(samples: Float32Array, sampleRate: number): void {
+  TYPING_TAPS.forEach((tap, tapIndex) => {
+    addTypingTap(samples, sampleRate, tap, tapIndex);
   });
 }
 
@@ -135,9 +149,9 @@ function normalizeTexture(samples: Float32Array, targetPeak: number): Float32Arr
 }
 
 /**
- * Renders one seamless thinking loop: a quiet circular air bed beneath two
- * interlocking 5:6 glass lattices. The stepped resonances imply motion without
- * resolving into a tune, and deterministic rendering keeps web/native parity.
+ * Renders one seamless thinking loop as irregular clusters of soft broadband
+ * taps. Each tap has a quieter pixel-like afterstroke, suggesting digital work
+ * without oscillators, melody, a fixed beat, or a continuous drone.
  */
 export function renderVoiceThinkingTexture({
   sampleRate,
@@ -148,7 +162,6 @@ export function renderVoiceThinkingTexture({
   if (!Number.isFinite(frameCount) || frameCount <= 0) return new Float32Array(0);
 
   const samples = new Float32Array(Math.floor(frameCount));
-  renderCircularAir(samples, sampleRate);
-  renderGlassLattices(samples, sampleRate);
+  renderSoftDigitalTyping(samples, sampleRate);
   return normalizeTexture(samples, Math.max(0, Math.min(1, targetPeak)));
 }
