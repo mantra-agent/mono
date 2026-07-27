@@ -3,6 +3,7 @@ import { requireAuth } from "./auth";
 import { businessModelStorage } from "./business-model-storage";
 import { assumptionsPatchSchema } from "@shared/models/business-model";
 import { createLogger } from "./log";
+import { requirePermission } from "./permissions";
 
 const log = createLogger("BusinessModelRoutes");
 
@@ -10,7 +11,7 @@ export function registerBusinessModelRoutes(app: Express): void {
   app.use("/api/business", requireAuth);
 
   // GET → get-or-create the principal's model with default assumptions.
-  app.get("/api/business/model", async (_req, res) => {
+  app.get("/api/business/model", requirePermission("system:read"), async (_req, res) => {
     try {
       res.json(await businessModelStorage.getOrCreate());
     } catch (error) {
@@ -20,7 +21,7 @@ export function registerBusinessModelRoutes(app: Express): void {
   });
 
   // PATCH → zod-validated partial assumptions update (omitted fields unchanged).
-  app.patch("/api/business/model", async (req, res) => {
+  app.patch("/api/business/model", requirePermission("system:write"), async (req, res) => {
     try {
       const patch = assumptionsPatchSchema.parse(req.body ?? {});
       res.json(await businessModelStorage.updateAssumptions(patch));

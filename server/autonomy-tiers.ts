@@ -45,6 +45,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   intentions: { default: 0 },
   tasks: { default: 1 },
   work: { default: 1, actions: { status: 0, list_projects: 0, get_project: 0, list_tasks: 0, read_file: 0 } },
+  jobs: { default: 1, actions: { list: 0, get: 0 } },
   decisions: { default: 1, actions: { list: 0, get: 0 } },
   strategy: { default: 1, actions: {
     list_strategies: 0, get_strategy: 0, get_move_tree: 0, get_move: 0, get_move_path: 0,

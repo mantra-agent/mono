@@ -6435,6 +6435,34 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_financial_models_account ON financial_models(account_id) WHERE account_id IS NOT NULL`);
   });
 
+  await heal("job roles domain", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS job_roles (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        normalized_title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        team TEXT NOT NULL,
+        annual_salary_min INTEGER NOT NULL DEFAULT 0,
+        annual_salary_max INTEGER NOT NULL DEFAULT 0,
+        target_bonus_percent REAL NOT NULL DEFAULT 0,
+        equity_share_count INTEGER NOT NULL DEFAULT 0,
+        scope TEXT NOT NULL DEFAULT 'user',
+        owner_user_id TEXT,
+        account_id TEXT,
+        created_by_user_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT job_roles_salary_range CHECK (annual_salary_min >= 0 AND annual_salary_max >= annual_salary_min),
+        CONSTRAINT job_roles_bonus_range CHECK (target_bonus_percent >= 0 AND target_bonus_percent <= 1000),
+        CONSTRAINT job_roles_equity_range CHECK (equity_share_count >= 0)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_roles_scope_owner ON job_roles(scope, owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_job_roles_account_team_title ON job_roles(account_id, team, normalized_title)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_job_roles_account_title ON job_roles(account_id, normalized_title) WHERE account_id IS NOT NULL`);
+  });
+
   // Backfill media items from S3 — idempotent, safe to run on every startup
   try {
     const { backfillMediaFromStorage } = await import("./media/media-storage");

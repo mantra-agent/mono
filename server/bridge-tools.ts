@@ -10194,6 +10194,55 @@ ${refs}` : ""),
       return { result: `Sentry ${action} failed: ${msg}`, error: true };
     }
   },
+  async jobs(args: Record<string, any>): Promise<ToolHandlerResult> {
+    const action = String(args.action || "");
+    try {
+      const { jobRoleStorage } = await import("./job-role-storage");
+      const { jobRoleCreateSchema, jobRoleUpdateSchema } = await import("@shared/models/job-roles");
+      switch (action) {
+        case "list":
+          return { result: JSON.stringify({ roles: await jobRoleStorage.list({ query: args.query, limit: args.limit }) }, null, 2) };
+        case "get":
+          if (!args.id) return { result: "Missing 'id' parameter", error: true };
+          return { result: JSON.stringify(await jobRoleStorage.get(String(args.id)), null, 2) };
+        case "create": {
+          const input = jobRoleCreateSchema.parse({
+            title: args.title,
+            description: args.description ?? "",
+            team: args.team ?? "Engineering",
+            annualSalaryMin: args.annualSalaryMin ?? 0,
+            annualSalaryMax: args.annualSalaryMax ?? 0,
+            targetBonusPercent: args.targetBonusPercent ?? 0,
+            equityShareCount: args.equityShareCount ?? 0,
+          });
+          const role = await jobRoleStorage.create(input);
+          return { result: JSON.stringify(role, null, 2) };
+        }
+        case "update": {
+          if (!args.id) return { result: "Missing 'id' parameter", error: true };
+          const patch = jobRoleUpdateSchema.parse(Object.fromEntries(
+            ["title", "description", "team", "annualSalaryMin", "annualSalaryMax", "targetBonusPercent", "equityShareCount", "clearFields"]
+              .filter((key) => args[key] !== undefined)
+              .map((key) => [key, args[key]]),
+          ));
+          const role = await jobRoleStorage.update(String(args.id), patch);
+          return { result: JSON.stringify(role, null, 2) };
+        }
+        case "delete": {
+          if (!args.id) return { result: "Missing 'id' parameter", error: true };
+          const role = await jobRoleStorage.delete(String(args.id));
+          return { result: JSON.stringify({ deleted: true, role }, null, 2) };
+        }
+        default:
+          return { result: `Unknown jobs action: ${action}. Available: list, get, create, update, delete`, error: true };
+      }
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      const message = code === "23505" ? "A role with this title already exists" : error instanceof Error ? error.message : String(error);
+      return { result: `Jobs ${action || "operation"} failed: ${message}`, error: true };
+    }
+  },
+
   async tasks(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = args.action;
     if (!action) return { result: "Missing action parameter", error: true };
@@ -15771,6 +15820,7 @@ function validateToolArgs(
 const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   session: new Set(["set_status", "end", "send_message"]),
   companies: new Set(["create", "update", "delete", "add_person", "remove_person", "add_opportunity", "remove_opportunity"]),
+  jobs: new Set(["create", "update", "delete"]),
   people: new Set(["create", "update", "merge", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact", "add_vault_membership", "remove_vault_membership", "set_vault_memberships"]),
   calendar: new Set(["create", "update", "delete"]),
   memory: new Set(["write"]),
