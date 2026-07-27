@@ -802,6 +802,7 @@ export const ADVISORY_LOCK_NS = {
   COMPACTION_OPERATION: 0x434f4d50, // 'COMP' — serializes one scoped compaction claim
   CALENDAR_ATTENDEE_PROMOTION: 0x43415450, // 'CATP' — serializes profile promotion by account + attendee email
   MEETING_PREP: 0x4d545052, // 'MTPR' — serializes one canonical preparation-page claim per meeting
+  MEETING_VAULT: 0x4d54564c, // 'MTVL' — serializes one meeting aggregate Vault transfer
   PROJECT_MILESTONES: 0x50524d53, // 'PRMS' — serializes milestone replacement and project-local ID allocation
   OBJECT_GRANT: 0x4f424752, // 'OBGR' — serializes all grant mutations for one work object
   INVITED_SUBJECT: 0x49565342, // 'IVSB' — serializes global email resolution and claim

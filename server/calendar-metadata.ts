@@ -13,7 +13,7 @@ import { libraryPages } from "@shared/models/info";
 import { createLogger } from "./log";
 import { TTLCache } from "./utils/ttl-cache";
 import { eventBus } from "./event-bus";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { getCurrentPrincipalOrSystem, runWithPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
 import { normalizeMeetingSpeakerPolicy, type MeetingSpeakerPolicy } from "@shared/models/chat";
@@ -450,21 +450,46 @@ export async function linkArtifact(
   if (PREPARATION_ARTIFACT_KINDS.has(normalizedKind)) {
     throw new Error("Agenda and legacy brief pages must use the canonical meeting preparation page");
   }
-  const [metadata, page] = await Promise.all([
-    getWritableMetadataById(metadataId),
-    getVisibleLibraryPage(libraryPageIdOrSlug),
-  ]);
+  const metadata = await getWritableMetadataById(metadataId);
   if (!metadata) throw new Error(`Calendar event metadata not found or not writable: ${metadataId}`);
+  const principal = getCurrentPrincipalOrSystem();
+  const meetingPrincipal = metadata.vaultId
+    ? {
+        ...principal,
+        activeVaultId: metadata.vaultId,
+        visibleVaultIds: Array.from(new Set([...principal.visibleVaultIds, metadata.vaultId])),
+      }
+    : principal;
+  const page = await runWithPrincipal(meetingPrincipal, () => getVisibleLibraryPage(libraryPageIdOrSlug));
   if (!page) throw new Error(`Library page not found: ${libraryPageIdOrSlug}`);
 
   log.log(`linkArtifact metadataId=${metadataId} libraryPageId=${page.id} kind=${normalizedKind}`);
-  const link = await upsertArtifactLink(
+  const link = await runWithPrincipal(meetingPrincipal, () => upsertArtifactLink(
     metadata.id,
     page.id,
     normalizedKind,
     title ?? page.title,
     source,
-  );
+  ));
+  if (metadata.vaultId) {
+    const ownership = await import("./meeting/vault-ownership");
+    const node = await ownership.ensureMeetingLibraryNode({
+      vaultId: metadata.vaultId,
+      meetingKey: ownership.calendarMeetingLibraryKey({
+        accountId: metadata.accountId,
+        calendarId: metadata.calendarId,
+        googleEventId: metadata.googleEventId,
+      }),
+      title: metadata.googleEventId,
+      principal: meetingPrincipal,
+    });
+    await ownership.organizeMeetingLibraryPage({
+      pageId: page.id,
+      nodePageId: node.id,
+      vaultId: metadata.vaultId,
+      principal: meetingPrincipal,
+    });
+  }
   invalidateCalendarCache();
   return link;
 }
@@ -655,6 +680,32 @@ export async function setMeetingAgendaPage(
     return selected;
   }));
 
+  const currentMetadata = await getWritableMetadataById(metadata.id);
+  if (currentMetadata?.vaultId) {
+    const ownership = await import("./meeting/vault-ownership");
+    const principal = getCurrentPrincipalOrSystem();
+    const meetingPrincipal = {
+      ...principal,
+      activeVaultId: currentMetadata.vaultId,
+      visibleVaultIds: Array.from(new Set([...principal.visibleVaultIds, currentMetadata.vaultId])),
+    };
+    const node = await ownership.ensureMeetingLibraryNode({
+      vaultId: currentMetadata.vaultId,
+      meetingKey: ownership.calendarMeetingLibraryKey({
+        accountId: currentMetadata.accountId,
+        calendarId: currentMetadata.calendarId,
+        googleEventId: currentMetadata.googleEventId,
+      }),
+      title: meetingTitle,
+      principal: meetingPrincipal,
+    });
+    await ownership.organizeMeetingLibraryPage({
+      pageId: page.id,
+      nodePageId: node.id,
+      vaultId: currentMetadata.vaultId,
+      principal: meetingPrincipal,
+    });
+  }
   invalidateCalendarCache();
   return page;
 }

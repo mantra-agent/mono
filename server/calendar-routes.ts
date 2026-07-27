@@ -413,7 +413,18 @@ export function registerCalendarRoutes(app: Express): void {
         return res.status(400).json({ error: "accountId and calendarId query params are required" });
       }
       const meta = await getMetadata(req.params.eventId, accountId, calendarId);
-      if (!meta) return res.json({ metadata: null });
+      if (!meta) {
+        const event = await getEvent(accountId, calendarId, req.params.eventId);
+        const { getVisibleConnectedAccount } = await import("./connected-accounts");
+        const sourceAccount = await getVisibleConnectedAccount(accountId);
+        return res.json({
+          metadata: null,
+          people: [],
+          artifacts: [],
+          ownerVaultId: sourceAccount?.vaultId ?? null,
+          eventIdentity: { id: event.id, accountId: event.accountId, calendarId: event.calendarId },
+        });
+      }
       const [linkedPeople, linkedArtifacts] = await Promise.all([
         getLinkedPeople(meta.id),
         getLinkedArtifacts(meta.id),
@@ -422,7 +433,7 @@ export function registerCalendarRoutes(app: Express): void {
         resolveMeetingPeopleContext(linkedPeople),
         resolveMeetingArtifactContext(linkedArtifacts),
       ]);
-      res.json({ metadata: meta, people, artifacts });
+      res.json({ metadata: meta, people, artifacts, ownerVaultId: meta.vaultId ?? null });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -503,6 +514,80 @@ export function registerCalendarRoutes(app: Express): void {
       res.json({ metadata: meta, people, artifacts, autoLoggedInteractions: autoLoggedCount });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  const moveMeetingVaultSchema = z.object({
+    googleEventId: z.string().min(1),
+    accountId: z.string().min(1),
+    calendarId: z.string().min(1),
+    vaultId: z.string().min(1),
+  });
+
+  app.post("/api/calendar/metadata/vault", async (req, res) => {
+    try {
+      const parsed = moveMeetingVaultSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+      const { googleEventId, accountId, calendarId, vaultId } = parsed.data;
+      const event = await getEvent(accountId, calendarId, googleEventId);
+      let metadata = await getMetadata(googleEventId, accountId, calendarId);
+      if (!metadata) {
+        const { getVisibleConnectedAccount } = await import("./connected-accounts");
+        const sourceAccount = await getVisibleConnectedAccount(accountId);
+        if (!sourceAccount?.vaultId) {
+          return res.status(409).json({ error: "The calendar source has no owning Vault" });
+        }
+        const { runWithPrincipal } = await import("./principal-context");
+        const principal = getCurrentPrincipalOrSystem();
+        metadata = await runWithPrincipal({
+          ...principal,
+          activeVaultId: sourceAccount.vaultId,
+          visibleVaultIds: [sourceAccount.vaultId],
+        }, () => setMetadata(
+          googleEventId,
+          accountId,
+          calendarId,
+          "meeting",
+          undefined,
+          (event.attendees || []).filter(attendee => attendee.email && !attendee.self).map(attendee => attendee.email),
+        ));
+      }
+      const { moveCalendarMeetingAggregate } = await import("./meeting/vault-ownership");
+      const result = await moveCalendarMeetingAggregate({ metadataId: metadata.id, event, destinationVaultId: vaultId });
+      const { runWithPrincipal } = await import("./principal-context");
+      const principal = getCurrentPrincipalOrSystem();
+      const context = await runWithPrincipal({
+        ...principal,
+        activeVaultId: vaultId,
+        visibleVaultIds: Array.from(new Set([...principal.visibleVaultIds, vaultId])),
+      }, async () => {
+        const [linkedPeople, linkedArtifacts] = await Promise.all([
+          getLinkedPeople(result.metadata.id),
+          getLinkedArtifacts(result.metadata.id),
+        ]);
+        const [people, artifacts] = await Promise.all([
+          resolveMeetingPeopleContext(linkedPeople),
+          resolveMeetingArtifactContext(linkedArtifacts),
+        ]);
+        return { people, artifacts };
+      });
+      res.json({
+        metadata: result.metadata,
+        people: context.people,
+        artifacts: context.artifacts,
+        ownerVaultId: result.metadata.vaultId,
+        meetingNodePageId: result.nodePageId,
+        meetingSessionId: result.sessionId,
+      });
+    } catch (error: unknown) {
+      const status = error && typeof error === "object" && "status" in error
+        ? Number((error as { status: number }).status)
+        : 500;
+      const message = error instanceof Error ? error.message : "Failed to move meeting";
+      log.error("meeting Vault move failed", { status, error: message });
+      res.status(status).json({ error: message });
     }
   });
 

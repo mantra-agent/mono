@@ -47,6 +47,8 @@ export interface ResolvedMeetingIdentity {
   resolutionSource: MeetingResolutionSource;
   participants: MeetingParticipant[];
   speakerPolicy: MeetingSpeakerPolicy;
+  vaultId?: string;
+  libraryNodePageId?: string;
 }
 
 export interface ResolveMeetingIdentityInput {
@@ -217,6 +219,20 @@ async function fromEvent(
     metadata?.id,
   );
   const speakerPolicy = normalizeMeetingSpeakerPolicy(metadata?.speakerPolicy as MeetingSpeakerPolicy | null);
+  const { getVisibleConnectedAccount } = await import("../connected-accounts");
+  const sourceAccount = await getVisibleConnectedAccount(event.accountId);
+  const vaultId = metadata?.vaultId ?? sourceAccount?.vaultId ?? undefined;
+  const libraryNode = vaultId
+    ? await (await import("./vault-ownership")).ensureMeetingLibraryNode({
+        vaultId,
+        meetingKey: (await import("./vault-ownership")).calendarMeetingLibraryKey({
+          accountId: event.accountId,
+          calendarId: event.calendarId,
+          googleEventId: event.id,
+        }),
+        title: event.summary?.trim() || fallbackTitle,
+      })
+    : null;
   return {
     meetingUrl,
     title: event.summary?.trim() || fallbackTitle,
@@ -231,6 +247,8 @@ async function fromEvent(
     resolutionSource,
     participants,
     speakerPolicy,
+    ...(vaultId ? { vaultId } : {}),
+    ...(libraryNode ? { libraryNodePageId: libraryNode.id } : {}),
   };
 }
 
@@ -258,6 +276,21 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
       : existingAgendaPage;
     const metadataAgenda = metadata ? await resolveMeetingAgenda(metadata) : undefined;
     const speakerPolicy = normalizeMeetingSpeakerPolicy(metadata?.speakerPolicy as MeetingSpeakerPolicy | null);
+    const { getVisibleConnectedAccount } = await import("../connected-accounts");
+    const sourceAccount = await getVisibleConnectedAccount(input.explicitEvent.accountId);
+    const vaultId = metadata?.vaultId ?? sourceAccount?.vaultId ?? undefined;
+    const vaultOwnership = await import("./vault-ownership");
+    const libraryNode = vaultId
+      ? await vaultOwnership.ensureMeetingLibraryNode({
+          vaultId,
+          meetingKey: vaultOwnership.calendarMeetingLibraryKey({
+            accountId: input.explicitEvent.accountId,
+            calendarId: input.explicitEvent.calendarId,
+            googleEventId: input.explicitEvent.providerEventId,
+          }),
+          title: input.explicitEvent.title?.trim() || title,
+        })
+      : null;
     return {
       meetingUrl,
       title: input.explicitEvent.title?.trim() || title,
@@ -272,6 +305,8 @@ export async function resolveMeetingIdentity(input: ResolveMeetingIdentityInput)
       resolutionSource: "calendar_auto_join",
       participants,
       speakerPolicy,
+      ...(vaultId ? { vaultId } : {}),
+      ...(libraryNode ? { libraryNodePageId: libraryNode.id } : {}),
     };
   }
 

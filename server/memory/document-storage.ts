@@ -50,6 +50,12 @@ export interface WorkspaceDocCompat {
   updatedAt: Date;
 }
 
+export interface DocumentVaultMovePatch {
+  title?: string | null;
+  content?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface InterruptedChatRecoveryCandidate {
   docId: string;
   ownerUserId: string;
@@ -856,6 +862,56 @@ export class DocumentStorage {
       `aggregateMetadataByDate docType=${docType} date=${dateStr} count=${result.count}`,
     );
     return result;
+  }
+
+  async moveDocumentToVault(
+    docType: DocType,
+    docId: string,
+    destinationVaultId: string,
+    patch: DocumentVaultMovePatch = {},
+  ): Promise<WorkspaceDocCompat> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId || !principal.accountId) {
+      throw new Error(`Document Vault moves require an explicit user and account owner: ${docType}/${docId}`);
+    }
+    if (await documentStoreIndependentWritesEnabled()) {
+      await targetReadsEnabled();
+      const [result] = await db
+        .update(documentStoreDocuments)
+        .set({
+          vaultId: destinationVaultId,
+          ...(patch.title !== undefined ? { title: patch.title } : {}),
+          ...(patch.content !== undefined ? { content: patch.content } : {}),
+          ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
+          updatedByUserId: principal.userId,
+          updatedAt: new Date(),
+        })
+        .where(combineWithWritableScope(principal, documentScopeColumns, and(
+          eq(documentStoreDocuments.documentType, docType),
+          eq(documentStoreDocuments.documentId, docId),
+        )))
+        .returning();
+      if (!result) throw new Error(`Document not found or not writable: ${docType}/${docId}`);
+      return targetToDoc(result);
+    }
+    const [result] = await db
+      .update(memoryEntries)
+      .set({
+        vaultId: destinationVaultId,
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.content !== undefined ? { content: patch.content } : {}),
+        ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
+        updatedByUserId: principal.userId,
+        processedAt: new Date(),
+      })
+      .where(combineWithWritableScope(principal, memoryScopeColumns, and(
+        eq(memoryEntries.layer, WORKSPACE_LAYER),
+        eq(memoryEntries.source, docType),
+        eq(memoryEntries.sourceId, docId),
+      )))
+      .returning();
+    if (!result) throw new Error(`Document not found or not writable: ${docType}/${docId}`);
+    return entryToDoc(result);
   }
 
   async countByType(

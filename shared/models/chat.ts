@@ -837,6 +837,10 @@ export interface MeetingSessionMeta {
   /** Owner captured at session creation so webhook-driven finalization can run under a real user principal. */
   ownerUserId?: string;
   principalAccountId?: string;
+  /** Canonical owning Vault for the entire meeting aggregate. */
+  vaultId?: string;
+  /** Protected Library node that organizes meeting-native artifacts. */
+  libraryNodePageId?: string;
   /** Signed Output Media page URL attached to the Recall bot. */
   outputMediaUrl?: string;
   /** Last meeting speech attempt, surfaced so failures are never silent. */

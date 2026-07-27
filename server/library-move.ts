@@ -49,6 +49,8 @@ export interface MoveLibraryPageInput {
   destinationParentId: string | null;
   destinationVaultId?: string | null;
   sortOrder?: number;
+  /** Internal system-managed roots may move only when the caller names their exact marker. */
+  protectedRootTag?: string;
 }
 
 export interface MoveLibraryPageResult {
@@ -395,7 +397,9 @@ export async function moveLibraryPage(
         });
         throw clientError(403, "The complete Library subtree must be visible and writable");
       }
-      if (isProtectedPage(root)) {
+      const protectedMeetingInstance = root.tags.includes("meeting-instance");
+      const mayMoveMeetingInstance = protectedMeetingInstance && input.protectedRootTag === "meeting-instance";
+      if (isProtectedPage(root) && !mayMoveMeetingInstance) {
         throw clientError(403, `"${root.title}" is protected Library structure and cannot be moved`);
       }
       // Canonical metadata identity is owned and self-healed by

@@ -101,6 +101,8 @@ export async function joinMeetingByUrl(opts: {
       eventStart: identity.eventStart,
       eventEnd: identity.eventEnd,
       resolutionSource: identity.resolutionSource,
+      vaultId: identity.vaultId,
+      libraryNodePageId: identity.libraryNodePageId,
       speakerPolicy: recognitionLaunch.mode === "shared_room"
         ? identity.speakerPolicy
         : { mode: "participant_streams" as const },

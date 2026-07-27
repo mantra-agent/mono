@@ -140,6 +140,16 @@ async function generateRecap(
   const recap = await generateRecapContent(sessionId, sessionTitle, meeting, transcript);
   const markdown = buildRecapMarkdown(recap, meeting);
 
+  const ownership = await import("./vault-ownership");
+  const vaultId = meeting.vaultId ?? getCurrentPrincipalOrSystem().activeVaultId ?? undefined;
+  if (!vaultId) throw new Error("Meeting Vault ownership is incomplete");
+  const node = meeting.libraryNodePageId
+    ? { id: meeting.libraryNodePageId }
+    : await ownership.ensureMeetingLibraryNode({
+        vaultId,
+        meetingKey: `session:${sessionId}`,
+        title: meeting.title || sessionTitle,
+      });
   const existingPage = await findExistingRecapPage(sessionId);
   const page = existingPage
     ? await refreshRecapPage(existingPage.id, recap.title, markdown)
@@ -147,6 +157,8 @@ async function generateRecap(
         title: recap.title,
         markdown,
         purpose: "meeting-notes",
+        explicitParentId: node.id,
+        explicitVaultId: vaultId,
         contentSummary: recap.summary.slice(0, 500),
         tags: ["meeting", "recap"],
         createdBySessionId: sessionId,
@@ -154,6 +166,11 @@ async function generateRecap(
         surfaceDurationHours: 48,
         surfaceReason: `Meeting recap: ${recap.title}`,
       });
+  await ownership.organizeMeetingLibraryPage({
+    pageId: page.id,
+    nodePageId: node.id,
+    vaultId,
+  });
 
   await recordSessionArtifact(sessionId, "library_page", page.slug, {
     title: page.title,
@@ -174,7 +191,11 @@ async function generateRecap(
     interactionsLogged,
   };
 
-  await chatStorage.updateMeetingMeta(sessionId, { recap: recapMeta });
+  await chatStorage.updateMeetingMeta(sessionId, {
+    recap: recapMeta,
+    vaultId,
+    libraryNodePageId: node.id,
+  });
   log.info(
     `Meeting recap ready for session ${sessionId}: page=${page.slug}, interactions=${interactionsLogged}`,
   );

@@ -1225,6 +1225,11 @@ export interface IChatFileStorage {
     sessionId: string,
     patch: Partial<MeetingSessionMeta>,
   ): Promise<FileSession | null>;
+  moveMeetingToVault(
+    sessionId: string,
+    vaultId: string,
+    libraryNodePageId: string,
+  ): Promise<FileSession | null>;
   claimMeetingLeave(sessionId: string): Promise<MeetingLeaveClaim>;
   restoreMeetingLeave(
     sessionId: string,
@@ -2129,40 +2134,63 @@ export const chatFileStorage: IChatFileStorage = {
     // Capture the owning user structurally so webhook-driven finalization
     // (which has no user principal) can reconstruct it later.
     const principal = getCurrentPrincipalOrSystem();
-    const ownership: Partial<MeetingSessionMeta> =
-      principal.actorType === "user" && principal.userId
-        ? {
-            ownerUserId: principal.userId,
-            principalAccountId: principal.accountId ?? undefined,
-          }
-        : {};
-    const data: SessionData = {
-      id,
-      title,
-      status: "saved",
-      sessionKey: sessionKey || `meeting:${id}`,
-      modelTier: null,
-      createdAt: now,
-      updatedAt: now,
-      messages: [],
-      type: "meeting",
-      sessionType: "user",
-      isPinned: false,
-      meeting: {
-        ...meeting,
-        ...ownership,
-        startedAt: meeting.startedAt || now,
-      },
-      triggerType: "meeting",
-      triggerId: id,
-      triggerName: title,
-      rootSessionId: id,
-      depth: 0,
-    };
-    await writeConv(data);
-    const meta = convToMeta(data);
-    invalidateSessionsCache({ action: "created", sessionId: id, session: meta });
-    return meta;
+    const vaultId = meeting.vaultId ?? principal.activeVaultId ?? undefined;
+    const meetingPrincipal = vaultId
+      ? {
+          ...principal,
+          activeVaultId: vaultId,
+          visibleVaultIds: Array.from(new Set([...principal.visibleVaultIds, vaultId])),
+        }
+      : principal;
+    return runWithPrincipal(meetingPrincipal, () => db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+      const ownership: Partial<MeetingSessionMeta> =
+        principal.actorType === "user" && principal.userId
+          ? {
+              ownerUserId: principal.userId,
+              principalAccountId: principal.accountId ?? undefined,
+            }
+          : {};
+      let libraryNodePageId = meeting.libraryNodePageId;
+      if (vaultId && !libraryNodePageId) {
+        const { ensureMeetingLibraryNode } = await import("./meeting/vault-ownership");
+        const node = await ensureMeetingLibraryNode({
+          vaultId,
+          meetingKey: `session:${id}`,
+          title,
+          principal: meetingPrincipal,
+        });
+        libraryNodePageId = node.id;
+      }
+      const data: SessionData = {
+        id,
+        title,
+        status: "saved",
+        sessionKey: sessionKey || `meeting:${id}`,
+        modelTier: null,
+        createdAt: now,
+        updatedAt: now,
+        messages: [],
+        type: "meeting",
+        sessionType: "user",
+        isPinned: false,
+        meeting: {
+          ...meeting,
+          ...ownership,
+          vaultId,
+          libraryNodePageId,
+          startedAt: meeting.startedAt || now,
+        },
+        triggerType: "meeting",
+        triggerId: id,
+        triggerName: title,
+        rootSessionId: id,
+        depth: 0,
+      };
+      await writeConv(data);
+      const meta = convToMeta(data);
+      invalidateSessionsCache({ action: "created", sessionId: id, session: meta });
+      return meta;
+    })));
   },
 
   async updateMeetingMeta(
@@ -2198,6 +2226,37 @@ export const chatFileStorage: IChatFileStorage = {
         session: meta,
       });
       return meta;
+    });
+  },
+
+  async moveMeetingToVault(
+    sessionId: string,
+    vaultId: string,
+    libraryNodePageId: string,
+  ) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data?.meeting || data.type !== "meeting") return null;
+      const principal = getCurrentPrincipalOrSystem();
+      if (!principal.userId || !principal.accountId) {
+        throw new Error("A user principal is required to move a meeting session");
+      }
+      const currentVaultId = data.vaultId;
+      if (!currentVaultId) throw new Error("Meeting session Vault ownership is incomplete");
+      if (!principal.visibleVaultIds.includes(currentVaultId)) {
+        throw new Error("Meeting session is outside the principal's visible Vault scope");
+      }
+      data.vaultId = vaultId;
+      data.meeting = { ...data.meeting, vaultId, libraryNodePageId };
+      data.updatedAt = new Date().toISOString();
+      await documentStorage.moveDocumentToVault("chat", sessionId, vaultId, {
+        title: data.title,
+        content: JSON.stringify(data),
+        metadata: buildConvDocumentMetadata(data),
+      });
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId, session });
+      return session;
     });
   },
 

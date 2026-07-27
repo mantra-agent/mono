@@ -361,6 +361,8 @@ app.use((req, res, next) => {
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
   await vaultsMigrationReady;
+  const { ensureMeetingRootsForAllVaults } = await import("./meeting/vault-ownership");
+  await ensureMeetingRootsForAllVaults();
   const { migrateOpportunitySchema } = await import("./opportunity-storage");
   await migrateOpportunitySchema();
   const { ensureWorkVaultParentSchema } = await import("./work-vault-schema");

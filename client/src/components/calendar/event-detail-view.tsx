@@ -44,6 +44,7 @@ import {
   Plus,
   MoreHorizontal,
   Shapes,
+  Vault as VaultIcon,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTimezone } from "@/hooks/use-timezone";
@@ -62,6 +63,7 @@ import { createMeetingPersonChild } from "@shared/meeting-feed-items";
 import { resolveMeetingJoinMode, type MeetingJoinMode } from "@shared/schema";
 import { SIMPLE_TEXT_FRAME_CLASS, SimpleTextFrame } from "@/components/home/simple-text-frame";
 import { MeetingJoinModeMenu } from "@/components/calendar/meeting-join-mode";
+import { useVaults } from "@/hooks/use-vaults";
 
 // --- Shared types (duplicated from calendar.tsx for now, will extract later) ---
 
@@ -128,6 +130,7 @@ interface CalendarMetadata {
   googleEventId: string;
   accountId: string;
   calendarId: string;
+  vaultId: string | null;
   eventType: EventTypeValue | null;
   capacityType: CapacityTypeValue | null;
   notes: string | null;
@@ -187,6 +190,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const [, navigate] = useLocation();
   const { timezone } = useTimezone();
   const { toast } = useToast();
+  const { vaults } = useVaults();
   const isCreate = eventId === "new";
 
   // --- Calendar list (needed for calendar picker) ---
@@ -531,6 +535,36 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
     onError: (err: any) => toast({ title: "Failed to update event type", description: err.message, variant: "destructive" }),
   });
 
+  const setMeetingVaultMutation = useMutation({
+    mutationFn: async (vaultId: string) => {
+      const response = await apiRequest("POST", "/api/calendar/metadata/vault", {
+        googleEventId: eventId,
+        accountId: accountId || selectedAccountId,
+        calendarId: calendarId || selectedCalendarId,
+        vaultId,
+      });
+      return response.json() as Promise<EventMetadataQueryData>;
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData<EventMetadataQueryData>(metadataQueryKey, {
+        metadata: updated.metadata,
+        people: updated.people ?? [],
+        artifacts: updated.artifacts ?? [],
+        ownerVaultId: updated.ownerVaultId ?? updated.metadata?.vaultId ?? null,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar/metadata"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar/events"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/meetings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/library"] });
+      toast({ title: "Meeting moved" });
+    },
+    onError: (err: unknown) => toast({
+      title: "Failed to move meeting",
+      description: err instanceof Error ? err.message : "Unknown error",
+      variant: "destructive",
+    }),
+  });
+
   const setJoinModeMutation = useMutation({
     mutationFn: async (nextMode: MeetingJoinMode) => {
       const response = await apiRequest("POST", "/api/calendar/agent-join", {
@@ -551,6 +585,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
         metadata: updatedMetadata,
         people: current?.people ?? [],
         artifacts: current?.artifacts ?? [],
+        ownerVaultId: updatedMetadata.vaultId ?? current?.ownerVaultId ?? null,
       }));
       setJoinMode(resolveMeetingJoinMode(
         updatedMetadata.agentJoinMode,
@@ -681,6 +716,40 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
           )}
 
           <div className="overflow-hidden rounded-md border border-border/20" data-testid="event-core-fields">
+            {!isCreate && (
+              <ProfileTreeRow
+                label="Vault"
+                icon={<VaultIcon className="h-3.5 w-3.5" />}
+                hasValue={Boolean(metadataData?.ownerVaultId)}
+                showEmpty
+                mobileLayout="inline"
+                testId="row-event-vault"
+              >
+                <Select
+                  value={metadataData?.ownerVaultId ?? undefined}
+                  onValueChange={value => setMeetingVaultMutation.mutate(value)}
+                  disabled={setMeetingVaultMutation.isPending || isReadOnly}
+                >
+                  <SelectTrigger data-testid="select-event-vault">
+                    <SelectValue placeholder="Choose Vault" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {vaults.map(vault => (
+                      <SelectItem key={vault.id} value={vault.id}>
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: vault.color ?? "hsl(var(--muted-foreground))" }}
+                          />
+                          {vault.name}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </ProfileTreeRow>
+            )}
+
             {!isCreate && (
               <ProfileTreeRow
                 label="Event Type"

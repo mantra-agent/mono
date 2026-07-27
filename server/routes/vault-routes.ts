@@ -274,30 +274,35 @@ export function registerVaultRoutes(app: Express) {
 
       const nextPosition = (maxPos?.maxPosition ?? -1) + 1;
 
-      // Insert the new vault
-      const [newVault] = await db
-        .insert(vaults)
-        .values({
-          accountId: principal.accountId,
-          name,
-          color: color || null,
-          icon: icon || name.slice(0, 2).toUpperCase(),
-          purpose: purpose || null,
-          position: nextPosition,
-          isDefault: false,
-          isArchived: false,
-        })
-        .returning();
-
-      // Add to the user's visible set (invariant: new vault is visible but not active)
-      const currentVisible = new Set(principal.visibleVaultIds);
-      currentVisible.add(newVault.id);
-      const updatedVisibleIds = Array.from(currentVisible);
-
-      await db
-        .update(users)
-        .set({ visibleVaultIds: updatedVisibleIds })
-        .where(eq(users.id, principal.userId));
+      // Insert the new vault, its reserved Meetings root, and visibility as one mutation.
+      let updatedVisibleIds: string[] = [];
+      const newVault = await db.transaction(async tx => {
+        const [created] = await tx
+          .insert(vaults)
+          .values({
+            accountId: principal.accountId,
+            name,
+            color: color || null,
+            icon: icon || name.slice(0, 2).toUpperCase(),
+            purpose: purpose || null,
+            position: nextPosition,
+            isDefault: false,
+            isArchived: false,
+          })
+          .returning();
+        updatedVisibleIds = Array.from(new Set([...principal.visibleVaultIds, created.id]));
+        await tx
+          .update(users)
+          .set({ visibleVaultIds: updatedVisibleIds })
+          .where(eq(users.id, principal.userId));
+        const { ensureMeetingsRoot } = await import("../meeting/vault-ownership");
+        await ensureMeetingsRoot(created.id, {
+          ...principal,
+          activeVaultId: created.id,
+          visibleVaultIds: updatedVisibleIds,
+        });
+        return created;
+      });
 
       log.info("vault created", {
         userId: principal.userId,
