@@ -427,6 +427,19 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
     restoreMutation.mutate(id);
   }, [restoreMutation]);
 
+  // Empty Trash — the only irreversible action in the feature. The visible
+  // trashed set (vault toggles + active chip) is computed inside TrashSection,
+  // which passes those exact ids here after a counted confirmation. The server
+  // re-validates them to trashed + owned rows before hard-deleting.
+  const emptyTrashMutation = useApiMutation<string[]>({
+    method: "POST",
+    path: "/api/info/library/trash/empty",
+    body: (ids) => ({ pageIds: ids }),
+    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library/trash"]],
+    successMessage: (_result, ids) => `Permanently deleted ${ids.length} ${ids.length === 1 ? "page" : "pages"}`,
+    errorTitle: "Empty Trash failed",
+  });
+
   const emojiMutation = useApiMutation<{ id: string; emoji: string | null }>({
     method: "PATCH",
     path: ({ id }) => `/api/info/library/${id}`,
@@ -616,6 +629,8 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
             onOpenChange={setTrashOpen}
             onRestore={handleRestore}
             restorePendingId={restoringId}
+            onEmptyTrash={(ids) => emptyTrashMutation.mutate(ids)}
+            emptyTrashPending={emptyTrashMutation.isPending}
           />
         </ScrollArea>
       </div>

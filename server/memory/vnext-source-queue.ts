@@ -124,6 +124,108 @@ export async function removeAutonomousSessionSource(
 }
 
 /**
+ * Remove Library-page sources from the vNext pipeline when their pages are
+ * permanently hard-deleted. Deletes queue rows and claim provenance for
+ * source_type='library_page'; claims are deleted only when this removes their
+ * final source (cascades entity/claim links). Mirrors
+ * removeAutonomousSessionSource, batched across many pages so it serves both
+ * user-triggered Empty Trash and the nightly auto-purge. Writable scope means a
+ * user principal only clears their own provenance, while a system principal
+ * (nightly auto-purge) spans all owners.
+ */
+export async function removeLibraryPageSources(
+  pageIds: string[],
+  principal: Principal,
+): Promise<{ queueRows: number; sourceRefs: number; orphanClaims: number }> {
+  const ids = [...new Set(pageIds)].filter(Boolean);
+  if (ids.length === 0) return { queueRows: 0, sourceRefs: 0, orphanClaims: 0 };
+
+  const BATCH = 500;
+  let queueRows = 0;
+  let sourceRefs = 0;
+  let orphanClaims = 0;
+
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const batch = ids.slice(i, i + BATCH);
+
+    const refs = await db
+      .select({
+        id: memoryVnextSourceRefs.id,
+        claimId: memoryVnextSourceRefs.claimId,
+      })
+      .from(memoryVnextSourceRefs)
+      .where(
+        combineWithVisibleScope(
+          principal,
+          sourceRefScopeColumns,
+          and(
+            eq(memoryVnextSourceRefs.sourceType, "library_page"),
+            inArray(memoryVnextSourceRefs.sourceId, batch),
+          ),
+        ),
+      );
+
+    const deletedRefs = await db
+      .delete(memoryVnextSourceRefs)
+      .where(
+        combineWithWritableScope(
+          principal,
+          sourceRefScopeColumns,
+          and(
+            eq(memoryVnextSourceRefs.sourceType, "library_page"),
+            inArray(memoryVnextSourceRefs.sourceId, batch),
+          ),
+        ),
+      )
+      .returning({ id: memoryVnextSourceRefs.id });
+    sourceRefs += deletedRefs.length;
+
+    const deletedQueue = await db
+      .delete(memoryVnextSourceQueue)
+      .where(
+        combineWithWritableScope(
+          principal,
+          scopeColumns,
+          and(
+            eq(memoryVnextSourceQueue.sourceType, "library_page"),
+            inArray(memoryVnextSourceQueue.sourceId, batch),
+          ),
+        ),
+      )
+      .returning({ id: memoryVnextSourceQueue.id });
+    queueRows += deletedQueue.length;
+
+    const claimIds = [...new Set(refs.map((ref) => ref.claimId))];
+    if (claimIds.length > 0) {
+      const deletedClaims = await db
+        .delete(memoryVnextClaims)
+        .where(
+          combineWithWritableScope(
+            principal,
+            claimScopeColumns,
+            and(
+              inArray(memoryVnextClaims.id, claimIds),
+              sql`NOT EXISTS (
+                SELECT 1 FROM ${memoryVnextSourceRefs}
+                WHERE ${memoryVnextSourceRefs.claimId} = ${memoryVnextClaims.id}
+              )`,
+            ),
+          ),
+        )
+        .returning({ id: memoryVnextClaims.id });
+      orphanClaims += deletedClaims.length;
+    }
+  }
+
+  if (queueRows || sourceRefs || orphanClaims) {
+    log.info(
+      `removed library_page sources pages=${ids.length} queueRows=${queueRows} sourceRefs=${sourceRefs} orphanClaims=${orphanClaims}`,
+    );
+  }
+  return { queueRows, sourceRefs, orphanClaims };
+}
+
+/**
  * Bounded maintenance for legacy autonomous session rows. Ownership from each
  * queue row is restored before session lookup and cleanup. Completed rows are
  * included, so the migration converges rather than relying on re-enqueue.
