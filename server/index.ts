@@ -1070,9 +1070,30 @@ function startDeferredBackgroundServices(): void {
 
   Promise.allSettled(services).then(async () => {
     bootTracker.completePhase("background_services");
-
     bootTracker.markReady();
 
+    try {
+      const { getRuntimeIdentity } = await import("./runtime-identity");
+      const { requestStageDocumentStoreActivationAfterReadiness } = await import(
+        "./memory/stage-document-store-activation"
+      );
+      const outcome = await requestStageDocumentStoreActivationAfterReadiness(
+        await getRuntimeIdentity(),
+      );
+      if (outcome === "restart_requested") {
+        await shutdownApplication({
+          terminationKind: "clean",
+          cause: "stage_document_store_activation",
+          exitCode: 0,
+          signal: null,
+        });
+        process.exit(0);
+      }
+    } catch (error) {
+      serverLog.error(
+        `stage document-store activation rollout failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   });
 }
 

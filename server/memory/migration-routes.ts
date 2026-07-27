@@ -48,8 +48,12 @@ export function registerMigrationRoutes(app: Express) {
   });
   app.post("/api/memory/migrations/document-store-workspace/activate", ...migrationAdmin, async (_req, res) => {
     try {
-      await requestIndependentDocumentStoreActivation();
-      res.status(202).json({ requested: true, restartRequired: true });
+      const outcome = await requestIndependentDocumentStoreActivation();
+      res.status(outcome === "requested" ? 202 : 200).json({
+        outcome,
+        requested: outcome !== "already_enabled",
+        restartRequired: outcome !== "already_enabled",
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to request independent document-store activation";
       log.error("independent document-store activation request failed", { error: message });
