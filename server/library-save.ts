@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { acquireLibraryParentLocks, db } from "./db";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
@@ -6,7 +6,7 @@ import type { LibrarySemanticPlacementResult } from "./library-placement";
 import { markSourceChanged } from "./memory/vnext-source-queue";
 import type { Principal } from "./principal";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
-import { combineWithVisibleScope, ownedInsertValues } from "./scoped-storage";
+import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { syncEmbeddedLibraryPageLinks } from "./library-link-graph";
 import { syncContentFields } from "@shared/markdown-tiptap";
@@ -76,12 +76,11 @@ export function isCanonicalVaultFolder(value: unknown): value is CanonicalVaultF
 
 /**
  * Get-or-create the canonical folder page for `(vaultId, kind)` at the vault
- * root, returning its page id. Identity is `(vault_id, root, folder tag)` under
- * a transaction-scoped advisory lock so concurrent producers converge on one
- * folder rather than forking duplicates. When duplicates already exist (e.g.
- * hand-migrated history), the earliest is treated as canonical. This is a fresh
- * deterministic placement authority for Plans/Workflows/Specs/Skills and does
- * not reuse the retired Library2 metadata (Wiki/Index/Log) machinery.
+ * root, returning its page id. Existing root structure wins: the resolver
+ * adopts the earliest same-title page before minting a new folder, then marks
+ * it with the canonical tag. Generated tagged duplicates converge into that
+ * adopted page by reparenting their direct children and removing only empty
+ * generated shells. A transaction-scoped lock makes the result replay-safe.
  */
 export async function ensureCanonicalVaultFolder(input: {
   principal: Principal;
@@ -92,43 +91,103 @@ export async function ensureCanonicalVaultFolder(input: {
   const lockKey = `library-canonical-folder:${input.vaultId}:${input.kind}`;
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
-    const existing = await tx
-      .select({ id: libraryPages.id })
+    await acquireLibraryParentLocks(tx, [null]);
+    const candidates = await tx
+      .select({
+        id: libraryPages.id,
+        title: libraryPages.title,
+        tags: libraryPages.tags,
+        createdAt: libraryPages.createdAt,
+      })
       .from(libraryPages)
       .where(
-        combineWithVisibleScope(
+        combineWithWritableScope(
           input.principal,
           libraryScopeColumns,
           and(
             eq(libraryPages.vaultId, input.vaultId),
             isNull(libraryPages.parentId),
-            sql`${def.tag} = ANY(${libraryPages.tags})`,
+            or(
+              eq(sql`lower(${libraryPages.title})`, def.title.toLowerCase()),
+              sql`${def.tag} = ANY(${libraryPages.tags})`,
+            ),
           ),
         ),
       )
-      .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id))
-      .limit(1);
-    if (existing[0]) return existing[0].id;
+      .orderBy(asc(libraryPages.createdAt), asc(libraryPages.id));
 
-    const synced = syncContentFields({ markdown: `# ${def.title}\n\n${def.description}` });
-    const [created] = await tx
-      .insert(libraryPages)
-      .values({
-        title: def.title,
-        slug: slugifyLibraryTitle(def.title, input.kind),
-        content: synced.content,
-        plainTextContent: synced.plainTextContent,
-        parentId: null,
-        tags: ["folder", def.tag],
-        structuralRole: "artifact",
-        sortOrder: def.sortOrder,
-        ...ownedInsertValues(input.principal, libraryScopeColumns),
+    let canonical = candidates[0];
+    if (!canonical) {
+      const synced = syncContentFields({ markdown: `# ${def.title}\n\n${def.description}` });
+      const [created] = await tx
+        .insert(libraryPages)
+        .values({
+          title: def.title,
+          slug: slugifyLibraryTitle(def.title, input.kind),
+          content: synced.content,
+          plainTextContent: synced.plainTextContent,
+          parentId: null,
+          tags: ["folder", def.tag],
+          structuralRole: "artifact",
+          sortOrder: def.sortOrder,
+          ...ownedInsertValues(input.principal, libraryScopeColumns),
+          vaultId: input.vaultId,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .returning({ id: libraryPages.id, title: libraryPages.title, tags: libraryPages.tags, createdAt: libraryPages.createdAt });
+      canonical = created;
+    } else if (!canonical.tags.includes(def.tag)) {
+      const [adopted] = await tx
+        .update(libraryPages)
+        .set({
+          tags: Array.from(new Set([...canonical.tags, "folder", def.tag])),
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .where(combineWithWritableScope(input.principal, libraryScopeColumns, eq(libraryPages.id, canonical.id)))
+        .returning({ id: libraryPages.id, title: libraryPages.title, tags: libraryPages.tags, createdAt: libraryPages.createdAt });
+      if (!adopted) throw new Error(`Canonical ${def.title} folder became unavailable`);
+      canonical = adopted;
+      log.info("Adopted existing canonical vault folder", { vaultId: input.vaultId, kind: input.kind, pageId: canonical.id });
+    }
+
+    const duplicateIds = candidates
+      .filter(candidate => candidate.id !== canonical.id && candidate.tags.includes(def.tag))
+      .map(candidate => candidate.id);
+    if (duplicateIds.length > 0) {
+      await acquireLibraryParentLocks(tx, [canonical.id, ...duplicateIds]);
+      await tx
+        .update(libraryPages)
+        .set({ parentId: canonical.id, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(
+          combineWithWritableScope(
+            input.principal,
+            libraryScopeColumns,
+            and(eq(libraryPages.vaultId, input.vaultId), inArray(libraryPages.parentId, duplicateIds)),
+          ),
+        );
+      await tx
+        .delete(libraryPages)
+        .where(
+          combineWithWritableScope(
+            input.principal,
+            libraryScopeColumns,
+            and(
+              eq(libraryPages.vaultId, input.vaultId),
+              inArray(libraryPages.id, duplicateIds),
+              sql`${def.tag} = ANY(${libraryPages.tags})`,
+            ),
+          ),
+        );
+      log.warn("Converged duplicate canonical vault folders", {
         vaultId: input.vaultId,
-        updatedAt: sql`CURRENT_TIMESTAMP`,
-      })
-      .returning({ id: libraryPages.id });
-    log.info("Ensured canonical vault folder", { vaultId: input.vaultId, kind: input.kind, pageId: created.id });
-    return created.id;
+        kind: input.kind,
+        canonicalPageId: canonical.id,
+        duplicateCount: duplicateIds.length,
+      });
+    }
+
+    log.info("Ensured canonical vault folder", { vaultId: input.vaultId, kind: input.kind, pageId: canonical.id });
+    return canonical.id;
   });
 }
 
