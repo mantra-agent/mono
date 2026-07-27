@@ -345,6 +345,14 @@ async function seedContextMemory(
   principal: Principal & { userId: string; accountId: string },
   contextSeed: string,
 ): Promise<void> {
+  const { legacyMemoryQuarantineApplied } = await import("./memory/legacy-memory-quarantine");
+  if (await legacyMemoryQuarantineApplied()) {
+    // Legacy memory_entries is quarantined; the onboarding context seed is a
+    // best-effort legacy write and is skipped rather than touching the
+    // quarantined table. Durable identity is preserved by ensureUserPerson.
+    log.log("Context seed skipped: legacy memory quarantined");
+    return;
+  }
   const sourceId = `onboarding:${principal.userId}`;
   await db
     .insert(memoryEntries)

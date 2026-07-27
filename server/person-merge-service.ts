@@ -2,7 +2,6 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   calendarEventPeople,
   communicationAudiences,
-  memoryEntityLinks,
   memoryVnextEntityLinks,
   opportunities,
   opportunityInteractions,
@@ -58,11 +57,6 @@ const opportunityInteractionScope = {
   scope: opportunityInteractions.scope,
   ownerUserId: opportunityInteractions.ownerUserId,
   accountId: opportunityInteractions.accountId,
-};
-const memoryEntityScope = {
-  scope: memoryEntityLinks.scope,
-  ownerUserId: memoryEntityLinks.ownerUserId,
-  accountId: memoryEntityLinks.accountId,
 };
 const memoryVnextEntityScope = {
   scope: memoryVnextEntityLinks.scope,
@@ -204,7 +198,6 @@ async function captureReferenceSnapshot(
 ): Promise<Record<string, unknown>> {
   const [
     calendarPeople,
-    memoryLinks,
     memoryVnextLinks,
     opportunityRows,
     opportunityInteractionRows,
@@ -221,13 +214,6 @@ async function captureReferenceSnapshot(
         calendarPeopleOwnerColumns,
         eq(calendarEventPeople.personId, sourceId),
         principal,
-      ),
-    ),
-    tx.select().from(memoryEntityLinks).where(
-      combineWithWritableScope(
-        principal,
-        memoryEntityScope,
-        and(eq(memoryEntityLinks.entityType, "person"), eq(memoryEntityLinks.entityId, sourceId)),
       ),
     ),
     tx.select().from(memoryVnextEntityLinks).where(
@@ -325,7 +311,6 @@ async function captureReferenceSnapshot(
 
   return {
     calendarPeople,
-    memoryLinks,
     memoryVnextLinks,
     opportunities: opportunityRows,
     opportunityInteractions: opportunityInteractionRows,
@@ -379,7 +364,7 @@ async function repointCalendarPeople(
     );
 }
 
-async function repointMemoryLinks(
+async function repointVnextMemoryLinks(
   tx: Tx,
   principal: Principal,
   sourceId: string,
@@ -411,32 +396,6 @@ async function repointMemoryLinks(
           eq(memoryVnextEntityLinks.entityType, "person"),
           eq(memoryVnextEntityLinks.entityId, sourceId),
         ),
-      ),
-    );
-
-  await tx.delete(memoryEntityLinks).where(
-    combineWithWritableScope(
-      principal,
-      memoryEntityScope,
-      and(
-        eq(memoryEntityLinks.entityType, "person"),
-        eq(memoryEntityLinks.entityId, sourceId),
-        sql`EXISTS (
-          SELECT 1 FROM memory_entity_links target_link
-          WHERE target_link.memory_id = ${memoryEntityLinks.memoryId}
-            AND target_link.entity_type = 'person'
-            AND target_link.entity_id = ${targetId}
-        )`,
-      ),
-    ),
-  );
-  await tx.update(memoryEntityLinks)
-    .set({ entityId: targetId })
-    .where(
-      combineWithWritableScope(
-        principal,
-        memoryEntityScope,
-        and(eq(memoryEntityLinks.entityType, "person"), eq(memoryEntityLinks.entityId, sourceId)),
       ),
     );
 }
@@ -588,7 +547,7 @@ async function repointReferences(
   interactionIdMap: Map<string, string>,
 ): Promise<void> {
   await repointCalendarPeople(tx, principal, sourceId, target);
-  await repointMemoryLinks(tx, principal, sourceId, target.id);
+  await repointVnextMemoryLinks(tx, principal, sourceId, target.id);
   await repointOpportunityInteractions(
     tx,
     principal,

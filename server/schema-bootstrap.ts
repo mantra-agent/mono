@@ -538,8 +538,31 @@ export async function runSchemaBootstrap(
   baselineTables: PgTable[] = [],
 ): Promise<void> {
   log(`schema bootstrap started (reason=${reason})`, "migration");
-  await ensureBaselineTables(reason, baselineTables);
   const { pool } = await import("./db");
+  // Quarantine-aware boot: once the durable legacy-memory quarantine epoch is
+  // applied, the canonical legacy `memory_entries` closure lives in a separate
+  // schema. Every legacy convergence path below is skipped so boot never
+  // recreates, mutates, or reconnects those tables. This gate reads PostgreSQL,
+  // never an environment variable, and defaults to disabled.
+  const {
+    ensureLegacyMemoryQuarantineStateTable,
+    legacyMemoryQuarantineApplied,
+    LEGACY_MEMORY_QUARANTINE_TABLES,
+  } = await import("./memory/legacy-memory-quarantine");
+  await ensureLegacyMemoryQuarantineStateTable();
+  const legacyMemoryQuarantined = await legacyMemoryQuarantineApplied();
+  if (legacyMemoryQuarantined) {
+    log("legacy memory quarantine applied; skipping legacy memory convergence", "migration");
+  }
+  const activeBaselineTables = legacyMemoryQuarantined
+    ? baselineTables.filter(
+        (table) =>
+          !new Set<string>(LEGACY_MEMORY_QUARANTINE_TABLES).has(
+            getTableConfig(table).name,
+          ),
+      )
+    : baselineTables;
+  await ensureBaselineTables(reason, activeBaselineTables);
   await ensureVoiceSessionActiveSchema(pool);
   await ensureDocumentStoreDocumentsSchema(pool);
   await ensureTimerOwnershipSchema(pool);
@@ -1213,7 +1236,11 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(conversation_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_scope_owner ON messages(scope, owner_user_id)`);
 
-    await pool.query(`
+    // Legacy memory_entries is created only while the quarantine epoch is not
+    // applied. After quarantine the table lives in a separate schema and must
+    // never be recreated in public.
+    if (!legacyMemoryQuarantined) {
+      await pool.query(`
       CREATE TABLE IF NOT EXISTS memory_entries (
         id SERIAL PRIMARY KEY,
         layer TEXT NOT NULL DEFAULT 'short',
@@ -1246,9 +1273,13 @@ export async function runSchemaBootstrap(
         emotional_state_id INTEGER
       )
     `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_source_id ON memory_entries(source_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_scope_owner ON memory_entries(scope, owner_user_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_source_id ON memory_entries(source_id)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_scope_owner ON memory_entries(scope, owner_user_id)`);
+    }
 
+    // library_pages.memory_entry_id is a legacy pointer. After quarantine the
+    // inbound FK is dropped by apply, so create the table without that FK to
+    // avoid referencing the quarantined table.
     await pool.query(`
       CREATE TABLE IF NOT EXISTS library_pages (
         id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -1736,6 +1767,7 @@ export async function runSchemaBootstrap(
   });
 
   await heal("scoped core personal data columns", async () => {
+    const legacyMemoryTables = new Set(["memory_entries", "memory_entity_links"]);
     const tables = [
       "sessions",
       "messages",
@@ -1753,7 +1785,7 @@ export async function runSchemaBootstrap(
       "signal_sources",
       "signal_items",
       "scan_runs",
-    ];
+    ].filter((table) => !(legacyMemoryQuarantined && legacyMemoryTables.has(table)));
     for (const table of tables) {
       await pool.query(
         `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'user'`,
@@ -1780,9 +1812,11 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_messages_scope_owner ON messages(scope, owner_user_id)`,
     );
-    await pool.query(
-      `CREATE INDEX IF NOT EXISTS idx_memory_scope_owner ON memory_entries(scope, owner_user_id)`,
-    );
+    if (!legacyMemoryQuarantined) {
+      await pool.query(
+        `CREATE INDEX IF NOT EXISTS idx_memory_scope_owner ON memory_entries(scope, owner_user_id)`,
+      );
+    }
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_ws_doc_scope_owner ON workspace_documents(scope, owner_user_id)`,
     );
@@ -1813,8 +1847,12 @@ export async function runSchemaBootstrap(
             UPDATE sessions SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE messages SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE workspace_documents SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
-            UPDATE memory_entries SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL AND layer <> 'workspace';
-            UPDATE memory_entity_links SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
+            IF to_regclass('public.memory_entries') IS NOT NULL THEN
+              UPDATE memory_entries SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL AND layer <> 'workspace';
+            END IF;
+            IF to_regclass('public.memory_entity_links') IS NOT NULL THEN
+              UPDATE memory_entity_links SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
+            END IF;
             UPDATE info_notes SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE library_pages SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
             UPDATE library_page_links SET owner_user_id = COALESCE(owner_user_id, ray_user_id), account_id = COALESCE(account_id, ray_account_id), created_by_user_id = COALESCE(created_by_user_id, ray_user_id) WHERE scope = 'user' AND owner_user_id IS NULL;
@@ -1834,6 +1872,7 @@ export async function runSchemaBootstrap(
   });
 
   await heal("memory processing-state columns", async () => {
+    if (legacyMemoryQuarantined) return;
     await pool.query(`ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS processing_status TEXT NOT NULL DEFAULT 'idle'`);
     await pool.query(`ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS processing_run_id TEXT`);
     await pool.query(`ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ`);
@@ -2352,9 +2391,11 @@ export async function runSchemaBootstrap(
     await pool.query(
       `ALTER TABLE library_pages ADD COLUMN IF NOT EXISTS summary TEXT`,
     );
-    await pool.query(
-      `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
-    );
+    if (!legacyMemoryQuarantined) {
+      await pool.query(
+        `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
+      );
+    }
   });
 
   await heal("library_pages created_by_session_id column", async () => {
@@ -2437,18 +2478,20 @@ export async function runSchemaBootstrap(
       `ALTER TABLE skills ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP`,
     );
 
-    await pool.query(
-      `ALTER TABLE memory_transitions ALTER COLUMN transitioned_at SET DEFAULT CURRENT_TIMESTAMP`,
-    );
+    if (!legacyMemoryQuarantined) {
+      await pool.query(
+        `ALTER TABLE memory_transitions ALTER COLUMN transitioned_at SET DEFAULT CURRENT_TIMESTAMP`,
+      );
 
-    await pool.query(
-      `UPDATE memory_links SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL`,
-    );
-    await pool.query(`
+      await pool.query(
+        `UPDATE memory_links SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL`,
+      );
+      await pool.query(`
       ALTER TABLE memory_links
         ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP,
         ALTER COLUMN created_at SET NOT NULL
     `);
+    }
 
     // --- signal_sources defaults ---
     await pool.query(
@@ -2758,6 +2801,7 @@ export async function runSchemaBootstrap(
   });
 
   await heal("memory_sources table", async () => {
+    if (legacyMemoryQuarantined) return;
     await pool.query(`
       CREATE TABLE IF NOT EXISTS memory_sources (
         id SERIAL PRIMARY KEY,
@@ -2903,6 +2947,7 @@ export async function runSchemaBootstrap(
   });
 
   await heal("memory_entries unique constraint", async () => {
+    if (legacyMemoryQuarantined) return;
     const exists = await pool.query(`
       SELECT 1 FROM pg_constraint c
       JOIN pg_class r ON c.conrelid = r.oid
@@ -2950,6 +2995,7 @@ export async function runSchemaBootstrap(
   });
 
   await heal("memory_entries timestamp defaults", async () => {
+    if (legacyMemoryQuarantined) return;
     // Drizzle declares `created_at` / `processed_at` with
     // `defaultNow().notNull()`, but the legacy DB sync only copies
     // rows, not column defaults. Railway's memory_entries lost its
@@ -3268,12 +3314,14 @@ export async function runSchemaBootstrap(
   });
 
   await heal("memory_entries pinned column", async () => {
+    if (legacyMemoryQuarantined) return;
     await pool.query(
       `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT false`,
     );
   });
 
   await heal("memory_entries integration_stage column", async () => {
+    if (legacyMemoryQuarantined) return;
     await pool.query(
       `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS integration_stage TEXT NOT NULL DEFAULT 'stage_0'`,
     );
@@ -4259,6 +4307,7 @@ export async function runSchemaBootstrap(
   });
 
   await heal("backfill session memory titles", async () => {
+    if (legacyMemoryQuarantined) return;
     const untitled = await pool.query(`
       SELECT id, metadata FROM memory_entries
       WHERE layer <> 'workspace' AND source = 'conversation' AND title IS NULL AND metadata IS NOT NULL
@@ -4738,6 +4787,7 @@ export async function runSchemaBootstrap(
 
 
   await heal("retire raw session memory rows from graph surfaces", async () => {
+    if (legacyMemoryQuarantined) return;
     const rawSessionPredicate = `
       source = 'conversation'
       AND layer <> 'workspace'
@@ -4779,6 +4829,7 @@ export async function runSchemaBootstrap(
   await heal(
     "memory_entries claim type event→action migration",
     async () => {
+      if (legacyMemoryQuarantined) return;
       const result = await pool.query(`
         UPDATE memory_entries
         SET metadata = jsonb_set(metadata, '{claimType}', '"action"')
@@ -4796,6 +4847,7 @@ export async function runSchemaBootstrap(
   await heal(
     "migrate embedding columns from 1536-dim to 384-dim (local model)",
     async () => {
+      if (legacyMemoryQuarantined) return;
       // Check each table independently using pg_attribute.atttypmod
       // For vector(N), atttypmod = N. PostgreSQL LIMIT 0 short-circuits without validating casts.
       const checkDim = async (table: string, col: string): Promise<boolean> => {
@@ -4874,6 +4926,7 @@ export async function runSchemaBootstrap(
   );
 
   await heal("HNSW vector index on memory_entries.embedding", async () => {
+    if (legacyMemoryQuarantined) return;
     const exists = await pool.query(`
       SELECT 1 FROM pg_indexes WHERE indexname = 'idx_memory_embedding_hnsw'
     `);
@@ -5357,6 +5410,7 @@ export async function runSchemaBootstrap(
   });
 
   await heal("memory_entries emotional_state_id column", async () => {
+    if (legacyMemoryQuarantined) return;
     const col = await pool.query(`
       SELECT 1 FROM information_schema.columns
       WHERE table_name = 'memory_entries' AND column_name = 'emotional_state_id'

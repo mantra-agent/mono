@@ -1072,13 +1072,15 @@ function startDeferredBackgroundServices(): void {
     bootTracker.completePhase("background_services");
     bootTracker.markReady();
 
+    const { getRuntimeIdentity } = await import("./runtime-identity");
+    const runtimeIdentity = await getRuntimeIdentity();
+
     try {
-      const { getRuntimeIdentity } = await import("./runtime-identity");
       const { requestStageDocumentStoreActivationAfterReadiness } = await import(
         "./memory/stage-document-store-activation"
       );
       const outcome = await requestStageDocumentStoreActivationAfterReadiness(
-        await getRuntimeIdentity(),
+        runtimeIdentity,
       );
       if (outcome === "restart_requested") {
         await shutdownApplication({
@@ -1088,10 +1090,34 @@ function startDeferredBackgroundServices(): void {
           signal: null,
         });
         process.exit(0);
+        return;
       }
     } catch (error) {
       serverLog.error(
         `stage document-store activation rollout failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+
+    try {
+      const { requestStageLegacyMemoryQuarantineAfterReadiness } = await import(
+        "./memory/stage-legacy-memory-quarantine-operation"
+      );
+      const outcome = await requestStageLegacyMemoryQuarantineAfterReadiness(
+        runtimeIdentity,
+      );
+      if (outcome === "restart_requested") {
+        await shutdownApplication({
+          terminationKind: "clean",
+          cause: "stage_legacy_memory_quarantine",
+          exitCode: 0,
+          signal: null,
+        });
+        process.exit(0);
+      }
+    } catch (error) {
+      serverLog.error(
+        `stage legacy-memory quarantine rollout failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   });

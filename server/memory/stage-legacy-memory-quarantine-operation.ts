@@ -1,0 +1,94 @@
+import { createLogger } from "../log";
+import type { RuntimeIdentity } from "../runtime-identity";
+import { documentStoreIndependentWritesEnabled } from "./document-store-cutover";
+import {
+  applyLegacyMemoryQuarantine,
+  getLegacyMemoryQuarantineStatus,
+  legacyMemoryQuarantineWasAppliedAtBoot,
+  prepareLegacyMemoryQuarantine,
+} from "./legacy-memory-quarantine";
+
+const log = createLogger("StageLegacyMemoryQuarantineOperation");
+const MANTRA_WEB_STAGE_ENVIRONMENT_ID = 11;
+
+export const STAGE_LEGACY_MEMORY_QUARANTINE_RESTART_REASON =
+  "stage_legacy_memory_quarantine";
+
+export type StageLegacyMemoryQuarantineOutcome =
+  | "not_stage"
+  | "document_store_not_independent"
+  | "already_applied"
+  | "prepared"
+  | "restart_requested";
+
+async function requestPlannedRestart(): Promise<void> {
+  if (typeof process.send !== "function") {
+    throw new Error(
+      "Stage legacy memory quarantine requires the supervised process wrapper",
+    );
+  }
+  await new Promise<void>((resolve, reject) => {
+    process.send!(
+      {
+        type: "planned_restart",
+        reason: STAGE_LEGACY_MEMORY_QUARANTINE_RESTART_REASON,
+      },
+      (error) => (error ? reject(error) : resolve()),
+    );
+  });
+}
+
+/**
+ * One-time post-readiness stage rollout. Canonical Platform Environment #11
+ * and the durable independent-document-store epoch are hard preconditions.
+ * Every eligible invocation produces a fresh verified archive immediately
+ * before apply, then requests a supervised clean restart. Other environments
+ * and an already-applied epoch are pure no-ops.
+ */
+export async function requestStageLegacyMemoryQuarantineAfterReadiness(
+  runtimeIdentity: RuntimeIdentity,
+): Promise<StageLegacyMemoryQuarantineOutcome> {
+  if (
+    runtimeIdentity.platformEnvironmentId !==
+    MANTRA_WEB_STAGE_ENVIRONMENT_ID
+  ) {
+    return "not_stage";
+  }
+  if (!(await documentStoreIndependentWritesEnabled())) {
+    log.warn(
+      "stage legacy memory quarantine blocked: document store is not independently authoritative",
+    );
+    return "document_store_not_independent";
+  }
+  if ((await getLegacyMemoryQuarantineStatus()).applied) {
+    if (legacyMemoryQuarantineWasAppliedAtBoot()) {
+      return "already_applied";
+    }
+    await requestPlannedRestart();
+    log.info(
+      "stage legacy memory quarantine observed after boot; planned restart requested",
+    );
+    return "restart_requested";
+  }
+
+  const status = await getLegacyMemoryQuarantineStatus();
+  if (!status.preparedAt || !status.archiveSha256) {
+    await prepareLegacyMemoryQuarantine();
+    log.info(
+      "stage legacy memory quarantine prepared; apply deferred until a later fresh boot",
+    );
+    return "prepared";
+  }
+
+  // A later boot always refreshes and re-verifies the archive immediately
+  // before apply. This makes destructive application impossible on the first
+  // deploy of a new execution path while still preventing stale snapshots.
+  await prepareLegacyMemoryQuarantine();
+  const applied = await applyLegacyMemoryQuarantine();
+  await requestPlannedRestart();
+  log.info("stage legacy memory quarantine applied; planned restart requested", {
+    appliedByThisProcess: applied.applied,
+    movedTables: applied.movedTables,
+  });
+  return "restart_requested";
+}

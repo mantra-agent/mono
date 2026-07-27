@@ -31,19 +31,6 @@ import {
 } from "@shared/models/info";
 import type { LibraryPage } from "@shared/models/info";
 // Vault destination validation lives in server/library-move.ts.
-import {
-  MEMORY_INTEGRATION_STAGE,
-  deriveMemoryIntegrationStage,
-  memoryEntries,
-  memorySourceRefs,
-} from "@shared/models/memory";
-import type { MemoryEntry } from "@shared/schema";
-import {
-  computeContentHash,
-  memoryEntryLightColumns,
-  wrapLightEntry,
-} from "../memory/memory-storage";
-import { scheduleMemoryLinks } from "../memory/link-scheduling";
 import { searchVnextMemory } from "../memory/vnext-search";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
@@ -75,18 +62,6 @@ const libraryScopeColumns = {
   ownerUserId: libraryPages.ownerUserId,
   accountId: libraryPages.accountId,
   vaultId: libraryPages.vaultId,
-};
-const memoryScopeColumns = {
-  scope: memoryEntries.scope,
-  ownerUserId: memoryEntries.ownerUserId,
-  accountId: memoryEntries.accountId,
-  vaultId: memoryEntries.vaultId,
-};
-
-const memorySourceScopeColumns = {
-  scope: memorySourceRefs.scope,
-  ownerUserId: memorySourceRefs.ownerUserId,
-  accountId: memorySourceRefs.accountId,
 };
 
 function principalOrThrow(req: any) {
@@ -153,121 +128,6 @@ const librarySurfaceInput = {
   surfaceSection: z.string().nullable().optional(),
 };
 
-function visibleMemory(req: any, predicate?: SQL): SQL {
-  return combineWithVisibleScope(
-    principalOrThrow(req),
-    memoryScopeColumns,
-    predicate,
-  );
-}
-
-async function ensureLibraryMemorySourceRef(memoryId: number, pageId: string): Promise<void> {
-  const principal = getCurrentPrincipalOrSystem();
-  await db
-    .insert(memorySourceRefs)
-    .values({
-      memoryId,
-      sourceType: "library",
-      sourceId: pageId,
-      relationship: "extracted_from",
-      context: "Library page memory mirror source from legacy memory_entries.source/source_id",
-      strength: 1,
-      ...ownedInsertValues(principal, memorySourceScopeColumns),
-      createdByUserId: principal.userId ?? undefined,
-      updatedByUserId: principal.userId ?? undefined,
-    })
-    .onConflictDoUpdate({
-      target: [
-        memorySourceRefs.memoryId,
-        memorySourceRefs.sourceType,
-        memorySourceRefs.sourceId,
-        memorySourceRefs.relationship,
-      ],
-      set: {
-        context: "Library page memory mirror source from legacy memory_entries.source/source_id",
-        strength: 1,
-        updatedByUserId: principal.userId ?? undefined,
-      },
-    });
-  log.debug(`[ingest] source_ref_attached source=library sourceId=${pageId} memoryEntryId=${memoryId}`);
-}
-
-export function isSummaryEffectivelyVerbatim(
-  summary: string | null,
-  plainContent: string | null,
-): boolean {
-  if (!summary || !plainContent) return false;
-  const s = summary.trim();
-  const c = plainContent.trim();
-  if (!s || !c) return false;
-  if (c.length < 200) return false; // very short pages may have a summary == content; skip
-  // Length within ~10% of the page's plaintext length and high prefix overlap.
-  const lengthRatio = s.length / c.length;
-  if (lengthRatio < 0.9 || lengthRatio > 1.1) return false;
-  const probeLen = Math.min(200, Math.floor(c.length * 0.2));
-  if (probeLen < 50) return false;
-  const sPrefix = s.slice(0, probeLen);
-  const cPrefix = c.slice(0, probeLen);
-  let matching = 0;
-  for (let i = 0; i < probeLen; i++) {
-    if (sPrefix[i] === cPrefix[i]) matching++;
-  }
-  return matching / probeLen >= 0.85;
-}
-
-interface BrokenLibraryEntry {
-  entry: MemoryEntry;
-  page: LibraryPage | null;
-}
-
-export async function findBrokenLibraryMemoryEntries(
-  limit?: number,
-): Promise<BrokenLibraryEntry[]> {
-  const rows = await db
-    .select(memoryEntryLightColumns)
-    .from(memoryEntries)
-    .where(
-      and(
-        eq(memoryEntries.source, "library"),
-        or(eq(memoryEntries.layer, "mid"), eq(memoryEntries.layer, "long")),
-      ),
-    )
-    .orderBy(asc(memoryEntries.id));
-
-  const entries = rows.map((r) =>
-    wrapLightEntry(r as Omit<MemoryEntry, "embedding">),
-  );
-  const pageIds = Array.from(new Set(
-    entries
-      .map((e) => e.sourceId)
-      .filter((id): id is string => !!id),
-  ));
-  const pageMap = new Map<string, LibraryPage>();
-  if (pageIds.length > 0) {
-    const pages = await db
-      .select()
-      .from(libraryPages)
-      .where(inArray(libraryPages.id, pageIds));
-    for (const p of pages) pageMap.set(p.id, p);
-  }
-
-  const broken: BrokenLibraryEntry[] = [];
-  for (const e of entries) {
-    const summary = (e.summary || "").trim();
-    const page = e.sourceId ? (pageMap.get(e.sourceId) ?? null) : null;
-    const plain = page?.plainTextContent || "";
-    if (!summary) {
-      broken.push({ entry: e, page });
-      continue;
-    }
-    if (page && isSummaryEffectivelyVerbatim(summary, plain)) {
-      broken.push({ entry: e, page });
-    }
-  }
-
-  return typeof limit === "number" ? broken.slice(0, limit) : broken;
-}
-
 function slugify(title: string): string {
   return (
     title
@@ -333,8 +193,10 @@ export async function registerLibraryRoutes(app: Express) {
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_library_page_trash_deleted_at ON library_page_trash(deleted_at)`,
     );
+    // Legacy memory_entries may be quarantined into a separate schema; guard by
+    // catalog presence so Library route boot never touches the quarantined table.
     await pool.query(
-      `ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
+      `DO $ BEGIN IF to_regclass('public.memory_entries') IS NOT NULL THEN EXECUTE 'ALTER TABLE memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT'; END IF; END $`,
     );
 
     const { rows: sentinel } = await pool.query(`
@@ -469,20 +331,6 @@ export async function registerLibraryRoutes(app: Express) {
               updatedAt: note.updatedAt,
             })
             .returning();
-
-          // Update memory entries from note source to library source
-          await db
-            .update(memoryEntries)
-            .set({
-              source: "library",
-              sourceId: created.id,
-            })
-            .where(
-              and(
-                eq(memoryEntries.source, "note"),
-                eq(memoryEntries.sourceId, note.id),
-              ),
-            );
 
           upsertLibraryPageMemory(created).catch((e) =>
             log.warn(
@@ -1458,35 +1306,6 @@ export async function registerLibraryRoutes(app: Express) {
               })
               .where(eq(libraryPages.id, page.id));
 
-            const [existingEntryRaw] = await db
-              .select(memoryEntryLightColumns)
-              .from(memoryEntries)
-              .where(
-                visibleMemory(
-                  req,
-                  and(
-                    eq(memoryEntries.source, "library"),
-                    eq(memoryEntries.sourceId, page.id),
-                  ),
-                ),
-              );
-            const existingEntry = existingEntryRaw
-              ? wrapLightEntry(
-                  existingEntryRaw as Omit<MemoryEntry, "embedding">,
-                )
-              : null;
-            if (existingEntry) {
-              await db
-                .update(memoryEntries)
-                .set({
-                  oneLiner: oneLiner || null,
-                  title: title || existingEntry.title,
-                  summary: genSummary || existingEntry.summary,
-                  tags: mergedTags,
-                })
-                .where(eq(memoryEntries.id, existingEntry.id));
-            }
-
             backfillState.enriched++;
             log.debug(
               `[backfill] Enriched library page "${page.title}" (${i + 1}/${needsEnrichment.length})`,
@@ -1497,90 +1316,6 @@ export async function registerLibraryRoutes(app: Express) {
               `[backfill] Failed to enrich page "${page.title}": ${pageErr instanceof Error ? pageErr.message : String(pageErr)}`,
             );
           }
-        }
-
-        // Phase 2: re-summarize library mid/long memory entries whose summary is missing
-        // or is effectively a verbatim dump of the linked page's plainTextContent.
-        const brokenLibraryEntries = await findBrokenLibraryMemoryEntries();
-        if (brokenLibraryEntries.length > 0) {
-          backfillState.total += brokenLibraryEntries.length;
-          log.debug(
-            `[backfill] Found ${brokenLibraryEntries.length} library memory entries with missing/dumped summaries — re-summarizing`,
-          );
-
-          for (let i = 0; i < brokenLibraryEntries.length; i++) {
-            const { entry, page } = brokenLibraryEntries[i];
-            const titleHint = page?.title || entry.title || "Untitled";
-            backfillState.detail = `re-summarize: ${titleHint}`;
-
-            if (i > 0 && i % BATCH_SIZE === 0) {
-              await new Promise((resolve) =>
-                setTimeout(resolve, BATCH_DELAY_MS),
-              );
-            }
-
-            try {
-              const contentForEnrich =
-                page?.plainTextContent && page.plainTextContent.length > 0
-                  ? page.plainTextContent
-                  : entry.content;
-
-              const {
-                title,
-                oneLiner,
-                summary: genSummary,
-                tags,
-              } = await generateTitleSummaryTags({
-                content: contentForEnrich,
-                source: "library",
-                title: titleHint,
-              });
-
-              const finalTitle =
-                title &&
-                title.trim() &&
-                title.trim().toLowerCase() !== "untitled"
-                  ? title.trim()
-                  : titleHint;
-
-              await db
-                .update(memoryEntries)
-                .set({
-                  summary: genSummary || null,
-                  oneLiner: oneLiner || null,
-                  title: finalTitle,
-                  tags: tags && tags.length > 0 ? tags : entry.tags,
-                  processedAt: new Date(),
-                })
-                .where(eq(memoryEntries.id, entry.id));
-
-              if (page) {
-                const existingTags = page.tags || [];
-                const mergedTags = [...new Set([...existingTags, ...tags])];
-                await db
-                  .update(libraryPages)
-                  .set({
-                    oneLiner: oneLiner || page.oneLiner || null,
-                    summary: genSummary || page.summary || null,
-                    tags: mergedTags,
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(libraryPages.id, page.id));
-              }
-
-              backfillState.enriched++;
-              log.debug(
-                `[backfill] Re-summarized library memory #${entry.id} ("${titleHint}") (${i + 1}/${brokenLibraryEntries.length})`,
-              );
-            } catch (resumErr: unknown) {
-              backfillState.errors++;
-              log.warn(
-                `[backfill] Failed to re-summarize library memory #${entry.id}: ${resumErr instanceof Error ? resumErr.message : String(resumErr)}`,
-              );
-            }
-          }
-        } else {
-          log.debug(`[backfill] No broken library memory entries found`);
         }
 
         backfillState.detail = "";
@@ -1653,33 +1388,6 @@ export async function registerLibraryRoutes(app: Express) {
           updatedAt: new Date(),
         })
         .where(eq(libraryPages.id, page.id));
-
-      const [existingEntryRaw2] = await db
-        .select(memoryEntryLightColumns)
-        .from(memoryEntries)
-        .where(
-          visibleMemory(
-            req,
-            and(
-              eq(memoryEntries.source, "library"),
-              eq(memoryEntries.sourceId, page.id),
-            ),
-          ),
-        );
-      const existingEntry = existingEntryRaw2
-        ? wrapLightEntry(existingEntryRaw2 as Omit<MemoryEntry, "embedding">)
-        : null;
-      if (existingEntry) {
-        await db
-          .update(memoryEntries)
-          .set({
-            oneLiner: oneLiner || null,
-            title: title || existingEntry.title,
-            summary: genSummary || existingEntry.summary,
-            tags: mergedTags,
-          })
-          .where(eq(memoryEntries.id, existingEntry.id));
-      }
 
       const [updated] = await db
         .select()

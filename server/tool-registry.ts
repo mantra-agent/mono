@@ -2050,6 +2050,11 @@ export async function getSkillDefinitionsForContext(): Promise<string> {
 async function getRecentlyUsedSkillIds(days: number): Promise<Set<string>> {
   return _recentSkillsCache.getOrFetch(`days:${days}`, async () => {
     try {
+      const { legacyMemoryQuarantineApplied } = await import(
+        "./memory/legacy-memory-quarantine"
+      );
+      if (await legacyMemoryQuarantineApplied()) return new Set<string>();
+
       const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
       const rows = await db
