@@ -2091,17 +2091,35 @@ async function resolveSkills(): Promise<string> {
 }
 
 async function resolveLibraryIndex(): Promise<string> {
+  // Reference-only: render a compact pointer to the LIBRARY.md operating guide
+  // (library_process context artifact) and the load-bearing conventions. The
+  // full guide is fetched on demand via get_library_page, mirroring the
+  // PLANNING.md lazy-load pattern. Library2 Wiki/Index/Log is retired.
+  let guidePointer = "Before you find, save, or edit a Library page, load the Library operating guide (LIBRARY.md) with get_library_page. It is not inlined here.";
+  try {
+    const { listVisibleEnvironmentContextPages } = await import("./platforms/context-artifact-access");
+    const pages = await listVisibleEnvironmentContextPages(["library_process"]);
+    const guide = pages[0];
+    if (guide?.libraryPageId) {
+      guidePointer = `Before you find, save, or edit a Library page, load the Library operating guide: @page:${guide.libraryPageId} (get_library_page). It is not inlined here.`;
+    }
+  } catch {
+    // Degrade to the generic pointer; the conventions below still apply.
+  }
+
   return `## Library Reference
 
-The Library is durable, searchable knowledge storage organized through the existing Vault and parent-page hierarchy. Library2 Wiki/Index/Log organization is disabled.
+${guidePointer}
 
-Use Library tools on demand:
-- search_library_pages/search: find pages by title or content.
-- browse_tree/tree: inspect the existing hierarchy.
-- get_library_page: load full page content.
-- create_library_page/edit_library_page: create or modify durable artifacts. New pages use an explicit parent when supplied; otherwise they are saved at the active Vault root.
+The Library is durable, searchable knowledge organized by Vault and parent-page hierarchy. Library2 Wiki/Index/Log organization is retired.
 
-When creating externally shareable artifacts, use a Library page rather than scratch. Ordinary Library saves retain Vault scope, hierarchy, surfacing, links, and vNext source signaling without creating Wiki, Index, or Log pages.`;
+Canonical per-Vault folders — file into them by passing \`canonicalFolder\` to create_library_page:
+- plans — multi-step execution plans (filed automatically by the plan tool)
+- workflows — workflow run checkpoints and lifecycle artifacts (filed automatically)
+- specs — specifications and implementation designs
+- skills — all skill run outputs, logs, and artifacts
+
+Use Library tools on demand: search_library_pages/search to find pages; browse_tree/tree to inspect hierarchy; get_library_page to load full content; create_library_page/edit_library_page to write. New pages file under an explicit parent or canonicalFolder when supplied; otherwise they save at the active Vault root. Use a Library page rather than scratch for externally shareable artifacts.`;
 }
 
 function getContextWindowForModel(model: string): number {

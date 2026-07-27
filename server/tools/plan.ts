@@ -227,6 +227,7 @@ async function handleCreate(
     title: `Plan: ${title}`,
     markdown: pageContent,
     purpose: "plans",
+    canonicalFolder: "plans",
     pageContext: "/plans",
     contentSummary: `Multi-step execution plan: ${title}`,
     tags: ["plan", "active"],

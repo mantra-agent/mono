@@ -1131,6 +1131,7 @@ export async function createWorkflowRun(input: {
     title: `Workflow: ${input.title}`,
     markdown: initialContent,
     purpose: "workflows",
+    canonicalFolder: "workflows",
     pageContext: "/workflows",
     contentSummary: `Workflow checkpoint for ${input.title}: ${input.objective}`,
     tags: ["workflow", "checkpoint"],

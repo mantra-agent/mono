@@ -11030,12 +11030,13 @@ ${refs}` : ""),
         const tags: string[] = Array.isArray(args.tags) ? args.tags : (action === "create_spec" ? ["spec"] : []);
         const status = args.status || null;
         const plain = args.plainTextContent || "";
-        const { createFiledLibraryPage } = await import("./library-save");
+        const { createFiledLibraryPage, isCanonicalVaultFolder } = await import("./library-save");
         try {
           const page = await createFiledLibraryPage({
             title,
             markdown: plain,
             purpose: args.purpose || null,
+            canonicalFolder: isCanonicalVaultFolder(args.canonicalFolder) ? args.canonicalFolder : null,
             explicitParentId: args.parentId || null,
             pageContext: args.pageContext || null,
             contentSummary: args.contentSummary || args.summary || null,
