@@ -82,12 +82,13 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 
 ## WebSocket
 
-A single shared WebSocket connection handles real-time updates:
+A single shared WebSocket connection handles authenticated `/ws/events` updates for the lifetime of the application shell:
 
-- `client/src/lib/websocket.ts` — Connection manager, reconnection logic, message routing
-- Used for: session updates, notification badges, voice audio, real-time state sync
-- Multiplexed: different message `type` fields route to different handlers
-- Auto-reconnects with exponential backoff
+- `client/src/lib/ws-connection.ts` — Sole physical `/ws/events` creator; owns connection, reconnection, liveness, logical owners, and bounded diagnostics.
+- `client/src/hooks/use-event-stream.ts` — App-root bounded generic-event projection over the shared transport; feature consumers read it and never create or close physical sockets.
+- Used for: session updates, generic events, client presence, semantic UI interaction, notification badges, and real-time state sync.
+- Multiplexed: different message `type` fields route to registered logical handlers.
+- Feature hooks may acquire balanced logical owner leases, but component or route lifetimes must never own the physical transport.
 
 ## Data Sync & Event-Carried State
 
