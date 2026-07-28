@@ -56,6 +56,7 @@ export interface MeetingIndexRecord {
   hasNotes: boolean;
   recapStatus: string | null;
   summary: string | null;
+  calendarEvent: { accountId: string; calendarId: string; eventId: string } | null;
   participants: MeetingIndexParticipant[];
   artifacts: MeetingIndexArtifact[];
 }
@@ -121,6 +122,19 @@ function projectedParticipants(session: FileSession): MeetingParticipant[] {
 function matchesNotesFilter(transcriptCount: number, notesFilter: MeetingNotesFilter | undefined): boolean {
   if (!notesFilter || notesFilter === "any") return true;
   return notesFilter === "with_notes" ? transcriptCount > 0 : transcriptCount === 0;
+}
+
+function calendarEventIdentity(
+  session: FileSession,
+): { accountId: string; calendarId: string; eventId: string } | null {
+  if (!hasCredibleCalendarBinding(session)) return null;
+  const meeting = session.meeting!;
+  if (!meeting.calendarAccountId || !meeting.calendarId || !meeting.providerEventId) return null;
+  return {
+    accountId: meeting.calendarAccountId,
+    calendarId: meeting.calendarId,
+    eventId: meeting.providerEventId,
+  };
 }
 
 function resolvedMeetingIdentity(session: FileSession): string | null {
@@ -418,6 +432,7 @@ async function projectRecords(snapshots: MeetingSessionSnapshot[]): Promise<Meet
       hasNotes: transcriptCount > 0,
       recapStatus: hasCredibleCalendarBinding(session) ? session.meeting?.recap?.status ?? null : null,
       summary: recap?.summary ?? recap?.oneLiner ?? null,
+      calendarEvent: calendarEventIdentity(session),
       participants: projectParticipants(session, peopleById, peopleByEmail),
       artifacts,
     };
@@ -472,11 +487,15 @@ export function meetingRecordToSimpleFeedItem(
   section: SimpleSection = "earlier",
   index = 0,
 ): SimpleFeedItem {
+  const event = meeting.calendarEvent;
+  const href = event
+    ? `/schedule/${encodeURIComponent(event.eventId)}?calendarId=${encodeURIComponent(event.calendarId)}&accountId=${encodeURIComponent(event.accountId)}`
+    : `/session?c=${encodeURIComponent(meeting.id)}`;
   const sourceRef: SimpleSourceRef = {
     type: "meeting",
     id: meeting.id,
     label: meeting.title,
-    href: `/session?c=${encodeURIComponent(meeting.id)}`,
+    href,
     observedAt: meeting.startedAt ?? undefined,
   };
   const attendees = dedupeMeetingInvitees(meeting.participants, participant => ({

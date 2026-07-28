@@ -77,11 +77,6 @@ export default function MeetingsPage() {
               : <Plus className="h-3.5 w-3.5 shrink-0" />}
             <span>{nativeTranscription.isStarting ? "Starting…" : "New Transcription"}</span>
           </button>
-          <div className="px-2 py-1 text-xs text-muted-foreground">
-            {data
-              ? `${data.counts.completedMeetingsWithNotesCount} with notes · ${data.counts.completedMeetingCount} completed`
-              : "Completed meetings"}
-          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
