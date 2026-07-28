@@ -159,8 +159,10 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
     }
   }, [isMobile, setOpen, setOpenMobile, setWidgetOpen]);
 
+  const canInvokeRef = useRef(canInvoke);
   const invokeRef = useRef(invoke);
   const revealRef = useRef(reveal);
+  canInvokeRef.current = canInvoke;
   invokeRef.current = invoke;
   revealRef.current = reveal;
 
@@ -182,7 +184,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (!canInvoke(message.target)) {
+      if (!canInvokeRef.current(message.target)) {
         sendResult(message, "unavailable", "target_unavailable");
         return;
       }
@@ -208,7 +210,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
       sharedWSRef.current = null;
       releaseSharedWS(WS_OWNER);
     };
-  }, [canInvoke, sendResult, settle]);
+  }, [sendResult, settle]);
 
   useEffect(() => {
     if (!activeCommand) return;
