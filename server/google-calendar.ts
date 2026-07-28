@@ -118,6 +118,8 @@ export async function listCalendars(accountId: string) {
   return res.data.items || [];
 }
 
+const MAX_EVENT_LIST_PAGES = 25;
+
 export async function listEvents(
   accountId: string,
   options: {
@@ -131,17 +133,43 @@ export async function listEvents(
   const tokens = await loadAccountTokens(accountId);
   const accountEmail = tokens?.email || '';
   const calendarId = options.calendarId || 'primary';
+  const resultLimit = Math.min(2500, Math.max(1, options.maxResults || 250));
+  const events: CalendarEvent[] = [];
+  const seenPageTokens = new Set<string>();
+  let pageToken: string | undefined;
+  let pageCount = 0;
 
-  const res = await calendar.events.list({
-    calendarId,
-    timeMin: options.timeMin,
-    timeMax: options.timeMax,
-    maxResults: options.maxResults || 250,
-    singleEvents: true,
-    orderBy: 'startTime',
-  });
+  do {
+    pageCount++;
+    const remaining = resultLimit - events.length;
+    const res = await calendar.events.list({
+      calendarId,
+      timeMin: options.timeMin,
+      timeMax: options.timeMax,
+      maxResults: remaining,
+      pageToken,
+      singleEvents: true,
+      orderBy: 'startTime',
+    });
 
-  return (res.data.items || []).map(ev => mapEvent(ev, calendarId, accountId, accountEmail));
+    events.push(...(res.data.items || [])
+      .slice(0, remaining)
+      .map(ev => mapEvent(ev, calendarId, accountId, accountEmail)));
+
+    const nextPageToken = res.data.nextPageToken || undefined;
+    if (!nextPageToken || events.length >= resultLimit) break;
+    if (seenPageTokens.has(nextPageToken)) {
+      log.warn(`listEvents stopped repeated page token account=${accountId}`);
+      break;
+    }
+    seenPageTokens.add(nextPageToken);
+    pageToken = nextPageToken;
+  } while (events.length < resultLimit && pageCount < MAX_EVENT_LIST_PAGES);
+
+  if (pageToken && events.length < resultLimit && pageCount >= MAX_EVENT_LIST_PAGES) {
+    log.warn(`listEvents reached page budget account=${accountId} pages=${pageCount} events=${events.length}`);
+  }
+  return events;
 }
 
 export async function getEvent(

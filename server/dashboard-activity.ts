@@ -1,16 +1,28 @@
 import { and, gte, lt, sql } from "drizzle-orm";
-import { tasks, wellnessLogs } from "@shared/schema";
+import { tasks, wellnessLogs, type CalendarEventMetadata } from "@shared/schema";
 import { db } from "./db";
 import type { Principal } from "./principal";
-import { queryDistinctInteractionPeopleSeries } from "./interaction-activity";
+import { queryNonMeetingInteractionEventSeries } from "./interaction-activity";
 import { combineWithWorkObjectAccess } from "./object-grant-access";
 import { combineWithSensitiveVisible } from "./sensitive-scope";
-import { userDayBounds } from "./utils/user-time";
+import { userDateStr, userDayBounds } from "./utils/user-time";
 import { fetchMergedPrsSince } from "./integrations/github-timeline";
 import { createLogger } from "./log";
+import { classifyEventByTitle, listMetadataByEvents, makeMetaKey } from "./calendar-metadata";
+import { listAllEvents, type CalendarEvent } from "./google-calendar";
+import { listGmailAccounts } from "./gmail";
+import { calendarOccurrenceKey } from "./meeting/identity";
+import { TTLCache } from "./utils/ttl-cache";
 
 const log = createLogger("DashboardActivity");
 const DASHBOARD_LOAD_BUDGET_MS = 1_000;
+const CALENDAR_INTERACTION_CACHE_TTL_MS = 15 * 60_000;
+const CALENDAR_INTERACTION_MAX_EVENTS = 2500;
+const CALENDAR_METADATA_BATCH_SIZE = 100;
+const calendarInteractionCache = new TTLCache<Map<string, number>>(
+  "DashboardCalendarInteractions",
+  CALENDAR_INTERACTION_CACHE_TTL_MS,
+);
 
 const wellnessLogScope = {
   ownerUserId: wellnessLogs.ownerUserId,
@@ -100,6 +112,107 @@ async function queryTaskSeries(start: Date, end: Date, principal: Principal): Pr
   return new Map(rows.map((row) => [row.date, Number(row.value)]));
 }
 
+function externalAttendeeEmails(event: CalendarEvent, selfEmails: ReadonlySet<string>): string[] {
+  return [...new Set(event.attendees
+    .filter((attendee) => !attendee.self)
+    .map((attendee) => attendee.email?.trim().toLowerCase())
+    .filter((email): email is string => Boolean(email) && !selfEmails.has(email)))];
+}
+
+function wasDeclinedByUser(event: CalendarEvent, selfEmails: ReadonlySet<string>): boolean {
+  const selfAttendee = event.attendees.find((attendee) =>
+    attendee.self || selfEmails.has(attendee.email?.trim().toLowerCase() || ""),
+  );
+  return selfAttendee?.responseStatus === "declined";
+}
+
+function eventEnd(event: CalendarEvent): Date | null {
+  if (event.end.date) return userDayBounds(event.end.date).start;
+  if (!event.end.dateTime) return null;
+  const value = new Date(event.end.dateTime);
+  return Number.isNaN(value.getTime()) ? null : value;
+}
+
+function eventStartDate(event: CalendarEvent): string | null {
+  if (event.start.date) return event.start.date;
+  if (!event.start.dateTime) return null;
+  const value = new Date(event.start.dateTime);
+  return Number.isNaN(value.getTime()) ? null : userDateStr(value);
+}
+
+async function queryCalendarMeetingSeries(
+  startDate: string,
+  endDate: string,
+  principal: Principal,
+): Promise<Map<string, number>> {
+  const principalKey = [principal.actorType, principal.accountId || "no-account", principal.userId || "no-user"].join(":");
+  const cacheKey = `${principalKey}:${startDate}:${endDate}`;
+  return calendarInteractionCache.getOrFetch(cacheKey, async () => {
+    const rangeStart = userDayBounds(startDate).start;
+    const rangeEnd = userDayBounds(endDate).end;
+    const completionCutoff = new Date(Math.min(rangeEnd.getTime(), Date.now()));
+    const [accounts, calendarResult] = await Promise.all([
+      listGmailAccounts(),
+      listAllEvents({
+        timeMin: rangeStart.toISOString(),
+        timeMax: new Date(rangeEnd.getTime() + 1).toISOString(),
+        maxResults: CALENDAR_INTERACTION_MAX_EVENTS,
+      }),
+    ]);
+    const selfEmails = new Set(accounts.map((account) => account.email.trim().toLowerCase()).filter(Boolean));
+    const { events, errors } = calendarResult;
+    if (errors.length > 0) {
+      log.warn("Dashboard calendar interactions loaded with account errors", {
+        errorCount: errors.length,
+        eventCount: events.length,
+      });
+    }
+
+    const candidates = events.filter((event) => {
+      if (
+        event.status === "cancelled"
+        || wasDeclinedByUser(event, selfEmails)
+        || externalAttendeeEmails(event, selfEmails).length === 0
+      ) return false;
+      const endedAt = eventEnd(event);
+      return endedAt !== null && endedAt.getTime() <= completionCutoff.getTime();
+    });
+    const eventIdentities = candidates.map((event) => ({
+      googleEventId: event.id,
+      accountId: event.accountId,
+      calendarId: event.calendarId,
+    }));
+    const metadata: CalendarEventMetadata[] = [];
+    for (let offset = 0; offset < eventIdentities.length; offset += CALENDAR_METADATA_BATCH_SIZE) {
+      metadata.push(...await listMetadataByEvents(eventIdentities.slice(offset, offset + CALENDAR_METADATA_BATCH_SIZE)));
+    }
+    const metadataByEvent = new Map(metadata.map((row) => [makeMetaKey(row.googleEventId, row.accountId, row.calendarId), row]));
+    const eventKeysByDate = new Map<string, Set<string>>();
+
+    for (const event of candidates) {
+      const storedType = metadataByEvent.get(makeMetaKey(event.id, event.accountId, event.calendarId))?.eventType;
+      const eventType = storedType || classifyEventByTitle(event.summary) || "meeting";
+      if (eventType !== "meeting") continue;
+      const date = eventStartDate(event);
+      if (!date) continue;
+      if (date < startDate || date > endDate) continue;
+      const keys = eventKeysByDate.get(date) ?? new Set<string>();
+      keys.add(calendarOccurrenceKey(event));
+      eventKeysByDate.set(date, keys);
+    }
+
+    return new Map([...eventKeysByDate].map(([date, keys]) => [date, keys.size]));
+  });
+}
+
+function sumSeries(...series: Map<string, number>[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const values of series) {
+    for (const [date, value] of values) result.set(date, (result.get(date) ?? 0) + value);
+  }
+  return result;
+}
+
 async function timedSource<T>(
   source: ActivityDashboardKpi["key"],
   timings: Partial<Record<ActivityDashboardKpi["key"], number>>,
@@ -129,7 +242,18 @@ export async function queryActivityDashboard(
 
   const corePromise = includeCore
     ? Promise.all([
-        timedSource("opportunity_interactions", timings, () => queryDistinctInteractionPeopleSeries(dates[0], date, principal)),
+        timedSource("opportunity_interactions", timings, async () => {
+          const [interactionEvents, calendarMeetings] = await Promise.all([
+            queryNonMeetingInteractionEventSeries(dates[0], date, principal),
+            queryCalendarMeetingSeries(dates[0], date, principal).catch((error) => {
+              log.warn("Dashboard calendar interactions unavailable; returning persisted interaction events", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return new Map<string, number>();
+            }),
+          ]);
+          return sumSeries(interactionEvents, calendarMeetings);
+        }),
         timedSource("wellness_completions", timings, () => queryWellnessSeries(rangeStart, rangeEnd, principal)),
         timedSource("completed_tasks", timings, () => queryTaskSeries(rangeStart, rangeEnd, principal)),
       ])
