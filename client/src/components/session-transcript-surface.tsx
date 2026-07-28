@@ -99,7 +99,7 @@ export function SessionTranscriptSurface({
           sessionTitle={sessionTitle}
         />
       )}
-      <SessionAgendaTree agenda={agenda} />
+      <SessionAgendaTree key={activeSession} sessionId={activeSession} agenda={agenda} />
       {!wsConnected && sessionStatus === "streaming" && !voiceActive && (
         <div
           className="flex items-center gap-2 px-4 py-2 bg-warning/5 dark:bg-warning/5 border-b border-warning/20 text-warning-foreground text-xs"

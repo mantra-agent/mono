@@ -183,7 +183,7 @@ Badges consolidate in the nav: highest-priority status wins per section.
 
 ## Session UI Ownership
 
-Focus Session is the canonical session entry surface. An optional conversation agenda renders display-only at the top of `SessionTranscriptSurface` through `SessionAgendaTree`, using the shared `HierarchyTreeRow`/Plan tree geometry; durable state and all edits remain server/session-tool owned, and absence renders no extra surface. Keep ownership split by role:
+Focus Session is the canonical session entry surface. An optional conversation agenda renders display-only at the top of `SessionTranscriptSurface` through `SessionAgendaTree`, using the shared `HierarchyTreeRow`/Plan tree geometry; durable state and all edits remain server/session-tool owned, and absence renders no extra surface. Agenda rows use Session Menu spacing and section typography, expose description/resolution through row disclosure, highlight the first open item as current, and collapse the section by default when every item is complete. Keep ownership split by role:
 
 - `client/src/components/focus-widget.tsx` — Orchestrates the active session, transcript panel, session menu, and desktop contained BottomBar.
 - `client/src/components/session-transcript-panel.tsx` — Transcript/header surface only. It renders messages, stream state, title/actions, linked entities, plan bar, and websocket health. It must not own the normal composer/input path.
