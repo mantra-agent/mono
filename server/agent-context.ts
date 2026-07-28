@@ -7,6 +7,7 @@ import { getContextWindow } from "./model-registry";
 import { withTimeout, isTimeoutError, CONTEXT_ASSEMBLY_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
+import { isRecapFtueSession } from "./ftue-session";
 
 const log = createLogger("AgentContext");
 
@@ -701,13 +702,14 @@ export async function assembleContext(options: {
   let systemPrompt = buildSystemPromptFromSpine(spinePrompt);
 
   // FTUE context injection — structural invariant, bypasses section exclusion.
-  // INTRO.md (welcome script) and PRODUCT.md (product definition) MUST load for
-  // FTUE sessions regardless of which sections are included/excluded.
+  // PRODUCT.md always loads for FTUE. INTRO.md loads only for ordinary entry;
+  // recap-origin FTUE continues directly from its persisted agenda and safe recap.
   if (sessionId) {
     try {
       const { chatFileStorage } = await import("./chat-file-storage");
       const conv = await chatFileStorage.getSession(sessionId);
       if (conv?.ftueWelcome) {
+        const recapFtue = isRecapFtueSession(conv);
         const { db } = await import("./db");
         const { eq, inArray } = await import("drizzle-orm");
         const { libraryPages } = await import("@shared/models/info");
@@ -718,9 +720,9 @@ export async function assembleContext(options: {
           .where(inArray(libraryPages.slug, [...ftueSlugs]));
         const pageMap = new Map(ftuePages.map((p) => [p.slug, p.plainTextContent]));
         const introContent = pageMap.get("intro-md");
-        if (introContent) {
+        if (!recapFtue && introContent) {
           systemPrompt += `\n\n<ftue_welcome_script>\n${introContent}\n</ftue_welcome_script>`;
-        } else {
+        } else if (!recapFtue) {
           log.warn("FTUE welcome script page not found (slug: intro-md)");
         }
         const productContent = pageMap.get("product-md");
@@ -728,6 +730,12 @@ export async function assembleContext(options: {
           systemPrompt += `\n\n<ftue_product_definition>\n${productContent}\n</ftue_product_definition>`;
         } else {
           log.warn("FTUE product definition page not found (slug: product-md)");
+        }
+        if (recapFtue) {
+          const { getCurrentRecipientOnboardingRecapProjectionByMeeting } = await import("./meeting/recipient-projection");
+          const recap = await getCurrentRecipientOnboardingRecapProjectionByMeeting(conv.triggerId);
+          if (!recap) throw new Error("Recipient-safe recap projection is unavailable");
+          systemPrompt += `\n\n<ftue_recap_context>\n${JSON.stringify(recap)}\n</ftue_recap_context>`;
         }
       }
     } catch (ftueErr: unknown) {

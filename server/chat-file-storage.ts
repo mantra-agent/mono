@@ -1245,6 +1245,19 @@ export interface IChatFileStorage {
       agenda?: SessionAgenda;
     },
   ): Promise<FileSession>;
+  createSessionOnce(
+    title: string,
+    sessionKey: string,
+    modelTier?: string,
+    options?: {
+      sessionType?: SessionType;
+      pageContext?: PageContext;
+      provenance?: SessionProvenanceInput;
+      ftueWelcome?: boolean;
+      personaId?: number | null;
+      agenda?: SessionAgenda;
+    },
+  ): Promise<{ outcome: "created" | "existing"; session: FileSession }>;
   updatePageContext(id: string, pageContext: PageContext): Promise<void>;
   createVoiceSession(
     title: string,
@@ -1667,7 +1680,7 @@ export const chatFileStorage: IChatFileStorage = {
       isPinned: false,
       pageContext: options?.pageContext,
       ftueWelcome: options?.ftueWelcome || undefined,
-      agenda: options?.agenda,
+      agenda: options?.agenda ? normalizeSessionAgenda(options.agenda.items) : undefined,
       triggerType: provenance.triggerType,
       triggerId: provenance.triggerId,
       triggerName: provenance.triggerName,
@@ -1678,6 +1691,77 @@ export const chatFileStorage: IChatFileStorage = {
     const meta = convToMeta(data);
     invalidateSessionsCache({ action: "created", sessionId: id, session: meta });
     return meta;
+  },
+
+  async createSessionOnce(
+    title: string,
+    sessionKey: string,
+    modelTier?: string,
+    options?: {
+      sessionType?: SessionType;
+      pageContext?: PageContext;
+      provenance?: SessionProvenanceInput;
+      ftueWelcome?: boolean;
+      personaId?: number | null;
+      agenda?: SessionAgenda;
+    },
+  ) {
+    const normalizedSessionKey = sessionKey.trim();
+    if (!normalizedSessionKey) throw new Error("Replay-safe session creation requires a session key");
+    const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId || !principal.accountId || principal.actorType !== "user") {
+      throw new Error("Replay-safe user session creation requires a user principal");
+    }
+
+    return db.transaction(async (transaction) => runWithDatabaseTransaction(transaction, async () => {
+      await acquireAdvisoryTransactionLock(
+        transaction,
+        ADVISORY_LOCK_NS.CHAT_SESSION_KEY,
+        `${principal.accountId}:${principal.userId}:${normalizedSessionKey}`,
+      );
+      const [existing] = await transaction
+        .select({
+          docId: documentStoreDocuments.documentId,
+          title: documentStoreDocuments.title,
+          createdAt: documentStoreDocuments.createdAt,
+          metadata: documentStoreDocuments.metadata,
+        })
+        .from(documentStoreDocuments)
+        .where(combineWithWritableScope(
+          principal,
+          {
+            scope: documentStoreDocuments.scope,
+            ownerUserId: documentStoreDocuments.ownerUserId,
+            accountId: documentStoreDocuments.accountId,
+            vaultId: documentStoreDocuments.vaultId,
+          },
+          and(
+            eq(documentStoreDocuments.documentType, "chat"),
+            sql`${documentStoreDocuments.metadata}->>'sessionKey' = ${normalizedSessionKey}`,
+          ),
+        ))
+        .orderBy(documentStoreDocuments.createdAt)
+        .limit(1);
+      if (existing) {
+        return {
+          outcome: "existing" as const,
+          session: docMetadataToSession({
+            docId: existing.docId,
+            title: existing.title,
+            createdAt: existing.createdAt?.toISOString() ?? null,
+            metadata: existing.metadata as ChatDocumentMetadata,
+          }),
+        };
+      }
+
+      const session = await chatFileStorage.createSession(
+        title,
+        normalizedSessionKey,
+        modelTier,
+        options,
+      );
+      return { outcome: "created" as const, session };
+    }));
   },
 
   async createVoiceSession(

@@ -28,12 +28,18 @@ export function getStartupOnboardingDestination(status: StartupOnboardingStatus)
   return `/home${query ? `?${query}` : ""}`;
 }
 
-export async function completeStartupOnboarding(name: string): Promise<StartupOnboardingStatus> {
+export async function completeStartupOnboarding(
+  name: string,
+  options?: { recapToken?: string },
+): Promise<StartupOnboardingStatus> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ONBOARDING_TIMEOUT_MS);
 
   try {
-    const res = await apiRequest("POST", "/api/onboarding/complete", { name: name.trim() }, controller.signal);
+    const res = await apiRequest("POST", "/api/onboarding/complete", {
+      name: name.trim(),
+      ...(options?.recapToken ? { recapToken: options.recapToken } : {}),
+    }, controller.signal);
     const status = await res.json() as StartupOnboardingStatus;
     queryClient.setQueryData(["/api/onboarding/status"], status);
     void queryClient.invalidateQueries({ queryKey: ["/api/onboarding/status"] });
