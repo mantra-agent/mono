@@ -386,6 +386,15 @@ export interface VoiceMessageMeta {
  */
 export type MessageVisibility = "chat" | "diagnostic";
 
+export type TerminalAssistantMessageState = Exclude<AssistantMessageState, "streaming">;
+
+export type AssistantDraftTerminalizationOutcome =
+  | { outcome: "terminalized"; state: TerminalAssistantMessageState }
+  | { outcome: "removed_empty"; state: TerminalAssistantMessageState }
+  | { outcome: "already_terminal"; state?: TerminalAssistantMessageState }
+  | { outcome: "run_mismatch"; actualRunId?: string }
+  | { outcome: "not_found" };
+
 export interface FileMessage {
   id: string;
   sessionId: string;
@@ -1438,6 +1447,13 @@ export interface IChatFileStorage {
       assistantInterruptedAt?: string;
     },
   ): Promise<FileMessage | null>;
+  terminalizeAssistantDraft(
+    sessionId: string,
+    messageId: string,
+    runId: string,
+    state: TerminalAssistantMessageState,
+    interruptedAt?: string,
+  ): Promise<AssistantDraftTerminalizationOutcome>;
   reconcileInterruptedAssistantDrafts(
     sessionId?: string,
   ): Promise<{ sessionsScanned: number; draftsReconciled: number; failures: number }>;
@@ -3078,17 +3094,32 @@ export const chatFileStorage: IChatFileStorage = {
         );
         return null;
       }
+      const now = new Date().toISOString();
+      let staleDraftsTerminalized = 0;
+      if (opts?.runId) {
+        for (const message of data.messages) {
+          if (
+            message.role !== "assistant" ||
+            message.assistantState !== "streaming" ||
+            message.assistantRunId === opts.runId
+          ) {
+            continue;
+          }
+          message.assistantState = "interrupted";
+          message.assistantRuntimeOwner = undefined;
+          message.assistantInterruptedAt = now;
+          message.updatedAt = now;
+          staleDraftsTerminalized++;
+        }
+      }
       const existing = [...data.messages]
         .reverse()
         .find(
           (m) =>
             m.role === "assistant" &&
             m.assistantState === "streaming" &&
-            (!opts?.runId ||
-              !m.assistantRunId ||
-              m.assistantRunId === opts.runId),
+            (!opts?.runId || m.assistantRunId === opts.runId),
         );
-      const now = new Date().toISOString();
       const persona = await resolvePersonaSnapshot(data.personaId);
       if (existing) {
         existing.model = opts?.model || existing.model || null;
@@ -3104,6 +3135,11 @@ export const chatFileStorage: IChatFileStorage = {
         data.updatedAt = now;
         await writeConv(data);
         invalidateSessionsCache();
+        if (staleDraftsTerminalized > 0) {
+          log.warn(
+            `[ChatFileStorage] terminalized stale assistant drafts before run sessionId=${sessionId} runId=${opts?.runId} count=${staleDraftsTerminalized}`,
+          );
+        }
         return existing;
       }
       const msg: FileMessage = {
@@ -3133,6 +3169,11 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = now;
       await writeConv(data);
       invalidateSessionsCache();
+      if (staleDraftsTerminalized > 0) {
+        log.warn(
+          `[ChatFileStorage] terminalized stale assistant drafts before run sessionId=${sessionId} runId=${opts?.runId} count=${staleDraftsTerminalized}`,
+        );
+      }
       return msg;
     });
   },
@@ -3239,6 +3280,56 @@ export const chatFileStorage: IChatFileStorage = {
         invalidateSessionsCache();
       }
       return msg;
+    });
+  },
+
+  async terminalizeAssistantDraft(
+    sessionId: string,
+    messageId: string,
+    runId: string,
+    state: TerminalAssistantMessageState,
+    interruptedAt?: string,
+  ): Promise<AssistantDraftTerminalizationOutcome> {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) return { outcome: "not_found" };
+      const msg = data.messages.find(
+        (candidate) => candidate.id === messageId && candidate.role === "assistant",
+      );
+      if (!msg) return { outcome: "not_found" };
+      if (msg.assistantRunId !== runId) {
+        return { outcome: "run_mismatch", actualRunId: msg.assistantRunId };
+      }
+      if (msg.assistantState !== "streaming") {
+        return {
+          outcome: "already_terminal",
+          state: msg.assistantState,
+        };
+      }
+
+      msg.assistantState = state;
+      msg.assistantRuntimeOwner = undefined;
+      if (interruptedAt !== undefined) msg.assistantInterruptedAt = interruptedAt;
+
+      const now = new Date().toISOString();
+      data.updatedAt = now;
+      if (!hasRenderableAssistantPayload(msg)) {
+        data.messages = data.messages.filter((candidate) => candidate.id !== msg.id);
+        await writeConv(data);
+        invalidateSessionsCache();
+        log.warn(
+          `[ChatFileStorage] terminalized empty assistant draft by removal sessionId=${sessionId} messageId=${messageId} runId=${runId} state=${state}`,
+        );
+        return { outcome: "removed_empty", state };
+      }
+
+      msg.updatedAt = now;
+      await writeConv(data);
+      invalidateSessionsCache();
+      log.warn(
+        `[ChatFileStorage] terminalized unsettled assistant draft sessionId=${sessionId} messageId=${messageId} runId=${runId} state=${state}`,
+      );
+      return { outcome: "terminalized", state };
     });
   },
 

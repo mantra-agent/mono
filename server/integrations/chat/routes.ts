@@ -1999,6 +1999,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let assistantDraft: Awaited<
       ReturnType<typeof chatStorage.createAssistantDraft>
     > = null;
+    let assistantDraftMessageId: string | undefined;
     let assistantDraftCheckpointPending: NodeJS.Timeout | null = null;
     let assistantDraftCheckpointWrite: Promise<void> = Promise.resolve();
     let settlement: { status: "completed" | "failed"; assistantMessageId?: string; error?: string } | null = null;
@@ -2258,6 +2259,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         model: chatModel,
         runId,
       });
+      assistantDraftMessageId = assistantDraft?.id;
       chatRunLifecycle.assertCurrent(lease);
       let assistantDraftLastCheckpoint = 0;
 
@@ -2978,6 +2980,43 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       if (sayAloud) {
         clearMeetingVisualizerState(sessionId, "tool");
         clearMeetingVisualizerState(sessionId, "turn");
+      }
+      if (assistantDraftCheckpointPending) {
+        clearTimeout(assistantDraftCheckpointPending);
+        assistantDraftCheckpointPending = null;
+      }
+      await assistantDraftCheckpointWrite;
+      if (assistantDraftMessageId) {
+        const terminalState = settlement?.status === "completed"
+          ? "complete"
+          : lease.invalidatedBy
+            ? "interrupted"
+            : "failed";
+        try {
+          const terminalization = await chatStorage.terminalizeAssistantDraft(
+            sessionId,
+            assistantDraftMessageId,
+            runId,
+            terminalState,
+            terminalState === "complete" ? undefined : new Date().toISOString(),
+          );
+          if (terminalization.outcome === "run_mismatch") {
+            chatLog.error(
+              `assistant draft terminalization ownership mismatch sessionId=${sessionId} messageId=${assistantDraftMessageId} expectedRunId=${runId} actualRunId=${terminalization.actualRunId || "none"}`,
+            );
+          } else if (
+            terminalization.outcome === "not_found" &&
+            !lease.invalidatedBy
+          ) {
+            chatLog.error(
+              `assistant draft terminalization target missing sessionId=${sessionId} messageId=${assistantDraftMessageId} runId=${runId}`,
+            );
+          }
+        } catch (terminalizationError) {
+          chatLog.error(
+            `assistant draft terminalization failed sessionId=${sessionId} messageId=${assistantDraftMessageId} runId=${runId}: ${terminalizationError instanceof Error ? terminalizationError.message : String(terminalizationError)}`,
+          );
+        }
       }
       if (onSettled) {
         await onSettled(settlement || { status: "failed", error: "run_did_not_settle" }).catch((error) =>
