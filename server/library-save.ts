@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import { acquireLibraryParentLocks, db } from "./db";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
@@ -78,9 +78,10 @@ export function isCanonicalVaultFolder(value: unknown): value is CanonicalVaultF
  * Get-or-create the canonical folder page for `(vaultId, kind)` at the vault
  * root, returning its page id. Existing root structure wins: the resolver
  * adopts the earliest same-title page before minting a new folder, then marks
- * it with the canonical tag. Generated tagged duplicates converge into that
- * adopted page by reparenting their direct children and removing only empty
- * generated shells. A transaction-scoped lock makes the result replay-safe.
+ * it with the canonical tag. Existing duplicates are never mutated here: the
+ * owning producer must reconcile its authoritative page joins and may retire
+ * only duplicate containers it proves empty. A transaction-scoped lock makes
+ * creation and adoption replay-safe.
  */
 export async function ensureCanonicalVaultFolder(input: {
   principal: Principal;
@@ -148,42 +149,6 @@ export async function ensureCanonicalVaultFolder(input: {
       if (!adopted) throw new Error(`Canonical ${def.title} folder became unavailable`);
       canonical = adopted;
       log.info("Adopted existing canonical vault folder", { vaultId: input.vaultId, kind: input.kind, pageId: canonical.id });
-    }
-
-    const duplicateIds = candidates
-      .filter(candidate => candidate.id !== canonical.id && candidate.tags.includes(def.tag))
-      .map(candidate => candidate.id);
-    if (duplicateIds.length > 0) {
-      await acquireLibraryParentLocks(tx, [canonical.id, ...duplicateIds]);
-      await tx
-        .update(libraryPages)
-        .set({ parentId: canonical.id, updatedAt: sql`CURRENT_TIMESTAMP` })
-        .where(
-          combineWithWritableScope(
-            input.principal,
-            libraryScopeColumns,
-            and(eq(libraryPages.vaultId, input.vaultId), inArray(libraryPages.parentId, duplicateIds)),
-          ),
-        );
-      await tx
-        .delete(libraryPages)
-        .where(
-          combineWithWritableScope(
-            input.principal,
-            libraryScopeColumns,
-            and(
-              eq(libraryPages.vaultId, input.vaultId),
-              inArray(libraryPages.id, duplicateIds),
-              sql`${def.tag} = ANY(${libraryPages.tags})`,
-            ),
-          ),
-        );
-      log.warn("Converged duplicate canonical vault folders", {
-        vaultId: input.vaultId,
-        kind: input.kind,
-        canonicalPageId: canonical.id,
-        duplicateCount: duplicateIds.length,
-      });
     }
 
     log.info("Ensured canonical vault folder", { vaultId: input.vaultId, kind: input.kind, pageId: canonical.id });

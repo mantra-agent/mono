@@ -441,7 +441,9 @@ export async function ensureMantraLibraryVault(
  *
  * Trash is a lifecycle sidecar row in `library_page_trash`, the single source
  * of truth. Vault, parent, placements, and content are left untouched; deleting
- * the sidecar row restores the page to the live Library.
+ * the sidecar row restores the page to the live Library. Callers that may delete
+ * only a leaf container pass `requireEmpty`; the same locked subtree read then
+ * fails closed if a live descendant exists.
  *
  * Derivation-first unit identity: every page in the cascade shares one
  * `deleted_at` timestamp in the sidecar, and the trashed unit is fully
@@ -455,6 +457,7 @@ export async function ensureMantraLibraryVault(
 export async function softDeleteLibrarySubtree(
   principal: Principal,
   rootId: string,
+  options?: { requireEmpty?: boolean },
 ): Promise<{ trashedCount: number; trashedIds: string[] }> {
   return db.transaction(async (tx) => {
     const [root] = await tx
@@ -487,6 +490,9 @@ export async function softDeleteLibrarySubtree(
     `);
     const ids = (subtree.rows as Array<{ id: string }>).map((row) => row.id);
     if (ids.length === 0) return { trashedCount: 0, trashedIds: [] };
+    if (options?.requireEmpty && ids.length !== 1) {
+      return { trashedCount: 0, trashedIds: [] };
+    }
 
     // Resolve the exact writable live subset before stamping one shared
     // timestamp into the sidecar. A child trashed earlier as its own unit is
