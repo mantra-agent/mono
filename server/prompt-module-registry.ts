@@ -78,7 +78,6 @@ export const PROMPT_MODULE_MANIFEST: Record<PromptModuleKey, PromptModuleManifes
     activity: ACTIVITY_MEMORY,
     callSites: [
       { file: "server/memory/graph-discovery.ts", purpose: "Scores graph link candidates." },
-      { file: "server/memory/memory-enrichment.ts", purpose: "Scores enrichment-time memory links." },
     ],
   },
   "myelination-mid-merge": {
@@ -105,7 +104,7 @@ export const PROMPT_MODULE_MANIFEST: Record<PromptModuleKey, PromptModuleManifes
     ownerSystem: "memory",
     description: "Summarizes memory content for enrichment without truncating source information.",
     activity: ACTIVITY_MEMORY,
-    callSites: [{ file: "server/memory/memory-enrichment.ts", purpose: "Builds memory summaries for enrichment." }],
+    callSites: [{ file: "server/title-summary-tags.ts", purpose: "Builds bounded title, summary, one-liner, and tag metadata for legitimate document consumers." }],
   },
   "people-deepsummary": {
     key: "people-deepsummary",

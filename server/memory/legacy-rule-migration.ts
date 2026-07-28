@@ -6,7 +6,7 @@ import { runWithPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 import { tagRegistry } from "../file-storage/tags";
 import { fileRuleStorage } from "../file-storage/rules";
-import { documentStoreDocuments, memoryEntries, memoryVnextClaims } from "@shared/schema";
+import { documentStoreDocuments, memoryVnextClaims } from "@shared/schema";
 import { getSetting, setSetting } from "../system-settings";
 import { memoryVnextClaimStorage, persistClaimCandidates } from "./vnext-claim-storage";
 
@@ -77,13 +77,6 @@ const documentScopeColumns = {
   vaultId: documentStoreDocuments.vaultId,
 };
 
-const memoryScopeColumns = {
-  scope: memoryEntries.scope,
-  ownerUserId: memoryEntries.ownerUserId,
-  accountId: memoryEntries.accountId,
-  vaultId: memoryEntries.vaultId,
-};
-
 interface AuditedRuleRow {
   documentId: string;
   ownerUserId: string;
@@ -124,17 +117,7 @@ async function deleteAuditedRule(row: AuditedRuleRow): Promise<void> {
           eq(documentStoreDocuments.documentId, row.documentId),
         ),
       ));
-    await db
-      .delete(memoryEntries)
-      .where(combineWithWritableScope(
-        principal,
-        memoryScopeColumns,
-        and(
-          eq(memoryEntries.layer, "workspace"),
-          eq(memoryEntries.source, "rule"),
-          eq(memoryEntries.sourceId, row.documentId),
-        ),
-      ));
+
   });
 }
 
@@ -282,39 +265,7 @@ async function listAuditedRules(): Promise<AuditedRuleRow[]> {
         ),
       ));
 
-    const targetKeys = new Set(targetRows.map((row) => `${row.ownerUserId}:${row.documentId}`));
-    const legacyRows = await db
-      .select({
-        documentId: memoryEntries.sourceId,
-        ownerUserId: memoryEntries.ownerUserId,
-        accountId: memoryEntries.accountId,
-        vaultId: memoryEntries.vaultId,
-      })
-      .from(memoryEntries)
-      .where(combineWithVisibleScope(
-        systemPrincipal,
-        memoryScopeColumns,
-        and(
-          eq(memoryEntries.layer, "workspace"),
-          eq(memoryEntries.source, "rule"),
-          inArray(memoryEntries.sourceId, AUDITED_RULE_IDS),
-          isNotNull(memoryEntries.sourceId),
-          isNotNull(memoryEntries.ownerUserId),
-          sql`(
-            ${memoryEntries.metadata} ? 'confidence'
-            OR ${memoryEntries.metadata} ? 'reinforcements'
-            OR ${memoryEntries.metadata} ? 'violations'
-            OR ${memoryEntries.metadata} ? 'principleRef'
-          )`,
-        ),
-      ));
-
-    return [
-      ...targetRows.filter((row): row is AuditedRuleRow => !!row.ownerUserId),
-      ...legacyRows
-        .filter((row): row is typeof row & { documentId: string; ownerUserId: string } => !!row.documentId && !!row.ownerUserId)
-        .filter((row) => !targetKeys.has(`${row.ownerUserId}:${row.documentId}`)),
-    ];
+    return targetRows.filter((row): row is AuditedRuleRow => !!row.ownerUserId);
   });
 }
 

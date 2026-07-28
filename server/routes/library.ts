@@ -1237,7 +1237,7 @@ export async function registerLibraryRoutes(app: Express) {
     (async () => {
       try {
         const { generateTitleSummaryTags } =
-          await import("../memory/memory-enrichment");
+          await import("../title-summary-tags");
 
         const pages = await db.select().from(libraryPages).where(visibleLibrary(req));
         const needsEnrichment = pages.filter((p) => !p.oneLiner || !p.summary);
@@ -1351,7 +1351,7 @@ export async function registerLibraryRoutes(app: Express) {
   app.post("/api/library/pages/:id/enrich", async (req, res) => {
     try {
       const { generateTitleSummaryTags } =
-        await import("../memory/memory-enrichment");
+        await import("../title-summary-tags");
       const pageId = req.params.id;
 
       const [page] = await db

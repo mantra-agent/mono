@@ -1,6 +1,5 @@
 import { abortTrace } from "../../abort-trace";
 import { pool as dbPool } from "../../db";
-import { documentStoreIndependentWritesEnabled } from "../../memory/document-store-cutover";
 import { chatStorage } from "./storage";
 import { createLogger } from "../../log";
 import { getCurrentPrincipalOrSystem } from "../../principal-context";
@@ -8,14 +7,6 @@ import { getCurrentPrincipalOrSystem } from "../../principal-context";
 const log = createLogger("chat-abort-defer");
 
 const STATUS_UPDATE_TIMEOUT_MS = 2000;
-
-const LEGACY_STATUS_UPDATE_SQL = `UPDATE memory_entries
-   SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), '{status}', to_jsonb($1::text), true),
-       processed_at = NOW()
- WHERE layer = 'workspace'
-   AND source = 'chat'
-   AND source_id = $2
-   AND (($3::text IS NOT NULL AND owner_user_id = $3) OR ($4::text IS NOT NULL AND account_id = $4))`;
 
 const TARGET_STATUS_UPDATE_SQL = `UPDATE document_store_documents
    SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), '{status}', to_jsonb($1::text), true),
@@ -73,10 +64,7 @@ async function runSqlBackstop(
     client = await dbPool.connect();
     await client.query("BEGIN");
     await client.query("SET LOCAL statement_timeout = '2000ms'");
-    const sql = await documentStoreIndependentWritesEnabled()
-      ? TARGET_STATUS_UPDATE_SQL
-      : LEGACY_STATUS_UPDATE_SQL;
-    const res = await client.query(sql, ["saved", sessionId, ownerUserId, accountId]);
+    const res = await client.query(TARGET_STATUS_UPDATE_SQL, ["saved", sessionId, ownerUserId, accountId]);
     await client.query("COMMIT");
     abortTrace("db_status_sql_updated", {
       sessionId,

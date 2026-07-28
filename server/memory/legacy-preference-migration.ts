@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { createNamedSystemPrincipal, type Principal } from "../principal";
@@ -11,9 +11,7 @@ import { tagRegistry } from "../file-storage/tags";
 import { fileRuleStorage } from "../file-storage/rules";
 import {
   documentStoreDocuments,
-  memoryEntries,
   type DocumentStoreDocument,
-  type MemoryEntry,
 } from "@shared/schema";
 import { memoryVnextClaimStorage, persistClaimCandidates } from "./vnext-claim-storage";
 import type { ClaimCandidate } from "./vnext-claim-extraction";
@@ -27,13 +25,6 @@ const documentScopeColumns = {
   ownerUserId: documentStoreDocuments.ownerUserId,
   accountId: documentStoreDocuments.accountId,
   vaultId: documentStoreDocuments.vaultId,
-};
-
-const memoryScopeColumns = {
-  scope: memoryEntries.scope,
-  ownerUserId: memoryEntries.ownerUserId,
-  accountId: memoryEntries.accountId,
-  vaultId: memoryEntries.vaultId,
 };
 
 
@@ -106,7 +97,7 @@ interface LegacyPreference {
   confidence: number;
   tags: string[];
   createdAt: Date;
-  source: "document_store" | "memory_entries";
+  source: "document_store";
 }
 
 function stringArray(value: unknown): string[] {
@@ -130,7 +121,7 @@ function parseMetadata(content: string, metadata: unknown): Record<string, unkno
 }
 
 function toLegacyPreference(
-  row: DocumentStoreDocument | MemoryEntry,
+  row: DocumentStoreDocument,
   source: LegacyPreference["source"],
 ): LegacyPreference | null {
   if (!row.ownerUserId) {
@@ -139,9 +130,7 @@ function toLegacyPreference(
   }
   const metadata = parseMetadata(row.content, row.metadata);
   const preference = String(metadata.preference || "").trim();
-  const documentId = source === "document_store"
-    ? String((row as DocumentStoreDocument).documentId || "")
-    : String((row as MemoryEntry).sourceId || "");
+  const documentId = String(row.documentId || "");
   if (!preference || !documentId) {
     log.warn(`skipped malformed preference source=${source} id=${row.id}`);
     return null;
@@ -221,17 +210,6 @@ async function deleteLegacyPreference(preference: LegacyPreference, principal: P
       ),
     ));
 
-  await db
-    .delete(memoryEntries)
-    .where(combineWithWritableScope(
-      principal,
-      memoryScopeColumns,
-      and(
-        eq(memoryEntries.layer, "workspace"),
-        eq(memoryEntries.source, "preference"),
-        eq(memoryEntries.sourceId, preference.documentId),
-      ),
-    ));
 }
 
 async function migrateOne(preference: LegacyPreference): Promise<void> {
@@ -313,40 +291,9 @@ async function listPending(limit: number): Promise<LegacyPreference[]> {
       .orderBy(documentStoreDocuments.id)
       .limit(limit);
 
-    const preferences = targetRows
+    return targetRows
       .map((row) => toLegacyPreference(row, "document_store"))
       .filter((row): row is LegacyPreference => !!row);
-    const remaining = limit - preferences.length;
-    if (remaining <= 0) return preferences;
-
-    const legacyRows = await db
-      .select()
-      .from(memoryEntries)
-      .where(combineWithVisibleScope(
-        systemPrincipal,
-        memoryScopeColumns,
-        and(
-          eq(memoryEntries.layer, "workspace"),
-          eq(memoryEntries.source, "preference"),
-          isNotNull(memoryEntries.ownerUserId),
-          sql`NOT EXISTS (
-            SELECT 1 FROM ${documentStoreDocuments} target
-            WHERE target.document_type = 'preference'
-              AND target.document_id = ${memoryEntries.sourceId}
-              AND target.owner_user_id IS NOT DISTINCT FROM ${memoryEntries.ownerUserId}
-              AND target.account_id IS NOT DISTINCT FROM ${memoryEntries.accountId}
-          )`,
-        ),
-      ))
-      .orderBy(memoryEntries.id)
-      .limit(remaining);
-
-    return [
-      ...preferences,
-      ...legacyRows
-        .map((row) => toLegacyPreference(row, "memory_entries"))
-        .filter((row): row is LegacyPreference => !!row),
-    ];
   });
 }
 
