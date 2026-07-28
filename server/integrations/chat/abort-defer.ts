@@ -38,7 +38,7 @@ export function deferStatusSaved(sessionId: string, routeStartAt: number): void 
     (outcome) => {
       const ms = Date.now() - dbStartAt;
       if (outcome === "timeout") {
-        abortTrace("db_status_update_failed", { sessionId, ms, error: "race_timeout", routeStartAt });
+        abortTrace("db_status_update_failed", { sessionId, ms, error: "race_timeout", routeStartAt }, "warn");
         log.warn(`abort: status update to saved timed out sessionId=${sessionId} after ${ms}ms`);
       } else {
         abortTrace("db_status_updated", { sessionId, ms, routeStartAt });
@@ -47,7 +47,7 @@ export function deferStatusSaved(sessionId: string, routeStartAt: number): void 
     (err: unknown) => {
       const ms = Date.now() - dbStartAt;
       const msg = err instanceof Error ? err.message : String(err);
-      abortTrace("db_status_update_failed", { sessionId, ms, error: msg, routeStartAt });
+      abortTrace("db_status_update_failed", { sessionId, ms, error: msg, routeStartAt }, "warn");
       log.warn(`abort: status update to saved failed sessionId=${sessionId} ms=${ms}: ${msg}`);
     },
   );
@@ -90,7 +90,7 @@ async function runSqlBackstop(
     if (client) {
       try { await client.query("ROLLBACK"); } catch { /* ignore */ }
     }
-    abortTrace("db_status_sql_failed", { sessionId, ms, error: msg, routeStartAt });
+    abortTrace("db_status_sql_failed", { sessionId, ms, error: msg, routeStartAt }, "warn");
     log.warn(`abort: direct SQL status update failed sessionId=${sessionId} ms=${ms}: ${msg}`);
   } finally {
     if (client) {

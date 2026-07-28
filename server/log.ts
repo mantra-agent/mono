@@ -525,7 +525,9 @@ export function createLogger(module: string) {
     log: info,
     info,
     warn: (...args: unknown[]) => {
-      write((...line) => console.warn(...line), "warn", args);
+      // Railway derives host severity from stdout/stderr. Keep warning severity
+      // in Mantra's structured sinks while avoiding provider-side error inflation.
+      write((...line) => console.log(...line), "warn", args);
     },
     error: (...args: unknown[]) => {
       write((...line) => console.error(...line), "error", args);

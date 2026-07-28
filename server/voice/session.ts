@@ -476,7 +476,7 @@ export async function abortAndCleanupTurn(
     sessionId: session.id,
     sessionKey: session.chatSessionKey || session.chatSessionId,
     inflightTurn: session.inflightTurn,
-  });
+  }, "warn");
   session.inflightAbort.abort();
   let waitMs = 0;
 
@@ -512,7 +512,7 @@ export async function abortAndCleanupTurn(
     sessionId: session.id,
     sessionKey: session.chatSessionKey || session.chatSessionId,
     ms: waitMs,
-  });
+  }, "warn");
   return { aborted: true, waitMs };
 }
 
@@ -528,7 +528,7 @@ function forceKillSession(id: string, s: VoiceSession, reason: string): void {
       sessionKey: s.chatSessionKey || s.chatSessionId,
       reason,
       inflightTurn: s.inflightTurn,
-    });
+    }, "warn");
     log.warn(`[SessionHealth] ZOMBIE_KILL session=${id} reason=${reason} — aborting inflight turn=${s.inflightTurn}`);
     s.inflightAbort!.abort();
     agentExecutor.abortVoiceSession(

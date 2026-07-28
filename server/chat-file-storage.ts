@@ -43,6 +43,7 @@ const treeLog = createLogger("SessionTree");
 const memoryMirrorLog = createLogger("SessionMemoryMirror");
 
 const SESSION_INDEX_TTL_MS = 30_000;
+const SESSION_READ_BATCH_SIZE = 500;
 const _sessionsCache = new TTLCache<any>("Sessions", SESSION_INDEX_TTL_MS);
 const CHAT_RECOVERY_JOB = "chat-recovery";
 const CHAT_RECOVERY_NOTICE_PREFIX = "system:chat-interrupted-by-restart:v1";
@@ -526,9 +527,10 @@ function withConvLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-async function readConv(id: string): Promise<SessionData | null> {
-  const doc = await documentStorage.getDocument("chat", id);
-  if (!doc) return null;
+function parseConvDocument(
+  id: string,
+  doc: { content: string; vaultId: string | null; metadata: unknown },
+): SessionData | null {
   try {
     const data = JSON.parse(doc.content) as SessionData;
     data.vaultId = doc.vaultId || undefined;
@@ -537,7 +539,6 @@ async function readConv(id: string): Promise<SessionData | null> {
     const legacy = data as SessionData & { needsAttention?: boolean; attentionReason?: string };
     if (data.isPinned === undefined) data.isPinned = legacy.needsAttention === true;
     if (data.pinReason === undefined && legacy.attentionReason !== undefined) data.pinReason = legacy.attentionReason;
-    await applySessionTreeOverlay(data);
     return data;
   } catch (err) {
     log.warn(`readConv parse error id=${id}:`, err);
@@ -545,39 +546,64 @@ async function readConv(id: string): Promise<SessionData | null> {
   }
 }
 
+async function readConv(id: string): Promise<SessionData | null> {
+  const doc = await documentStorage.getDocument("chat", id);
+  if (!doc) return null;
+  const data = parseConvDocument(id, doc);
+  if (!data) return null;
+  await applySessionTreeOverlay(data);
+  return data;
+}
+
 /**
  * Prefer the indexed session_tree row when available. Legacy chat documents may
  * still carry spawn metadata inside the document payload; when encountered,
  * repair the index in place instead of emitting per-session deprecation spam.
  */
+type SessionTreeOverlay = Pick<
+  typeof sessionTree.$inferSelect,
+  "parentSessionId" | "spawnReason" | "spawnerTool" | "spawnerSkillRun"
+>;
+
+function applyIndexedSessionTreeOverlay(data: SessionData, row: SessionTreeOverlay): void {
+  // session_tree is the source of truth. Null values in the indexed row are
+  // authoritative and must not fall back to legacy document metadata.
+  data.parentSessionId = row.parentSessionId || undefined;
+  data.spawnReason = row.spawnReason || undefined;
+  data.spawnerTool = row.spawnerTool || undefined;
+  data.spawnerSkillRun = row.spawnerSkillRun || undefined;
+}
+
+function hasLegacySessionTreeMetadata(data: SessionData): boolean {
+  return Boolean(
+    data.parentSessionId ||
+    data.spawnReason ||
+    data.spawnerTool ||
+    data.spawnerSkillRun
+  );
+}
+
+async function repairLegacySessionTreeMetadata(data: SessionData): Promise<void> {
+  if (!hasLegacySessionTreeMetadata(data)) return;
+  const tree = await import("./sessions/tree");
+  await tree.upsertSessionTreeRow({
+    sessionId: data.id,
+    parentSessionId: data.parentSessionId || null,
+    spawnReason: data.spawnReason || null,
+    spawnerTool: data.spawnerTool || null,
+    spawnerSkillRun: data.spawnerSkillRun || null,
+  });
+}
+
 async function applySessionTreeOverlay(data: SessionData): Promise<void> {
   try {
     const tree = await import("./sessions/tree");
     const row = await tree.getSessionTreeRow(data.id);
     if (row) {
-      // session_tree is the source of truth. Null values in the indexed row are
-      // authoritative and must not fall back to legacy document metadata.
-      data.parentSessionId = row.parentSessionId || undefined;
-      data.spawnReason = row.spawnReason || undefined;
-      data.spawnerTool = row.spawnerTool || undefined;
-      data.spawnerSkillRun = row.spawnerSkillRun || undefined;
+      applyIndexedSessionTreeOverlay(data, row);
       return;
     }
-
-    if (
-      data.parentSessionId ||
-      data.spawnReason ||
-      data.spawnerTool ||
-      data.spawnerSkillRun
-    ) {
-      await tree.upsertSessionTreeRow({
-        sessionId: data.id,
-        parentSessionId: data.parentSessionId || null,
-        spawnReason: data.spawnReason || null,
-        spawnerTool: data.spawnerTool || null,
-        spawnerSkillRun: data.spawnerSkillRun || null,
-      });
-    }
+    await repairLegacySessionTreeMetadata(data);
   } catch {
     // Silent: tree overlay/backfill is best-effort. Callers can still use the
     // legacy payload fields for this read if the repair path is unavailable.
@@ -1118,6 +1144,7 @@ export async function rebuildIndex(): Promise<void> {
 
 export interface IChatFileStorage {
   getSession(id: string): Promise<FileSession | undefined>;
+  getSessions(ids: string[]): Promise<FileSession[]>;
   getSavedSessions(): Promise<FileSession[]>;
   getAllSessions(): Promise<FileSession[]>;
   createSession(
@@ -1438,6 +1465,59 @@ export const chatFileStorage: IChatFileStorage = {
       const data = await readConv(id);
       if (!data) return undefined as any;
       return convToMeta(data);
+    });
+  },
+
+  async getSessions(ids: string[]) {
+    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+    if (uniqueIds.length === 0) return [];
+    const cachePrefix = `session:${principalCacheKey()}:`;
+    const sessionById = new Map<string, FileSession>();
+    const missingIds: string[] = [];
+
+    for (const id of uniqueIds) {
+      const cached = _sessionsCache.get(`${cachePrefix}${id}`) as FileSession | undefined;
+      if (cached) sessionById.set(id, cached);
+      else missingIds.push(id);
+    }
+
+    const tree = await import("./sessions/tree");
+    for (let index = 0; index < missingIds.length; index += SESSION_READ_BATCH_SIZE) {
+      const batch = missingIds.slice(index, index + SESSION_READ_BATCH_SIZE);
+      // Read documents before tree overlays so even the canonical batch path
+      // never submits more than one database operation at a time.
+      const documents = await documentStorage.getDocuments("chat", batch);
+      const parsedSessions = documents.flatMap((document) => {
+        const data = parseConvDocument(document.docId, document);
+        return data ? [data] : [];
+      });
+      const treeRows = await tree.getSessionTreeRows(parsedSessions.map((session) => session.id));
+      const treeBySessionId = new Map(treeRows.map((row) => [row.sessionId, row]));
+
+      for (const data of parsedSessions) {
+        const treeRow = treeBySessionId.get(data.id);
+        if (treeRow) applyIndexedSessionTreeOverlay(data, treeRow);
+      }
+
+      // Legacy repair is intentionally sequential. It is rare after migration
+      // and must never recreate the unbounded write fan-out this batch API removes.
+      for (const data of parsedSessions) {
+        if (!treeBySessionId.has(data.id)) {
+          try {
+            await repairLegacySessionTreeMetadata(data);
+          } catch {
+            // Best-effort compatibility repair; the authorized document remains usable.
+          }
+        }
+        const session = convToMeta(data);
+        sessionById.set(session.id, session);
+        _sessionsCache.set(`${cachePrefix}${session.id}`, session);
+      }
+    }
+
+    return uniqueIds.flatMap((id) => {
+      const session = sessionById.get(id);
+      return session ? [session] : [];
     });
   },
 
