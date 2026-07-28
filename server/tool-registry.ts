@@ -1160,13 +1160,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     whenToUse: "On the first turn of every session to set title, topics, and persona together — persona is REQUIRED on the first call (before any title is set) and will be rejected without it. Also for mid-session re-orientation when the conversation's purpose shifts (persona optional on updates). The active persona determines which context sections and tools load — switch persona to change what's assembled.",
   },
   session: {
-    description: "Manage session metadata and lifecycle. Actions: 'get' reads any session's metadata by ID, 'set_status' records lifecycle completion/failure via session.status, 'end' ends the current session, 'list' returns all conversations, 'search' finds conversations by query, 'get_messages' retrieves messages for a session, 'spawn_child' forks a linked child conversation seeded with a warm-start brief from this session (idempotent on parent + spawnReason), and 'send_message' delivers a cross-session message to any target session by ID. For a coding mission, set delegation=engineering; the server grants Git-write authority only when the parent has trusted engineering authority and build:write, and the child must use its own session-scoped clone.",
+    description: "Manage session metadata, agenda, and lifecycle. Actions: 'get' reads any session's metadata by ID; 'get_agenda', 'set_agenda', and 'update_agenda_item' query or mutate its optional conversation agenda; 'set_status' and 'end' settle lifecycle; 'list', 'search', and 'get_messages' retrieve sessions; 'spawn_child' forks a linked child conversation with an optional explicit agenda; and 'send_message' delivers a cross-session message. Child sessions never inherit the parent's agenda. For a coding mission, set delegation=engineering; the server grants Git-write authority only when the parent has trusted engineering authority and build:write, and the child must use its own session-scoped clone.",
     category: "communication",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["get", "set_status", "end", "list", "search", "get_messages", "spawn_child", "send_message"], description: "Action to perform" },
+        action: { type: "string", enum: ["get", "get_agenda", "set_agenda", "update_agenda_item", "set_status", "end", "list", "search", "get_messages", "spawn_child", "send_message"], description: "Action to perform" },
         sessionId: { type: "string", description: "Target session ID (for get/get_messages/send_message; defaults to current session for get/get_messages)" },
         runStatus: { type: "string", enum: ["resolved", "saved", "failed"], description: "Lifecycle state to set for set_status. resolved is accepted as a legacy alias for saved; session.status is the source of truth." },
         summary: { type: "string", description: "Brief summary of the session (for end)" },
@@ -1178,6 +1178,9 @@ export const TOOLS: Record<string, ToolMeta> = {
         reason: { type: "string", description: "Free-text reason describing why the child is being spawned (for spawn_child); included in the warm-start brief. This text cannot grant permissions or trusted engineering provenance." },
         spawnReason: { type: "string", description: "Idempotency key for spawn_child; reusing the same (parent, spawnReason) returns the existing child instead of creating a new one. Defaults to 'spawn_child:<topic>'." },
         delegation: { type: "string", enum: ["conversation", "engineering"], description: "Delegation mode for spawn_child. Use engineering for implementation, debugging, build, deploy, or Git-writing missions. The server validates the parent's authority; defaults to conversation." },
+        agenda: { type: "array", items: { type: "object", properties: { id: { type: "string", description: "Stable item ID (optional when creating; generated if omitted)" }, title: { type: "string", description: "Simple 3–5 word title" }, description: { type: "string", description: "One to three sentence description" }, status: { type: "string", enum: ["open", "complete", "skipped", "deferred"] }, resolution: { type: "string", description: "Discrete resolution; required when status is complete" } }, required: ["title", "description"] }, description: "Ordered agenda items for set_agenda, spawn_child, or converse initiation. Existing agendas are replaced only by set_agenda." },
+        itemId: { type: "string", description: "Agenda item ID for update_agenda_item" },
+        item: { type: "object", properties: { title: { type: "string", description: "Replacement 3–5 word title" }, description: { type: "string", description: "Replacement description" }, status: { type: "string", enum: ["open", "complete", "skipped", "deferred"] }, resolution: { type: "string", description: "Resolution required for complete; ignored and removed for other statuses" } }, description: "Sparse agenda item patch for update_agenda_item" },
         content: { type: "string", description: "Message body to deliver for send_message." },
         toSessionId: { type: "string", description: "Alternative target session ID for send_message." },
       },
@@ -1194,6 +1197,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         action: { type: "string", enum: ["initiate", "set_attention"], description: "Action to perform (default: initiate)" },
         topic: { type: "string", description: "Short session topic / title (for initiate)" },
         message: { type: "string", description: "Opening message to the user (for initiate)" },
+        agenda: { type: "array", items: { type: "object", properties: { id: { type: "string", description: "Stable item ID (optional; generated if omitted)" }, title: { type: "string", description: "Simple 3–5 word title" }, description: { type: "string", description: "One to three sentence description" }, status: { type: "string", enum: ["open", "complete", "skipped", "deferred"] }, resolution: { type: "string", description: "Discrete resolution; required when status is complete" } }, required: ["title", "description"] }, description: "Optional ordered conversation agenda for the new session" },
 
         sessionId: { type: "string", description: "The session ID to flag (for set_attention). If omitted, defaults to the current session." },
         isPinned: { type: "boolean", description: "Whether to set or clear the pin flag (for set_attention, default true)" },
