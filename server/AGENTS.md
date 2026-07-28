@@ -65,6 +65,83 @@ The server is a Node.js/Express/TypeScript monolith running all backend logic: A
 
 ---
 
+## Database Architecture
+
+### Connection and access model
+
+`server/db.ts` owns the ordinary application database boundary over Railway-injected `DATABASE_URL`:
+
+- `pool`: node-postgres general lane, `max=26`, `min=16`, 5 s acquisition timeout, 10 s server-side `statement_timeout`, 60 s idle timeout.
+- `voicePool`: reserved real-time lane, `max=min=4`, 750 ms acquisition timeout, 4 s server-side `statement_timeout`.
+- `db`: the canonical Drizzle proxy. AsyncLocalStorage selects an ambient transaction first, otherwise the voice lane when `withDatabaseLane("voice")` is active, otherwise the general lane. `runWithDatabaseTransaction(...)` lets nested storage calls share the caller's transaction; durable diagnostics may deliberately exit it with `runOutsideDatabaseTransaction(...)`.
+- `setupAuth()` creates a separate 5-connection node-postgres pool for `connect-pg-simple`. It is outside `server/db.ts` lane selection, query attribution, saturation counters, and `closeDatabasePools()`; account for it when reasoning about per-process connection demand.
+- Dedicated `pg.Client` connections are exceptional but real: the pool-wedge `pg_stat_activity` dump and Brain export/preflight paths bypass the application pools so diagnostics or long cursor exports do not occupy ordinary request capacity. Brain cursor exports intentionally disable statement timeout and rely on bounded fetches, progress heartbeats, cancellation, and the export reaper.
+
+The configured ordinary budget is 30 connections per app process, not per deployment; with auth it is up to 35 pooled clients before exceptional dedicated clients. Live idle/total counts are demand-driven and may remain below configured `min` because node-postgres does not proactively create the minimum. Scaling replicas multiplies every pool. There is currently no application evidence that Railway PgBouncer is enabled: Live exposes only `DATABASE_URL`, not an unpooled companion variable. Railway's current transaction-pooling contract would be incompatible with session-scoped advisory locks, session `SET`, `LISTEN/NOTIFY`, and concurrent index maintenance unless those paths use an unpooled connection; do not put PgBouncer in front of every path by assumption.
+
+Drizzle is the default query builder and schema mapper, not the only SQL path. Raw `pool.query`, checked-out `PoolClient`, `db.execute(sql\`...\`)`, and `sql.raw` are used for DDL/catalog work, PostgreSQL-specific JSONB/array/vector/trigram operators, bulk SQL, locks, and migrations. New ordinary domain reads/writes should use `db` plus scoped-storage helpers. Use raw pool/client access only when the contract cannot be represented truthfully through that path, preserve explicit ownership predicates, and accept that bypasses lose ambient transaction and voice-lane selection unless deliberately restored.
+
+### Timeouts, cancellation, transactions, and locks
+
+- General and voice statement ceilings are server-side PostgreSQL cancellation (`57014`). Query instrumentation measures submission through settlement, so duration includes pool wait plus execution; it does not distinguish those phases per individual query.
+- `connectionTimeoutMillis` bounds pool acquisition only. JavaScript `Promise.race` probes and generic `withTimeout` do not cancel their underlying SQL; use PostgreSQL statement/lock timeouts or a real abort-capable boundary when resource release matters.
+- `db.transaction(...)` is the ordinary atomic boundary. The default PostgreSQL isolation remains read committed unless a caller specifies otherwise. Nested Drizzle transactions are savepoints.
+- Transaction-scoped advisory locks are the preferred serialization primitive for domain invariants. `ADVISORY_LOCK_NS` + stable FNV keys cover chat documents, Library parents, People merges, compaction, meeting/workflow operations, and related boundaries. Acquire multiple logical locks in deterministic order. Session-scoped advisory locks exist for cross-replica maintenance such as document-search index convergence and require one checked-out unpooled session plus explicit unlock/reset/discard handling.
+- `isSerializationConflict()` classifies `40P01` and `40001`; callers own bounded retry or a 409 mapping. Connection recovery classification covers SQLSTATE class `08`, `57P01`–`57P03`, and known disconnect messages. Statement timeout, lock timeout, serialization conflicts, and constraint errors are not connection incidents.
+
+### Schema and index ownership — current reality
+
+The deployed schema has multiple active owners:
+
+1. `runSchemaBootstrap()` performs extensive pre-readiness `CREATE/ALTER/INDEX/TRIGGER/COMMENT` work. Core ensures fail startup; many later `heal(...)` blocks race work against a 2 s JavaScript timer, log failure/quarantine, and let boot continue. That timer does not cancel the SQL, so a timed-out heal may still hold a pool client and mutate later.
+2. Ordered subsystem ensures and one-time migrations run before route readiness (`ensureVaults`, document-store cutover/bootstrap, work/milestone/grant schemas, persona/skill reconciliation, etc.).
+3. Some route registrars still execute compatibility DDL and data backfills. `registerLibraryRoutes()` is a prominent example and treats several failures as non-fatal.
+4. Post-ready maintenance builds `document_store_documents` trigram indexes with `CREATE INDEX CONCURRENTLY` under a session advisory lock, verifies the exact production query with bounded `EXPLAIN (ANALYZE, BUFFERS)`, then retires old index identities.
+5. SQL migration files and Drizzle table declarations are important specifications but are not the sole live-schema application path.
+
+Railway private networking is runtime-only, so database migrations that use the internal host belong in the start/runtime lifecycle, not image build. Production schema changes remain additive/backward-compatible first. Expensive index replacement uses a fresh versioned name and concurrent build-before-retire. Never add request-time auto-heal as the primary rollout path; keep it as explicit compatibility recovery and move canonical convergence into the ordered boot owner.
+
+### Workload classes and concurrency
+
+- **Foreground HTTP/chat/tools:** share the general lane. Context sections resolve in parallel with per-section 15 s wrappers; an uncached full assembly can fan out across many storage reads. Agent tool reads run with `pLimit(4)`, while writes serialize at the executor layer. Those controls limit model orchestration, not every route or internal `Promise.all`.
+- **Session persistence:** `chat-file-storage.ts` serializes one session in process and again with a transaction advisory lock across replicas, then reads/parses/modifies and rewrites the complete JSON document in `document_store_documents.content`. Indexed JSONB metadata supports lists and filters; `session_tree` is a relational side index with best-effort legacy repair.
+- **Library:** metadata list/tree reads load the full visible result set; substring search uses unescaped `%term%` `ILIKE` over title/plain text and currently has no dedicated Library trigram/FTS index contract. Page writes use transactions, principal scope, Library-parent locks, arrays for tags, TipTap JSONB, markdown text, and asynchronous best-effort link/vNext ingestion after commit.
+- **Memory:** active context retrieval runs semantic and recency seeds in parallel, then at most two sequential graph hops with frontier/result limits before one batched provenance read. Source polling is one process-local sequential loop (10 sources/run, 3 claims/source), but `pollSettledSources()` and `markProcessing()` are separate statements without an atomic `UPDATE ... RETURNING`/`SKIP LOCKED` claim; multiple replicas can duplicate extraction work. Canonical persistence dedup makes many outcomes replay-safe, but it does not make the lease correct.
+- **Timers/autonomy:** each app process maintains one serial timer execution promise with a 12 s between-run cooldown; one slow timer delays that process. Scheduler enumeration is cross-account and database-backed, and selected run transitions use guarded updates. Autonomous admission defaults to 20 total / 14 request / 6 background slots, which bounds executor runs rather than SQL statements. Concurrent sessions multiply context reads, API-call audit writes, document checkpoints, tool operations, artifact indexing, and post-run ingestion.
+- **Email/background:** timer execution may be serial, but handlers can introduce their own bounded workers (triage defaults to 2 workers × batches of 5; email reconciliation uses up to 8 workers). Treat every nested worker pool as additive demand on the same general DB lane.
+- **Caching:** process-local `TTLCache` coalesces same-key fills and generation-fences invalidation. It is neither cross-replica coherence nor a substitute for indexed bounded reads. Context section and graph caches reduce repeated reads per process; EventBus telemetry is memory-only.
+
+### Data shapes and query mechanisms
+
+PostgreSQL stores relational columns alongside extensive JSONB (`metadata`, document/session payload indexes, schedules, workflow definitions, diagnostics), native arrays (tags, visible Vaults, transition IDs/keys), text blobs (whole sessions, markdown), and pgvector embeddings. vNext claim search uses cosine distance (`<=>`) over validated embeddings. Exact session substring search uses partial title/content `pg_trgm` GIN indexes; it deliberately preserves complete-substring semantics rather than token-only full-text search. Full-text search is not a general platform abstraction. Every JSONB/array predicate used in a recurring bounded query still requires measured index evidence; containment inside a JSON blob is not free.
+
+### Observability and operating rules
+
+`server/db.ts` instruments `pool.query` on the general and voice pools, attributes operations through AsyncLocalStorage, records in-flight/long-running work, logs queries over 1 s, probes health, and declares saturation only after a configured lane is exhausted with waiters for 2 s. A slow-query line is diagnostic evidence, not proof of saturation; current logs may render slow queries at `error` despite the intended logging-level contract. Direct checked-out `client.query`, the auth pool, and dedicated clients are not covered by this query instrumentation.
+
+Live Platform Environment 12 on commit `bc528443603a` showed configured demand without sustained exhaustion: general pool samples ranged roughly 15–25 total with 0 waiters; voice ranged 0–3 with 0 waiters; no `DB SATURATION START` appeared in the sampled window. The same window proved statement cancellation of exact session search at ~10.0–10.5 s (`57014`) while the pool still had idle clients, plus repeat ~1.1–1.5 s context-health reads and ~1.1 s browser-telemetry writes. Diagnose SQL/index/selectivity and logging severity separately from pool exhaustion.
+
+Non-negotiable rules:
+
+- Budget connections across all pools, replicas, background workers, and exceptional clients before changing pool sizes. Never tune pool counts from one snapshot.
+- Preserve the reserved voice lane for route-installed real-time voice work; direct general-pool calls inside that path are bypasses.
+- Bound result rows, fan-out, lock wait, statement time, retry count, and background runtime. A `LIMIT` after an unselective scan bounds output, not work.
+- Never use JavaScript timeouts as if they cancel SQL. Never leave a checked-out client with changed session state; reset or discard it.
+- Keep transactions short; never hold one across model/provider calls or ordinary network I/O. Cursor exports are a deliberate dedicated-client exception with cancellation and progress liveness.
+- Prefer database constraints, guarded state transitions, transaction locks, idempotency keys, and `SKIP LOCKED`/atomic claims over process-local maps for cross-replica correctness.
+- Never log SQL parameters, principal identity, corpus text, secrets, or full plans. Query text logging is currently a known inconsistency in the generic DB instrumentation and must not be copied into new diagnostics.
+
+### Known database gaps
+
+- Pool/shutdown/telemetry ownership is fragmented by the separate auth pool and dedicated clients.
+- Schema convergence is distributed and partly non-fatal; the 2 s heal race does not cancel SQL.
+- Instrumentation wraps `Pool.query`, not checked-out `PoolClient.query`, auth, or dedicated clients, and labels slow-but-successful queries inconsistently with the logging contract.
+- Exact session search has the intended index contract but is timing out live; index existence and a boot probe are not proof that every real search pattern is cheap.
+- Context-health orders and filters a growing `api_calls` telemetry set by a JSONB expression and is repeatedly slow in live evidence.
+- Library visible-list/tree reads and substring search are full-result/full-text-column workloads without a documented pagination/index budget.
+- Session persistence is full-document read/parse/rewrite, so transcript size increases write amplification and lock hold time.
+- vNext source selection lacks an atomic cross-replica lease.
+
 Email synchronization timers must fan out through explicit user principals and one Vault at a time. The system scheduler may page the global user identity table with a durable round-robin cursor, but connected-account discovery, token access, email cache mutation, triage, enrichment, and autonomous session creation must execute inside the exact owner's personal-account principal with exactly one owned, non-archived Vault visible. The whole timer pipeline uses a cross-process advisory lock; each connected account must match the outer user, personal account, and active Vault before any token or email access. Never authorize `timer:email-sync` for cross-Vault sensitive reads.
 
 ## Access Control
