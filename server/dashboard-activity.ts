@@ -145,23 +145,20 @@ async function queryCalendarMeetingSeries(
   startDate: string,
   endDate: string,
   principal: Principal,
+  selfEmails: ReadonlySet<string>,
 ): Promise<Map<string, number>> {
   const principalKey = [principal.actorType, principal.accountId || "no-account", principal.userId || "no-user"].join(":");
-  const cacheKey = `${principalKey}:${startDate}:${endDate}`;
+  const selfEmailKey = [...selfEmails].sort().join(",");
+  const cacheKey = `${principalKey}:${selfEmailKey}:${startDate}:${endDate}`;
   return calendarInteractionCache.getOrFetch(cacheKey, async () => {
     const rangeStart = userDayBounds(startDate).start;
     const rangeEnd = userDayBounds(endDate).end;
     const completionCutoff = new Date(Math.min(rangeEnd.getTime(), Date.now()));
-    const [accounts, calendarResult] = await Promise.all([
-      listGmailAccounts(),
-      listAllEvents({
-        timeMin: rangeStart.toISOString(),
-        timeMax: new Date(rangeEnd.getTime() + 1).toISOString(),
-        maxResults: CALENDAR_INTERACTION_MAX_EVENTS,
-      }),
-    ]);
-    const selfEmails = new Set(accounts.map((account) => account.email.trim().toLowerCase()).filter(Boolean));
-    const { events, errors } = calendarResult;
+    const { events, errors } = await listAllEvents({
+      timeMin: rangeStart.toISOString(),
+      timeMax: new Date(rangeEnd.getTime() + 1).toISOString(),
+      maxResults: CALENDAR_INTERACTION_MAX_EVENTS,
+    });
     if (errors.length > 0) {
       log.warn("Dashboard calendar interactions loaded with account errors", {
         errorCount: errors.length,
@@ -248,9 +245,13 @@ export async function queryActivityDashboard(
           const interactionStartDate = dates[0] < INTERACTION_TRACKING_START_DATE
             ? INTERACTION_TRACKING_START_DATE
             : dates[0];
+          const accounts = await listGmailAccounts();
+          const selfEmails = new Set(
+            accounts.map((account) => account.email.trim().toLowerCase()).filter(Boolean),
+          );
           const [interactionEvents, calendarMeetings] = await Promise.all([
-            queryNonMeetingInteractionEventSeries(interactionStartDate, date, principal),
-            queryCalendarMeetingSeries(interactionStartDate, date, principal).catch((error) => {
+            queryNonMeetingInteractionEventSeries(interactionStartDate, date, selfEmails, principal),
+            queryCalendarMeetingSeries(interactionStartDate, date, principal, selfEmails).catch((error) => {
               log.warn("Dashboard calendar interactions unavailable; returning persisted interaction events", {
                 error: error instanceof Error ? error.message : String(error),
               });
