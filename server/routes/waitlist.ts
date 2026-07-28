@@ -32,7 +32,7 @@ const waitlistSubmissionSchema = z.object({
   email: z.string().trim().email().max(320),
   role: z.enum(ROLE_OPTIONS),
   needs: z.array(z.enum(NEED_OPTIONS)).min(1).max(3),
-  readiness: z.enum(READINESS_OPTIONS),
+  readiness: z.enum(READINESS_OPTIONS).optional(),
   attribution: attributionSchema.optional(),
   consent: z.literal(true),
   website: z.string().max(0).optional(),
@@ -169,7 +169,7 @@ export function registerWaitlistRoutes(app: Express): void {
           ${email},
           ${parsed.data.role},
           ARRAY[${sql.join(parsed.data.needs.map((need) => sql`${need}`), sql`, `)}]::text[],
-          ${parsed.data.readiness},
+          ${parsed.data.readiness || "curious"},
           ${attribution.source || "direct"},
           ${JSON.stringify(attribution)}::jsonb
         )
