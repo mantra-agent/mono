@@ -18,7 +18,7 @@ import { finalizeMeetingSession } from "../meeting/recap";
 import { distributeRecap, resolveOnboardingToken } from "../meeting/distribution";
 import { createLogger } from "../log";
 import type { RecipientRecapProjectionResponse } from "@shared/meeting-recipient-recap";
-import { getAuthenticatedOnboardingRecapProjection } from "../meeting/recipient-projection";
+import { materializeAuthenticatedRecipientRecap } from "../meeting/recipient-materialization";
 import { normalizeEmailAddress } from "../email-normalization";
 import { storage } from "../storage";
 
@@ -128,15 +128,15 @@ export function registerMeetingDistributionRoutes(app: Express): void {
           res.status(404).json({ error: "Recap unavailable" });
           return;
         }
-        const projection = await getAuthenticatedOnboardingRecapProjection(
+        const materialized = await materializeAuthenticatedRecipientRecap(
           req.params.token ?? "",
           email,
         );
-        if (!projection) {
+        if (!materialized) {
           res.status(404).json({ error: "Recap unavailable" });
           return;
         }
-        const response: RecipientRecapProjectionResponse = { projection };
+        const response: RecipientRecapProjectionResponse = { projection: materialized.projection };
         res.setHeader("Cache-Control", "private, no-store");
         res.setHeader("Referrer-Policy", "no-referrer");
         res.json(response);

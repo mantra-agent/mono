@@ -3290,6 +3290,96 @@ export async function runSchemaBootstrap(
 
   // Project Vault membership convergence runs after work Vault anchors are complete.
 
+  await heal("account-local person email identity", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS person_emails (
+        account_id TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+        person_name TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'contact_info',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (account_id, email)
+      )
+    `);
+    await pool.query(`ALTER TABLE person_emails ADD COLUMN IF NOT EXISTS account_id TEXT`);
+    await pool.query(`ALTER TABLE person_emails ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
+    await pool.query(`ALTER TABLE person_emails ADD COLUMN IF NOT EXISTS person_name TEXT`);
+    await pool.query(`ALTER TABLE person_emails ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'contact_info'`);
+    await pool.query(`ALTER TABLE person_emails ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+    await pool.query(`ALTER TABLE person_emails ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP`);
+    await pool.query(`
+      UPDATE person_emails AS email
+      SET account_id = person.account_id,
+          owner_user_id = person.owner_user_id,
+          person_name = person.name,
+          updated_at = CURRENT_TIMESTAMP
+      FROM persons AS person
+      WHERE person.id = email.person_id
+        AND (email.account_id IS NULL OR email.owner_user_id IS NULL)
+    `);
+    const orphaned = await pool.query(`
+      DELETE FROM person_emails
+      WHERE account_id IS NULL OR owner_user_id IS NULL
+    `);
+    if (orphaned.rowCount) {
+      log(`[boot] removed orphaned Person email index rows: count=${orphaned.rowCount}`, "migration");
+    }
+    await pool.query(`ALTER TABLE person_emails ALTER COLUMN account_id SET NOT NULL`);
+    await pool.query(`ALTER TABLE person_emails ALTER COLUMN owner_user_id SET NOT NULL`);
+    await pool.query(`ALTER TABLE person_emails ALTER COLUMN person_name SET NOT NULL`);
+    await pool.query(`
+      DO $person_email_identity$
+      DECLARE
+        primary_name TEXT;
+        primary_definition TEXT;
+      BEGIN
+        SELECT constraint_name, pg_get_constraintdef(pg_constraint.oid)
+        INTO primary_name, primary_definition
+        FROM information_schema.table_constraints
+        JOIN pg_constraint ON pg_constraint.conname = constraint_name
+          AND pg_constraint.conrelid = 'person_emails'::regclass
+        WHERE table_schema = 'public'
+          AND table_name = 'person_emails'
+          AND constraint_type = 'PRIMARY KEY'
+        LIMIT 1;
+        IF primary_definition IS DISTINCT FROM 'PRIMARY KEY (account_id, email)' THEN
+          IF primary_name IS NOT NULL THEN
+            EXECUTE format('ALTER TABLE person_emails DROP CONSTRAINT %I', primary_name);
+          END IF;
+          ALTER TABLE person_emails ADD CONSTRAINT person_emails_pkey PRIMARY KEY (account_id, email);
+        END IF;
+      END $person_email_identity$;
+    `);
+    await pool.query(`
+      DO $person_email_person_fk$
+      DECLARE
+        foreign_name TEXT;
+        foreign_definition TEXT;
+      BEGIN
+        SELECT conname, pg_get_constraintdef(oid)
+        INTO foreign_name, foreign_definition
+        FROM pg_constraint
+        WHERE conrelid = 'person_emails'::regclass
+          AND contype = 'f'
+          AND conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'person_emails'::regclass AND attname = 'person_id')]
+        LIMIT 1;
+        IF foreign_definition IS NULL OR foreign_definition NOT LIKE '%ON DELETE CASCADE%' THEN
+          IF foreign_name IS NOT NULL THEN
+            EXECUTE format('ALTER TABLE person_emails DROP CONSTRAINT %I', foreign_name);
+          END IF;
+          ALTER TABLE person_emails
+          ADD CONSTRAINT person_emails_person_id_fkey
+          FOREIGN KEY (person_id) REFERENCES persons(id) ON DELETE CASCADE;
+        END IF;
+      END $person_email_person_fk$;
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_person_emails_person ON person_emails(person_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_person_emails_owner ON person_emails(owner_user_id, account_id)`);
+  });
+
   await heal("person vault memberships", async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS person_vault_memberships (

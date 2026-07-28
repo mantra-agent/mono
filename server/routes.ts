@@ -189,27 +189,6 @@ export async function registerRoutes(
     routesLog.warn("CaptureProcessor failed to initialize (non-fatal):", err instanceof Error ? err.message : String(err));
   });
 
-  import("./people-storage").then(async ({ PeopleStorage }) => {
-    try {
-      const { db } = await import("./db");
-      const { sql } = await import("drizzle-orm");
-      await db.execute(sql`
-        CREATE TABLE IF NOT EXISTS person_emails (
-          email TEXT PRIMARY KEY,
-          person_id TEXT NOT NULL,
-          person_name TEXT NOT NULL,
-          source TEXT NOT NULL DEFAULT 'contact_info',
-          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-      const count = await PeopleStorage.rebuildEmailIndex();
-      routesLog.info(`PersonEmailIndex: rebuilt ${count} email(s)`);
-    } catch (err) {
-      routesLog.warn("PersonEmailIndex: rebuild failed (non-fatal):", err instanceof Error ? err.message : String(err));
-    }
-  });
-
   await registerChatRoutes(app);
 
   // Confirmed user-data leak surfaces: route auth establishes request principal

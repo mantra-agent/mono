@@ -20,6 +20,7 @@ import { eq, sql } from "drizzle-orm";
 import {
   attachUserPrincipal,
   createServicePrincipal,
+  createUserPrincipalFromUser,
   ensureUserIdentityFoundation,
   resolveUserIdentityFoundation,
   getPrincipal,
@@ -34,7 +35,7 @@ import { MEETING_JOIN_POLICIES, getMeetingJoinPolicy, setMeetingJoinPolicy } fro
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { getClientPresenceSnapshot } from "./client-presence";
 import { normalizeEmailAddress } from "./email-normalization";
-import { db, acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS } from "./db";
+import { db, acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, runWithDatabaseTransaction } from "./db";
 import { claimInvitedSubjectInTransaction } from "./invited-subject-service";
 
 const setupSchema = z.object({
@@ -853,11 +854,11 @@ export function setupAuth(app: Express) {
       const email = normalizeEmailAddress(resolution.email);
       const hashed = await bcrypt.hash(password, 12);
 
-      // 2-3. Atomically create the real user, set the password, and rebind the
-      //      provisional identity's live grants + task assignments. Serialized
-      //      on the recipient email so concurrent submits cannot create two
-      //      users or double-rebind grants.
-      const claimResult = await db.transaction(async (tx) => {
+      // 2-3. Atomically create the real user, establish its Personal identity
+      //      foundation, rebind provisional grants, and materialize the recap
+      //      Meeting/People projection. Serialized on recipient email plus the
+      //      projection key so any failure rolls back the complete claim.
+      const claimResult = await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
         await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.INVITED_SUBJECT, email);
 
         const [existingUser] = await tx
@@ -875,8 +876,20 @@ export function setupAuth(app: Express) {
           .returning();
         if (!createdUser) throw new Error("Claim user creation produced no row");
         const rebind = await claimInvitedSubjectInTransaction(tx, createdUser);
-        return { alreadyClaimed: false as const, user: createdUser, rebind };
-      });
+        const foundation = await ensureUserIdentityFoundation(createdUser, { identityName: displayName });
+        const recipientPrincipal = createUserPrincipalFromUser({
+          ...createdUser,
+          activeVaultId: foundation.activeVaultId,
+          visibleVaultIds: foundation.visibleVaultIds,
+        }, foundation.accountId);
+        const { materializeAuthenticatedRecipientRecap } = await import("./meeting/recipient-materialization");
+        const materializedRecap = await runWithPrincipal(
+          recipientPrincipal,
+          () => materializeAuthenticatedRecipientRecap(token, email),
+        );
+        if (!materializedRecap) throw new Error("Claimed recipient recap could not be materialized");
+        return { alreadyClaimed: false as const, user: createdUser, rebind, materializedRecap };
+      }));
 
       if (claimResult.alreadyClaimed) {
         // A prior/concurrent claim already promoted this email. Never create a
