@@ -5,6 +5,11 @@ import {
   type BrowserTelemetryEventInput,
 } from "@shared/browser-telemetry";
 import { createLogger } from "@/lib/logger";
+import {
+  initializeNavigationTracing,
+  noteNavigationLongTask,
+  noteNavigationSlowFrame,
+} from "@/lib/navigation-trace";
 
 const log = createLogger("BrowserTelemetry");
 
@@ -244,6 +249,7 @@ function observeLongTasks(): void {
     const observer = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
         if (entry.duration >= LONG_TASK_THRESHOLD_MS) {
+          noteNavigationLongTask(entry.duration);
           recordBrowserTelemetry({ kind: "long_task", name: "main_thread_blocked", value: entry.duration, unit: "ms", bucket: bucketDuration(entry.duration) });
         }
       }
@@ -296,6 +302,9 @@ function observeFrameContention(): void {
       window.requestAnimationFrame(tick);
       return;
     }
+    if (delta >= FRAME_CONTENTION_THRESHOLD_MS) {
+      noteNavigationSlowFrame(delta);
+    }
     if (delta >= FRAME_CONTENTION_THRESHOLD_MS && Date.now() - lastFrameContentionAt >= FRAME_CONTENTION_MIN_INTERVAL_MS) {
       lastFrameContentionAt = Date.now();
       recordBrowserTelemetry({
@@ -315,6 +324,18 @@ function observeFrameContention(): void {
 export function initializeBrowserTelemetry(): void {
   if (initialized || typeof window === "undefined" || typeof performance === "undefined") return;
   initialized = true;
+  initializeNavigationTracing((trace) => {
+    recordBrowserTelemetry({
+      kind: "navigation",
+      name: "spa_navigation",
+      value: trace.durationMs,
+      unit: "ms",
+      routeKey: trace.toRoute,
+      bucket: bucketDuration(trace.durationMs),
+      metadata: trace.metadata,
+      occurredAt: trace.occurredAt,
+    });
+  });
   observeNavigation();
   observeWebVitals();
   observeLongTasks();

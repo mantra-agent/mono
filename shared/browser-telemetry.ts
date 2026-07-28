@@ -12,6 +12,17 @@ export const BROWSER_TELEMETRY_EVENT_KINDS = [
 
 export type BrowserTelemetryEventKind = typeof BROWSER_TELEMETRY_EVENT_KINDS[number];
 
+export const NAVIGATION_TRACE_DIAGNOSES = [
+  "healthy",
+  "network_or_query_delay",
+  "main_thread_contention",
+  "ready_but_uncommitted",
+  "incomplete_or_unknown",
+] as const;
+
+export type NavigationTraceDiagnosis = typeof NAVIGATION_TRACE_DIAGNOSES[number];
+export type NavigationTraceOutcome = "completed" | "deadline" | "pagehide" | "superseded";
+
 export interface BrowserTelemetryEventInput {
   kind: BrowserTelemetryEventKind;
   name: string;
@@ -70,6 +81,37 @@ export interface BrowserTelemetryMetricSummary {
   latestAt: string | null;
 }
 
+export interface NavigationTraceAggregate {
+  count: number;
+  completedCount: number;
+  incompleteCount: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  diagnosisCounts: Record<NavigationTraceDiagnosis, number>;
+}
+
+export interface NavigationTraceIncident {
+  traceId: string;
+  fromRoute: string;
+  toRoute: string;
+  durationMs: number;
+  outcome: NavigationTraceOutcome;
+  diagnosis: NavigationTraceDiagnosis;
+  occurredAt: string;
+  evidence: {
+    fallbackMs: number | null;
+    lazyReadyMs: number | null;
+    dataReadyMs: number | null;
+    firstCommitMs: number | null;
+    queriesActiveAtEnd: number;
+    peakQueries: number;
+    longTaskMaxMs: number;
+    slowFrameMaxMs: number;
+    streamActiveMax: number;
+    streamSegmentsMax: number;
+  };
+}
+
 export interface BrowserTelemetrySummary {
   generatedAt: number;
   windowHours: number;
@@ -79,6 +121,8 @@ export interface BrowserTelemetrySummary {
   budgets: typeof BROWSER_TELEMETRY_BUDGETS;
   metrics: BrowserTelemetryMetricSummary[];
   recentDegradations: Array<{ kind: string; name: string; value: number; unit: string; routeKey: string | null; occurredAt: string }>;
+  navigationTraces: NavigationTraceAggregate;
+  recentNavigationIncidents: NavigationTraceIncident[];
   /** Number of samples excluded from percentile calculations because visibility='hidden'.
    *  Zero when all samples are visible or untagged (NULL). */
   hiddenSampleCount: number;
