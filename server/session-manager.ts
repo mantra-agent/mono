@@ -52,6 +52,10 @@ export interface SessionSubscriberIdentity {
   activeSession?: string | null;
 }
 
+export type ActiveSessionClientResolution =
+  | { outcome: "resolved"; socket: WebSocket }
+  | { outcome: "no_active_client" | "ambiguous_active_client" };
+
 export type SessionStreamEvent = {
   type: string;
   content?: string;
@@ -507,6 +511,25 @@ class SessionManager {
     }
     for (const session of this.sessions.values()) session.subscribers.delete(ws);
     log.verbose(() => `SESSION:UNSUBSCRIBE_ALL removed=${removed}`);
+  }
+
+  resolveActiveClient(sessionId: string, clientId?: string): ActiveSessionClientResolution {
+    if (!clientId) return { outcome: "no_active_client" };
+    const sockets = this.subscriptionOwners.get(sessionId);
+    if (!sockets) return { outcome: "no_active_client" };
+
+    const matches: WebSocket[] = [];
+    for (const [socket, owners] of sockets) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      const activeOwners = Array.from(owners.values()).filter((identity) =>
+        identity.activeSession === sessionId && identity.tabId === clientId,
+      );
+      if (activeOwners.length > 0) matches.push(socket);
+    }
+
+    if (matches.length === 0) return { outcome: "no_active_client" };
+    if (matches.length > 1) return { outcome: "ambiguous_active_client" };
+    return { outcome: "resolved", socket: matches[0] };
   }
 
   // ── Finalization ──────────────────────────────────────────────────

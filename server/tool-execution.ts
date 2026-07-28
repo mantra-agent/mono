@@ -20,6 +20,7 @@ export interface ToolExecutionContext {
   runId: string;
   origin?: import("./agent-authority").ToolInvocationOrigin;
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation;
+  clientId?: string;
 }
 
 export interface ToolResult {
@@ -87,6 +88,7 @@ export function createToolExecutor(
       const result = await executeTool(name, callId || `exec-${Date.now()}`, args, {
         sessionId: ctx.sessionId || "",
         sessionKey: ctx.sessionKey,
+        clientId: ctx.clientId,
         authority: {
           origin: ctx.origin ?? (ctx.voiceSessionId ? "voice" : "interactive"),
           trustedDelegation: ctx.trustedDelegation,

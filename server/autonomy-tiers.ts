@@ -17,6 +17,7 @@ export type SideEffectTier = 0 | 1 | 2;
  * Tool-level default is the fallback; action-level overrides take precedence.
  */
 const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Record<string, SideEffectTier> }> = {
+  ui: { default: 2 },
   scratch: { default: 1, actions: { read: 0, list: 0, search: 0 } },
   files: { default: 1, actions: { read: 0, list: 0 } },
   shell: { default: 1 },

@@ -279,6 +279,7 @@ export function createVoiceSession(
     activeTranscriptRevision: 0,
     activeAssistantAttemptId: null,
     principal: null,
+    originatingClientId: null,
     toolMode: "standard",
     onboardingTokenHash: null,
   };

@@ -15,6 +15,8 @@ import { chatFileStorage } from "../chat-file-storage";
 import { requirePermission } from "../permissions";
 import { requireAuth } from "../auth";
 import { initialStreamingContent } from "@shared/streaming-types";
+import { isUiInteractionResult } from "@shared/ui-interaction";
+import { cancelUiInteractionsForSocket, resolveUiInteractionResult } from "../ui-interaction-coordinator";
 
 const eventsLog = createLogger("EventsWS");
 let eventsConnectionCounter = 0;
@@ -64,6 +66,18 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
         }
         if (msg.type === "client_presence.register" && isClientPresenceKind(msg.kind)) {
           registerClientPresence(ws, accountId, msg.kind, typeof msg.clientId === "string" ? msg.clientId : undefined);
+          return;
+        }
+        if (isUiInteractionResult(msg)) {
+          const accepted = resolveUiInteractionResult({
+            socket: ws,
+            commandId: msg.commandId,
+            outcome: msg.outcome,
+            reason: msg.reason,
+          });
+          if (!accepted) {
+            eventsLog.warn("WS:UI_INTERACTION_RESULT_REJECTED", { connectionId, commandId: msg.commandId });
+          }
           return;
         }
         if (msg.type === "events.resume") {
@@ -220,6 +234,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
       eventsLog.log("WS:DISCONNECT", { connectionId, code, reason: reason?.toString() || "none", durationMs: duration, remainingSessionSubscriptions: subscribedSessionIds.size, eventBusSubscribers: eventBus.listenerCount("event"), eventsWssClients: remaining });
       eventBus.removeListener("event", handler);
       unregisterSocketPresence(ws);
+      cancelUiInteractionsForSocket(ws);
 
       // Unsubscribe from all server-authoritative sessions on disconnect
       if (subscribedSessionIds.size > 0) {
