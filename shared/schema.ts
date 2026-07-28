@@ -35,6 +35,7 @@ export * from "./models/vaults";
 export * from "./models/communications";
 export * from "./models/browser-telemetry";
 export * from "./models/job-roles";
+export * from "./models/agendas";
 
 
 export const mobileStartupTelemetry = pgTable("mobile_startup_telemetry", {

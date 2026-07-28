@@ -11,6 +11,7 @@
  * the boot migration.
  */
 export const MANAGED_TABLES: string[] = [
+  "agenda_definitions",
   "app_secrets",
   "budget_entries",
   "budget_income_override",

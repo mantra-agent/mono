@@ -1304,6 +1304,36 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  agendas: {
+    description: "Manage reusable conversational agenda definitions. Definitions are editable templates; Session agendas are independent execution snapshots and are never rewritten by definition edits. Actions: list, get, search, create, update, delete. The reserved FTUE definition is editable but cannot be deleted.",
+    category: "automation",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "get", "search", "create", "update", "delete"], description: "Action to perform" },
+        id: { type: "string", description: "Agenda definition ID (for get, update, delete)" },
+        name: { type: "string", description: "Agenda name (for create/update)" },
+        description: { type: "string", description: "Agenda description (for create/update)" },
+        query: { type: "string", description: "Search query (for search)" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Stable item ID. Omit only when creating a new item." },
+              title: { type: "string", description: "Simple 3–5 word item title" },
+              description: { type: "string", description: "One to three sentence item instructions" },
+            },
+            required: ["title", "description"],
+          },
+          description: "Ordered agenda definition items (for create/update). Definition items never carry execution status or resolution.",
+        },
+        clearFields: { type: "array", items: { type: "string", enum: ["description"] }, description: "Fields to explicitly clear (for update)" },
+        limit: { type: "number", description: "Max definitions to return (default 50, max 100)" },
+      },
+      required: ["action"],
+    },
+  },
   skills: {
     description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, set_persona, delete, search, run, runs, scores. The 'get' action returns full skill details including the structured weighted checklist used by the scorer. The 'run' action spawns an autonomous skill execution. The 'runs' action returns recent execution history (status, duration, score, timestamps, and failureReason/endReason for failed runs) from skill_runs — same data shown in the dashboard's Run History panel. The 'scores' action returns scored runs from skill_runs (the source of truth).",
     category: "knowledge",
