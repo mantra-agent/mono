@@ -15,7 +15,6 @@ export { MEMORY_THRESHOLDS, checkThresholds, tryMergeWithExistingMid } from "./m
 export {
   getMyelinationStatus,
   startMyelinationBackground,
-  generateTitleSummaryTags,
   runMemoryEnrichment,
 } from "./memory-enrichment";
 export type { MyelinationProgress, MyelinationResult } from "./memory-enrichment";

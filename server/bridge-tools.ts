@@ -4125,7 +4125,7 @@ async function buildWarmStartBrief(opts: {
   let tagsBlock = "";
   if (serializedAll.length > 80) {
     try {
-      const { generateTitleSummaryTags } = await import("./memory/memory-enrichment");
+      const { generateTitleSummaryTags } = await import("./title-summary-tags");
       const tst = await generateTitleSummaryTags({
         content: serializedAll,
         source: `session:${opts.parentSessionId}`,

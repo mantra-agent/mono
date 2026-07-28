@@ -1,9 +1,6 @@
 import { getToolStats } from "./file-storage";
 import { createLogger } from "./log";
 import { bridgeHandlers } from "./bridge-tools";
-import { db } from "./db";
-import { memoryEntries } from "@shared/schema";
-import { sql, and as andOp, eq as eqOp, gte as gteOp } from "drizzle-orm";
 import { storage } from "./storage";
 import { TTLCache } from "./utils/ttl-cache";
 import type { SkillWithReferences } from "@shared/models/skills";
@@ -2078,41 +2075,16 @@ export async function getSkillDefinitionsForContext(): Promise<string> {
 async function getRecentlyUsedSkillIds(days: number): Promise<Set<string>> {
   return _recentSkillsCache.getOrFetch(`days:${days}`, async () => {
     try {
-      const { legacyMemoryQuarantineApplied } = await import(
-        "./memory/legacy-memory-quarantine"
-      );
-      if (await legacyMemoryQuarantineApplied()) return new Set<string>();
-
-      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-
-      const rows = await db
-        .select({
-          metadata: memoryEntries.metadata,
-        })
-        .from(memoryEntries)
-        .where(
-          andOp(
-            eqOp(memoryEntries.layer, "workspace"),
-            eqOp(memoryEntries.source, "chat"),
-            gteOp(memoryEntries.processedAt, new Date(cutoff)),
-            sql`${memoryEntries.metadata}->>'sessionKey' LIKE 'auto:%'`,
-            sql`${memoryEntries.metadata}->>'parentSessionId' IS NOT NULL`,
-            sql`${memoryEntries.metadata}->>'parentSessionId' != ''`,
-          )
-        );
-
+      const { chatFileStorage } = await import("./chat-file-storage");
+      const cutoffMs = Date.now() - days * 24 * 60 * 60 * 1000;
+      const sessions = await chatFileStorage.getAllSessions();
       const skillIds = new Set<string>();
-      for (const row of rows) {
-        const meta = row.metadata as Record<string, unknown> | null;
-        const sessionKey = meta?.sessionKey as string | undefined;
-        if (sessionKey?.startsWith("auto:")) {
-          const skillId = sessionKey.slice(5);
-          if (skillId) {
-            skillIds.add(skillId);
-          }
-        }
+      for (const session of sessions) {
+        if (new Date(session.updatedAt).getTime() < cutoffMs) continue;
+        if (!session.parentSessionId || !session.sessionKey?.startsWith("auto:")) continue;
+        const skillId = session.sessionKey.slice(5);
+        if (skillId) skillIds.add(skillId);
       }
-
       log.log(`getRecentlyUsedSkillIds: ${skillIds.size} skills used in sessions in last ${days} days: [${[...skillIds].join(", ")}]`);
       return skillIds;
     } catch (err: any) {

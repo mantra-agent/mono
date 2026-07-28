@@ -132,7 +132,7 @@ Should these be merged or kept separate?`,
 
       const mergedHash = computeContentHash(mergedContent);
 
-      const { generateTitleSummaryTags } = await import("./memory-enrichment");
+      const { generateTitleSummaryTags } = await import("../title-summary-tags");
       const { title: newTitle, oneLiner: mergeOneLiner, summary: newSummary, tags: newMergedTags } = await generateTitleSummaryTags({
         content: mergedContent,
         source: best.entry.source,
