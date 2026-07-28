@@ -275,7 +275,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   const hostRef = useRef<HTMLDivElement>(null);
   const labelRefs = useRef(new Map<number, HTMLDivElement>());
   const runtimeRef = useRef<GraphRuntime | null>(null);
-  const [hoverNeighborhoodNodeIds, setHoverNeighborhoodNodeIds] = useState<number[]>([]);
+  const [focusNeighborhoodNodeIds, setFocusNeighborhoodNodeIds] = useState<number[]>([]);
   const selectedNodeIdRef = useRef(selectedNodeId);
   selectedNodeIdRef.current = selectedNodeId;
   const onNodeSelectRef = useRef(onNodeSelect);
@@ -284,13 +284,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   onNodeHoverRef.current = onNodeHover;
 
   const overlayNodes = useMemo(() => {
-    const hoverNeighborhood = new Set(hoverNeighborhoodNodeIds);
+    const focusNeighborhood = new Set(focusNeighborhoodNodeIds);
     return nodes.filter((node) => (
       selectedLabelTypes.has(getMemoryGraphNodeTypeConfig(node.source).id)
-      || hoverNeighborhood.has(node.id)
+      || focusNeighborhood.has(node.id)
       || selectedNodeId === node.id
     ));
-  }, [hoverNeighborhoodNodeIds, nodes, selectedLabelTypes, selectedNodeId]);
+  }, [focusNeighborhoodNodeIds, nodes, selectedLabelTypes, selectedNodeId]);
 
   useImperativeHandle(forwardedRef, () => ({
     zoomIn: () => {
@@ -452,7 +452,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const cameraSpace = new THREE.Vector3();
     let selectedIndex = selectedNodeIdRef.current == null ? null : nodeIndex.get(selectedNodeIdRef.current) ?? null;
     let hoveredIndex: number | null = null;
-    let hoveredNeighborIndices = new Set<number>();
+    let focusNeighborIndices = new Set<number>();
     let focusedRenderedLinkIndices = new Set<number>();
     let pointerDown = { x: 0, y: 0 };
     let pendingPointer = { x: 0, y: 0 };
@@ -461,10 +461,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let simulationTick = 0;
 
     function getNodeScale(index: number) {
-      if (selectedIndex === index) return 1.22;
+      const focusIndex = hoveredIndex ?? selectedIndex;
       if (hoveredIndex === index) return 1.28;
-      if (hoveredNeighborIndices.has(index)) return 1.14;
-      return hoveredIndex == null ? 1 : 0.94;
+      if (selectedIndex === index) return 1.22;
+      if (focusNeighborIndices.has(index)) return 1.14;
+      return focusIndex == null ? 1 : 0.94;
     }
 
     function syncNodeMatrices() {
@@ -558,6 +559,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function syncLinkVisibility() {
       camera.updateMatrixWorld();
+      const focusIndex = hoveredIndex ?? selectedIndex;
       const viewportHeight = Math.max(1, host.clientHeight);
       const pixelsPerRadian = viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
       sceneNodes.forEach((node, index) => {
@@ -565,9 +567,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const depth = -cameraSpace.z;
         const projectedRadius = depth > 0 ? node.radius * pixelsPerRadian / depth : 0;
         const distanceVisibility = THREE.MathUtils.smoothstep(projectedRadius, 0.75, 3.5);
-        const unrelated = hoveredIndex != null
-          && hoveredIndex !== index
-          && !hoveredNeighborIndices.has(index);
+        const unrelated = focusIndex != null
+          && focusIndex !== index
+          && !focusNeighborIndices.has(index);
         nodeLinkVisibility[index] = distanceVisibility
           * recencyToVisibility(node.recency)
           * (unrelated ? 0.62 : 1);
@@ -575,8 +577,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
       renderedLinks.forEach((link, linkIndex) => {
         const endpointVisibility = Math.min(nodeLinkVisibility[link.fromIndex], nodeLinkVisibility[link.toIndex]);
-        const hoverDim = hoveredIndex != null && !focusedRenderedLinkIndices.has(linkIndex) ? 0.42 : 1;
-        const brightness = linkBrightness[linkIndex] * endpointVisibility * hoverDim;
+        const focusDim = focusIndex != null && !focusedRenderedLinkIndices.has(linkIndex) ? 0.42 : 1;
+        const brightness = linkBrightness[linkIndex] * endpointVisibility * focusDim;
         for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
           const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
           linkColors[offset] = baseLinkColor.r * brightness;
@@ -595,15 +597,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function syncNodeAppearance() {
+      const focusIndex = hoveredIndex ?? selectedIndex;
       sceneNodes.forEach((node, index) => {
-        const selected = selectedIndex === index;
-        const hovered = hoveredIndex === index;
-        const neighbor = hoveredNeighborIndices.has(index);
-        const unrelated = hoveredIndex != null && !hovered && !neighbor;
-        emphasis[index] = selected ? 1 : hovered ? 1 : neighbor ? 0.58 : unrelated ? -0.35 : 0;
+        const isFocus = focusIndex === index;
+        const neighbor = focusNeighborIndices.has(index);
+        const unrelated = focusIndex != null && !isFocus && !neighbor;
+        emphasis[index] = isFocus ? 1 : neighbor ? 0.58 : unrelated ? -0.35 : 0;
         const tint = node.pendingDeletion
           ? deletionColor
-          : selected || hovered || neighbor
+          : isFocus || neighbor
             ? activeColor
             : nodeBaseColors[index];
         tint.toArray(tints, index * 3);
@@ -615,24 +617,39 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       (nodeGeometry.getAttribute("aTint") as THREE.InstancedBufferAttribute).needsUpdate = true;
     }
 
-    function syncHoverNeighborhood(nextHoveredIndex: number | null) {
-      hoveredIndex = nextHoveredIndex;
-      const hoveredNode = hoveredIndex == null ? null : sceneNodes[hoveredIndex];
-      const neighborNodeIds = hoveredNode == null
-        ? new Set<number>()
-        : adjacency.neighborsByNodeId.get(hoveredNode.id) ?? new Set<number>();
-      hoveredNeighborIndices = new Set(
+    function neighborIndicesOf(index: number | null): Set<number> {
+      if (index == null) return new Set<number>();
+      const node = sceneNodes[index];
+      const neighborNodeIds = adjacency.neighborsByNodeId.get(node.id) ?? new Set<number>();
+      return new Set(
         [...neighborNodeIds].flatMap((nodeId): number[] => {
-          const index = nodeIndex.get(nodeId);
-          return index == null ? [] : [index];
+          const neighborIndex = nodeIndex.get(nodeId);
+          return neighborIndex == null ? [] : [neighborIndex];
         }),
       );
-      focusedRenderedLinkIndices = hoveredNode == null
+    }
+
+    // Hover and selection are one "focus" concept: an active hover takes
+    // precedence, and when the pointer leaves, the persistent selection keeps
+    // its neighborhood highlighted. Both drive the same node emphasis, link
+    // focus, and overlay labels.
+    function syncFocusNeighborhood() {
+      const focusIndex = hoveredIndex ?? selectedIndex;
+      const focusNode = focusIndex == null ? null : sceneNodes[focusIndex];
+      focusNeighborIndices = neighborIndicesOf(focusIndex);
+      focusedRenderedLinkIndices = focusNode == null
         ? new Set<number>()
-        : new Set(adjacency.renderedLinkIndicesByNodeId.get(hoveredNode.id) ?? []);
-      setHoverNeighborhoodNodeIds(hoveredNode == null ? [] : [hoveredNode.id, ...neighborNodeIds]);
+        : new Set(adjacency.renderedLinkIndicesByNodeId.get(focusNode.id) ?? []);
+      const neighborNodeIds = [...focusNeighborIndices].map((index) => sceneNodes[index].id);
+      setFocusNeighborhoodNodeIds(focusNode == null ? [] : [focusNode.id, ...neighborNodeIds]);
       syncNodeAppearance();
       syncLinkVisibility();
+    }
+
+    // Frame the selected node together with its one-hop neighborhood (item 2).
+    function fitCameraToIndex(index: number) {
+      const subset = [sceneNodes[index], ...[...neighborIndicesOf(index)].map((neighborIndex) => sceneNodes[neighborIndex])];
+      fitCamera(camera, controls, subset);
     }
 
     function syncLabels() {
@@ -656,12 +673,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         projectedLabels.push({ node, x, y, distance: Math.sqrt(dx * dx + dy * dy + dz * dz) });
       });
 
+      const focusIndex = hoveredIndex ?? selectedIndex;
       projectedLabels
         .sort((left, right) => {
           const leftIndex = nodeIndex.get(left.node.id);
           const rightIndex = nodeIndex.get(right.node.id);
-          const leftFocused = leftIndex != null && (hoveredIndex === leftIndex || hoveredNeighborIndices.has(leftIndex));
-          const rightFocused = rightIndex != null && (hoveredIndex === rightIndex || hoveredNeighborIndices.has(rightIndex));
+          const leftFocused = leftIndex != null && (focusIndex === leftIndex || focusNeighborIndices.has(leftIndex));
+          const rightFocused = rightIndex != null && (focusIndex === rightIndex || focusNeighborIndices.has(rightIndex));
           if (leftFocused !== rightFocused) return leftFocused ? -1 : 1;
           return left.node.id - right.node.id;
         })
@@ -669,11 +687,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           const element = labelRefs.current.get(node.id);
           if (!element) return;
           const sceneIndex = nodeIndex.get(node.id);
-          const focused = sceneIndex != null && (hoveredIndex === sceneIndex || hoveredNeighborIndices.has(sceneIndex));
+          const focused = sceneIndex != null && (focusIndex === sceneIndex || focusNeighborIndices.has(sceneIndex));
           const selected = selectedNodeIdRef.current === node.id;
           element.style.display = "flex";
           element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -12px)`;
-          element.style.opacity = focused || selected ? "1" : String(THREE.MathUtils.clamp(1.18 - distance / 520, hoveredIndex == null ? 0.66 : 0.4, 0.94));
+          element.style.opacity = focused || selected ? "1" : String(THREE.MathUtils.clamp(1.18 - distance / 520, focusIndex == null ? 0.66 : 0.4, 0.94));
           element.style.zIndex = String(focused ? 2_000 : selected ? 1_500 : Math.max(1, Math.round(1_000 - distance)));
         });
     }
@@ -692,7 +710,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function setSelectedNodeId(nextNodeId: number | null) {
       selectedIndex = nextNodeId == null ? null : nodeIndex.get(nextNodeId) ?? null;
-      syncNodeAppearance();
+      syncFocusNeighborhood();
+      if (selectedIndex != null) fitCameraToIndex(selectedIndex);
       requestRender();
     }
 
@@ -744,7 +763,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const exactHoveredIndex = raycaster.intersectObject(nodeMesh, false)[0]?.instanceId ?? null;
       const nextHoveredIndex = exactHoveredIndex ?? pickProjectedNode(rect);
       if (nextHoveredIndex === hoveredIndex) return;
-      syncHoverNeighborhood(nextHoveredIndex);
+      hoveredIndex = nextHoveredIndex;
+      syncFocusNeighborhood();
       renderer.domElement.style.cursor = hoveredIndex == null ? "grab" : "pointer";
       if (hoveredIndex == null) {
         onNodeHoverRef.current(null);
@@ -776,7 +796,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     function handlePointerLeave() {
       if (pointerFrame !== 0) cancelAnimationFrame(pointerFrame);
       pointerFrame = 0;
-      syncHoverNeighborhood(null);
+      hoveredIndex = null;
+      syncFocusNeighborhood();
       renderer.domElement.style.cursor = "grab";
       onNodeHoverRef.current(null);
       requestRender();
@@ -838,8 +859,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     syncNodeMatrices();
     syncLinkPositions();
     fitCamera(camera, controls, sceneNodes);
-    syncLinkVisibility();
-    syncNodeAppearance();
+    syncFocusNeighborhood();
     runtimeRef.current = { camera, controls, nodes: sceneNodes, requestRender, setSelectedNodeId };
     requestRender();
 
