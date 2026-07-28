@@ -20,6 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  RecapRecipientSelector,
+  type RecapRecipientSelection,
+} from "@/components/recap-recipient-selector";
 
 const log = createLogger("EmailDraftWidget");
 
@@ -30,6 +34,7 @@ const log = createLogger("EmailDraftWidget");
 interface EmailDraft {
   id: string;
   gmailAccountId: string | null;
+  purpose: "ordinary" | "meeting_recap";
   to: string[];
   cc: string[];
   bcc: string[];
@@ -66,6 +71,10 @@ interface GmailAccount {
   healthy?: boolean;
   scopes?: { hasSend?: boolean };
 }
+
+type EmailDraftRecipientMode =
+  | { mode: "freeform" }
+  | { mode: "recap_person"; selected: RecapRecipientSelection | null };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -221,6 +230,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
   const [sentExpanded, setSentExpanded] = useState(false);
+  const [recapRecipientState, setRecapRecipientState] = useState({ pending: false, failed: false });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Local edit state — initialized from server, patches sent on change
@@ -228,6 +238,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
 
   const { data, isLoading, error } = useQuery<{
     draft: EmailDraft;
+    recipientMode: EmailDraftRecipientMode;
     threadMessages: ThreadMessage[];
   }>({
     queryKey: ["/api/email-drafts", draftId],
@@ -252,6 +263,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
   });
 
   const draft = data?.draft;
+  const recipientMode = data?.recipientMode ?? { mode: "freeform" as const };
   const threadMessages = data?.threadMessages ?? [];
 
   // Initialize showCc/showBcc from existing data
@@ -307,6 +319,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
 
   const debouncedPatch = useCallback(
     (field: string, value: unknown) => {
+      setRecapRecipientState(state => state.failed ? { ...state, failed: false } : state);
       setLocalEdits((prev) => ({ ...prev, [field]: value }));
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
@@ -479,7 +492,7 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
 
   const isSending = sendMutation.isPending;
   const isDiscarding = discardMutation.isPending;
-  const isBusy = isSending || isDiscarding;
+  const isBusy = isSending || isDiscarding || recapRecipientState.pending;
   const fromAccount = accounts.find((a) => a.id === merged.gmailAccountId);
   const hasAvailableSender = accounts.length > 0 && !!fromAccount;
 
@@ -526,50 +539,60 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
           </div>
         )}
 
-        {/* To */}
-        <RecipientField
-          label="To"
-          values={merged.to}
-          onChange={(val) => immediatePatch("to", val)}
-          disabled={isBusy}
-        />
-
-        {/* CC / BCC toggles */}
-        {!showCc && !showBcc && (
-          <div className="flex gap-2 pl-10">
-            <button
-              type="button"
-              className="text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => setShowCc(true)}
-            >
-              CC
-            </button>
-            <button
-              type="button"
-              className="text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => setShowBcc(true)}
-            >
-              BCC
-            </button>
-          </div>
-        )}
-
-        {showCc && (
-          <RecipientField
-            label="CC"
-            values={merged.cc}
-            onChange={(val) => immediatePatch("cc", val)}
+        {/* Recipients */}
+        {recipientMode.mode === "recap_person" ? (
+          <RecapRecipientSelector
+            draftId={draftId}
+            selected={recipientMode.selected}
             disabled={isBusy}
+            onMutationStateChange={setRecapRecipientState}
           />
-        )}
+        ) : (
+          <>
+            <RecipientField
+              label="To"
+              values={merged.to}
+              onChange={(val) => immediatePatch("to", val)}
+              disabled={isBusy}
+            />
 
-        {showBcc && (
-          <RecipientField
-            label="BCC"
-            values={merged.bcc}
-            onChange={(val) => immediatePatch("bcc", val)}
-            disabled={isBusy}
-          />
+            {!showCc && !showBcc && (
+              <div className="flex gap-2 pl-10">
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowCc(true)}
+                >
+                  CC
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowBcc(true)}
+                >
+                  BCC
+                </button>
+              </div>
+            )}
+
+            {showCc && (
+              <RecipientField
+                label="CC"
+                values={merged.cc}
+                onChange={(val) => immediatePatch("cc", val)}
+                disabled={isBusy}
+              />
+            )}
+
+            {showBcc && (
+              <RecipientField
+                label="BCC"
+                values={merged.bcc}
+                onChange={(val) => immediatePatch("bcc", val)}
+                disabled={isBusy}
+              />
+            )}
+          </>
         )}
 
         {/* Subject */}
@@ -606,7 +629,12 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
         <Button
           size="sm"
           onClick={() => sendMutation.mutate()}
-          disabled={isBusy || merged.to.length === 0 || !hasAvailableSender}
+          disabled={
+            isBusy
+            || merged.to.length === 0
+            || !hasAvailableSender
+            || (recipientMode.mode === "recap_person" && (!recipientMode.selected || recapRecipientState.failed))
+          }
           className="gap-1.5"
         >
           {isSending ? (
@@ -630,9 +658,11 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
           )}
           Cancel
         </Button>
-        {sendMutation.isError && (
+        {(sendMutation.isError || recapRecipientState.failed) && (
           <span className="text-xs text-destructive ml-auto">
-            {(sendMutation.error as Error).message || "Send failed"}
+            {sendMutation.isError
+              ? (sendMutation.error as Error).message || "Send failed"
+              : "Repair the recap recipient before sending"}
           </span>
         )}
       </div>

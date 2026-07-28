@@ -94,7 +94,8 @@ export function registerEmailDraftRoutes(app: Express) {
         }
       }
 
-      res.json({ draft, threadMessages });
+      const recipientMode = await emailDraftStorage.getRecipientMode(principal, draft);
+      res.json({ draft, recipientMode, threadMessages });
     } catch (err: any) {
       log.error(`GET /api/email-drafts/:id error: ${err.message}`);
       res.status(500).json({ error: err.message });
@@ -135,6 +136,31 @@ export function registerEmailDraftRoutes(app: Express) {
       }
       log.error(`PATCH /api/email-drafts/:id error: ${err.message}`);
       res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/email-drafts/:id/recap-recipient", async (req: Request, res: Response) => {
+    try {
+      const principal = req.principal;
+      if (!principal) return res.status(401).json({ error: "Not authenticated" });
+      if (typeof req.body?.personId !== "string" || typeof req.body?.email !== "string") {
+        return res.status(400).json({ error: "personId and email are required" });
+      }
+      const result = await emailDraftStorage.setRecapRecipient(
+        principal,
+        req.params.id,
+        req.body.personId,
+        req.body.email,
+      );
+      res.json(result);
+    } catch (err: unknown) {
+      const error = err instanceof Error ? err : new Error("Failed to change recap recipient");
+      const status = typeof (err as { status?: unknown })?.status === "number"
+        ? (err as { status: number }).status
+        : 500;
+      if (status >= 500) log.error(`POST /api/email-drafts/:id/recap-recipient error: ${error.message}`);
+      else log.warn(`POST /api/email-drafts/:id/recap-recipient rejected: ${error.message}`);
+      res.status(status).json({ error: error.message });
     }
   });
 

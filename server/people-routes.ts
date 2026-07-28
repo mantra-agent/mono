@@ -311,6 +311,26 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
     }
   });
 
+  app.post("/api/people/:id/emails", async (req, res) => {
+    log.info(`POST /api/people/${req.params.id}/emails`);
+    try {
+      if (typeof req.body?.email !== "string") {
+        return res.status(400).json({ error: "email is required" });
+      }
+      const person = await peopleStorage.addEmail(
+        req.params.id,
+        req.body.email,
+        typeof req.body.label === "string" ? req.body.label : undefined,
+      );
+      res.json(person);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to add Person email";
+      const status = message.includes("not found") ? 404 : 400;
+      log.warn(`POST /api/people/${req.params.id}/emails rejected: ${message}`);
+      res.status(status).json({ error: message });
+    }
+  });
+
   app.patch("/api/people/:id", async (req, res) => {
     log.log(`PATCH /api/people/${req.params.id} fields=${Object.keys(req.body).join(",")}`);
     try {
