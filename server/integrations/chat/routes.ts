@@ -24,7 +24,6 @@ import type {
 import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
-import { pipeline } from "node:stream/promises";
 import {
   storageBackend,
 } from "../../object_storage/s3-backend";
@@ -397,9 +396,9 @@ function publishChatStreamEvent(
 export async function registerChatRoutes(app: Express): Promise<void> {
   const {
     clearMeetingVisualizerState,
-    nextMeetingAudio,
     outputMediaSession,
     registerMeetingVisualizerTransport,
+    sendNextMeetingAudio,
     setMeetingVisualizerState,
     syncMeetingVisualizerBotStatus,
   } = await import("../../meeting/output-media");
@@ -411,19 +410,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   app.get("/api/meeting-output/:token/audio", async (req, res) => {
     const sessionId = outputMediaSession(req.params.token as string);
     if (!sessionId) return res.status(401).end();
-    const audio = await nextMeetingAudio(sessionId);
-    if (!audio) {
-      res.setHeader("Cache-Control", "no-store");
-      res.setHeader("X-Meeting-Audio-State", "idle");
-      return res.status(204).end();
-    }
-
-    res.status(200);
-    res.setHeader("Content-Type", audio.contentType);
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Accept-Ranges", "none");
+    const requestAbort = new AbortController();
+    res.once("close", () => requestAbort.abort());
     try {
-      await pipeline(audio.stream, res);
+      await sendNextMeetingAudio(sessionId, res, requestAbort.signal);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (req.destroyed || res.destroyed) {

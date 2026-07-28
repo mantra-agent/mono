@@ -24,6 +24,7 @@ import type {
   MeetingRecognitionStream,
   MeetingSessionMeta,
 } from "@shared/models/chat";
+import { meetingSpeakerDisplayLabel } from "@shared/meeting-speaker-label";
 
 const log = createLogger("MeetingSpeakerAssignments");
 
@@ -48,9 +49,10 @@ function normalizedLabel(value: string | null | undefined): string {
 }
 
 function speakerDisplayLabel(participant: MeetingParticipant, index?: number): string {
-  return participant.providerLabel?.trim()
-    || participant.label.trim()
-    || `Unknown speaker${index == null ? "" : ` ${index + 1}`}`;
+  return meetingSpeakerDisplayLabel(
+    participant.providerLabel?.trim() || participant.label,
+    index == null ? undefined : index + 1,
+  );
 }
 
 function speakerTestId(participant: MeetingParticipant): string {

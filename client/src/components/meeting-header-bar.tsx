@@ -126,12 +126,23 @@ export function MeetingHeaderBar({
   const toggleListenMode = useMutation({
     mutationFn: async () => {
       if (!sessionId) throw new Error("Meeting session unavailable");
-      const response = await apiRequest(
-        "PATCH",
-        `/api/meetings/${encodeURIComponent(sessionId)}/participation-policy`,
-        { participationPolicy: isListenOnly ? "auto" : "listen_only" },
-      );
-      return response.json();
+      const enablingSpeech = isListenOnly;
+      if (meeting.transport === "native") {
+        nativeTranscription.setSpeechPlaybackEnabled(enablingSpeech, sessionId);
+      }
+      try {
+        const response = await apiRequest(
+          "PATCH",
+          `/api/meetings/${encodeURIComponent(sessionId)}/participation-policy`,
+          { participationPolicy: enablingSpeech ? "auto" : "listen_only" },
+        );
+        return response.json();
+      } catch (error) {
+        if (meeting.transport === "native") {
+          nativeTranscription.setSpeechPlaybackEnabled(!enablingSpeech, sessionId);
+        }
+        throw error;
+      }
     },
     onSuccess: () => {
       if (!sessionId) return;
@@ -276,7 +287,7 @@ export function MeetingHeaderBar({
         className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2"
         data-testid="meeting-header-bar"
       >
-        <div className="flex min-w-0 items-center" data-testid="text-meeting-title">
+        <div className="hidden min-w-0 items-center md:flex" data-testid="text-meeting-title">
           {meetingReference ? (
             <ReferenceRenderer
               refValue={meetingReference}

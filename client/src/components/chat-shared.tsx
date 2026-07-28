@@ -1,6 +1,7 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
+import { meetingSpeakerDisplayLabel } from "@shared/meeting-speaker-label";
 import {
   formatDiagnosticError,
   formatDiagnosticValue,
@@ -2789,7 +2790,7 @@ export const ChatTurn = memo(function ChatTurn({
                   referenceSurface="simple-chip"
                 />
               ) : (
-                message.speaker.label
+                meetingSpeakerDisplayLabel(message.speaker.label)
               )}
             </div>
           )}

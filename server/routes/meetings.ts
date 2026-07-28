@@ -4,8 +4,11 @@ import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { deleteMeetingSession } from "../meeting/delete";
 import { withNativeMeetingCreationLock } from "../meeting/locks";
+import { principalOwnsMeeting } from "../meeting/owner-principal";
+import { sendNextMeetingAudio } from "../meeting/output-media";
 import { meetingRecognitionCapabilities } from "../meeting/stt";
 import { getPrincipal } from "../principal";
+import { resolveCurrentProfileIdentity } from "../profile-identity";
 import {
   getMeetingCounts,
   getMeetingRecord,
@@ -91,13 +94,20 @@ export function registerMeetingsRoutes(app: Express): void {
           const now = new Date();
           const title = nativeMeetingTitle(now);
           const sourceKey = "native:microphone";
+          const identity = await resolveCurrentProfileIdentity();
           const session = await chatStorage.createMeetingSession(
             title,
             {
               title,
               platform: "native",
               transport: "native",
-              participants: [],
+              participants: identity.userName
+                ? [{
+                    label: identity.userName,
+                    identitySource: "transport",
+                    transportParticipantId: "native-microphone",
+                  }]
+                : [],
               botStatus: "live",
               speakerPolicy: { mode: "shared_room" },
               audioSourcePolicies: {
@@ -145,6 +155,40 @@ export function registerMeetingsRoutes(app: Express): void {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: "Failed to start transcription" });
+    }
+  });
+
+  app.get("/api/meetings/:sessionId/native-audio", requireAuth, async (req: Request, res: Response) => {
+    const principal = getPrincipal(req);
+    if (!principal) {
+      res.status(401).end();
+      return;
+    }
+    const sessionId = req.params.sessionId?.trim() || "";
+    try {
+      const session = sessionId ? await chatStorage.getSession(sessionId) : undefined;
+      if (
+        !session
+        || !principalOwnsMeeting(principal, session)
+        || session.meeting?.transport !== "native"
+        || session.meeting.botStatus !== "live"
+        || session.meeting.participationPolicy !== "auto"
+      ) {
+        res.status(404).end();
+        return;
+      }
+      const requestAbort = new AbortController();
+      res.once("close", () => requestAbort.abort());
+      await sendNextMeetingAudio(sessionId, res, requestAbort.signal);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (req.destroyed || res.destroyed) {
+        log.warn("native meeting audio client disconnected", { sessionId, error: detail });
+        return;
+      }
+      log.error("native meeting audio stream failed", { sessionId, error: detail });
+      if (!res.headersSent) res.status(502).end();
+      else res.destroy(error instanceof Error ? error : new Error(detail));
     }
   });
 
