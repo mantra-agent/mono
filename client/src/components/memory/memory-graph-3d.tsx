@@ -47,6 +47,8 @@ interface MemoryGraph3DProps {
   highlightedNodeIds: ReadonlySet<number>;
   onNodeSelect: (nodeId: number) => void;
   onNodeHover: (nodeId: number | null, position?: { x: number; y: number }) => void;
+  onBackgroundSelect?: () => void;
+  onGraphInteractionStart?: () => void;
 }
 
 interface SceneNode extends MemoryGraph3DNode {
@@ -267,7 +269,16 @@ function writeQuadraticPoint(
 }
 
 export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>(function MemoryGraph3D(
-  { nodes, links, selectedNodeId, highlightedNodeIds, onNodeSelect, onNodeHover },
+  {
+    nodes,
+    links,
+    selectedNodeId,
+    highlightedNodeIds,
+    onNodeSelect,
+    onNodeHover,
+    onBackgroundSelect,
+    onGraphInteractionStart,
+  },
   forwardedRef,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -282,6 +293,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   onNodeSelectRef.current = onNodeSelect;
   const onNodeHoverRef = useRef(onNodeHover);
   onNodeHoverRef.current = onNodeHover;
+  const onBackgroundSelectRef = useRef(onBackgroundSelect);
+  onBackgroundSelectRef.current = onBackgroundSelect;
+  const onGraphInteractionStartRef = useRef(onGraphInteractionStart);
+  onGraphInteractionStartRef.current = onGraphInteractionStart;
 
   const overlayNodes = useMemo(() => {
     const focusNeighborhood = new Set(focusNeighborhoodNodeIds);
@@ -807,6 +822,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         if (tappedIndex != null) {
           hoveredIndex = tappedIndex;
           onNodeSelectRef.current(sceneNodes[tappedIndex].id);
+        } else {
+          onBackgroundSelectRef.current?.();
         }
       }
       renderer.domElement.style.cursor = hoveredIndex == null ? "grab" : "pointer";
@@ -838,7 +855,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       .iterations(1);
     const simulation: Simulation<SceneNode> = forceSimulation(sceneNodes, 3)
       .force("charge", forceManyBody<SceneNode>()
-        .strength((node) => -(90 + Math.sqrt(node.degree) * 6))
+        .strength((node) => -(135 + Math.sqrt(node.degree) * 9))
         .theta(0.76)
         .distanceMin(2)
         .distanceMax(520))
@@ -866,9 +883,14 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       requestRender();
     }
 
+    function handleControlsStart() {
+      onGraphInteractionStartRef.current?.();
+    }
+
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(host);
     controls.addEventListener("change", handleControlsChange);
+    controls.addEventListener("start", handleControlsStart);
     renderer.domElement.addEventListener("pointermove", handlePointerMove);
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
     renderer.domElement.addEventListener("pointerup", handlePointerUp);
@@ -901,6 +923,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       runtimeRef.current = null;
       resizeObserver.disconnect();
       controls.removeEventListener("change", handleControlsChange);
+      controls.removeEventListener("start", handleControlsStart);
       controls.dispose();
       renderer.domElement.removeEventListener("pointermove", handlePointerMove);
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);

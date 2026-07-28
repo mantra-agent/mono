@@ -345,7 +345,7 @@ motion:
 
 - Animate state transitions, not decoration.
 - Disclosure controls rotate. They do not slide the page around.
-- Loading motion must communicate pending work. Prefer shimmer for skeleton content and spinner only for explicit command execution.
+- Full-screen and page-level loading uses one centered circular `Loader2` spinner in `text-muted-foreground`. Skeletons are reserved for inline content whose eventual shape is already known; never represent a loading screen as a flashing rectangle.
 - Use motion to preserve continuity when panels, trees, or object rows expand and collapse.
 - Respect reduced-motion preferences where available.
 

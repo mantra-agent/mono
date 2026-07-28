@@ -206,7 +206,7 @@ Do not reintroduce a second embedded session input under the transcript panel. I
 
 - **All components are functional** with hooks. No class components.
 - **Props use TypeScript interfaces**, not inline types.
-- **Loading states**: Use `Skeleton` from shadcn/ui for content loading.
+- **Loading states**: Full-screen and page-level loading uses one centered circular `Loader2` spinner in `text-muted-foreground`. Use `Skeleton` only for inline content whose eventual shape is already known.
 - **Error boundaries**: Wrap page-level components. Show friendly error with retry.
 - **Responsive**: Mobile-first, but desktop is the primary target. Minimum viable mobile support.
 

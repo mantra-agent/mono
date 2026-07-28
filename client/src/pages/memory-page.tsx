@@ -110,7 +110,7 @@ import {
   Circle,
 } from "lucide-react";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
-import { TOAST_GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface";
+import { ReferenceText } from "@/components/references/reference-text";
 import { createReferenceRef } from "@shared/references";
 import { SimpleTextFrame } from "@/components/home/simple-text-frame";
 import { MemoryGraph3D, type MemoryGraph3DHandle, type MemoryGraph3DLink, type MemoryGraph3DNode } from "@/components/memory/memory-graph-3d";
@@ -135,6 +135,12 @@ interface VnextEntityLink {
   createdAt?: string | null;
 }
 
+interface CanonicalLinkTarget {
+  key: string;
+  type: string;
+  id: string;
+}
+
 function CanonicalLink({ type, id }: { type: string; id: string }) {
   return (
     <ReferenceRenderer
@@ -144,6 +150,30 @@ function CanonicalLink({ type, id }: { type: string; id: string }) {
     />
   );
 }
+
+function getCanonicalLinkTargets(
+  sources: VnextSourceRef[],
+  entities: VnextEntityLink[],
+): CanonicalLinkTarget[] {
+  const targets = new Map<string, CanonicalLinkTarget>();
+  for (const link of entities) {
+    const type = link.entityType.trim().toLowerCase();
+    const id = link.entityId.trim();
+    if (!type || !id) continue;
+    const key = `${type}:${id}`;
+    targets.set(key, { key, type, id });
+  }
+  for (const ref of sources) {
+    const type = SOURCE_REF_TYPE_MAP[ref.sourceType] ?? ref.sourceType.trim().toLowerCase();
+    const id = ref.sourceId.trim();
+    if (!type || !id) continue;
+    const key = `${type}:${id}`;
+    targets.set(key, { key, type, id });
+  }
+  return [...targets.values()];
+}
+
+const GRAPH_DETAIL_MARKDOWN_COMPONENTS = {};
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1046,7 +1076,11 @@ function VnextClaimRow({ claim, expanded, onToggle, timezone }: { claim: VnextCl
 }
 
 function VnextLinksSection({ claimId }: { claimId: number }) {
-  const { data: sourceData, isLoading: sourcesLoading } = useQuery<{ sources: VnextSourceRef[]; total: number }>({
+  const {
+    data: sourceData,
+    isLoading: sourcesLoading,
+    isError: sourcesError,
+  } = useQuery<{ sources: VnextSourceRef[]; total: number }>({
     queryKey: ["/api/memory/vnext/claims", claimId, "sources"],
     queryFn: async () => {
       const res = await fetch(`/api/memory/vnext/claims/${claimId}/sources`, { credentials: "include" });
@@ -1055,7 +1089,11 @@ function VnextLinksSection({ claimId }: { claimId: number }) {
     },
     enabled: !!claimId,
   });
-  const { data: entityData, isLoading: entitiesLoading } = useQuery<{ entityLinks: VnextEntityLink[]; total: number }>({
+  const {
+    data: entityData,
+    isLoading: entitiesLoading,
+    isError: entitiesError,
+  } = useQuery<{ entityLinks: VnextEntityLink[]; total: number }>({
     queryKey: ["/api/memory/vnext/claims", claimId, "entity-links"],
     queryFn: async () => {
       const res = await fetch(`/api/memory/vnext/claims/${claimId}/entity-links`, { credentials: "include" });
@@ -1065,26 +1103,30 @@ function VnextLinksSection({ claimId }: { claimId: number }) {
     enabled: !!claimId,
   });
 
-  if (sourcesLoading || entitiesLoading) return <Skeleton className="h-16 w-full rounded-md" />;
-  const sources = sourceData?.sources ?? [];
-  const entities = entityData?.entityLinks ?? [];
-  if (sources.length === 0 && entities.length === 0) return null;
+  const targets = getCanonicalLinkTargets(
+    sourceData?.sources ?? [],
+    entityData?.entityLinks ?? [],
+  );
+  const isLoading = sourcesLoading || entitiesLoading;
+  const isError = sourcesError || entitiesError;
+  if (!isLoading && !isError && targets.length === 0) return null;
 
   return (
     <div className="space-y-0.5" data-testid={`memory-vnext-links-${claimId}`}>
       <div className={HIERARCHY_SECTION_HEADER_CLASS}>Links</div>
-      <div className="flex flex-col items-start gap-1 px-2">
-        {entities.map((link) => (
-          <CanonicalLink key={`entity-${link.id}`} type={link.entityType} id={link.entityId} />
-        ))}
-        {sources.map((ref) => (
-          <CanonicalLink
-            key={`source-${ref.id}`}
-            type={SOURCE_REF_TYPE_MAP[ref.sourceType] ?? ref.sourceType}
-            id={ref.sourceId}
-          />
-        ))}
-      </div>
+      {isLoading ? (
+        <div className="flex items-center px-2 py-1.5 text-muted-foreground" data-testid={`memory-vnext-links-loading-${claimId}`}>
+          <Loader2 className="h-4 w-4 animate-spin" />
+        </div>
+      ) : isError ? (
+        <div className="px-2 py-1.5 text-sm text-error" data-testid={`memory-vnext-links-error-${claimId}`}>Links could not be loaded.</div>
+      ) : (
+        <div className="flex flex-col items-start gap-1 px-2">
+          {targets.map((target) => (
+            <CanonicalLink key={target.key} type={target.type} id={target.id} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1397,6 +1439,7 @@ function GraphTab({
   const isMobile = useIsMobile();
   const graphRef = useRef<MemoryGraph3DHandle>(null);
   const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
+  const [graphDetailExpanded, setGraphDetailExpanded] = useState(false);
   const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(() => new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
@@ -1472,9 +1515,16 @@ function GraphTab({
     });
   }, []);
 
+  const dismissGraphDetail = useCallback(() => {
+    setSelectedNode(null);
+    setGraphDetailExpanded(false);
+  }, []);
+
   const handleNodeSelect = useCallback((nodeId: number) => {
     const entry = entryMap.get(nodeId);
-    if (entry) setSelectedNode(entry);
+    if (!entry) return;
+    setSelectedNode(entry);
+    setGraphDetailExpanded(false);
   }, [entryMap]);
 
   const handleNodeHover = useCallback((nodeId: number | null, position?: { x: number; y: number }) => {
@@ -1505,15 +1555,19 @@ function GraphTab({
   }, [handleNodeSelect]);
 
   useEffect(() => {
-    if (selectedNode && !entryMap.has(selectedNode.id)) setSelectedNode(null);
-  }, [entryMap, selectedNode]);
+    if (selectedNode && !entryMap.has(selectedNode.id)) dismissGraphDetail();
+  }, [dismissGraphDetail, entryMap, selectedNode]);
 
   useEffect(() => {
-    if (selectedNode && !visibleNodeIds.has(selectedNode.id)) setSelectedNode(null);
-  }, [selectedNode, visibleNodeIds]);
+    if (selectedNode && !visibleNodeIds.has(selectedNode.id)) dismissGraphDetail();
+  }, [dismissGraphDetail, selectedNode, visibleNodeIds]);
 
   if (isLoading) {
-    return <div className="p-4"><Skeleton className="h-[400px] w-full" /></div>;
+    return (
+      <div className="flex h-full items-center justify-center" data-testid="memory-graph-loading">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   if (isError) {
@@ -1566,6 +1620,8 @@ function GraphTab({
             highlightedNodeIds={graphSearchMatchIds}
             onNodeSelect={handleNodeSelect}
             onNodeHover={handleNodeHover}
+            onBackgroundSelect={dismissGraphDetail}
+            onGraphInteractionStart={dismissGraphDetail}
           />
 
           {hoveredNodeId !== null && (() => {
@@ -1650,32 +1706,48 @@ function GraphTab({
         </div>
 
         {selectedNode && (
-          <div className={cn("absolute inset-x-2 bottom-2 z-20 max-h-[55%] overflow-y-auto scrollbar-thin p-4 space-y-4 md:inset-y-2 md:left-auto md:right-2 md:w-80 md:max-h-none", TOAST_GLASS_SURFACE_CLASS)} data-testid="memory-graph-detail">
-            <div className="relative z-10 flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className="flex shrink-0 items-center"
-                  title={selectedMetadata.lifecycleStage ? lifecycleLabel(String(selectedMetadata.lifecycleStage)) : undefined}
-                  data-testid="graph-detail-lifecycle"
+          <div
+            className="absolute inset-x-3 bottom-3 z-20 max-h-[65%] overflow-y-auto scrollbar-thin md:left-auto md:right-4 md:w-96"
+            data-testid="memory-graph-detail"
+          >
+            <Collapsible open={graphDetailExpanded} onOpenChange={setGraphDetailExpanded}>
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="group flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/70"
+                  aria-label={`${graphDetailExpanded ? "Collapse" : "Expand"} ${getDisplayTitle(selectedNode, 80)}`}
+                  data-testid="button-toggle-graph-detail"
                 >
-                  <SourceIcon source={selectedNode.source} className="h-4 w-4 text-white/70" />
-                </span>
-                <h3 className="truncate text-base font-semibold text-white">{getDisplayTitle(selectedNode, 80)}</h3>
-              </div>
-              <Button variant="ghost" size="icon" className="text-white/70 hover:bg-white/10 hover:text-white" onClick={() => setSelectedNode(null)} aria-label="Close graph detail" data-testid="button-close-graph-detail">
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            </div>
+                  <span
+                    className="flex shrink-0 items-center text-muted-foreground"
+                    title={selectedMetadata.lifecycleStage ? lifecycleLabel(String(selectedMetadata.lifecycleStage)) : undefined}
+                    data-testid="graph-detail-lifecycle"
+                  >
+                    <SourceIcon source={selectedNode.source} className="h-4 w-4" />
+                  </span>
+                  <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">{getDisplayTitle(selectedNode, 80)}</h3>
+                  <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", graphDetailExpanded && "rotate-90")} />
+                </button>
+              </CollapsibleTrigger>
 
-            <div className="relative z-10">
-              <SimpleTextFrame content={selectedNode.content} />
-            </div>
-            {selectedNode.createdAt && (
-              <div className="relative z-10 text-xs text-white/55" data-testid="graph-detail-date">
-                {new Date(selectedNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}
+              <div
+                className="line-clamp-3 px-2 text-sm leading-relaxed text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5"
+                data-testid="graph-detail-content"
+              >
+                <ReferenceText content={selectedNode.content} markdownComponents={GRAPH_DETAIL_MARKDOWN_COMPONENTS} />
               </div>
-            )}
-            {selectedIsClaim && <div className="relative z-10"><VnextLinksSection claimId={selectedNode.id} /></div>}
+
+              <CollapsibleContent>
+                <div className="space-y-3 px-2 pb-2 pt-3">
+                  {selectedNode.createdAt && (
+                    <div className="text-xs text-muted-foreground" data-testid="graph-detail-date">
+                      {new Date(selectedNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}
+                    </div>
+                  )}
+                  {selectedIsClaim && <VnextLinksSection claimId={selectedNode.id} />}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
         )}
       </div>
