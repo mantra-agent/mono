@@ -6,6 +6,7 @@ import { combineWithVisibleScope } from "../scoped-storage";
 import type { Principal } from "../principal";
 import type { CalendarEvent } from "../google-calendar";
 import { formatInTimezone } from "../timezone";
+import { stripPrivateAgendaFromRecap } from "./recap-content";
 
 const EMAIL_BODY_CHAR_LIMIT = 30_000;
 
@@ -56,7 +57,7 @@ export async function buildRecapEmailContent(
       ),
     )
     .limit(1);
-  const storedRecap = page?.plainTextContent.trim();
+  const storedRecap = stripPrivateAgendaFromRecap(page?.plainTextContent.trim() ?? "");
   if (!storedRecap) throw new Error(`Canonical recap page ${recap.pageId} has no content`);
 
   const meetingName = meeting.title?.trim() || recap.pageTitle?.replace(/^Meeting:\s*/i, "").trim() || "Meeting";
