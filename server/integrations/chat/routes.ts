@@ -3684,7 +3684,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      abortTrace("route_error", { sessionId, error: msg, routeStartAt });
+      abortTrace("route_error", { sessionId, error: msg, routeStartAt }, "error");
       chatLog.error("Error aborting session:", error);
       if (!res.headersSent) {
         res.status(500).json({ error: "Failed to abort session" });

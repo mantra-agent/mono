@@ -733,7 +733,6 @@ async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner):
 export async function runEmailSync(): Promise<{ accountsDiscovered: number; accountsSynced: number; errors: string[] }> {
   requireCurrentUserPrincipal();
 
-  log.log(`[runEmailSync] Starting owner-scoped email sync cycle`);
   const accounts = await listGmailAccounts();
   if (accounts.length > MAX_ACCOUNTS_PER_VAULT) {
     throw new Error(`Email sync exceeds ${MAX_ACCOUNTS_PER_VAULT} accounts in one Vault`);
@@ -744,6 +743,7 @@ export async function runEmailSync(): Promise<{ accountsDiscovered: number; acco
     return { accountsDiscovered: 0, accountsSynced: 0, errors: [] };
   }
 
+  log.log(`[runEmailSync] Starting owner-scoped email sync cycle accounts=${accounts.length}`);
   const errors: string[] = [];
   let synced = 0;
 

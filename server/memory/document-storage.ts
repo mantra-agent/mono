@@ -8,7 +8,7 @@ import {
   type MemorySource,
   type DocType,
 } from "@shared/schema";
-import { eq, and, like, desc, sql, type SQL } from "drizzle-orm";
+import { eq, and, like, desc, inArray, sql, type SQL } from "drizzle-orm";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import {
   combineWithVisibleScope,
@@ -114,7 +114,17 @@ export async function targetReadsEnabled(): Promise<boolean> {
 }
 
 const WORKSPACE_LAYER = "workspace";
+const DOCUMENT_READ_BATCH_SIZE = 500;
 const log = createLogger("DocStorage");
+
+function chunkDocumentIds(documentIds: string[]): string[][] {
+  const uniqueIds = Array.from(new Set(documentIds.filter(Boolean)));
+  const batches: string[][] = [];
+  for (let index = 0; index < uniqueIds.length; index += DOCUMENT_READ_BATCH_SIZE) {
+    batches.push(uniqueIds.slice(index, index + DOCUMENT_READ_BATCH_SIZE));
+  }
+  return batches;
+}
 
 const memoryScopeColumns = {
   scope: memoryEntries.scope,
@@ -370,6 +380,59 @@ export class DocumentStorage {
     return rows[0]
       ? entryToDoc(wrapLightEntry(rows[0] as Omit<MemoryEntry, "embedding">))
       : null;
+  }
+
+  async getDocuments(
+    docType: DocType,
+    documentIds: string[],
+  ): Promise<WorkspaceDocCompat[]> {
+    const batches = chunkDocumentIds(documentIds);
+    if (batches.length === 0) return [];
+    const principal = getCurrentPrincipalOrSystem();
+    const documents: WorkspaceDocCompat[] = [];
+
+    if (await targetReadsEnabled()) {
+      for (const batch of batches) {
+        const rows = await db
+          .select()
+          .from(documentStoreDocuments)
+          .where(
+            combineWithVisibleScope(
+              principal,
+              documentScopeColumns,
+              and(
+                eq(documentStoreDocuments.documentType, docType),
+                inArray(documentStoreDocuments.documentId, batch),
+              ),
+            ),
+          );
+        documents.push(...rows.map(targetToDoc));
+      }
+      log.verbose(() => `getDocuments target docType=${docType} requested=${documentIds.length} found=${documents.length}`);
+      return documents;
+    }
+
+    for (const batch of batches) {
+      const rows = await db
+        .select(memoryEntryLightColumns)
+        .from(memoryEntries)
+        .where(
+          combineWithVisibleScope(
+            principal,
+            memoryScopeColumns,
+            and(
+              eq(memoryEntries.layer, WORKSPACE_LAYER),
+              eq(memoryEntries.source, docType),
+              inArray(memoryEntries.sourceId, batch),
+            ),
+          ),
+        );
+      documents.push(...rows.map((row) =>
+        entryToDoc(wrapLightEntry(row as Omit<MemoryEntry, "embedding">)),
+      ));
+    }
+    log.verbose(() => `getDocuments docType=${docType} requested=${documentIds.length} found=${documents.length}`);
+    return documents;
   }
 
   async getDocumentsByType(
