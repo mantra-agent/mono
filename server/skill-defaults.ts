@@ -661,7 +661,7 @@ This skill runs in the background. Do NOT create a conversation or set attention
     category: "growth",
     activity: ACTIVITY_THINKING,
     author: getInstanceName(),
-    version: "2.1",
+    version: "2.2",
     addToMemory: true,
     pinnedToContext: false,
     whenToUse: "Used for growth operations",
@@ -681,7 +681,7 @@ Load the following to build a rich picture of where things stand:
 - Current priorities (daily, weekly, monthly)
 - Recent memory (search for recent exchanges, observations, patterns, gaps, opportunities from the last 7-14 days)
 - Active projects and tasks (work list_projects, list_tasks)
-- Known system gaps and tensions (library: living-architectural-self-map)
+- Known system gaps and tensions — clone the authoritative Mantra repo and read root \`AGENTS.md\` plus the relevant nested \`AGENTS.md\` files, focusing on their current "Known Gaps" sections
 - Recent observations (metacognitive observation history)
 - Recent conversations (session list, limited to last 7 days) — scan for recurring friction, unresolved threads, or missed opportunities
 
