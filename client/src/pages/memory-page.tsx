@@ -56,6 +56,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import { HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-header";
 import {
   ChevronLeft,
   ChevronRight,
@@ -808,15 +809,6 @@ function getDisplayTitle(entry: { title?: string | null; oneLiner?: string | nul
   return firstLine(entry.content, maxLen);
 }
 
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-  return String(n);
-}
-
 const HIDDEN_TAGS = new Set(["exchange"]);
 function displayTags(tags: string[] | null | undefined): string[] {
   if (!tags) return [];
@@ -1057,19 +1049,16 @@ function VnextSourceRefsSection({ claimId }: { claimId: number }) {
   const refs = data?.sources ?? [];
   if (refs.length === 0) return null;
   return (
-    <div>
-      <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1"><FileText className="h-3 w-3" />Source refs ({refs.length})</p>
-      <div className="space-y-1">
+    <div className="space-y-0.5" data-testid={`memory-vnext-source-refs-${claimId}`}>
+      <div className={HIERARCHY_SECTION_HEADER_CLASS}>Source refs ({refs.length})</div>
+      <div className="flex flex-col items-start gap-1 px-2">
         {refs.map((ref) => (
-          <div key={ref.id} className="rounded-md border border-card-border bg-muted/10 p-2" data-testid={`memory-vnext-source-ref-${ref.id}`}>
-            <div className="flex items-center gap-2 text-xs">
-              <Badge variant="outline" className="px-1.5 py-0">{ref.sourceType}</Badge>
-              <SourceRefLabel sourceType={ref.sourceType} sourceId={ref.sourceId} className="truncate" />
-              <span className="ml-auto text-muted-foreground">{ref.relationship} · {Math.round(Number(ref.strength ?? 0) * 100)}%</span>
-            </div>
-            {ref.context && <p className="mt-1 text-xs text-foreground/75 whitespace-pre-wrap">{ref.context}</p>}
-            {ref.quote && <p className="mt-1 border-l border-primary/40 pl-2 text-xs italic text-muted-foreground">{ref.quote}</p>}
-          </div>
+          <SourceRefLabel
+            key={ref.id}
+            sourceType={ref.sourceType}
+            sourceId={ref.sourceId}
+            className="max-w-full truncate text-sm"
+          />
         ))}
       </div>
     </div>
@@ -1395,22 +1384,17 @@ function VnextEntityLinksSection({ claimId }: { claimId: number }) {
   if (links.length === 0) return null;
 
   return (
-    <div data-testid={`vnext-entity-links-section-${claimId}`}>
-      <p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-        <Link2 className="h-3 w-3" />
-        Entity Links ({links.length})
-      </p>
-      <div className="space-y-1">
+    <div className="space-y-0.5" data-testid={`vnext-entity-links-section-${claimId}`}>
+      <div className={HIERARCHY_SECTION_HEADER_CLASS}>Entity Links ({links.length})</div>
+      <div className="flex flex-col items-start gap-1 px-2">
         {links.map((link) => {
           const config = entityTypeConfig[link.entityType] || { icon: Link2, label: link.entityType };
           const Icon = config.icon;
           return (
-            <div key={link.id} className={cn("flex items-center gap-2 px-3 py-2", MEMORY_LIST_ROW_CLASS, "border-card-border bg-card")} data-testid={`vnext-entity-link-${link.id}`}>
-              <Icon className="h-3 w-3 text-muted-foreground/70 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm truncate text-foreground/80">{link.entityId}</p>
-                <p className="text-xs text-muted-foreground">{config.label}</p>
-              </div>
+            <div key={link.id} className="flex min-w-0 max-w-full items-center gap-2 text-sm" data-testid={`vnext-entity-link-${link.id}`}>
+              <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="min-w-0 flex-1 truncate text-foreground/80">{link.entityId}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{config.label}</span>
             </div>
           );
         })}
@@ -1433,6 +1417,7 @@ function GraphTab({
   const [selectedLabelTypes, setSelectedLabelTypes] = useState<Set<string>>(() => new Set(["people"]));
   const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const [graphSearchQuery, setGraphSearchQuery] = useState("");
 
   useFocusContext(
     selectedNode
@@ -1502,6 +1487,24 @@ function GraphTab({
     if (position) setTooltipPos(position);
   }, []);
 
+  const graphSearchMatches = useMemo(() => {
+    const query = graphSearchQuery.trim().toLowerCase();
+    if (!query) return [] as MemoryGraph3DNode[];
+    const matches: MemoryGraph3DNode[] = [];
+    for (const node of graphNodes) {
+      const entry = entryMap.get(node.id);
+      const haystack = [node.label, entry?.title, entry?.content].filter(Boolean).join(" ").toLowerCase();
+      if (haystack.includes(query)) matches.push(node);
+      if (matches.length >= 8) break;
+    }
+    return matches;
+  }, [graphSearchQuery, graphNodes, entryMap]);
+
+  const handleGraphSearchSelect = useCallback((nodeId: number) => {
+    handleNodeSelect(nodeId);
+    setGraphSearchQuery("");
+  }, [handleNodeSelect]);
+
   useEffect(() => {
     if (selectedNode && !entryMap.has(selectedNode.id)) setSelectedNode(null);
   }, [entryMap, selectedNode]);
@@ -1523,6 +1526,33 @@ function GraphTab({
 
   return (
     <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="memory-graph-tab">
+      <div className="min-w-0 border-b border-border p-2">
+        <div className="relative">
+          <HierarchySearchInput
+            value={graphSearchQuery}
+            onChange={setGraphSearchQuery}
+            inputTestId="input-search-graph"
+            clearTestId="button-clear-graph-search"
+            ariaLabel="Search memory graph"
+          />
+          {graphSearchMatches.length > 0 && (
+            <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto scrollbar-thin rounded-md border border-card-border bg-popover p-1 shadow-md" data-testid="graph-search-results">
+              {graphSearchMatches.map((node) => (
+                <button
+                  key={node.id}
+                  type="button"
+                  className={cn(WORKING_TREE_ROW_CLASS, WORKING_TREE_IDLE_CLASS)}
+                  onClick={() => handleGraphSearchSelect(node.id)}
+                  data-testid={`graph-search-result-${node.id}`}
+                >
+                  <MemorySourceIcon source={node.source} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-left">{node.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
       <div className="relative flex flex-1 overflow-hidden min-h-0">
         <div className="flex-1 relative overflow-hidden bg-background">
           <MemoryGraph3D
@@ -1630,9 +1660,12 @@ function GraphTab({
 
             <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
               {selectedMetadata.lifecycleStage && <Badge variant="outline">{lifecycleLabel(String(selectedMetadata.lifecycleStage))}</Badge>}
-              {selectedMetadata.claimType && <Badge variant="outline">{claimTypeLabel(String(selectedMetadata.claimType))}</Badge>}
+              {selectedMetadata.claimType && (
+                <span title={claimTypeLabel(String(selectedMetadata.claimType))} className="flex items-center" data-testid="graph-detail-claim-type">
+                  <VnextClaimTypeIcon claimType={String(selectedMetadata.claimType)} />
+                </span>
+              )}
               {selectedNode.createdAt && <span>{new Date(selectedNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>}
-              <span>~{formatTokens(estimateTokens(selectedNode.content))} tok</span>
             </div>
 
             <SimpleTextFrame content={selectedNode.content} />
