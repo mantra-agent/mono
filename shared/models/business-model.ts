@@ -1,12 +1,25 @@
 import { z } from "zod";
+import type { JobRole } from "./job-roles";
 
-export const MODEL_VERSION = 2;
+export const MODEL_VERSION = 3;
 export const HORIZON_MIN = 1;
 export const HORIZON_MAX = 120;
+export const LOADED_COST_MULTIPLIER_MIN = 0.5;
+export const LOADED_COST_MULTIPLIER_MAX = 3;
 export const PHASE_KEYS = ["phase_0", "phase_1", "phase_2", "phase_3"] as const;
 export type PhaseKey = (typeof PHASE_KEYS)[number];
-export const FINANCING_KEYS = ["pre_seed", "seed", "series_a", "series_b"] as const;
+export const FINANCING_KEYS = ["seed", "series_a", "series_b"] as const;
 export type FinancingKey = (typeof FINANCING_KEYS)[number];
+export type OpexCategory = "staff" | "marketing" | "g_and_a";
+export type PeriodMode = "monthly" | "quarterly" | "annually";
+
+/** Maps each phase to the round that funds it (phase_0 bootstrap shares the Seed band). */
+export const PHASE_FINANCING: Record<PhaseKey, FinancingKey> = {
+  phase_0: "seed",
+  phase_1: "seed",
+  phase_2: "series_a",
+  phase_3: "series_b",
+};
 export type FinancingInstrument = "post_money_safe" | "priced_round";
 export type CostClassification = "opex" | "product_cogs";
 export type GateStatus = "achieved" | "missed" | "not_yet_observable";
@@ -19,11 +32,16 @@ export const PHASE_LABELS: Record<PhaseKey, string> = {
 };
 
 export const FINANCING_LABELS: Record<FinancingKey, string> = {
-  pre_seed: "Pre-Seed",
   seed: "Seed",
   series_a: "Series A",
   series_b: "Series B",
 };
+
+export interface StageKeyHire {
+  roleId: string;
+  startMonth?: number;
+  headcount?: number;
+}
 
 export interface PhaseAssumption {
   key: PhaseKey;
@@ -37,6 +55,7 @@ export interface PhaseAssumption {
   accountExpansion90dMin: number;
   cacPaybackMaxMonths: number;
   productGrossMarginMinPct: number;
+  keyHires: StageKeyHire[];
 }
 
 export interface FinancingEvent {
@@ -63,6 +82,7 @@ export interface OperatingCostEntry {
   monthlyAmount: number;
   headcount: number;
   classification: CostClassification;
+  opexCategory?: OpexCategory;
 }
 
 export interface Assumptions {
@@ -90,6 +110,7 @@ export interface Assumptions {
   roundIncrement: number;
   fundraisingLeadMonths: number;
   trailingBurnMonths: number;
+  loadedCostMultiplier: number;
   phases: PhaseAssumption[];
   financingEvents: FinancingEvent[];
   operatingCosts: OperatingCostEntry[];
@@ -136,17 +157,21 @@ export function calendarMonthLabel(startCalendarMonth: string, monthIndex: numbe
 }
 
 const PHASE_DEFAULTS: Record<PhaseKey, Omit<PhaseAssumption, "key">> = {
-  phase_0: { startMonth: 0, endMonth: 0, fundedBy: "Bootstrap", productArrMin: 0, productArrMax: 0, annualNrrMinPct: 0, annualGlrMinPct: 0, accountExpansion90dMin: 0, cacPaybackMaxMonths: 0, productGrossMarginMinPct: 0 },
-  phase_1: { startMonth: 1, endMonth: 18, fundedBy: "Pre-Seed", productArrMin: 1_000_000, productArrMax: 2_000_000, annualNrrMinPct: 150, annualGlrMinPct: 90, accountExpansion90dMin: 0, cacPaybackMaxMonths: 0, productGrossMarginMinPct: 0 },
-  phase_2: { startMonth: 19, endMonth: 36, fundedBy: "Seed", productArrMin: 10_000_000, productArrMax: 0, annualNrrMinPct: 0, annualGlrMinPct: 0, accountExpansion90dMin: 1.5, cacPaybackMaxMonths: 12, productGrossMarginMinPct: 0 },
-  phase_3: { startMonth: 37, endMonth: 60, fundedBy: "Series A", productArrMin: 30_000_000, productArrMax: 50_000_000, annualNrrMinPct: 0, annualGlrMinPct: 0, accountExpansion90dMin: 0, cacPaybackMaxMonths: 0, productGrossMarginMinPct: 80 },
+  phase_0: { startMonth: 0, endMonth: 0, fundedBy: "Bootstrap", productArrMin: 0, productArrMax: 0, annualNrrMinPct: 0, annualGlrMinPct: 0, accountExpansion90dMin: 0, cacPaybackMaxMonths: 0, productGrossMarginMinPct: 0, keyHires: [] },
+  phase_1: { startMonth: 1, endMonth: 18, fundedBy: "Seed", productArrMin: 1_000_000, productArrMax: 2_000_000, annualNrrMinPct: 150, annualGlrMinPct: 90, accountExpansion90dMin: 0, cacPaybackMaxMonths: 0, productGrossMarginMinPct: 0, keyHires: [
+    { roleId: "18d90c4f05e92d7d", startMonth: 1 },
+    { roleId: "ac66ad0dcbcc671f", startMonth: 1 },
+    { roleId: "bb87b49068593dc8", startMonth: 7 },
+    { roleId: "e8fc275fa51a38d2", startMonth: 13 },
+  ] },
+  phase_2: { startMonth: 19, endMonth: 36, fundedBy: "Series A", productArrMin: 10_000_000, productArrMax: 0, annualNrrMinPct: 0, annualGlrMinPct: 0, accountExpansion90dMin: 1.5, cacPaybackMaxMonths: 12, productGrossMarginMinPct: 0, keyHires: [] },
+  phase_3: { startMonth: 37, endMonth: 60, fundedBy: "Series B", productArrMin: 30_000_000, productArrMax: 50_000_000, annualNrrMinPct: 0, annualGlrMinPct: 0, accountExpansion90dMin: 0, cacPaybackMaxMonths: 0, productGrossMarginMinPct: 80, keyHires: [] },
 };
 
 const FINANCING_DEFAULTS: Record<FinancingKey, Omit<FinancingEvent, "key">> = {
-  pre_seed: { month: 1, amount: 1_000_000, instrument: "post_money_safe", valuation: 8_000_000, optionPoolTopUpPct: 0 },
-  seed: { month: 19, amount: 0, instrument: "priced_round", valuation: 20_000_000, optionPoolTopUpPct: 0 },
-  series_a: { month: 37, amount: 0, instrument: "priced_round", valuation: 75_000_000, optionPoolTopUpPct: 0 },
-  series_b: { month: 61, amount: 0, instrument: "priced_round", valuation: 250_000_000, optionPoolTopUpPct: 0 },
+  seed: { month: 1, amount: 1_000_000, instrument: "post_money_safe", valuation: 8_000_000, optionPoolTopUpPct: 0 },
+  series_a: { month: 19, amount: 8_000_000, instrument: "priced_round", valuation: 40_000_000, optionPoolTopUpPct: 0 },
+  series_b: { month: 37, amount: 0, instrument: "priced_round", valuation: 150_000_000, optionPoolTopUpPct: 0 },
 };
 
 export function defaultPhases(): PhaseAssumption[] {
@@ -159,11 +184,7 @@ export function defaultFinancingEvents(): FinancingEvent[] {
 
 export function defaultOperatingCosts(): OperatingCostEntry[] {
   return [
-    { id: "founder", label: "Founder", startMonth: 1, endMonth: 120, monthlyAmount: 12_000, headcount: 1, classification: "opex" },
-    { id: "founding-engineer", label: "Founding Engineer", startMonth: 1, endMonth: 120, monthlyAmount: 18_000, headcount: 1, classification: "opex" },
-    { id: "ga", label: "G&A, tools, legal, security", startMonth: 1, endMonth: 120, monthlyAmount: 6_000, headcount: 0, classification: "opex" },
-    { id: "customer-success", label: "Customer Success delivery", startMonth: 7, endMonth: 120, monthlyAmount: 12_000, headcount: 1, classification: "product_cogs" },
-    { id: "second-engineer", label: "Second Engineer", startMonth: 13, endMonth: 120, monthlyAmount: 20_000, headcount: 1, classification: "opex" },
+    { id: "ga", label: "G&A, tools, legal, security", startMonth: 1, endMonth: 120, monthlyAmount: 6_000, headcount: 0, classification: "opex", opexCategory: "g_and_a" },
   ];
 }
 
@@ -198,6 +219,7 @@ export function defaultAssumptions(): Assumptions {
     roundIncrement: 100_000,
     fundraisingLeadMonths: 4,
     trailingBurnMonths: 3,
+    loadedCostMultiplier: 1.25,
     phases: defaultPhases(),
     financingEvents: defaultFinancingEvents(),
     operatingCosts: defaultOperatingCosts(),
@@ -205,10 +227,17 @@ export function defaultAssumptions(): Assumptions {
   };
 }
 
+const keyHireSchema = z.object({
+  roleId: z.string().min(1).max(64),
+  startMonth: z.number().optional(),
+  headcount: z.number().optional(),
+}).strict();
+
 const phaseSchema = z.object({
   key: z.enum(PHASE_KEYS), startMonth: z.number().optional(), endMonth: z.number().optional(), fundedBy: z.string().max(80).optional(),
   productArrMin: z.number().optional(), productArrMax: z.number().optional(), annualNrrMinPct: z.number().optional(), annualGlrMinPct: z.number().optional(),
   accountExpansion90dMin: z.number().optional(), cacPaybackMaxMonths: z.number().optional(), productGrossMarginMinPct: z.number().optional(),
+  keyHires: z.array(keyHireSchema).max(40).optional(),
 }).strict();
 
 const financingSchema = z.object({
@@ -218,6 +247,7 @@ const financingSchema = z.object({
 
 const operatingCostSchema = z.object({
   id: z.string().min(1).max(80), label: z.string().min(1).max(120), startMonth: z.number(), endMonth: z.number(), monthlyAmount: z.number(), headcount: z.number(), classification: z.enum(["opex", "product_cogs"]),
+  opexCategory: z.enum(["staff", "marketing", "g_and_a"]).optional(),
 }).strict();
 
 const cashLaneSchema = z.object({ month: z.number(), consultingRevenue: z.number().optional(), consultingCogs: z.number().optional(), capex: z.number().optional() }).strict();
@@ -233,7 +263,7 @@ const rawAssumptionsSchema = z.object({
   maxIncludedTokensMillions: z.number().optional(), blendedTokenCostPerMillion: z.number().optional(), overageMarkupPct: z.number().optional(),
   infrastructurePerActiveAccount: z.number().optional(), supportPerActiveAccount: z.number().optional(), paymentProcessingPct: z.number().optional(), onboardingCostPerNewAccount: z.number().optional(),
   plgSharePct: z.number().optional(), plgCac: z.number().optional(), topDownCac: z.number().optional(), reserveAtNextGate: z.number().optional(), roundIncrement: z.number().optional(),
-  fundraisingLeadMonths: z.number().optional(), trailingBurnMonths: z.number().optional(), phases: z.array(phaseSchema).max(4).optional(), financingEvents: z.array(financingSchema).max(4).optional(),
+  fundraisingLeadMonths: z.number().optional(), trailingBurnMonths: z.number().optional(), loadedCostMultiplier: z.number().optional(), phases: z.array(phaseSchema).max(4).optional(), financingEvents: z.array(financingSchema).max(4).optional(),
   operatingCosts: z.array(operatingCostSchema).max(40).optional(), monthlyCashLanes: z.array(cashLaneSchema).max(HORIZON_MAX).optional(), stages: z.array(legacyStageSchema).max(4).optional(),
 }).strict();
 
@@ -242,7 +272,7 @@ export type AssumptionsPatch = z.infer<typeof assumptionsPatchSchema>;
 
 function legacyCompatibility(raw: AssumptionsPatch, defaults: Assumptions) {
   const legacyStages = raw.stages ?? [];
-  const first = legacyStages.find((stage) => stage.key === "pre_seed");
+  const first = legacyStages[0];
   const legacyOperatingCosts = legacyStages.length > 0 && raw.operatingCosts === undefined
     ? legacyStages.map((stage, index) => ({
         id: `legacy-${stage.key}`, label: `${FINANCING_LABELS[stage.key]} operating plan`, startMonth: whole(stage.roundMonth, 1, HORIZON_MAX, FINANCING_DEFAULTS[stage.key].month),
@@ -262,13 +292,53 @@ function legacyCompatibility(raw: AssumptionsPatch, defaults: Assumptions) {
       const def = FINANCING_DEFAULTS[key];
       const amount = nonNegative(legacy?.investmentAmount, def.amount);
       const preMoney = nonNegative(legacy?.preMoneyValuation, Math.max(0, def.valuation - def.amount));
-      return { key, month: whole(legacy?.roundMonth, 1, HORIZON_MAX, def.month), amount, instrument: key === "pre_seed" ? "post_money_safe" as const : "priced_round" as const, valuation: key === "pre_seed" ? preMoney + amount : preMoney, optionPoolTopUpPct: 0 };
+      return { key, month: whole(legacy?.roundMonth, 1, HORIZON_MAX, def.month), amount, instrument: key === "seed" ? "post_money_safe" as const : "priced_round" as const, valuation: key === "seed" ? preMoney + amount : preMoney, optionPoolTopUpPct: 0 };
     }) : defaults.financingEvents),
   };
 }
 
+const FUNDED_BY_REMAP: Record<string, string> = { "Pre-Seed": "Seed", "Seed": "Series A", "Series A": "Series B" };
+const LEGACY_STAFF_COST_IDS = new Set(["founder", "founding-engineer", "second-engineer", "customer-success"]);
+
+/**
+ * Migrate a stored v2 model to v3 before schema validation. v2 carried four
+ * financing keys (pre_seed/seed/series_a/series_b) and hand-entered staff
+ * operating costs; v3 keeps three institutional rounds and derives staff cost
+ * from Key Hires. The remap is additive and lossless for the surviving rounds:
+ * the real pre_seed round becomes Seed, and Series A/B fall back to defaults.
+ */
+function migrateLegacyModel(input: unknown): unknown {
+  if (!input || typeof input !== "object") return input;
+  const raw = input as Record<string, unknown>;
+  const version = typeof raw.modelVersion === "number" ? raw.modelVersion : 0;
+  const financingEvents = Array.isArray(raw.financingEvents) ? raw.financingEvents : [];
+  const hasLegacyFinancing = financingEvents.some((event) => (event as { key?: string })?.key === "pre_seed");
+  if (version >= MODEL_VERSION && !hasLegacyFinancing) return input;
+
+  const next: Record<string, unknown> = { ...raw };
+  // Carry the real founding round (old pre_seed) onto Seed; let Series A/B use v3 defaults.
+  next.financingEvents = financingEvents
+    .filter((event) => (event as { key?: string })?.key === "pre_seed")
+    .map((event) => ({ ...(event as object), key: "seed" }));
+  if (Array.isArray(raw.phases)) {
+    next.phases = raw.phases.map((phase) => {
+      const value = phase as Record<string, unknown>;
+      const fundedBy = typeof value.fundedBy === "string" ? (FUNDED_BY_REMAP[value.fundedBy] ?? value.fundedBy) : value.fundedBy;
+      const { keyHires: _drop, ...rest } = value;
+      return { ...rest, fundedBy };
+    });
+  }
+  if (Array.isArray(raw.operatingCosts)) {
+    next.operatingCosts = raw.operatingCosts
+      .filter((cost) => !LEGACY_STAFF_COST_IDS.has((cost as { id?: string })?.id ?? ""))
+      .map((cost) => (cost as { id?: string })?.id === "ga" ? { ...(cost as object), opexCategory: "g_and_a" } : cost);
+  }
+  next.modelVersion = MODEL_VERSION;
+  return next;
+}
+
 export function normalizeAssumptions(input: unknown): Assumptions {
-  const parsed = rawAssumptionsSchema.safeParse(input ?? {});
+  const parsed = rawAssumptionsSchema.safeParse(migrateLegacyModel(input) ?? {});
   const raw: AssumptionsPatch = parsed.success ? parsed.data : {};
   const defaults = defaultAssumptions();
   const compatibility = legacyCompatibility(raw, defaults);
@@ -277,6 +347,13 @@ export function normalizeAssumptions(input: unknown): Assumptions {
   const phases = PHASE_KEYS.map((key) => {
     const value = phaseByKey.get(key) ?? { key };
     const def = PHASE_DEFAULTS[key];
+    const keyHires = (value.keyHires ?? def.keyHires)
+      .map((hire) => ({
+        roleId: hire.roleId.trim(),
+        startMonth: whole(hire.startMonth, 1, HORIZON_MAX, def.startMonth || 1),
+        headcount: Math.max(1, Math.round(nonNegative(hire.headcount, 1))),
+      }))
+      .filter((hire) => hire.roleId.length > 0);
     return {
       key,
       startMonth: whole(value.startMonth, 0, HORIZON_MAX, def.startMonth), endMonth: whole(value.endMonth, 0, HORIZON_MAX, def.endMonth), fundedBy: value.fundedBy?.trim() || def.fundedBy,
@@ -284,6 +361,7 @@ export function normalizeAssumptions(input: unknown): Assumptions {
       annualNrrMinPct: nonNegative(value.annualNrrMinPct, def.annualNrrMinPct), annualGlrMinPct: bounded(value.annualGlrMinPct, 0, 100, def.annualGlrMinPct),
       accountExpansion90dMin: nonNegative(value.accountExpansion90dMin, def.accountExpansion90dMin), cacPaybackMaxMonths: nonNegative(value.cacPaybackMaxMonths, def.cacPaybackMaxMonths),
       productGrossMarginMinPct: bounded(value.productGrossMarginMinPct, 0, 100, def.productGrossMarginMinPct),
+      keyHires,
     };
   });
   const financingByKey = new Map((compatibility.financingEvents ?? []).map((event) => [event.key, event]));
@@ -295,6 +373,7 @@ export function normalizeAssumptions(input: unknown): Assumptions {
   const operatingCosts = (raw.operatingCosts ?? compatibility.operatingCosts).map((entry) => ({
     id: entry.id, label: entry.label.trim(), startMonth: whole(entry.startMonth, 1, HORIZON_MAX, 1), endMonth: whole(entry.endMonth, 1, HORIZON_MAX, HORIZON_MAX),
     monthlyAmount: nonNegative(entry.monthlyAmount, 0), headcount: nonNegative(entry.headcount, 0), classification: entry.classification,
+    opexCategory: entry.classification === "opex" ? ((entry as OperatingCostEntry).opexCategory ?? "g_and_a") : undefined,
   })).map((entry) => ({ ...entry, endMonth: Math.max(entry.startMonth, entry.endMonth) }));
   const laneByMonth = new Map((raw.monthlyCashLanes ?? []).map((lane) => [whole(lane.month, 1, horizonMonths, 1), lane]));
   const monthlyCashLanes = Array.from({ length: horizonMonths }, (_, index) => {
@@ -314,6 +393,7 @@ export function normalizeAssumptions(input: unknown): Assumptions {
     plgSharePct: bounded(raw.plgSharePct, 0, 100, defaults.plgSharePct), plgCac: nonNegative(raw.plgCac, defaults.plgCac), topDownCac: nonNegative(raw.topDownCac, defaults.topDownCac),
     reserveAtNextGate: nonNegative(raw.reserveAtNextGate, defaults.reserveAtNextGate), roundIncrement: Math.max(1, nonNegative(raw.roundIncrement, defaults.roundIncrement)),
     fundraisingLeadMonths: whole(raw.fundraisingLeadMonths, 0, 24, defaults.fundraisingLeadMonths), trailingBurnMonths: whole(raw.trailingBurnMonths, 1, 12, defaults.trailingBurnMonths),
+    loadedCostMultiplier: bounded(raw.loadedCostMultiplier, LOADED_COST_MULTIPLIER_MIN, LOADED_COST_MULTIPLIER_MAX, defaults.loadedCostMultiplier),
     phases, financingEvents, operatingCosts, monthlyCashLanes,
   };
 }
@@ -346,7 +426,17 @@ export interface MonthRow {
   consultingRevenue: number; totalCashRevenue: number; includedTokenCogs: number; overageTokenCogs: number; requiredOverageTokensMillions: number; totalTokenUsageMillions: number; overageGrossMargin: number;
   variableProductCogs: number; fixedProductCogs: number; productCogs: number; consultingCogs: number; productGrossMargin: number; consultingGrossMargin: number; blendedCompanyGrossMargin: number;
   acquisitionSpend: number; blendedCac: number; cacPaybackMonths: number; headcount: number; operatingExpense: number; capex: number;
+  grossProfit: number; staffOpex: number; marketingOpex: number; gaOpex: number; totalOpex: number; operatingIncome: number;
   netCashChange: number; financingCash: number; endingCash: number; trailingBurn: number; runwayMonths: number;
+}
+
+export interface PeriodRow {
+  key: string; label: string; startMonth: number; endMonth: number; monthCount: number;
+  phaseKey: PhaseKey; phaseLabel: string; financingKey: FinancingKey;
+  activeAccounts: number; newAccounts: number;
+  totalCashRevenue: number; productRevenue: number; consultingRevenue: number; productCogs: number; consultingCogs: number; cogs: number; grossProfit: number;
+  staffOpex: number; marketingOpex: number; gaOpex: number; totalOpex: number; operatingIncome: number;
+  acquisitionSpend: number; netCashChange: number; financingCash: number; endingCash: number;
 }
 
 export interface GateSummary {
@@ -355,7 +445,7 @@ export interface GateSummary {
 
 export interface FinancingSummary {
   key: FinancingKey; label: string; month: number; instrument: FinancingInstrument; investment: number; valuation: number; postMoneyValuation: number;
-  newInvestorOwnership: number; preSeedOwnership: number; preSeedPaperValue: number; preSeedReturnMultiple: number;
+  newInvestorOwnership: number; foundingOwnership: number; foundingPaperValue: number; foundingReturnMultiple: number;
 }
 
 export interface FinancingNeed {
@@ -384,8 +474,32 @@ function roundUp(value: number, increment: number): number {
   return Math.ceil(Math.max(0, value) / increment) * increment;
 }
 
-export function computeProjection(input: Assumptions | unknown): Projection {
+interface DerivedHire { startMonth: number; monthlyCost: number; isDelivery: boolean; headcount: number; }
+
+/** Loaded monthly cost for one role: base-midpoint × (1 + target bonus) × loaded multiplier ÷ 12. */
+function loadedMonthlyForRole(role: JobRole, loadedCostMultiplier: number): number {
+  const baseMidpoint = (role.annualSalaryMin + role.annualSalaryMax) / 2;
+  const annualLoaded = baseMidpoint * (1 + role.targetBonusPercent / 100) * loadedCostMultiplier;
+  return annualLoaded / 12;
+}
+
+export function computeProjection(input: Assumptions | unknown, roles: JobRole[] = []): Projection {
   const assumptions = normalizeAssumptions(input);
+  const roleById = new Map(roles.map((role) => [role.id, role]));
+  const derivedHires: DerivedHire[] = [];
+  for (const phase of assumptions.phases) {
+    for (const hire of phase.keyHires) {
+      const role = roleById.get(hire.roleId);
+      if (!role) continue;
+      const headcount = Math.max(1, hire.headcount ?? 1);
+      derivedHires.push({
+        startMonth: hire.startMonth ?? phase.startMonth ?? 1,
+        monthlyCost: loadedMonthlyForRole(role, assumptions.loadedCostMultiplier) * headcount,
+        isDelivery: role.team === "Customer Success",
+        headcount,
+      });
+    }
+  }
   const logoRetentionMonthly = Math.pow(assumptions.annualGrossLogoRetentionPct / 100, 1 / 12);
   const nrrMonthly = Math.pow(assumptions.annualNrrPct / 100, 1 / 12);
   const overagePriceMultiple = 1 + assumptions.overageMarkupPct / 100;
@@ -417,7 +531,11 @@ export function computeProjection(input: Assumptions | unknown): Projection {
     const overageTokenCogs = overagePriceMultiple > 0 ? overageRevenue / overagePriceMultiple : 0;
     const requiredOverageTokensMillions = assumptions.blendedTokenCostPerMillion > 0 ? overageTokenCogs / assumptions.blendedTokenCostPerMillion : 0;
     const includedTokenCogs = activeAccounts * includedInferencePerAccount;
-    const fixedProductCogs = assumptions.operatingCosts.filter((cost) => cost.classification === "product_cogs" && activeCost(cost, month)).reduce((sum, cost) => sum + cost.monthlyAmount, 0);
+    const activeHires = derivedHires.filter((hire) => hire.startMonth <= month);
+    const keyHireStaffOpex = activeHires.filter((hire) => !hire.isDelivery).reduce((sum, hire) => sum + hire.monthlyCost, 0);
+    const keyHireDeliveryCogs = activeHires.filter((hire) => hire.isDelivery).reduce((sum, hire) => sum + hire.monthlyCost, 0);
+    const keyHireHeadcount = activeHires.reduce((sum, hire) => sum + hire.headcount, 0);
+    const fixedProductCogs = assumptions.operatingCosts.filter((cost) => cost.classification === "product_cogs" && activeCost(cost, month)).reduce((sum, cost) => sum + cost.monthlyAmount, 0) + keyHireDeliveryCogs;
     const variableProductCogs = includedTokenCogs + overageTokenCogs + activeAccounts * (assumptions.infrastructurePerActiveAccount + assumptions.supportPerActiveAccount) + productRevenue * assumptions.paymentProcessingPct / 100 + newAccounts * assumptions.onboardingCostPerNewAccount;
     const productCogs = variableProductCogs + fixedProductCogs;
     const lane = assumptions.monthlyCashLanes[month - 1];
@@ -425,8 +543,16 @@ export function computeProjection(input: Assumptions | unknown): Projection {
     const consultingCogs = lane.consultingCogs;
     const totalCashRevenue = productRevenue + consultingRevenue;
     const acquisitionSpend = newAccounts * blendedEntryCac;
-    const operatingExpense = assumptions.operatingCosts.filter((cost) => cost.classification === "opex" && activeCost(cost, month)).reduce((sum, cost) => sum + cost.monthlyAmount, 0);
-    const headcount = assumptions.operatingCosts.filter((cost) => activeCost(cost, month)).reduce((sum, cost) => sum + cost.headcount, 0);
+    const manualOpex = (category: OpexCategory) => assumptions.operatingCosts.filter((cost) => cost.classification === "opex" && (cost.opexCategory ?? "g_and_a") === category && activeCost(cost, month)).reduce((sum, cost) => sum + cost.monthlyAmount, 0);
+    const staffOpex = keyHireStaffOpex + manualOpex("staff");
+    const marketingOpex = manualOpex("marketing") + acquisitionSpend;
+    const gaOpex = manualOpex("g_and_a");
+    const totalOpex = staffOpex + marketingOpex + gaOpex;
+    // Cash operating expense excludes acquisitionSpend, which is subtracted as its own cash line below.
+    const operatingExpense = staffOpex + manualOpex("marketing") + gaOpex;
+    const headcount = assumptions.operatingCosts.filter((cost) => activeCost(cost, month)).reduce((sum, cost) => sum + cost.headcount, 0) + keyHireHeadcount;
+    const grossProfit = totalCashRevenue - productCogs - consultingCogs;
+    const operatingIncome = grossProfit - totalOpex;
     const netCashChange = totalCashRevenue - productCogs - consultingCogs - acquisitionSpend - operatingExpense - lane.capex;
     const financingCash = assumptions.financingEvents.filter((event) => event.month === month).reduce((sum, event) => sum + event.amount, 0);
     endingCash += netCashChange + financingCash;
@@ -439,7 +565,7 @@ export function computeProjection(input: Assumptions | unknown): Projection {
       consultingRevenue, totalCashRevenue, includedTokenCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: activeAccounts * assumptions.maxIncludedTokensMillions + requiredOverageTokensMillions, overageGrossMargin,
       variableProductCogs, fixedProductCogs, productCogs, consultingCogs, productGrossMargin: safeRatio(productRevenue - productCogs, productRevenue), consultingGrossMargin: safeRatio(consultingRevenue - consultingCogs, consultingRevenue),
       blendedCompanyGrossMargin: safeRatio(totalCashRevenue - productCogs - consultingCogs, totalCashRevenue), acquisitionSpend, blendedCac: newAccounts > 0 ? acquisitionSpend / newAccounts : blendedEntryCac,
-      cacPaybackMonths: baselineCacPaybackMonths, headcount, operatingExpense, capex: lane.capex, netCashChange, financingCash, endingCash, trailingBurn, runwayMonths: trailingBurn > 0 ? Math.max(0, endingCash) / trailingBurn : Number.POSITIVE_INFINITY,
+      cacPaybackMonths: baselineCacPaybackMonths, headcount, operatingExpense, capex: lane.capex, grossProfit, staffOpex, marketingOpex, gaOpex, totalOpex, operatingIncome, netCashChange, financingCash, endingCash, trailingBurn, runwayMonths: trailingBurn > 0 ? Math.max(0, endingCash) / trailingBurn : Number.POSITIVE_INFINITY,
     });
   }
 
@@ -450,14 +576,14 @@ export function computeProjection(input: Assumptions | unknown): Projection {
     return { phaseKey: phase.key, label: PHASE_LABELS[phase.key], targetMonth: phase.endMonth, status, firstAchievedMonth: achieved?.month ?? null };
   });
 
-  const preSeedInvestment = assumptions.financingEvents[0].amount;
-  let preSeedOwnership = 0;
+  const foundingInvestment = assumptions.financingEvents[0].amount;
+  let foundingOwnership = 0;
   const financing = assumptions.financingEvents.map((event, index) => {
     const postMoneyValuation = event.instrument === "post_money_safe" ? event.valuation : event.valuation + event.amount;
     const newInvestorOwnership = postMoneyValuation > 0 ? event.amount / postMoneyValuation : 0;
-    preSeedOwnership = index === 0 ? newInvestorOwnership : preSeedOwnership * Math.max(0, 1 - newInvestorOwnership - event.optionPoolTopUpPct / 100);
-    const preSeedPaperValue = preSeedOwnership * postMoneyValuation;
-    return { key: event.key, label: FINANCING_LABELS[event.key], month: event.month, instrument: event.instrument, investment: event.amount, valuation: event.valuation, postMoneyValuation, newInvestorOwnership, preSeedOwnership, preSeedPaperValue, preSeedReturnMultiple: preSeedInvestment > 0 ? preSeedPaperValue / preSeedInvestment : 0 };
+    foundingOwnership = index === 0 ? newInvestorOwnership : foundingOwnership * Math.max(0, 1 - newInvestorOwnership - event.optionPoolTopUpPct / 100);
+    const foundingPaperValue = foundingOwnership * postMoneyValuation;
+    return { key: event.key, label: FINANCING_LABELS[event.key], month: event.month, instrument: event.instrument, investment: event.amount, valuation: event.valuation, postMoneyValuation, newInvestorOwnership, foundingOwnership, foundingPaperValue, foundingReturnMultiple: foundingInvestment > 0 ? foundingPaperValue / foundingInvestment : 0 };
   });
 
   const nextGate = assumptions.phases.find((phase) => phase.key === "phase_1")!;
@@ -468,12 +594,59 @@ export function computeProjection(input: Assumptions | unknown): Projection {
   const requiredForSolvency = Math.max(0, -minimumCashWithoutRaise);
   const requiredForReserve = Math.max(0, assumptions.reserveAtNextGate - cashWithoutRaise);
   const raiseRequired = roundUp(Math.max(requiredForSolvency, requiredForReserve), assumptions.roundIncrement);
-  const preSeed = assumptions.financingEvents[0];
+  const founding = assumptions.financingEvents[0];
   const financingNeed: FinancingNeed = {
-    phaseKey: nextGate.key, gateMonth: nextGate.endMonth, raiseRequired, plannedRaise: preSeed.amount, fundingMonth: preSeed.month,
+    phaseKey: nextGate.key, gateMonth: nextGate.endMonth, raiseRequired, plannedRaise: founding.amount, fundingMonth: founding.month,
     nextFundraiseStartMonth: Math.max(1, nextGate.endMonth - assumptions.fundraisingLeadMonths), cashAtGateWithoutRaise: cashWithoutRaise,
     confirmedConsultingNetCash: throughGate.reduce((sum, row) => sum + row.consultingRevenue - row.consultingCogs, 0), reserveAtGate: assumptions.reserveAtNextGate,
   };
 
   return { assumptions, months, gates, financing, financingNeed, impliedRetainedAccountArpaExpansionPct: assumptions.annualGrossLogoRetentionPct > 0 ? assumptions.annualNrrPct / assumptions.annualGrossLogoRetentionPct * 100 : 0, entryContributionGrossMargin, baselineCacPaybackMonths };
+}
+
+/**
+ * Roll monthly rows up into the requested period. Monthly is the source of
+ * truth: flows are summed, balances (accounts, ending cash) are period-end,
+ * and no ratio is averaged — margins are recomputed from summed numerators
+ * and denominators by the consumer.
+ */
+export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow[] {
+  if (months.length === 0) return [];
+  const size = mode === "annually" ? 12 : mode === "quarterly" ? 3 : 1;
+  const rows: PeriodRow[] = [];
+  for (let index = 0; index < months.length; index += size) {
+    const slice = months.slice(index, index + size);
+    const first = slice[0];
+    const last = slice[slice.length - 1];
+    const sum = (pick: (row: MonthRow) => number) => slice.reduce((acc, row) => acc + pick(row), 0);
+    rows.push({
+      key: `${first.month}-${last.month}`,
+      label: size === 1 ? last.label : `${first.label}–${last.label}`,
+      startMonth: first.month,
+      endMonth: last.month,
+      monthCount: slice.length,
+      phaseKey: last.phaseKey,
+      phaseLabel: last.phaseLabel,
+      financingKey: PHASE_FINANCING[last.phaseKey],
+      activeAccounts: last.activeAccounts,
+      newAccounts: sum((row) => row.newAccounts),
+      totalCashRevenue: sum((row) => row.totalCashRevenue),
+      productRevenue: sum((row) => row.productRevenue),
+      consultingRevenue: sum((row) => row.consultingRevenue),
+      productCogs: sum((row) => row.productCogs),
+      consultingCogs: sum((row) => row.consultingCogs),
+      cogs: sum((row) => row.productCogs + row.consultingCogs),
+      grossProfit: sum((row) => row.grossProfit),
+      staffOpex: sum((row) => row.staffOpex),
+      marketingOpex: sum((row) => row.marketingOpex),
+      gaOpex: sum((row) => row.gaOpex),
+      totalOpex: sum((row) => row.totalOpex),
+      operatingIncome: sum((row) => row.operatingIncome),
+      acquisitionSpend: sum((row) => row.acquisitionSpend),
+      netCashChange: sum((row) => row.netCashChange),
+      financingCash: sum((row) => row.financingCash),
+      endingCash: last.endingCash,
+    });
+  }
+  return rows;
 }

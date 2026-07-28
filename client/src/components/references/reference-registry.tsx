@@ -1,4 +1,5 @@
 import {
+  Briefcase,
   Building2,
   CalendarDays,
   ListTodo,
@@ -98,6 +99,11 @@ const registry: Record<string, RegistryEntry> = {
     Icon: Diamond,
     fallbackLabel: ref => metadataString(ref, "label") || `Milestone ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/projects`,
+  },
+  role: {
+    Icon: Briefcase,
+    fallbackLabel: ref => metadataString(ref, "label") || `Role ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/business/roles?role=${encodeURIComponent(ref.id)}`,
   },
 
   decision: {
