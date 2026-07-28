@@ -10,6 +10,7 @@ import {
   ADVISORY_LOCK_NS,
   db,
   runWithDatabaseTransaction,
+  type DrizzleTx,
 } from "../db";
 import { createLogger } from "../log";
 import { createUserPrincipalFromUser, type Principal } from "../principal";
@@ -89,6 +90,35 @@ async function requireDestinationVault(principal: Principal, vaultId: string): P
     .where(and(eq(vaults.id, vaultId), eq(vaults.accountId, principal.accountId), eq(vaults.isArchived, false)))
     .limit(1);
   if (!vault) throw clientError(403, "Destination Vault is unavailable");
+}
+
+async function normalizeMeetingInstanceClassification(
+  tx: DrizzleTx,
+  principal: Principal,
+  vaultId: string,
+  rootPageId: string,
+): Promise<number> {
+  const normalized = await tx
+    .update(libraryPages)
+    .set({
+      tags: sql`array_remove(${libraryPages.tags}, 'system-folder')`,
+      updatedAt: new Date(),
+      updatedByUserId: principal.userId,
+    })
+    .where(
+      combineWithWritableScope(
+        principal,
+        pageScopeColumns,
+        and(
+          eq(libraryPages.vaultId, vaultId),
+          eq(libraryPages.parentId, rootPageId),
+          sql`${MEETING_INSTANCE_TAG} = ANY(${libraryPages.tags})`,
+          sql`'system-folder' = ANY(${libraryPages.tags})`,
+        ),
+      ),
+    )
+    .returning({ id: libraryPages.id });
+  return normalized.length;
 }
 
 async function ensureOrganizationalPage(input: {
@@ -252,6 +282,20 @@ export async function ensureMeetingsRoot(vaultId: string, principal = getCurrent
           });
         }
       }
+
+      const normalizedMeetingInstances = await normalizeMeetingInstanceClassification(
+        tx,
+        scopedPrincipal,
+        vaultId,
+        canonical.id,
+      );
+      if (normalizedMeetingInstances > 0) {
+        log.info("normalized meeting instance classification", {
+          vaultId,
+          rootPageId: canonical.id,
+          normalizedMeetingInstances,
+        });
+      }
       return canonical;
     }));
   });
@@ -272,7 +316,7 @@ export async function ensureMeetingLibraryNode(input: {
     slug: id,
     vaultId: input.vaultId,
     parentId: root.id,
-    tags: ["system-folder", MEETING_INSTANCE_TAG],
+    tags: [MEETING_INSTANCE_TAG],
     principal,
   });
 }
