@@ -149,11 +149,17 @@ export function nextCalendarMonth(from: Date = new Date()): string {
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-export function calendarMonthLabel(startCalendarMonth: string, monthIndex: number): string {
+function calendarMonthAt(startCalendarMonth: string, monthIndex: number): string {
   const base = MONTH_PATTERN.test(startCalendarMonth) ? startCalendarMonth : nextCalendarMonth();
   const [year, month] = base.split("-").map(Number);
   const value = new Date(Date.UTC(year, month - 1 + monthIndex - 1, 1));
-  return `${MONTH_ABBR[value.getUTCMonth()]} '${String(value.getUTCFullYear()).slice(-2)}`;
+  return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+export function calendarMonthLabel(startCalendarMonth: string, monthIndex: number): string {
+  const calendarMonth = calendarMonthAt(startCalendarMonth, monthIndex);
+  const [year, month] = calendarMonth.split("-").map(Number);
+  return `${MONTH_ABBR[month - 1]} '${String(year).slice(-2)}`;
 }
 
 const PHASE_DEFAULTS: Record<PhaseKey, Omit<PhaseAssumption, "key">> = {
@@ -420,7 +426,7 @@ export function mergeAssumptions(current: Assumptions, patch: AssumptionsPatch):
 interface Cohort { birthMonth: number; accounts: number; }
 
 export interface MonthRow {
-  month: number; label: string; phaseKey: PhaseKey; phaseLabel: string;
+  month: number; calendarMonth: string; label: string; phaseKey: PhaseKey; phaseLabel: string;
   newAccounts: number; newPlgAccounts: number; newTopDownAccounts: number; activeAccounts: number;
   sameCohortRecurringRevenue: number; subscriptionRevenue: number; overageRevenue: number; productRevenue: number; productArr: number;
   consultingRevenue: number; totalCashRevenue: number; includedTokenCogs: number; overageTokenCogs: number; requiredOverageTokensMillions: number; totalTokenUsageMillions: number; overageGrossMargin: number;
@@ -560,7 +566,7 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
     const trailingBurn = Math.max(0, -burnWindow.reduce((sum, value) => sum + value, 0) / burnWindow.length);
     const newPlgAccounts = newAccounts * assumptions.plgSharePct / 100;
     months.push({
-      month, label: calendarMonthLabel(assumptions.startCalendarMonth, month), phaseKey: phaseForMonth(assumptions.phases, month).key, phaseLabel: PHASE_LABELS[phaseForMonth(assumptions.phases, month).key],
+      month, calendarMonth: calendarMonthAt(assumptions.startCalendarMonth, month), label: calendarMonthLabel(assumptions.startCalendarMonth, month), phaseKey: phaseForMonth(assumptions.phases, month).key, phaseLabel: PHASE_LABELS[phaseForMonth(assumptions.phases, month).key],
       newAccounts, newPlgAccounts, newTopDownAccounts: newAccounts - newPlgAccounts, activeAccounts, sameCohortRecurringRevenue, subscriptionRevenue, overageRevenue, productRevenue, productArr: productRevenue * 12,
       consultingRevenue, totalCashRevenue, includedTokenCogs, overageTokenCogs, requiredOverageTokensMillions, totalTokenUsageMillions: activeAccounts * assumptions.maxIncludedTokensMillions + requiredOverageTokensMillions, overageGrossMargin,
       variableProductCogs, fixedProductCogs, productCogs, consultingCogs, productGrossMargin: safeRatio(productRevenue - productCogs, productRevenue), consultingGrossMargin: safeRatio(consultingRevenue - consultingCogs, consultingRevenue),
@@ -610,18 +616,35 @@ export function computeProjection(input: Assumptions | unknown, roles: JobRole[]
  * and no ratio is averaged — margins are recomputed from summed numerators
  * and denominators by the consumer.
  */
+interface CalendarPeriodDescriptor { key: string; label: string; }
+
+function calendarPeriodForMonth(row: MonthRow, mode: PeriodMode): CalendarPeriodDescriptor {
+  if (mode === "monthly") return { key: row.calendarMonth, label: row.label };
+  const [year, month] = row.calendarMonth.split("-").map(Number);
+  if (mode === "quarterly") {
+    const quarter = Math.floor((month - 1) / 3) + 1;
+    return { key: `${year}-Q${quarter}`, label: `Q${quarter} '${String(year).slice(-2)}` };
+  }
+  return { key: String(year), label: String(year) };
+}
+
 export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow[] {
   if (months.length === 0) return [];
-  const size = mode === "annually" ? 12 : mode === "quarterly" ? 3 : 1;
-  const rows: PeriodRow[] = [];
-  for (let index = 0; index < months.length; index += size) {
-    const slice = months.slice(index, index + size);
+  const groups: { period: CalendarPeriodDescriptor; months: MonthRow[] }[] = [];
+  for (const month of months) {
+    const period = calendarPeriodForMonth(month, mode);
+    const current = groups[groups.length - 1];
+    if (current?.period.key === period.key) current.months.push(month);
+    else groups.push({ period, months: [month] });
+  }
+
+  return groups.map(({ period, months: slice }) => {
     const first = slice[0];
     const last = slice[slice.length - 1];
     const sum = (pick: (row: MonthRow) => number) => slice.reduce((acc, row) => acc + pick(row), 0);
-    rows.push({
-      key: `${first.month}-${last.month}`,
-      label: size === 1 ? last.label : `${first.label}–${last.label}`,
+    return {
+      key: period.key,
+      label: period.label,
       startMonth: first.month,
       endMonth: last.month,
       monthCount: slice.length,
@@ -646,7 +669,6 @@ export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow
       netCashChange: sum((row) => row.netCashChange),
       financingCash: sum((row) => row.financingCash),
       endingCash: last.endingCash,
-    });
-  }
-  return rows;
+    };
+  });
 }
