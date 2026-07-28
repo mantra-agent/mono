@@ -14,10 +14,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
-import {
-  getMemoryGraphNodeTypeConfig,
-  MemorySourceIcon,
-} from "@/components/memory/memory-source-icon";
+import { MemorySourceIcon } from "@/components/memory/memory-source-icon";
 
 export interface MemoryGraph3DNode {
   id: number;
@@ -47,7 +44,7 @@ interface MemoryGraph3DProps {
   nodes: MemoryGraph3DNode[];
   links: MemoryGraph3DLink[];
   selectedNodeId: number | null;
-  selectedLabelTypes: ReadonlySet<string>;
+  highlightedNodeIds: ReadonlySet<number>;
   onNodeSelect: (nodeId: number) => void;
   onNodeHover: (nodeId: number | null, position?: { x: number; y: number }) => void;
 }
@@ -86,6 +83,7 @@ interface GraphRuntime {
   controls: OrbitControls;
   nodes: SceneNode[];
   requestRender: () => void;
+  refreshAppearance: () => void;
   setSelectedNodeId: (nodeId: number | null) => void;
 }
 
@@ -269,7 +267,7 @@ function writeQuadraticPoint(
 }
 
 export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>(function MemoryGraph3D(
-  { nodes, links, selectedNodeId, selectedLabelTypes, onNodeSelect, onNodeHover },
+  { nodes, links, selectedNodeId, highlightedNodeIds, onNodeSelect, onNodeHover },
   forwardedRef,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -278,6 +276,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   const [focusNeighborhoodNodeIds, setFocusNeighborhoodNodeIds] = useState<number[]>([]);
   const selectedNodeIdRef = useRef(selectedNodeId);
   selectedNodeIdRef.current = selectedNodeId;
+  const highlightedNodeIdsRef = useRef(highlightedNodeIds);
+  highlightedNodeIdsRef.current = highlightedNodeIds;
   const onNodeSelectRef = useRef(onNodeSelect);
   onNodeSelectRef.current = onNodeSelect;
   const onNodeHoverRef = useRef(onNodeHover);
@@ -286,11 +286,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   const overlayNodes = useMemo(() => {
     const focusNeighborhood = new Set(focusNeighborhoodNodeIds);
     return nodes.filter((node) => (
-      selectedLabelTypes.has(getMemoryGraphNodeTypeConfig(node.source).id)
+      highlightedNodeIds.has(node.id)
       || focusNeighborhood.has(node.id)
       || selectedNodeId === node.id
     ));
-  }, [focusNeighborhoodNodeIds, nodes, selectedLabelTypes, selectedNodeId]);
+  }, [focusNeighborhoodNodeIds, highlightedNodeIds, nodes, selectedNodeId]);
 
   useImperativeHandle(forwardedRef, () => ({
     zoomIn: () => {
@@ -319,6 +319,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   useEffect(() => {
     runtimeRef.current?.setSelectedNodeId(selectedNodeId);
   }, [selectedNodeId]);
+
+  useEffect(() => {
+    runtimeRef.current?.refreshAppearance();
+  }, [highlightedNodeIds]);
 
   useEffect(() => {
     runtimeRef.current?.requestRender();
@@ -601,11 +605,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       sceneNodes.forEach((node, index) => {
         const isFocus = focusIndex === index;
         const neighbor = focusNeighborIndices.has(index);
+        const searchMatch = highlightedNodeIdsRef.current.has(node.id);
         const unrelated = focusIndex != null && !isFocus && !neighbor;
-        emphasis[index] = isFocus ? 1 : neighbor ? 0.58 : unrelated ? -0.35 : 0;
+        emphasis[index] = isFocus ? 1 : neighbor ? 0.58 : searchMatch ? 0.72 : unrelated ? -0.35 : 0;
         const tint = node.pendingDeletion
           ? deletionColor
-          : isFocus || neighbor
+          : isFocus || neighbor || searchMatch
             ? activeColor
             : nodeBaseColors[index];
         tint.toArray(tints, index * 3);
@@ -833,7 +838,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       .iterations(1);
     const simulation: Simulation<SceneNode> = forceSimulation(sceneNodes, 3)
       .force("charge", forceManyBody<SceneNode>()
-        .strength((node) => -(60 + Math.sqrt(node.degree) * 4))
+        .strength((node) => -(90 + Math.sqrt(node.degree) * 6))
         .theta(0.76)
         .distanceMin(2)
         .distanceMax(520))
@@ -874,7 +879,17 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     syncLinkPositions();
     fitCamera(camera, controls, sceneNodes);
     syncFocusNeighborhood();
-    runtimeRef.current = { camera, controls, nodes: sceneNodes, requestRender, setSelectedNodeId };
+    runtimeRef.current = {
+      camera,
+      controls,
+      nodes: sceneNodes,
+      requestRender,
+      refreshAppearance: () => {
+        syncNodeAppearance();
+        requestRender();
+      },
+      setSelectedNodeId,
+    };
     requestRender();
 
     return () => {
