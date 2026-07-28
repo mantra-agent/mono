@@ -66,13 +66,35 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useUiInteraction, useUiInteractionTarget } from "@/hooks/use-ui-interaction";
+import {
+  getUiInteractionTargetHref,
+  getUiInteractionTargetPermission,
+  type UiInteractionTarget,
+} from "@shared/ui-interaction";
 
 interface NavItem {
   title: string;
+  target: UiInteractionTarget;
   url: string;
   icon: React.ComponentType<{ className?: string }>;
   permission?: string;
   titleTone?: "default" | "muted";
+}
+
+function navItem(
+  title: string,
+  target: UiInteractionTarget,
+  icon: NavItem["icon"],
+  titleTone?: NavItem["titleTone"],
+): NavItem {
+  return {
+    title,
+    target,
+    url: getUiInteractionTargetHref(target),
+    icon,
+    permission: getUiInteractionTargetPermission(target),
+    ...(titleTone ? { titleTone } : {}),
+  };
 }
 
 interface NavSection {
@@ -86,107 +108,107 @@ const navSections: NavSection[] = [
     label: "Tools",
     defaultOpen: true,
     items: [
-      { title: "Home", url: "/home", icon: Home },
-      { title: "Dashboard", url: "/dashboard", icon: Gauge, permission: "system:read" },
-      { title: "News", url: "/news", icon: Newspaper },
-      { title: "Email", url: "/email", icon: Mail, titleTone: "muted" },
-      { title: "Library", url: "/library", icon: BookOpen },
-      { title: "Schedule", url: "/schedule", icon: Calendar },
-      { title: "Projects", url: "/projects", icon: Briefcase },
-      { title: "Wellness", url: "/wellness", icon: Activity, titleTone: "muted" },
+      navItem("Home", "navigation.home.open", Home),
+      navItem("Dashboard", "navigation.dashboard.open", Gauge),
+      navItem("News", "navigation.news.open", Newspaper),
+      navItem("Email", "navigation.email.open", Mail, "muted"),
+      navItem("Library", "navigation.library.open", BookOpen),
+      navItem("Schedule", "navigation.schedule.open", Calendar),
+      navItem("Projects", "navigation.projects.open", Briefcase),
+      navItem("Wellness", "navigation.wellness.open", Activity, "muted"),
     ],
   },
   {
     label: "Network",
     defaultOpen: true,
     items: [
-      { title: "People", url: "/people", icon: Users },
-      { title: "Meetings", url: "/meetings", icon: MessagesSquare },
-      { title: "Companies", url: "/companies", icon: Briefcase },
-      { title: "Pipelines", url: "/pipelines", icon: Target },
+      navItem("People", "navigation.people.open", Users),
+      navItem("Meetings", "navigation.meetings.open", MessagesSquare),
+      navItem("Companies", "navigation.companies.open", Briefcase),
+      navItem("Pipelines", "navigation.pipelines.open", Target),
     ],
   },
   {
     label: "Planning",
     defaultOpen: false,
     items: [
-      { title: "Goals", url: "/goals", icon: Target, titleTone: "muted" },
-      { title: "Decisions", url: "/decisions", icon: Scale },
-      { title: "Strategy", url: "/strategy", icon: Swords },
+      navItem("Goals", "navigation.goals.open", Target, "muted"),
+      navItem("Decisions", "navigation.decisions.open", Scale),
+      navItem("Strategy", "navigation.strategy.open", Swords),
     ],
   },
   {
     label: "Business",
     defaultOpen: false,
     items: [
-      { title: "Model", url: "/business/model", icon: LineChart, permission: "system:read" },
-      { title: "Roles", url: "/business/roles", icon: Briefcase, permission: "system:read" },
+      navItem("Model", "navigation.businessModel.open", LineChart),
+      navItem("Roles", "navigation.roles.open", Briefcase),
     ],
   },
   {
     label: "Automation",
     defaultOpen: false,
     items: [
-      { title: "Skills", url: "/skills", icon: Lightbulb, permission: "system:read" },
-      { title: "Plans", url: "/brain?tab=plans", icon: FileText },
-      { title: "Workflows", url: "/workflows", icon: Workflow },
-      { title: "Hooks", url: "/system?tab=hooks", icon: GitBranch, permission: "system:read" },
-      { title: "Timers", url: "/system?tab=timers", icon: Clock, permission: "system:read" },
+      navItem("Skills", "navigation.skills.open", Lightbulb),
+      navItem("Plans", "navigation.plans.open", FileText),
+      navItem("Workflows", "navigation.workflows.open", Workflow),
+      navItem("Hooks", "navigation.hooks.open", GitBranch),
+      navItem("Timers", "navigation.timers.open", Clock),
     ],
   },
   {
     label: "Agent",
     defaultOpen: false,
     items: [
-      { title: "Orientation", url: "/orientation", icon: Globe },
-      { title: "Persona", url: "/brain?tab=persona", icon: User },
-      { title: "Emotion", url: "/brain?tab=emotion", icon: Heart },
+      navItem("Orientation", "navigation.orientation.open", Globe),
+      navItem("Persona", "navigation.persona.open", User),
+      navItem("Emotion", "navigation.emotion.open", Heart),
     ],
   },
   {
     label: "Memory",
     defaultOpen: false,
     items: [
-      { title: "Layers", url: "/memory?tab=memories", icon: DatabaseZap },
-      { title: "Graph", url: "/memory?tab=graph", icon: Share2 },
-      { title: "Journal", url: "/memory?tab=maintenance", icon: ScrollText },
+      navItem("Layers", "navigation.memoryLayers.open", DatabaseZap),
+      navItem("Graph", "navigation.memoryGraph.open", Share2),
+      navItem("Journal", "navigation.memoryJournal.open", ScrollText),
     ],
   },
   {
     label: "Build",
     defaultOpen: false,
     items: [
-      { title: "Platforms", url: "/platforms", icon: Boxes, permission: "build:read" },
-      { title: "Design", url: "/design", icon: Palette, permission: "build:read" },
-      { title: "Database", url: "/database", icon: DatabaseZap, permission: "build:read" },
-      { title: "Issues", url: "/build?tab=issues", icon: Hammer, permission: "build:read" },
+      navItem("Platforms", "navigation.platforms.open", Boxes),
+      navItem("Design", "navigation.design.open", Palette),
+      navItem("Database", "navigation.database.open", DatabaseZap),
+      navItem("Issues", "navigation.issues.open", Hammer),
     ],
   },
   {
     label: "System",
     defaultOpen: false,
     items: [
-      { title: "Performance", url: "/system?tab=resources", icon: Gauge, permission: "system:read" },
-      { title: "Logs", url: "/system?tab=logs", icon: ScrollText, permission: "system:read" },
-      { title: "Events", url: "/system?tab=events", icon: Zap, permission: "system:read" },
-      { title: "Tools", url: "/system?tab=tools", icon: Wrench, permission: "system:read" },
-      { title: "Prompts", url: "/build?tab=prompts", icon: FileText, permission: "build:read" },
-      { title: "Context", url: "/brain?tab=context", icon: BrainCircuit },
-      { title: "Router", url: "/system?tab=inference", icon: Brain, permission: "system:read" },
-      { title: "Models", url: "/brain?tab=model", icon: SlidersHorizontal },
-      { title: "Cost", url: "/system?tab=cost", icon: DollarSign, permission: "system:read" },
+      navItem("Performance", "navigation.performance.open", Gauge),
+      navItem("Logs", "navigation.logs.open", ScrollText),
+      navItem("Events", "navigation.events.open", Zap),
+      navItem("Tools", "navigation.tools.open", Wrench),
+      navItem("Prompts", "navigation.prompts.open", FileText),
+      navItem("Context", "navigation.context.open", BrainCircuit),
+      navItem("Router", "navigation.router.open", Brain),
+      navItem("Models", "navigation.models.open", SlidersHorizontal),
+      navItem("Cost", "navigation.cost.open", DollarSign),
     ],
   },
   {
     label: "Admin",
     defaultOpen: false,
     items: [
-      { title: "Audiences", url: "/audiences", icon: Users, permission: "system:read" },
-      { title: "Campaigns", url: "/campaigns", icon: Megaphone, permission: "system:read" },
-      { title: "Users", url: "/system?tab=users", icon: Users, permission: "system:read" },
-      { title: "Vaults", url: "/system?tab=vaults", icon: Vault },
-      { title: "Integrations", url: "/integrations", icon: Plug },
-      { title: "Account", url: "/account", icon: Settings },
+      navItem("Audiences", "navigation.audiences.open", Users),
+      navItem("Campaigns", "navigation.campaigns.open", Megaphone),
+      navItem("Users", "navigation.users.open", Users),
+      navItem("Vaults", "navigation.vaults.open", Vault),
+      navItem("Integrations", "navigation.integrations.open", Plug),
+      navItem("Account", "navigation.account.open", Settings),
     ],
   },
 ];
@@ -280,16 +302,36 @@ function isItemActive(itemUrl: string, location: string): boolean {
   return params.get("tab") === tab;
 }
 
+interface SemanticNavButtonProps {
+  item: NavItem;
+  onNavigate: (target: UiInteractionTarget) => void;
+  className: string;
+  children: React.ReactNode;
+}
+
+function SemanticNavButton({ item, onNavigate, className, children }: SemanticNavButtonProps) {
+  const targetRef = useUiInteractionTarget(item.target);
+  return (
+    <button
+      ref={targetRef}
+      type="button"
+      onClick={() => onNavigate(item.target)}
+      className={className}
+      data-testid={`link-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 /**
  * Full-page navigation view. Replaces the main content area when the sidebar
  * is open. Renders nav items under collapsible section headers.
  */
 export function NavPage() {
-  const [location, navigate] = useLocation();
-  const { closeSidebar } = useSidebar();
+  const [location] = useLocation();
   const { hasPermission } = useAuth();
   const { guidedTarget, invoke } = useUiInteraction();
-  const memoryGraphTargetRef = useUiInteractionTarget("navigation.memoryGraph.open");
   const [searchQuery, setSearchQuery] = useState("");
 
   // Activity indicators
@@ -333,15 +375,8 @@ export function NavPage() {
   }, []);
 
   const handleNav = useCallback(
-    (url: string) => {
-      if (url === "/memory?tab=graph") {
-        invoke("navigation.memoryGraph.open");
-        return;
-      }
-      navigate(url);
-      closeSidebar();
-    },
-    [closeSidebar, invoke, navigate]
+    (target: UiInteractionTarget) => invoke(target),
+    [invoke],
   );
 
   // Filter sections and items by permission and search query
@@ -367,17 +402,22 @@ export function NavPage() {
   }, [hasPermission, searchQuery]);
 
   // Guided targets own their discoverability while the command is active.
-  const isGuidingMemoryGraph = guidedTarget === "navigation.memoryGraph.open";
+  const guidedSectionLabel = useMemo(() => {
+    if (!guidedTarget) return null;
+    return navSections.find((section) =>
+      section.items.some((item) => item.target === guidedTarget),
+    )?.label ?? null;
+  }, [guidedTarget]);
   const isSearching = searchQuery.trim().length > 0;
   const visibleSections = useMemo(() => {
-    if (!isGuidingMemoryGraph) return filteredSections;
-    const memorySection = navSections.find((section) => section.label === "Memory");
-    if (!memorySection) return filteredSections;
-    const items = memorySection.items.filter((item) =>
-      !item.permission || hasPermission(item.permission),
+    if (!guidedTarget || !guidedSectionLabel) return filteredSections;
+    const section = navSections.find((candidate) => candidate.label === guidedSectionLabel);
+    if (!section) return filteredSections;
+    const items = section.items.filter((item) =>
+      item.target === guidedTarget && (!item.permission || hasPermission(item.permission)),
     );
-    return items.length > 0 ? [{ ...memorySection, items }] : filteredSections;
-  }, [filteredSections, hasPermission, isGuidingMemoryGraph]);
+    return items.length > 0 ? [{ ...section, items }] : filteredSections;
+  }, [filteredSections, guidedSectionLabel, guidedTarget, hasPermission]);
 
   return (
     <div
@@ -403,7 +443,7 @@ export function NavPage() {
           </div>
         ) : (
           visibleSections.map((section) => {
-            const isOpen = isSearching || (isGuidingMemoryGraph && section.label === "Memory") || !collapsed.has(section.label);
+            const isOpen = isSearching || section.label === guidedSectionLabel || !collapsed.has(section.label);
 
             return (
               <Collapsible
@@ -438,17 +478,15 @@ export function NavPage() {
                             <div className="absolute left-1/2 top-1/2 right-0 border-t border-border" />
                           </div>
                           {/* Nav item */}
-                          <button
-                            ref={item.url === "/memory?tab=graph" ? memoryGraphTargetRef : undefined}
-                            type="button"
-                            onClick={() => handleNav(item.url)}
+                          <SemanticNavButton
+                            item={item}
+                            onNavigate={handleNav}
                             className={cn(
                               "flex items-center gap-2 flex-1 min-w-0 rounded-md px-2 py-1.5 text-sm transition-colors",
                               active
                                 ? "bg-muted font-medium text-foreground"
                                 : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                             )}
-                            data-testid={`link-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
                           >
                             {level === "active" ? (
                               <ActiveStatusSpinner className="h-4 w-4" />
@@ -469,7 +507,7 @@ export function NavPage() {
                             >
                               {item.title}
                             </span>
-                          </button>
+                          </SemanticNavButton>
                         </div>
                       );
                     })}

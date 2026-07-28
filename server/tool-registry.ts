@@ -4,6 +4,7 @@ import { bridgeHandlers } from "./bridge-tools";
 import { storage } from "./storage";
 import { TTLCache } from "./utils/ttl-cache";
 import type { SkillWithReferences } from "@shared/models/skills";
+import { UI_INTERACTION_TARGETS } from "@shared/ui-interaction";
 import {
   QUESTION_TOOL_DESCRIPTION,
   RULES_TOOL_DESCRIPTION,
@@ -42,12 +43,12 @@ export interface ToolMeta {
 
 export const TOOLS: Record<string, ToolMeta> = {
   ui: {
-    description: "Interact with the authenticated application UI in the browser tab containing the originating session. `execute` performs the same registered action as the user control. `guide` reveals and spotlights that control, locks interaction outside it, and completes when the intended outcome occurs or the user cancels. The first available target is Memory Graph navigation.",
+    description: "Interact with the authenticated application UI in the browser tab containing the originating session. `execute` performs the same registered action as the user control. `guide` reveals and spotlights that control, locks interaction outside it, and completes when the intended outcome occurs or the user cancels. Targets cover the primary sidebar navigation controls.",
     category: "browser",
     parameters: {
       type: "object",
       properties: {
-        target: { type: "string", enum: ["navigation.memoryGraph.open"], description: "Stable semantic UI target." },
+        target: { type: "string", enum: UI_INTERACTION_TARGETS, description: "Stable semantic UI target." },
         mode: { type: "string", enum: ["execute", "guide"], description: "Execute the action directly or guide the user through the real control." },
       },
       required: ["target", "mode"],
