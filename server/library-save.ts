@@ -1,4 +1,5 @@
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
+import { libraryPageIsLive } from "./library-trash";
 import { acquireLibraryParentLocks, db } from "./db";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
@@ -15,7 +16,6 @@ import {
   normalizeLibraryStructuralRole,
   type LibraryStructuralRole,
 } from "./library-domain";
-import { libraryPageIsLive } from "./library-trash";
 
 export interface CreateFiledLibraryPageInput {
   title: string;
@@ -79,10 +79,11 @@ export function isCanonicalVaultFolder(value: unknown): value is CanonicalVaultF
  * Get-or-create the canonical folder page for `(vaultId, kind)` at the vault
  * root, returning its page id. Existing root structure wins: the resolver
  * adopts the earliest same-title page before minting a new folder, then marks
- * it with the canonical tag. Existing duplicates are never mutated here: the
- * owning producer must reconcile its authoritative page joins and may retire
- * only duplicate containers it proves empty. A transaction-scoped lock makes
- * creation and adoption replay-safe.
+ * it with the canonical tag. Only live pages are adoption candidates, and the
+ * destination must be a live, writable, same-account Vault. Existing duplicates
+ * are never mutated here: the owning producer must reconcile its authoritative
+ * page joins and may retire only duplicate containers it proves empty. A
+ * transaction-scoped lock makes creation and adoption replay-safe.
  */
 export async function ensureCanonicalVaultFolder(input: {
   principal: Principal;
@@ -221,7 +222,7 @@ async function resolveStandardLibraryPlacement(
           libraryScopeColumns,
           and(
             eq(libraryPages.id, input.explicitParentId),
-            isNull(libraryPages.deletedAt),
+            libraryPageIsLive(),
           ),
         ),
       )
