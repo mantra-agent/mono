@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { useLogin, useSetup, useAuthStatus } from "@/hooks/use-auth";
-import { completeStartupOnboarding } from "@/lib/startup-onboarding";
+import {
+  completeStartupOnboarding,
+  getStartupOnboardingDestination,
+} from "@/lib/startup-onboarding";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2 } from "lucide-react";
@@ -169,13 +172,7 @@ function SetupForm({ onStepChange, onError }: { onStepChange: (step: SetupStep) 
     setSavingName(true);
     try {
       const result = await completeStartupOnboarding(name);
-      const params = new URLSearchParams();
-      if (result.ftueSessionId) {
-        params.set("c", result.ftueSessionId);
-        params.set("autoVoice", "1");
-      }
-      const query = params.toString();
-      setLocation(`/session${query ? `?${query}` : ""}`, { replace: true });
+      setLocation(getStartupOnboardingDestination(result), { replace: true });
     } catch (err: any) {
       onError({ title: err?.message || "Could not save name", detail: err?.message });
       setSavingName(false);

@@ -12,14 +12,11 @@ const ENTRANCE_SETTLE_MS = 3_200;
  * The single persistent orb instance mounted in the center slot of the app
  * shell's immersive-orb presentation mode (see `AppShellImmersive`).
  *
- * It is a PURE visual bound to the LiveVoice bridge (`useLiveVoice`), mounted
- * ONCE ABOVE both the provisional and authenticated voice providers. The
- * provisional→authenticated claim swap changes which transport publishes to the
- * bridge, but never remounts this component — the orb DOM node persists across
- * the swap (FR-17). Transport lifecycle (start/end) is owned by the voice
- * controllers (`ProvisionalVoiceController` / `AuthenticatedVoiceController`),
- * not by the orb. The mount/unmount logs below make the no-remount guarantee
- * observable: exactly one mount, no unmount, across the entire swap.
+ * It is a PURE visual bound to the LiveVoice bridge (`useLiveVoice`) and mounted
+ * above the provisional voice provider so transport state never owns the orb
+ * DOM. Transport lifecycle (start/end) is owned by
+ * `ProvisionalVoiceController`, not by the orb. Account claim then replaces the
+ * capability-scoped entrance URL and cleanly mounts the real authenticated app.
  */
 export function ImmersiveOrbSlot() {
   const { visualState, readAudioLevel } = useLiveVoice();
@@ -28,7 +25,7 @@ export function ImmersiveOrbSlot() {
   const [audioLevel, setAudioLevel] = useState(0);
 
   useEffect(() => {
-    log.info("Immersive orb mounted (persistent instance)");
+    log.info("Immersive entrance orb mounted");
     const timer = window.setTimeout(() => setEntranceActive(false), ENTRANCE_SETTLE_MS);
     return () => {
       window.clearTimeout(timer);
