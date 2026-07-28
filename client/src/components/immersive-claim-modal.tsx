@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,8 +18,8 @@ interface ImmersiveClaimModalProps {
   onboardingToken: string;
   /**
    * Fired once the claim succeeds and the authenticated session cookie is
-   * established. Carries the claimed display name so the shell can complete
-   * onboarding and warm the authenticated FTUE voice session.
+   * established. Carries the claimed display name so the entrance can complete
+   * canonical onboarding and hand off to the authenticated app.
    */
   onClaimed: (name: string) => void;
 }
@@ -36,14 +35,12 @@ interface ImmersiveClaimModalProps {
  * `VoiceSessionProvider`), so a spoken product question is answered by the
  * provisional agent while the form waits.
  *
- * On success it establishes the authenticated session by seeding the
- * `/api/auth/me` query cache — matching the login/register handoff, which
- * deliberately does NOT immediately refetch and race the cookie handoff — then
- * calls `onClaimed` WITHOUT a page reload, so the orb component instance is
- * never remounted (FR-17).
+ * On success the server-established session cookie is authoritative. The modal
+ * calls `onClaimed`, which proves that cookie through canonical onboarding and
+ * replaces the capability URL with the real authenticated Home FTUE destination;
+ * no authenticated client state is manufactured inside this provisional tree.
  */
 export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveClaimModalProps) {
-  const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -111,8 +108,7 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
         password,
         termsAccepted: true,
       });
-      const data = await res.json();
-      queryClient.setQueryData(["/api/auth/me"], data);
+      await res.json();
       onClaimed(name.trim());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -228,10 +228,10 @@ export function VoiceSessionProvider({
   children: ReactNode;
   onboardingToken?: string;
   /**
-   * Silence the connection/disconnection chimes for this provider. Used by the
-   * immersive claim crossfade so the provisional→authenticated voice swap has
-   * no audible chime while the two transports briefly overlap and hand off.
-   * Defaults false — every existing caller is unchanged.
+   * Silence connection/disconnection chimes for a deliberate transport handoff.
+   * The provisional entrance enables this only after claim, preventing a
+   * redundant disconnect tone while navigation mounts the authenticated app.
+   * Defaults false — ordinary voice behavior is unchanged.
    */
   suppressChimes?: boolean;
 }) {

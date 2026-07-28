@@ -262,10 +262,7 @@ function Router() {
         <Route path="/logs">{() => <LogsPage />}</Route>
         <Route path="/goals/:id" component={GoalDetail} />
         <Route path="/dashboard">{() => <RequirePermission permission="system:read"><DashboardPage /></RequirePermission>}</Route>
-        <Route path="/home">{() => {
-          const target = sessionRedirectFromQuery();
-          return target === "/home" ? <HomePage /> : <Redirect to={target} />;
-        }}</Route>
+        <Route path="/home" component={HomePage} />
         <Route path="/simple">{() => <Redirect to={sessionRedirectFromQuery()} />}</Route>
         <Route path="/session" component={SessionPage} />
         <Route path="/sessions">{() => <Redirect to={sessionRedirectFromQuery()} />}</Route>
@@ -567,8 +564,8 @@ function App() {
   // (`/visualizer?i=<token>`) renders the app shell in immersive-orb mode and
   // deliberately bypasses AuthGate/BootGate/VaultProvider — a provisional
   // visitor has no authenticated principal. The URL is stable for this step;
-  // the future account-claim flow performs its own transition into the
-  // authenticated shell.
+  // account claim hard-replaces this capability URL with the canonical Home
+  // FTUE deep link, causing a clean mount of the authenticated shell.
   const [provisionalOnboardingToken] = useState(() => getProvisionalOnboardingToken());
 
   return (
