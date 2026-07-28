@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, Loader2, TrendingUp } from "lucide-react";
+import { Briefcase, Check, ChevronRight, Loader2, Plus, TrendingUp, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
@@ -9,16 +9,33 @@ import { cn } from "@/lib/utils";
 import {
   FINANCING_KEYS,
   FINANCING_LABELS,
+  aggregateMonths,
   computeProjection,
   type Assumptions,
   type FinancialModel,
   type FinancingEvent,
   type FinancingKey,
+  type PeriodMode,
+  type PeriodRow,
   type PhaseKey,
+  type StageKeyHire,
 } from "@shared/models/business-model";
+import type { JobRole } from "@shared/models/job-roles";
 
-type Month = ReturnType<typeof computeProjection>["months"][number];
 type SaveState = "idle" | "pending" | "saving" | "saved" | "error";
+
+const PERIOD_MODES: { key: PeriodMode; label: string }[] = [
+  { key: "monthly", label: "Monthly" },
+  { key: "quarterly", label: "Quarterly" },
+  { key: "annually", label: "Annually" },
+];
+
+/** Each institutional round is funded by exactly one phase's operating plan. */
+const STAGE_PHASE: Record<FinancingKey, PhaseKey> = {
+  seed: "phase_1",
+  series_a: "phase_2",
+  series_b: "phase_3",
+};
 
 function trimNum(value: number): string {
   return (Math.round(value * 10) / 10).toLocaleString();
@@ -41,17 +58,9 @@ function fmtMultiple(value: number): string {
 }
 
 const STAGE_COLOR: Record<FinancingKey, { band: string; text: string; dot: string }> = {
-  pre_seed: { band: "bg-[hsl(var(--chart-2)/0.15)]", text: "text-[hsl(var(--chart-2))]", dot: "bg-[hsl(var(--chart-2))]" },
   seed: { band: "bg-[hsl(var(--chart-1)/0.15)]", text: "text-[hsl(var(--chart-1))]", dot: "bg-[hsl(var(--chart-1))]" },
   series_a: { band: "bg-[hsl(var(--chart-3)/0.15)]", text: "text-[hsl(var(--chart-3))]", dot: "bg-[hsl(var(--chart-3))]" },
   series_b: { band: "bg-[hsl(var(--chart-4)/0.15)]", text: "text-[hsl(var(--chart-4))]", dot: "bg-[hsl(var(--chart-4))]" },
-};
-
-const PHASE_STAGE: Record<PhaseKey, FinancingKey> = {
-  phase_0: "pre_seed",
-  phase_1: "pre_seed",
-  phase_2: "seed",
-  phase_3: "series_a",
 };
 
 interface NumericInputProps {
@@ -110,10 +119,16 @@ export default function BusinessModelPage() {
   usePageHeader({ title: "Business Model" });
   const { toast } = useToast();
   const { data, isLoading, isFetching, error, refetch } = useQuery<FinancialModel>({ queryKey: ["/api/business/model"] });
+  const { data: rolesData } = useQuery<{ roles: JobRole[] }>({ queryKey: ["/api/business/roles"] });
   const [draft, setDraft] = useState<Assumptions | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [period, setPeriod] = useState<PeriodMode>("monthly");
+  const [opexOpen, setOpexOpen] = useState(false);
   const loadedIdRef = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const roles = useMemo(() => rolesData?.roles ?? [], [rolesData]);
+  const roleMap = useMemo(() => new Map(roles.map((role) => [role.id, role])), [roles]);
 
   useEffect(() => {
     if (data && loadedIdRef.current !== data.id) {
@@ -159,8 +174,13 @@ export default function BusinessModelPage() {
     ...current,
     financingEvents: current.financingEvents.map((event) => event.key === key ? { ...event, ...patch } : event),
   })), [update]);
+  const updateHires = useCallback((phaseKey: PhaseKey, hires: StageKeyHire[]) => update((current) => ({
+    ...current,
+    phases: current.phases.map((phase) => phase.key === phaseKey ? { ...phase, keyHires: hires } : phase),
+  })), [update]);
 
-  const projection = useMemo(() => draft ? computeProjection(draft) : null, [draft]);
+  const projection = useMemo(() => draft ? computeProjection(draft, roles) : null, [draft, roles]);
+  const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
 
   if (error) {
     return (
@@ -181,8 +201,6 @@ export default function BusinessModelPage() {
     return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
   }
 
-  const financingMonths = new Set(draft.financingEvents.map((event) => event.month));
-
   return (
     <div className="w-full space-y-6 p-4" data-testid="business-model-page">
       <section className="overflow-hidden rounded-md border border-border/20">
@@ -193,13 +211,15 @@ export default function BusinessModelPage() {
 
         <div className="border-b border-border/20 p-4">
           <div className="mb-3 text-sm font-medium text-foreground">Global</div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <Field label="Horizon (months)"><NumericInput value={draft.horizonMonths} min={1} step={1} onChange={(horizonMonths) => updateGlobal({ horizonMonths })} /></Field>
             <Field label="Start month"><div className="flex items-center rounded-md border border-border/40 bg-background px-2"><input type="month" value={draft.startCalendarMonth} onChange={(event) => updateGlobal({ startCalendarMonth: event.target.value })} className="w-full bg-transparent py-1.5 text-sm outline-none" /></div></Field>
             <Field label="Starting cash"><NumericInput value={draft.openingCash} min={0} step={1000} prefix="$" onChange={(openingCash) => updateGlobal({ openingCash })} /></Field>
             <Field label="Starting accounts"><NumericInput value={draft.startingAccounts} min={0} step={1} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} /></Field>
             <Field label="Base subscription / account (mo)"><NumericInput value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} /></Field>
+            <Field label="Loaded cost multiplier"><NumericInput value={draft.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} /></Field>
           </div>
+          <p className="mt-2 text-xs text-muted-foreground">Staff OpEx = Key Hires × role comp × loaded multiplier. Set the multiplier to 1.0× for raw base comp.</p>
         </div>
 
         <div className="border-b border-border/20 p-4">
@@ -213,10 +233,12 @@ export default function BusinessModelPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
           {FINANCING_KEYS.map((key) => {
             const event = draft.financingEvents.find((item) => item.key === key)!;
             const summary = projection.financing.find((item) => item.key === key)!;
+            const phaseKey = STAGE_PHASE[key];
+            const phase = draft.phases.find((item) => item.key === phaseKey);
             const color = STAGE_COLOR[key];
             return (
               <div key={key} className="overflow-hidden rounded-md border border-border/30">
@@ -230,7 +252,16 @@ export default function BusinessModelPage() {
                   <Field label={event.instrument === "post_money_safe" ? "Post-money cap" : "Pre-money valuation"}><NumericInput value={event.valuation} min={0} step={500_000} prefix="$" ariaLabel={`${FINANCING_LABELS[key]} valuation`} onChange={(valuation) => updateFinancing(key, { valuation })} /></Field>
                   <Field label="Option pool top-up"><NumericInput value={event.optionPoolTopUpPct} min={0} step={1} suffix="%" ariaLabel={`${FINANCING_LABELS[key]} option pool top-up`} onChange={(optionPoolTopUpPct) => updateFinancing(key, { optionPoolTopUpPct })} /></Field>
                   <Row label="New investor ownership" value={fmtPercent(summary.newInvestorOwnership)} />
-                  <Row label="Pre-Seed remaining" value={fmtPercent(summary.preSeedOwnership)} />
+                  <Row label="Founding stake remaining" value={fmtPercent(summary.foundingOwnership)} />
+                  {phase && (
+                    <KeyHiresEditor
+                      phaseKey={phase.key}
+                      hires={phase.keyHires}
+                      roles={roles}
+                      roleMap={roleMap}
+                      onChange={updateHires}
+                    />
+                  )}
                 </div>
               </div>
             );
@@ -243,7 +274,7 @@ export default function BusinessModelPage() {
           <TrendingUp className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Money in now → value later</h2>
         </div>
-        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
           {projection.financing.map((summary) => {
             const color = STAGE_COLOR[summary.key];
             return (
@@ -256,10 +287,10 @@ export default function BusinessModelPage() {
                   <Row label="Investment" value={fmtCurrency(summary.investment)} />
                   <Row label={summary.instrument === "post_money_safe" ? "Post-money cap" : "Pre-money"} value={fmtCurrency(summary.valuation)} />
                   <Row label="Post-money" value={fmtCurrency(summary.postMoneyValuation)} />
-                  <Row label="Pre-Seed stake" value={`${fmtPercent(summary.preSeedOwnership)} · ${fmtCurrency(summary.preSeedPaperValue)}`} />
+                  <Row label="Founding stake" value={`${fmtPercent(summary.foundingOwnership)} · ${fmtCurrency(summary.foundingPaperValue)}`} />
                   <div className="mt-2 flex items-center justify-between border-t border-border/20 pt-2">
-                    <span className="text-xs text-muted-foreground">Return on Pre-Seed</span>
-                    <span className={cn("text-base font-semibold", color.text)}>{fmtMultiple(summary.preSeedReturnMultiple)}</span>
+                    <span className="text-xs text-muted-foreground">Return on founding</span>
+                    <span className={cn("text-base font-semibold", color.text)}>{fmtMultiple(summary.foundingReturnMultiple)}</span>
                   </div>
                 </div>
               </div>
@@ -269,35 +300,60 @@ export default function BusinessModelPage() {
       </section>
 
       <section className="overflow-hidden rounded-md border border-border/20">
-        <div className="border-b border-border/20 px-4 py-3">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Monthly projection ({projection.months.length} months)</h2>
+        <div className="flex items-center justify-between gap-3 border-b border-border/20 px-4 py-3">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Projection ({periods.length} {period === "monthly" ? "months" : period === "quarterly" ? "quarters" : "years"})</h2>
+          <div className="flex items-center gap-1 rounded-md border border-border/40 p-0.5">
+            {PERIOD_MODES.map((mode) => (
+              <button
+                key={mode.key}
+                type="button"
+                onClick={() => setPeriod(mode.key)}
+                className={cn(
+                  "rounded px-2 py-1 text-xs font-medium transition-colors",
+                  period === mode.key ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-max border-collapse text-xs tabular-nums" data-testid="projection-table">
             <thead>
               <tr>
-                <th className="sticky left-0 z-20 min-w-[8.5rem] border-b border-r border-border/20 bg-background px-3 py-2 text-left font-medium text-muted-foreground">Month</th>
-                {projection.months.map((month) => <th key={month.month} className={cn("min-w-[4rem] border-b border-border/10 px-2 py-2 text-right font-medium text-muted-foreground", financingMonths.has(month.month) && "bg-muted/40 text-foreground")}>{month.label}</th>)}
+                <th className="sticky left-0 z-20 min-w-[9.5rem] border-b border-r border-border/20 bg-background px-3 py-2 text-left font-medium text-muted-foreground">Period</th>
+                {periods.map((row) => <th key={row.key} className={cn("min-w-[4.5rem] border-b border-border/10 px-2 py-2 text-right font-medium text-muted-foreground", row.financingCash > 0 && "bg-muted/40 text-foreground")}>{row.label}</th>)}
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td className="sticky left-0 z-10 border-r border-border/20 bg-background px-3 py-1.5 text-left font-medium text-muted-foreground">Phase</td>
-                {projection.months.map((month, index) => {
-                  const stageKey = PHASE_STAGE[month.phaseKey];
-                  const color = STAGE_COLOR[stageKey];
-                  const isStart = index === 0 || projection.months[index - 1].phaseKey !== month.phaseKey;
-                  return <td key={month.month} className={cn("px-2 py-1.5 text-right", color.band, color.text)}>{isStart ? <span className="font-medium">{FINANCING_LABELS[stageKey]}</span> : ""}</td>;
+                <td className="sticky left-0 z-10 border-r border-border/20 bg-background px-3 py-1.5 text-left font-medium text-muted-foreground">Stage</td>
+                {periods.map((row, index) => {
+                  const color = STAGE_COLOR[row.financingKey];
+                  const isStart = index === 0 || periods[index - 1].financingKey !== row.financingKey;
+                  return <td key={row.key} className={cn("px-2 py-1.5 text-right", color.band, color.text)}>{isStart ? <span className="font-medium">{FINANCING_LABELS[row.financingKey]}</span> : ""}</td>;
                 })}
               </tr>
-              <DataRow label="Accounts" months={projection.months} financingMonths={financingMonths} render={(month) => Math.round(month.activeAccounts).toLocaleString()} />
-              <DataRow label="New Accounts" months={projection.months} financingMonths={financingMonths} render={(month) => month.newAccounts >= 0.05 ? `+${trimNum(month.newAccounts)}` : "—"} />
-              <DataRow label="Revenue" months={projection.months} financingMonths={financingMonths} render={(month) => fmtCurrency(month.productRevenue)} />
-              <DataRow label="Blended ARPU" months={projection.months} financingMonths={financingMonths} render={(month) => fmtCurrency(month.activeAccounts > 0 ? month.productRevenue / month.activeAccounts : 0)} />
-              <DataRow label="Expenses" months={projection.months} financingMonths={financingMonths} render={(month) => fmtCurrency(month.productCogs + month.consultingCogs + month.acquisitionSpend + month.operatingExpense + month.capex)} />
-              <DataRow label="Net Cash Flow" months={projection.months} financingMonths={financingMonths} render={(month) => fmtCurrency(month.netCashChange)} tone={(month) => month.netCashChange < 0 ? "text-destructive" : "text-foreground"} />
-              <DataRow label="Investment In" months={projection.months} financingMonths={financingMonths} render={(month) => month.financingCash > 0 ? fmtCurrency(month.financingCash) : "—"} />
-              <DataRow label="Cash Balance" months={projection.months} financingMonths={financingMonths} render={(month) => fmtCurrency(month.endingCash)} tone={(month) => month.endingCash < 0 ? "font-medium text-destructive" : "text-foreground"} emphasize />
+              <DataRow label="Accounts" periods={periods} render={(row) => Math.round(row.activeAccounts).toLocaleString()} />
+              <DataRow label="New Accounts" periods={periods} render={(row) => row.newAccounts >= 0.05 ? `+${trimNum(row.newAccounts)}` : "—"} />
+              <DataRow label="Gross Revenue" periods={periods} render={(row) => fmtCurrency(row.totalCashRevenue)} />
+              <DataRow label="COGS" periods={periods} render={(row) => fmtCurrency(-row.cogs)} tone={() => "text-muted-foreground"} />
+              <DataRow label="Gross Profit" periods={periods} render={(row) => fmtCurrency(row.grossProfit)} tone={(row) => row.grossProfit < 0 ? "text-destructive" : "text-foreground"} />
+              <DataRow
+                label="OpEx"
+                periods={periods}
+                render={(row) => fmtCurrency(-row.totalOpex)}
+                onToggle={() => setOpexOpen((open) => !open)}
+                open={opexOpen}
+              />
+              {opexOpen && <DataRow label="Staff" indent periods={periods} render={(row) => fmtCurrency(-row.staffOpex)} tone={() => "text-muted-foreground"} />}
+              {opexOpen && <DataRow label="Marketing / S&M" indent periods={periods} render={(row) => fmtCurrency(-row.marketingOpex)} tone={() => "text-muted-foreground"} />}
+              {opexOpen && <DataRow label="G&A" indent periods={periods} render={(row) => fmtCurrency(-row.gaOpex)} tone={() => "text-muted-foreground"} />}
+              <DataRow label="Operating Income" periods={periods} render={(row) => fmtCurrency(row.operatingIncome)} tone={(row) => row.operatingIncome < 0 ? "text-destructive" : "text-foreground"} />
+              <DataRow label="Net Cash Flow" periods={periods} render={(row) => fmtCurrency(row.netCashChange)} tone={(row) => row.netCashChange < 0 ? "text-destructive" : "text-foreground"} />
+              <DataRow label="Investment In" periods={periods} render={(row) => row.financingCash > 0 ? fmtCurrency(row.financingCash) : "—"} />
+              <DataRow label="Cash Balance" periods={periods} render={(row) => fmtCurrency(row.endingCash)} tone={(row) => row.endingCash < 0 ? "font-medium text-destructive" : "text-foreground"} emphasize />
             </tbody>
           </table>
         </div>
@@ -310,20 +366,83 @@ function Row({ label, value }: { label: string; value: string }) {
   return <div className="flex items-center justify-between gap-3"><span className="text-xs text-muted-foreground">{label}</span><span className="text-sm tabular-nums text-foreground">{value}</span></div>;
 }
 
-interface DataRowProps {
-  label: string;
-  months: Month[];
-  financingMonths: Set<number>;
-  render: (month: Month) => string;
-  tone?: (month: Month) => string;
-  emphasize?: boolean;
+interface KeyHiresEditorProps {
+  phaseKey: PhaseKey;
+  hires: StageKeyHire[];
+  roles: JobRole[];
+  roleMap: Map<string, JobRole>;
+  onChange: (phaseKey: PhaseKey, hires: StageKeyHire[]) => void;
 }
 
-function DataRow({ label, months, financingMonths, render, tone, emphasize }: DataRowProps) {
+function KeyHiresEditor({ phaseKey, hires, roles, roleMap, onChange }: KeyHiresEditorProps) {
+  const taken = new Set(hires.map((hire) => hire.roleId));
+  const available = roles.filter((role) => !taken.has(role.id));
+
+  const addRole = (roleId: string) => {
+    if (!roleId || taken.has(roleId)) return;
+    onChange(phaseKey, [...hires, { roleId }]);
+  };
+  const removeRole = (roleId: string) => onChange(phaseKey, hires.filter((hire) => hire.roleId !== roleId));
+
+  return (
+    <div className="space-y-2 border-t border-border/20 pt-2">
+      <span className="text-xs font-medium text-muted-foreground">Key hires</span>
+      <div className="flex flex-wrap gap-1.5">
+        {hires.length === 0 && <span className="text-xs text-muted-foreground/70">No hires yet</span>}
+        {hires.map((hire) => {
+          const role = roleMap.get(hire.roleId);
+          return (
+            <span key={hire.roleId} className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-muted/40 px-1.5 py-0.5 text-xs text-foreground">
+              <Briefcase className="h-3 w-3 text-muted-foreground" />
+              <span className="max-w-[10rem] truncate">{role?.title ?? hire.roleId}</span>
+              <button type="button" aria-label={`Remove ${role?.title ?? "hire"}`} className="text-muted-foreground hover:text-destructive" onClick={() => removeRole(hire.roleId)}>
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          );
+        })}
+      </div>
+      {available.length > 0 && (
+        <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background px-1.5">
+          <Plus className="h-3 w-3 text-muted-foreground" />
+          <select
+            aria-label="Add key hire"
+            value=""
+            onChange={(event) => addRole(event.target.value)}
+            className="w-full min-w-0 bg-transparent py-1 text-xs text-foreground outline-none"
+          >
+            <option value="">Add hire…</option>
+            {available.map((role) => <option key={role.id} value={role.id}>{role.title}</option>)}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface DataRowProps {
+  label: string;
+  periods: PeriodRow[];
+  render: (row: PeriodRow) => string;
+  tone?: (row: PeriodRow) => string;
+  emphasize?: boolean;
+  indent?: boolean;
+  onToggle?: () => void;
+  open?: boolean;
+}
+
+function DataRow({ label, periods, render, tone, emphasize, indent, onToggle, open }: DataRowProps) {
   return (
     <tr className="border-t border-border/10">
-      <td className={cn("sticky left-0 z-10 border-r border-border/20 bg-background px-3 py-1.5 text-left text-muted-foreground", emphasize && "font-medium text-foreground")}>{label}</td>
-      {months.map((month) => <td key={month.month} className={cn("px-2 py-1.5 text-right text-foreground", financingMonths.has(month.month) && "bg-muted/20", tone?.(month))}>{render(month)}</td>)}
+      <td className={cn("sticky left-0 z-10 border-r border-border/20 bg-background px-3 py-1.5 text-left text-muted-foreground", emphasize && "font-medium text-foreground", indent && "pl-6 text-muted-foreground/80")}>
+        {onToggle ? (
+          <button type="button" onClick={onToggle} className="flex items-center gap-1 text-left hover:text-foreground">
+            <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
+            {label}
+          </button>
+        ) : label}
+      </td>
+      {periods.map((row) => <td key={row.key} className={cn("px-2 py-1.5 text-right text-foreground", row.financingCash > 0 && "bg-muted/20", indent && "text-muted-foreground/80", tone?.(row))}>{render(row)}</td>)}
     </tr>
   );
 }
