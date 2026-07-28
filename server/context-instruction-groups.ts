@@ -90,7 +90,7 @@ export function expandDisabledSemanticContextFlags(flags: ContextFlags | null): 
 
 const FLAG_ALIASES: Record<string, string[]> = {
   "instructions.coding": ["code", "coding", "debug", "debugging", "implementation", "repo", "build", "deployment", "system"],
-  "instructions.library_artifact": ["spec", "artifact", "library", "report", "draft", "writing", "document"],
+  "instructions.library_artifact": ["spec", "artifact", "library", "report", "draft", "writing", "document", "find", "search", "save", "edit", "organize", "organization", "placement", "folder"],
   "context.active_work": ["planning", "review", "goals", "work", "execution", "project"],
   "context.relationships": ["people", "relationship", "relationships", "contact", "outreach", "coaching"],
   "context.memory": ["memory", "context", "continuity", "retrieval", "compaction"],

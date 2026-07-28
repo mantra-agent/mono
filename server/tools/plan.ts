@@ -7,7 +7,7 @@
  * as a rendered view, but execution NEVER reads from the Library page.
  */
 import { db } from "../db";
-import { eq, and, desc, gt, sql, type SQL } from "drizzle-orm";
+import { eq, and, desc, gt, inArray, sql, type SQL } from "drizzle-orm";
 import { planExecutions, planSteps } from "@shared/schema";
 import {
   createPlanSessionLink,
@@ -139,6 +139,8 @@ export async function handlePlan(
       return handleUnlinkSession(args);
     case "list":
       return handleList(args);
+    case "reconcile_library":
+      return handleReconcileLibrary(args);
     case "execute":
       return handleExecute(args);
     case "update_step":
@@ -153,7 +155,7 @@ export async function handlePlan(
       return handleResume(args);
     default:
       return {
-        result: `Unknown plan action: "${action}". Available: create, get, associate_session, unlink_session, list, execute, update_step, edit, add_steps, pause, resume`,
+        result: `Unknown plan action: "${action}". Available: create, get, associate_session, unlink_session, list, reconcile_library, execute, update_step, edit, add_steps, pause, resume`,
         error: true,
       };
   }
@@ -198,6 +200,10 @@ async function handleCreate(
   }
 
   const sessionId = (args._sessionId as string) || "";
+  const principal = getCurrentPrincipalOrSystem();
+  if (!principal.userId || !principal.accountId) {
+    return { result: "Plan creation requires an explicit user principal.", error: true };
+  }
   const planId = generatePlanId();
   const blocking = typeof args.blocking === "boolean" ? args.blocking : false;
 
@@ -223,11 +229,18 @@ async function handleCreate(
   // Create Library page (rendered view)
   const pageContent = buildPlanPageContent(meta, stepsInput);
   const { createFiledLibraryPage } = await import("../library-save");
+  const planVaultId = typeof args.vaultId === "string" && args.vaultId.trim()
+    ? args.vaultId.trim()
+    : principal.activeVaultId;
+  if (!planVaultId) {
+    return { result: "Choose the Plan's Vault before creating it.", error: true };
+  }
   const page = await createFiledLibraryPage({
     title: `Plan: ${title}`,
     markdown: pageContent,
     purpose: "plans",
     canonicalFolder: "plans",
+    explicitVaultId: planVaultId,
     pageContext: "/plans",
     contentSummary: `Multi-step execution plan: ${title}`,
     tags: ["plan", "active"],
@@ -436,46 +449,82 @@ async function handleUnlinkSession(
 async function handleList(
   args: Record<string, any>,
 ): Promise<ToolHandlerResult> {
-  const limit = Math.min(Number(args.limit) || 20, 50);
-
+  const limit = Math.max(1, Math.min(Math.floor(Number(args.limit) || 20), 100));
+  const offset = Math.max(0, Math.min(Math.floor(Number(args.offset) || 0), 100_000));
+  const [totalRow] = await db
+    .select({ total: sql<number>`COUNT(*)` })
+    .from(planExecutions)
+    .where(visiblePlan());
+  const total = Number(totalRow?.total ?? 0);
   const plans = await db
     .select()
     .from(planExecutions)
     .where(visiblePlan())
-    .orderBy(desc(planExecutions.updatedAt))
-    .limit(limit);
+    .orderBy(desc(planExecutions.updatedAt), desc(planExecutions.id))
+    .limit(limit)
+    .offset(offset);
 
-  if (plans.length === 0) {
-    return { result: "No plans found." };
+  const planIds = plans.map(plan => plan.id);
+  const pageIds = plans.map(plan => plan.pageId);
+  const steps = planIds.length === 0 ? [] : await db
+    .select()
+    .from(planSteps)
+    .where(visiblePlanStep(inArray(planSteps.planId, planIds)));
+  const { libraryPages } = await import("@shared/models/info");
+  const pages = pageIds.length === 0 ? [] : await db
+    .select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug })
+    .from(libraryPages)
+    .where(combineWithVisibleScope(
+      getCurrentPrincipalOrSystem(),
+      libraryScopeColumns(libraryPages),
+      inArray(libraryPages.id, pageIds),
+    ));
+  const stepsByPlan = new Map<string, typeof steps>();
+  for (const step of steps) {
+    const current = stepsByPlan.get(step.planId) ?? [];
+    current.push(step);
+    stepsByPlan.set(step.planId, current);
   }
+  const pagesById = new Map(pages.map(page => [page.id, page]));
+  const items = plans.map(plan => {
+    const planStepsForRow = stepsByPlan.get(plan.id) ?? [];
+    const page = pagesById.get(plan.pageId);
+    return {
+      planId: plan.id,
+      libraryPageId: plan.pageId,
+      libraryPageSlug: page?.slug ?? null,
+      title: page?.title ?? null,
+      status: plan.status,
+      resolvedSteps: planStepsForRow.filter(isStepProgressed).length,
+      totalSteps: planStepsForRow.length,
+      updatedAt: plan.updatedAt.toISOString(),
+    };
+  });
 
-  const statusIcon: Record<string, string> = {
-    created: "📋",
-    executing: "⏳",
-    paused: "⏸️",
-    needs_review: "👀",
-    completed: "✅",
-    completed_with_failures: "⚠️",
-    failed: "❌",
-    aborted: "🚫",
+  return {
+    result: JSON.stringify({
+      outcome: "listed",
+      pagination: { limit, offset, total, hasMore: offset + items.length < total },
+      plans: items,
+    }, null, 2),
   };
+}
 
-  const lines: string[] = [];
-  for (const p of plans) {
-    const steps = await db
-      .select()
-      .from(planSteps)
-      .where(visiblePlanStep(eq(planSteps.planId, p.id)));
-    const resolved = steps.filter(isStepProgressed).length;
-    const page = await getLibraryPage(p.pageId);
-    const title = page?.title || "Untitled";
-    const slug = page?.slug || "";
-    lines.push(
-      `${statusIcon[p.status] || "📋"} **${title}** (${p.id}) — ${resolved}/${steps.length} steps · ${p.status}${slug ? ` @page:${slug}` : ""}`,
-    );
+async function handleReconcileLibrary(
+  args: Record<string, any>,
+): Promise<ToolHandlerResult> {
+  const mode = args.mode === "apply" ? "apply" : "preview";
+  if (args.mode !== undefined && args.mode !== "preview" && args.mode !== "apply") {
+    return { result: "Invalid mode. Use preview or apply.", error: true };
   }
-
-  return { result: `**Plans** (${plans.length})\n\n${lines.join("\n")}` };
+  const { reconcilePlanLibraryPlacement } = await import("../plan-library-reconciliation");
+  const result = await reconcilePlanLibraryPlacement({
+    principal: getCurrentPrincipalOrSystem(),
+    mode,
+    limit: args.limit,
+    offset: args.offset,
+  });
+  return { result: JSON.stringify(result, null, 2) };
 }
 
 async function handleExecute(
