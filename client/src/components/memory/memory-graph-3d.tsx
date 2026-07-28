@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   forceCollide,
   forceLink,
@@ -40,15 +40,21 @@ export interface MemoryGraph3DHandle {
   fitToView: () => void;
 }
 
+export interface MemoryGraph3DNodeDetail {
+  nodeId: number;
+  content: ReactNode;
+  interactive: boolean;
+}
+
 interface MemoryGraph3DProps {
   nodes: MemoryGraph3DNode[];
   links: MemoryGraph3DLink[];
   selectedNodeId: number | null;
   highlightedNodeIds: ReadonlySet<number>;
+  nodeDetail?: MemoryGraph3DNodeDetail | null;
   onNodeSelect: (nodeId: number) => void;
-  onNodeHover: (nodeId: number | null, position?: { x: number; y: number }) => void;
+  onNodeHover: (nodeId: number | null) => void;
   onBackgroundSelect?: () => void;
-  onGraphInteractionStart?: () => void;
 }
 
 interface SceneNode extends MemoryGraph3DNode {
@@ -274,15 +280,18 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     links,
     selectedNodeId,
     highlightedNodeIds,
+    nodeDetail,
     onNodeSelect,
     onNodeHover,
     onBackgroundSelect,
-    onGraphInteractionStart,
   },
   forwardedRef,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const labelRefs = useRef(new Map<number, HTMLDivElement>());
+  const detailRef = useRef<HTMLDivElement>(null);
+  const nodeDetailRef = useRef(nodeDetail);
+  nodeDetailRef.current = nodeDetail;
   const runtimeRef = useRef<GraphRuntime | null>(null);
   const [focusNeighborhoodNodeIds, setFocusNeighborhoodNodeIds] = useState<number[]>([]);
   const selectedNodeIdRef = useRef(selectedNodeId);
@@ -295,8 +304,6 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   onNodeHoverRef.current = onNodeHover;
   const onBackgroundSelectRef = useRef(onBackgroundSelect);
   onBackgroundSelectRef.current = onBackgroundSelect;
-  const onGraphInteractionStartRef = useRef(onGraphInteractionStart);
-  onGraphInteractionStartRef.current = onGraphInteractionStart;
 
   const overlayNodes = useMemo(() => {
     const focusNeighborhood = new Set(focusNeighborhoodNodeIds);
@@ -341,7 +348,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
   useEffect(() => {
     runtimeRef.current?.requestRender();
-  }, [overlayNodes]);
+  }, [nodeDetail, overlayNodes]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -672,6 +679,35 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       fitCamera(camera, controls, subset);
     }
 
+    function syncDetail() {
+      const element = detailRef.current;
+      const detail = nodeDetailRef.current;
+      if (!element || !detail) return;
+      const node = sceneNodeById.get(detail.nodeId);
+      if (!node) {
+        element.style.display = "none";
+        return;
+      }
+      projected.set(node.x, node.y, node.z).project(camera);
+      const visible = projected.z > -1 && projected.z < 1 && Math.abs(projected.x) < 1.02 && Math.abs(projected.y) < 1.02;
+      if (!visible) {
+        element.style.display = "none";
+        return;
+      }
+      const width = host.clientWidth;
+      const height = host.clientHeight;
+      const projectedX = (projected.x * 0.5 + 0.5) * width;
+      const projectedY = (-projected.y * 0.5 + 0.5) * height;
+      cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
+      const depth = Math.max(0.001, -cameraSpace.z);
+      const pixelsPerRadian = height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+      const nodeRadius = node.radius * getNodeScale(nodeIndex.get(node.id) ?? 0) * pixelsPerRadian / depth;
+      element.style.display = "block";
+      const halfWidth = element.offsetWidth / 2;
+      const x = THREE.MathUtils.clamp(projectedX, halfWidth + 8, Math.max(halfWidth + 8, width - halfWidth - 8));
+      element.style.transform = `translate3d(${x}px, ${projectedY + Math.max(18, nodeRadius + 10)}px, 0) translateX(-50%)`;
+    }
+
     function syncLabels() {
       const width = host.clientWidth;
       const height = host.clientHeight;
@@ -714,6 +750,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           element.style.opacity = focused || selected ? "1" : String(THREE.MathUtils.clamp(1.18 - distance / 520, focusIndex == null ? 0.66 : 0.4, 0.94));
           element.style.zIndex = String(focused ? 2_000 : selected ? 1_500 : Math.max(1, Math.round(1_000 - distance)));
         });
+      syncDetail();
     }
 
     function renderNow() {
@@ -790,14 +827,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       hoveredIndex = nextHoveredIndex;
       syncFocusNeighborhood();
       renderer.domElement.style.cursor = hoveredIndex == null ? "grab" : "pointer";
-      if (hoveredIndex == null) {
-        onNodeHoverRef.current(null);
-      } else {
-        onNodeHoverRef.current(sceneNodes[hoveredIndex].id, {
-          x: pendingPointer.x - rect.left + 16,
-          y: pendingPointer.y - rect.top,
-        });
-      }
+      onNodeHoverRef.current(hoveredIndex == null ? null : sceneNodes[hoveredIndex].id);
       requestRender();
     }
 
@@ -883,14 +913,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       requestRender();
     }
 
-    function handleControlsStart() {
-      onGraphInteractionStartRef.current?.();
-    }
-
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(host);
     controls.addEventListener("change", handleControlsChange);
-    controls.addEventListener("start", handleControlsStart);
     renderer.domElement.addEventListener("pointermove", handlePointerMove);
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
     renderer.domElement.addEventListener("pointerup", handlePointerUp);
@@ -923,7 +948,6 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       runtimeRef.current = null;
       resizeObserver.disconnect();
       controls.removeEventListener("change", handleControlsChange);
-      controls.removeEventListener("start", handleControlsStart);
       controls.dispose();
       renderer.domElement.removeEventListener("pointermove", handlePointerMove);
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
@@ -958,12 +982,23 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
             <span className="flex h-6 w-6 shrink-0 items-center justify-center text-active drop-shadow-md">
               <MemorySourceIcon source={node.source} className="h-4 w-4" />
             </span>
-            <span className="mt-0.5 max-w-[180px] truncate whitespace-nowrap rounded-md bg-card/80 px-1.5 py-0.5 text-[10px] font-medium text-foreground/90 shadow-sm backdrop-blur-sm">
-              {node.label}
-            </span>
+            {nodeDetail?.nodeId !== node.id && (
+              <span className="mt-0.5 max-w-[180px] truncate whitespace-nowrap rounded-md bg-card/80 px-1.5 py-0.5 text-[10px] font-medium text-foreground/90 shadow-sm backdrop-blur-sm">
+                {node.label}
+              </span>
+            )}
           </div>
         ))}
       </div>
+      {nodeDetail && (
+        <div
+          ref={detailRef}
+          className={nodeDetail.interactive ? "absolute left-0 top-0 z-30 will-change-transform" : "pointer-events-none absolute left-0 top-0 z-30 will-change-transform"}
+          data-testid={`memory-graph-node-detail-${nodeDetail.nodeId}`}
+        >
+          {nodeDetail.content}
+        </div>
+      )}
     </div>
   );
 });
