@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, X } from "lucide-react";
 import { parseReferenceText } from "@shared/reference-parser";
 
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { TOAST_GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -141,7 +142,8 @@ export function AppToastDisplay({ className, toastClassName }: AppToastDisplayPr
         role="status"
         aria-live="polite"
         className={cn(
-          "pointer-events-auto relative flex min-h-12 max-w-[min(38rem,calc(100vw-2rem))] items-center gap-3 overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-br from-zinc-900/90 via-zinc-800/70 to-zinc-950/90 px-5 py-3 text-center text-sm text-white shadow-[0_18px_60px_rgba(0,0,0,0.58),0_0_0_1px_rgba(255,255,255,0.08),inset_0_1px_0_rgba(255,255,255,0.22)] backdrop-blur-xl before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-1/2 before:bg-gradient-to-b before:from-white/18 before:via-white/7 before:to-transparent after:pointer-events-none after:absolute after:inset-0 after:bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.16),transparent_58%)]",
+          TOAST_GLASS_SURFACE_CLASS,
+          "pointer-events-auto flex min-h-12 max-w-[min(38rem,calc(100vw-2rem))] items-center gap-3 px-5 py-3 text-center text-sm",
           isDestructive && "border-error/30 from-zinc-950/92 via-zinc-900/78 to-red-950/55 after:bg-[radial-gradient(circle_at_50%_0%,rgba(239,68,68,0.22),transparent_60%)]",
           "transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform",
           phase === "enter" && "translate-y-8 opacity-0",

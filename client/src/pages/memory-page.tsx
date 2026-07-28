@@ -89,7 +89,6 @@ import {
   Maximize2,
   Play,
   Pause as PauseIcon,
-  Link2,
   MessageSquare,
   Pencil,
   Globe,
@@ -104,35 +103,46 @@ import {
   ListFilter,
   Share2,
   GitBranch,
-  Users,
   Target,
-  FolderKanban,
   Unlink,
   ShieldCheck,
   AlertTriangle,
   Circle,
 } from "lucide-react";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { TOAST_GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface";
 import { createReferenceRef } from "@shared/references";
 import { SimpleTextFrame } from "@/components/home/simple-text-frame";
 import { MemoryGraph3D, type MemoryGraph3DHandle, type MemoryGraph3DLink, type MemoryGraph3DNode } from "@/components/memory/memory-graph-3d";
 import {
   getAvailableMemoryGraphNodeTypes,
+  getMemoryGraphNodeTypeConfig,
   MemorySourceIcon,
 } from "@/components/memory/memory-source-icon";
 
-const SOURCE_REF_TYPE_MAP: Record<string, "session" | "page"> = {
-  session: "session",
-  library_page: "page",
+const SOURCE_REF_TYPE_MAP: Record<string, string> = {
+  chat_journal: "session",
   library: "page",
+  library_page: "page",
+  session: "session",
 };
 
-function SourceRefLabel({ sourceType, sourceId, className }: { sourceType: string; sourceId: string; className?: string }) {
-  const refType = SOURCE_REF_TYPE_MAP[sourceType];
-  if (refType) {
-    return <ReferenceRenderer refValue={createReferenceRef({ type: refType, id: sourceId })} surface="simple-chip" className={className} />;
-  }
-  return <span className={className ?? "font-mono text-muted-foreground truncate"}>{sourceId}</span>;
+interface VnextEntityLink {
+  id: number;
+  claimId: number;
+  entityType: string;
+  entityId: string;
+  createdAt?: string | null;
+}
+
+function CanonicalLink({ type, id }: { type: string; id: string }) {
+  return (
+    <ReferenceRenderer
+      refValue={createReferenceRef({ type, id })}
+      surface="simple-chip"
+      className="mx-0 max-w-full text-sm"
+    />
+  );
 }
 import {
   DropdownMenu,
@@ -983,7 +993,7 @@ function MemoryPipelineRow({ entry, expanded, onToggle, timezone }: { entry: Mem
             {processed && <span>{new Date(processed).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>}
           </div>
           <div><p className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1"><FileText className="h-3 w-3" />Content</p><ExchangeContentRenderer content={entry.content} /></div>
-          <VnextSourceRefsSection claimId={entry.id} />
+          <VnextLinksSection claimId={entry.id} />
         </div>
       )}
     </div>
@@ -1022,7 +1032,7 @@ function VnextClaimRow({ claim, expanded, onToggle, timezone }: { claim: VnextCl
             <span>{Math.round(Number(claim.confidence ?? 0) * 100)}% confidence</span>
           </div>
           {topics.length > 0 && <div className="flex flex-wrap gap-1.5">{topics.map(topic => <Badge key={topic} variant="outline" className="px-1.5 py-0 text-xs">{topic}</Badge>)}</div>}
-          <VnextSourceRefsSection claimId={claim.id} />
+          <VnextLinksSection claimId={claim.id} />
           {metadataEntries.length > 0 && (
             <div>
               <p className="mb-1 text-xs font-medium text-muted-foreground">Budget metadata</p>
@@ -1035,8 +1045,8 @@ function VnextClaimRow({ claim, expanded, onToggle, timezone }: { claim: VnextCl
   );
 }
 
-function VnextSourceRefsSection({ claimId }: { claimId: number }) {
-  const { data, isLoading } = useQuery<{ sources: VnextSourceRef[]; total: number }>({
+function VnextLinksSection({ claimId }: { claimId: number }) {
+  const { data: sourceData, isLoading: sourcesLoading } = useQuery<{ sources: VnextSourceRef[]; total: number }>({
     queryKey: ["/api/memory/vnext/claims", claimId, "sources"],
     queryFn: async () => {
       const res = await fetch(`/api/memory/vnext/claims/${claimId}/sources`, { credentials: "include" });
@@ -1045,19 +1055,33 @@ function VnextSourceRefsSection({ claimId }: { claimId: number }) {
     },
     enabled: !!claimId,
   });
-  if (isLoading) return <Skeleton className="h-16 w-full rounded-md" />;
-  const refs = data?.sources ?? [];
-  if (refs.length === 0) return null;
+  const { data: entityData, isLoading: entitiesLoading } = useQuery<{ entityLinks: VnextEntityLink[]; total: number }>({
+    queryKey: ["/api/memory/vnext/claims", claimId, "entity-links"],
+    queryFn: async () => {
+      const res = await fetch(`/api/memory/vnext/claims/${claimId}/entity-links`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch vNext entity links");
+      return res.json();
+    },
+    enabled: !!claimId,
+  });
+
+  if (sourcesLoading || entitiesLoading) return <Skeleton className="h-16 w-full rounded-md" />;
+  const sources = sourceData?.sources ?? [];
+  const entities = entityData?.entityLinks ?? [];
+  if (sources.length === 0 && entities.length === 0) return null;
+
   return (
-    <div className="space-y-0.5" data-testid={`memory-vnext-source-refs-${claimId}`}>
-      <div className={HIERARCHY_SECTION_HEADER_CLASS}>Source refs ({refs.length})</div>
+    <div className="space-y-0.5" data-testid={`memory-vnext-links-${claimId}`}>
+      <div className={HIERARCHY_SECTION_HEADER_CLASS}>Links</div>
       <div className="flex flex-col items-start gap-1 px-2">
-        {refs.map((ref) => (
-          <SourceRefLabel
-            key={ref.id}
-            sourceType={ref.sourceType}
-            sourceId={ref.sourceId}
-            className="max-w-full truncate text-sm"
+        {entities.map((link) => (
+          <CanonicalLink key={`entity-${link.id}`} type={link.entityType} id={link.entityId} />
+        ))}
+        {sources.map((ref) => (
+          <CanonicalLink
+            key={`source-${ref.id}`}
+            type={SOURCE_REF_TYPE_MAP[ref.sourceType] ?? ref.sourceType}
+            id={ref.sourceId}
           />
         ))}
       </div>
@@ -1327,7 +1351,7 @@ function VnextJournalTab() {
                                           <SimpleTextFrame content={selectedClaim.content} />
                                         </div>
 
-                                        <VnextSourceRefsSection claimId={selectedClaim.id} />
+                                        <VnextLinksSection claimId={selectedClaim.id} />
 
                                         {selectedClaim.metadata && Object.keys(selectedClaim.metadata).length > 0 && (
                                           <div>
@@ -1362,47 +1386,6 @@ function VnextJournalTab() {
 }
 
 
-const entityTypeConfig: Record<string, { icon: typeof Users; label: string }> = {
-  person: { icon: Users, label: "Person" },
-  project: { icon: FolderKanban, label: "Project" },
-  goal: { icon: Target, label: "Goal" },
-  strategy: { icon: Target, label: "Strategy" },
-};
-
-function VnextEntityLinksSection({ claimId }: { claimId: number }) {
-  const { data, isLoading } = useQuery<{ entityLinks: VnextEntityLink[]; total: number }>({
-    queryKey: ["/api/memory/vnext/claims", claimId, "entity-links"],
-    queryFn: async () => {
-      const res = await fetch(`/api/memory/vnext/claims/${claimId}/entity-links`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch vNext entity links");
-      return res.json();
-    },
-  });
-
-  if (isLoading) return <Skeleton className="h-8 w-full" />;
-  const links = data?.entityLinks ?? [];
-  if (links.length === 0) return null;
-
-  return (
-    <div className="space-y-0.5" data-testid={`vnext-entity-links-section-${claimId}`}>
-      <div className={HIERARCHY_SECTION_HEADER_CLASS}>Entity Links ({links.length})</div>
-      <div className="flex flex-col items-start gap-1 px-2">
-        {links.map((link) => {
-          const config = entityTypeConfig[link.entityType] || { icon: Link2, label: link.entityType };
-          const Icon = config.icon;
-          return (
-            <div key={link.id} className="flex min-w-0 max-w-full items-center gap-2 text-sm" data-testid={`vnext-entity-link-${link.id}`}>
-              <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="min-w-0 flex-1 truncate text-foreground/80">{link.entityId}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{config.label}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function GraphTab({
   inFullscreenModal = false,
   onOpenFullscreen,
@@ -1414,7 +1397,7 @@ function GraphTab({
   const isMobile = useIsMobile();
   const graphRef = useRef<MemoryGraph3DHandle>(null);
   const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
-  const [selectedLabelTypes, setSelectedLabelTypes] = useState<Set<string>>(() => new Set(["people"]));
+  const [visibleNodeTypes, setVisibleNodeTypes] = useState<Set<string>>(() => new Set(["people"]));
   const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [graphSearchQuery, setGraphSearchQuery] = useState("");
@@ -1463,13 +1446,25 @@ function GraphTab({
     [graph?.links],
   );
 
-  const availableLabelTypes = useMemo(
+  const availableNodeTypes = useMemo(
     () => getAvailableMemoryGraphNodeTypes(graphNodes.map((node) => node.source)),
     [graphNodes],
   );
+  const visibleGraphNodes = useMemo(
+    () => graphNodes.filter((node) => visibleNodeTypes.has(getMemoryGraphNodeTypeConfig(node.source).id)),
+    [graphNodes, visibleNodeTypes],
+  );
+  const visibleNodeIds = useMemo(
+    () => new Set(visibleGraphNodes.map((node) => node.id)),
+    [visibleGraphNodes],
+  );
+  const visibleGraphLinks = useMemo(
+    () => graphLinks.filter((link) => visibleNodeIds.has(link.fromId) && visibleNodeIds.has(link.toId)),
+    [graphLinks, visibleNodeIds],
+  );
 
-  const toggleLabelType = useCallback((typeId: string) => {
-    setSelectedLabelTypes((current) => {
+  const toggleNodeType = useCallback((typeId: string) => {
+    setVisibleNodeTypes((current) => {
       const next = new Set(current);
       if (next.has(typeId)) next.delete(typeId);
       else next.add(typeId);
@@ -1491,14 +1486,18 @@ function GraphTab({
     const query = graphSearchQuery.trim().toLowerCase();
     if (!query) return [] as MemoryGraph3DNode[];
     const matches: MemoryGraph3DNode[] = [];
-    for (const node of graphNodes) {
+    for (const node of visibleGraphNodes) {
       const entry = entryMap.get(node.id);
       const haystack = [node.label, entry?.title, entry?.content].filter(Boolean).join(" ").toLowerCase();
       if (haystack.includes(query)) matches.push(node);
       if (matches.length >= 8) break;
     }
     return matches;
-  }, [graphSearchQuery, graphNodes, entryMap]);
+  }, [entryMap, graphSearchQuery, visibleGraphNodes]);
+  const graphSearchMatchIds = useMemo(
+    () => new Set(graphSearchMatches.map((node) => node.id)),
+    [graphSearchMatches],
+  );
 
   const handleGraphSearchSelect = useCallback((nodeId: number) => {
     handleNodeSelect(nodeId);
@@ -1508,6 +1507,10 @@ function GraphTab({
   useEffect(() => {
     if (selectedNode && !entryMap.has(selectedNode.id)) setSelectedNode(null);
   }, [entryMap, selectedNode]);
+
+  useEffect(() => {
+    if (selectedNode && !visibleNodeIds.has(selectedNode.id)) setSelectedNode(null);
+  }, [selectedNode, visibleNodeIds]);
 
   if (isLoading) {
     return <div className="p-4"><Skeleton className="h-[400px] w-full" /></div>;
@@ -1557,10 +1560,10 @@ function GraphTab({
         <div className="flex-1 relative overflow-hidden bg-background">
           <MemoryGraph3D
             ref={graphRef}
-            nodes={graphNodes}
-            links={graphLinks}
+            nodes={visibleGraphNodes}
+            links={visibleGraphLinks}
             selectedNodeId={selectedNode?.id ?? null}
-            selectedLabelTypes={selectedLabelTypes}
+            highlightedNodeIds={graphSearchMatchIds}
             onNodeSelect={handleNodeSelect}
             onNodeHover={handleNodeHover}
           />
@@ -1591,10 +1594,10 @@ function GraphTab({
                 <Button
                   variant="outline"
                   size="icon"
-                  aria-label="Choose persistent graph labels"
-                  title="Choose labels"
+                  aria-label="Choose visible graph node types"
+                  title="Choose visible nodes"
                   data-testid="button-graph-label-filter"
-                  className={selectedLabelTypes.size > 0 ? "border-foreground/30 bg-card/90" : "bg-card/80"}
+                  className={visibleNodeTypes.size > 0 ? "border-foreground/30 bg-card/90" : "bg-card/80"}
                 >
                   <ListFilter className="h-3.5 w-3.5" />
                 </Button>
@@ -1606,9 +1609,9 @@ function GraphTab({
                 className="w-48 border-card-border bg-popover p-1.5"
                 data-testid="memory-graph-label-filter"
               >
-                <div className="space-y-0.5" role="group" aria-label="Persistent graph labels">
-                  {availableLabelTypes.map((type) => {
-                    const selected = selectedLabelTypes.has(type.id);
+                <div className="space-y-0.5" role="group" aria-label="Visible graph node types">
+                  {availableNodeTypes.map((type) => {
+                    const selected = visibleNodeTypes.has(type.id);
                     return (
                       <label
                         key={type.id}
@@ -1617,9 +1620,9 @@ function GraphTab({
                       >
                         <Checkbox
                           checked={selected}
-                          onCheckedChange={() => toggleLabelType(type.id)}
+                          onCheckedChange={() => toggleNodeType(type.id)}
                           onClick={(event) => event.stopPropagation()}
-                          aria-label={`Show ${type.label} labels`}
+                          aria-label={`Show ${type.label} nodes`}
                         />
                         <MemorySourceIcon source={type.iconSource} className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="flex-1">{type.label}</span>
@@ -1647,30 +1650,32 @@ function GraphTab({
         </div>
 
         {selectedNode && (
-          <div className={cn("absolute inset-x-2 bottom-2 z-20 max-h-[55%] overflow-y-auto scrollbar-thin border p-4 space-y-4 md:inset-y-2 md:left-auto md:right-2 md:w-80 md:max-h-none", MEMORY_PANEL_CLASS)} data-testid="memory-graph-detail">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <SourceIcon source={selectedNode.source} className="h-4 w-4 text-muted-foreground shrink-0" />
-                <h3 className="text-base font-semibold text-foreground truncate">{getDisplayTitle(selectedNode, 80)}</h3>
+          <div className={cn("absolute inset-x-2 bottom-2 z-20 max-h-[55%] overflow-y-auto scrollbar-thin p-4 space-y-4 md:inset-y-2 md:left-auto md:right-2 md:w-80 md:max-h-none", TOAST_GLASS_SURFACE_CLASS)} data-testid="memory-graph-detail">
+            <div className="relative z-10 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className="flex shrink-0 items-center"
+                  title={selectedMetadata.lifecycleStage ? lifecycleLabel(String(selectedMetadata.lifecycleStage)) : undefined}
+                  data-testid="graph-detail-lifecycle"
+                >
+                  <SourceIcon source={selectedNode.source} className="h-4 w-4 text-white/70" />
+                </span>
+                <h3 className="truncate text-base font-semibold text-white">{getDisplayTitle(selectedNode, 80)}</h3>
               </div>
-              <Button variant="ghost" size="icon" onClick={() => setSelectedNode(null)} aria-label="Close graph detail" data-testid="button-close-graph-detail">
+              <Button variant="ghost" size="icon" className="text-white/70 hover:bg-white/10 hover:text-white" onClick={() => setSelectedNode(null)} aria-label="Close graph detail" data-testid="button-close-graph-detail">
                 <X className="h-3.5 w-3.5" />
               </Button>
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-              {selectedMetadata.lifecycleStage && <Badge variant="outline">{lifecycleLabel(String(selectedMetadata.lifecycleStage))}</Badge>}
-              {selectedMetadata.claimType && (
-                <span title={claimTypeLabel(String(selectedMetadata.claimType))} className="flex items-center" data-testid="graph-detail-claim-type">
-                  <VnextClaimTypeIcon claimType={String(selectedMetadata.claimType)} />
-                </span>
-              )}
-              {selectedNode.createdAt && <span>{new Date(selectedNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+            <div className="relative z-10">
+              <SimpleTextFrame content={selectedNode.content} />
             </div>
-
-            <SimpleTextFrame content={selectedNode.content} />
-            {selectedIsClaim && <VnextSourceRefsSection claimId={selectedNode.id} />}
-            {selectedIsClaim && <VnextEntityLinksSection claimId={selectedNode.id} />}
+            {selectedNode.createdAt && (
+              <div className="relative z-10 text-xs text-white/55" data-testid="graph-detail-date">
+                {new Date(selectedNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}
+              </div>
+            )}
+            {selectedIsClaim && <div className="relative z-10"><VnextLinksSection claimId={selectedNode.id} /></div>}
           </div>
         )}
       </div>
@@ -1785,7 +1790,7 @@ function QueryTab() {
               </div>
               {(selectedResult.topics ?? []).length > 0 && <div className="flex items-center gap-1.5 flex-wrap">{selectedResult.topics!.map((topic) => <Badge key={topic} variant="outline" className="text-xs">{topic}</Badge>)}</div>}
               <div><p className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1"><FileText className="h-3 w-3" />Claim</p><SimpleTextFrame content={selectedResult.content} /></div>
-              <VnextSourceRefsSection claimId={selectedResult.id} />
+              <VnextLinksSection claimId={selectedResult.id} />
               {selectedResult.metadata && Object.keys(selectedResult.metadata).length > 0 && <div><p className="text-xs font-medium text-muted-foreground mb-1.5">Metadata</p><pre className="text-xs font-mono whitespace-pre-wrap text-foreground/70 bg-muted/20 border border-card-border rounded-md p-3" data-testid="query-detail-metadata">{JSON.stringify(selectedResult.metadata, null, 2)}</pre></div>}
             </div>
           ) : <div className="flex-1 px-2 py-1.5 text-sm text-muted-foreground" data-testid="query-no-selection">Select a vNext claim to view details.</div>}
