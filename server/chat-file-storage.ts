@@ -4,14 +4,18 @@ import {
   acquireAdvisoryTransactionLock,
   BOOT_ID,
   db,
+  runOutsideDatabaseTransaction,
   runWithDatabaseTransaction,
 } from "./db";
 import { accounts, users, memoryEntries, documentStoreDocuments, planStepAttempts, planSteps, sessionArtifacts, sessionTree, compactionOperations } from "@shared/schema";
-import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import { documentStoreIndependentWritesEnabled } from "./memory/document-store-cutover";
 import { targetReadsEnabled } from "./memory/document-storage";
-import { buildTargetSessionSearchQuery } from "./memory/session-search-query";
+import {
+  buildLiteralSubstringPattern,
+  buildTargetSessionSearchQuery,
+} from "./memory/session-search-query";
 import { generateId } from "./file-storage/utils";
 import { createLogger } from "./log";
 import { markSessionDeleted } from "./chat-journal";
@@ -3953,6 +3957,19 @@ function sessionSearchSqlState(error: unknown): string | undefined {
     : undefined;
 }
 
+const SESSION_SEARCH_STATEMENT_TIMEOUT_MS = 2_500;
+
+async function executeBoundedSessionSearch<T>(operation: () => Promise<T>): Promise<T> {
+  return runOutsideDatabaseTransaction(() =>
+    db.transaction(async (transaction) => {
+      await transaction.execute(
+        sql.raw(`SET LOCAL statement_timeout = '${SESSION_SEARCH_STATEMENT_TIMEOUT_MS}ms'`),
+      );
+      return runWithDatabaseTransaction(transaction, operation);
+    }),
+  );
+}
+
 export async function searchSessionSummaries(
   query: string,
   sinceHours = 24,
@@ -3975,42 +3992,47 @@ export async function searchSessionSummaries(
   try {
     const queryBuildStartedAt = performance.now();
     const cutoff = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
-    const searchPattern = `%${trimmed}%`;
+    const searchPattern = buildLiteralSubstringPattern(trimmed);
     const principal = getCurrentPrincipalOrSystem();
     queryBuildMs = performance.now() - queryBuildStartedAt;
 
     resultDbStartedAt = performance.now();
-    const rows = source === "target"
-      ? await buildTargetSessionSearchQuery(
-          principal,
-          cutoff.toISOString(),
-          searchPattern,
-          maxResults,
-        )
-      : await db
-          .select({
-            docId: memoryEntries.sourceId,
-            title: memoryEntries.title,
-            content: memoryEntries.content,
-            metadata: memoryEntries.metadata,
-            updatedAt: memoryEntries.processedAt,
-          })
-          .from(memoryEntries)
-          .where(
-            combineWithVisibleScope(
-              principal,
-              chatDocumentScopeColumns,
-              and(
-                eq(memoryEntries.layer, "workspace"),
-                eq(memoryEntries.source, "chat"),
-                sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text) >= ${cutoff.toISOString()}`,
-                sql`coalesce((${memoryEntries.metadata}->>'messageCount')::int, 0) > 0`,
-                or(ilike(memoryEntries.title, searchPattern), ilike(memoryEntries.content, searchPattern)),
-              ),
-            ),
+    const rows = await executeBoundedSessionSearch(() =>
+      source === "target"
+        ? buildTargetSessionSearchQuery(
+            principal,
+            cutoff.toISOString(),
+            trimmed,
+            maxResults,
           )
-          .orderBy(desc(sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text)`))
-          .limit(Math.max(1, Math.min(maxResults, 100)));
+        : db
+            .select({
+              docId: memoryEntries.sourceId,
+              title: memoryEntries.title,
+              content: memoryEntries.content,
+              metadata: memoryEntries.metadata,
+              updatedAt: memoryEntries.processedAt,
+            })
+            .from(memoryEntries)
+            .where(
+              combineWithVisibleScope(
+                principal,
+                chatDocumentScopeColumns,
+                and(
+                  eq(memoryEntries.layer, "workspace"),
+                  eq(memoryEntries.source, "chat"),
+                  sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text) >= ${cutoff.toISOString()}`,
+                  sql`coalesce((${memoryEntries.metadata}->>'messageCount')::int, 0) > 0`,
+                  or(
+                    sql`${memoryEntries.title} ILIKE ${searchPattern} ESCAPE '!'`,
+                    sql`${memoryEntries.content} ILIKE ${searchPattern} ESCAPE '!'`,
+                  ),
+                ),
+              ),
+            )
+            .orderBy(desc(sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text)`))
+            .limit(Math.max(1, Math.min(maxResults, 100))),
+    );
     resultDbMs = performance.now() - resultDbStartedAt;
     resultDbStartedAt = undefined;
 
