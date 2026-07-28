@@ -16,7 +16,6 @@ import {
   libraryPages,
   memberships,
   magicDemoSessions,
-  memoryEntries,
   userProfiles,
   users,
   type User,
@@ -35,7 +34,6 @@ type RootKey = (typeof ROOTS)[number]["key"] | "agent";
 type WorkspaceMetadata = {
   libraryRootIds?: Partial<Record<RootKey, string>>;
   templateLinks?: string[];
-  contextSeededAt?: string;
   onboardingStartedAt?: string;
   onboardingCompletedAt?: string;
   enteredDemoAt?: string;
@@ -341,51 +339,6 @@ function buildIdentityContent(displayName: string, preferredName: string): strin
   return lines.join(" ");
 }
 
-async function seedContextMemory(
-  principal: Principal & { userId: string; accountId: string },
-  contextSeed: string,
-): Promise<void> {
-  const { legacyMemoryQuarantineApplied } = await import("./memory/legacy-memory-quarantine");
-  if (await legacyMemoryQuarantineApplied()) {
-    // Legacy memory_entries is quarantined; the onboarding context seed is a
-    // best-effort legacy write and is skipped rather than touching the
-    // quarantined table. Durable identity is preserved by ensureUserPerson.
-    log.log("Context seed skipped: legacy memory quarantined");
-    return;
-  }
-  const sourceId = `onboarding:${principal.userId}`;
-  await db
-    .insert(memoryEntries)
-    .values({
-      layer: "short",
-      source: "identity",
-      sourceId,
-      title: "Onboarding context seed",
-      oneLiner: "Initial context provided during onboarding.",
-      content: contextSeed,
-      summary: contextSeed,
-      metadata: { source: "onboarding", consented: true },
-      tags: ["onboarding", "context-seed"],
-      ...ownedInsertValues(principal, {
-        scope: memoryEntries.scope,
-        ownerUserId: memoryEntries.ownerUserId,
-        accountId: memoryEntries.accountId,
-      }),
-      createdByUserId: principal.userId,
-      updatedByUserId: principal.userId,
-    })
-    .onConflictDoUpdate({
-      target: [memoryEntries.layer, memoryEntries.source, memoryEntries.sourceId],
-      set: {
-        content: contextSeed,
-        summary: contextSeed,
-        metadata: { source: "onboarding", consented: true },
-        updatedByUserId: principal.userId,
-        processedAt: sql`CURRENT_TIMESTAMP`,
-      },
-    });
-}
-
 export async function createUserWorkspace(
   principal: Principal & { userId: string; accountId: string },
   input: CreateUserWorkspaceInput = {},
@@ -424,7 +377,6 @@ export async function createUserWorkspace(
     ...(input.markStarted && !existingProfile?.metadata?.["onboardingStartedAt"] ? { onboardingStartedAt: now } : {}),
     ...(input.markCompleted ? { onboardingCompletedAt: now } : {}),
     ...(input.enterDemo ? { enteredDemoAt: now, magicDemoSessionId } : {}),
-    ...(input.contextSeed && memoryConsent ? { contextSeededAt: now } : {}),
   });
 
   await db
@@ -484,15 +436,8 @@ export async function createUserWorkspace(
     payload: { source: "onboarding", userId: principal.userId },
   });
 
-  // Fire-and-forget: these are non-critical for the onboarding response.
+  // Fire-and-forget: this is non-critical for the onboarding response.
   // Structurally non-blocking so the user navigates immediately.
-  const contextSeed = cleanText(input.contextSeed, 4000);
-  if (contextSeed && memoryConsent) {
-    void seedContextMemory(principal, contextSeed).catch((err) =>
-      log.warn("Context seed failed (non-fatal):", err instanceof Error ? err.message : String(err)),
-    );
-  }
-
   void ensureUserPerson(principal, displayName, preferredName).catch((err) =>
     log.warn("ensureUserPerson failed (non-fatal):", err instanceof Error ? err.message : String(err)),
   );
