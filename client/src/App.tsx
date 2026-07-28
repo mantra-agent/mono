@@ -39,6 +39,7 @@ import NotFound from "@/pages/not-found";
 import { AppShellImmersive } from "@/components/app-shell-immersive";
 import { getProvisionalOnboardingToken } from "@/lib/immersive-entrance";
 import { markNavigationDestinationCommit, markNavigationFallback } from "@/lib/navigation-trace";
+import { UiInteractionProvider } from "@/hooks/use-ui-interaction";
 
 const log = createLogger("App");
 
@@ -495,7 +496,9 @@ function AppShell() {
                 <FocusContextProvider>
                 <TaskModalProvider>
                 <SidebarProvider style={style as React.CSSProperties} forceMobile={mobileSurfaceActive} defaultOpen={false}>
-                  <AppLayout mobileSurfaceActive={mobileSurfaceActive} previewRouteOwnsCanvas={previewRouteOwnsCanvas} />
+                  <UiInteractionProvider>
+                    <AppLayout mobileSurfaceActive={mobileSurfaceActive} previewRouteOwnsCanvas={previewRouteOwnsCanvas} />
+                  </UiInteractionProvider>
                 </SidebarProvider>
                 </TaskModalProvider>
                 </FocusContextProvider>

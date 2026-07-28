@@ -41,6 +41,7 @@ export interface VoiceStartRequest {
   isReconnect: boolean;
   requestId: string;
   onboardingToken?: string;
+  clientId?: string;
 }
 
 function toBoundedLogError(error: unknown): { name?: string; message: string } {
@@ -71,6 +72,7 @@ export async function fetchVoiceStartStream(
       isReconnect: request.isReconnect || undefined,
       requestId: request.requestId,
       onboardingToken: request.onboardingToken,
+      clientId: request.clientId,
     }),
     signal,
   });
@@ -141,6 +143,7 @@ export async function fetchVoiceStartFallback(request: VoiceStartRequest): Promi
     isReconnect: request.isReconnect || undefined,
     requestId: request.requestId,
     onboardingToken: request.onboardingToken,
+    clientId: request.clientId,
   });
   return await response.json() as VoiceStartResponse;
 }

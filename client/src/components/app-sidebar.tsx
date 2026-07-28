@@ -65,6 +65,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { useUiInteraction, useUiInteractionTarget } from "@/hooks/use-ui-interaction";
 
 interface NavItem {
   title: string;
@@ -287,6 +288,8 @@ export function NavPage() {
   const [location, navigate] = useLocation();
   const { closeSidebar } = useSidebar();
   const { hasPermission } = useAuth();
+  const { guidedTarget, invoke } = useUiInteraction();
+  const memoryGraphTargetRef = useUiInteractionTarget("navigation.memoryGraph.open");
   const [searchQuery, setSearchQuery] = useState("");
 
   // Activity indicators
@@ -331,10 +334,14 @@ export function NavPage() {
 
   const handleNav = useCallback(
     (url: string) => {
+      if (url === "/memory?tab=graph") {
+        invoke("navigation.memoryGraph.open");
+        return;
+      }
       navigate(url);
       closeSidebar();
     },
-    [navigate, closeSidebar]
+    [closeSidebar, invoke, navigate]
   );
 
   // Filter sections and items by permission and search query
@@ -359,8 +366,18 @@ export function NavPage() {
       .filter((section) => section.items.length > 0);
   }, [hasPermission, searchQuery]);
 
-  // When searching, expand all sections
+  // Guided targets own their discoverability while the command is active.
+  const isGuidingMemoryGraph = guidedTarget === "navigation.memoryGraph.open";
   const isSearching = searchQuery.trim().length > 0;
+  const visibleSections = useMemo(() => {
+    if (!isGuidingMemoryGraph) return filteredSections;
+    const memorySection = navSections.find((section) => section.label === "Memory");
+    if (!memorySection) return filteredSections;
+    const items = memorySection.items.filter((item) =>
+      !item.permission || hasPermission(item.permission),
+    );
+    return items.length > 0 ? [{ ...memorySection, items }] : filteredSections;
+  }, [filteredSections, hasPermission, isGuidingMemoryGraph]);
 
   return (
     <div
@@ -377,7 +394,7 @@ export function NavPage() {
         />
 
         {/* Nav sections */}
-        {filteredSections.length === 0 && searchQuery.trim() ? (
+        {visibleSections.length === 0 && searchQuery.trim() ? (
           <div className="py-8 text-center">
             <Search className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
             <p className="text-xs text-muted-foreground">
@@ -385,8 +402,8 @@ export function NavPage() {
             </p>
           </div>
         ) : (
-          filteredSections.map((section) => {
-            const isOpen = isSearching || !collapsed.has(section.label);
+          visibleSections.map((section) => {
+            const isOpen = isSearching || (isGuidingMemoryGraph && section.label === "Memory") || !collapsed.has(section.label);
 
             return (
               <Collapsible
@@ -422,6 +439,7 @@ export function NavPage() {
                           </div>
                           {/* Nav item */}
                           <button
+                            ref={item.url === "/memory?tab=graph" ? memoryGraphTargetRef : undefined}
                             type="button"
                             onClick={() => handleNav(item.url)}
                             className={cn(

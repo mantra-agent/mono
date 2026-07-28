@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useId, useMemo, useState, type Re
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import type { ClientPresenceEntry, ClientPresenceKind } from "@shared/client-presence";
 import { isClientPresenceKind } from "@shared/client-presence";
+import { getClientTabId } from "@/lib/client-tab-identity";
 
 type PresenceMessage = {
   type?: string;
@@ -9,8 +10,6 @@ type PresenceMessage = {
 };
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const CLIENT_ID_STORAGE_KEY = "agent.clientPresenceTabId";
-
 function isPresenceEntry(value: unknown): value is ClientPresenceEntry {
   const entry = value as Partial<ClientPresenceEntry> | null;
   return Boolean(
@@ -20,19 +19,6 @@ function isPresenceEntry(value: unknown): value is ClientPresenceEntry {
     typeof entry.connectedAt === "string" &&
     typeof entry.lastSeenAt === "string",
   );
-}
-
-function stableClientId(): string {
-  if (typeof window === "undefined") return `client-${Math.random().toString(36).slice(2)}`;
-  try {
-    const existing = window.sessionStorage.getItem(CLIENT_ID_STORAGE_KEY);
-    if (existing) return existing;
-    const next = `client-${crypto.randomUUID()}`;
-    window.sessionStorage.setItem(CLIENT_ID_STORAGE_KEY, next);
-    return next;
-  } catch {
-    return `client-${Math.random().toString(36).slice(2)}`;
-  }
 }
 
 function mergeClients(...groups: ClientPresenceEntry[][]): ClientPresenceEntry[] {
@@ -62,7 +48,7 @@ function useClientPresenceState() {
   const [httpClients, setHttpClients] = useState<ClientPresenceEntry[]>([]);
   const hookId = useId();
   const clientKind = useMemo(detectClientKind, []);
-  const clientId = useMemo(stableClientId, []);
+  const clientId = useMemo(getClientTabId, []);
   const clients = useMemo(() => mergeClients(wsClients, httpClients), [wsClients, httpClients]);
 
   useEffect(() => {

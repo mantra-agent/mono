@@ -10,6 +10,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { GATEWAY_STATUS_KEY } from "@/hooks/use-executor-status";
 import { applySessionStatusToCache, emitSessionChanged } from "@/hooks/use-data-sync";
 import type { useToast } from "@/hooks/use-toast";
+import { getClientTabId } from "@/lib/client-tab-identity";
 
 export interface PendingChatTurn {
   clientTurnId: string;
@@ -142,7 +143,7 @@ export function useChatSend(deps: UseChatSendDeps) {
       const response = await fetch(`/api/sessions/${convId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: fullMessage, clientTurnId, ...(pageContext ? { pageContext } : {}) }),
+        body: JSON.stringify({ content: fullMessage, clientTurnId, clientId: getClientTabId(), ...(pageContext ? { pageContext } : {}) }),
       });
 
       if (response.status === 409) {
