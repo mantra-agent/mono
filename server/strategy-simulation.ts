@@ -5,6 +5,7 @@ import { getPromptModulePrompt } from "./prompt-modules";
 import { ACTIVITY_STRATEGY } from "./job-profiles";
 import type { StrategyMoveInstance } from "@shared/schema";
 import { createLogger } from "./log";
+import { getCurrentPrincipal, runWithPrincipal } from "./principal-context";
 
 const log = createLogger("StrategySim");
 
@@ -580,10 +581,24 @@ export async function evaluateMoveWithAgent(
     }
   };
 
+  // Establish a principal for the agent run. The detached (non-awaited) path
+  // otherwise reaches the tracked inference boundary with no principal in
+  // AsyncLocalStorage, so currentOwnership() (fail-closed by design) throws and
+  // the inference-audit (CostTracker) write is dropped. Reuse the shared
+  // autonomous resolver; callers that already hold a principal pass through.
+  const dispatchWork = async (): Promise<string> => {
+    if (getCurrentPrincipal()) return work();
+    const { resolveAutonomousPrincipal } = await import("./autonomous-skill-runner");
+    const principal = await resolveAutonomousPrincipal();
+    return runWithPrincipal(principal, work);
+  };
+
   if (options?.awaitResult) {
-    await work();
+    await dispatchWork();
   } else {
-    work();
+    void dispatchWork().catch((err: unknown) => {
+      log.error(`evaluateMoveWithAgent detached run failed runId=${runId}: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   return runId;

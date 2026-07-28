@@ -33,7 +33,7 @@ const lifecycleLog = createLogger("AutonomousLifecycle");
 // This is resolved once and cached for the process lifetime.
 let _cachedAutonomousPrincipal: Principal | null = null;
 
-async function resolveAutonomousPrincipal(): Promise<Principal> {
+export async function resolveAutonomousPrincipal(): Promise<Principal> {
   if (_cachedAutonomousPrincipal) return _cachedAutonomousPrincipal;
   try {
     const { resolveUserIdentityFoundation } = await import("./principal");
@@ -1364,6 +1364,21 @@ async function runSkillPipeline(
  * Fire-and-forget from the caller's perspective.
  */
 export async function triggerResponseOnChildSession(sessionId: string): Promise<void> {
+  // ── Ensure user principal context ───────────────────────────────────
+  // This is a detached, fire-and-forget entry point: callers dispatch it
+  // via `void triggerResponseOnChildSession(...)` from cross-session message
+  // tool handlers, so a user principal is not reliably present in
+  // AsyncLocalStorage by the time the run reaches the tracked inference
+  // boundary. Without one, currentOwnership() (fail-closed by design) throws
+  // and every inference-audit (CostTracker) write for the child run is dropped.
+  // Resolve the autonomous principal and wrap the whole execution, exactly as
+  // executeAutonomousSkillRun does. Callers that already hold a principal
+  // (interactive parents inheriting context) pass through unchanged.
+  if (!getCurrentPrincipal()) {
+    const principal = await resolveAutonomousPrincipal();
+    return runWithPrincipal(principal, () => triggerResponseOnChildSession(sessionId));
+  }
+
   // Gate: if the session already has an active agent run, do nothing —
   // the existing run will pick up the new message naturally.
   if (agentExecutor.hasActiveRunForSession(sessionId)) {
