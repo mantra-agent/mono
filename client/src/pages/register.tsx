@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation, useParams } from "wouter";
 import { useRegister } from "@/hooks/use-auth";
-import { completeStartupOnboarding } from "@/lib/startup-onboarding";
+import {
+  completeStartupOnboarding,
+  getStartupOnboardingDestination,
+} from "@/lib/startup-onboarding";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,13 +104,7 @@ export default function RegisterPage() {
     setSavingName(true);
     try {
       const result = await completeStartupOnboarding(name);
-      const params = new URLSearchParams();
-      if (result.ftueSessionId) {
-        params.set("c", result.ftueSessionId);
-        params.set("autoVoice", "1");
-      }
-      const query = params.toString();
-      setLocation(`/session${query ? `?${query}` : ""}`, { replace: true });
+      setLocation(getStartupOnboardingDestination(result), { replace: true });
     } catch (err: any) {
       setAuthError({ title: err?.message || "Could not save name", detail: err?.message });
       setSavingName(false);
