@@ -22,6 +22,33 @@ export const LEGACY_MEMORY_QUARANTINE_SCHEMA = "legacy_memory_archive";
 const RETIRED_LEGACY_MEMORY_QUARANTINE_SCHEMA = "legacy_memory_quarantine";
 export const LEGACY_MEMORY_ARCHIVE_PREFIX =
   "private/archives/legacy-memory/stage/env-11/";
+export const LIVE_LEGACY_MEMORY_ARCHIVE_PREFIX =
+  "private/archives/legacy-memory/live/env-12/";
+
+/**
+ * Per-environment quarantine configuration. The prepare/apply core is otherwise
+ * environment-agnostic: the archive object prefix and the authoritative
+ * Platform Environment stamped into (and verified against) the manifest are the
+ * only environment-specific facts. Keeping them in one config value is what lets
+ * Stage and Live share the exact same archive-first prepare/verify/apply core
+ * (DRY) without weakening either environment's boundary.
+ */
+export interface LegacyMemoryQuarantineEnvironment {
+  platformEnvironmentId: number;
+  archivePrefix: string;
+}
+
+export const STAGE_LEGACY_MEMORY_QUARANTINE_ENV: LegacyMemoryQuarantineEnvironment =
+  {
+    platformEnvironmentId: 11,
+    archivePrefix: LEGACY_MEMORY_ARCHIVE_PREFIX,
+  };
+
+export const LIVE_LEGACY_MEMORY_QUARANTINE_ENV: LegacyMemoryQuarantineEnvironment =
+  {
+    platformEnvironmentId: 12,
+    archivePrefix: LIVE_LEGACY_MEMORY_ARCHIVE_PREFIX,
+  };
 
 /**
  * Exact allowlisted legacy table closure. `memory_entries` is the root; the
@@ -290,6 +317,52 @@ export async function getLegacyMemoryQuarantineStatus(): Promise<{
     hasRollbackSql: Boolean(state?.rollback_sql),
     catalog,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Zero-write observation
+// ---------------------------------------------------------------------------
+
+export interface LegacyMemoryWriteActivity {
+  inserts: number;
+  updates: number;
+  deletes: number;
+  liveTuples: number;
+}
+
+/**
+ * Read-only sample of cumulative write activity on the retired `memory_entries`
+ * and `memory_links` tables from `pg_stat_user_tables`. Two samples taken across
+ * a window (e.g. prepare in this step and apply in the next) prove zero
+ * write activity: the insert/update/delete deltas must be zero because the
+ * document-store epoch rejects legacy workspace mutation and vNext never writes
+ * these tables. This function never mutates anything.
+ */
+export async function observeLegacyMemoryWriteActivity(): Promise<
+  Record<string, LegacyMemoryWriteActivity>
+> {
+  const result = await pool.query<{
+    relname: string;
+    n_tup_ins: string;
+    n_tup_upd: string;
+    n_tup_del: string;
+    n_live_tup: string;
+  }>(
+    `SELECT relname, n_tup_ins, n_tup_upd, n_tup_del, n_live_tup
+     FROM pg_stat_user_tables
+     WHERE schemaname = 'public' AND relname = ANY($1::text[])`,
+    [["memory_entries", "memory_links"]],
+  );
+  const activity: Record<string, LegacyMemoryWriteActivity> = {};
+  for (const row of result.rows) {
+    activity[row.relname] = {
+      inserts: Number(row.n_tup_ins),
+      updates: Number(row.n_tup_upd),
+      deletes: Number(row.n_tup_del),
+      liveTuples: Number(row.n_live_tup),
+    };
+  }
+  return activity;
 }
 
 // ---------------------------------------------------------------------------
@@ -640,7 +713,9 @@ export type PreparePrecondition = () => Promise<void>;
  * its pruning), read it back, and verify the byte hash. Persists prepared
  * state. Does not move any table.
  */
-export async function prepareLegacyMemoryQuarantine(): Promise<{
+export async function prepareLegacyMemoryQuarantine(
+  env: LegacyMemoryQuarantineEnvironment,
+): Promise<{
   archiveObjectPath: string;
   archiveSha256: string;
   totalRows: number;
@@ -666,7 +741,20 @@ export async function prepareLegacyMemoryQuarantine(): Promise<{
     client.release();
   }
 
-  const archivePrefix = `${LEGACY_MEMORY_ARCHIVE_PREFIX}${archive.manifest.archiveSha256}/`;
+  // Structural guard: an archive can only be prepared by the binary actually
+  // running in the target environment. This makes a wrong-environment prepare
+  // (e.g. preparing a Live archive while running on Stage) unrepresentable
+  // rather than merely discouraged.
+  if (
+    archive.manifest.runtimeIdentity.platformEnvironmentId !==
+    env.platformEnvironmentId
+  ) {
+    throw new Error(
+      `Legacy memory quarantine prepare environment mismatch: archive runtime is Platform Environment ${String(archive.manifest.runtimeIdentity.platformEnvironmentId)} but target is ${env.platformEnvironmentId}`,
+    );
+  }
+
+  const archivePrefix = `${env.archivePrefix}${archive.manifest.archiveSha256}/`;
   const objectKey = `${archivePrefix}archive.jsonl`;
   const manifestKey = `${archivePrefix}manifest.json`;
   const checksumKey = `${archivePrefix}files.sha256`;
@@ -748,6 +836,7 @@ export async function prepareLegacyMemoryQuarantine(): Promise<{
 
 async function verifyPersistedLegacyMemoryArchive(
   state: QuarantineStateRow,
+  env: LegacyMemoryQuarantineEnvironment,
 ): Promise<void> {
   if (!state.archive_object_path || !state.archive_sha256 || !state.manifest) {
     throw new Error(
@@ -758,11 +847,11 @@ async function verifyPersistedLegacyMemoryArchive(
   if (
     manifest.archiveSha256 !== state.archive_sha256 ||
     manifest.quarantineSchema !== LEGACY_MEMORY_QUARANTINE_SCHEMA ||
-    manifest.runtimeIdentity.platformEnvironmentId !== 11 ||
+    manifest.runtimeIdentity.platformEnvironmentId !== env.platformEnvironmentId ||
     manifest.independentDocumentStore !== true
   ) {
     throw new Error(
-      "Legacy memory archive manifest does not match the canonical Stage quarantine contract",
+      "Legacy memory archive manifest does not match the canonical legacy-memory quarantine contract",
     );
   }
   const archivePrefix = state.archive_object_path.slice(
@@ -825,7 +914,9 @@ async function verifyPersistedLegacyMemoryArchive(
  * the applied epoch plus the exact reverse SQL. Requires a verified prepared
  * archive. Does not drop any table.
  */
-export async function applyLegacyMemoryQuarantine(): Promise<{
+export async function applyLegacyMemoryQuarantine(
+  env: LegacyMemoryQuarantineEnvironment,
+): Promise<{
   applied: true;
   movedTables: string[];
   droppedInboundForeignKeys: string[];
@@ -864,7 +955,7 @@ export async function applyLegacyMemoryQuarantine(): Promise<{
         "Legacy memory quarantine requires a verified prepared archive before apply",
       );
     }
-    await verifyPersistedLegacyMemoryArchive(transactionState);
+    await verifyPersistedLegacyMemoryArchive(transactionState, env);
 
     const catalogBeforeApply = await inspectLegacyMemoryCatalogState(client);
     if (

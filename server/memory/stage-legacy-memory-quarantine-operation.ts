@@ -2,6 +2,7 @@ import { createLogger } from "../log";
 import type { RuntimeIdentity } from "../runtime-identity";
 import { documentStoreIndependentWritesEnabled } from "./document-store-cutover";
 import {
+  STAGE_LEGACY_MEMORY_QUARANTINE_ENV,
   applyLegacyMemoryQuarantine,
   getLegacyMemoryQuarantineStatus,
   legacyMemoryQuarantineWasAppliedAtBoot,
@@ -82,7 +83,7 @@ export async function requestStageLegacyMemoryQuarantineAfterReadiness(
 
   const status = initialStatus;
   if (!status.preparedAt || !status.archiveSha256) {
-    await prepareLegacyMemoryQuarantine();
+    await prepareLegacyMemoryQuarantine(STAGE_LEGACY_MEMORY_QUARANTINE_ENV);
     // Request a supervised planned restart so the deployed binary self-converges
     // to apply on the next fresh boot instead of waiting passively for an
     // unrelated deployment. The apply branch below re-prepares and re-verifies
@@ -99,8 +100,10 @@ export async function requestStageLegacyMemoryQuarantineAfterReadiness(
   // A later boot always refreshes and re-verifies the archive immediately
   // before apply. This makes destructive application impossible on the first
   // deploy of a new execution path while still preventing stale snapshots.
-  await prepareLegacyMemoryQuarantine();
-  const applied = await applyLegacyMemoryQuarantine();
+  await prepareLegacyMemoryQuarantine(STAGE_LEGACY_MEMORY_QUARANTINE_ENV);
+  const applied = await applyLegacyMemoryQuarantine(
+    STAGE_LEGACY_MEMORY_QUARANTINE_ENV,
+  );
   await requestPlannedRestart();
   log.info("stage legacy memory quarantine applied; planned restart requested", {
     appliedByThisProcess: applied.applied,
