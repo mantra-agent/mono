@@ -753,15 +753,19 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       return nearestIndex;
     }
 
+    function resolvePickedIndex(rect: DOMRect): number | null {
+      pointer.x = ((pendingPointer.x - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((pendingPointer.y - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const exactIndex = raycaster.intersectObject(nodeMesh, false)[0]?.instanceId ?? null;
+      return exactIndex ?? pickProjectedNode(rect);
+    }
+
     function pickNode() {
       pointerFrame = 0;
       const rect = renderer.domElement.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return;
-      pointer.x = ((pendingPointer.x - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((pendingPointer.y - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointer, camera);
-      const exactHoveredIndex = raycaster.intersectObject(nodeMesh, false)[0]?.instanceId ?? null;
-      const nextHoveredIndex = exactHoveredIndex ?? pickProjectedNode(rect);
+      const nextHoveredIndex = resolvePickedIndex(rect);
       if (nextHoveredIndex === hoveredIndex) return;
       hoveredIndex = nextHoveredIndex;
       syncFocusNeighborhood();
@@ -789,7 +793,17 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function handlePointerUp(event: PointerEvent) {
       const moved = Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y);
-      if (moved < 6 && hoveredIndex != null) onNodeSelectRef.current(sceneNodes[hoveredIndex].id);
+      if (moved < 6) {
+        // Touch has no hover phase, so resolve the node under the release point
+        // directly rather than relying on a hoveredIndex a pointermove never set.
+        pendingPointer = { x: event.clientX, y: event.clientY };
+        const rect = renderer.domElement.getBoundingClientRect();
+        const tappedIndex = rect.width > 0 && rect.height > 0 ? resolvePickedIndex(rect) : hoveredIndex;
+        if (tappedIndex != null) {
+          hoveredIndex = tappedIndex;
+          onNodeSelectRef.current(sceneNodes[tappedIndex].id);
+        }
+      }
       renderer.domElement.style.cursor = hoveredIndex == null ? "grab" : "pointer";
     }
 
