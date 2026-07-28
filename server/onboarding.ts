@@ -4,7 +4,7 @@ import { z } from "zod";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { requireAuth } from "./auth";
-import { getPrincipal, type Principal } from "./principal";
+import { ensureUserIdentityFoundation, getPrincipal, type Principal } from "./principal";
 import { ownedInsertValues } from "./scoped-storage";
 import { peopleStorage } from "./people-storage";
 import { seedFtuePrioritiesForUser } from "./ftue-goals";
@@ -16,10 +16,8 @@ import { DEFAULT_AGENT_NAME } from "@shared/instance-config";
 import { normalizeEmailAddress } from "./email-normalization";
 import { eventBus } from "./event-bus";
 import {
-  accounts,
   agentProfiles,
   libraryPages,
-  memberships,
   magicDemoSessions,
   userProfiles,
   users,
@@ -89,31 +87,6 @@ function mergeMetadata(existing: unknown, patch: WorkspaceMetadata): WorkspaceMe
     ? (existing as WorkspaceMetadata)
     : {};
   return { ...base, ...patch };
-}
-
-async function ensurePersonalAccount(user: User, principal: Principal & { accountId: string }): Promise<string> {
-  await db
-    .insert(accounts)
-    .values({
-      id: principal.accountId,
-      kind: "personal",
-      name: `Personal Account`,
-      ownerUserId: user.id,
-    })
-    .onConflictDoUpdate({
-      target: accounts.id,
-      set: { updatedAt: sql`CURRENT_TIMESTAMP` },
-    });
-
-  await db
-    .insert(memberships)
-    .values({ accountId: principal.accountId, userId: user.id, role: "owner" })
-    .onConflictDoUpdate({
-      target: [memberships.accountId, memberships.userId],
-      set: { role: "owner", updatedAt: sql`CURRENT_TIMESTAMP` },
-    });
-
-  return principal.accountId;
 }
 
 async function deleteEmptyLegacyMagicDemoRoot(principal: Principal & { userId: string; accountId: string }): Promise<void> {
@@ -350,7 +323,15 @@ export async function createUserWorkspace(
   input: CreateUserWorkspaceInput = {},
 ) {
   const user = await getUserOrThrow(principal.userId);
-  const accountId = await ensurePersonalAccount(user, principal);
+  const requestedName = cleanText(input.name, 120);
+  const foundation = await ensureUserIdentityFoundation(user, { identityName: requestedName });
+  const workspacePrincipal = {
+    ...principal,
+    accountId: foundation.accountId,
+    activeVaultId: foundation.activeVaultId,
+    visibleVaultIds: foundation.visibleVaultIds,
+  };
+  const accountId = foundation.accountId;
   const [[existingProfile], [existingAgentProfile]] = await Promise.all([
     db.select().from(userProfiles).where(eq(userProfiles.userId, principal.userId)).limit(1),
     db.select().from(agentProfiles).where(eq(agentProfiles.userId, principal.userId)).limit(1),
@@ -358,9 +339,11 @@ export async function createUserWorkspace(
   const displayName = cleanText(input.name, 120) ?? existingProfile?.displayName ?? displayNameFor(user, input);
   const preferredName = cleanText(input.preferredName, 80) ?? existingProfile?.preferredName ?? preferredNameFor(user, input);
   const agentName = existingAgentProfile?.agentName ?? FTUE_AGENT_NAME;
-  const roots = await ensurePrivateRoots(principal, preferredName);
+  const { ensureMeetingsRoot } = await import("./meeting/vault-ownership");
+  await ensureMeetingsRoot(workspacePrincipal.activeVaultId, workspacePrincipal);
+  const roots = await ensurePrivateRoots(workspacePrincipal, preferredName);
   if (agentName !== "Agent") {
-    roots.agent = await ensureAgentLibraryRoot(principal, agentName);
+    roots.agent = await ensureAgentLibraryRoot(workspacePrincipal, agentName);
   }
   const magicDemoSessionId = input.enterDemo ? await ensureMagicDemoSession(principal) : null;
 
@@ -444,7 +427,7 @@ export async function createUserWorkspace(
 
   // Fire-and-forget: this is non-critical for the onboarding response.
   // Structurally non-blocking so the user navigates immediately.
-  void ensureUserPerson(principal, displayName, preferredName).catch((err) =>
+  void ensureUserPerson(workspacePrincipal, displayName, preferredName).catch((err) =>
     log.warn("ensureUserPerson failed (non-fatal):", err instanceof Error ? err.message : String(err)),
   );
 

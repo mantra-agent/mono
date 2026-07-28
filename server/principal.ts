@@ -1,11 +1,13 @@
 import { sql, eq, and } from "drizzle-orm";
 import { type Request, type Response, type NextFunction } from "express";
-import { db } from "./db";
+import { ADVISORY_LOCK_NS, acquireAdvisoryTransactionLock, db, type DrizzleTx } from "./db";
 import { createLogger } from "./log";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { accounts, memberships, userProfiles, agentProfiles, privilegedAccessAudit, type User } from "@shared/schema";
 import { getUserEffectivePermissions, type Permission } from "./permissions";
 import { DEFAULT_AGENT_NAME } from "@shared/instance-config";
+import { deriveUserFirstName } from "@shared/identity-name";
+import { PERSONAL_VAULT_COLOR, vaults } from "@shared/models/vaults";
 
 const log = createLogger("principal");
 
@@ -154,6 +156,17 @@ export function createUserPrincipalFromUser(user: User, accountId: string): Prin
   };
 }
 
+export interface UserIdentityFoundation {
+  accountId: string;
+  role: PrincipalRole;
+  activeVaultId: string;
+  visibleVaultIds: string[];
+}
+
+export interface EnsureUserIdentityFoundationOptions {
+  identityName?: string | null;
+}
+
 export async function createUserSessionPrincipal(user: User): Promise<Principal> {
   const foundation = await resolveUserIdentityFoundation(user.id);
   const isAdmin = user.role === "admin";
@@ -167,82 +180,156 @@ export async function createUserSessionPrincipal(user: User): Promise<Principal>
     isAdmin,
     impersonation: null,
     source: "session",
-    visibleVaultIds: user.visibleVaultIds ?? [],
-    activeVaultId: user.activeVaultId ?? null,
+    visibleVaultIds: foundation.visibleVaultIds,
+    activeVaultId: foundation.activeVaultId,
   };
 }
 
-export async function resolveUserIdentityFoundation(userId: string): Promise<{ accountId: string; role: PrincipalRole }> {
-  const existing = await db
-    .select({ accountId: accounts.id, role: memberships.role })
+export async function resolveUserIdentityFoundation(userId: string): Promise<UserIdentityFoundation> {
+  const [existing] = await db
+    .select({
+      accountId: accounts.id,
+      role: memberships.role,
+      activeVaultId: users.activeVaultId,
+      visibleVaultIds: users.visibleVaultIds,
+    })
     .from(accounts)
     .innerJoin(memberships, eq(memberships.accountId, accounts.id))
+    .innerJoin(users, eq(users.id, memberships.userId))
     .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, userId), eq(memberships.userId, userId)))
     .limit(1);
-  if (!existing[0]?.accountId) {
+  if (!existing?.accountId || !existing.activeVaultId) {
     throw new Error(`Identity foundation missing for user ${userId}`);
   }
-  return { accountId: existing[0].accountId, role: normalizeRole(existing[0].role) };
+  return {
+    accountId: existing.accountId,
+    role: normalizeRole(existing.role),
+    activeVaultId: existing.activeVaultId,
+    visibleVaultIds: existing.visibleVaultIds ?? [],
+  };
 }
 
-export async function ensureUserIdentityFoundation(user: User): Promise<{ accountId: string; role: PrincipalRole }> {
-  const existing = await db
-    .select({ accountId: accounts.id, role: memberships.role })
-    .from(accounts)
-    .innerJoin(memberships, eq(memberships.accountId, accounts.id))
-    .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, user.id), eq(memberships.userId, user.id)))
-    .limit(1);
+export async function ensureUserIdentityFoundation(
+  user: User,
+  options: EnsureUserIdentityFoundationOptions = {},
+): Promise<UserIdentityFoundation> {
+  return db.transaction(async (tx) => {
+    await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.USER_IDENTITY, user.id);
 
-  if (existing[0]?.accountId) {
-    return { accountId: existing[0].accountId, role: normalizeRole(existing[0].role) };
-  }
+    const identityName = options.identityName?.replace(/\s+/g, " ").trim().slice(0, 120) || null;
 
-  const accountName = "Personal Account";
-  const [account] = await db
-    .insert(accounts)
-    .values({ kind: "personal", name: accountName, ownerUserId: user.id })
-    .onConflictDoUpdate({
-      target: [accounts.kind, accounts.ownerUserId],
-      set: { updatedAt: sql`CURRENT_TIMESTAMP` },
-    })
-    .returning();
+    const [existingProfile] = await tx
+      .select({ preferredName: userProfiles.preferredName, displayName: userProfiles.displayName })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, user.id))
+      .limit(1);
+    const firstName = deriveUserFirstName({
+      preferredName: identityName ?? existingProfile?.preferredName,
+      displayName: identityName ?? existingProfile?.displayName,
+      email: user.email,
+    }, "Personal");
 
-  const accountId = account?.id ?? (await db
-    .select({ id: accounts.id })
-    .from(accounts)
-    .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, user.id)))
-    .limit(1))[0]?.id;
+    const [existingAccount] = await tx
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, user.id)))
+      .limit(1);
 
-  if (!accountId) throw new Error(`Failed to resolve personal account for user ${user.id}`);
+    const accountId = existingAccount?.id ?? (await tx
+      .insert(accounts)
+      .values({ kind: "personal", name: firstName, ownerUserId: user.id })
+      .onConflictDoUpdate({
+        target: [accounts.kind, accounts.ownerUserId],
+        set: { updatedAt: sql`CURRENT_TIMESTAMP` },
+      })
+      .returning({ id: accounts.id }))[0]?.id;
+    if (!accountId) throw new Error(`Failed to resolve personal account for user ${user.id}`);
 
-  const membershipRole = "owner";
-  await db
-    .insert(memberships)
-    .values({ accountId, userId: user.id, role: membershipRole })
-    .onConflictDoUpdate({
-      target: [memberships.accountId, memberships.userId],
-      set: { role: membershipRole, updatedAt: sql`CURRENT_TIMESTAMP` },
-    });
+    const membershipRole = "owner";
+    await tx
+      .insert(memberships)
+      .values({ accountId, userId: user.id, role: membershipRole })
+      .onConflictDoUpdate({
+        target: [memberships.accountId, memberships.userId],
+        set: { role: membershipRole, updatedAt: sql`CURRENT_TIMESTAMP` },
+      });
 
-  await ensureProfileRows(user, accountId);
-  return { accountId, role: normalizeRole(membershipRole) };
+    await ensureProfileRows(tx, user, accountId, identityName);
+
+    const [existingDefaultVault] = await tx
+      .select({ id: vaults.id })
+      .from(vaults)
+      .where(and(eq(vaults.accountId, accountId), eq(vaults.isDefault, true)))
+      .orderBy(vaults.createdAt, vaults.id)
+      .limit(1);
+
+    const createdDefaultVault = !existingDefaultVault;
+    const defaultVaultId = existingDefaultVault?.id ?? (await tx
+      .insert(vaults)
+      .values({
+        accountId,
+        name: firstName,
+        icon: firstName.slice(0, 1).toUpperCase(),
+        color: PERSONAL_VAULT_COLOR,
+        position: 0,
+        isDefault: true,
+        isArchived: false,
+      })
+      .returning({ id: vaults.id }))[0]?.id;
+    if (!defaultVaultId) throw new Error(`Failed to resolve default Vault for user ${user.id}`);
+
+    const [currentUser] = await tx
+      .select({ activeVaultId: users.activeVaultId, visibleVaultIds: users.visibleVaultIds })
+      .from(users)
+      .where(eq(users.id, user.id))
+      .limit(1);
+    if (!currentUser) throw new Error(`User not found while provisioning identity foundation ${user.id}`);
+
+    const activeVaultId = currentUser.activeVaultId ?? defaultVaultId;
+    const visibleVaultIds = Array.from(new Set([
+      ...(currentUser.visibleVaultIds ?? []),
+      ...(createdDefaultVault || !currentUser.activeVaultId ? [defaultVaultId] : []),
+      activeVaultId,
+    ]));
+
+    await tx
+      .update(users)
+      .set({ activeVaultId, visibleVaultIds })
+      .where(eq(users.id, user.id));
+
+    return {
+      accountId,
+      role: normalizeRole(membershipRole),
+      activeVaultId,
+      visibleVaultIds,
+    };
+  });
 }
 
-async function ensureProfileRows(user: User, accountId: string): Promise<void> {
-  await db
+async function ensureProfileRows(
+  tx: DrizzleTx,
+  user: User,
+  accountId: string,
+  identityName: string | null,
+): Promise<void> {
+  await tx
     .insert(userProfiles)
     .values({
       userId: user.id,
       accountId,
-      displayName: null,
-      preferredName: null,
+      displayName: identityName,
+      preferredName: identityName,
     })
     .onConflictDoUpdate({
       target: userProfiles.userId,
-      set: { accountId, updatedAt: sql`CURRENT_TIMESTAMP` },
+      set: {
+        accountId,
+        ...(identityName ? { displayName: identityName, preferredName: identityName } : {}),
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      },
     });
 
-  await db
+  await tx
     .insert(agentProfiles)
     .values({ userId: user.id, accountId, agentName: DEFAULT_AGENT_NAME })
     .onConflictDoUpdate({
