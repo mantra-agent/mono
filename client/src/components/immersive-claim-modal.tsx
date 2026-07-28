@@ -4,6 +4,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("ImmersiveClaimModal");
@@ -47,6 +48,7 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // React state setters are async; a synchronous ref is the concurrency lock so
@@ -95,6 +97,10 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
       setError("Passwords do not match.");
       return;
     }
+    if (!termsAccepted) {
+      setError("Agree to the Terms of Service to continue.");
+      return;
+    }
 
     submittingRef.current = true;
     setSubmitting(true);
@@ -103,6 +109,7 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
         token: onboardingToken,
         name: name.trim(),
         password,
+        termsAccepted: true,
       });
       const data = await res.json();
       queryClient.setQueryData(["/api/auth/me"], data);
@@ -129,10 +136,9 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
       >
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
-            <h2 className="text-lg font-semibold text-foreground">Make it yours</h2>
+            <h2 className="text-lg font-semibold text-foreground">Create Your Account</h2>
             <p className="text-sm text-muted-foreground">
-              Keep this conversation and everything it captured. Create your account to pick up
-              where you left off.
+              Create your account to access the meeting notes and continue with Mantra.
             </p>
           </div>
 
@@ -184,14 +190,40 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
             />
           </div>
 
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="claim-terms"
+              checked={termsAccepted}
+              onCheckedChange={(checked) => setTermsAccepted(checked === true)}
+              disabled={submitting}
+              className="mt-0.5 border-border data-[state=checked]:border-cta data-[state=checked]:bg-cta data-[state=checked]:text-cta-foreground"
+            />
+            <Label
+              htmlFor="claim-terms"
+              className="cursor-pointer text-sm font-normal leading-5 text-muted-foreground"
+            >
+              I have read and agree to the{" "}
+              <a
+                href="https://www.trymantra.ai/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-cta underline underline-offset-4 hover:text-active"
+                onClick={(event) => event.stopPropagation()}
+              >
+                Terms of Service
+              </a>
+              .
+            </Label>
+          </div>
+
           {error ? (
             <p className="text-sm text-destructive" role="alert">
               {error}
             </p>
           ) : null}
 
-          <Button type="submit" disabled={submitting} className="w-full">
-            {submitting ? "Creating account…" : "Create account"}
+          <Button type="submit" disabled={submitting || !termsAccepted} className="w-full">
+            {submitting ? "Continuing…" : "Continue"}
           </Button>
         </div>
       </form>
