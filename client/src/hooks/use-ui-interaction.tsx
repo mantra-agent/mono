@@ -11,7 +11,10 @@ import {
 } from "react";
 import { useLocation, useSearch } from "wouter";
 import {
+  getUiInteractionTargetHref,
+  getUiInteractionTargetPermission,
   isUiInteractionCommand,
+  isUiInteractionTargetOpen,
   type UiInteractionCommand,
   type UiInteractionReason,
   type UiInteractionTarget,
@@ -21,6 +24,7 @@ import { createLogger } from "@/lib/logger";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useAuth } from "@/hooks/use-auth";
 
 const log = createLogger("UiInteraction");
 const WS_OWNER = "ui-interaction";
@@ -44,10 +48,6 @@ interface UiInteractionContextValue {
 }
 
 const UiInteractionContext = createContext<UiInteractionContextValue | null>(null);
-
-function memoryGraphIsOpen(path: string, search: string): boolean {
-  return path === "/memory" && new URLSearchParams(search).get("tab") === "graph";
-}
 
 function GuideSpotlight({ target, onCancel }: { target: HTMLElement; onCancel: () => void }) {
   const [rect, setRect] = useState<TargetRect | null>(null);
@@ -100,6 +100,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation();
   const search = useSearch();
   const isMobile = useIsMobile();
+  const { hasPermission } = useAuth();
   const { setOpen, setOpenMobile, closeSidebar } = useSidebar();
   const { setWidgetOpen } = useFocusSession();
   const targetsRef = useRef<TargetRegistry>(new Map());
@@ -137,15 +138,19 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
     sendResult(command, outcome, reason);
   }, [sendResult]);
 
-  const invoke = useCallback((target: UiInteractionTarget) => {
-    if (target !== "navigation.memoryGraph.open") return;
-    if (isMobile) setWidgetOpen(false);
-    navigate("/memory?tab=graph");
-    closeSidebar();
-  }, [closeSidebar, isMobile, navigate, setWidgetOpen]);
+  const canInvoke = useCallback((target: UiInteractionTarget) => {
+    const permission = getUiInteractionTargetPermission(target);
+    return !permission || hasPermission(permission);
+  }, [hasPermission]);
 
-  const reveal = useCallback((target: UiInteractionTarget) => {
-    if (target !== "navigation.memoryGraph.open") return;
+  const invoke = useCallback((target: UiInteractionTarget) => {
+    if (!canInvoke(target)) return;
+    if (isMobile) setWidgetOpen(false);
+    navigate(getUiInteractionTargetHref(target));
+    closeSidebar();
+  }, [canInvoke, closeSidebar, isMobile, navigate, setWidgetOpen]);
+
+  const reveal = useCallback((_target: UiInteractionTarget) => {
     if (isMobile) {
       setWidgetOpen(false);
       setOpenMobile(true);
@@ -177,8 +182,16 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (!canInvoke(message.target)) {
+        sendResult(message, "unavailable", "target_unavailable");
+        return;
+      }
       const previous = activeCommandRef.current;
-      if (previous) sendResult(previous, "cancelled", "superseded");
+      if (previous) {
+        activeCommandRef.current = null;
+        setActiveCommand(null);
+        sendResult(previous, "cancelled", "superseded");
+      }
       activeCommandRef.current = message;
       setActiveCommand(message);
 
@@ -195,11 +208,11 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
       sharedWSRef.current = null;
       releaseSharedWS(WS_OWNER);
     };
-  }, [sendResult, settle]);
+  }, [canInvoke, sendResult, settle]);
 
   useEffect(() => {
     if (!activeCommand) return;
-    if (activeCommand.target === "navigation.memoryGraph.open" && memoryGraphIsOpen(location, search)) {
+    if (isUiInteractionTargetOpen(activeCommand.target, location, search)) {
       settle("completed");
     }
   }, [activeCommand, location, search, settle]);
