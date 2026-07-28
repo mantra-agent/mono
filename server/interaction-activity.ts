@@ -32,7 +32,7 @@ export async function queryNonMeetingInteractionEventSeries(
       interaction.value->>'date' AS date,
       COUNT(DISTINCT COALESCE(
         NULLIF(substring(interaction.value->>'context' FROM '^(email:[^: ]+:[^: ]+:[^: ]+)'), ''),
-        ${persons.id} || ':' || interaction.value->>'id'
+        concat(${persons.id}, ':', interaction.value->>'id')
       ))::int AS value
     FROM ${persons}
     CROSS JOIN LATERAL jsonb_array_elements(
