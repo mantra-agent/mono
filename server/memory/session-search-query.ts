@@ -1,5 +1,9 @@
-import { and, desc, sql, type SQL } from "drizzle-orm";
-import { documentStoreDocuments } from "@shared/schema";
+import { and, desc, eq, sql } from "drizzle-orm";
+import {
+  documentStoreDocuments,
+  sessionSearchSegments,
+  SESSION_SEARCH_PROJECTION_VERSION,
+} from "@shared/schema";
 import { db } from "../db";
 import type { Principal } from "../principal";
 import { combineWithVisibleScope } from "../scoped-storage";
@@ -16,7 +20,7 @@ export function buildLiteralSubstringPattern(searchTerm: string): string {
   return `%${escaped}%`;
 }
 
-function sessionSearchCandidatePredicate(searchTerm: string): SQL {
+function legacySessionSearchCandidatePredicate(searchTerm: string) {
   const searchPattern = buildLiteralSubstringPattern(searchTerm);
   return sql`${documentStoreDocuments.id} IN (
     WITH session_search_candidates AS MATERIALIZED (
@@ -34,12 +38,13 @@ function sessionSearchCandidatePredicate(searchTerm: string): SQL {
   )`;
 }
 
-export function buildTargetSessionSearchQuery(
+export function buildLegacySessionSearchQuery(
   principal: Principal,
   cutoffIso: string,
   searchTerm: string,
   maxResults: number,
 ) {
+  const updatedAt = sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text)`;
   return db
     .select({
       docId: documentStoreDocuments.documentId,
@@ -49,22 +54,57 @@ export function buildTargetSessionSearchQuery(
       updatedAt: documentStoreDocuments.updatedAt,
     })
     .from(documentStoreDocuments)
+    .where(combineWithVisibleScope(
+      principal,
+      targetChatDocumentScopeColumns,
+      and(
+        sql`${documentStoreDocuments.documentType} = 'chat'`,
+        sql`${updatedAt} >= ${cutoffIso}`,
+        sql`coalesce((${documentStoreDocuments.metadata}->>'messageCount')::int, 0) > 0`,
+        legacySessionSearchCandidatePredicate(searchTerm),
+      ),
+    ))
+    .orderBy(desc(updatedAt))
+    .limit(Math.max(1, Math.min(maxResults, 100)));
+}
+
+export function buildTargetSessionSearchQuery(
+  principal: Principal,
+  cutoffIso: string,
+  searchTerm: string,
+  maxResults: number,
+) {
+  const searchPattern = buildLiteralSubstringPattern(searchTerm);
+  const updatedAt = sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text)`;
+  const matchOffset = sql`greatest(strpos(lower(${sessionSearchSegments.content}), lower(${searchTerm})) - 80, 1)`;
+
+  return db
+    .select({
+      docId: documentStoreDocuments.documentId,
+      title: documentStoreDocuments.title,
+      metadata: documentStoreDocuments.metadata,
+      updatedAt: documentStoreDocuments.updatedAt,
+      matchSnippet: sql<string>`min(substring(${sessionSearchSegments.content} from ${matchOffset} for 280))`,
+    })
+    .from(sessionSearchSegments)
+    .innerJoin(
+      documentStoreDocuments,
+      eq(sessionSearchSegments.documentStoreId, documentStoreDocuments.id),
+    )
     .where(
       combineWithVisibleScope(
         principal,
         targetChatDocumentScopeColumns,
         and(
           sql`${documentStoreDocuments.documentType} = 'chat'`,
-          sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text) >= ${cutoffIso}`,
+          sql`${updatedAt} >= ${cutoffIso}`,
           sql`coalesce((${documentStoreDocuments.metadata}->>'messageCount')::int, 0) > 0`,
-          sessionSearchCandidatePredicate(searchTerm),
+          eq(sessionSearchSegments.projectionVersion, SESSION_SEARCH_PROJECTION_VERSION),
+          sql`${sessionSearchSegments.content} ILIKE ${searchPattern} ESCAPE '!'`,
         ),
       ),
     )
-    .orderBy(
-      desc(
-        sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text)`,
-      ),
-    )
+    .groupBy(documentStoreDocuments.id)
+    .orderBy(desc(updatedAt))
     .limit(Math.max(1, Math.min(maxResults, 100)));
 }

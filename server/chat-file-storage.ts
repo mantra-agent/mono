@@ -4,16 +4,20 @@ import {
   acquireAdvisoryTransactionLock,
   BOOT_ID,
   db,
+  hasAmbientDatabaseTransaction,
   runOutsideDatabaseTransaction,
   runWithDatabaseTransaction,
 } from "./db";
 import { accounts, users, documentStoreDocuments, planStepAttempts, planSteps, sessionArtifacts, sessionTree, compactionOperations } from "@shared/schema";
+import { replaceSessionSearchProjection } from "./memory/session-search-projection";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import {
+  buildLegacySessionSearchQuery,
   buildLiteralSubstringPattern,
   buildTargetSessionSearchQuery,
 } from "./memory/session-search-query";
+import { isSessionSearchProjectionReady } from "./memory/session-search-projection";
 import { generateId } from "./file-storage/utils";
 import { createLogger } from "./log";
 import { markSessionDeleted } from "./chat-journal";
@@ -802,8 +806,8 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
   };
 }
 
-async function writeConv(data: SessionData): Promise<void> {
-  await documentStorage.upsertDocument(
+async function writeConvInAmbientTransaction(data: SessionData): Promise<void> {
+  const document = await documentStorage.upsertDocument(
     "chat",
     data.id,
     `chat/text/conv-${data.id}.json`,
@@ -811,6 +815,15 @@ async function writeConv(data: SessionData): Promise<void> {
     JSON.stringify(data),
     buildConvDocumentMetadata(data),
   );
+  await replaceSessionSearchProjection(document.documentStoreId, data);
+}
+
+async function writeConv(data: SessionData): Promise<void> {
+  if (!hasAmbientDatabaseTransaction()) {
+    await withConvLock(data.id, () => writeConvInAmbientTransaction(data));
+    return;
+  }
+  await writeConvInAmbientTransaction(data);
   if (
     data.parentSessionId ||
     data.spawnReason ||
@@ -2565,11 +2578,12 @@ export const chatFileStorage: IChatFileStorage = {
       data.vaultId = vaultId;
       data.meeting = { ...data.meeting, vaultId, libraryNodePageId };
       data.updatedAt = new Date().toISOString();
-      await documentStorage.moveDocumentToVault("chat", sessionId, vaultId, {
+      const document = await documentStorage.moveDocumentToVault("chat", sessionId, vaultId, {
         title: data.title,
         content: JSON.stringify(data),
         metadata: buildConvDocumentMetadata(data),
       });
+      await replaceSessionSearchProjection(document.documentStoreId, data);
       const session = convToMeta(data);
       invalidateSessionsCache({ action: "updated", sessionId, session });
       return session;
@@ -3388,6 +3402,7 @@ export const chatFileStorage: IChatFileStorage = {
             if (updated.length !== 1) {
               throw new Error(`Locked chat document update failed: chat/${id}`);
             }
+            await replaceSessionSearchProjection(locked.id, data);
             invalidateSessionsCache({
               action: "updated",
               sessionId: id,
@@ -4220,7 +4235,7 @@ export async function searchSessionSummaries(
   let snippetHydrationMs = 0;
   let resultDbStartedAt: number | undefined;
   let snippetHydrationStartedAt: number | undefined;
-  const source: SessionSearchDiagnostics["source"] = "target";
+  let source: SessionSearchDiagnostics["source"] = "target";
 
   try {
     const queryBuildStartedAt = performance.now();
@@ -4230,25 +4245,46 @@ export async function searchSessionSummaries(
     queryBuildMs = performance.now() - queryBuildStartedAt;
 
     resultDbStartedAt = performance.now();
+    const projectionReady = await isSessionSearchProjectionReady();
+    source = projectionReady ? "target" : "legacy";
     const rows = await executeBoundedSessionSearch(() =>
-      buildTargetSessionSearchQuery(
-        principal,
-        cutoff.toISOString(),
-        trimmed,
-        maxResults,
-      ),
+      projectionReady
+        ? buildTargetSessionSearchQuery(
+            principal,
+            cutoff.toISOString(),
+            trimmed,
+            maxResults,
+          )
+        : buildLegacySessionSearchQuery(
+            principal,
+            cutoff.toISOString(),
+            trimmed,
+            maxResults,
+          ),
     );
     resultDbMs = performance.now() - resultDbStartedAt;
     resultDbStartedAt = undefined;
 
     snippetHydrationStartedAt = performance.now();
-    const summaries = await buildSessionSummaries(rows.filter((row): row is {
-      docId: string;
-      title: string | null;
-      content: string;
-      metadata: unknown;
-      updatedAt: Date | null;
-    } => Boolean(row.docId)));
+    const summaries = projectionReady
+      ? rows
+          .filter((row) => Boolean(row.docId))
+          .map((row) => ({
+            id: row.docId,
+            title: row.title || "Untitled Session",
+            updatedAt:
+              ((row.metadata as Record<string, unknown> | null)?.updatedAt as string | undefined) ||
+              row.updatedAt?.toISOString?.() ||
+              "",
+            snippet: "matchSnippet" in row ? row.matchSnippet : "",
+          }))
+      : await buildSessionSummaries(rows.filter((row) => "content" in row && Boolean(row.docId)) as Array<{
+          docId: string;
+          title: string | null;
+          content: string;
+          metadata: unknown;
+          updatedAt: Date | null;
+        }>);
     snippetHydrationMs = performance.now() - snippetHydrationStartedAt;
     snippetHydrationStartedAt = undefined;
     onDiagnostics?.({

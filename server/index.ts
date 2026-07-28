@@ -563,6 +563,16 @@ app.use((req, res, next) => {
           );
         });
 
+      import("./memory/session-search-projection")
+        .then(({ startSessionSearchProjectionBackfill }) => {
+          startSessionSearchProjectionBackfill();
+        })
+        .catch((err) => {
+          serverLog.error("session search projection backfill unavailable", {
+            errorName: err instanceof Error ? err.name : typeof err,
+          });
+        });
+
       // Account-specific Library integrity repair runs only after readiness.
       // It is exact-match, replay-safe, bounded, and cannot become a universal
       // service dependency while repairing one diagnosed hierarchy edge.

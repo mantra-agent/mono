@@ -204,6 +204,24 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
     await pool.query(`ALTER TABLE document_store_documents ADD COLUMN IF NOT EXISTS ${quoteIdent(name)} ${type}`);
   }
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_document_store_source_memory_entry ON document_store_documents(source_memory_entry_id) WHERE source_memory_entry_id IS NOT NULL`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS session_search_segments (
+      id SERIAL PRIMARY KEY,
+      document_store_id INTEGER NOT NULL REFERENCES document_store_documents(id) ON DELETE CASCADE,
+      segment_key TEXT NOT NULL,
+      segment_kind TEXT NOT NULL,
+      source_id TEXT,
+      ordinal INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      projection_version INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT ck_session_search_segments_kind CHECK (segment_kind IN ('title', 'agenda', 'message', 'tool')),
+      CONSTRAINT ck_session_search_segments_ordinal CHECK (ordinal >= 0),
+      CONSTRAINT ck_session_search_segments_content CHECK (char_length(content) BETWEEN 1 AND 4096)
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_session_search_segments_document_key ON session_search_segments(document_store_id, segment_key)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_search_segments_document ON session_search_segments(document_store_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_key ON document_store_documents(migration_key)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_source_hashes ON document_store_documents(source_content_hash, source_metadata_hash, source_identity_hash)`);
   await pool.query(`
@@ -3245,6 +3263,7 @@ export async function runSchemaBootstrap(
       deprecateRetiredBuiltinSkills,
       migrateSkillProcessUpdates,
       migrateAutonomyCanonicalMeetingPrep,
+      migrateAutonomyProvenanceVerification,
       migrateDailyBriefCanonicalMeetingPrep,
       migrateSentryRecentChangelistGate,
       migrateLegacySkillPersonaPreferences,
@@ -3260,6 +3279,7 @@ export async function runSchemaBootstrap(
     await deprecateRetiredBuiltinSkills();
     await migrateSkillProcessUpdates();
     await migrateAutonomyCanonicalMeetingPrep();
+    await migrateAutonomyProvenanceVerification();
     await migrateDailyBriefCanonicalMeetingPrep();
     await migrateSentryRecentChangelistGate();
     await deleteZombieSkills();

@@ -544,6 +544,56 @@ export async function migrateAutonomyCanonicalMeetingPrep(): Promise<void> {
   }
 }
 
+const AUTONOMY_PROVENANCE_VERIFICATION_V17 = `## Session-ledger verification
+
+Sessions remain the universal execution ledger, but routine reconciliation is provenance-first:
+
+1. Enumerate changed timers, skill runs, plan/workflow attempts, tasks, and sessions from their canonical status/timestamp fields since the last checkpoint.
+2. Retain and follow exact session IDs already attached to those producers. Inspect authoritative messages by exact ID with \`session.get_messages\` when outcome evidence is needed.
+3. Use \`session.list\` for bounded metadata discovery when provenance is incomplete. Reserve \`session.search\` for historical recovery, human recall, or genuinely missing identity; do not use guessed keywords as the normal proof that scheduled work ran.
+4. Reconcile terminal status and canonical artifacts/tasks from exact records. A fuzzy text match is discovery evidence, never execution identity.
+`;
+
+export async function migrateAutonomyProvenanceVerification(): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [existing] = await db
+      .select({
+        id: skills.id,
+        author: skills.author,
+        customized: skills.customized,
+        version: skills.version,
+        process: skills.process,
+      })
+      .from(skills)
+      .where(eq(skills.name, "autonomy"));
+    if (!existing || existing.author !== "system" || existing.customized === true) return;
+    const versionOrder = compareSkillVersions(existing.version, "1.7");
+    if (versionOrder === null || versionOrder >= 0) return;
+    if (existing.version !== "1.6" || !existing.process.includes(AUTONOMY_MEETING_PROTOCOL_V16)) {
+      log.warn(`Skipped autonomy provenance verification migration from ${existing.version}: expected v1.6 canonical policy was not found`);
+      return;
+    }
+
+    const process = existing.process.includes("## Session-ledger verification")
+      ? existing.process
+      : `${existing.process.trim()}\n\n${AUTONOMY_PROVENANCE_VERIFICATION_V17.trim()}`;
+    const updated = await db
+      .update(skills)
+      .set({ process, version: "1.7", updatedAt: new Date() })
+      .where(and(
+        eq(skills.id, existing.id),
+        eq(skills.author, "system"),
+        eq(skills.customized, false),
+        eq(skills.version, existing.version),
+      ))
+      .returning({ id: skills.id });
+    if (updated.length > 0) {
+      log.info(`Migrated autonomy verification policy ${existing.version} → 1.7 without replacing newer live content`);
+      return;
+    }
+  }
+}
+
 export async function migrateDailyBriefCanonicalMeetingPrep(): Promise<void> {
   const [existing] = await db
     .select({ id: skills.id, author: skills.author, customized: skills.customized, version: skills.version, process: skills.process })
