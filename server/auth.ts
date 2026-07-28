@@ -14,7 +14,7 @@ import crypto from "crypto";
 import { storage } from "./storage";
 import { getSetting, setSetting } from "./system-settings";
 import { getAutomationAuthToken } from "./automation-auth-token";
-import { loginSchema, registerSchema, users, type User } from "@shared/schema";
+import { loginSchema, registerSchema, userProfiles, users, type User } from "@shared/schema";
 import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import {
@@ -34,11 +34,21 @@ import { MEETING_JOIN_POLICIES, getMeetingJoinPolicy, setMeetingJoinPolicy } fro
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { getClientPresenceSnapshot } from "./client-presence";
 import { normalizeEmailAddress } from "./email-normalization";
-import { db } from "./db";
+import { db, acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS } from "./db";
 import { claimInvitedSubjectInTransaction } from "./invited-subject-service";
 
 const setupSchema = z.object({
   email: z.string().email(),
+  password: z.string().min(8),
+});
+
+// Invite-authorized account claim. The onboarding token is the sole
+// authorization and the sole source of the bound email — the request body
+// never carries an email, so a claimant cannot bind the token to a different
+// identity.
+const claimSchema = z.object({
+  token: z.string().min(1).max(200),
+  name: z.string().min(1).max(120),
   password: z.string().min(8),
 });
 
@@ -737,6 +747,126 @@ export function setupAuth(app: Express) {
         return res.status(400).json({ error: "Email already exists" });
       }
       res.status(500).json({ error: "Registration failed" });
+    }
+  });
+
+  /**
+   * POST /api/auth/claim
+   *
+   * Invite-authorized account claim for a meeting-recap recipient. The
+   * onboarding token is the authorization (NOT public registration): it is
+   * re-resolved through the canonical read path and must resolve to a
+   * provisional (unclaimed) recipient. On success the provisional identity is
+   * promoted into a real authenticated User — recap access (preserved by email
+   * identity), live object grants, and Action Item ownership all move to the
+   * new User — and an authenticated session is returned. No email round-trip;
+   * PUBLIC_REGISTRATION_ENABLED is irrelevant here.
+   *
+   * Security invariants:
+   *  - Fail closed unless the token resolves to status="resolved" +
+   *    accountState="provisional". A real account => 409 (log in instead).
+   *  - Email is derived ONLY from the token, never the request body.
+   *  - The whole promotion is serialized on the recipient email via the
+   *    INVITED_SUBJECT advisory lock and re-checks for an existing user inside
+   *    the lock, so a double-submit can neither create two users nor
+   *    double-rebind grants (replay-safe / idempotent: first claim wins, later
+   *    submits get 409 without touching the existing account or its password).
+   */
+  app.post("/api/auth/claim", enforceAuthBudget("claim", 8), async (req: Request, res: Response) => {
+    try {
+      const parsed = claimSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid claim data", details: parsed.error.flatten() });
+      }
+      const { token, name, password } = parsed.data;
+
+      // 1. Re-resolve via the canonical pure-read path. Dynamic import avoids
+      //    any module-load cycle between auth and the meeting subsystem.
+      const { resolveOnboardingToken } = await import("./meeting/distribution");
+      const resolution = await resolveOnboardingToken(token);
+      if (resolution.status !== "resolved") {
+        return res.status(404).json({ error: "This invitation is no longer valid" });
+      }
+      if (resolution.accountState !== "provisional") {
+        // A real account already owns this email. The token cannot set its
+        // password; the recipient must authenticate through login.
+        return res.status(409).json({
+          error: "An account already exists for this invitation. Please log in.",
+          email: resolution.email,
+        });
+      }
+
+      const email = normalizeEmailAddress(resolution.email);
+      const hashed = await bcrypt.hash(password, 12);
+
+      // 2-3. Atomically create the real user, set the password, and rebind the
+      //      provisional identity's live grants + task assignments. Serialized
+      //      on the recipient email so concurrent submits cannot create two
+      //      users or double-rebind grants.
+      const claimResult = await db.transaction(async (tx) => {
+        await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.INVITED_SUBJECT, email);
+
+        const [existingUser] = await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(sql`LOWER(BTRIM(${users.email})) = ${email}`)
+          .limit(1);
+        if (existingUser) {
+          return { alreadyClaimed: true as const };
+        }
+
+        const [createdUser] = await tx
+          .insert(users)
+          .values({ email, password: hashed })
+          .returning();
+        if (!createdUser) throw new Error("Claim user creation produced no row");
+        const rebind = await claimInvitedSubjectInTransaction(tx, createdUser);
+        return { alreadyClaimed: false as const, user: createdUser, rebind };
+      });
+
+      if (claimResult.alreadyClaimed) {
+        // A prior/concurrent claim already promoted this email. Never create a
+        // second user or reset the existing account's password.
+        return res.status(409).json({
+          error: "An account already exists for this invitation. Please log in.",
+          email,
+        });
+      }
+
+      // 4. Establish the authenticated session for the new principal. This also
+      //    ensures the identity foundation (account, membership, profile rows).
+      const principal = await completeUserAuth(req, res, claimResult.user, "claim");
+
+      // Persist the recipient-provided display name on the freshly created
+      // profile row (created with null names by ensureUserIdentityFoundation).
+      const displayName = name.trim().slice(0, 120);
+      if (displayName) {
+        await db
+          .update(userProfiles)
+          .set({ displayName, preferredName: displayName, updatedAt: sql`CURRENT_TIMESTAMP` })
+          .where(eq(userProfiles.userId, claimResult.user.id));
+      }
+
+      log.info("[AuthClaim] Provisional recipient claimed account", {
+        userId: claimResult.user.id,
+        reboundGrantCount: claimResult.rebind.reboundGrantCount,
+        reboundAssignmentCount: claimResult.rebind.reboundAssignmentCount,
+      });
+
+      res.json(userResponse(claimResult.user, principal));
+    } catch (error: any) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error("[AuthClaim] Claim failed", {
+        error: message,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      if (message.includes("unique") || message.includes("duplicate key")) {
+        return res.status(409).json({ error: "An account already exists for this invitation. Please log in." });
+      }
+      if (message.includes("already claimed by another user")) {
+        return res.status(409).json({ error: "This invitation has already been claimed." });
+      }
+      res.status(500).json({ error: "Claim failed" });
     }
   });
 
