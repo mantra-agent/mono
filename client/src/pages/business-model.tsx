@@ -1,6 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Briefcase, Check, ChevronRight, Loader2, Plus, TrendingUp, X } from "lucide-react";
+import {
+  Banknote,
+  Briefcase,
+  Calendar,
+  Check,
+  ChevronRight,
+  Clock3,
+  DollarSign,
+  Gauge,
+  Loader2,
+  Percent,
+  Plus,
+  Repeat2,
+  TrendingUp,
+  Users,
+  X,
+} from "lucide-react";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
@@ -71,12 +88,20 @@ interface NumericInputProps {
   min?: number;
   step?: number;
   ariaLabel?: string;
+  compact?: boolean;
 }
 
-function NumericInput({ value, onChange, prefix, suffix, min, step, ariaLabel }: NumericInputProps) {
+function NumericInput({ value, onChange, prefix, suffix, min, step, ariaLabel, compact = false }: NumericInputProps) {
   return (
-    <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background px-2 focus-within:ring-1 focus-within:ring-ring">
-      {prefix && <span className="text-xs text-muted-foreground">{prefix}</span>}
+    <div
+      className={cn(
+        "relative flex items-center rounded-md focus-within:ring-1 focus-within:ring-ring",
+        compact ? "h-5 w-48 max-w-full bg-muted/50" : "gap-1 border border-border/40 bg-background px-2",
+      )}
+    >
+      {prefix && (
+        <span className={cn("pointer-events-none text-xs text-muted-foreground", compact && "absolute left-1.5 z-10")}>{prefix}</span>
+      )}
       <input
         aria-label={ariaLabel}
         type="number"
@@ -88,9 +113,16 @@ function NumericInput({ value, onChange, prefix, suffix, min, step, ariaLabel }:
           const next = Number(event.target.value);
           if (Number.isFinite(next)) onChange(next);
         }}
-        className="w-full min-w-0 bg-transparent py-1.5 text-sm tabular-nums outline-none"
+        className={cn(
+          "w-full min-w-0 bg-transparent py-1.5 text-sm tabular-nums outline-none",
+          compact && "!h-5 !w-full !bg-transparent !py-0 !text-right !text-xs !leading-none",
+          compact && prefix && "!pl-5",
+          compact && suffix && (suffix.length > 4 ? "!pr-16" : suffix.length > 2 ? "!pr-10" : "!pr-5"),
+        )}
       />
-      {suffix && <span className="whitespace-nowrap text-xs text-muted-foreground">{suffix}</span>}
+      {suffix && (
+        <span className={cn("pointer-events-none whitespace-nowrap text-xs text-muted-foreground", compact && "absolute right-1.5 z-10")}>{suffix}</span>
+      )}
     </div>
   );
 }
@@ -210,27 +242,60 @@ export default function BusinessModelPage() {
         </div>
 
         <div className="border-b border-border/20 p-4">
-          <div className="mb-3 text-sm font-medium text-foreground">Global</div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <Field label="Horizon (months)"><NumericInput value={draft.horizonMonths} min={1} step={1} onChange={(horizonMonths) => updateGlobal({ horizonMonths })} /></Field>
-            <Field label="Start month"><div className="flex items-center rounded-md border border-border/40 bg-background px-2"><input type="month" value={draft.startCalendarMonth} onChange={(event) => updateGlobal({ startCalendarMonth: event.target.value })} className="w-full bg-transparent py-1.5 text-sm outline-none" /></div></Field>
-            <Field label="Starting cash"><NumericInput value={draft.openingCash} min={0} step={1000} prefix="$" onChange={(openingCash) => updateGlobal({ openingCash })} /></Field>
-            <Field label="Starting accounts"><NumericInput value={draft.startingAccounts} min={0} step={1} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} /></Field>
-            <Field label="Base subscription / account (mo)"><NumericInput value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} /></Field>
-            <Field label="Loaded cost multiplier"><NumericInput value={draft.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} /></Field>
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">Staff OpEx = Key Hires × role comp × loaded multiplier. Set the multiplier to 1.0× for raw base comp.</p>
+          <AssumptionGroup label="Global">
+            <ProfileTreeRow label="Horizon" icon={<Clock3 className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-horizon">
+              <NumericInput compact ariaLabel="Horizon in months" value={draft.horizonMonths} min={1} step={1} suffix="months" onChange={(horizonMonths) => updateGlobal({ horizonMonths })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Start month" icon={<Calendar className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-start-month">
+              <input
+                aria-label="Start month"
+                type="month"
+                value={draft.startCalendarMonth}
+                onChange={(event) => updateGlobal({ startCalendarMonth: event.target.value })}
+                className="w-48 max-w-full rounded-md border-0 bg-muted/50 px-1.5 text-right text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Starting cash" icon={<Banknote className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-starting-cash">
+              <NumericInput compact ariaLabel="Starting cash" value={draft.openingCash} min={0} step={1000} prefix="$" onChange={(openingCash) => updateGlobal({ openingCash })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Starting accounts" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-starting-accounts">
+              <NumericInput compact ariaLabel="Starting accounts" value={draft.startingAccounts} min={0} step={1} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Base subscription" icon={<DollarSign className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-base-subscription">
+              <NumericInput compact ariaLabel="Base monthly subscription per account" value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow
+              label="Loaded cost"
+              icon={<Gauge className="h-3.5 w-3.5" />}
+              hasValue
+              showEmpty
+              mobileLayout="inline"
+              testId="row-assumption-loaded-cost"
+              expandedContent="Applied to base salary midpoint plus bonus for every Key Hire. Set to 1.0× for raw compensation."
+            >
+              <NumericInput compact ariaLabel="Loaded cost multiplier" value={draft.loadedCostMultiplier} min={0.5} step={0.05} suffix="×" onChange={(loadedCostMultiplier) => updateGlobal({ loadedCostMultiplier })} />
+            </ProfileTreeRow>
+          </AssumptionGroup>
         </div>
 
         <div className="border-b border-border/20 p-4">
-          <div className="mb-3 text-sm font-medium text-foreground">Growth</div>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-            <Field label="Q1 new accounts"><NumericInput value={draft.quarterOneNewAccounts} min={0} step={1} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} /></Field>
-            <Field label="New accounts (× / 90 days)"><NumericInput value={draft.accountExpansion90d} min={0} step={0.1} suffix="×" onChange={(accountExpansion90d) => updateGlobal({ accountExpansion90d })} /></Field>
-            <Field label="Annual NRR"><NumericInput value={draft.annualNrrPct} min={0} step={5} suffix="%" onChange={(annualNrrPct) => updateGlobal({ annualNrrPct })} /></Field>
-            <Field label="Annual logo retention"><NumericInput value={draft.annualGrossLogoRetentionPct} min={0} step={1} suffix="%" onChange={(annualGrossLogoRetentionPct) => updateGlobal({ annualGrossLogoRetentionPct })} /></Field>
-            <Field label="Reserve at next gate"><NumericInput value={draft.reserveAtNextGate} min={0} step={10_000} prefix="$" onChange={(reserveAtNextGate) => updateGlobal({ reserveAtNextGate })} /></Field>
-          </div>
+          <AssumptionGroup label="Growth">
+            <ProfileTreeRow label="Q1 new accounts" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-q1-accounts">
+              <NumericInput compact ariaLabel="Q1 new accounts" value={draft.quarterOneNewAccounts} min={0} step={1} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Account expansion" icon={<TrendingUp className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-account-expansion">
+              <NumericInput compact ariaLabel="New account expansion every 90 days" value={draft.accountExpansion90d} min={0} step={0.1} suffix="× / 90d" onChange={(accountExpansion90d) => updateGlobal({ accountExpansion90d })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Annual NRR" icon={<Repeat2 className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-nrr">
+              <NumericInput compact ariaLabel="Annual net revenue retention" value={draft.annualNrrPct} min={0} step={5} suffix="%" onChange={(annualNrrPct) => updateGlobal({ annualNrrPct })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Logo retention" icon={<Percent className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-logo-retention">
+              <NumericInput compact ariaLabel="Annual gross logo retention" value={draft.annualGrossLogoRetentionPct} min={0} step={1} suffix="%" onChange={(annualGrossLogoRetentionPct) => updateGlobal({ annualGrossLogoRetentionPct })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Gate reserve" icon={<Banknote className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-gate-reserve">
+              <NumericInput compact ariaLabel="Reserve at next gate" value={draft.reserveAtNextGate} min={0} step={10_000} prefix="$" onChange={(reserveAtNextGate) => updateGlobal({ reserveAtNextGate })} />
+            </ProfileTreeRow>
+          </AssumptionGroup>
         </div>
 
         <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
@@ -358,6 +423,15 @@ export default function BusinessModelPage() {
           </table>
         </div>
       </section>
+    </div>
+  );
+}
+
+function AssumptionGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="mb-2 px-2 text-sm font-medium text-foreground">{label}</h3>
+      <div className="overflow-hidden rounded-md border border-border/20">{children}</div>
     </div>
   );
 }
