@@ -4082,6 +4082,7 @@ export async function runSchemaBootstrap(
         created_by_user_id TEXT,
         vault_id TEXT,
         session_id TEXT,
+        purpose TEXT NOT NULL DEFAULT 'ordinary',
         gmail_account_id TEXT,
         "to" TEXT[] NOT NULL DEFAULT '{}',
         cc TEXT[] NOT NULL DEFAULT '{}',
@@ -4099,6 +4100,7 @@ export async function runSchemaBootstrap(
       )
     `);
     await pool.query(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS vault_id TEXT`);
+    await pool.query(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'ordinary'`);
     await pool.query(`ALTER TABLE email_drafts ADD COLUMN IF NOT EXISTS body_format TEXT NOT NULL DEFAULT 'text'`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_owner ON email_drafts (owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_account ON email_drafts (account_id)`);
@@ -6626,6 +6628,7 @@ export async function runSchemaBootstrap(
         scope           TEXT NOT NULL DEFAULT 'user',
         attendee_email  TEXT NOT NULL,
         attendee_name   TEXT,
+        recipient_person_id TEXT REFERENCES persons(id) ON DELETE RESTRICT,
         is_mantra_user  BOOLEAN NOT NULL DEFAULT false,
         access_token_hash TEXT,
         access_expires_at TIMESTAMPTZ,
@@ -6641,6 +6644,17 @@ export async function runSchemaBootstrap(
         updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS recipient_person_id TEXT REFERENCES persons(id) ON DELETE RESTRICT`);
+    await pool.query(`
+      UPDATE meeting_recap_distributions AS distribution
+      SET recipient_person_id = email.person_id
+      FROM person_emails AS email, persons AS person
+      WHERE distribution.recipient_person_id IS NULL
+        AND LOWER(BTRIM(distribution.attendee_email)) = email.email
+        AND person.id = email.person_id
+        AND person.owner_user_id = distribution.owner_user_id
+        AND person.account_id = distribution.account_id
+    `);
     await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS discarded_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE meeting_recap_distributions ADD COLUMN IF NOT EXISTS access_token_hash TEXT`);
@@ -6654,7 +6668,14 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_account ON meeting_recap_distributions(account_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_mrd_status_account ON meeting_recap_distributions(account_id, status)`);
     await pool.query(`
-      DO $$
+      UPDATE email_drafts AS draft
+      SET purpose = 'meeting_recap'
+      FROM meeting_recap_distributions AS distribution
+      WHERE distribution.draft_id = draft.id
+        AND draft.purpose = 'ordinary'
+    `);
+    await pool.query(`
+      DO $
       BEGIN
         IF NOT EXISTS (
           SELECT 1

@@ -1147,6 +1147,23 @@ export class PeopleStorage {
     return this.resolvePersonAliasFromGraph(id, await this.getAliasGraph());
   }
 
+  async getPersonByEmail(email: string): Promise<Person | null> {
+    const normalizedEmail = normalizePersonEmail(email);
+    const principal = getCurrentPrincipalOrSystem();
+    const rows = await db
+      .select({ person: persons })
+      .from(personEmailsTable)
+      .innerJoin(persons, eq(persons.id, personEmailsTable.personId))
+      .where(and(
+        eq(personEmailsTable.email, normalizedEmail),
+        visiblePersonPredicate(principal),
+      ))
+      .limit(1);
+    if (!rows[0]) return null;
+    const [person] = await this.hydratePersonRows([rows[0].person]);
+    return person ?? null;
+  }
+
   async getPerson(id: string): Promise<Person | null> {
     const resolvedId = await this.resolvePersonAlias(id);
     const principal = getCurrentPrincipalOrSystem();
@@ -1248,6 +1265,23 @@ export class PeopleStorage {
     }
     await this.savePerson(updated);
     return updated;
+  }
+
+  async addEmail(personId: string, email: string, label = "Email"): Promise<Person> {
+    const normalizedEmail = normalizePersonEmail(email);
+    const normalizedLabel = label.trim().slice(0, 80) || "Email";
+    const person = await this.getPerson(personId);
+    if (!person) throw new Error(`Person ${personId} not found`);
+    const hasEmail = person.contactInfo.some(
+      contact => contact.type === "email" && contact.value.trim().toLowerCase() === normalizedEmail,
+    );
+    if (hasEmail) return person;
+    return this.updatePerson(person.id, {
+      contactInfo: [
+        ...person.contactInfo,
+        { type: "email", label: normalizedLabel, value: normalizedEmail },
+      ],
+    });
   }
 
   async renamePerson(input: { personId: string; newName: string; expectedCurrentName: string }): Promise<Person> {

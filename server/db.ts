@@ -810,6 +810,7 @@ export const ADVISORY_LOCK_NS = {
   PROJECT_MILESTONES: 0x50524d53, // 'PRMS' — serializes milestone replacement and project-local ID allocation
   OBJECT_GRANT: 0x4f424752, // 'OBGR' — serializes all grant mutations for one work object
   INVITED_SUBJECT: 0x49565342, // 'IVSB' — serializes global email resolution and claim
+  RECAP_DRAFT_RECIPIENT: 0x52445243, // 'RDRC' — serializes one recap draft recipient capability rotation
   WORKFLOW_ARTIFACTS: 0x57464152, // 'WFAR' — serializes child-session artifact projection per stage attempt
 } as const;
 
