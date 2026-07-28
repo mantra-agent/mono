@@ -17,6 +17,16 @@ function cleanName(value: string | null | undefined): string | null {
   return name || null;
 }
 
+/**
+ * Canonical default agent identity for pre-user (provisional) contexts.
+ * Synchronous and DB-free: there is no user, so this resolves to the
+ * default/canonical agent name only. Never crosses an ownership boundary
+ * and never reads user data — safe for latency-bounded provisional prompts.
+ */
+export function defaultProfileIdentity(): ProfileIdentity {
+  return { agentName: DEFAULT_AGENT_NAME, userName: null };
+}
+
 /** Resolve names from the current user's canonical profile rows. */
 export async function resolveCurrentProfileIdentity(): Promise<ProfileIdentity> {
   const principal = getCurrentPrincipalOrSystem();
