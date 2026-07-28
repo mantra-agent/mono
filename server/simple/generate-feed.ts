@@ -4,7 +4,7 @@ import { createLogger } from "../log";
 import { chatCompletion } from "../model-client";
 import { ACTIVITY_FRAMING } from "../job-profiles";
 import { collectSimpleContext, type SimpleContextBundle } from "./collectors";
-import { validateSimpleFeed } from "./schema";
+import { lintSimpleTitle, validateSimpleFeed } from "./schema";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 
 const log = createLogger("SimpleFeed");
@@ -298,7 +298,19 @@ function normalizeGeneratedFeed(input: unknown, fallback: SimpleFeed): SimpleFee
         planCadence: fallbackSection?.planCadence,
         items: section.items
           .filter(item => allowedIds.has(item.id))
-          .map(item => ({ ...fallbackById.get(item.id), ...item, sourceRefs: fallbackById.get(item.id)?.sourceRefs ?? item.sourceRefs, references: fallbackById.get(item.id)?.references ?? item.references } as SimpleFeedItem)),
+          .map(item => {
+            const fallbackItem = fallbackById.get(item.id)!;
+            if (item.title !== fallbackItem.title) {
+              const tone = lintSimpleTitle(item.title);
+              if (tone) throw new Error(`Invalid curated Simple feed title: ${item.id}:${tone}`);
+            }
+            return {
+              ...fallbackItem,
+              ...item,
+              sourceRefs: fallbackItem.sourceRefs,
+              references: fallbackItem.references ?? item.references,
+            } as SimpleFeedItem;
+          }),
       };
     })
     .filter(section => section.items.length > 0 || section.planArtifact !== undefined);
