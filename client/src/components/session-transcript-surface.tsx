@@ -3,7 +3,9 @@ import { cn } from "@/lib/utils";
 import { MessageList } from "@/components/message-list";
 import { MeetingHeaderBar } from "@/components/meeting-header-bar";
 import { DesktopVoiceSurface } from "@/components/desktop-voice-surface";
+import { DesktopAudioSurface } from "@/components/desktop-audio-surface";
 import { MobileVoiceViewport } from "@/components/mobile-voice-viewport";
+import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
 import { isNativeVoiceBridge } from "@/lib/native-voice-bridge";
 import type { MeetingSessionMeta, QuestionResponseMeta } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
@@ -77,6 +79,11 @@ export function SessionTranscriptSurface({
   onQuestionSubmit,
   onQuestionCancel,
 }: SessionTranscriptSurfaceProps) {
+  const nativeTranscription = useNativeMeetingTranscription();
+  const nativeCaptureActive = meeting?.transport === "native"
+    && meeting.botStatus === "live"
+    && nativeTranscription.activeSessionId === activeSession;
+
   return (
     <div
       className={cn("flex flex-col flex-1 min-h-0 overflow-hidden", className)}
@@ -163,6 +170,16 @@ export function SessionTranscriptSurface({
           </div>
         );
 
+        if (nativeCaptureActive) {
+          return (
+            <DesktopAudioSurface
+              visualState="listening"
+              readAudioLevel={nativeTranscription.readAudioLevel}
+              transcript={transcript}
+              testId="desktop-native-transcription-surface"
+            />
+          );
+        }
         if (!voiceActive || !voiceSession) return transcript;
         return isNativeVoiceBridge()
           ? <MobileVoiceViewport voiceSession={voiceSession} />

@@ -47,6 +47,10 @@ export function registerNativeMeetingAudioTransport(
     const provider = new DeepgramDiarizingSTTProvider();
     let providerSession: Awaited<ReturnType<typeof provider.connect>> | undefined;
     let closed = false;
+    let audioStarted = false;
+    let firstUtteranceReceived = false;
+    let audioFrameCount = 0;
+    let audioByteCount = 0;
 
     const persistFailure = async (detail: string): Promise<void> => {
       await runWithPrincipal(principal, () => chatStorage.updateMeetingMeta(sessionId, {
@@ -101,6 +105,7 @@ export function registerNativeMeetingAudioTransport(
         },
         async (utterance) => {
           if (!utterance.isFinal || closed) return;
+          const isFirstUtterance = !firstUtteranceReceived;
           const current = await runWithPrincipal(principal, () => chatStorage.getSession(sessionId));
           if (
             !current?.meeting ||
@@ -131,6 +136,14 @@ export function registerNativeMeetingAudioTransport(
             },
           });
           if (!result.ok) throw new Error(result.error);
+          if (isFirstUtterance) {
+            firstUtteranceReceived = true;
+            log.info("native meeting first utterance persisted", {
+              sessionId,
+              audioFrameCount,
+              audioByteCount,
+            });
+          }
         },
         (error) => {
           if (closed) return;
@@ -184,12 +197,28 @@ export function registerNativeMeetingAudioTransport(
         socket.close(1009, "Invalid audio frame");
         return;
       }
+      audioFrameCount += 1;
+      audioByteCount += bytes.length;
+      if (!audioStarted) {
+        audioStarted = true;
+        log.info("native meeting first audio frame received", {
+          sessionId,
+          byteLength: bytes.length,
+        });
+        socket.send(JSON.stringify({ type: "audio_started", sessionId, sourceKey: SOURCE_KEY }));
+      }
       providerSession.sendAudio(bytes);
     });
 
     socket.on("close", () => {
       if (closed) return;
       closed = true;
+      log.info("native meeting audio disconnected", {
+        sessionId,
+        audioFrameCount,
+        audioByteCount,
+        firstUtteranceReceived,
+      });
       providerSession?.close();
       void runWithPrincipal(principal, async () => {
         const session = await chatStorage.getSession(sessionId);

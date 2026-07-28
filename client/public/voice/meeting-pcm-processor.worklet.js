@@ -24,12 +24,15 @@ class MeetingPcmProcessor extends AudioWorkletProcessor {
 
     while (this.pending.length >= this.frameSamples) {
       const pcm = new Int16Array(this.frameSamples);
+      let sumSquares = 0;
       for (let index = 0; index < pcm.length; index += 1) {
         const sample = this.pending[index];
+        sumSquares += sample * sample;
         pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
       }
       this.pending.splice(0, this.frameSamples);
-      this.port.postMessage(pcm.buffer, [pcm.buffer]);
+      const level = Math.min(1, Math.sqrt(sumSquares / pcm.length) * 4.5);
+      this.port.postMessage({ type: "audio_frame", pcm: pcm.buffer, level }, [pcm.buffer]);
     }
     return true;
   }
