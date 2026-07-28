@@ -34,6 +34,12 @@ type RenderSegment =
   | { type: "content"; content: string; sourceIndexes: number[] }
   | { type: "timeline"; segment: Extract<MessageSegment, { type: "timeline" }>; sourceIndexes: number[] };
 
+function stepOwnsActiveStatus(step: Extract<MessageSegment, { type: "timeline" }>["steps"][number]): boolean {
+  if (step.status !== "active") return false;
+  if (step.type === "thinking" || step.type === "tool_call") return true;
+  return step.type === "system" && step.systemStepName === "session_compaction";
+}
+
 function normalizeRenderSegments(segments: MessageSegment[], layer: 1 | 2 | 3 | 4): RenderSegment[] {
   const rendered: RenderSegment[] = [];
   let pendingContent = "";
@@ -159,9 +165,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
           return null;
         })}
         {!suppressTrailingThinking && isStreaming && !hasContent && !renderSegments.some(seg =>
-          seg.type === "timeline" && seg.segment.steps.some(step =>
-            (step.type === "thinking" || step.type === "tool_call") && step.status === "active"
-          )
+          seg.type === "timeline" && seg.segment.steps.some(stepOwnsActiveStatus)
         ) && (
           <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid="thinking-status-trailing">
             <ActiveThinkingStatus startTime={findThinkingStartTime(segments)} showTimer={layer >= 3} />
