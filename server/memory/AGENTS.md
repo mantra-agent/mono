@@ -1,6 +1,6 @@
 # Memory Architecture
 
-The memory subsystem is in staged retirement. vNext claims are the active semantic graph and the nightly sleep substrate. Legacy `memory_entries` tiers remain as compatibility/archive data while their readers migrate; automatic legacy propagation and maintenance launchers are disabled.
+The memory subsystem is in staged retirement. vNext claims are the active semantic graph and the nightly sleep substrate. The ordinary HTTP registrar is vNext-only: legacy 410 shims, retention purge, document/workspace compatibility, and legacy maintenance routes are not registered. Legacy `memory_entries` tiers remain as compatibility/archive data while non-route readers migrate; automatic legacy propagation and maintenance launchers are disabled. The separately registered privileged migration boundary retains only explicit document-store migration controls and legacy-memory quarantine status/prepare/apply operations.
 
 ## Core Tables
 
