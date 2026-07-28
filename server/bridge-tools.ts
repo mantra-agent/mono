@@ -4455,8 +4455,45 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (conv.depth !== undefined && conv.depth !== null) provParts.push(`Depth: ${conv.depth}`);
       if (provParts.length > 0) parts.push(`Provenance: ${provParts.join(" | ")}`);
       if (conv.topics && conv.topics.length > 0) parts.push(`Topics: ${conv.topics.join(", ")}`);
+      if (conv.agenda) parts.push(`Agenda: ${conv.agenda.items.length} item${conv.agenda.items.length === 1 ? "" : "s"}`);
       if (conv.messageCount !== undefined) parts.push(`Messages: ${conv.messageCount}`);
       return { result: parts.join("\n") };
+    }
+
+    if (action === "get_agenda") {
+      const targetId = args.sessionId || sessionId;
+      const conv = await chatFileStorage.getSession(targetId);
+      if (!conv) return { result: `Session "${targetId}" not found`, error: true };
+      return { result: safeStringify({ sessionId: targetId, agenda: conv.agenda ?? null }, { label: "bridge.session.agenda" }) };
+    }
+
+    if (action === "set_agenda") {
+      const targetId = args.sessionId || sessionId;
+      if (!Array.isArray(args.agenda)) return { result: "Missing 'agenda' items for set_agenda", error: true };
+      try {
+        const updated = await chatFileStorage.setSessionAgenda(targetId, args.agenda);
+        if (!updated?.agenda) return { result: `Session "${targetId}" not found`, error: true };
+        return { result: safeStringify({ sessionId: targetId, agenda: updated.agenda }, { label: "bridge.session.agenda.set" }) };
+      } catch (err: unknown) {
+        return { result: `Invalid session agenda: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      }
+    }
+
+    if (action === "update_agenda_item") {
+      const targetId = args.sessionId || sessionId;
+      const itemId = typeof args.itemId === "string" ? args.itemId.trim() : "";
+      if (!itemId) return { result: "Missing 'itemId' for update_agenda_item", error: true };
+      if (!args.item || typeof args.item !== "object" || Array.isArray(args.item)) {
+        return { result: "Missing sparse 'item' patch for update_agenda_item", error: true };
+      }
+      try {
+        const updated = await chatFileStorage.updateSessionAgendaItem(targetId, itemId, args.item);
+        if (!updated?.agenda) return { result: `Session or agenda item not found: ${targetId}/${itemId}`, error: true };
+        const item = updated.agenda.items.find((candidate) => candidate.id === itemId);
+        return { result: safeStringify({ sessionId: targetId, item, agenda: updated.agenda }, { label: "bridge.session.agenda.item" }) };
+      } catch (err: unknown) {
+        return { result: `Invalid agenda item update: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      }
     }
 
     if (action === "send_message") {
@@ -4652,6 +4689,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const spawnReason = explicitSpawnReason || `spawn_child:${topicRaw.slice(0, 60)}`;
       const spawnerTool = engineeringDelegation ? "session.spawn_child.engineering" : "session.spawn_child";
       const spawnerSkillRun = `session.spawn_child:${sessionId}:${spawnReason}:${delegation}`;
+      let agenda: import("@shared/models/chat").SessionAgenda | undefined;
+      try {
+        agenda = Array.isArray(args.agenda)
+          ? (await import("./chat-file-storage")).normalizeSessionAgenda(args.agenda)
+          : undefined;
+      } catch (err: unknown) {
+        return { result: `Invalid child session agenda: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      }
 
       if (await isSpecSkillSession(sessionId) && isSpecChildSpawnRequest(topicRaw, reason, explicitSpawnReason, spawnReason)) {
         return {
@@ -4681,7 +4726,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               undefined,
               undefined,
               undefined,
-              { personaId, parentSessionId: sessionId, spawnReason, spawnerTool, spawnerSkillRun, triggerType: "spawn" as const, triggerId: sessionId, triggerName: shortTitle },
+              { personaId, agenda, parentSessionId: sessionId, spawnReason, spawnerTool, spawnerSkillRun, triggerType: "spawn" as const, triggerId: sessionId, triggerName: shortTitle },
             );
             return { sessionId: created.id };
           },
@@ -4787,7 +4832,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    return { result: `Unknown session action: ${action}. Available: get, set_status, end, list, search, get_messages, spawn_child, send_message`, error: true };
+    return { result: `Unknown session action: ${action}. Available: get, get_agenda, set_agenda, update_agenda_item, set_status, end, list, search, get_messages, spawn_child, send_message`, error: true };
   },
 
   async create_task(args) {
@@ -7943,6 +7988,14 @@ ${lines.join("\n")}` };
       const shortTitle = topic.split(/\s+/).slice(0, 3).join(" ");
       const callingSessionId: string | undefined = args._sessionId || undefined;
       const spawnReason = `converse:${topic.slice(0, 40)}`;
+      let agenda: import("@shared/models/chat").SessionAgenda | undefined;
+      try {
+        agenda = Array.isArray(args.agenda)
+          ? (await import("./chat-file-storage")).normalizeSessionAgenda(args.agenda)
+          : undefined;
+      } catch (err: unknown) {
+        return { result: `Invalid conversation agenda: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      }
 
       let convId: string;
       {
@@ -7955,7 +8008,7 @@ ${lines.join("\n")}` };
           undefined,
           undefined,
           undefined,
-          { spawnReason, spawnerTool: "converse.initiate", triggerType: "agent" as const, triggerId: callingSessionId || undefined, triggerName: topic },
+          { agenda, spawnReason, spawnerTool: "converse.initiate", triggerType: "agent" as const, triggerId: callingSessionId || undefined, triggerName: topic },
         );
         convId = created.id;
       }

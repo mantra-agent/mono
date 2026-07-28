@@ -903,6 +903,21 @@ export interface PersonaSnapshot {
 
 export type SessionModelTierOverride = "fast" | "balanced" | "high" | "max";
 
+export type SessionAgendaItemStatus = "open" | "complete" | "skipped" | "deferred";
+
+export interface SessionAgendaItem {
+  id: string;
+  title: string;
+  description: string;
+  status: SessionAgendaItemStatus;
+  /** Present only when status is complete. */
+  resolution?: string;
+}
+
+export interface SessionAgenda {
+  items: SessionAgendaItem[];
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -933,6 +948,8 @@ export interface ChatSession {
   messageCount?: number;
   lastMessageRole?: LastMessageRole;
   topics?: string[];
+  /** Optional ordered checklist that guides this conversation across text and voice. */
+  agenda?: SessionAgenda;
   runStatus?: RunStatus;
   parentSessionId?: string;
   spawnReason?: string;

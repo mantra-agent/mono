@@ -751,6 +751,7 @@ export function SessionTranscriptPanel({
         wsConnected={wsConnected}
         sessionStatus={ownedSessionData?.status}
         meeting={ownedSessionData?.meeting}
+        agenda={ownedSessionData?.agenda}
         sessionTitle={ownedSessionData?.title}
         scrollContainerRef={scrollContainerRef}
         onUserScrollIntent={handleUserScrollIntent}

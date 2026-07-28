@@ -51,6 +51,18 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
   },
 
   {
+    id: "world_model.session_agenda",
+    layer: "kernel",
+    title: "Conversation Agenda",
+    parentId: "world_model",
+    sourceType: "dynamic",
+    freshnessPolicy: "real-time",
+    priority: 0.2,
+    includedIn: ["full", "world"],
+    bootstrap: true,
+  },
+
+  {
     id: "world_model.people",
     title: "People",
     parentId: "world_model",

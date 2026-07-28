@@ -35,6 +35,9 @@ import type {
   MessageSpeakerMeta,
   ChatSession,
   PersonaSnapshot,
+  SessionAgenda,
+  SessionAgendaItem,
+  SessionAgendaItemStatus,
   QuestionResponseMeta,
   QuestionCancellationMeta,
   SystemStepRecord,
@@ -144,6 +147,8 @@ export interface SessionProvenanceInput {
 interface SpawnMetaInput extends Partial<SessionProvenanceInput> {
   /** Persona selected before creation so initial session snapshots are truthful. */
   personaId?: number;
+  /** Explicit child agenda. Parent agendas are never inherited. */
+  agenda?: SessionAgenda;
   parentSessionId?: string;
   spawnReason?: string;
   spawnerTool?: string;
@@ -173,6 +178,92 @@ function provenanceFromSessionType(
     return { triggerType: "agent", triggerName: title };
   }
   return { triggerType: "user", triggerName: title };
+}
+
+const SESSION_AGENDA_MAX_ITEMS = 20;
+const SESSION_AGENDA_TITLE_MAX_CHARS = 80;
+const SESSION_AGENDA_DESCRIPTION_MAX_CHARS = 600;
+const SESSION_AGENDA_RESOLUTION_MAX_CHARS = 1_200;
+const SESSION_AGENDA_TITLE_MIN_WORDS = 3;
+const SESSION_AGENDA_TITLE_MAX_WORDS = 5;
+const SESSION_AGENDA_STATUSES = new Set<SessionAgendaItemStatus>([
+  "open",
+  "complete",
+  "skipped",
+  "deferred",
+]);
+
+export interface SessionAgendaItemInput {
+  id?: string;
+  title: string;
+  description: string;
+  status?: SessionAgendaItemStatus;
+  resolution?: string;
+}
+
+export interface SessionAgendaItemPatch {
+  title?: string;
+  description?: string;
+  status?: SessionAgendaItemStatus;
+  resolution?: string;
+}
+
+function boundedAgendaText(value: unknown, label: string, maxChars: number): string {
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized) throw new Error(`${label} is required`);
+  if (normalized.length > maxChars) throw new Error(`${label} must be ${maxChars} characters or fewer`);
+  return normalized;
+}
+
+function normalizeAgendaTitle(value: unknown): string {
+  const title = boundedAgendaText(value, "Agenda item title", SESSION_AGENDA_TITLE_MAX_CHARS);
+  const wordCount = title.split(/\s+/).length;
+  if (wordCount < SESSION_AGENDA_TITLE_MIN_WORDS || wordCount > SESSION_AGENDA_TITLE_MAX_WORDS) {
+    throw new Error("Agenda item titles must be 3–5 words");
+  }
+  return title;
+}
+
+function normalizeAgendaStatus(value: unknown): SessionAgendaItemStatus {
+  if (typeof value !== "string" || !SESSION_AGENDA_STATUSES.has(value as SessionAgendaItemStatus)) {
+    throw new Error("Agenda item status must be open, complete, skipped, or deferred");
+  }
+  return value as SessionAgendaItemStatus;
+}
+
+function normalizeAgendaItem(
+  input: SessionAgendaItemInput,
+  existingIds: Set<string>,
+): SessionAgendaItem {
+  const id = typeof input.id === "string" && input.id.trim() ? input.id.trim() : generateId();
+  if (existingIds.has(id)) throw new Error(`Duplicate agenda item id: ${id}`);
+  existingIds.add(id);
+  const status = normalizeAgendaStatus(input.status ?? "open");
+  const resolution = typeof input.resolution === "string" && input.resolution.trim()
+    ? boundedAgendaText(input.resolution, "Agenda item resolution", SESSION_AGENDA_RESOLUTION_MAX_CHARS)
+    : undefined;
+  if (status === "complete" && !resolution) {
+    throw new Error("Complete agenda items require a resolution");
+  }
+  return {
+    id,
+    title: normalizeAgendaTitle(input.title),
+    description: boundedAgendaText(input.description, "Agenda item description", SESSION_AGENDA_DESCRIPTION_MAX_CHARS),
+    status,
+    ...(status === "complete" ? { resolution } : {}),
+  };
+}
+
+export function normalizeSessionAgenda(items: SessionAgendaItemInput[]): SessionAgenda {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("A session agenda requires at least one item");
+  }
+  if (items.length > SESSION_AGENDA_MAX_ITEMS) {
+    throw new Error(`A session agenda may contain at most ${SESSION_AGENDA_MAX_ITEMS} items`);
+  }
+  const existingIds = new Set<string>();
+  return { items: items.map((item) => normalizeAgendaItem(item, existingIds)) };
 }
 
 
@@ -354,6 +445,7 @@ interface SessionData {
   meeting?: MeetingSessionMeta;
   initialSystemPrompt?: string | null;
   topics?: string[];
+  agenda?: SessionAgenda;
   runStatus?: RunStatus;
   parentSessionId?: string;
   spawnReason?: string;
@@ -675,6 +767,7 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
     voiceSessionId: data.voiceSessionId,
     hasInitialContext: !!data.initialSystemPrompt,
     topics: data.topics || [],
+    agenda: data.agenda,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
     runStatus: data.runStatus || undefined,
@@ -936,6 +1029,7 @@ function convToMeta(data: SessionData): FileSession {
     lastMessageRole: getLastMessageRole(data.messages),
     awaitingQuestionResponse: hasUnansweredQuestion(data.messages) || undefined,
     topics: data.topics || [],
+    agenda: data.agenda,
     runStatus: data.runStatus,
     parentSessionId: data.parentSessionId,
     spawnReason: data.spawnReason,
@@ -1094,6 +1188,7 @@ function docMetadataToSession(doc: {
     lastMessageRole: toLastMessageRole(metadataString(meta, "lastMessageRole")),
     awaitingQuestionResponse: metadataBool(meta, "awaitingQuestionResponse") || undefined,
     topics: metadataStringArray(meta, "topics"),
+    agenda: meta.agenda as SessionAgenda | undefined,
     runStatus: metadataString(meta, "runStatus") as RunStatus | undefined,
     parentSessionId: metadataString(meta, "parentSessionId"),
     spawnReason: metadataString(meta, "spawnReason"),
@@ -1137,6 +1232,7 @@ export interface IChatFileStorage {
       provenance?: SessionProvenanceInput;
       ftueWelcome?: boolean;
       personaId?: number | null;
+      agenda?: SessionAgenda;
     },
   ): Promise<FileSession>;
   updatePageContext(id: string, pageContext: PageContext): Promise<void>;
@@ -1157,6 +1253,8 @@ export interface IChatFileStorage {
   updateSessionTitle(id: string, title: string, options?: { source?: "manual" | "auto" | "orient"; respectManualTitle?: boolean }): Promise<void>;
   updateSessionSessionKey(id: string, sessionKey: string): Promise<void>;
   updateSessionTopics(id: string, topics: string[]): Promise<void>;
+  setSessionAgenda(id: string, items: SessionAgendaItemInput[]): Promise<FileSession | null>;
+  updateSessionAgendaItem(id: string, itemId: string, patch: SessionAgendaItemPatch): Promise<FileSession | null>;
   updateSessionPersona(id: string, personaId: number): Promise<void>;
   setSessionPersonaIfUnset(id: string, personaId: number): Promise<{ personaId: number; applied: boolean } | null>;
   setSessionPersonaPin(id: string, personaId: number | null): Promise<boolean>;
@@ -1536,6 +1634,7 @@ export const chatFileStorage: IChatFileStorage = {
       provenance?: SessionProvenanceInput;
       ftueWelcome?: boolean;
       personaId?: number | null;
+      agenda?: SessionAgenda;
     },
   ) {
     const id = generateId();
@@ -1558,6 +1657,7 @@ export const chatFileStorage: IChatFileStorage = {
       isPinned: false,
       pageContext: options?.pageContext,
       ftueWelcome: options?.ftueWelcome || undefined,
+      agenda: options?.agenda,
       triggerType: provenance.triggerType,
       triggerId: provenance.triggerId,
       triggerName: provenance.triggerName,
@@ -1725,6 +1825,54 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = new Date().toISOString();
       await writeConv(data);
       invalidateSessionsCache();
+    });
+  },
+
+  async setSessionAgenda(id: string, items: SessionAgendaItemInput[]) {
+    const agenda = normalizeSessionAgenda(items);
+    return withConvLock(id, async () => {
+      const data = await readConv(id);
+      if (!data) return null;
+      data.agenda = agenda;
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId: id, session });
+      log.info("Session agenda replaced", { sessionId: id, itemCount: agenda.items.length });
+      return session;
+    });
+  },
+
+  async updateSessionAgendaItem(id: string, itemId: string, patch: SessionAgendaItemPatch) {
+    return withConvLock(id, async () => {
+      const data = await readConv(id);
+      if (!data?.agenda) return null;
+      const index = data.agenda.items.findIndex((item) => item.id === itemId);
+      if (index < 0) return null;
+      const current = data.agenda.items[index];
+      const nextStatus = patch.status === undefined ? current.status : normalizeAgendaStatus(patch.status);
+      const nextResolution = patch.resolution === undefined
+        ? current.resolution
+        : boundedAgendaText(patch.resolution, "Agenda item resolution", SESSION_AGENDA_RESOLUTION_MAX_CHARS);
+      if (nextStatus === "complete" && !nextResolution) {
+        throw new Error("Complete agenda items require a resolution");
+      }
+      const next: SessionAgendaItem = {
+        id: current.id,
+        title: patch.title === undefined ? current.title : normalizeAgendaTitle(patch.title),
+        description: patch.description === undefined
+          ? current.description
+          : boundedAgendaText(patch.description, "Agenda item description", SESSION_AGENDA_DESCRIPTION_MAX_CHARS),
+        status: nextStatus,
+        ...(nextStatus === "complete" ? { resolution: nextResolution } : {}),
+      };
+      data.agenda.items[index] = next;
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId: id, session });
+      log.info("Session agenda item updated", { sessionId: id, itemId, status: next.status });
+      return session;
     });
   },
 
@@ -3241,6 +3389,7 @@ export const chatFileStorage: IChatFileStorage = {
       messages: [],
       sessionType,
       isPinned: false,
+      agenda: spawnMeta?.agenda,
       intentionId: intentionId || undefined,
       parentSessionId: spawnMeta?.parentSessionId,
       spawnReason: spawnMeta?.spawnReason,
