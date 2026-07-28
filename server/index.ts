@@ -800,20 +800,6 @@ app.use((req, res, next) => {
         }
       }).catch(() => {});
 
-      import("./memory/memory-listener").then(({ registerMemoryListener }) => {
-        registerMemoryListener();
-        log("[startup] memory listener registered", "boot");
-      }).catch((err) => {
-        log(`[startup] memory listener registration failed: ${err.message}`, "boot");
-      });
-
-      import("./memory/long-title-maintenance").then(async ({ logMemoryDiagnostics }) => {
-        await logMemoryDiagnostics();
-        log("[startup] legacy memory diagnostics complete; maintenance writes disabled", "boot");
-      }).catch((err) => {
-        log(`[startup] legacy memory diagnostics failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
-      });
-
       import("./plaid-service").then(async ({ reconcileWebhookUrls, isPlaidConfigured }) => {
         if (isPlaidConfigured()) {
           await reconcileWebhookUrls();

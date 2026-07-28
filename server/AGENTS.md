@@ -245,7 +245,7 @@ The context system builds the LLM prompt from ~40 dynamically resolved sections.
 - **Event-based invalidation:** `INVALIDATION_EVENT_MAP` maps mutation events to cache-invalidated sections
 - **Coalescing:** `_sectionInFlight` Map prevents duplicate concurrent resolves
 - **Graph memory retrieval:** `resolveGraphMemory()` is vNext-only — `retrieveVnextContext()` over `memory_vnext_claims` (semantic + causal + contrastive + temporal blend, weights modulated by session type and emotional state), rendered by `renderVnextContext()` with tiered allocation (`allocateTiers()`). No legacy fallback: errors return "Graph memory temporarily unavailable.", empty results render empty. No LLM calls at query time
-- **No layer sections:** short/mid/long-term memory layers are no longer context sections. `memory_entries` remains a write-side store only (session summaries, sleep cycle) pending full retirement
+- **No layer sections:** short/mid/long-term memory layers are no longer context sections. `memory_entries` is retired compatibility/archive state pending quarantine; context and sleep use vNext claims only.
 - **Pre-warming:** 7 storage layers pre-warmed at boot (people, projects, tasks, principles, rules, goals, skills)
 - **Budget:** compact boot context target; heavy docs render as retrieval references, no truncation of source data
 - **Personal Rules vs learned state:** A Rule is a user-owned, durable, deterministic override of Agent's default behavior. Universal behavior belongs in the system that owns it. Personal facts, tastes, tendencies, and probabilistic guidance belong in vNext memory. `personal-rule-policy.ts` is the canonical classification source; storage-layer validation remains authoritative for writes.

@@ -297,7 +297,7 @@ Layer 1: Infrastructure  — Express server, WebSocket, event bus, PostgreSQL po
 
 Plus: `registerChatRoutes`, `registerPeopleRoutes`, `registerGoalRoutes`, `registerTagRoutes`, `registerCalendarRoutes`, `registerTimerRoutes`, `registerMemoryRoutes`, `registerMigrationRoutes`, `registerContextRoutes`, `registerThoughtRoutes`, `registerStrategyRoutes`, `registerObjectStorageRoutes`, `registerSkillRoutes`
 
-**Boot hooks** (`server/index.ts`): Memory listener, timer scheduler, content publisher, nightly sleep cycle (2 AM CT)
+**Boot hooks** (`server/index.ts`): Timer scheduler, content publisher, nightly vNext sleep cycle (2 AM CT)
 
 ## Canonical State Stores
 
@@ -338,7 +338,7 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 ## Main Data Flows
 
 1. **Chat Streaming** — Server-side `SessionManager` maintains authoritative streaming state per session. Clients subscribe via WebSocket (`session.subscribe`) and receive snapshot + deltas. Single channel, single source of truth. Types in `shared/streaming-types.ts`, reducers in `server/streaming-reducers.ts`
-2. **Chat → Memory** — Messages → event bus → memory listener → exchange buffer → short-term entries → consolidation
+2. **Chat → Memory** — Persisted sessions enqueue canonical vNext sources → bounded extraction → claim persistence and source provenance
 3. **Session → Artifact Linking** — Tool call succeeds → `recordSessionArtifact()` → `session_artifacts` table; session resolves → scorer enriches transcript with artifact content; output buffer reads linked pages from artifacts table
 4. **Timer → Skill** — Timer fires → scheduler preconditions → pre-context → autonomous skill execution
 5. **Intention → Execution** — Intention selected → autonomous conversation → context → agent executor → artifacts
@@ -347,7 +347,7 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 8. **Daily Artifacts** — Timer → skill → Library page → set_brief/set_review → CheckIn → UI gold dot
 9. **Hook Reactor** — System event → pattern match → condition + cooldown → action dispatch
 10. **Sleep Cycle** — Nightly: decay → reinforce → NREM merge/prune → REM dream → GSI score
-11. **Memory Consolidation** — Session summaries may mirror into memory; short→mid (threshold/timer) → mid→long (integration) → graph myelination powered by Prompt Modules. Raw session/archive rows are not graph nodes by default.
+11. **Memory Lifecycle** — vNext source extraction persists provenance-backed claims; nightly lifecycle, REM, and GSI maintain the active claim graph without legacy tier promotion.
 12. **Access Control** — Session/auth middleware resolves a `Principal` → permission service computes base role + `user_permissions` overrides → `/api/auth/me` exposes principal/scopes/permissions → privileged routes call `requirePermission(...)` or equivalent central checks
 13. **Calendar Metadata** — Google event → local overlay → type, linked tasks, auto-linked People
 14. **Wellness Rhythm** — Activity logged → urgency recalculated → trends → briefs
