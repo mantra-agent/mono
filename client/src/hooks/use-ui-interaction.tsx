@@ -252,6 +252,9 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
       event.preventDefault();
       event.stopPropagation();
     };
+    const completeOnTargetActivation = () => {
+      settle("completed");
+    };
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -265,10 +268,12 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    activeTargetElement.addEventListener("click", completeOnTargetActivation, true);
     document.addEventListener("pointerdown", blockOutside, true);
     document.addEventListener("click", blockOutside, true);
     document.addEventListener("keydown", handleKey, true);
     return () => {
+      activeTargetElement.removeEventListener("click", completeOnTargetActivation, true);
       document.removeEventListener("pointerdown", blockOutside, true);
       document.removeEventListener("click", blockOutside, true);
       document.removeEventListener("keydown", handleKey, true);
