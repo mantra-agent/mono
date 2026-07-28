@@ -12,14 +12,20 @@ import { SimpleTreeRow } from "./home-tree-row";
  * Renders each item as a tree row (time + checkbox + chevron + content).
  * Type-specific widgets provide the inline content.
  */
-export function SimpleWidgetRenderer({ item, depth = 0 }: { item: SimpleFeedItem; depth?: number }) {
+interface SimpleWidgetRendererProps {
+  item: SimpleFeedItem;
+  depth?: number;
+  onDelete?: (item: SimpleFeedItem) => void;
+}
+
+export function SimpleWidgetRenderer({ item, depth = 0, onDelete }: SimpleWidgetRendererProps) {
   const content = getInlineContent(item);
 
   // State widget is a special full-width display, not a tree row
   if (item.widgetType === "state") return <StateWidget item={item} />;
 
   return (
-    <SimpleTreeRow item={item} depth={depth}>
+    <SimpleTreeRow item={item} depth={depth} onDelete={onDelete}>
       {content}
     </SimpleTreeRow>
   );

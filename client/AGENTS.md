@@ -233,7 +233,7 @@ Use `ProfileTreeRow` for compact label/value rows with optional progressive disc
 
 ### Meeting Tree Rows
 
-Network Meetings reuses `SimpleWidgetRenderer` and `SimpleTreeRow` for completed meeting sessions. Meeting rows render as canonical CTA-blue references, omit completion controls because completion is implied by the index, and expand the recap summary directly when present. Participants stay in the canonical meeting record/tool response but are not duplicated as UI children because the summary already names them; non-recap Library artifacts may remain as reference children. Do not create a second meeting card or a split-view detail surface.
+Network Meetings reuses `SimpleWidgetRenderer` and `SimpleTreeRow` for completed meeting sessions. Meeting rows render as canonical CTA-blue references, omit completion controls because completion is implied by the index, and expand the recap summary directly when present. Participants stay in the canonical meeting record/tool response but are not duplicated as UI children because the summary already names them; non-recap Library artifacts may remain as reference children. Do not create a second meeting card or a split-view detail surface. Its search/action/section stack must consume `HIERARCHY_TREE_STACK_CLASS`, `HIERARCHY_PRIMARY_ACTION_CLASS`, and `HIERARCHY_SECTION_HEADER_CLASS`, which are shared with the Session Menu rather than copied locally. Historical meeting sections enable their React Query request only after disclosure; This Week alone defaults open.
 
 ### Opportunity Vault Visibility
 

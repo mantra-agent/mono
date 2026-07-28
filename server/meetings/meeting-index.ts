@@ -16,10 +16,12 @@ import { createLogger } from "../log";
 const log = createLogger("MeetingIndex");
 
 export type MeetingNotesFilter = "any" | "with_notes" | "without_notes";
+export type MeetingLifecycleFilter = "active" | "completed";
 
 export interface MeetingIndexFilter {
   query?: string;
   notesFilter?: MeetingNotesFilter;
+  lifecycle?: MeetingLifecycleFilter;
   startAfter?: string;
   startBefore?: string;
   limit?: number;
@@ -242,7 +244,10 @@ function searchableSnapshots(
   return snapshots
     .filter(({ session, transcriptCount }) => {
       const meetingActive = ["dialing", "in_lobby", "live", "leaving"].includes(session.meeting?.botStatus ?? "");
-      if (session.meeting?.botStatus !== "ended" && !(includeActive && meetingActive)) return false;
+      const meetingCompleted = session.meeting?.botStatus === "ended";
+      if (!meetingCompleted && !(includeActive && meetingActive)) return false;
+      if (filter.lifecycle === "active" && !meetingActive) return false;
+      if (filter.lifecycle === "completed" && !meetingCompleted) return false;
       if (!matchesNotesFilter(transcriptCount, filter.notesFilter)) return false;
       const start = parseDate(meetingStart(session) ?? undefined);
       if (startAfter !== null && (start === null || start < startAfter)) return false;

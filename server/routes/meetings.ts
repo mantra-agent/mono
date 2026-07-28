@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "../auth";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
+import { deleteMeetingSession } from "../meeting/delete";
 import { withNativeMeetingCreationLock } from "../meeting/locks";
 import { meetingRecognitionCapabilities } from "../meeting/stt";
 import { getPrincipal } from "../principal";
@@ -12,6 +13,7 @@ import {
   listMeetingsForPage,
   meetingRecordToSimpleFeedItem,
   type MeetingIndexFilter,
+  type MeetingLifecycleFilter,
   type MeetingNotesFilter,
 } from "../meetings/meeting-index";
 
@@ -40,10 +42,15 @@ function optionalNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function optionalLifecycle(value: unknown): MeetingLifecycleFilter | undefined {
+  return value === "active" || value === "completed" ? value : undefined;
+}
+
 function filterFromQuery(req: Request): MeetingIndexFilter {
   return {
     query: typeof req.query.query === "string" ? req.query.query : undefined,
     notesFilter: optionalNotesFilter(req.query.notesFilter, req.query.hasNotes),
+    lifecycle: optionalLifecycle(req.query.lifecycle),
     startAfter: typeof req.query.startAfter === "string" ? req.query.startAfter : undefined,
     startBefore: typeof req.query.startBefore === "string" ? req.query.startBefore : undefined,
     limit: optionalNumber(req.query.limit),
@@ -141,7 +148,7 @@ export function registerMeetingsRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/meetings/records/counts", async (_req: Request, res: Response) => {
+  app.get("/api/meetings/records/counts", requireAuth, async (_req: Request, res: Response) => {
     try {
       res.json(await getMeetingCounts());
     } catch (error) {
@@ -150,7 +157,7 @@ export function registerMeetingsRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/meetings/records/:id", async (req: Request, res: Response) => {
+  app.get("/api/meetings/records/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const meeting = await getMeetingRecord(req.params.id);
       if (!meeting) return res.status(404).json({ error: "Meeting not found" });
@@ -164,7 +171,7 @@ export function registerMeetingsRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/meetings/records", async (req: Request, res: Response) => {
+  app.get("/api/meetings/records", requireAuth, async (req: Request, res: Response) => {
     try {
       const result = req.query.includeActive === "true"
         ? await listMeetingsForPage(filterFromQuery(req))
@@ -178,6 +185,37 @@ export function registerMeetingsRoutes(app: Express): void {
     } catch (error) {
       log.error("Meeting records failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: "Failed to load meetings" });
+    }
+  });
+
+  app.delete("/api/meetings/records/:id", requireAuth, async (req: Request, res: Response) => {
+    const principal = getPrincipal(req);
+    if (!principal) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    try {
+      const result = await deleteMeetingSession(req.params.id, principal);
+      if (result.outcome === "not_found") {
+        res.status(404).json({ error: "Meeting not found" });
+        return;
+      }
+      if (result.outcome === "transport_failed") {
+        res.status(502).json({ error: "Failed to stop the active meeting before deletion" });
+        return;
+      }
+      log.info("meeting deleted", {
+        sessionId: req.params.id,
+        deletedSessionCount: result.deletedSessionIds.length,
+      });
+      res.json(result);
+    } catch (error) {
+      log.error("Meeting deletion failed", {
+        meetingId: req.params.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "Failed to delete meeting" });
     }
   });
 }
