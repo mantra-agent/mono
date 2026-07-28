@@ -16,12 +16,10 @@
  *     from `recap.ts` and runs inside the same `runWithPrincipal` context so
  *     all writes are user-owned, not system orphans.
  */
-import { createHash, randomBytes } from "crypto";
-import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, pool } from "../db";
+import { createHash } from "crypto";
+import { db, pool } from "../db";
 import { meetingRecapDistributions, users } from "@shared/schema";
-import { libraryPages } from "@shared/models/info";
 import {
-  combineWithVisibleScope,
   ownedInsertValues,
   visibleScopePredicate,
   writableScopePredicate,
@@ -30,7 +28,6 @@ import { emailDraftStorage } from "../email-draft-storage";
 import { sendNotification } from "../notifications";
 import { listAvailableGmailSenderAccounts, type GmailAccount } from "../gmail";
 import type { CalendarEvent } from "../google-calendar";
-import { formatInTimezone } from "../timezone";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { eventBus } from "../event-bus";
@@ -38,10 +35,14 @@ import { eq, and, gt, isNull, or, sql, SQL } from "drizzle-orm";
 import type { Principal } from "../principal";
 import type { MeetingSessionMeta, MeetingRecapMeta } from "@shared/models/chat";
 import { normalizeEmailAddress } from "../email-normalization";
-import { resolveOrCreateInvitedSubjectInTransaction } from "../invited-subject-service";
 import { peopleStorage } from "../people-storage";
 import { runWithPrincipal } from "../principal-context";
 import { resolveMeetingTransportSession } from "./owner-principal";
+import { hashRecapCapabilityToken } from "./recap-capability";
+import {
+  buildRecapEmailContent,
+  type RecapEmailRecipient,
+} from "./recap-email-content";
 
 const log = createLogger("MeetingDistribution");
 
@@ -51,47 +52,6 @@ const scopeColumns = {
   accountId: meetingRecapDistributions.accountId,
 };
 
-const libraryScopeColumns = {
-  scope: libraryPages.scope,
-  ownerUserId: libraryPages.ownerUserId,
-  accountId: libraryPages.accountId,
-  vaultId: libraryPages.vaultId,
-};
-
-// Bound the compact, editable recap email body.
-const EMAIL_BODY_CHAR_LIMIT = 30_000;
-const RECIPIENT_ACCESS_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
-const APP_BASE_URL = "https://app.trymantra.ai";
-
-interface RecipientEntryCapability {
-  token: string;
-  tokenHash: string;
-  expiresAt: Date;
-}
-
-/** Single minting primitive for the per-recipient recap entry capability. */
-function hashCapabilityToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-function createRecipientEntryCapability(): RecipientEntryCapability {
-  const token = randomBytes(32).toString("base64url");
-  return {
-    token,
-    tokenHash: hashCapabilityToken(token),
-    expiresAt: new Date(Date.now() + RECIPIENT_ACCESS_TTL_MS),
-  };
-}
-
-/**
- * Universal recap-onboarding entry. The app resolves current account state
- * before deciding whether this recipient belongs in login, recap, or FTUE.
- * The token identifies the intended recipient but never authenticates them or
- * grants recap content by itself.
- */
-function onboardingEntryUrl(token: string): string {
-  return `${APP_BASE_URL}/r/${encodeURIComponent(token)}`;
-}
 
 export type OnboardingTokenResolution =
   | { status: "not_found" }
@@ -162,7 +122,7 @@ export async function resolveOnboardingToken(
 ): Promise<OnboardingTokenResolution> {
   const token = rawToken.trim();
   if (!token || token.length > 200) return { status: "not_found" };
-  return resolveOnboardingTokenHash(hashCapabilityToken(token));
+  return resolveOnboardingTokenHash(hashRecapCapabilityToken(token));
 }
 
 /** Internal pure-read recovery from an already hashed onboarding capability. */
@@ -472,7 +432,7 @@ async function runDistribution(
 
   if (attendees.length === 0) {
     try {
-      const body = await buildEmailContent(
+      const body = await buildRecapEmailContent(
         attemptRecap,
         meeting,
         undefined,
@@ -482,6 +442,7 @@ async function runDistribution(
       );
       const draft = await emailDraftStorage.create(principal, {
         sessionId,
+        purpose: "meeting_recap",
         gmailAccountId,
         to: [],
         subject,
@@ -518,78 +479,57 @@ async function runDistribution(
   }
 
   for (const attendee of attendees) {
-    const entryCapability = createRecipientEntryCapability();
     let distributionId: string | null = null;
+    let createdDraftId: string | null = null;
     try {
-      const owned = ownedInsertValues(principal, scopeColumns);
-      const normalizedEmail = normalizeEmailAddress(attendee.email);
-      const row = await db.transaction(async (tx) => {
-        await acquireAdvisoryTransactionLock(
-          tx,
-          ADVISORY_LOCK_NS.INVITED_SUBJECT,
-          normalizedEmail,
-        );
-        const [existingUser] = await tx
-          .select({ id: users.id })
-          .from(users)
-          .where(sql`LOWER(BTRIM(${users.email})) = ${normalizedEmail}`)
-          .limit(1);
-        const isMantraUser = !!existingUser;
-        if (!isMantraUser) {
-          await resolveOrCreateInvitedSubjectInTransaction(
-            tx,
-            normalizedEmail,
-            attendee.name,
-          );
-        }
-        const [createdDistribution] = await tx
-          .insert(meetingRecapDistributions)
-          .values({
-            sessionId,
-            attendeeEmail: normalizedEmail,
-            attendeeName: attendee.name ?? null,
-            isMantraUser,
-            accessExpiresAt: entryCapability.expiresAt,
-            onboardingTokenHash: entryCapability.tokenHash,
-            sendMethod: "gmail_draft",
-            status: "pending",
-            ...owned,
-          })
-          .returning({ id: meetingRecapDistributions.id });
-        return createdDistribution;
-      });
-      distributionId = row?.id ?? null;
-      if (!distributionId) throw new Error("Recap recipient record was not created");
-
-      const body = await buildEmailContent(
+      const body = await buildRecapEmailContent(
         attemptRecap,
         meeting,
         attendee,
         emailContext.event,
         principal,
-        onboardingEntryUrl(entryCapability.token),
+        null,
       );
       const draft = await emailDraftStorage.create(principal, {
         sessionId,
+        purpose: "meeting_recap",
         gmailAccountId,
-        to: [attendee.email],
+        to: [],
         subject,
         body,
         bodyFormat: "markdown",
       });
-      await db
-        .update(meetingRecapDistributions)
-        .set({ draftId: draft.id, status: "draft_created", updatedAt: new Date() })
+      createdDraftId = draft.id;
+      const rotated = await emailDraftStorage.setRecapRecipient(
+        principal,
+        draft.id,
+        attendee.personId!,
+        attendee.email,
+      );
+      const recipientMode = rotated.recipientMode;
+      const [distribution] = await db
+        .select({ id: meetingRecapDistributions.id })
+        .from(meetingRecapDistributions)
         .where(and(
-          eq(meetingRecapDistributions.id, distributionId),
+          eq(meetingRecapDistributions.draftId, draft.id),
           writableScopePredicate(principal, scopeColumns) as SQL,
-        ));
-      draftIds.push(draft.id);
-      log.debug(`Gmail recap draft created for recipient (draftId=${draft.id})`);
+        ))
+        .limit(1);
+      distributionId = distribution?.id ?? null;
+      if (!recipientMode.selected || !distributionId) {
+        throw new Error("Recap recipient capability was not created");
+      }
+      draftIds.push(rotated.draft.id);
+      log.debug(`Gmail recap draft created for recipient (draftId=${rotated.draft.id})`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       draftErrors.push(msg.slice(0, 500));
       log.warn(`Recap draft creation failed for one recipient (session=${sessionId}): ${msg}`);
+      if (createdDraftId) {
+        await emailDraftStorage.discard(principal, createdDraftId).catch((discardError) => {
+          log.warn(`Failed to discard incomplete recap draft ${createdDraftId}: ${discardError instanceof Error ? discardError.message : String(discardError)}`);
+        });
+      }
       if (distributionId) {
         await db
           .update(meetingRecapDistributions)
@@ -684,10 +624,7 @@ async function surfaceRecapDraftsInline(
 
 // ─── Attendee resolution ──────────────────────────────────────────────────────
 
-interface ResolvedAttendee {
-  email: string;
-  name?: string;
-}
+export interface ResolvedAttendee extends RecapEmailRecipient {}
 
 interface MeetingEmailContext {
   event: CalendarEvent | null;
@@ -825,108 +762,21 @@ async function resolveRecipients(
   });
 
   emailMap.delete(senderEmail.trim().toLowerCase());
-  return [...emailMap.values()];
-}
 
-// ─── Email content ────────────────────────────────────────────────────────────
-
-async function buildEmailContent(
-  recap: MeetingRecapMeta,
-  meeting: MeetingSessionMeta,
-  attendee: ResolvedAttendee | undefined,
-  event: CalendarEvent | null,
-  principal: Principal,
-  recapEntryUrl: string | null,
-): Promise<string> {
-  if (!recap.pageId) throw new Error("Canonical recap page is missing");
-
-  const [page] = await db
-    .select({ plainTextContent: libraryPages.plainTextContent })
-    .from(libraryPages)
-    .where(
-      combineWithVisibleScope(
-        principal,
-        libraryScopeColumns,
-        eq(libraryPages.id, recap.pageId),
-      ),
-    )
-    .limit(1);
-  const storedRecap = page?.plainTextContent.trim();
-  if (!storedRecap) {
-    throw new Error(`Canonical recap page ${recap.pageId} has no content`);
+  const resolvedRecipients: ResolvedAttendee[] = [];
+  for (const attendee of emailMap.values()) {
+    const person = await runWithPrincipal(principal, () => peopleStorage.getPersonByEmail(attendee.email));
+    if (!person) {
+      log.warn(`Recap recipient email is not linked to a visible Person; skipping capability issuance`);
+      continue;
+    }
+    resolvedRecipients.push({
+      email: attendee.email,
+      name: person.name.trim() || attendee.name,
+      personId: person.id,
+    });
   }
-
-  const meetingName = meeting.title?.trim() || recap.pageTitle?.replace(/^Meeting:\s*/i, "").trim() || "Meeting";
-  const startedAt = new Date(meeting.startedAt ?? meeting.eventStart ?? event?.start.dateTime ?? event?.start.date ?? "");
-  const timeLabel = Number.isNaN(startedAt.getTime())
-    ? "Time unavailable"
-    : `${formatInTimezone(startedAt, { hour: "numeric", minute: "2-digit", timeZoneName: "short" })} ${formatInTimezone(startedAt, { month: "short", day: "numeric", year: "numeric" })}`;
-  const participantLine = meeting.participants
-    .map((participant) => participant.label.trim())
-    .filter((label): label is string => !!label)
-    .filter((label, index, labels) => labels.indexOf(label) === index)
-    .join(", ");
-  const meetingDetails = [
-    `- Time: ${timeLabel}`,
-    ...(participantLine ? [`- Participants: ${participantLine}`] : []),
-  ].join("\n");
-  const greetingName = firstName(attendee?.name);
-  const greeting = greetingName ? `Hi ${greetingName},` : "Hi,";
-
-  const summary = sectionContent(storedRecap, "Summary");
-  if (!summary) throw new Error("Canonical recap summary is missing");
-  const sections = [
-    { title: "KEY DECISIONS", items: sectionItems(storedRecap, "Key Decisions") },
-    { title: "OPEN QUESTIONS", items: sectionItems(storedRecap, "Open Questions") },
-    { title: "ACTION ITEMS", items: sectionItems(storedRecap, "Action Items") },
-  ].filter((section) => section.items.length > 0);
-
-  const blocks = [
-    greeting,
-    `**${meetingName}**\n${meetingDetails}`,
-    summary,
-    ...sections.map((section) =>
-      `**${section.title}**\n${section.items.map((item) => `- ${item}`).join("\n")}`,
-    ),
-    ...(recapEntryUrl
-      ? [
-          `[Open your recap and assigned work](${recapEntryUrl})`,
-          `Sent with [Mantra](${recapEntryUrl})`,
-        ]
-      : []),
-  ];
-  const body = blocks.join("\n\n");
-  if (body.length > EMAIL_BODY_CHAR_LIMIT) {
-    throw new Error(`Canonical recap exceeds the ${EMAIL_BODY_CHAR_LIMIT}-character email budget`);
-  }
-  return body;
-}
-
-function sectionContent(markdown: string, heading: string): string {
-  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = markdown.match(
-    new RegExp(`^##\\s+${escapedHeading}\\s*\n+([\\s\\S]*?)(?=\n##\\s+|$)`, "im"),
-  );
-  return match?.[1]
-    ?.trim()
-    .replace(/@person:[A-Za-z0-9_-]+/g, "")
-    .replace(/\n{3,}/g, "\n\n") ?? "";
-}
-
-function sectionItems(markdown: string, heading: string): string[] {
-  const content = sectionContent(markdown, heading);
-  if (!content || /^(?:[-*]\s*)?none\.?$/i.test(content.trim())) return [];
-  const bulletItems = content
-    .split("\n")
-    .map((line) => line.match(/^[-*]\s+(.+)$/)?.[1]?.trim())
-    .filter((item): item is string => !!item && !/^none\.?$/i.test(item));
-  return bulletItems.length > 0 ? bulletItems : [content.replace(/\s+/g, " ").trim()];
-}
-
-function firstName(name: string | undefined): string | null {
-  const normalized = name?.trim();
-  if (!normalized) return null;
-  return normalized.split(/\s+/)[0] || null;
+  return resolvedRecipients;
 }
 
 function isValidEmail(value: string): boolean {
