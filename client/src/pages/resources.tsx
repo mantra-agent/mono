@@ -262,6 +262,25 @@ function formatMetricName(kind: string, name: string): string {
   return `${kind.replace(/_/g, " ")} · ${name.replace(/_/g, " ")}`;
 }
 
+function formatNavigationDiagnosis(value: string): string {
+  return value.replace(/_/g, " ");
+}
+
+function formatNavigationEvidence(incident: BrowserTelemetrySummary["recentNavigationIncidents"][number]): string {
+  const evidence = incident.evidence;
+  return [
+    `${incident.fromRoute} → ${incident.toRoute}`,
+    formatMs(incident.durationMs),
+    formatNavigationDiagnosis(incident.diagnosis),
+    `commit ${evidence.firstCommitMs === null ? "—" : formatMs(evidence.firstCommitMs)}`,
+    `ready ${evidence.dataReadyMs === null ? "—" : formatMs(evidence.dataReadyMs)}`,
+    `queries ${evidence.queriesActiveAtEnd}/${evidence.peakQueries}`,
+    `task ${formatMs(evidence.longTaskMaxMs)}`,
+    `frame ${formatMs(evidence.slowFrameMaxMs)}`,
+    `streams ${evidence.streamActiveMax}/${evidence.streamSegmentsMax}`,
+  ].join(" · ");
+}
+
 function formatFrontendMetricValue(kind: string, name: string, value: number | null): string {
   if (value === null) return "—";
   if (kind === "web_vital" && name.toLowerCase().includes("cls")) return value.toFixed(3);
@@ -736,6 +755,33 @@ function ResourcesView({
                           detail={<DetailText>p50 / p95 · n={metric.count} · budget {formatFrontendMetricValue(metric.kind, metric.name, frontendMetricBudget(frontendExperience, metric.kind, metric.name))} · latest {formatRelative(metric.latestAt ? new Date(metric.latestAt).getTime() : null, now)}</DetailText>}
                         />
                       ))}
+                      <MetricRow
+                        label="SPA navigation health"
+                        value={`${frontendExperience.navigationTraces.count} traces · ${formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p50Ms)} / ${formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.p95Ms)}`}
+                        status={frontendExperience.navigationTraces.incompleteCount > 0 || (frontendExperience.navigationTraces.p95Ms ?? 0) > frontendExperience.budgets.navigation.p95Ms ? "amber" : "ok"}
+                        detail={(
+                          <DetailList
+                            items={[
+                              `p50 / p95 · ${frontendExperience.navigationTraces.completedCount} completed · ${frontendExperience.navigationTraces.incompleteCount} incomplete`,
+                              ...Object.entries(frontendExperience.navigationTraces.diagnosisCounts).map(([diagnosis, count]) => `${formatNavigationDiagnosis(diagnosis)}: ${count}`),
+                            ]}
+                          />
+                        )}
+                        testId="tile-navigation-health"
+                      />
+                      <MetricRow
+                        label="Navigation incidents"
+                        value={String(frontendExperience.recentNavigationIncidents.length)}
+                        status={frontendExperience.recentNavigationIncidents.length ? "amber" : "ok"}
+                        detail={(
+                          <DetailList
+                            items={frontendExperience.recentNavigationIncidents.length
+                              ? frontendExperience.recentNavigationIncidents.slice(0, 8).map(formatNavigationEvidence)
+                              : ["No diagnosed navigation incidents in this window."]}
+                          />
+                        )}
+                        testId="tile-navigation-incidents"
+                      />
                       <MetricRow
                         label="Budgets"
                         value="p95 guarded"

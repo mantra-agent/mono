@@ -38,6 +38,7 @@ import { useMobileViewportRestoration } from "@/hooks/use-mobile-viewport-restor
 import NotFound from "@/pages/not-found";
 import { AppShellImmersive } from "@/components/app-shell-immersive";
 import { getProvisionalOnboardingToken } from "@/lib/immersive-entrance";
+import { markNavigationDestinationCommit, markNavigationFallback } from "@/lib/navigation-trace";
 
 const log = createLogger("App");
 
@@ -197,6 +198,9 @@ interface OnboardingStatus {
 }
 
 function PageFallback() {
+  useEffect(() => {
+    markNavigationFallback();
+  }, []);
   return (
     <div className="flex h-screen items-center justify-center bg-background">
       <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -238,9 +242,18 @@ function sessionRedirectFromQuery(fallbackPath = "/home"): string {
   return `/session?${next.toString()}`;
 }
 
+function RouteCommitObserver() {
+  const [location] = useLocation();
+  useEffect(() => {
+    markNavigationDestinationCommit(location);
+  }, [location]);
+  return null;
+}
+
 function Router() {
   return (
     <Suspense fallback={<PageFallback />}>
+      <RouteCommitObserver />
       <Switch>
         <Route path="/"><Redirect to="/home" /></Route>
         <Route path="/brain" component={BrainPage} />
