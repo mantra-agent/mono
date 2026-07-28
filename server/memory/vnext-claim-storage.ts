@@ -27,7 +27,7 @@ import type { ClaimCandidate, ObservationRelationshipCandidate } from "./vnext-c
 import { deriveVnextClaimDimensions, type VnextClaimDimensions } from "./vnext-claim-dimensions";
 import { generateEmbedding } from "./embedding";
 import { MEMORY_VNEXT_EMBEDDING_PROFILE } from "./embedding-profile";
-import { cosineSimilarity } from "./graph-walker";
+import { cosineSimilarity } from "./embedding";
 import { resolveVnextEntityMentions } from "./vnext-entity-resolution";
 
 const log = createLogger("MemoryVnextClaims");

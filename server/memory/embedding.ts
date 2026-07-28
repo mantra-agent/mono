@@ -59,6 +59,22 @@ export function isEmbeddingsAvailable(): boolean {
   return true;
 }
 
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0;
+
+  let dot = 0;
+  let magnitudeA = 0;
+  let magnitudeB = 0;
+  for (let index = 0; index < a.length; index++) {
+    dot += a[index] * b[index];
+    magnitudeA += a[index] * a[index];
+    magnitudeB += b[index] * b[index];
+  }
+
+  const denominator = Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB);
+  return denominator === 0 ? 0 : dot / denominator;
+}
+
 export async function generateEmbedding(text: string): Promise<number[]> {
   const trimmed = text.trim();
   if (!trimmed) {

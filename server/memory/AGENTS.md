@@ -355,7 +355,7 @@ All vNext claim logic lives in `server/memory/vnext-*` modules with zero imports
 | `vnext-content-chunking.ts` | Content loading (sessions, library pages) and chunking helpers |
 | `vnext-source-queue.ts` | Source queue DB operations (poll, mark processing/completed, reset stuck) |
 
-`memory-enrichment.ts` re-exports `ClaimCandidate`, but its legacy myelination entry points are fail-closed archival compatibility only. Generic bounded title/summary/tag generation lives in neutral `server/title-summary-tags.ts` and is used directly by legitimate document consumers. `consolidation.ts` preserves legacy status/types for rollback visibility, but short→mid, mid→long, Stage-1 advancement, and graph enrichment runtime entry points are fail-closed and must not mutate `memory_entries`.
+Generic bounded title/summary/tag generation lives in neutral `server/title-summary-tags.ts` and is used directly by legitimate document consumers. The obsolete `MemoryStorage`, tier consolidation, transition, graph-walker, link-scheduling, listener, title-maintenance, and boot-diagnostic implementations are removed from ordinary runtime composition. vNext modules depend only on vNext storage and neutral embedding/summarization primitives.
 
 ### Ingestion paths
 
@@ -450,4 +450,4 @@ Memory/myelination prompt templates live in Prompt Modules, not Skills. They hav
 - The standalone Beliefs tool, API, context section, storage model, reflection reads, export, capture target, and confidence lifecycle are removed. Existing rows are archival-only and must not be read, migrated, or deleted by runtime retirement code.
 - Probabilistic person/world knowledge belongs in vNext claims. Deliberate explanatory positions with evidence and predictions belong in Theses. Do not recreate a generic Beliefs abstraction.
 - Quick-capture memory writes a filed Library source artifact so normal ingestion can decide whether it yields a vNext claim.
-- Generic long-title repair lives in `long-title-maintenance.ts`; it must not be coupled to a cognitive domain.
+- Title/summary generation for legitimate document consumers remains neutral in `server/title-summary-tags.ts`; legacy memory-entry title maintenance is retired.
