@@ -87,7 +87,6 @@ export async function ensureVaults(): Promise<void> {
       "sessions",
       "messages",
       "workspace_documents",
-      "memory_entries",
       "library_pages",
       "emotional_states",
       "personas",
@@ -157,7 +156,6 @@ export async function ensureVaults(): Promise<void> {
     const indexedTables = [
       { table: "sessions", idx: "idx_sessions_vault" },
       { table: "workspace_documents", idx: "idx_ws_doc_vault" },
-      { table: "memory_entries", idx: "idx_memory_vault" },
       { table: "library_pages", idx: "idx_library_pages_vault" },
       // Phase 2 indexes
       { table: "calendar_event_metadata", idx: "idx_cal_meta_vault" },
@@ -257,7 +255,6 @@ export async function ensureVaults(): Promise<void> {
       { table: "sessions", accountCol: "account_id" },
       { table: "messages", accountCol: "account_id" },
       { table: "workspace_documents", accountCol: "account_id" },
-      { table: "memory_entries", accountCol: "account_id" },
       { table: "library_pages", accountCol: "account_id" },
       { table: "emotional_states", accountCol: "account_id" },
       { table: "personas", accountCol: "account_id" },
