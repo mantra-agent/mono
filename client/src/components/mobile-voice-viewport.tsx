@@ -1,5 +1,6 @@
 import { VoiceEntranceOrb } from "@/components/voice-entrance-orb";
 import type { VoiceSessionContextValue } from "@/hooks/use-voice-session";
+import { publishCanonicalOrbReady } from "@/lib/claim-visual-handoff";
 
 interface MobileVoiceViewportProps {
   voiceSession: VoiceSessionContextValue;
@@ -21,6 +22,7 @@ export function MobileVoiceViewport({ voiceSession }: MobileVoiceViewportProps) 
         state={voiceSession.visualState}
         maxFrameRate={30}
         paused={!voiceSession.isHostForeground}
+        onFirstFrame={publishCanonicalOrbReady}
         className="absolute left-1/2 top-1/2 h-[60%] w-[60%] -translate-x-1/2 -translate-y-1/2"
       />
     </div>

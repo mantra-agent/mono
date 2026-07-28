@@ -40,6 +40,7 @@ import { AppShellImmersive } from "@/components/app-shell-immersive";
 import { getProvisionalOnboardingToken } from "@/lib/immersive-entrance";
 import { markNavigationDestinationCommit, markNavigationFallback } from "@/lib/navigation-trace";
 import { UiInteractionProvider } from "@/hooks/use-ui-interaction";
+import { ClaimVisualHandoff } from "@/components/claim-visual-handoff";
 
 const log = createLogger("App");
 
@@ -574,6 +575,7 @@ function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider>
+        <ClaimVisualHandoff />
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
             {provisionalOnboardingToken !== null ? (

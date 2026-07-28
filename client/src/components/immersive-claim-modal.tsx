@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { createLogger } from "@/lib/logger";
+import { cn } from "@/lib/utils";
 
 const log = createLogger("ImmersiveClaimModal");
 
@@ -46,8 +47,11 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [termsInvalid, setTermsInvalid] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const termsControlRef = useRef<HTMLButtonElement>(null);
+  const termsRowRef = useRef<HTMLDivElement>(null);
   // React state setters are async; a synchronous ref is the concurrency lock so
   // a double-submit in the same tick cannot fire two claim requests.
   const submittingRef = useRef(false);
@@ -95,7 +99,19 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
       return;
     }
     if (!termsAccepted) {
-      setError("Agree to the Terms of Service to continue.");
+      setTermsInvalid(true);
+      window.requestAnimationFrame(() => termsControlRef.current?.focus());
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        termsRowRef.current?.animate(
+          [
+            { transform: "translateX(0)" },
+            { transform: "translateX(-4px)" },
+            { transform: "translateX(4px)" },
+            { transform: "translateX(0)" },
+          ],
+          { duration: 180, easing: "ease-out" },
+        );
+      }
       return;
     }
 
@@ -186,30 +202,47 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
             />
           </div>
 
-          <div className="flex items-start gap-2">
-            <Checkbox
-              id="claim-terms"
-              checked={termsAccepted}
-              onCheckedChange={(checked) => setTermsAccepted(checked === true)}
-              disabled={submitting}
-              className="mt-0.5 border-border data-[state=checked]:border-cta data-[state=checked]:bg-cta data-[state=checked]:text-cta-foreground"
-            />
-            <Label
-              htmlFor="claim-terms"
-              className="cursor-pointer text-sm font-normal leading-5 text-muted-foreground"
-            >
-              I have read and agree to the{" "}
-              <a
-                href="https://www.trymantra.ai/terms"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-cta underline underline-offset-4 hover:text-active"
-                onClick={(event) => event.stopPropagation()}
+          <div ref={termsRowRef} className="flex flex-col gap-1.5">
+            <div className="flex items-start gap-2">
+              <Checkbox
+                ref={termsControlRef}
+                id="claim-terms"
+                checked={termsAccepted}
+                onCheckedChange={(checked) => {
+                  const accepted = checked === true;
+                  setTermsAccepted(accepted);
+                  if (accepted) setTermsInvalid(false);
+                }}
+                disabled={submitting}
+                aria-invalid={termsInvalid}
+                aria-describedby={termsInvalid ? "claim-terms-error" : undefined}
+                className={cn(
+                  "mt-0.5 border-border data-[state=checked]:border-cta data-[state=checked]:bg-cta data-[state=checked]:text-cta-foreground",
+                  termsInvalid && "border-destructive ring-2 ring-destructive ring-offset-2 ring-offset-card",
+                )}
+              />
+              <Label
+                htmlFor="claim-terms"
+                className="cursor-pointer text-sm font-normal leading-5 text-muted-foreground"
               >
-                Terms of Service
-              </a>
-              .
-            </Label>
+                I have read and agree to the{" "}
+                <a
+                  href="https://www.trymantra.ai/terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-cta underline underline-offset-4 hover:text-active"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  Terms of Service
+                </a>
+                .
+              </Label>
+            </div>
+            {termsInvalid ? (
+              <p id="claim-terms-error" className="pl-6 text-sm text-destructive" role="alert">
+                Agree to the Terms of Service to continue.
+              </p>
+            ) : null}
           </div>
 
           {error ? (
@@ -218,7 +251,7 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
             </p>
           ) : null}
 
-          <Button type="submit" disabled={submitting || !termsAccepted} className="w-full">
+          <Button type="submit" disabled={submitting} className="w-full">
             {submitting ? "Continuing…" : "Continue"}
           </Button>
         </div>

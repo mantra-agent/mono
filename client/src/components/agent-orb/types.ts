@@ -28,6 +28,8 @@ export interface AgentOrbProps {
    * Reserved for captured media surfaces whose video track must stay live.
    */
   sustainFrameProduction?: boolean;
+  /** Called once after this renderer has painted its first WebGL frame. */
+  onFirstFrame?: (element: HTMLDivElement) => void;
   /** Additional CSS class for the container */
   className?: string;
 }
