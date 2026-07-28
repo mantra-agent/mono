@@ -94,6 +94,9 @@ function applySessionDelta(delta: { action: string; sessionId: string; session?:
   }
 
   if (action === "updated" && session) {
+    queryClient.setQueryData<ChatSession>(["/api/sessions", sessionId], (old) =>
+      old ? { ...old, ...session } : old,
+    );
     queryClient.setQueryData<ChatSession[]>(["/api/sessions"], (old) => {
       if (!old) return old;
       const updated = old.map(s => s.id === sessionId ? { ...s, ...session } : s);

@@ -5,9 +5,10 @@ import { MeetingHeaderBar } from "@/components/meeting-header-bar";
 import { DesktopVoiceSurface } from "@/components/desktop-voice-surface";
 import { DesktopAudioSurface } from "@/components/desktop-audio-surface";
 import { MobileVoiceViewport } from "@/components/mobile-voice-viewport";
+import { SessionAgendaTree } from "@/components/session-agenda-tree";
 import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
 import { isNativeVoiceBridge } from "@/lib/native-voice-bridge";
-import type { MeetingSessionMeta, QuestionResponseMeta } from "@shared/models/chat";
+import type { MeetingSessionMeta, QuestionResponseMeta, SessionAgenda } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
@@ -35,6 +36,7 @@ export interface SessionTranscriptSurfaceProps {
   wsConnected: boolean;
   sessionStatus?: string | null;
   meeting?: MeetingSessionMeta | null;
+  agenda?: SessionAgenda;
   sessionTitle?: string;
   scrollContainerRef: React.RefObject<HTMLDivElement>;
   onScroll: React.UIEventHandler<HTMLDivElement>;
@@ -68,6 +70,7 @@ export function SessionTranscriptSurface({
   wsConnected,
   sessionStatus,
   meeting,
+  agenda,
   sessionTitle,
   scrollContainerRef,
   onScroll,
@@ -96,6 +99,7 @@ export function SessionTranscriptSurface({
           sessionTitle={sessionTitle}
         />
       )}
+      <SessionAgendaTree agenda={agenda} />
       {!wsConnected && sessionStatus === "streaming" && !voiceActive && (
         <div
           className="flex items-center gap-2 px-4 py-2 bg-warning/5 dark:bg-warning/5 border-b border-warning/20 text-warning-foreground text-xs"
