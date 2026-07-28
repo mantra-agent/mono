@@ -58,6 +58,7 @@ import { addObjectAclsTable } from "./migrations/add-object-acls";
 import { ensureVaults } from "./migrations/ensure-vaults";
 import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
 import { runDiagnosedCrossOwnerLibraryChildRepair } from "./migrations/detach-cross-owner-library-child";
+import { runMeetingRecapAgendaSanitizer } from "./migrations/sanitize-meeting-recap-agendas";
 
 const objectAclsMigrationReady = addObjectAclsTable();
 const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
@@ -567,6 +568,14 @@ app.use((req, res, next) => {
       // service dependency while repairing one diagnosed hierarchy edge.
       serverLog.info("[post-ready] registering cross-owner Library child repair");
       void runDiagnosedCrossOwnerLibraryChildRepair();
+
+      serverLog.info("[post-ready] registering meeting recap agenda sanitizer");
+      void runMeetingRecapAgendaSanitizer().catch((error) => {
+        serverLog.error("meeting recap agenda sanitizer failed", {
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+        });
+      });
 
       // Worker-thread heartbeat (Task #995). Spawn a tiny worker that posts a
       // heartbeat every 1s. Forward each beat to the wrapper over IPC. If the

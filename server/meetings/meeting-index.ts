@@ -12,6 +12,7 @@ import { peopleStorage, type Person } from "../people-storage";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { visibleScopePredicate } from "../scoped-storage";
 import { createLogger } from "../log";
+import { stripPrivateAgendaFromRecap } from "../meeting/recap-content";
 
 const log = createLogger("MeetingIndex");
 
@@ -402,7 +403,9 @@ async function artifactMapForSessions(sessions: FileSession[]): Promise<Map<stri
         slug: page.slug,
         artifactKind: direct.kind,
         source: direct.source,
-        summary: page.summary?.trim() || page.plainTextContent?.trim() || null,
+        summary: direct.kind === "recap"
+          ? stripPrivateAgendaFromRecap(page.summary?.trim() || page.plainTextContent?.trim() || "") || null
+          : page.summary?.trim() || page.plainTextContent?.trim() || null,
         oneLiner: page.oneLiner?.trim() || null,
       });
     }

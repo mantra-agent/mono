@@ -31,6 +31,7 @@ import { runWithMeetingOwnerPrincipal } from "./owner-principal";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 import { formatInTimezone, getDateInTimezone } from "../timezone";
 import { eventBus } from "../event-bus";
+import { stripPrivateAgendaFromRecap } from "./recap-content";
 import type { MeetingParticipant, MeetingSessionMeta } from "@shared/models/chat";
 
 const log = createLogger("MeetingRecap");
@@ -249,6 +250,40 @@ async function findExistingRecapPage(sessionId: string) {
   return page;
 }
 
+export async function sanitizeStoredMeetingRecapPage(
+  sessionId: string,
+  pageId: string,
+): Promise<"updated" | "already_clean" | "not_found"> {
+  const principal = getCurrentPrincipalOrSystem();
+  const [page] = await db
+    .select({
+      id: libraryPages.id,
+      title: libraryPages.title,
+      plainTextContent: libraryPages.plainTextContent,
+      createdBySessionId: libraryPages.createdBySessionId,
+      tags: libraryPages.tags,
+    })
+    .from(libraryPages)
+    .where(
+      combineWithVisibleScope(
+        principal,
+        libraryScopeColumns,
+        and(
+          eq(libraryPages.id, pageId),
+          eq(libraryPages.createdBySessionId, sessionId),
+          sql`${libraryPages.tags} @> ARRAY['meeting', 'recap']::text[]`,
+        ),
+      ),
+    )
+    .limit(1);
+  if (!page) return "not_found";
+
+  const sanitized = stripPrivateAgendaFromRecap(page.plainTextContent);
+  if (sanitized === page.plainTextContent) return "already_clean";
+  await refreshRecapPage(page.id, page.title, sanitized);
+  return "updated";
+}
+
 async function refreshRecapPage(pageId: string, title: string, markdown: string) {
   const principal = getCurrentPrincipalOrSystem();
   const synced = syncContentFields({ markdown });
@@ -369,7 +404,6 @@ async function generateRecapContent(
         content: [
           `Meeting: ${meeting.title || sessionTitle}`,
           `Participants: ${participantList}`,
-          ...(meeting.agenda ? [`Private agenda:\n${meeting.agenda}`] : []),
           `Transcript:\n${transcript}`,
         ].join("\n\n"),
       },
@@ -562,13 +596,12 @@ function buildRecapMarkdown(recap: RecapContent, meeting: MeetingSessionMeta): s
   const listOrNone = (items: string[]) => items.length > 0
     ? items.map((item) => `- ${item}`).join("\n")
     : "- None.";
-  if (meeting.agenda) parts.push(`## Agenda\n\n${meeting.agenda}`);
   parts.push(`## Summary\n\n${recap.summary}`);
   parts.push(`## Details\n\n${recap.details}`);
   parts.push(`## Key Decisions\n\n${listOrNone(recap.decisions)}`);
   parts.push(`## Open Questions\n\n${listOrNone(recap.openQuestions)}`);
   parts.push(`## Action Items\n\n${listOrNone(recap.followUps)}`);
-  return parts.join("\n\n");
+  return stripPrivateAgendaFromRecap(parts.join("\n\n"));
 }
 
 /**

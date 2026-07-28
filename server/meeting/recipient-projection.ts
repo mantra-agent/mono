@@ -14,6 +14,7 @@ import { chatStorage } from "../integrations/chat/storage";
 import { combineWithVisibleScope } from "../scoped-storage";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { resolveMeetingTransportSession, runWithMeetingOwnerPrincipal } from "./owner-principal";
+import { stripPrivateAgendaFromRecap } from "./recap-content";
 
 const MAX_RECIPIENT_TASKS = 100;
 
@@ -101,7 +102,7 @@ async function loadRecapContent(meeting: MeetingSessionMeta): Promise<RecipientR
       eq(libraryPages.id, recap.pageId),
     ))
     .limit(1);
-  const markdown = page?.plainTextContent.trim();
+  const markdown = stripPrivateAgendaFromRecap(page?.plainTextContent.trim() ?? "");
   if (!markdown) return null;
   return {
     summary: sectionContent(markdown, "Summary"),
