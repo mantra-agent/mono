@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { libraryPageIsLive } from "./library-trash";
 import { acquireLibraryParentLocks, db } from "./db";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
@@ -253,7 +254,7 @@ async function resolveStandardLibraryPlacement(
           libraryScopeColumns,
           and(
             eq(libraryPages.id, input.explicitParentId),
-            isNull(libraryPages.deletedAt),
+            libraryPageIsLive(),
           ),
         ),
       )
