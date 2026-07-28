@@ -751,6 +751,49 @@ export function setupAuth(app: Express) {
   });
 
   /**
+   * POST /api/auth/claim/resolve
+   *
+   * Pure-read prefill for the account-claim modal. Mirrors the claim route's
+   * authorization guard (canonical resolveOnboardingToken; fail closed unless
+   * status="resolved" + accountState="provisional") but performs NO identity
+   * mutation. Returns the token-bound email — locked in the claim form so a
+   * claimant cannot rebind the token to a different identity — plus the
+   * attendee display name for prefill. A real account => 409 so the client
+   * routes the recipient to login instead of the claim form.
+   */
+  app.post("/api/auth/claim/resolve", enforceAuthBudget("claim-resolve", 20), async (req: Request, res: Response) => {
+    try {
+      const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+      if (!token || token.length > 200) {
+        return res.status(400).json({ error: "Invalid claim token" });
+      }
+      const { resolveOnboardingToken } = await import("./meeting/distribution");
+      const resolution = await resolveOnboardingToken(token);
+      if (resolution.status !== "resolved") {
+        return res.status(404).json({ error: "This invitation is no longer valid" });
+      }
+      if (resolution.accountState !== "provisional") {
+        return res.status(409).json({
+          error: "An account already exists for this invitation. Please log in.",
+          email: resolution.email,
+        });
+      }
+      const email = normalizeEmailAddress(resolution.email);
+      // resolveOnboardingToken falls back to the email when no attendee name is
+      // known; only surface a real name so the form never seeds the name field
+      // with an email address.
+      const displayName = resolution.displayName && resolution.displayName !== email
+        ? resolution.displayName
+        : "";
+      res.json({ email, displayName, meetingTitle: resolution.meetingTitle });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error("[AuthClaim] Claim resolve failed", { error: message });
+      res.status(500).json({ error: "Could not resolve invitation" });
+    }
+  });
+
+  /**
    * POST /api/auth/claim
    *
    * Invite-authorized account claim for a meeting-recap recipient. The
