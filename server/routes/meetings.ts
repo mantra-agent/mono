@@ -245,10 +245,6 @@ export function registerMeetingsRoutes(app: Express): void {
         res.status(404).json({ error: "Meeting not found" });
         return;
       }
-      if (result.outcome === "transport_failed") {
-        res.status(502).json({ error: "Failed to stop the active meeting before deletion" });
-        return;
-      }
       log.info("meeting deleted", {
         sessionId: req.params.id,
         deletedSessionCount: result.deletedSessionIds.length,
