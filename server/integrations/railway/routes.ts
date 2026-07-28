@@ -339,6 +339,19 @@ export function registerRailwayRoutes(app: Express) {
     }
   });
 
+  // Lightweight, environment-independent publish run status. The publish run is
+  // a global singleton (getDisplayRun); consumers that only need the current
+  // run status — e.g. the sidebar Build indicator — must read it here instead
+  // of the env-scoped summary, which requires source/target environment IDs.
+  app.get("/api/railway/publish/run", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const run = await getDisplayRun();
+      return res.json({ run: toPublicRun(run) });
+    } catch (err: unknown) {
+      handleError(res, err, "publish run status failed");
+    }
+  });
+
   app.post("/api/railway/publish/start", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const parsed = publishContextSchema.extend({ increment: z.enum(["minor", "major", "flagship"]) }).safeParse(req.body);
