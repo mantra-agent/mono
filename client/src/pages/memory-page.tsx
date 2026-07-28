@@ -1397,7 +1397,7 @@ function GraphTab({
   const isMobile = useIsMobile();
   const graphRef = useRef<MemoryGraph3DHandle>(null);
   const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
-  const [visibleNodeTypes, setVisibleNodeTypes] = useState<Set<string>>(() => new Set(["people"]));
+  const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(() => new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [graphSearchQuery, setGraphSearchQuery] = useState("");
@@ -1451,8 +1451,8 @@ function GraphTab({
     [graphNodes],
   );
   const visibleGraphNodes = useMemo(
-    () => graphNodes.filter((node) => visibleNodeTypes.has(getMemoryGraphNodeTypeConfig(node.source).id)),
-    [graphNodes, visibleNodeTypes],
+    () => graphNodes.filter((node) => !hiddenNodeTypes.has(getMemoryGraphNodeTypeConfig(node.source).id)),
+    [graphNodes, hiddenNodeTypes],
   );
   const visibleNodeIds = useMemo(
     () => new Set(visibleGraphNodes.map((node) => node.id)),
@@ -1464,7 +1464,7 @@ function GraphTab({
   );
 
   const toggleNodeType = useCallback((typeId: string) => {
-    setVisibleNodeTypes((current) => {
+    setHiddenNodeTypes((current) => {
       const next = new Set(current);
       if (next.has(typeId)) next.delete(typeId);
       else next.add(typeId);
@@ -1597,7 +1597,7 @@ function GraphTab({
                   aria-label="Choose visible graph node types"
                   title="Choose visible nodes"
                   data-testid="button-graph-label-filter"
-                  className={visibleNodeTypes.size > 0 ? "border-foreground/30 bg-card/90" : "bg-card/80"}
+                  className={hiddenNodeTypes.size > 0 ? "border-foreground/30 bg-card/90" : "bg-card/80"}
                 >
                   <ListFilter className="h-3.5 w-3.5" />
                 </Button>
@@ -1611,7 +1611,7 @@ function GraphTab({
               >
                 <div className="space-y-0.5" role="group" aria-label="Visible graph node types">
                   {availableNodeTypes.map((type) => {
-                    const selected = visibleNodeTypes.has(type.id);
+                    const selected = !hiddenNodeTypes.has(type.id);
                     return (
                       <label
                         key={type.id}
