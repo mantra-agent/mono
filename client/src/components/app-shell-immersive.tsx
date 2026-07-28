@@ -57,7 +57,7 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
     handoffStartedRef.current = true;
 
     try {
-      const status = await completeStartupOnboarding(claimedName);
+      const status = await completeStartupOnboarding(claimedName, { recapToken: onboardingToken });
       const destination = getStartupOnboardingDestination(status);
       if (status.ftueSessionId) {
         log.info("Claim complete: entering canonical authenticated FTUE", {

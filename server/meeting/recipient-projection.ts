@@ -138,6 +138,43 @@ async function projectRecipientRecap(
   });
 }
 
+export async function getCurrentRecipientOnboardingRecapProjectionByMeeting(
+  meetingSessionId: string,
+): Promise<RecipientRecapProjection | null> {
+  const principal = getCurrentPrincipalOrSystem();
+  if (principal.actorType !== "user" || !principal.userId) return null;
+  const [user] = await db.select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, principal.userId))
+    .limit(1);
+  if (!user?.email) return null;
+  return getAuthenticatedOnboardingRecapProjectionByMeeting(meetingSessionId, user.email);
+}
+
+export async function getAuthenticatedOnboardingRecapProjectionByMeeting(
+  meetingSessionId: string,
+  authenticatedEmail: string,
+): Promise<RecipientRecapProjection | null> {
+  const normalizedMeetingSessionId = meetingSessionId.trim();
+  if (!normalizedMeetingSessionId || normalizedMeetingSessionId.length > 128) return null;
+  const normalizedEmail = normalizeEmailAddress(authenticatedEmail);
+  const [distribution] = await db.select({
+    sessionId: meetingRecapDistributions.sessionId,
+    ownerUserId: meetingRecapDistributions.ownerUserId,
+    accountId: meetingRecapDistributions.accountId,
+    attendeeEmail: meetingRecapDistributions.attendeeEmail,
+    accessExpiresAt: meetingRecapDistributions.accessExpiresAt,
+  }).from(meetingRecapDistributions).where(and(
+    eq(meetingRecapDistributions.sessionId, normalizedMeetingSessionId),
+    sql`LOWER(BTRIM(${meetingRecapDistributions.attendeeEmail})) = ${normalizedEmail}`,
+    sql`${meetingRecapDistributions.status} IN ('draft_created', 'sent')`,
+    isNull(meetingRecapDistributions.accessRevokedAt),
+    gt(meetingRecapDistributions.accessExpiresAt, new Date()),
+  )).limit(1);
+  if (!distribution?.accessExpiresAt) return null;
+  return projectRecipientRecap(distribution as DistributionCapability);
+}
+
 export async function getAuthenticatedOnboardingRecapProjection(
   token: string,
   authenticatedEmail: string,

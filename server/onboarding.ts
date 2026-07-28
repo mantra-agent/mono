@@ -8,7 +8,12 @@ import { getPrincipal, type Principal } from "./principal";
 import { ownedInsertValues } from "./scoped-storage";
 import { peopleStorage } from "./people-storage";
 import { seedFtuePrioritiesForUser } from "./ftue-goals";
+import {
+  createRecapFtueAgenda,
+  RECAP_FTUE_TRIGGER_NAME,
+} from "./ftue-session";
 import { DEFAULT_AGENT_NAME } from "@shared/instance-config";
+import { normalizeEmailAddress } from "./email-normalization";
 import { eventBus } from "./event-bus";
 import {
   accounts,
@@ -48,6 +53,7 @@ export interface CreateUserWorkspaceInput {
   markStarted?: boolean;
   markCompleted?: boolean;
   enterDemo?: boolean;
+  recapMeetingSessionId?: string;
 }
 
 function requireUserPrincipal(req: Request): Principal & { userId: string; accountId: string } {
@@ -358,7 +364,7 @@ export async function createUserWorkspace(
   }
   const magicDemoSessionId = input.enterDemo ? await ensureMagicDemoSession(principal) : null;
 
-  if (input.markStarted || input.markCompleted || input.enterDemo) {
+  if (!input.recapMeetingSessionId && (input.markStarted || input.markCompleted || input.enterDemo)) {
     await seedFtuePrioritiesForUser(principal);
   }
 
@@ -449,18 +455,31 @@ export async function createUserWorkspace(
       const { chatFileStorage } = await import("./chat-file-storage");
       const { DEFAULT_ACTIVITY_ROUTING } = await import("./job-profiles");
       const defaultTier = DEFAULT_ACTIVITY_ROUTING.chat || "high";
-      const session = await chatFileStorage.createSession(
+      const recapMeetingSessionId = cleanText(input.recapMeetingSessionId, 128);
+      const result = await chatFileStorage.createSessionOnce(
         "Welcome",
         `ftue:${principal.userId}`,
         defaultTier,
         {
           sessionType: "user",
           ftueWelcome: true,
-          provenance: { triggerType: "system", triggerName: "ftue_welcome" },
+          provenance: recapMeetingSessionId
+            ? {
+                triggerType: "meeting",
+                triggerId: recapMeetingSessionId,
+                triggerName: RECAP_FTUE_TRIGGER_NAME,
+              }
+            : { triggerType: "system", triggerName: "ftue_welcome" },
+          agenda: recapMeetingSessionId ? createRecapFtueAgenda() : undefined,
         },
       );
-      ftueSessionId = session.id;
-      log.log("FTUE welcome session created", { userId: principal.userId, sessionId: ftueSessionId });
+      ftueSessionId = result.session.id;
+      log.info("FTUE welcome session resolved", {
+        userId: principal.userId,
+        sessionId: ftueSessionId,
+        outcome: result.outcome,
+        recapAware: Boolean(recapMeetingSessionId),
+      });
     } catch (err) {
       log.warn("Failed to create FTUE welcome session:", err instanceof Error ? err.message : String(err));
     }
@@ -527,6 +546,7 @@ const completeSchema = z.object({
   contextSeed: z.string().max(4000).optional().default(""),
   memoryConsent: z.boolean().default(false),
   enterDemo: z.boolean().default(true),
+  recapToken: z.string().min(1).max(200).optional(),
 });
 
 function routeError(res: any, error: unknown) {
@@ -562,8 +582,29 @@ export function registerOnboardingRoutes(app: Express): void {
       const parsed = completeSchema.safeParse(req.body || {});
       if (!parsed.success) return res.status(400).json({ error: "Invalid onboarding data", details: parsed.error.flatten() });
       const principal = requireUserPrincipal(req);
-      const status = await createUserWorkspace(principal, { ...parsed.data, markStarted: true, markCompleted: true });
-      log.log("onboarding completed", { userId: principal.userId, accountId: principal.accountId, memoryConsent: parsed.data.memoryConsent });
+      let recapMeetingSessionId: string | undefined;
+      if (parsed.data.recapToken) {
+        const user = await getUserOrThrow(principal.userId);
+        const { resolveOnboardingToken } = await import("./meeting/distribution");
+        const resolution = await resolveOnboardingToken(parsed.data.recapToken);
+        if (
+          resolution.status !== "resolved"
+          || resolution.accountState !== "real"
+          || resolution.email !== normalizeEmailAddress(user.email)
+        ) {
+          res.status(404).json({ error: "Recap onboarding unavailable" });
+          return;
+        }
+        recapMeetingSessionId = resolution.meetingSessionId;
+      }
+      const { recapToken: _recapToken, ...onboardingInput } = parsed.data;
+      const status = await createUserWorkspace(principal, {
+        ...onboardingInput,
+        recapMeetingSessionId,
+        markStarted: true,
+        markCompleted: true,
+      });
+      log.log("onboarding completed", { userId: principal.userId, accountId: principal.accountId, memoryConsent: parsed.data.memoryConsent, recapAware: Boolean(recapMeetingSessionId) });
       res.json(status);
     } catch (error) {
       routeError(res, error);

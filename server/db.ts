@@ -811,6 +811,7 @@ export const ADVISORY_LOCK_NS = {
   OBJECT_GRANT: 0x4f424752, // 'OBGR' — serializes all grant mutations for one work object
   INVITED_SUBJECT: 0x49565342, // 'IVSB' — serializes global email resolution and claim
   RECAP_DRAFT_RECIPIENT: 0x52445243, // 'RDRC' — serializes recap recipient rotation with provider-send ownership
+  CHAT_SESSION_KEY: 0x4348534b, // 'CHSK' — serializes replay-safe session creation by owner + canonical session key
   WORKFLOW_ARTIFACTS: 0x57464152, // 'WFAR' — serializes child-session artifact projection per stage attempt
 } as const;
 

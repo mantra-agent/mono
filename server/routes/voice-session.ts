@@ -9,6 +9,11 @@ import { VoiceEvents } from "@shared/event-catalog";
 import { getSecretSync } from "../secrets-store";
 import crypto from "crypto";
 import { FTUE_AGENT_NAME } from "../onboarding";
+import {
+  firstOpenAgendaItem,
+  FTUE_FIRST_MESSAGE_ARTIFACT_KEY,
+  isRecapFtueSession,
+} from "../ftue-session";
 import { createServicePrincipal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import { resolveOnboardingToken } from "../meeting/distribution";
@@ -779,8 +784,16 @@ export async function registerVoiceSessionRoutes(app: Express) {
                 .where(eq(userProfilesTable.userId, principal.userId))
                 .limit(1);
               const userName = userProfile?.preferredName || userProfile?.displayName || "there";
-              firstMessage = `Hey ${userName}! I'm ${FTUE_AGENT_NAME}. I help you keep track of what matters and turn it into action. To start, what's one goal you'd like me to help move forward?`;
-              voiceLog.log(`FTUE firstMessage composed for user=${userName} agent=${FTUE_AGENT_NAME}`);
+              const openItem = firstOpenAgendaItem(sessionMeta.agenda);
+              firstMessage = isRecapFtueSession(sessionMeta)
+                ? openItem
+                  ? `Welcome in, ${userName}. Let's begin with ${openItem.title.toLowerCase()}. What's one goal you'd like us to build around?`
+                  : `Welcome back, ${userName}. Your onboarding agenda is complete. What should we move forward next?`
+                : `Hey ${userName}! I'm ${FTUE_AGENT_NAME}. I help you keep track of what matters and turn it into action. To start, what's one goal you'd like me to help move forward?`;
+              voiceLog.info("FTUE first message composed", {
+                recapAware: isRecapFtueSession(sessionMeta),
+                openAgendaItemId: openItem?.id,
+              });
             }
           }
         } catch (err: unknown) {
@@ -788,14 +801,20 @@ export async function registerVoiceSessionRoutes(app: Express) {
         }
       }
 
-      // Persist FTUE first_message as the first assistant message in the session.
-      // Server is the single source of truth — persist at the point of creation
-      // so the message exists in session history regardless of voice connection outcome.
+      // Persist the FTUE first message replay-safely as the session's canonical
+      // assistant greeting so retries/re-entry cannot duplicate transcript rows.
       if (firstMessage && chatSessionId) {
         try {
           const { chatFileStorage: cfs } = await import("../chat-file-storage");
-          await cfs.createMessage(chatSessionId, "assistant", firstMessage);
-          voiceLog.log("FTUE firstMessage persisted to chat session", { chatSessionId });
+          const persisted = await cfs.createAssistantArtifactMessageOnce(
+            chatSessionId,
+            firstMessage,
+            FTUE_FIRST_MESSAGE_ARTIFACT_KEY,
+          );
+          voiceLog.info("FTUE first message persistence resolved", {
+            chatSessionId,
+            outcome: persisted.outcome,
+          });
         } catch (persistErr: unknown) {
           voiceLog.warn(`FTUE firstMessage persistence failed (non-fatal): ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`);
         }
