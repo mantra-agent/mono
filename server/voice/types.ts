@@ -16,6 +16,7 @@ export interface VoiceMessage {
 }
 
 export interface VoiceToolCall {
+  assistantAttemptId: string;
   name: string;
   args: Record<string, unknown>;
   result: string;
@@ -69,8 +70,8 @@ export interface VoiceSession {
   activeVoiceUserOrdinal: number | null;
   activeTranscriptRevision: number;
   activeAssistantAttemptId: string | null;
-  /** Principal captured at /api/voice/start for scoping voice LLM callbacks. */
-  principal: Principal | null;
+  /** Principal captured by the durable voice lease; required for every authenticated chat access. */
+  principal: Principal;
   /** Authenticated browser tab that initiated this voice session; never model-provided. */
   originatingClientId: string | null;
   /** Restricted public sessions receive no model-callable tools. */

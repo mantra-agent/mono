@@ -340,7 +340,7 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
   }
 
   const turnRunner = () => executeVoiceTurn(req, res, session, callbackArrivalAt, voiceTurnId, transcriptRevision);
-  const turnPromise = runWithPrincipal(session.principal!, turnRunner);
+  const turnPromise = runWithPrincipal(session.principal, turnRunner);
   turnPromise.catch((err) => {
     const errMsg = err instanceof Error ? err.message : String(err);
     log.error(`UNCAUGHT_TURN_ERROR session=${sessionId} err=${JSON.stringify(err, Object.getOwnPropertyNames(err))} headersSent=${res.headersSent} writableEnded=${res.writableEnded} destroyed=${res.destroyed}`);

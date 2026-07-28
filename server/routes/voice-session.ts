@@ -210,22 +210,28 @@ export async function registerVoiceSessionRoutes(app: Express) {
             voiceLog.log(`published voice_connection_dropped event to chat UI convId=${diagChatSessionId}`);
           }
         }).catch((err: unknown) => { voiceLog.warn(`voice_connection_dropped publish failed: ${err instanceof Error ? err.message : String(err)}`); });
-        import("../chat-file-storage").then(({ chatFileStorage }) => {
+        import("../voice-llm").then(async ({ findSessionForChat }) => {
+          const voiceSession = findSessionForChat(diagChatSessionId);
+          if (!voiceSession) {
+            voiceLog.debug(`discarded disconnect lifecycle persistence without exact active voice owner convId=${diagChatSessionId}`);
+            return;
+          }
           const disconnectStep = {
             name: "voice_disconnect",
             status: "done" as const,
             detail: `Disconnect closeCode=${closeCode} reason=${reason || "(none)"} elapsed=${elapsed}ms turnCount=${turnCount}`,
           };
-          chatFileStorage.createMessage(
+          const { accessVoiceChat, voiceChatAccessError } = await import("../voice/chat-owner");
+          const access = await accessVoiceChat(voiceSession, "persist_disconnect_step", (chatStorage) => chatStorage.createMessage(
             diagChatSessionId, "assistant", "",
             undefined, undefined, "elevenlabs-voice", [disconnectStep],
             undefined, undefined, undefined, undefined, undefined, undefined, "diagnostic",
-          ).then(() => {
-            voiceLog.log(`persisted disconnect lifecycle system step convId=${diagChatSessionId}`);
-          }).catch((err: unknown) => {
-            voiceLog.warn(`failed to persist disconnect lifecycle: ${err instanceof Error ? err.message : String(err)}`);
-          });
-        }).catch((importErr: unknown) => { voiceLog.warn(`disconnect lifecycle import failed: ${importErr instanceof Error ? importErr.message : String(importErr)}`); });
+          ));
+          if (access.outcome === "owner_context_missing" || access.outcome === "storage_failure") {
+            throw voiceChatAccessError("persist_disconnect_step", access);
+          }
+          voiceLog.log(`disconnect lifecycle persistence outcome=${access.outcome} convId=${diagChatSessionId}`);
+        }).catch((err: unknown) => { voiceLog.warn(`disconnect lifecycle persistence failed: ${err instanceof Error ? err.message : String(err)}`); });
       }
     } else if (event === "start_failed") {
       const reason = (details?.reason ?? "") as string;
@@ -663,7 +669,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
             },
           });
         } else {
-          session = createVoiceSession(chatSessionId || undefined, undefined, sessionId, chatSessionKey || undefined, isReconnect);
+          session = createVoiceSession(req.principal!, chatSessionId || undefined, undefined, sessionId, chatSessionKey || undefined, isReconnect);
           voiceLog.log(`[fast-reconnect] resume failed — created fresh session ${sessionId}`);
           accumulatedSystemSteps.push({
             name: "voice_reconnect",
@@ -682,11 +688,10 @@ export async function registerVoiceSessionRoutes(app: Express) {
           });
         }
       } else {
-        session = createVoiceSession(chatSessionId || undefined, undefined, sessionId, chatSessionKey || undefined, isReconnect);
+        session = createVoiceSession(req.principal!, chatSessionId || undefined, undefined, sessionId, chatSessionKey || undefined, isReconnect);
       }
 
-      // The in-memory session inherits the same Principal that won the durable claim.
-      session.principal = req.principal!;
+      // The constructor and reconnect copy both retain the Principal that won the durable claim.
       session.originatingClientId = originatingClientId;
       session.toolMode = provisionalIdentity ? "none" : "standard";
       session.onboardingTokenHash = provisionalIdentity?.tokenHash ?? null;
@@ -724,7 +729,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
       voiceLog.log(`start complete path=${pathLabel} in ${totalElapsed}ms sessionId=${sessionId}${previousSessionId ? ` previousSessionId=${previousSessionId}` : ""} ctx=${contextElapsed}ms signedUrl=${signedUrlElapsed}ms`);
 
       if (accumulatedSystemSteps.length > 0 && chatSessionId) {
-        persistVoiceSystemSteps(chatSessionId, accumulatedSystemSteps)
+        persistVoiceSystemSteps(session, accumulatedSystemSteps)
           .then((persisted) => {
             try { sendSSE({ type: "phase_persisted", persisted, chatSessionId }); } catch (e: any) { voiceLog.debug(`phase_persisted SSE send failed: ${e?.message}`); }
           })

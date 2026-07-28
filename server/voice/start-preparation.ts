@@ -261,31 +261,30 @@ function shouldPersistVoiceSystemSteps(
 }
 
 export async function persistVoiceSystemSteps(
-  chatSessionId: string | null,
+  session: import("./types").VoiceSession,
   systemSteps: VoiceSystemStep[],
 ): Promise<boolean> {
+  const chatSessionId = session.chatSessionId;
   if (!chatSessionId || systemSteps.length === 0) return false;
   if (!shouldPersistVoiceSystemSteps(systemSteps)) {
     voiceLog.debug(`skipped voice startup system-step persistence convId=${chatSessionId} systemSteps=${systemSteps.length}`);
     return false;
   }
 
-  try {
-    const { chatFileStorage } = await import("../chat-file-storage");
-    // Error and reconnect steps are chat-visible (shouldPersistVoiceSystemSteps gates);
-    // all others are diagnostic-only forensics.
-    const hasUserVisible = systemSteps.some(s => s.status === "error");
-    await chatFileStorage.createMessage(
-      chatSessionId, "assistant", "",
-      undefined, undefined, "elevenlabs-voice", [...systemSteps],
-      undefined, undefined, undefined, undefined, undefined, undefined,
-      hasUserVisible ? undefined : "diagnostic",
-    );
-    voiceLog.log(`persisted voice system steps convId=${chatSessionId} systemSteps=${systemSteps.length} visibility=${hasUserVisible ? "chat" : "diagnostic"}`);
-    return true;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    voiceLog.warn(`failed to persist voice system steps: ${msg}`);
-    return false;
+  const { accessVoiceChat, voiceChatAccessError } = await import("./chat-owner");
+  // Only exceptional errors are chat-visible. Reconnect and operational steps
+  // remain diagnostic records so abandoned chronology cannot render bubbles.
+  const hasUserVisible = systemSteps.some(s => s.status === "error");
+  const access = await accessVoiceChat(session, "persist_start_system_steps", (storage) => storage.createMessage(
+    chatSessionId, "assistant", "",
+    undefined, undefined, "elevenlabs-voice", [...systemSteps],
+    undefined, undefined, undefined, undefined, undefined, undefined,
+    hasUserVisible ? undefined : "diagnostic",
+  ));
+  if (access.outcome === "owner_context_missing" || access.outcome === "storage_failure") {
+    throw voiceChatAccessError("persist_start_system_steps", access);
   }
+  const persisted = access.outcome === "ok" && !!access.value;
+  voiceLog.log(`voice system-step persistence outcome=${access.outcome} convId=${chatSessionId} systemSteps=${systemSteps.length} visibility=${hasUserVisible ? "chat" : "diagnostic"}`);
+  return persisted;
 }
