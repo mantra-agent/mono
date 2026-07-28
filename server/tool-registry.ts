@@ -520,18 +520,19 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   library: {
-    description: "Manage standard Library pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Actions: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Pages retain their Vault and parent hierarchy; Library2 Wiki/Index/Log organization is disabled. Use 'browse_tree' or 'tree' to see the full page hierarchy as an indented outline. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
+    description: "Manage standard Library pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Actions: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Pages retain their Vault and parent hierarchy; Library2 Wiki/Index/Log organization is disabled. Use 'browse_tree' or 'tree' to see the full page hierarchy grouped by Vault as an indented outline, 'list_vaults' to enumerate the account's Vaults (id, name, page count, visibility), and an optional vaultId filter on list/search/browse_tree to scope to one Vault; reads report each page's Vault. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
     category: "knowledge",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list_library_pages", "get_library_page", "create_library_page", "update_library_page", "edit_library_page", "dismiss_library_page", "delete_library_page", "search_library_pages", "search", "browse_tree", "tree", "link_pages", "annotate"], description: "The action to perform" },
+        action: { type: "string", enum: ["list_library_pages", "get_library_page", "create_library_page", "update_library_page", "edit_library_page", "dismiss_library_page", "delete_library_page", "search_library_pages", "search", "browse_tree", "tree", "list_vaults", "link_pages", "annotate"], description: "The action to perform" },
         id: { type: "string", description: "Page ID/slug" },
         title: { type: "string", description: "Title (for create/update)" },
         plainTextContent: { type: "string", description: "Markdown content for pages (automatically converted to rich TipTap JSON and stored as the single source of truth)" },
         parentId: { type: ["string", "null"], description: "Destination parent page ID for update_library_page; null means the root of destinationVaultId" },
         destinationVaultId: { type: "string", description: "Explicit destination vault ID for update_library_page moves; required for cross-vault root moves" },
+        vaultId: { type: "string", description: "Optional Vault ID filter for list, search, and browse_tree — restrict results to a single Vault. Use list_vaults to resolve Vault IDs." },
         purpose: { type: "string", description: "Optional source context retained for compatibility when creating a page" },
         canonicalFolder: { type: "string", enum: ["plans", "workflows", "specs", "skills"], description: "File the new page under the canonical per-Vault folder (for create). Use 'specs' for specifications/implementation designs and 'skills' for skill run outputs, logs, and artifacts. Plans and Workflows are filed automatically by their producers. Ignored when parentId is supplied." },
         pageContext: { type: "string", description: "Optional originating app route retained for compatibility" },
