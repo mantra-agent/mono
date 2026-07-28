@@ -60,7 +60,14 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   skills: { default: 1, actions: { list: 0, get: 0, search: 0, scores: 0, run: 2 } },
   timers: { default: 1, actions: { list: 0, get: 0, runs: 0 } },
   hooks: { default: 1, actions: { list: 0, get: 0 } },
-  session: { default: 0, actions: { send_message: 1, set_agenda: 1, update_agenda_item: 1 } },
+  session: { default: 0, actions: {
+    send_message: 1,
+    set_agenda: 1,
+    update_agenda_item: 1,
+    complete_agenda_item: 1,
+    skip_agenda_item: 1,
+    defer_agenda_item: 1,
+  } },
   settings: { default: 1, actions: { get: 0 } },
   system: { default: 0, actions: { create_issue: 1 } },
   workflows: { default: 2, actions: {
