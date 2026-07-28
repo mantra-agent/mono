@@ -579,6 +579,108 @@ export async function migrateDailyBriefCanonicalMeetingPrep(): Promise<void> {
   }
 }
 
+const SENTRY_CHANGESET_GATE_VERSION = "1.8";
+const SENTRY_RUN_EVIDENCE_MARKER = "8. Inspect recent `sentry` skill runs and open system issues/tasks/sessions when useful. Deduplicate by normalized signature + environment + likely subsystem. Update or reference an existing incident instead of creating another.";
+const SENTRY_REPORT_MARKER = "## Canonical report page";
+const SENTRY_CHANGESET_GATE = `## Recent changelist remediation gate
+Before creating or reusing a task, repair handoff, conversation, or attention flag, compare every new or worsening software-defect candidate against recent Mantra Web changelists. Use bounded read-only evidence already available from \`platforms.get_build_status\`, \`platforms.get_environment_status\`, and recent \`railway.deployments\` for environment 11 and 12. Inspect up to 20 stage/main deployments from the last 24 hours, including builds still in progress, so a later deployment does not hide the relevant merged PR or commit.
+
+Assign exactly one remediation disposition:
+- \`unaddressed\`: no evidenced matching changelist or active repair exists.
+- \`repair_active\`: an existing task, engineering session, plan, workflow, PR, build, or stage deployment is actively addressing the same signature.
+- \`addressed_pending_live_promotion\`: a recent merged main changelist or stage build/deployment explicitly cures the same subsystem and failure mechanism, but production does not yet contain that cure.
+- \`live_verified\`: the matching cure is in the current successful production deployment or the production symptom has disappeared after promotion.
+- \`uncertain\`: evidence is unavailable, vague, or only keyword-similar. Treat this as \`unaddressed\` for notification safety.
+
+A changelist match must cite a PR or commit SHA/message and explain how it addresses the observed failure mechanism. Shared words, neighboring subsystem work, a newer stage SHA by itself, or an unverified hypothesis are not a match. Never downgrade the truthful stage or production runtime classification because source is fixed elsewhere.
+
+\`addressed_pending_live_promotion\`, \`repair_active\`, and \`live_verified\` suppress duplicate tasks, repair handoffs, new conversations, and attention flags. Persist the incident and remediation disposition in the canonical report instead. Alert Ray only when the matching build/deployment is blocked or failed, the incident materially worsens after that changelist, evidence shows the changelist does not cure the mechanism, or a distinct human decision beyond ordinary live promotion is required. Production promotion remains human-controlled; its mere pending state is not a blocked repair.
+`;
+
+/**
+ * The Reliability Sentinel is a live code-owned Skill that predates the current
+ * bootstrap fixture. Patch its single classification boundary monotonically so
+ * runtime severity and remediation state cannot collapse into one alert decision.
+ */
+export async function migrateSentryRecentChangelistGate(): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [existing] = await db
+      .select({
+        id: skills.id,
+        author: skills.author,
+        customized: skills.customized,
+        version: skills.version,
+        description: skills.description,
+        process: skills.process,
+        outputSpec: skills.outputSpec,
+        checklist: skills.checklist,
+      })
+      .from(skills)
+      .where(eq(skills.name, "sentry"));
+    if (!existing || existing.author !== "system" || existing.customized === true) return;
+    const versionOrder = compareSkillVersions(existing.version, SENTRY_CHANGESET_GATE_VERSION);
+    if (versionOrder === null || versionOrder >= 0) return;
+    if (
+      !existing.process.includes(SENTRY_RUN_EVIDENCE_MARKER)
+      || !existing.process.includes(SENTRY_REPORT_MARKER)
+      || existing.process.includes("## Recent changelist remediation gate")
+    ) {
+      log.warn(`Skipped sentry changelist-gate migration from ${existing.version}: expected v1.7 contract was not found`);
+      return;
+    }
+
+    const process = existing.process.replace(
+      `${SENTRY_RUN_EVIDENCE_MARKER}\n\n${SENTRY_REPORT_MARKER}`,
+      `${SENTRY_RUN_EVIDENCE_MARKER}\n\n${SENTRY_CHANGESET_GATE}\n${SENTRY_REPORT_MARKER}`,
+    );
+    const description = `${existing.description.replace(/\s+$/, "")} Checks recent merged and staged changelists before creating user attention or repair work.`;
+    const outputSpec = existing.outputSpec.includes("remediationDisposition")
+      ? existing.outputSpec
+      : existing.outputSpec.replace(
+        "`repairHandoff` (none|prepared|active|blocked plus task/plan/workflow/PR references)",
+        "`remediationDisposition` (unaddressed|repair_active|addressed_pending_live_promotion|live_verified|uncertain plus PR/SHA/deployment evidence), `repairHandoff` (none|prepared|active|blocked plus task/plan/workflow/PR references)",
+      );
+    const checklist = (existing.checklist ?? []).map((item: any) => {
+      if (typeof item?.check !== "string") return item;
+      if (item.check.startsWith("Deduplicates incidents and does not create repeated issues")) {
+        return {
+          ...item,
+          check: "Before any user alert or repair work, checks bounded recent merged/staged changelists, records one remediation disposition with PR/SHA/deployment evidence, and suppresses duplicate issues, tasks, plans, workflows, conversations, or attention when the same mechanism is already addressed or actively being repaired.",
+        };
+      }
+      if (item.check.startsWith("For an eligible bounded software defect, prepares or reuses one protected engineering handoff")) {
+        return {
+          ...item,
+          check: "For an eligible unaddressed bounded software defect, prepares or reuses one protected engineering handoff with complete evidence and canonical coding/stage-verification instructions; never performs code or provider writes directly from the timer run.",
+        };
+      }
+      return item;
+    });
+
+    const updated = await db
+      .update(skills)
+      .set({
+        description,
+        process,
+        outputSpec,
+        checklist,
+        version: SENTRY_CHANGESET_GATE_VERSION,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(skills.id, existing.id),
+        eq(skills.author, "system"),
+        eq(skills.customized, false),
+        eq(skills.version, existing.version),
+      ))
+      .returning({ id: skills.id });
+    if (updated.length > 0) {
+      log.info(`Migrated Reliability Sentinel ${existing.version} → ${SENTRY_CHANGESET_GATE_VERSION} with recent-changelist remediation gate`);
+      return;
+    }
+  }
+}
+
 export async function migrateSkillProcessUpdates(): Promise<void> {
   const migrations: Array<{ name: string; sentinel: string }> = [
     {

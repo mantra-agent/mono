@@ -3636,6 +3636,7 @@ export async function runSchemaBootstrap(
       migrateSkillProcessUpdates,
       migrateAutonomyCanonicalMeetingPrep,
       migrateDailyBriefCanonicalMeetingPrep,
+      migrateSentryRecentChangelistGate,
       migrateLegacySkillPersonaPreferences,
       deleteZombieSkills,
     } = await import("./skill-seed");
@@ -3650,6 +3651,7 @@ export async function runSchemaBootstrap(
     await migrateSkillProcessUpdates();
     await migrateAutonomyCanonicalMeetingPrep();
     await migrateDailyBriefCanonicalMeetingPrep();
+    await migrateSentryRecentChangelistGate();
     await deleteZombieSkills();
     await verifyRequiredSkills();
   } catch (err: any) {
