@@ -22,6 +22,7 @@ import { MyelinationProvider } from "@/hooks/use-myelination";
 import { TopBar } from "@/components/top-bar";
 import { VaultProvider } from "@/hooks/use-vaults";
 import { useDataSync } from "@/hooks/use-data-sync";
+import { useEventStreamTransport } from "@/hooks/use-event-stream";
 import { ClientPresenceProvider } from "@/hooks/use-client-presence";
 import { ExecutorStatusProvider } from "@/hooks/use-executor-status";
 import { FocusSessionProvider, useFocusSession } from "@/hooks/use-focus-session";
@@ -472,6 +473,7 @@ function AppLayout({ mobileSurfaceActive, previewRouteOwnsCanvas }: { mobileSurf
 }
 
 function AppShell() {
+  useEventStreamTransport();
   useDataSync();
   useEffect(() => {
     void initializeDiagnosticLogging();
