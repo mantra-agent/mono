@@ -28,6 +28,7 @@ import { registerThesisRoutes } from "./thesis-routes";
 import { registerNewsRoutes } from "./news-routes";
 import { registerObjectStorageRoutes } from "./object_storage";
 import { registerSkillRoutes } from "./skill-routes";
+import { registerAgendaRoutes } from "./agenda-routes";
 import { registerPromptModuleRoutes } from "./prompt-module-routes";
 import { registerDomainRoutes } from "./routes/index";
 import { diagnoseGmailBatchRead } from "./bridge-tools";
@@ -235,6 +236,7 @@ export async function registerRoutes(
   registerNewsRoutes(app);
   registerObjectStorageRoutes(app);
   registerSkillRoutes(app);
+  registerAgendaRoutes(app);
   registerPromptModuleRoutes(app);
   registerExportRoutes(app);
   registerBackupRoutes(app);

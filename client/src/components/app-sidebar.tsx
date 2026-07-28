@@ -14,6 +14,7 @@ import {
   Briefcase,
   BrainCircuit,
   Calendar,
+  ClipboardList,
   ChevronRight,
   Clock,
   DatabaseZap,
@@ -153,6 +154,7 @@ const navSections: NavSection[] = [
     label: "Automation",
     defaultOpen: false,
     items: [
+      navItem("Agendas", "navigation.agendas.open", ClipboardList),
       navItem("Skills", "navigation.skills.open", Lightbulb),
       navItem("Plans", "navigation.plans.open", FileText),
       navItem("Workflows", "navigation.workflows.open", Workflow),

@@ -814,6 +814,7 @@ export const ADVISORY_LOCK_NS = {
   CHAT_SESSION_KEY: 0x4348534b, // 'CHSK' — serializes replay-safe session creation by owner + canonical session key
   WORKFLOW_ARTIFACTS: 0x57464152, // 'WFAR' — serializes child-session artifact projection per stage attempt
   USER_IDENTITY: 0x55494446, // 'UIDF' — serializes personal account, membership, profile, and default Vault provisioning
+  AGENDA_DEFINITION: 0x41474446, // 'AGDF' — serializes agenda definition mutations and reserved seeding per owner/account
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";

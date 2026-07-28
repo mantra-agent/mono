@@ -58,6 +58,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   stories: { default: 1, actions: { list: 0, get: 0 } },
   capabilities: { default: 1, actions: { list: 0, get_validations: 0 } },
   skills: { default: 1, actions: { list: 0, get: 0, search: 0, scores: 0, run: 2 } },
+  agendas: { default: 1, actions: { list: 0, get: 0, search: 0 } },
   timers: { default: 1, actions: { list: 0, get: 0, runs: 0 } },
   hooks: { default: 1, actions: { list: 0, get: 0 } },
   session: { default: 0, actions: {
