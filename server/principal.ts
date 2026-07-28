@@ -3,7 +3,7 @@ import { type Request, type Response, type NextFunction } from "express";
 import { ADVISORY_LOCK_NS, acquireAdvisoryTransactionLock, db, type DrizzleTx } from "./db";
 import { createLogger } from "./log";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
-import { accounts, memberships, userProfiles, agentProfiles, privilegedAccessAudit, type User } from "@shared/schema";
+import { accounts, memberships, users, userProfiles, agentProfiles, privilegedAccessAudit, type User } from "@shared/schema";
 import { getUserEffectivePermissions, type Permission } from "./permissions";
 import { DEFAULT_AGENT_NAME } from "@shared/instance-config";
 import { deriveUserFirstName } from "@shared/identity-name";
