@@ -18,8 +18,6 @@ const OWNER_TABLES_WITH_SCOPE = [
   "sessions",
   "messages",
   "workspace_documents",
-  "memory_entries",
-  "memory_entity_links",
   "info_notes",
   "library_pages",
   "library_page_links",

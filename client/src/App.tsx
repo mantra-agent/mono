@@ -18,7 +18,6 @@ import { openIssueCaptureDialog } from "@/components/issue-capture";
 import { BootGate } from "@/components/boot-gate";
 import { PageHeaderProvider } from "@/hooks/use-page-header";
 import { VoiceSessionProvider } from "@/hooks/use-voice-session";
-import { MyelinationProvider } from "@/hooks/use-myelination";
 import { TopBar } from "@/components/top-bar";
 import { VaultProvider } from "@/hooks/use-vaults";
 import { useDataSync } from "@/hooks/use-data-sync";
@@ -492,7 +491,6 @@ function AppShell() {
     <ClientPresenceProvider>
       <PageHeaderProvider>
         <VoiceSessionProvider>
-        <MyelinationProvider>
           <ExecutorStatusProvider>
             <FocusSessionProvider>
               <NativeMeetingTranscriptionProvider>
@@ -508,7 +506,6 @@ function AppShell() {
               </NativeMeetingTranscriptionProvider>
             </FocusSessionProvider>
           </ExecutorStatusProvider>
-        </MyelinationProvider>
         </VoiceSessionProvider>
       </PageHeaderProvider>
     </ClientPresenceProvider>
