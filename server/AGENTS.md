@@ -632,6 +632,7 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - Pool instrumentation distinguishes submitted, waiting, and executing operations. `total` remains a compatibility alias for submitted work.
 - Saturation is sampled only by the periodic monitor. A lane is saturated only when it has waiters, zero idle connections, has reached its configured maximum, and remains exhausted for at least two seconds. Emit one `DB SATURATION START`, periodic `SUMMARY` lines no faster than every 10 seconds, and one `RECOVERED` line. Never detect or log from query submission/settlement transitions.
 - Query duration still includes pool acquisition plus execution; use the waiting/executing split when diagnosing whether SQL itself is slow.
+- Memory-graph source hydration must use the canonical batched document/session read path; never restore per-source `Promise.all(getSession)` fan-out. Session-tree batches are derived only from principal-visible document results.
 
 ### File-Storage Abstraction
 - `TTLCache` coalesces same-key reads and generation-guards cache writes so a fetch completed after invalidation cannot repopulate stale state.

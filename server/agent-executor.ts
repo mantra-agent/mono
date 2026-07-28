@@ -931,7 +931,7 @@ export class AgentExecutor extends EventEmitter {
       sessionId: run.sessionId,
       sessionKey: run.sessionKey,
       reason,
-    });
+    }, "warn");
     run.aborted = true;
     if (!run.abort.signal.aborted) {
       run.abort.abort(reason);
@@ -2154,7 +2154,7 @@ export class AgentExecutor extends EventEmitter {
           sessionId: options.sessionId,
           sessionKey: options.sessionKey,
           reason: ctx.abortReason,
-        });
+        }, "warn");
         abortController.abort(ctx.abortReason);
       };
       options.signal.addEventListener("abort", mapUpstreamReason);
@@ -3134,7 +3134,7 @@ export class AgentExecutor extends EventEmitter {
           sessionKey: options.sessionKey,
           reason: ctx.abortReason || terminationReason,
           ms: Date.now() - startTime,
-        });
+        }, "warn");
       }
       return result;
     } catch (err: unknown) {

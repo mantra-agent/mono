@@ -1113,7 +1113,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       (async () => {
         const sessions: Array<Awaited<ReturnType<typeof chatFileStorage.getSession>>> = [];
         for (const batch of chunkValues(sourceSessionIds)) {
-          sessions.push(...await Promise.all(batch.map((id) => chatFileStorage.getSession(id))));
+          sessions.push(...await chatFileStorage.getSessions(batch));
         }
         return sessions;
       })(),

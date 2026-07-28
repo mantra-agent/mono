@@ -1,6 +1,8 @@
-import { writeSync } from "fs";
+import { createLogger } from "./log";
 
-const STDERR_FD = 2;
+const log = createLogger("AbortTrace");
+
+export type AbortTraceLevel = "info" | "warn" | "error";
 
 export interface AbortTraceFields {
   runId?: string | null;
@@ -14,19 +16,20 @@ export interface AbortTraceFields {
   [key: string]: string | number | boolean | null | undefined;
 }
 
-export function abortTrace(stage: string, fields: AbortTraceFields = {}): void {
+export function abortTrace(
+  stage: string,
+  fields: AbortTraceFields = {},
+  level: AbortTraceLevel = "info",
+): void {
   const { routeStartAt, ...rest } = fields;
   const elapsedMs = typeof routeStartAt === "number" ? Date.now() - routeStartAt : undefined;
   const parts: string[] = [`stage=${stage}`];
   if (elapsedMs !== undefined) parts.push(`elapsedMs=${elapsedMs}`);
-  for (const [k, v] of Object.entries(rest)) {
-    if (v === undefined || v === null) continue;
-    const str = typeof v === "string" ? v : String(v);
+  for (const [key, value] of Object.entries(rest)) {
+    if (value === undefined || value === null) continue;
+    const str = typeof value === "string" ? value : String(value);
     const safe = str.includes(" ") || str.includes("=") ? JSON.stringify(str) : str;
-    parts.push(`${k}=${safe}`);
+    parts.push(`${key}=${safe}`);
   }
-  const line = `[AbortTrace] ${parts.join(" ")} ts=${new Date().toISOString()}\n`;
-  try {
-    writeSync(STDERR_FD, line);
-  } catch {}
+  log[level](parts.join(" "));
 }
