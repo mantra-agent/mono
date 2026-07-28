@@ -1355,10 +1355,8 @@ function GraphTab({
   const isMobile = useIsMobile();
   const graphRef = useRef<MemoryGraph3DHandle>(null);
   const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
-  const [graphDetailExpanded, setGraphDetailExpanded] = useState(false);
   const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(() => new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [graphSearchQuery, setGraphSearchQuery] = useState("");
 
   useFocusContext(
@@ -1433,19 +1431,16 @@ function GraphTab({
 
   const dismissGraphDetail = useCallback(() => {
     setSelectedNode(null);
-    setGraphDetailExpanded(false);
   }, []);
 
   const handleNodeSelect = useCallback((nodeId: number) => {
     const entry = entryMap.get(nodeId);
     if (!entry) return;
     setSelectedNode(entry);
-    setGraphDetailExpanded(false);
   }, [entryMap]);
 
-  const handleNodeHover = useCallback((nodeId: number | null, position?: { x: number; y: number }) => {
+  const handleNodeHover = useCallback((nodeId: number | null) => {
     setHoveredNodeId(nodeId);
-    if (position) setTooltipPos(position);
   }, []);
 
   const graphSearchMatches = useMemo(() => {
@@ -1476,7 +1471,8 @@ function GraphTab({
 
   useEffect(() => {
     if (selectedNode && !visibleNodeIds.has(selectedNode.id)) dismissGraphDetail();
-  }, [dismissGraphDetail, selectedNode, visibleNodeIds]);
+    if (hoveredNodeId !== null && !visibleNodeIds.has(hoveredNodeId)) setHoveredNodeId(null);
+  }, [dismissGraphDetail, hoveredNodeId, selectedNode, visibleNodeIds]);
 
   if (isLoading) {
     return (
@@ -1494,8 +1490,52 @@ function GraphTab({
     return <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="memory-graph-empty">No linked vNext claims yet.</div>;
   }
 
-  const selectedMetadata = (selectedNode?.metadata ?? {}) as Record<string, unknown>;
-  const selectedIsClaim = selectedMetadata.nodeKind === "claim" || !selectedMetadata.nodeKind;
+  const pinnedMetadata = (selectedNode?.metadata ?? {}) as Record<string, unknown>;
+  const selectedIsClaim = pinnedMetadata.nodeKind === "claim" || !pinnedMetadata.nodeKind;
+  const hoveredNode = hoveredNodeId === null ? null : entryMap.get(hoveredNodeId) ?? null;
+  const detailNode = hoveredNode ?? selectedNode;
+  const detailPinned = selectedNode !== null && detailNode?.id === selectedNode.id;
+  const detailVisual = detailNode ? getGraphNodeVisual(detailNode) : null;
+  const DetailIcon = detailVisual?.Icon;
+  const nodeDetail = detailNode && DetailIcon ? {
+    nodeId: detailNode.id,
+    interactive: detailPinned,
+    content: (
+      <div
+        className={cn(
+          "w-[min(20rem,calc(100vw-2rem))] rounded-md border border-card-border bg-popover p-3 text-sm text-popover-foreground shadow-md",
+          detailPinned && "max-h-72 overflow-y-auto scrollbar-thin",
+        )}
+        data-testid={detailPinned ? "memory-graph-detail" : `memory-graph-tooltip-${detailNode.id}`}
+      >
+        <div className="flex items-center gap-2 font-semibold leading-tight">
+          <DetailIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">{detailNode.title || firstLine(detailNode.content)}</span>
+        </div>
+        {detailNode.content && (
+          <div
+            className={cn(
+              "mt-2 text-xs leading-relaxed text-popover-foreground/80 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5",
+              !detailPinned && "line-clamp-4",
+            )}
+            data-testid="graph-detail-content"
+          >
+            <ReferenceText content={detailNode.content} markdownComponents={GRAPH_DETAIL_MARKDOWN_COMPONENTS} />
+          </div>
+        )}
+        {detailPinned && (
+          <div className="mt-3 space-y-3">
+            <div className="text-xs text-muted-foreground" data-testid="graph-detail-date">
+              {detailNode.createdAt
+                ? new Date(detailNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
+                : "Unknown date"}
+            </div>
+            {selectedIsClaim && <VnextLinksSection claimId={detailNode.id} />}
+          </div>
+        )}
+      </div>
+    ),
+  } : null;
 
   return (
     <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="memory-graph-tab">
@@ -1534,31 +1574,11 @@ function GraphTab({
             links={visibleGraphLinks}
             selectedNodeId={selectedNode?.id ?? null}
             highlightedNodeIds={graphSearchMatchIds}
+            nodeDetail={nodeDetail}
             onNodeSelect={handleNodeSelect}
             onNodeHover={handleNodeHover}
             onBackgroundSelect={dismissGraphDetail}
-            onGraphInteractionStart={dismissGraphDetail}
           />
-
-          {hoveredNodeId !== null && (() => {
-            const entry = entryMap.get(hoveredNodeId);
-            if (!entry) return null;
-            const visual = getGraphNodeVisual(entry);
-            const HoverIcon = visual.Icon;
-            return (
-              <div
-                className="absolute z-50 max-w-xs rounded-md border border-card-border bg-popover p-3 shadow-md"
-                style={{ left: tooltipPos.x, top: tooltipPos.y, transform: "translateY(-50%)" }}
-                data-testid={`memory-graph-tooltip-${hoveredNodeId}`}
-              >
-                <div className="flex items-center gap-2 text-sm font-semibold text-popover-foreground leading-tight">
-                  <HoverIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{entry.title || firstLine(entry.content)}</span>
-                </div>
-                {entry.content && <p className="mt-2 text-xs text-popover-foreground/80 line-clamp-4">{entry.content}</p>}
-              </div>
-            );
-          })()}
 
           <div className="absolute bottom-3 left-3 z-10 flex flex-col gap-1" data-testid="memory-graph-controls">
             <Popover>
@@ -1620,52 +1640,6 @@ function GraphTab({
             )}
           </div>
         </div>
-
-        {selectedNode && (
-          <div
-            className="absolute inset-x-3 bottom-3 z-20 max-h-[65%] overflow-y-auto scrollbar-thin md:left-auto md:right-4 md:w-96"
-            data-testid="memory-graph-detail"
-          >
-            <Collapsible open={graphDetailExpanded} onOpenChange={setGraphDetailExpanded}>
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  className="group flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent/70"
-                  aria-label={`${graphDetailExpanded ? "Collapse" : "Expand"} ${getDisplayTitle(selectedNode, 80)}`}
-                  data-testid="button-toggle-graph-detail"
-                >
-                  <span
-                    className="flex shrink-0 items-center text-muted-foreground"
-                    title={selectedMetadata.lifecycleStage ? lifecycleLabel(String(selectedMetadata.lifecycleStage)) : undefined}
-                    data-testid="graph-detail-lifecycle"
-                  >
-                    <SourceIcon source={selectedNode.source} className="h-4 w-4" />
-                  </span>
-                  <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">{getDisplayTitle(selectedNode, 80)}</h3>
-                  <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", graphDetailExpanded && "rotate-90")} />
-                </button>
-              </CollapsibleTrigger>
-
-              <div
-                className="line-clamp-3 px-2 text-sm leading-relaxed text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5"
-                data-testid="graph-detail-content"
-              >
-                <ReferenceText content={selectedNode.content} markdownComponents={GRAPH_DETAIL_MARKDOWN_COMPONENTS} />
-              </div>
-
-              <CollapsibleContent>
-                <div className="space-y-3 px-2 pb-2 pt-3">
-                  {selectedNode.createdAt && (
-                    <div className="text-xs text-muted-foreground" data-testid="graph-detail-date">
-                      {new Date(selectedNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}
-                    </div>
-                  )}
-                  {selectedIsClaim && <VnextLinksSection claimId={selectedNode.id} />}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
-        )}
       </div>
     </div>
   );
