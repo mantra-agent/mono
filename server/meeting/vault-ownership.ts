@@ -291,13 +291,48 @@ export async function organizeMeetingLibraryPage(input: {
       .from(libraryPages)
       .where(combineWithVisibleScope(principal, pageScopeColumns, eq(libraryPages.id, input.pageId)))
       .limit(1);
-    if (!page) throw clientError(404, "Meeting artifact is not visible");
+    if (!page) {
+      // A linked page the meeting owner cannot see is a cross-vault reference,
+      // orphaned, or foreign-owned artifact — a pointer, not a meeting-native
+      // page. Its calendar_event_artifacts link row still travels with the
+      // meeting; the referenced page stays where the user filed it. Skip it so
+      // one un-relocatable pointer never aborts the whole Vault move.
+      log.warn("Skipping non-relocatable linked meeting page during Vault move", {
+        pageId: input.pageId,
+        nodePageId: input.nodePageId,
+        vaultId: input.vaultId,
+        visibleVaultIds: principal.visibleVaultIds,
+      });
+      return;
+    }
     if (page.parentId === input.nodePageId && page.vaultId === input.vaultId) return;
-    await moveLibraryPage({
-      pageId: page.id,
-      destinationParentId: input.nodePageId,
-      destinationVaultId: input.vaultId,
-    }, principal);
+    try {
+      await moveLibraryPage({
+        pageId: page.id,
+        destinationParentId: input.nodePageId,
+        destinationVaultId: input.vaultId,
+      }, principal);
+    } catch (error) {
+      const status = error && typeof error === "object" && "status" in error
+        ? Number((error as { status: number }).status)
+        : 0;
+      // A client-scope rejection (not writable, protected, or a subtree that
+      // already spans vaults) means this linked page cannot be cleanly
+      // relocated into the meeting node. moveLibraryPage rolled back its own
+      // transaction, so degrade gracefully and leave it in place rather than
+      // failing the meeting move. Unexpected (5xx) errors still propagate.
+      if (status >= 400 && status < 500) {
+        log.warn("Skipping linked meeting page that cannot be relocated during Vault move", {
+          pageId: page.id,
+          nodePageId: input.nodePageId,
+          vaultId: input.vaultId,
+          status,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      throw error;
+    }
   });
 }
 
