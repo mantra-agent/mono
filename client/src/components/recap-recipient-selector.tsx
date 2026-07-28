@@ -51,17 +51,17 @@ export function RecapRecipientSelector({
 
   useEffect(() => setPersonId(selected?.personId ?? null), [selected?.personId]);
 
-  const { data: people = [] } = useQuery<PersonSearchResult[]>({
+  const { data: peopleSearchData } = useQuery<{ people: PersonSearchResult[] }>({
     queryKey: ["/api/people/search", query],
     queryFn: async () => {
-      if (query.trim().length < 2) return [];
       const response = await fetch(`/api/people/search?q=${encodeURIComponent(query.trim())}`, { credentials: "include" });
       if (!response.ok) throw new Error("Could not search People");
       const payload = await response.json();
-      return Array.isArray(payload.people) ? payload.people.slice(0, 12) : [];
+      return { people: Array.isArray(payload.people) ? payload.people : [] };
     },
     enabled: open && query.trim().length >= 2,
   });
+  const people = peopleSearchData?.people.slice(0, 12) ?? [];
 
   const { data: person } = useQuery<PersonDetail>({
     queryKey: ["/api/people", personId],
