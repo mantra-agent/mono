@@ -2114,7 +2114,7 @@ ${guidePointer}
 The Library is durable, searchable knowledge organized by Vault and parent-page hierarchy. Library2 Wiki/Index/Log organization is retired.
 
 Canonical per-Vault folders — file into them by passing \`canonicalFolder\` to create_library_page:
-- plans — multi-step execution plans (filed automatically by the plan tool)
+- plans — multi-step execution plans (filed automatically by the plan tool); every execution Plan page lives under the Plans folder of its own Vault
 - workflows — workflow run checkpoints and lifecycle artifacts (filed automatically)
 - specs — specifications and implementation designs
 - skills — all skill run outputs, logs, and artifacts
