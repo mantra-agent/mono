@@ -8,6 +8,7 @@ import { writeVoiceJournal, publishVoiceDiagnostic } from "./session";
 import { buildSSEChunk, isResponseAlive, sendSSEComment } from "./sse";
 import { logPipelineStage } from "./pipeline-log";
 import { persistUserMessage } from "./persistence";
+import { accessVoiceChat, voiceChatAccessError } from "./chat-owner";
 import { getToolSchemas as getToolDefinitions } from "../tool-registry";
 import { formatMessageTimestamp, nowMessageTimestamp } from "../timezone";
 import { createLogger } from "../log";
@@ -41,11 +42,15 @@ function conversationFocusKey(conversationHistory: ContextConversationMessage[])
 
 // ── Chat Continuation Section ────────────────────────────────────────────
 
-export async function buildChatContinuationSection(chatSessionId: string | null): Promise<string> {
-  if (!chatSessionId) return "";
+export async function buildChatContinuationSection(session: VoiceSession): Promise<string> {
+  if (!session.chatSessionId) return "";
+  const access = await accessVoiceChat(session, "build_chat_continuation", (storage) => storage.getMessagesBySession(session.chatSessionId!));
+  if (access.outcome === "chat_unavailable" || access.outcome === "superseded" || access.outcome === "persistence_disabled") return "";
+  if (access.outcome === "owner_context_missing" || access.outcome === "storage_failure") {
+    throw voiceChatAccessError("build_chat_continuation", access);
+  }
   try {
-    const { chatFileStorage } = await import("../chat-file-storage");
-    const messages = await chatFileStorage.getMessagesBySession(chatSessionId);
+    const messages = access.value;
     if (messages && messages.length > 0) {
       const { resolveCurrentProfileIdentity } = await import("../profile-identity");
       const { agentName, userName } = await resolveCurrentProfileIdentity();
@@ -60,7 +65,7 @@ export async function buildChatContinuationSection(chatSessionId: string | null)
         return `${formatMessageTimestamp(safeTs)} [${role}]: ${content}`;
       }).join("\n");
       if (chatHistory.length > 0) {
-        log.debug(`TRANSCRIPT_LOADED path=handoff priorMsgs=${messages.length} totalChars=${chatHistory.length} chatSessionId=${chatSessionId}`);
+        log.debug(`TRANSCRIPT_LOADED path=handoff priorMsgs=${messages.length} totalChars=${chatHistory.length} chatSessionId=${session.chatSessionId}`);
         return `\n\n## Prior Chat (text chat)\nThe user switched from text chat to voice within the same conversation. Here is the full prior transcript — continue naturally from this context. Do NOT re-introduce yourself or give a standard greeting. Just pick up where the conversation left off.\n${chatHistory}`;
       }
     }
@@ -114,7 +119,7 @@ export async function buildSystemPrompt(
   const droppedReason = contextHistory.length > keptAfterBudget ? "token_budget" : "none";
   log.debug(`context spine resolved in ${spineElapsed}ms promptLen=${assembled.systemPrompt.length} TRANSCRIPT_LOADED path=spine_assembled focusMsgs=${contextHistory.length} keptAfterBudget=${keptAfterBudget} droppedReason=${droppedReason} sysPromptTokens=${assembled.tokenUsage.systemPrompt} convTokens=${assembled.tokenUsage.conversation} budgetRemaining=${assembled.tokenUsage.remaining} session=${session.id}`);
 
-  const chatContinuation = await buildChatContinuationSection(session.chatSessionId);
+  const chatContinuation = await buildChatContinuationSection(session);
   const fullPrompt = assembled.systemPrompt + chatContinuation;
 
   session.cachedSystemPrompt = fullPrompt;
@@ -199,8 +204,11 @@ export async function buildConversationMessages(
 
   if (session.chatSessionId) {
     try {
-      const { chatFileStorage } = await import("../chat-file-storage");
-      const priorMessages = await chatFileStorage.getMessagesBySession(session.chatSessionId);
+      const access = await accessVoiceChat(session, "build_conversation_messages", (storage) => storage.getMessagesBySession(session.chatSessionId!));
+      if (access.outcome === "owner_context_missing" || access.outcome === "storage_failure") {
+        throw voiceChatAccessError("build_conversation_messages", access);
+      }
+      const priorMessages = access.outcome === "ok" ? access.value : [];
       const persisted = priorMessages
         .filter((m) => (m.role === "user" || m.role === "assistant") && m.content && m.content.trim())
         .map((m) => {

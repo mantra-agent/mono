@@ -59,9 +59,15 @@ export function emitDiagnostic(ev: DiagEvent): void {
 }
 
 async function persistStep(ev: DiagEvent): Promise<void> {
-  const { chatFileStorage } = await import("../chat-file-storage");
-  await chatFileStorage.createMessage(
-    ev.chatSessionId!,
+  const { getVoiceSession } = await import("./session");
+  const session = getVoiceSession(ev.sessionId);
+  if (!session || session.chatSessionId !== ev.chatSessionId) {
+    log.debug(`discarded diagnostic persistence without exact owned voice session step=${ev.step} sessionId=${ev.sessionId}`);
+    return;
+  }
+  const { accessVoiceChat, voiceChatAccessError } = await import("./chat-owner");
+  const access = await accessVoiceChat(session, "persist_diagnostic_step", (storage) => storage.createMessage(
+    session.chatSessionId!,
     "assistant",
     "",
     undefined,
@@ -75,14 +81,17 @@ async function persistStep(ev: DiagEvent): Promise<void> {
         detail: ev.detail || `${ev.step} (v2.5)`,
       },
     ],
-    undefined, // cost
-    undefined, // apiCallCount
-    undefined, // segmentChronology
-    undefined, // isError
-    undefined, // pageContext
-    undefined, // tokenUsage
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
     "diagnostic",
-  );
+  ));
+  if (access.outcome === "owner_context_missing" || access.outcome === "storage_failure") {
+    throw voiceChatAccessError("persist_diagnostic_step", access);
+  }
 }
 
 /**

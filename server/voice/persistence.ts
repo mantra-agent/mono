@@ -9,6 +9,7 @@
  */
 import type { VoiceSession, VoiceToolCall, TurnContext } from "./types";
 import { acquireSessionTurnLock, publishVoiceDiagnostic, publishVoiceEvent } from "./session";
+import { accessVoiceChat, voiceChatAccessError } from "./chat-owner";
 import { createLogger } from "../log";
 
 const log = createLogger("VoiceLlm");
@@ -52,18 +53,18 @@ export async function persistUserMessage(
   const cleanContent = cleanVoiceTranscriptText(lastUserMsg.content);
   if (!cleanContent) return null;
 
-  try {
-    const { chatFileStorage } = await import("../chat-file-storage");
-
-    const computedUserOrdinal = getVoiceUserOrdinal(conversationMessages);
-    const userOrdinal = session.prefixContinuation && session.lastPersistedUserOrdinal !== null
-      ? session.lastPersistedUserOrdinal
-      : computedUserOrdinal;
-    const turnKey = session.prefixContinuation && session.lastPersistedUserTurnKey
-      ? session.lastPersistedUserTurnKey
-      : getVoiceUserTurnKey(session, userOrdinal);
-    const msg = await chatFileStorage.upsertVoiceUserMessage(
-      session.chatSessionId,
+  const computedUserOrdinal = getVoiceUserOrdinal(conversationMessages);
+  const userOrdinal = session.prefixContinuation && session.lastPersistedUserOrdinal !== null
+    ? session.lastPersistedUserOrdinal
+    : computedUserOrdinal;
+  const turnKey = session.prefixContinuation && session.lastPersistedUserTurnKey
+    ? session.lastPersistedUserTurnKey
+    : getVoiceUserTurnKey(session, userOrdinal);
+  const access = await accessVoiceChat(
+    session,
+    "persist_user_message",
+    (storage) => storage.upsertVoiceUserMessage(
+      session.chatSessionId!,
       cleanContent,
       {
         source: "elevenlabs-voice",
@@ -73,24 +74,27 @@ export async function persistUserMessage(
         userOrdinal,
         turnNumber: currentTurn,
       },
-    );
-    if (!msg) {
-      log.warn(`turn ${currentTurn} SINGLE_WRITE user createMessage returned null — session may have been deleted convId=${session.chatSessionId}`);
-      return null;
-    }
+    ),
+    { nullMeansUnavailable: true },
+  );
 
-    const wasContinuation = session.prefixContinuation ? " prefixContinuation=true" : "";
-    session.lastPersistedUserMessageId = msg.id;
-    session.lastPersistedUserTurnKey = turnKey;
-    session.lastPersistedUserOrdinal = userOrdinal;
-    log.log(`turn ${currentTurn} SINGLE_WRITE user upserted msgId=${msg.id} turnKey=${turnKey} userOrdinal=${userOrdinal} computedOrdinal=${computedUserOrdinal}${wasContinuation} convId=${session.chatSessionId}`);
-    return msg.id;
-  } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    log.error(`turn ${currentTurn} SINGLE_WRITE user persist failed: ${errMsg}`);
-    publishVoiceDiagnostic(session, "user_persist_failed", `Failed to persist user transcript: ${errMsg}`, { turn: currentTurn, status: "error" });
+  if (access.outcome === "chat_unavailable") {
+    log.warn(`turn ${currentTurn} SINGLE_WRITE user discarded because owner-verified chat is unavailable convId=${session.chatSessionId}`);
     return null;
   }
+  if (access.outcome === "superseded" || access.outcome === "persistence_disabled") return null;
+  if (access.outcome === "owner_context_missing" || access.outcome === "storage_failure") {
+    const error = voiceChatAccessError("persist_user_message", access);
+    publishVoiceDiagnostic(session, "user_persist_failed", error.message, { turn: currentTurn, status: "error" });
+    throw error;
+  }
+  const msg = access.value;
+  const wasContinuation = session.prefixContinuation ? " prefixContinuation=true" : "";
+  session.lastPersistedUserMessageId = msg.id;
+  session.lastPersistedUserTurnKey = turnKey;
+  session.lastPersistedUserOrdinal = userOrdinal;
+  log.log(`turn ${currentTurn} SINGLE_WRITE user upserted msgId=${msg.id} turnKey=${turnKey} userOrdinal=${userOrdinal} computedOrdinal=${computedUserOrdinal}${wasContinuation} convId=${session.chatSessionId}`);
+  return msg.id;
 }
 
 // ── Assistant Message Persistence (single write) ─────────────────────────
@@ -109,7 +113,19 @@ export async function persistAssistantMessage(
   const releaseLock = await acquireSessionTurnLock(session.id);
   let turnToolCalls: VoiceToolCall[];
   try {
-    turnToolCalls = session.toolCalls.splice(0);
+    if (turnCtx && (turnCtx.aborted || session.activeAssistantAttemptId !== turnCtx.assistantAttemptId)) {
+      const discarded = session.toolCalls.filter((call) => call.assistantAttemptId === turnCtx.assistantAttemptId).length;
+      session.toolCalls = session.toolCalls.filter((call) => call.assistantAttemptId !== turnCtx.assistantAttemptId);
+      log.log(`turn ${currentTurn} assistant persistence discarded before mutation after supersession attempt=${turnCtx.assistantAttemptId} toolCalls=${discarded}`);
+      return;
+    }
+    const attemptId = turnCtx?.assistantAttemptId;
+    turnToolCalls = attemptId
+      ? session.toolCalls.filter((call) => call.assistantAttemptId === attemptId)
+      : [];
+    session.toolCalls = attemptId
+      ? session.toolCalls.filter((call) => call.assistantAttemptId !== attemptId)
+      : session.toolCalls;
   } finally {
     releaseLock();
   }
@@ -122,22 +138,22 @@ export async function persistAssistantMessage(
     return;
   }
 
-  try {
-    const { chatFileStorage } = await import("../chat-file-storage");
+  const toolCalls = turnToolCalls.length > 0
+    ? turnToolCalls.map(tc => ({
+        toolName: tc.name,
+        status: ("done" as const),
+        arguments: tc.args,
+        result: tc.result,
+        toolCallId: tc.callId,
+      }))
+    : undefined;
 
-    const toolCalls = turnToolCalls.length > 0
-      ? turnToolCalls.map(tc => ({
-          toolName: tc.name,
-          status: ("done" as const),
-          arguments: tc.args,
-          result: tc.result,
-          toolCallId: tc.callId,
-        }))
-      : undefined;
-
-    const effectiveTurnId = turnId || turnCtx?.turnId;
-    const msg = await chatFileStorage.createMessage(
-      session.chatSessionId,
+  const effectiveTurnId = turnId || turnCtx?.turnId;
+  const access = await accessVoiceChat(
+    session,
+    "persist_assistant_message",
+    (storage) => storage.createMessage(
+      session.chatSessionId!,
       "assistant",
       sanitizedAssistant || "",
       undefined,
@@ -153,13 +169,26 @@ export async function persistAssistantMessage(
       undefined,
       effectiveTurnId,
       turnCtx?.persona,
-    );
+    ),
+    {
+      isCurrent: () => !turnCtx || (!turnCtx.aborted && session.activeAssistantAttemptId === turnCtx.assistantAttemptId),
+      nullMeansUnavailable: true,
+    },
+  );
 
-    log.log(`turn ${currentTurn} SINGLE_WRITE assistant persisted msgId=${msg?.id || "null"} turnId=${effectiveTurnId || "none"} toolCalls=${turnToolCalls.length} systemSteps=${systemSteps?.length || 0} convId=${session.chatSessionId}`);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.error(`turn ${currentTurn} SINGLE_WRITE assistant persist failed: ${msg}`);
+  if (access.outcome === "superseded") {
+    log.log(`turn ${currentTurn} assistant persistence discarded after supersession attempt=${turnCtx?.assistantAttemptId || "none"}`);
+    return;
   }
+  if (access.outcome === "chat_unavailable") {
+    log.warn(`turn ${currentTurn} assistant persistence discarded because owner-verified chat is unavailable convId=${session.chatSessionId}`);
+    return;
+  }
+  if (access.outcome === "persistence_disabled") return;
+  if (access.outcome === "owner_context_missing" || access.outcome === "storage_failure") {
+    throw voiceChatAccessError("persist_assistant_message", access);
+  }
+  log.log(`turn ${currentTurn} SINGLE_WRITE assistant persisted msgId=${access.value.id} turnId=${effectiveTurnId || "none"} toolCalls=${turnToolCalls.length} systemSteps=${systemSteps?.length || 0} convId=${session.chatSessionId}`);
 }
 
 // ── Voice Error Message Persistence ──────────────────────────────────────
@@ -170,17 +199,26 @@ export async function persistVoiceErrorMessage(
   turnCtx?: TurnContext,
 ): Promise<void> {
   if (!session.chatSessionId) return;
-  try {
-    const { chatFileStorage } = await import("../chat-file-storage");
-    const systemSteps = turnCtx?.systemSteps && turnCtx.systemSteps.length > 0 ? [...turnCtx.systemSteps] : undefined;
-    const segmentChronology = turnCtx?.segmentChronology && turnCtx.segmentChronology.length > 0 ? [...turnCtx.segmentChronology] : undefined;
-    const effectiveTurnId = turnCtx?.turnId;
-    await chatFileStorage.createMessage(session.chatSessionId, "assistant", errorText, undefined, undefined, undefined, systemSteps, undefined, undefined, segmentChronology, undefined, undefined, undefined, undefined, effectiveTurnId, turnCtx?.persona);
-    log.log(`persisted voice error message to chat session=${session.chatSessionId} turnId=${effectiveTurnId || "none"} error="${errorText.slice(0, 80)}" systemSteps=${systemSteps?.length || 0}`);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn(`failed to persist voice error message: ${msg}`);
+  const systemSteps = turnCtx?.systemSteps && turnCtx.systemSteps.length > 0 ? [...turnCtx.systemSteps] : undefined;
+  const segmentChronology = turnCtx?.segmentChronology && turnCtx.segmentChronology.length > 0 ? [...turnCtx.segmentChronology] : undefined;
+  const effectiveTurnId = turnCtx?.turnId;
+  const access = await accessVoiceChat(
+    session,
+    "persist_voice_error",
+    (storage) => storage.createMessage(session.chatSessionId!, "assistant", errorText, undefined, undefined, undefined, systemSteps, undefined, undefined, segmentChronology, undefined, undefined, undefined, undefined, effectiveTurnId, turnCtx?.persona),
+    {
+      isCurrent: () => !turnCtx || (!turnCtx.aborted && session.activeAssistantAttemptId === turnCtx.assistantAttemptId),
+      nullMeansUnavailable: true,
+    },
+  );
+  if (access.outcome === "superseded" || access.outcome === "chat_unavailable" || access.outcome === "persistence_disabled") {
+    log.debug(`voice error persistence discarded outcome=${access.outcome} session=${session.id}`);
+    return;
   }
+  if (access.outcome === "owner_context_missing" || access.outcome === "storage_failure") {
+    throw voiceChatAccessError("persist_voice_error", access);
+  }
+  log.log(`persisted voice error message to chat session=${session.chatSessionId} turnId=${effectiveTurnId || "none"} error="${errorText.slice(0, 80)}" systemSteps=${systemSteps?.length || 0}`);
 }
 
 // ── Orphaned Turn Data Persistence ───────────────────────────────────────
@@ -194,7 +232,11 @@ export async function persistOrphanedTurnData(
   const releaseLock = await acquireSessionTurnLock(session.id);
   let discardedToolCallCount = 0;
   try {
-    discardedToolCallCount = session.toolCalls.splice(0).length;
+    const attemptId = ctx?.assistantAttemptId;
+    if (attemptId) {
+      discardedToolCallCount = session.toolCalls.filter((call) => call.assistantAttemptId === attemptId).length;
+      session.toolCalls = session.toolCalls.filter((call) => call.assistantAttemptId !== attemptId);
+    }
   } finally {
     releaseLock();
   }

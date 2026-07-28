@@ -217,6 +217,7 @@ export function generateVoiceSessionId(): string {
 }
 
 export function createVoiceSession(
+  principal: import("../principal").Principal,
   chatSessionId?: string,
   preCachedSystemPrompt?: string,
   preGeneratedId?: string,
@@ -278,7 +279,7 @@ export function createVoiceSession(
     activeVoiceUserOrdinal: null,
     activeTranscriptRevision: 0,
     activeAssistantAttemptId: null,
-    principal: null,
+    principal,
     originatingClientId: null,
     toolMode: "standard",
     onboardingTokenHash: null,
@@ -334,18 +335,17 @@ export async function resumeVoiceSession(
 
   if (prev.chatSessionId) {
     publishVoiceDiagnostic(prev, "voice_reconnect", `Voice session reconnected (${previousSessionId} → ${newSessionId})`, { status: "done" });
-    try {
-      const { chatFileStorage } = await import("../chat-file-storage");
-      await chatFileStorage.createMessage(
-        prev.chatSessionId, "assistant", "",
-        undefined, undefined, "elevenlabs-voice",
-        [{ name: "voice_reconnect", status: "done" as const, detail: `Reconnected: ${previousSessionId} → ${newSessionId}` }],
-      );
-      log.debug(`resumeVoiceSession: voice_reconnect event persisted to DB session=${previousSessionId}`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`resumeVoiceSession: voice_reconnect persistence failed: ${msg}`);
+    const { accessVoiceChat, voiceChatAccessError } = await import("./chat-owner");
+    const access = await accessVoiceChat(prev, "persist_reconnect_step", (storage) => storage.createMessage(
+      prev.chatSessionId!, "assistant", "",
+      undefined, undefined, "elevenlabs-voice",
+      [{ name: "voice_reconnect", status: "done" as const, detail: `Reconnected: ${previousSessionId} → ${newSessionId}` }],
+      undefined, undefined, undefined, undefined, undefined, undefined, "diagnostic",
+    ));
+    if (access.outcome === "owner_context_missing" || access.outcome === "storage_failure") {
+      throw voiceChatAccessError("persist_reconnect_step", access);
     }
+    log.debug(`resumeVoiceSession: voice_reconnect persistence outcome=${access.outcome} session=${previousSessionId}`);
   }
 
   import("../cli-sdk-adapter").then(({ cleanupVoiceWarmHandle }) => {
@@ -714,8 +714,7 @@ export async function resolveSession(
         const { createServicePrincipal } = await import("../principal");
         session = sessions.get(sessionId) || null;
         if (!session) {
-          session = createVoiceSession(undefined, undefined, sessionId);
-          session.principal = createServicePrincipal(["service:read"], []);
+          session = createVoiceSession(createServicePrincipal(["service:read"], []), undefined, undefined, sessionId);
           session.toolMode = "none";
           session.onboardingTokenHash = onboardingTokenHash;
           const { provisionalVoicePrompt } = await import("./provisional-session");
@@ -754,8 +753,7 @@ export async function resolveSession(
         // durable identity checks were running. Reuse it rather than replacing it.
         session = sessions.get(sessionId) || null;
         if (!session) {
-          session = createVoiceSession(lease.chatSessionId, undefined, sessionId, conversation.sessionKey || undefined);
-          session.principal = principal;
+          session = createVoiceSession(principal, lease.chatSessionId, undefined, sessionId, conversation.sessionKey || undefined);
           log.log(`session recovered from exact owned lease sessionId=${sessionId} chatSessionId=${lease.chatSessionId} ownerUserId=${lease.ownerUserId} accountId=${lease.accountId}`);
         }
       }
@@ -766,11 +764,6 @@ export async function resolveSession(
       });
       session = null;
     }
-  }
-
-  if (session && !session.principal) {
-    log.error(`session resolution rejected: principal missing sessionId=${sessionId}`);
-    session = null;
   }
 
   try {

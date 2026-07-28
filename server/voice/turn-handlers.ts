@@ -237,7 +237,7 @@ export async function runExecutorPhase(
       const releaseLock = await acquireSessionTurnLock(session.id);
       try {
         if (session.activeTurnNumber === currentTurn) {
-          session.toolCalls.push({ name, args, result, callId, timestamp: new Date().toISOString() });
+          session.toolCalls.push({ assistantAttemptId: ctx.assistantAttemptId, name, args, result, callId, timestamp: new Date().toISOString() });
         } else {
           log.warn(`tool_result name=${name} callId=${callId} STALE_PUSH — originTurn=${currentTurn} activeTurn=${session.activeTurnNumber} — discarding from shared toolCalls`);
         }
