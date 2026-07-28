@@ -128,14 +128,26 @@ export async function resolveSpeaker(
     ? { id: calendarParticipant.personId, name: calendarParticipant.label }
     : await resolvePerson(evidence);
   const providerLabel = evidence.label?.trim();
+  const nativeStarter = evidence.source === "machine_diarization"
+    && session.meeting.transport === "native"
+    ? session.meeting.participants.find((participant) =>
+        !participant.key
+        && participant.identitySource === "transport"
+        && participant.transportParticipantId === evidence.transportParticipantId,
+      )
+    : undefined;
   const candidate: MeetingParticipant = {
     ...(evidence.speakerKey?.trim() ? { key: evidence.speakerKey.trim() } : {}),
     label: evidence.source === "machine_diarization"
-      ? ""
+      ? nativeStarter?.label || ""
       : calendarParticipant?.label || person?.name || providerLabel || "",
-    ...(person ? { personId: person.id } : {}),
+    ...(nativeStarter?.personId
+      ? { personId: nativeStarter.personId }
+      : person
+        ? { personId: person.id }
+        : {}),
     ...(evidence.source ? { source: evidence.source } : {}),
-    identitySource: calendarParticipant ? "calendar" : "transport",
+    identitySource: calendarParticipant ? "calendar" : nativeStarter?.identitySource || "transport",
     ...(evidence.transportParticipantId ? { transportParticipantId: evidence.transportParticipantId } : {}),
     ...(evidence.email ? { transportEmail: evidence.email } : {}),
     ...(evidence.providerSpeakerId ? { providerSpeakerId: evidence.providerSpeakerId } : {}),

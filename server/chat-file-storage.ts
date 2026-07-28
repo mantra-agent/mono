@@ -1554,19 +1554,15 @@ async function resolvePersonaSnapshot(personaId: number | null | undefined): Pro
 }
 
 function nextOrdinalLabel(participants: MeetingParticipant[], prefix: string): string {
-  const pattern = new RegExp(`^${prefix} (\\d+)$`);
+  const pattern = /^(?:unknown speaker|speaker) (\d+)$/i;
   const ordinals = new Set(
     participants
       .map((participant) => participant.label.match(pattern)?.[1])
       .filter((ordinal): ordinal is string => Boolean(ordinal)),
   );
-  let ordinal = 1;
+  let ordinal = participants.length + 1;
   while (ordinals.has(String(ordinal))) ordinal += 1;
   return `${prefix} ${ordinal}`;
-}
-
-function nextUnknownSpeakerLabel(participants: MeetingParticipant[]): string {
-  return nextOrdinalLabel(participants, "Unknown speaker");
 }
 
 function nextGenericSpeakerLabel(participants: MeetingParticipant[]): string {
@@ -2706,7 +2702,7 @@ export const chatFileStorage: IChatFileStorage = {
         if (existing.label.trim() || candidate.source !== "machine_diarization") {
           return { participant: existing, participants, added: false };
         }
-        const participant = { ...existing, label: nextUnknownSpeakerLabel(participants) };
+        const participant = { ...existing, label: nextGenericSpeakerLabel(participants) };
         const updatedParticipants = [...participants];
         updatedParticipants[keyedIndex] = participant;
         data.meeting = { ...data.meeting, participants: updatedParticipants };
@@ -2738,9 +2734,7 @@ export const chatFileStorage: IChatFileStorage = {
       if (!candidate.label.trim()) {
         participant = {
           ...candidate,
-          label: candidate.source === "machine_diarization"
-            ? nextUnknownSpeakerLabel(participants)
-            : nextGenericSpeakerLabel(participants),
+          label: nextGenericSpeakerLabel(participants),
         };
       }
       const updatedParticipants = [...participants, participant];

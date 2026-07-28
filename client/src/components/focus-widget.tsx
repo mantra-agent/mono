@@ -657,11 +657,15 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
 
   // One discriminant: panelView.mode determines which view the user sees.
   const showMobileSessionTranscriptPanel = !isDesktop && panelView.mode !== "list";
+  const activeSessionData = activeSession
+    ? sessions.find((session) => session.id === activeSession)
+    : undefined;
   const activeSessionTitle = activeSession
-    ? sessions.find((session) => session.id === activeSession)?.title || "Session"
+    ? activeSessionData?.title || "Session"
     : composing
       ? "New Session"
       : "Sessions";
+  const activeMeetingTitle = activeSessionData?.meeting?.botStatus === "live";
   const returnToMobileSessionList = useCallback(() => {
     setPanelView({ mode: "list" });
     clearSessionForRoute(route);
@@ -710,7 +714,13 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
     <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
       <div className="flex items-center gap-2 h-[42px] px-1.5 border-b border-black md:hidden shrink-0 bg-background">
         {!isDesktop && <NavigationOrbButton />}
-        <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={activeSessionTitle}>
+        <div
+          className={cn(
+            "min-w-0 flex-1 truncate text-sm font-medium text-foreground",
+            activeMeetingTitle && "text-active motion-safe:animate-pulse",
+          )}
+          title={activeSessionTitle}
+        >
           {activeSessionTitle}
         </div>
         {showMobileSessionTranscriptPanel && (

@@ -1,7 +1,8 @@
 import crypto from "crypto";
 import type { IncomingMessage } from "http";
 import type { Socket } from "net";
-import { finished } from "node:stream/promises";
+import { finished, pipeline } from "node:stream/promises";
+import type { Response } from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import type { AgentVisualizerEvent, AgentVisualState } from "@shared/agent-visualizer";
 import type { MeetingBotStatus } from "@shared/models/chat";
@@ -236,10 +237,14 @@ function enqueue(sessionId: string, audio: VoiceAudioStream) {
   audioQueues.set(sessionId, queue);
 }
 
-export async function nextMeetingAudio(sessionId: string): Promise<VoiceAudioStream | null> {
+export async function nextMeetingAudio(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<VoiceAudioStream | null> {
   const queue = audioQueues.get(sessionId);
   const audio = queue?.shift();
   if (audio) return audio;
+  if (signal?.aborted) return null;
 
   return new Promise((resolve) => {
     let settled = false;
@@ -247,18 +252,40 @@ export async function nextMeetingAudio(sessionId: string): Promise<VoiceAudioStr
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
       const current = waiters.get(sessionId) ?? [];
       const index = current.indexOf(finish);
       if (index >= 0) current.splice(index, 1);
       if (current.length === 0) waiters.delete(sessionId);
       resolve(value);
     };
+    const abort = () => finish(null);
+    signal?.addEventListener("abort", abort, { once: true });
     const list = waiters.get(sessionId) ?? [];
     list.push(finish);
     waiters.set(sessionId, list);
     const timer = setTimeout(() => finish(null), 25_000);
     timer.unref?.();
   });
+}
+
+export async function sendNextMeetingAudio(
+  sessionId: string,
+  res: Response,
+  signal?: AbortSignal,
+): Promise<void> {
+  const audio = await nextMeetingAudio(sessionId, signal);
+  res.setHeader("Cache-Control", "no-store");
+  if (!audio) {
+    res.setHeader("X-Meeting-Audio-State", "idle");
+    res.status(204).end();
+    return;
+  }
+
+  res.status(200);
+  res.setHeader("Content-Type", audio.contentType);
+  res.setHeader("Accept-Ranges", "none");
+  await pipeline(audio.stream, res);
 }
 
 export async function speakMeetingResponse(sessionId: string, text: string): Promise<void> {
