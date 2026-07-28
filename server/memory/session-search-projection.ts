@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   accounts,
   documentStoreDocuments,
@@ -16,6 +16,7 @@ import {
   runWithDatabaseTransaction,
 } from "../db";
 import { createLogger } from "../log";
+import { getPostgresErrorCode } from "../postgres-errors";
 import { createUserPrincipalFromUser } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 
@@ -28,21 +29,22 @@ const MAX_TOOL_CONTENT_CHARS = 16_000;
 const MAX_SEGMENTS_PER_SESSION = 600;
 const BACKFILL_BATCH_SIZE = 50;
 const BACKFILL_LOOKBACK_DAYS = 30;
-const BACKFILL_RETRY_MS = 5_000;
+const BACKFILL_INITIAL_RETRY_MS = 5_000;
+const BACKFILL_MAX_RETRY_MS = 5 * 60_000;
 const READINESS_CACHE_MS = 30_000;
 type SearchableMessage = {
-  id: string;
-  role: string;
+  id?: string | null;
+  role?: string | null;
   content?: string | null;
   visibility?: "chat" | "diagnostic";
   toolCalls?: unknown;
 };
 
 export type SearchableSession = {
-  id: string;
-  title: string;
+  id?: string | null;
+  title?: string | null;
   agenda?: SessionAgenda;
-  messages: SearchableMessage[];
+  messages?: SearchableMessage[] | null;
 };
 
 type ProjectionSegment = Pick<
@@ -52,6 +54,7 @@ type ProjectionSegment = Pick<
 
 let readinessCache: { ready: boolean; expiresAt: number } | null = null;
 let backfillStarted = false;
+let backfillFailureCount = 0;
 
 function boundedSerializable(value: unknown, depth = 0): unknown {
   if (value === null || value === undefined) return value;
@@ -80,17 +83,26 @@ function boundedJson(value: unknown): string {
   }
 }
 
+function normalizeSearchText(value: unknown, maxChars: number): string {
+  if (typeof value !== "string") return "";
+  return value.replaceAll("\u0000", "").trim().slice(0, maxChars);
+}
+
 function appendChunks(
   segments: ProjectionSegment[],
   input: {
     kind: ProjectionSegment["segmentKind"];
     sourceId: string;
-    text: string;
+    segmentIdentity: string;
+    text: unknown;
     maxChars?: number;
   },
 ): void {
   if (segments.length >= MAX_SEGMENTS_PER_SESSION) return;
-  const normalized = input.text.trim().slice(0, input.maxChars ?? MAX_SOURCE_CONTENT_CHARS);
+  const normalized = normalizeSearchText(
+    input.text,
+    input.maxChars ?? MAX_SOURCE_CONTENT_CHARS,
+  );
   if (!normalized) return;
 
   let offset = 0;
@@ -98,7 +110,7 @@ function appendChunks(
   while (offset < normalized.length && segments.length < MAX_SEGMENTS_PER_SESSION) {
     const content = normalized.slice(offset, offset + CHUNK_CONTENT_CHARS);
     segments.push({
-      segmentKey: `${input.kind}:${input.sourceId}:${ordinal}`,
+      segmentKey: `${input.kind}:${input.segmentIdentity}:${ordinal}`,
       segmentKind: input.kind,
       sourceId: input.sourceId,
       ordinal,
@@ -112,7 +124,7 @@ function appendChunks(
 }
 
 function toolText(toolCall: ToolCallInfo, index: number): { sourceId: string; text: string } {
-  const sourceId = toolCall.toolCallId || String(index);
+  const sourceId = normalizeSearchText(toolCall.toolCallId, 1_000) || String(index);
   const parts = [
     toolCall.toolName,
     boundedJson(toolCall.arguments),
@@ -125,33 +137,46 @@ function toolText(toolCall: ToolCallInfo, index: number): { sourceId: string; te
 
 export function buildSessionSearchSegments(session: SearchableSession): ProjectionSegment[] {
   const segments: ProjectionSegment[] = [];
-  appendChunks(segments, { kind: "title", sourceId: "session", text: session.title, maxChars: 1_000 });
+  appendChunks(segments, {
+    kind: "title",
+    sourceId: "session",
+    segmentIdentity: "session",
+    text: session.title,
+    maxChars: 1_000,
+  });
 
-  for (const [index, item] of (session.agenda?.items ?? []).entries()) {
+  const agendaItems = Array.isArray(session.agenda?.items) ? session.agenda.items : [];
+  for (const [agendaIndex, item] of agendaItems.entries()) {
+    const agendaSourceId = normalizeSearchText(item.id, 1_000) || String(agendaIndex);
     appendChunks(segments, {
       kind: "agenda",
-      sourceId: item.id || String(index),
+      sourceId: agendaSourceId,
+      segmentIdentity: String(agendaIndex),
       text: [item.title, item.description, item.resolution].filter(Boolean).join("\n"),
       maxChars: 8_000,
     });
   }
 
-  for (const message of session.messages) {
-    if (message.visibility === "diagnostic") continue;
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  for (const [messageIndex, message] of messages.entries()) {
+    if (!message || typeof message !== "object" || message.visibility === "diagnostic") continue;
+    const messageSourceId = normalizeSearchText(message.id, 1_000) || String(messageIndex);
     appendChunks(segments, {
       kind: "message",
-      sourceId: message.id,
-      text: message.content || "",
+      sourceId: messageSourceId,
+      segmentIdentity: String(messageIndex),
+      text: message.content,
     });
     const toolCalls = Array.isArray(message.toolCalls)
       ? (message.toolCalls as ToolCallInfo[])
       : [];
-    for (const [index, toolCall] of toolCalls.entries()) {
+    for (const [toolIndex, toolCall] of toolCalls.entries()) {
       if (!toolCall || typeof toolCall !== "object") continue;
-      const searchable = toolText(toolCall, index);
+      const searchable = toolText(toolCall, toolIndex);
       appendChunks(segments, {
         kind: "tool",
-        sourceId: `${message.id}:${searchable.sourceId}`,
+        sourceId: `${messageSourceId}:${searchable.sourceId}`,
+        segmentIdentity: `${messageIndex}:${toolIndex}`,
         text: searchable.text,
         maxChars: MAX_TOOL_CONTENT_CHARS,
       });
@@ -317,8 +342,10 @@ export function startSessionSearchProjectionBackfill(): void {
   if (backfillStarted) return;
   backfillStarted = true;
   const run = async (): Promise<void> => {
+    let retryMs = BACKFILL_INITIAL_RETRY_MS;
     try {
       const complete = await runBackfillBatch();
+      backfillFailureCount = 0;
       readinessCache = null;
       if (complete && await isSessionSearchProjectionReady()) {
         log.info("session search projection backfill ready", {
@@ -328,11 +355,20 @@ export function startSessionSearchProjectionBackfill(): void {
         return;
       }
     } catch (error) {
+      backfillFailureCount += 1;
+      retryMs = Math.min(
+        BACKFILL_INITIAL_RETRY_MS * 2 ** Math.min(backfillFailureCount - 1, 6),
+        BACKFILL_MAX_RETRY_MS,
+      );
       log.error("session search projection backfill failed", {
         errorName: error instanceof Error ? error.name : typeof error,
+        postgresCode: getPostgresErrorCode(error),
+        failureCount: backfillFailureCount,
+        retryMs,
+        projectionVersion: SESSION_SEARCH_PROJECTION_VERSION,
       });
     }
-    setTimeout(run, BACKFILL_RETRY_MS).unref();
+    setTimeout(run, retryMs).unref();
   };
 
   setTimeout(run, 1_000).unref();
