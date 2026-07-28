@@ -10,13 +10,13 @@ import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
-import { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from "react";
+import { useState, useEffect, useRef, useCallback, useImperativeHandle, useMemo, forwardRef } from "react";
 import type { ForwardedRef, MutableRefObject, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useWikiLinks } from "@/hooks/use-wiki-links";
 import { isEditorEmpty } from "@/lib/editor-utils";
-import { tiptapToMarkdown as jsonToMarkdownShared, markdownToTiptap, isValidTiptapDoc } from "@shared/markdown-tiptap";
+import { tiptapToMarkdown as jsonToMarkdownShared, markdownToTiptap, normalizeTiptapDoc } from "@shared/markdown-tiptap";
 import { ReferenceWidgetExtension } from "@/components/references/tiptap-reference-extension";
 import { ImageIcon } from "lucide-react";
 
@@ -197,14 +197,26 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     handleWikiKeyDown,
   } = useWikiLinks(editorContainerRef);
 
-  const initialContent = isValidTiptapDoc(value) ? value : "";
-  if (!isValidTiptapDoc(value)) {
-    if (value) {
-      log.warn("[LibraryContent] initialContent resolved to empty — value was present but not a valid TipTap doc", { valueType: typeof value, keys: Object.keys(value) });
-    } else {
-      log.debug("[LibraryContent] initialContent is null/empty, editor will show placeholder");
+  const normalizedValue = useMemo(() => normalizeTiptapDoc(value), [value]);
+  const initialContent = normalizedValue ?? "";
+  const invalidValueSignature = useMemo(() => {
+    if (!value || normalizedValue) return null;
+    return `${typeof value}:${Object.keys(value).sort().join(",")}`;
+  }, [value, normalizedValue]);
+  const lastInvalidValueSignatureRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!invalidValueSignature) {
+      lastInvalidValueSignatureRef.current = null;
+      return;
     }
-  }
+    if (lastInvalidValueSignatureRef.current === invalidValueSignature) return;
+    lastInvalidValueSignatureRef.current = invalidValueSignature;
+    log.warn("initialContent resolved to empty — value was present but not a valid TipTap doc", {
+      valueType: typeof value,
+      keys: Object.keys(value ?? {}),
+    });
+  }, [invalidValueSignature, value]);
 
   const textToParagraphDoc = useCallback((text: string): JSONContent | null => {
     const paragraphs: JSONContent[] = text.split("\n")
@@ -259,8 +271,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     content: initialContent,
     editable: !readOnly,
     onCreate: ({ editor: ed }) => {
-      const incomingHasContent = isValidTiptapDoc(value);
-      if (!incomingHasContent) return;
+      if (!normalizedValue || isEditorEmpty(normalizedValue)) return;
 
       const afterJson = ed.getJSON();
       const afterText = ed.state.doc.textContent.trim();
@@ -320,19 +331,16 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
   }, []);
 
   useEffect(() => {
-    if (!editor) return;
-    if (!value || Object.keys(value).length === 0) return;
+    if (!editor || !normalizedValue) return;
     const currentJson = JSON.stringify(editor.getJSON());
-    const incomingJson = JSON.stringify(value);
+    const incomingJson = JSON.stringify(normalizedValue);
     if (currentJson !== incomingJson) {
       try {
-        editor.commands.setContent(value, { emitUpdate: false });
+        editor.commands.setContent(normalizedValue, { emitUpdate: false });
 
         const afterSet = editor.getJSON();
         const afterText = editor.state.doc.textContent.trim();
-        const incomingHasContent = isValidTiptapDoc(value);
-
-        if (incomingHasContent && isEditorEmpty(afterSet) && !afterText) {
+        if (!isEditorEmpty(normalizedValue) && isEditorEmpty(afterSet) && !afterText) {
           log.warn(
             "setContent produced empty editor despite non-empty input, applying plain text fallback",
           );
@@ -343,7 +351,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
         applyPlainTextFallback(editor);
       }
     }
-  }, [value, editor, applyPlainTextFallback]);
+  }, [normalizedValue, editor, applyPlainTextFallback]);
 
   const handleImagePasteOrDrop = useCallback(
     async (file: File) => {

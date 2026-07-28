@@ -6,6 +6,11 @@ interface JSONContent {
   text?: string;
 }
 
+interface TiptapDocument extends JSONContent {
+  type: "doc";
+  content: JSONContent[];
+}
+
 export function tiptapToMarkdown(node: JSONContent): string {
   if (!node) return "";
   const type = node.type;
@@ -95,10 +100,10 @@ function parseInlineMarks(text: string): JSONContent[] {
 }
 
 export function syncContentFields(input: { markdown?: string; tiptapJson?: JSONContent }): { content: JSONContent; plainTextContent: string } {
-  if (isValidTiptapDoc(input.tiptapJson)) {
-    const content = input.tiptapJson;
-    const plainTextContent = tiptapToMarkdown(content);
-    return { content, plainTextContent };
+  const normalizedContent = normalizeTiptapDoc(input.tiptapJson);
+  if (normalizedContent) {
+    const plainTextContent = tiptapToMarkdown(normalizedContent);
+    return { content: normalizedContent, plainTextContent };
   }
   const md = input.markdown ?? "";
   const content = markdownToTiptap(md);
@@ -106,10 +111,16 @@ export function syncContentFields(input: { markdown?: string; tiptapJson?: JSONC
   return { content, plainTextContent };
 }
 
-export function isValidTiptapDoc(value: unknown): value is JSONContent {
+export function isValidTiptapDoc(value: unknown): value is TiptapDocument {
   if (!value || typeof value !== "object") return false;
   const doc = value as JSONContent;
-  return doc.type === "doc" && Array.isArray(doc.content) && doc.content.length > 0;
+  return doc.type === "doc" && Array.isArray(doc.content);
+}
+
+export function normalizeTiptapDoc(value: unknown): JSONContent | null {
+  if (!isValidTiptapDoc(value)) return null;
+  if (value.content.length > 0) return value;
+  return { ...value, content: [{ type: "paragraph" }] };
 }
 
 export function markdownToTiptap(md: string): JSONContent {
