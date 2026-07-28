@@ -6,6 +6,11 @@ import { cn } from "@/lib/utils";
  * menu. Interactive section triggers compose this class with their own hover
  * and disclosure behavior; static labels use HierarchySectionHeader directly.
  */
+export const HIERARCHY_TREE_STACK_CLASS = "min-w-0 p-2 space-y-1";
+
+export const HIERARCHY_PRIMARY_ACTION_CLASS =
+  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80 disabled:cursor-not-allowed disabled:opacity-50";
+
 export const HIERARCHY_SECTION_HEADER_CLASS =
   "flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground";
 

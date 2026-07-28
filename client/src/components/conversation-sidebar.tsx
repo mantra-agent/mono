@@ -40,7 +40,12 @@ import { isDurablyActiveSession, type ChatSession } from "@shared/models/chat";
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
-import { HIERARCHY_SECTION_HEADER_CLASS, HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
+import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -889,7 +894,7 @@ export function ConversationSidebar({
     <div className={`w-full min-w-0 flex flex-col overflow-hidden bg-background text-foreground ${hideForSessionTranscript ? "hidden md:flex" : "flex"}`}>
 
       <ScrollArea ref={scrollAreaRef} className="flex-1 min-w-0">
-        <div className="min-w-0 p-2 space-y-1">
+        <div className={HIERARCHY_TREE_STACK_CLASS}>
           <HierarchySearchInput
             value={searchQuery}
             onChange={setSearchQuery}
@@ -902,7 +907,7 @@ export function ConversationSidebar({
             type="button"
             onClick={onStartNewChat}
             disabled={!isAgentRunning}
-            className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className={HIERARCHY_PRIMARY_ACTION_CLASS}
             data-testid="button-new-chat"
           >
             <Plus className="h-3.5 w-3.5 shrink-0" />

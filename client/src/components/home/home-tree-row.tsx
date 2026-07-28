@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { ChevronRight, Loader2, MessageSquare, MoreHorizontal, Plus, User } from "lucide-react";
+import { ChevronRight, Loader2, MessageSquare, MoreHorizontal, Plus, Trash2, User } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleAction, SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
 import { createReferenceRef, type ReferenceRef } from "@shared/references";
@@ -174,12 +174,14 @@ interface SimpleTreeRowProps {
   layout?: "feed" | "embedded";
   /** Content to render in the title area. Falls back to reference link or item.title. */
   children?: ReactNode;
+  /** Page-owned destructive action. Omitted on surfaces that do not own deletion. */
+  onDelete?: (item: SimpleFeedItem) => void;
 }
 
 const INDENT_PX = 24;
 const CONNECTOR_CLASS = "border-muted-foreground/50";
 
-export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: SimpleTreeRowProps) {
+export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDelete }: SimpleTreeRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [entryOpen, setEntryOpen] = useState(false);
   const [entryContent, setEntryContent] = useState("");
@@ -497,6 +499,18 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children }: Si
                 {discussMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <MessageSquare className="mr-2 h-3.5 w-3.5" />}
                 Discuss
               </DropdownMenuItem>
+              {onDelete ? (
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(item);
+                  }}
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                  Delete
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
