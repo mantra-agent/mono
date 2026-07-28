@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { User, Check, ChevronDown, ChevronUp, Plus, Loader2, Trash2, Pencil, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, ChevronRight, Plus, Loader2, Trash2, Pencil, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { HIERARCHY_SESSION_ROW_CLASS } from "@/components/hierarchy-section-header";
 import { Card } from "@/components/ui/card";
-import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -126,17 +127,14 @@ function IconPicker({ value, onChange }: { value: string; onChange: (icon: strin
 
 function PersonaTreeItem({
   persona,
-  onActivate,
   onDelete,
   onUpdate,
-  activating,
 }: {
   persona: Persona;
-  onActivate: () => void;
   onDelete: () => void;
   onUpdate: (data: { description?: string; icon?: string; promptOverlay?: string; expressionTags?: string[]; semanticTier?: "max" | "high" | "balanced" | "fast"; contextSections?: Record<string, boolean>; toolBundle?: string[] }) => void;
-  activating: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editDescription, setEditDescription] = useState(persona.description);
   const [editOverlay, setEditOverlay] = useState(persona.promptOverlay || "");
@@ -181,14 +179,6 @@ function PersonaTreeItem({
     setEditToolBundle(persona.toolBundle || []);
     setEditing(false);
   };
-
-  const meta = (
-    <span className="flex min-w-0 items-center justify-end gap-1.5">
-      {persona.isDefault && <Badge variant="outline" className="text-[10px]">Default</Badge>}
-      {persona.isSystem && <Badge variant="outline" className="text-[10px]">System</Badge>}
-      <Badge variant="outline" className="text-[10px]">{persona.semanticTier || "balanced"}</Badge>
-    </span>
-  );
 
   const expandedContent = editing ? (
     <div className="space-y-3 rounded-md border border-border/30 bg-card/60 p-3">
@@ -309,11 +299,6 @@ function PersonaTreeItem({
             <Button size="sm" variant="outline" className="gap-1" onClick={() => setEditing(true)}>
               <Pencil className="h-3 w-3" /> Edit
             </Button>
-            {!persona.isActive && (
-              <Button size="sm" variant="default" className="gap-1 bg-cta text-cta-foreground hover:bg-cta/90" onClick={onActivate} disabled={activating}>
-                {activating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Activate
-              </Button>
-            )}
             {persona.source !== "seed" && (
               <Button size="sm" variant="destructive" className="gap-1" onClick={onDelete}>
                 <Trash2 className="h-3 w-3" /> Delete
@@ -326,22 +311,23 @@ function PersonaTreeItem({
   );
 
   return (
-    <ProfileTreeRow
-      label={<span className="flex min-w-0 items-center gap-2"><span className="truncate font-medium text-foreground">{persona.name}</span>{persona.isActive && <span className="inline-flex items-center gap-1 text-[10px] text-foreground"><Check className="h-3 w-3" />Active</span>}</span>}
-      icon={<PersonaIconDisplay iconName={persona.icon} className="h-3.5 w-3.5" />}
-      hasValue
-      showEmpty
-      defaultOpen={persona.isActive}
-      expandedContent={expandedContent}
-      expandedContentClassName="pl-8 pr-2"
-    >
-      {meta}
-    </ProfileTreeRow>
+    <Collapsible open={open} onOpenChange={setOpen} data-testid={`persona-row-${persona.id}`}>
+      <CollapsibleTrigger className={cn(HIERARCHY_SESSION_ROW_CLASS, "hover:bg-accent/70")}>
+        <PersonaIconDisplay iconName={persona.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-foreground">{persona.name}</span>
+        {persona.isDefault && <span className="shrink-0 text-xs text-muted-foreground/70">Default</span>}
+        <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform", open && "rotate-90")} />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="px-2 pb-2 pl-8">
+          {expandedContent}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
-function CreatePersonaForm({ onSuccess }: { onSuccess: () => void }) {
-  const [open, setOpen] = useState(false);
+function CreatePersonaForm({ onSuccess, onClose }: { onSuccess: () => void; onClose: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [icon, setIcon] = useState("Bot");
@@ -365,13 +351,7 @@ function CreatePersonaForm({ onSuccess }: { onSuccess: () => void }) {
     },
     onSuccess: () => {
       toast({ title: "Persona created" });
-      setName("");
-      setDescription("");
-      setIcon("Bot");
-      setPromptOverlay("");
-      setExpressionTags("");
-      setSemanticTier("balanced");
-      setOpen(false);
+      onClose();
       onSuccess();
     },
     onError: (err: Error) => {
@@ -379,20 +359,11 @@ function CreatePersonaForm({ onSuccess }: { onSuccess: () => void }) {
     },
   });
 
-  if (!open) {
-    return (
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)} className="gap-1.5">
-        <Plus className="h-3.5 w-3.5" />
-        Create Persona
-      </Button>
-    );
-  }
-
   return (
     <Card className="overflow-hidden">
       <div className="py-3 px-4 flex items-center justify-between border-b border-border/20">
-        <span className="text-sm font-medium">Create Persona</span>
-        <Button size="sm" variant="ghost" onClick={() => setOpen(false)} className="h-6 w-6 p-0">
+        <span className="text-sm font-medium">New Persona</span>
+        <Button size="sm" variant="ghost" onClick={onClose} className="h-6 w-6 p-0">
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -449,7 +420,7 @@ function CreatePersonaForm({ onSuccess }: { onSuccess: () => void }) {
             {mutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
             Create
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button size="sm" variant="ghost" onClick={onClose}>Cancel</Button>
         </div>
       </div>
     </Card>
@@ -459,27 +430,11 @@ function CreatePersonaForm({ onSuccess }: { onSuccess: () => void }) {
 export default function PersonaTab() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [activatingId, setActivatingId] = useState<number | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const { data: allPersonas, isLoading } = useQuery<Persona[]>({
     queryKey: ["/api/personas/management"],
     refetchInterval: 30000,
-  });
-
-  const activateMutation = useMutation({
-    mutationFn: async (id: number) => {
-      setActivatingId(id);
-      await apiRequest("POST", `/api/personas/${id}/activate`, {});
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
-      toast({ title: "Persona activated" });
-      setActivatingId(null);
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-      setActivatingId(null);
-    },
   });
 
   const deleteMutation = useMutation({
@@ -512,52 +467,43 @@ export default function PersonaTab() {
     queryClient.invalidateQueries({ queryKey: ["/api/personas/management"] });
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
   const personas = allPersonas || [];
-  const sortedPersonas = [...personas].sort((a, b) => {
-    if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
-    return a.sortOrder - b.sortOrder;
-  });
-
-  if (personas.length === 0) {
-    return (
-      <div className="p-4 w-full">
-        <div className="py-8 text-center">
-          <User className="h-6 w-6 mx-auto mb-3 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">No personas configured</p>
-        </div>
-        <div className="mt-4">
-          <CreatePersonaForm onSuccess={refresh} />
-        </div>
-      </div>
-    );
-  }
+  const sortedPersonas = [...personas].sort((a, b) => a.sortOrder - b.sortOrder);
 
   return (
-    <div className="p-4 space-y-4 w-full">
-      <div>
-        <div className="rounded-lg border border-border/40 bg-muted/30 p-1">
+    <div className="p-2 space-y-1 w-full">
+      <button
+        type="button"
+        onClick={() => setCreating(true)}
+        className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-cta hover:text-cta/80 hover:bg-accent/70 rounded-md transition-colors"
+        data-testid="button-new-persona"
+      >
+        <Plus className="h-3.5 w-3.5 shrink-0" />
+        <span>New Persona</span>
+      </button>
+
+      {creating && (
+        <CreatePersonaForm onSuccess={refresh} onClose={() => setCreating(false)} />
+      )}
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : sortedPersonas.length === 0 ? (
+        <div className="px-2 py-1.5 text-sm text-muted-foreground">No personas yet</div>
+      ) : (
+        <div className="space-y-0.5">
           {sortedPersonas.map(persona => (
             <PersonaTreeItem
               key={persona.id}
               persona={persona}
-              onActivate={() => activateMutation.mutate(persona.id)}
               onDelete={() => deleteMutation.mutate(persona.id)}
               onUpdate={(data) => updateMutation.mutate({ id: persona.id, data })}
-              activating={activatingId === persona.id}
             />
           ))}
         </div>
-      </div>
-
-      <CreatePersonaForm onSuccess={refresh} />
+      )}
     </div>
   );
 }

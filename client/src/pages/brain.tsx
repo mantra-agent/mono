@@ -54,7 +54,7 @@ export default function BrainPage() {
   }, [readUrlParams]);
 
   usePageHeader({
-    title: "Brain",
+    title: activeTab === "persona" ? "Personas" : "Brain",
     tabs: brainTabs,
     activeTab,
     onTabChange: setActiveTab,
