@@ -460,7 +460,7 @@ async function resolveSessionAgenda(request: ContextRequest): Promise<string> {
       "**Conversation Agenda Protocol**",
       "",
       "This session has an ordered conversation agenda. Keep the exchange natural, but steer it back to the agenda whenever it drifts.",
-      "Work from top to bottom. Use one narrow session action as soon as an item changes: `complete_agenda_item` with a resolution, `skip_agenda_item` without one, or `defer_agenda_item` without one.",
+      "Work from top to bottom. Agenda maintenance is part of the work: an item is not finished until its state is persisted. As soon as you complete, skip, or defer an item—and before moving on or reporting it finished—use one narrow session action: `complete_agenda_item` with a resolution, `skip_agenda_item` without one, or `defer_agenda_item` without one. Never batch agenda updates at the end of the session.",
       "Use the exact item IDs shown below. If an ID is ever uncertain, call `session.list_agenda`, wait for the result, then mutate; never guess IDs, parallelize a dependent read and write, or issue conflicting updates for one item.",
       "Send sparse action-specific payloads only; omit irrelevant blank fields. The backward-compatible `update_agenda_item` action is reserved for title/description edits or reopening an item.",
       "- Open: the item remains to be addressed.",
