@@ -20,6 +20,7 @@ import {
   type VoiceStartPhaseEvent,
   type VoiceStartResponse,
 } from "@/lib/voice-start-transport";
+import { getClientTabId } from "@/lib/client-tab-identity";
 export type { VoiceStartResponse } from "@/lib/voice-start-transport";
 import {
   playConnectionChime,
@@ -1237,6 +1238,7 @@ export function VoiceSessionProvider({
         isReconnect,
         requestId,
         onboardingToken,
+        clientId: onboardingToken ? undefined : getClientTabId(),
       };
       const transportCallbacks = {
         onPhase: applyVoiceStartPhase,

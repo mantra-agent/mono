@@ -81,6 +81,7 @@ function isSpecChildSpawnRequest(...values: unknown[]): boolean {
 export interface BridgeToolContext {
   sessionKey: string;
   sessionId: string;
+  clientId?: string;
   orientationPersonaPolicy?: "replace" | "preserve_existing";
   authority?: import("./agent-authority").AgentAuthorityContext;
 }
@@ -4209,6 +4210,11 @@ async function buildWarmStartBrief(opts: {
 }
 
 export const bridgeHandlers: Record<string, ToolHandler> = {
+
+  async ui(args) {
+    const { handleUiInteraction } = await import("./tools/ui");
+    return handleUiInteraction(args);
+  },
 
   async question(args) {
     const { handleQuestion } = await import("./tools/question");
@@ -16225,6 +16231,7 @@ export async function executeTool(
   // validation so capability introspection can describe this exact execution.
   if (context?.sessionId) enrichedArgs._sessionId = context.sessionId;
   if (context?.sessionKey) enrichedArgs._sessionKey = context.sessionKey;
+  if (context?.clientId) enrichedArgs._clientId = context.clientId;
   enrichedArgs._authorityContext = {
     ...context?.authority,
     sessionId: context?.sessionId,

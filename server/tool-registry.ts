@@ -41,6 +41,18 @@ export interface ToolMeta {
 }
 
 export const TOOLS: Record<string, ToolMeta> = {
+  ui: {
+    description: "Interact with the authenticated application UI in the browser tab containing the originating session. `execute` performs the same registered action as the user control. `guide` reveals and spotlights that control, locks interaction outside it, and completes when the intended outcome occurs or the user cancels. The first available target is Memory Graph navigation.",
+    category: "browser",
+    parameters: {
+      type: "object",
+      properties: {
+        target: { type: "string", enum: ["navigation.memoryGraph.open"], description: "Stable semantic UI target." },
+        mode: { type: "string", enum: ["execute", "guide"], description: "Execute the action directly or guide the user through the real control." },
+      },
+      required: ["target", "mode"],
+    },
+  },
   scratch: {
     description: "Read and author workspace files, including code inside the current session-owned repos/ clone. Use write/edit for code changes; shell is intentionally read-only. Repository writes require trusted engineering provenance and build:write. Use `files` for persistent user-facing storage.",
     category: "file",
@@ -1792,6 +1804,7 @@ export function getToolSchemas(): ToolSchema[] {
  */
 export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "converse",
+  "ui",
   "orient",
   "question",
   "cognition",
