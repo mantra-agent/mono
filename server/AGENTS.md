@@ -117,7 +117,7 @@ PostgreSQL stores relational columns alongside extensive JSONB (`metadata`, docu
 
 ### Observability and operating rules
 
-`server/db.ts` instruments `pool.query` on the general and voice pools, attributes operations through AsyncLocalStorage, records in-flight/long-running work, logs queries over 1 s, probes health, and declares saturation only after a configured lane is exhausted with waiters for 2 s. A slow-query line is diagnostic evidence, not proof of saturation; current logs may render slow queries at `error` despite the intended logging-level contract. Direct checked-out `client.query`, the auth pool, and dedicated clients are not covered by this query instrumentation.
+`server/db.ts` instruments `pool.query` on the general and voice pools, attributes operations through AsyncLocalStorage, records in-flight/long-running work, logs successful queries over 1 s at `warn`, probes health, and declares saturation only after a configured lane is exhausted with waiters for 2 s. Generic query diagnostics never emit SQL text, parameters, or arbitrary database error messages; they retain timing, lane, subsystem, label, pool counts, error type, and SQLSTATE. A slow-query line is diagnostic evidence, not proof of saturation. Direct checked-out `client.query`, the auth pool, and dedicated clients are not covered by this query instrumentation.
 
 Live Platform Environment 12 on commit `bc528443603a` showed configured demand without sustained exhaustion: general pool samples ranged roughly 15–25 total with 0 waiters; voice ranged 0–3 with 0 waiters; no `DB SATURATION START` appeared in the sampled window. The same window proved statement cancellation of exact session search at ~10.0–10.5 s (`57014`) while the pool still had idle clients, plus repeat ~1.1–1.5 s context-health reads and ~1.1 s browser-telemetry writes. Diagnose SQL/index/selectivity and logging severity separately from pool exhaustion.
 
@@ -135,7 +135,7 @@ Non-negotiable rules:
 
 - Pool/shutdown/telemetry ownership is fragmented by the separate auth pool and dedicated clients.
 - Schema convergence is distributed and partly non-fatal; the 2 s heal race does not cancel SQL.
-- Instrumentation wraps `Pool.query`, not checked-out `PoolClient.query`, auth, or dedicated clients, and labels slow-but-successful queries inconsistently with the logging contract.
+- Instrumentation wraps `Pool.query`, not checked-out `PoolClient.query`, auth, or dedicated clients; those paths remain outside the ordinary timing and pressure evidence.
 - Exact session search has the intended index contract but is timing out live; index existence and a boot probe are not proof that every real search pattern is cheap.
 - Context-health orders and filters a growing `api_calls` telemetry set by a JSONB expression and is repeatedly slow in live evidence.
 - Library visible-list/tree reads and substring search are full-result/full-text-column workloads without a documented pagination/index budget.

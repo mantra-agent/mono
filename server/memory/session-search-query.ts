@@ -11,18 +11,24 @@ const targetChatDocumentScopeColumns = {
   vaultId: documentStoreDocuments.vaultId,
 };
 
-function sessionSearchCandidatePredicate(searchPattern: string): SQL {
+export function buildLiteralSubstringPattern(searchTerm: string): string {
+  const escaped = searchTerm.replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_");
+  return `%${escaped}%`;
+}
+
+function sessionSearchCandidatePredicate(searchTerm: string): SQL {
+  const searchPattern = buildLiteralSubstringPattern(searchTerm);
   return sql`${documentStoreDocuments.id} IN (
     WITH session_search_candidates AS MATERIALIZED (
       SELECT ${documentStoreDocuments.id} AS candidate_id
       FROM ${documentStoreDocuments}
       WHERE ${documentStoreDocuments.documentType} = 'chat'
-        AND ${documentStoreDocuments.title} ILIKE ${searchPattern}
+        AND ${documentStoreDocuments.title} ILIKE ${searchPattern} ESCAPE '!'
       UNION
       SELECT ${documentStoreDocuments.id} AS candidate_id
       FROM ${documentStoreDocuments}
       WHERE ${documentStoreDocuments.documentType} = 'chat'
-        AND ${documentStoreDocuments.content} ILIKE ${searchPattern}
+        AND ${documentStoreDocuments.content} ILIKE ${searchPattern} ESCAPE '!'
     )
     SELECT candidate_id FROM session_search_candidates
   )`;
@@ -31,7 +37,7 @@ function sessionSearchCandidatePredicate(searchPattern: string): SQL {
 export function buildTargetSessionSearchQuery(
   principal: Principal,
   cutoffIso: string,
-  searchPattern: string,
+  searchTerm: string,
   maxResults: number,
 ) {
   return db
@@ -51,7 +57,7 @@ export function buildTargetSessionSearchQuery(
           sql`${documentStoreDocuments.documentType} = 'chat'`,
           sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text) >= ${cutoffIso}`,
           sql`coalesce((${documentStoreDocuments.metadata}->>'messageCount')::int, 0) > 0`,
-          sessionSearchCandidatePredicate(searchPattern),
+          sessionSearchCandidatePredicate(searchTerm),
         ),
       ),
     )

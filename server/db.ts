@@ -701,7 +701,6 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
     const entryId = ++_inFlightSeq;
     _inFlightEntries.set(entryId, { id: entryId, subsystem, label: label ? `${lane}:${label}` : lane, startedAt: Date.now() });
     const start = Date.now();
-    const queryText = typeof args[0] === "string" ? args[0] : args[0]?.text || "(unknown)";
 
     let result: any;
     try {
@@ -710,6 +709,12 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       inFlightQueries--;
       inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
       _inFlightEntries.delete(entryId);
+      const counts = `${targetPool.totalCount}/${targetPool.idleCount}/${targetPool.waitingCount}`;
+      const pgCode = getPostgresErrorCode(err);
+      const errorType = err instanceof Error ? "Error" : typeof err;
+      log.error(
+        `query contract failed after ${Date.now() - start}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts} errorType=${errorType}${pgCode ? ` code=${pgCode}` : ""}`,
+      );
       throw err;
     }
 
@@ -720,13 +725,12 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       const elapsed = Date.now() - start;
       if (elapsed > SLOW_QUERY_THRESHOLD_MS || failed) {
         if (elapsed > SLOW_QUERY_THRESHOLD_MS) recordSlowQuery(elapsed);
-        const truncated = safeTruncate(queryText, 2 * 1024, `db.${failed ? "failed" : "slow"}.${subsystem}`);
         const counts = `${targetPool.totalCount}/${targetPool.idleCount}/${targetPool.waitingCount}`;
-        let message = `${failed ? "query contract failed" : "SLOW query"} after ${elapsed}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}: ${truncated}`;
+        let message = `${failed ? "query contract failed" : "SLOW query"} after ${elapsed}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}`;
         if (failed && err !== undefined) {
-          const detail = err instanceof Error ? err.message : String(err);
-          const pgCode = (err as { code?: string })?.code;
-          message += ` | error=${detail}${pgCode ? ` code=${pgCode}` : ""}`;
+          const pgCode = getPostgresErrorCode(err);
+          const errorType = err instanceof Error ? "Error" : typeof err;
+          message += ` errorType=${errorType}${pgCode ? ` code=${pgCode}` : ""}`;
         }
         if (failed) log.error(message); else log.warn(message);
       }

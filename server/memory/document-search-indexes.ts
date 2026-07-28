@@ -42,7 +42,7 @@ type VerificationScope = {
   ownerUserId: string;
   accountId: string;
   vaultId: string | null;
-  searchPattern: string;
+  searchTerm: string;
 };
 
 function errorCode(error: unknown): string | undefined {
@@ -147,7 +147,7 @@ async function readVerificationScope(
     `SELECT recent.owner_user_id,
             recent.account_id,
             recent.vault_id,
-            '%' || substring(recent.content FROM '([[:alnum:]][[:alnum:]_-]{4,31})') || '%' AS probe_term
+            substring(recent.content FROM '([[:alnum:]][[:alnum:]_-]{4,31})') AS probe_term
        FROM (
          SELECT owner_user_id, account_id, vault_id, content
            FROM document_store_documents
@@ -170,7 +170,7 @@ async function readVerificationScope(
         ownerUserId: row.owner_user_id,
         accountId: row.account_id,
         vaultId: row.vault_id,
-        searchPattern: row.probe_term,
+        searchTerm: row.probe_term,
       }
     : null;
 }
@@ -230,7 +230,7 @@ async function verifyOperationalQuery(client: PoolClient): Promise<"verified" | 
   const productionQuery = buildTargetSessionSearchQuery(
     verificationPrincipal(scope),
     cutoffIso,
-    scope.searchPattern,
+    scope.searchTerm,
     50,
   ).toSQL();
   await client.query(`SET statement_timeout TO '${OPERATIONAL_PROBE_TIMEOUT_MS}ms'`);
