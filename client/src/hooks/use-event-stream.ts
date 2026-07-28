@@ -1,74 +1,137 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 
 export interface BusEvent {
   id: string;
   timestamp: number;
   category: "agent" | "system" | "session" | "channel" | "chat" | "gateway" | "tool" | "responsibility" | "memory";
   event: string;
-  payload: any;
+  payload: unknown;
   runId?: string;
   sessionKey?: string;
   bootId?: string;
 }
 
-export function useEventStream(maxEvents = 500) {
-  const [events, setEvents] = useState<BusEvent[]>([]);
-  const [connected, setConnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+interface EventStreamSnapshot {
+  events: BusEvent[];
+  connected: boolean;
+}
 
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+const EVENT_STREAM_CAPACITY = 1_000;
+const EVENT_STREAM_OWNER = "eventStream";
+const EVENT_STREAM_HANDLER = "eventStream";
+const EMPTY_SNAPSHOT: EventStreamSnapshot = { events: [], connected: false };
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
-    wsRef.current = ws;
+let eventStreamSnapshot = EMPTY_SNAPSHOT;
+const eventStreamListeners = new Set<() => void>();
 
-    ws.onopen = () => {
-      setConnected(true);
-    };
+function isBusEvent(value: unknown): value is BusEvent {
+  const event = value as Partial<BusEvent> | null;
+  return Boolean(
+    event
+    && typeof event.id === "string"
+    && typeof event.timestamp === "number"
+    && typeof event.category === "string"
+    && typeof event.event === "string",
+  );
+}
 
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "event" && msg.event) {
-          setEvents((prev) => {
-            const next = [...prev, msg.event];
-            return next.length > maxEvents ? next.slice(-maxEvents) : next;
-          });
-        } else if (msg.type === "history" && Array.isArray(msg.events)) {
-          setEvents((prev) => {
-            const merged = [...prev, ...msg.events];
-            const unique = Array.from(new Map(merged.map(e => [e.id, e])).values());
-            return unique.slice(-maxEvents);
-          });
-        }
-      } catch {}
-    };
+function emitEventStreamSnapshot(next: EventStreamSnapshot): void {
+  if (next === eventStreamSnapshot) return;
+  eventStreamSnapshot = next;
+  eventStreamListeners.forEach((listener) => listener());
+}
 
-    ws.onclose = () => {
-      setConnected(false);
-      wsRef.current = null;
-      reconnectTimerRef.current = setTimeout(connect, 3000);
-    };
+function setEventStreamConnected(connected: boolean): void {
+  if (eventStreamSnapshot.connected === connected) return;
+  emitEventStreamSnapshot({ ...eventStreamSnapshot, connected });
+}
 
-    ws.onerror = () => {
-      ws.close();
-    };
-  }, [maxEvents]);
+function mergeEvents(incoming: readonly BusEvent[]): void {
+  if (incoming.length === 0) return;
+  const byId = new Map(eventStreamSnapshot.events.map((event) => [event.id, event]));
+  for (const event of incoming) byId.set(event.id, event);
+  const events = Array.from(byId.values())
+    .sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id))
+    .slice(-EVENT_STREAM_CAPACITY);
+  emitEventStreamSnapshot({ ...eventStreamSnapshot, events });
+}
 
+function subscribeEventStream(listener: () => void): () => void {
+  eventStreamListeners.add(listener);
+  return () => eventStreamListeners.delete(listener);
+}
+
+function getEventStreamSnapshot(): EventStreamSnapshot {
+  return eventStreamSnapshot;
+}
+
+function resetEventStream(): void {
+  emitEventStreamSnapshot(EMPTY_SNAPSHOT);
+}
+
+export function useEventStreamTransport(): void {
   useEffect(() => {
-    connect();
-    return () => {
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      if (wsRef.current) {
-        wsRef.current.onclose = null;
-        wsRef.current.close();
-      }
+    const sharedWS = acquireSharedWS(EVENT_STREAM_OWNER);
+
+    const resume = () => {
+      setEventStreamConnected(true);
+      const afterEventId = eventStreamSnapshot.events.at(-1)?.id;
+      sharedWS.send({
+        type: "events.resume",
+        ...(afterEventId ? { afterEventId } : {}),
+      });
     };
-  }, [connect]);
 
-  const clearEvents = useCallback(() => setEvents([]), []);
+    sharedWS.addMessageHandler(EVENT_STREAM_HANDLER, (message) => {
+      const msg = message as { type?: unknown; event?: unknown; events?: unknown };
+      if (msg.type === "event" && isBusEvent(msg.event)) {
+        mergeEvents([msg.event]);
+        return;
+      }
+      if (msg.type === "history" && Array.isArray(msg.events)) {
+        mergeEvents(msg.events.filter(isBusEvent));
+      }
+    });
+    sharedWS.addOpenHandler(EVENT_STREAM_HANDLER, resume);
+    sharedWS.addCloseHandler(EVENT_STREAM_HANDLER, () => setEventStreamConnected(false));
+    sharedWS.addErrorHandler(EVENT_STREAM_HANDLER, () => setEventStreamConnected(false));
 
-  return { events, connected, clearEvents };
+    if (sharedWS.getReadyState() === WebSocket.OPEN) resume();
+    else sharedWS.connect();
+
+    return () => {
+      sharedWS.removeMessageHandler(EVENT_STREAM_HANDLER);
+      sharedWS.removeOpenHandler(EVENT_STREAM_HANDLER);
+      sharedWS.removeCloseHandler(EVENT_STREAM_HANDLER);
+      sharedWS.removeErrorHandler(EVENT_STREAM_HANDLER);
+      releaseSharedWS(EVENT_STREAM_OWNER);
+      resetEventStream();
+    };
+  }, []);
+}
+
+export function useEventStream(maxEvents = 500) {
+  const snapshot = useSyncExternalStore(
+    subscribeEventStream,
+    getEventStreamSnapshot,
+    getEventStreamSnapshot,
+  );
+  const clearedEventIdsRef = useRef<Set<string>>(new Set());
+  const [clearRevision, setClearRevision] = useState(0);
+  const boundedMaxEvents = Math.max(1, Math.min(maxEvents, EVENT_STREAM_CAPACITY));
+
+  const events = useMemo(
+    () => snapshot.events
+      .filter((event) => !clearedEventIdsRef.current.has(event.id))
+      .slice(-boundedMaxEvents),
+    [boundedMaxEvents, clearRevision, snapshot.events],
+  );
+
+  const clearEvents = useCallback(() => {
+    clearedEventIdsRef.current = new Set(snapshot.events.map((event) => event.id));
+    setClearRevision((revision) => revision + 1);
+  }, [snapshot.events]);
+
+  return { events, connected: snapshot.connected, clearEvents };
 }

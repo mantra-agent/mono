@@ -9,6 +9,14 @@ type MessageHandler = (msg: unknown) => void;
 type LifecycleHandler = () => void;
 type CloseHandler = (code: number, reason: string) => void;
 
+export type SharedWSCloseCause =
+  | "app_release"
+  | "liveness_timeout"
+  | "page_exit"
+  | "normal_peer_close"
+  | "peer_or_network"
+  | "remote_close";
+
 interface SharedWebSocket {
   addMessageHandler(id: string, handler: MessageHandler): void;
   removeMessageHandler(id: string): void;
@@ -47,6 +55,11 @@ export interface SharedWSDiagnostics {
   forcedReconnects: number;
   connectedAt: number | null;
   lastMessageAt: number | null;
+  lastCloseAt: number | null;
+  lastCloseCode: number | null;
+  lastCloseCause: SharedWSCloseCause | null;
+  lastCloseRefCount: number | null;
+  lastCloseOwners: string[];
   resumeGeneration: number;
 }
 
@@ -76,6 +89,11 @@ const EMPTY_DIAGNOSTICS: SharedWSDiagnostics = {
   forcedReconnects: 0,
   connectedAt: null,
   lastMessageAt: null,
+  lastCloseAt: null,
+  lastCloseCode: null,
+  lastCloseCause: null,
+  lastCloseRefCount: null,
+  lastCloseOwners: [],
   resumeGeneration: 0,
 };
 let diagnosticSnapshot: SharedWSDiagnostics = EMPTY_DIAGNOSTICS;
@@ -108,10 +126,31 @@ const LIVENESS_TIMEOUT_MS = 45_000;
 const LIVENESS_CHECK_INTERVAL_MS = 30_000;
 const CLOSE_DELAY_MS = 50;
 
+// Page exit is a browser-tab-level fact, not a per-physical-socket fact. One
+// module-level observer keeps it correct across reconnects and re-created
+// instances, and never accumulates duplicate listeners.
+let pageExitObserved = false;
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => { pageExitObserved = true; });
+  window.addEventListener("pageshow", () => { pageExitObserved = false; });
+}
+
+function classifyCloseCause(
+  code: number,
+  pendingCause: "app_release" | "liveness_timeout" | null,
+  pageExit: boolean,
+): SharedWSCloseCause {
+  if (pendingCause) return pendingCause;
+  if (pageExit) return "page_exit";
+  if (code === 1000 || code === 1001) return "normal_peer_close";
+  if (code === 1005 || code === 1006) return "peer_or_network";
+  return "remote_close";
+}
+
 function createSharedWebSocket(): SharedWebSocket {
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let intentionalClose = false;
+  let pendingCloseCause: "app_release" | "liveness_timeout" | null = null;
   let reconnectAttempt = 0;
   let lastMessageTime = Date.now();
   let connectTime = 0;
@@ -120,6 +159,11 @@ function createSharedWebSocket(): SharedWebSocket {
   let forcedReconnects = 0;
   let connectedAt: number | null = null;
   let lastMessageAt: number | null = null;
+  let lastCloseAt: number | null = null;
+  let lastCloseCode: number | null = null;
+  let lastCloseCause: SharedWSCloseCause | null = null;
+  let lastCloseRefCount: number | null = null;
+  let lastCloseOwners: string[] = [];
   let livenessTimer: ReturnType<typeof setInterval> | null = null;
   const messageHandlers = new Map<string, MessageHandler>();
   const reconnectHandlers = new Map<string, LifecycleHandler>();
@@ -136,7 +180,7 @@ function createSharedWebSocket(): SharedWebSocket {
   function doConnect() {
     if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
 
-    intentionalClose = false;
+    pendingCloseCause = null;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${protocol}//${window.location.host}/ws/events`;
     log.debug(`connecting url=${url} refCount=${refCount}`);
@@ -144,6 +188,7 @@ function createSharedWebSocket(): SharedWebSocket {
     ws = socket;
 
     socket.onopen = () => {
+      pendingCloseCause = null;
       const wasReconnect = hasEverConnected;
       lastOpenWasReconnect = wasReconnect;
       reconnectAttempt = 0;
@@ -207,13 +252,21 @@ function createSharedWebSocket(): SharedWebSocket {
 
     socket.onclose = (ev) => {
       const duration = connectTime ? Date.now() - connectTime : 0;
-      log.debug(`close code=${ev.code} reason=${ev.reason || "none"} intentional=${intentionalClose} duration=${duration}ms refCount=${refCount} reconnectAttempt=${reconnectAttempt}`);
+      const closeCause = classifyCloseCause(ev.code, pendingCloseCause, pageExitObserved);
+      const closeOwners = Array.from(ownerRefs.keys()).sort();
+      lastCloseAt = Date.now();
+      lastCloseCode = ev.code;
+      lastCloseCause = closeCause;
+      lastCloseRefCount = refCount;
+      lastCloseOwners = closeOwners;
+      log.debug(`close code=${ev.code} cause=${closeCause} reason=${ev.reason || "none"} duration=${duration}ms refCount=${refCount} reconnectAttempt=${reconnectAttempt}`);
       chatBeacon("ws_close", {
         code: ev.code,
+        cause: closeCause,
         reason: ev.reason || "none",
-        intentional: intentionalClose,
         durationMs: duration,
         refCount,
+        owners: closeOwners,
         streamActive: streamOwners.size > 0,
       });
       ws = null;
@@ -226,10 +279,10 @@ function createSharedWebSocket(): SharedWebSocket {
           log.warn("close handler error:", err);
         }
       }
-      if (!intentionalClose) {
+      if (closeCause !== "app_release" && closeCause !== "page_exit") {
         const attempt = reconnectAttempt++;
         const delay = Math.min(500 * Math.pow(1.5, attempt), 5000);
-        log.debug(`scheduling reconnect in ${Math.round(delay)}ms attempt=${attempt}`);
+        log.debug(`scheduling reconnect in ${Math.round(delay)}ms attempt=${attempt} cause=${closeCause}`);
         reconnectTimer = setTimeout(doConnect, delay);
       }
     };
@@ -256,6 +309,7 @@ function createSharedWebSocket(): SharedWebSocket {
     chatBeacon("ws_force_reconnect", { elapsedSinceLastMsg: elapsed, streamActive: streamOwners.size > 0 });
     recordTransportGap("liveness_timeout", elapsed, { streamActive: streamOwners.size > 0 }, lastMessageTime);
     emitDiagnostics();
+    pendingCloseCause = "liveness_timeout";
     ws.close(4000, "liveness-timeout");
   }
 
@@ -278,8 +332,8 @@ function createSharedWebSocket(): SharedWebSocket {
   }
 
   function doClose() {
-    log.debug(`doClose intentionalClose=true wsState=${ws?.readyState ?? "null"} refCount=${refCount}`);
-    intentionalClose = true;
+    log.debug(`doClose cause=app_release wsState=${ws?.readyState ?? "null"} refCount=${refCount}`);
+    pendingCloseCause = "app_release";
     stopLivenessTimer();
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
@@ -372,6 +426,11 @@ function createSharedWebSocket(): SharedWebSocket {
         forcedReconnects,
         connectedAt,
         lastMessageAt,
+        lastCloseAt,
+        lastCloseCode,
+        lastCloseCause,
+        lastCloseRefCount,
+        lastCloseOwners,
         resumeGeneration: getBrowserTelemetryResumeGeneration(),
       };
     },
