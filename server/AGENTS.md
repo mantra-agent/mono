@@ -345,6 +345,7 @@ Server-authoritative streaming state for chat sessions. The server maintains a `
 - `session.unsubscribe { sessionId }` — Client unsubscribes
 - `/ws/events` upgrades require an authenticated user Principal. Generic events carry one audience discriminant (`user`, `system`, or `global`); both live and replay delivery use the same visibility predicate. `session.subscribe` must verify the requested session through principal-scoped storage before touching `SessionManager`.
 - Event reconnect uses `events.resume` with a process-local event ID cursor. Replay is principal-scoped, bounded to 200 buffered events, and filtered by canonical payload identity. A restart invalidates the cursor; clients then recover from canonical session state. Replayed records use the ordinary `type: "event"` envelope so live and replay consumers share one reducer.
+- Session-bound semantic UI commands use the same authenticated `/ws/events` socket and `SessionManager` subscription-owner identity. `ui-interaction-coordinator.ts` may target only the exact active subscriber matching the server-derived originating browser-tab ID; missing or ambiguous identity fails closed, result acknowledgement must come from that exact socket, and all pending command state is bounded/process-local. Never add selectors, arbitrary browser commands, autonomous access, or durable interaction state here.
 
 ### Event Flow
 ```

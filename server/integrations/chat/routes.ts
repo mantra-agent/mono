@@ -1870,6 +1870,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     diagnosticTurnId?: string,
     refreshAfterPersonaSwitch?: Parameters<typeof agentExecutor.run>[0]["refreshAfterPersonaSwitch"],
     refreshToolSchema?: Parameters<typeof agentExecutor.run>[0]["refreshToolSchema"],
+    clientId?: string,
   ): Promise<ExecutorRunResult> {
     const toolExecutor = async (name: string, args: Record<string, any>) => {
       const shouldTrackPersonaChange = name === "orient" && typeof args.persona !== "undefined";
@@ -1880,6 +1881,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       const toolResult = await executeTool(name, toolCallId, args, {
         sessionKey,
         sessionId,
+        clientId,
         authority: { origin: "interactive" },
       });
       const nextPersonaId = shouldTrackPersonaChange && !toolResult.error
@@ -1932,6 +1934,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       assistantMessageId?: string;
       error?: string;
     }) => Promise<void> | void,
+    clientId?: string,
   ) {
     const lease = acceptedLease ?? chatRunLifecycle.begin(sessionId, sessionKey);
     if (sayAloud) setMeetingVisualizerState(sessionId, "turn", "thinking");
@@ -2534,6 +2537,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         diagnosticTurnId,
         refreshAfterPersonaSwitch,
         refreshToolSchema,
+        clientId,
       );
       if (assistantDraftCheckpointPending) {
         clearTimeout(assistantDraftCheckpointPending);
@@ -3013,7 +3017,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           clientTurnId: rawClientTurnId,
           pageContext: incomingPageContext,
           questionResponse: incomingQuestionResponse,
+          clientId: rawClientId,
         } = req.body;
+        const clientId = typeof rawClientId === "string" && /^client-[a-zA-Z0-9-]{8,113}$/.test(rawClientId)
+          ? rawClientId
+          : undefined;
         const clientTurnId = typeof rawClientTurnId === "string" && rawClientTurnId.length <= 120
           ? rawClientTurnId
           : undefined;
@@ -3206,6 +3214,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           undefined,
           runGeneration,
           acceptedLease,
+          undefined,
+          undefined,
+          clientId,
         ).catch((err) => {
           if (err instanceof ChatRunInvalidatedError) {
             chatLog.log(`processChatStream ${err.reason} sessionId=${sessionId} generation=${err.generation}`);

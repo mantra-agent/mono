@@ -136,6 +136,10 @@ export function authorizeToolInvocation(
   const origin = context.origin ?? "internal";
   const action = actionOf(args);
 
+  if (toolName === "ui" && (!context.sessionId || (origin !== "interactive" && origin !== "voice"))) {
+    return { allowed: false, reason: "session_bound_interactive_ui_required" };
+  }
+
   if (!principal) return { allowed: false, reason: "missing_principal" };
   if (principal.actorType === "service" && !principal.userId && principal.permissions.length === 0) {
     return { allowed: false, reason: "unbound_service_principal" };

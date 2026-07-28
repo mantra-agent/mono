@@ -271,6 +271,7 @@ export async function runExecutorPhase(
       activity: ACTIVITY_VOICE,
       runId: `voice-${session.id}-t${currentTurn}`,
       origin: "voice",
+      clientId: session.originatingClientId || undefined,
     },
   );
 

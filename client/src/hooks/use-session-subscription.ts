@@ -13,6 +13,7 @@ import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import { createLogger } from "@/lib/logger";
 import { markChatStreamProgress, streamingContentHasText } from "@/lib/browser-telemetry";
 import { noteNavigationStreamPressure } from "@/lib/navigation-trace";
+import { getClientTabId } from "@/lib/client-tab-identity";
 
 const log = createLogger("SessionSub");
 
@@ -92,21 +93,6 @@ function normalizeSessionIds(sessionIds: readonly (string | null | undefined)[])
 
 let instanceCounter = 0;
 
-function getStreamTraceTabId(): string {
-  const key = "xyzStreamTraceTabId";
-  try {
-    const existing = window.sessionStorage.getItem(key);
-    if (existing) return existing;
-    const next = typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    window.sessionStorage.setItem(key, next);
-    return next;
-  } catch {
-    return "tab-unavailable";
-  }
-}
-
 export function useSessionSubscriptions(
   sessionIds: readonly (string | null | undefined)[],
   options: SessionSubscriptionOptions = {},
@@ -119,7 +105,7 @@ export function useSessionSubscriptions(
   const activeSession = options.activeSession ?? null;
   const activeSessionRef = useRef<string | null>(activeSession);
   activeSessionRef.current = activeSession;
-  const tabId = useMemo(getStreamTraceTabId, []);
+  const tabId = useMemo(getClientTabId, []);
   const initialSessionIdsRef = useRef<string[]>(normalizeSessionIds(sessionIds));
   const sharedWSRef = useRef<ReturnType<typeof acquireSharedWS> | null>(null);
   const wsOwnerId = `${owner}:${handlerId}`;
@@ -326,6 +312,14 @@ export function useSessionSubscriptions(
       releaseSharedWS(wsOwnerId);
     };
   }, [handlerId, handleMessage, handleReconnect, owner, refreshSubscriptions, sendSubscribe, sendUnsubscribe, setStreamConnected, tabId, wsOwnerId]);
+
+  useEffect(() => {
+    if (sharedWSRef.current?.getReadyState() !== WebSocket.OPEN) return;
+    const ids = Array.from(subscribedIdsRef.current);
+    if (ids.length === 0) return;
+    requestedIdsRef.current.clear();
+    ids.forEach(sendSubscribe);
+  }, [activeSession, sendSubscribe]);
 
   useEffect(() => {
     const normalizedIds = normalizedKey ? normalizedKey.split("\u0000") : [];

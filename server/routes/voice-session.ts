@@ -372,6 +372,11 @@ export async function registerVoiceSessionRoutes(app: Express) {
     const requestId = req.body.requestId || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const provisionalIdentity = res.locals.provisionalVoiceIdentity as ProvisionalVoiceIdentity | undefined;
     const chatSessionId: string | null = provisionalIdentity ? null : req.body.chatSessionId || null;
+    const originatingClientId = !provisionalIdentity
+      && typeof req.body.clientId === "string"
+      && /^client-[a-zA-Z0-9-]{8,113}$/.test(req.body.clientId)
+      ? req.body.clientId
+      : null;
     const isReconnect = provisionalIdentity ? false : !!req.body.isReconnect;
 
     if (!provisionalIdentity && !chatSessionId) {
@@ -682,6 +687,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
 
       // The in-memory session inherits the same Principal that won the durable claim.
       session.principal = req.principal!;
+      session.originatingClientId = originatingClientId;
       session.toolMode = provisionalIdentity ? "none" : "standard";
       session.onboardingTokenHash = provisionalIdentity?.tokenHash ?? null;
 
