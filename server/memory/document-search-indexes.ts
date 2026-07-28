@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import {
   DOCUMENT_STORE_CHAT_SEARCH_INDEXES,
   RETIRED_DOCUMENT_STORE_CHAT_SEARCH_INDEXES,
+  SESSION_SEARCH_SEGMENT_INDEX,
 } from "@shared/models/memory";
 import { createLogger } from "../log";
 import type { Principal } from "../principal";
@@ -9,7 +10,7 @@ import { buildTargetSessionSearchQuery } from "./session-search-query";
 
 const log = createLogger("DocumentSearchIndexes");
 
-const LOCK_KEY = "document_store_chat_trigram_indexes_v2";
+const LOCK_KEY = "document_store_chat_trigram_indexes_v3";
 const START_DELAY_MS = 15_000;
 const RETRY_DELAY_MS = 60_000;
 const MAX_ATTEMPTS = 15;
@@ -18,14 +19,26 @@ const OPERATIONAL_PROBE_TIMEOUT_MS = 10_000;
 const SEARCH_INDEXES = [
   {
     name: DOCUMENT_STORE_CHAT_SEARCH_INDEXES.title,
+    table: "document_store_documents",
     method: "GIN",
     expression: "title gin_trgm_ops",
+    predicate: "WHERE document_type = 'chat'",
     fastUpdate: "on",
   },
   {
     name: DOCUMENT_STORE_CHAT_SEARCH_INDEXES.content,
+    table: "document_store_documents",
     method: "GIN",
     expression: "content gin_trgm_ops",
+    predicate: "WHERE document_type = 'chat'",
+    fastUpdate: "off",
+  },
+  {
+    name: SESSION_SEARCH_SEGMENT_INDEX,
+    table: "session_search_segments",
+    method: "GIN",
+    expression: "content gin_trgm_ops",
+    predicate: "",
     fastUpdate: "off",
   },
 ] as const;
@@ -123,9 +136,9 @@ async function ensureSearchIndex(
   );
   await client.query(`
     CREATE INDEX CONCURRENTLY IF NOT EXISTS "${definition.name}"
-    ON document_store_documents USING ${definition.method} (${definition.expression})
+    ON ${definition.table} USING ${definition.method} (${definition.expression})
     WITH (fastupdate = ${definition.fastUpdate})
-    WHERE document_type = 'chat'
+    ${definition.predicate}
   `);
 
   const createdState = await readIndexState(client, definition.name);
@@ -147,20 +160,26 @@ async function readVerificationScope(
     `SELECT recent.owner_user_id,
             recent.account_id,
             recent.vault_id,
-            substring(recent.content FROM '([[:alnum:]][[:alnum:]_-]{4,31})') AS probe_term
+            substring(recent.segment_content FROM '([[:alnum:]][[:alnum:]_-]{4,31})') AS probe_term
        FROM (
-         SELECT owner_user_id, account_id, vault_id, content
-           FROM document_store_documents
-          WHERE document_type = 'chat'
-            AND scope = 'user'
-            AND owner_user_id IS NOT NULL
-            AND account_id IS NOT NULL
-            AND coalesce(metadata->>'updatedAt', updated_at::text, created_at::text) >= $1
-            AND coalesce((metadata->>'messageCount')::int, 0) > 0
-          ORDER BY coalesce(metadata->>'updatedAt', updated_at::text, created_at::text) DESC
-          LIMIT 20
+         SELECT document.owner_user_id,
+                document.account_id,
+                document.vault_id,
+                segment.content AS segment_content,
+                document.updated_at
+           FROM document_store_documents AS document
+           JOIN session_search_segments AS segment
+             ON segment.document_store_id = document.id
+          WHERE document.document_type = 'chat'
+            AND document.scope = 'user'
+            AND document.owner_user_id IS NOT NULL
+            AND document.account_id IS NOT NULL
+            AND coalesce(document.metadata->>'updatedAt', document.updated_at::text, document.created_at::text) >= $1
+            AND coalesce((document.metadata->>'messageCount')::int, 0) > 0
+          ORDER BY document.updated_at DESC
+          LIMIT 50
        ) AS recent
-      WHERE substring(recent.content FROM '([[:alnum:]][[:alnum:]_-]{4,31})') IS NOT NULL
+      WHERE substring(recent.segment_content FROM '([[:alnum:]][[:alnum:]_-]{4,31})') IS NOT NULL
       LIMIT 1`,
     [cutoffIso],
   );
@@ -248,8 +267,8 @@ async function verifyOperationalQuery(client: PoolClient): Promise<"verified" | 
       : undefined;
     const rootPlan = statement?.Plan as Record<string, unknown> | undefined;
     const usedIndexes = collectIndexNames(payload);
-    const missingIndexes = SEARCH_INDEXES
-      .map((definition) => definition.name)
+    const requiredOperationalIndexes = [SESSION_SEARCH_SEGMENT_INDEX];
+    const missingIndexes = requiredOperationalIndexes
       .filter((name) => !usedIndexes.has(name));
     if (missingIndexes.length > 0) {
       log.error("session search operational probe failed", {
