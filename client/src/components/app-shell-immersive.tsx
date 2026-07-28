@@ -8,6 +8,7 @@ import {
   completeStartupOnboarding,
   getStartupOnboardingDestination,
 } from "@/lib/startup-onboarding";
+import { beginClaimVisualHandoff } from "@/lib/claim-visual-handoff";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("AppShellImmersive");
@@ -65,6 +66,7 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
       } else {
         log.warn("Claim complete without FTUE session: entering authenticated Home");
       }
+      beginClaimVisualHandoff();
       window.location.replace(destination);
     } catch (err) {
       // Account claim has already established the authenticated cookie. Never
@@ -73,6 +75,7 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
       log.error("Claim onboarding completion failed: entering authenticated Home", {
         error: err instanceof Error ? err.message : String(err),
       });
+      beginClaimVisualHandoff();
       window.location.replace("/home");
     }
   }, []);

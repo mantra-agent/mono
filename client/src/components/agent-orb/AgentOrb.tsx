@@ -39,6 +39,7 @@ export function AgentOrb({
   maxFrameRate = 60,
   paused = false,
   sustainFrameProduction = false,
+  onFirstFrame,
   className,
 }: AgentOrbProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,9 +47,11 @@ export function AgentOrb({
   const audioRef = useRef(audioLevel);
   const pausedRef = useRef(paused);
   const entranceVeilRef = useRef<HTMLDivElement>(null);
+  const onFirstFrameRef = useRef(onFirstFrame);
   const [webGlFailed, setWebGlFailed] = useState(false);
 
   stateRef.current = state;
+  onFirstFrameRef.current = onFirstFrame;
   audioRef.current = audioLevel;
   pausedRef.current = paused;
 
@@ -312,6 +315,7 @@ export function AgentOrb({
     resizeObserver.observe(container);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     resize();
+    onFirstFrameRef.current?.(container);
     scheduleFrame();
 
     return () => {
