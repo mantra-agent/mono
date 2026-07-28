@@ -36,6 +36,8 @@ import { TabParamSync } from "@/hooks/use-tab-param";
 import { useIsMobile, ContainerWidthProvider } from "@/hooks/use-mobile";
 import { useMobileViewportRestoration } from "@/hooks/use-mobile-viewport-restoration";
 import NotFound from "@/pages/not-found";
+import { AppShellImmersive } from "@/components/app-shell-immersive";
+import { getProvisionalOnboardingToken } from "@/lib/immersive-entrance";
 
 const log = createLogger("App");
 
@@ -548,18 +550,30 @@ function App() {
     };
   }, []);
 
+  // Captured once at mount: the provisional immersive-orb voice entrance
+  // (`/visualizer?i=<token>`) renders the app shell in immersive-orb mode and
+  // deliberately bypasses AuthGate/BootGate/VaultProvider — a provisional
+  // visitor has no authenticated principal. The URL is stable for this step;
+  // the future account-claim flow performs its own transition into the
+  // authenticated shell.
+  const [provisionalOnboardingToken] = useState(() => getProvisionalOnboardingToken());
+
   return (
     <ErrorBoundary>
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
-            <AuthGate>
-              <BootGate>
-                <VaultProvider>
-                  <AppShell />
-                </VaultProvider>
-              </BootGate>
-            </AuthGate>
+            {provisionalOnboardingToken !== null ? (
+              <AppShellImmersive onboardingToken={provisionalOnboardingToken} />
+            ) : (
+              <AuthGate>
+                <BootGate>
+                  <VaultProvider>
+                    <AppShell />
+                  </VaultProvider>
+                </BootGate>
+              </AuthGate>
+            )}
           </TooltipProvider>
         </QueryClientProvider>
       </ThemeProvider>

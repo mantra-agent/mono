@@ -1,8 +1,15 @@
 import { createRoot } from "react-dom/client";
 import "./index.css";
+import { getProvisionalOnboardingToken } from "./lib/immersive-entrance";
 
 const root = createRoot(document.getElementById("root")!);
-const isStandaloneVisualizer = window.location.pathname === "/visualizer";
+// The standalone lightweight root serves the Recall meeting-bot visualizer
+// (`/visualizer?token=`) and the design preview (`/visualizer?state=`). The
+// provisional immersive-orb voice entrance (`/visualizer?i=`) is excluded here
+// so it falls through to the full App and renders in the app shell's
+// immersive-orb presentation mode.
+const isStandaloneVisualizer =
+  window.location.pathname === "/visualizer" && getProvisionalOnboardingToken() === null;
 
 async function renderRoot(): Promise<void> {
   if (isStandaloneVisualizer) {
