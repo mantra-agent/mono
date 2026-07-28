@@ -2,18 +2,13 @@ import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MessageList } from "@/components/message-list";
 import { MeetingHeaderBar } from "@/components/meeting-header-bar";
-import { DesktopVoiceSurface } from "@/components/desktop-voice-surface";
-import { DesktopAudioSurface } from "@/components/desktop-audio-surface";
-import { MobileVoiceViewport } from "@/components/mobile-voice-viewport";
 import { SessionAgendaTree } from "@/components/session-agenda-tree";
-import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
-import { isNativeVoiceBridge } from "@/lib/native-voice-bridge";
 import type { MeetingSessionMeta, QuestionResponseMeta, SessionAgenda } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 import type { StreamingContent } from "@shared/streaming-types";
-import type { VoiceSessionContextValue, VoiceTranscriptEntry } from "@/hooks/use-voice-session";
+import type { VoiceTranscriptEntry } from "@/hooks/use-voice-session";
 
 export interface SessionTranscriptSurfaceProps {
   activeSession: string;
@@ -24,7 +19,6 @@ export interface SessionTranscriptSurfaceProps {
   runActive?: boolean;
   msgsLoading: boolean;
   voiceActive: boolean;
-  voiceSession?: VoiceSessionContextValue | null;
   voiceStatus: string;
   voiceTranscript: VoiceTranscriptEntry[];
   voiceThinking?: boolean;
@@ -58,7 +52,6 @@ export function SessionTranscriptSurface({
   runActive,
   msgsLoading,
   voiceActive,
-  voiceSession,
   voiceStatus,
   voiceTranscript,
   voiceThinking,
@@ -82,11 +75,6 @@ export function SessionTranscriptSurface({
   onQuestionSubmit,
   onQuestionCancel,
 }: SessionTranscriptSurfaceProps) {
-  const nativeTranscription = useNativeMeetingTranscription();
-  const nativeCaptureActive = meeting?.transport === "native"
-    && meeting.botStatus === "live"
-    && nativeTranscription.activeSessionId === activeSession;
-
   return (
     <div
       className={cn("flex flex-col flex-1 min-h-0 overflow-hidden", className)}
@@ -174,20 +162,7 @@ export function SessionTranscriptSurface({
           </div>
         );
 
-        if (nativeCaptureActive) {
-          return (
-            <DesktopAudioSurface
-              visualState="listening"
-              readAudioLevel={nativeTranscription.readAudioLevel}
-              transcript={transcript}
-              testId="desktop-native-transcription-surface"
-            />
-          );
-        }
-        if (!voiceActive || !voiceSession) return transcript;
-        return isNativeVoiceBridge()
-          ? <MobileVoiceViewport voiceSession={voiceSession} />
-          : <DesktopVoiceSurface voiceSession={voiceSession} transcript={transcript} />;
+        return transcript;
       })()}
     </div>
   );
