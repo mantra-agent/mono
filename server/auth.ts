@@ -50,6 +50,7 @@ const claimSchema = z.object({
   token: z.string().min(1).max(200),
   name: z.string().min(1).max(120),
   password: z.string().min(8),
+  termsAccepted: z.literal(true),
 });
 
 const deleteUserSchema = z.object({
@@ -809,6 +810,9 @@ export function setupAuth(app: Express) {
    *  - Fail closed unless the token resolves to status="resolved" +
    *    accountState="provisional". A real account => 409 (log in instead).
    *  - Email is derived ONLY from the token, never the request body.
+   *  - Explicit Terms acceptance is required by the strict request schema at
+   *    this canonical account-creation boundary; client state alone is never
+   *    authoritative.
    *  - The whole promotion is serialized on the recipient email via the
    *    INVITED_SUBJECT advisory lock and re-checks for an existing user inside
    *    the lock, so a double-submit can neither create two users nor
