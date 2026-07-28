@@ -493,7 +493,7 @@ export async function runAgeBasedConsolidation(): Promise<{ promoted: number; fa
   let failureCount = 0;
 
   try {
-    const { generateTitleSummaryTags } = await import("./memory-enrichment");
+    const { generateTitleSummaryTags } = await import("../title-summary-tags");
 
     for (let i = 0; i < staleEntries.length; i++) {
       const entry = staleEntries[i];
@@ -773,7 +773,7 @@ export async function runConsolidation(layer: "short" = "short"): Promise<void> 
     state.total = entriesToPromote;
     log.verbose(() => `Need to promote ${entriesToPromote} entries to get below target capacity (${currentTokens} → target <${thresholds.targetCapacity})`);
 
-    const { generateTitleSummaryTags } = await import("./memory-enrichment");
+    const { generateTitleSummaryTags } = await import("../title-summary-tags");
 
     let successCount = 0;
     let failureCount = 0;
@@ -991,7 +991,7 @@ export async function promoteEntryToLong(entry: MemoryEntry): Promise<any> {
   if (!summary) {
     intLog.warn(`promoteEntryToLong: entry #${entry.id} (source=${entry.source}) is missing a real summary — re-summarizing before promotion`);
     try {
-      const { generateTitleSummaryTags } = await import("./memory-enrichment");
+      const { generateTitleSummaryTags } = await import("../title-summary-tags");
       const titleHint = title || (await resolveFallbackTitle(entry)) || undefined;
       const generated = await generateTitleSummaryTags({
         content: entry.content,

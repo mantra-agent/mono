@@ -6,11 +6,9 @@ import {
   db,
   runWithDatabaseTransaction,
 } from "./db";
-import { accounts, users, memoryEntries, documentStoreDocuments, planStepAttempts, planSteps, sessionArtifacts, sessionTree, compactionOperations } from "@shared/schema";
-import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { accounts, users, documentStoreDocuments, planStepAttempts, planSteps, sessionArtifacts, sessionTree, compactionOperations } from "@shared/schema";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
-import { documentStoreIndependentWritesEnabled } from "./memory/document-store-cutover";
-import { targetReadsEnabled } from "./memory/document-storage";
 import { buildTargetSessionSearchQuery } from "./memory/session-search-query";
 import { generateId } from "./file-storage/utils";
 import { createLogger } from "./log";
@@ -735,13 +733,6 @@ export interface SessionDeletionResult {
   descendantCount: number;
 }
 
-const chatDocumentScopeColumns = {
-  scope: memoryEntries.scope,
-  ownerUserId: memoryEntries.ownerUserId,
-  accountId: memoryEntries.accountId,
-  vaultId: memoryEntries.vaultId,
-};
-
 const targetChatDocumentScopeColumns = {
   scope: documentStoreDocuments.scope,
   ownerUserId: documentStoreDocuments.ownerUserId,
@@ -785,34 +776,19 @@ async function deleteSessionSubtree(rootSessionId: string): Promise<SessionDelet
   }
 
   await db.transaction(async (tx) => {
-    const deletedDocuments = await documentStoreIndependentWritesEnabled()
-      ? await tx
-          .delete(documentStoreDocuments)
-          .where(
-            combineWithWritableScope(
-              principal,
-              targetChatDocumentScopeColumns,
-              and(
-                eq(documentStoreDocuments.documentType, "chat"),
-                inArray(documentStoreDocuments.documentId, deletedSessionIds),
-              ),
-            ),
-          )
-          .returning({ sessionId: documentStoreDocuments.documentId })
-      : await tx
-          .delete(memoryEntries)
-          .where(
-            combineWithWritableScope(
-              principal,
-              chatDocumentScopeColumns,
-              and(
-                eq(memoryEntries.layer, "workspace"),
-                eq(memoryEntries.source, "chat"),
-                inArray(memoryEntries.sourceId, deletedSessionIds),
-              ),
-            ),
-          )
-          .returning({ sessionId: memoryEntries.sourceId });
+    const deletedDocuments = await tx
+      .delete(documentStoreDocuments)
+      .where(
+        combineWithWritableScope(
+          principal,
+          targetChatDocumentScopeColumns,
+          and(
+            eq(documentStoreDocuments.documentType, "chat"),
+            inArray(documentStoreDocuments.documentId, deletedSessionIds),
+          ),
+        ),
+      )
+      .returning({ sessionId: documentStoreDocuments.documentId });
 
     if (!deletedDocuments.some((row) => row.sessionId === rootSessionId)) {
       throw new Error(`Session is not writable: ${rootSessionId}`);
@@ -2138,7 +2114,6 @@ export const chatFileStorage: IChatFileStorage = {
   async findMeetingSessionForOccurrence(input) {
     const normalized = input.occurrenceKey.trim();
     if (!normalized) return null;
-    await targetReadsEnabled();
     const legacyIdentity = input.calendarAccountId && input.calendarId && input.providerEventId
       ? and(
           sql`COALESCE(${documentStoreDocuments.metadata}->'meeting'->>'occurrenceKey', '') = ''`,
@@ -2177,7 +2152,6 @@ export const chatFileStorage: IChatFileStorage = {
   async findNativeMeetingSessionByIdempotencyKey(idempotencyKey: string) {
     const normalized = idempotencyKey.trim();
     if (!normalized) return null;
-    await targetReadsEnabled();
     const sessionKey = `meeting-native:${normalized}`;
     const rows = await db
       .select({ documentId: documentStoreDocuments.documentId })
@@ -3970,7 +3944,7 @@ export async function searchSessionSummaries(
   let snippetHydrationMs = 0;
   let resultDbStartedAt: number | undefined;
   let snippetHydrationStartedAt: number | undefined;
-  let source: SessionSearchDiagnostics["source"] = targetReadsEnabled() ? "target" : "legacy";
+  const source: SessionSearchDiagnostics["source"] = "target";
 
   try {
     const queryBuildStartedAt = performance.now();
@@ -3980,37 +3954,12 @@ export async function searchSessionSummaries(
     queryBuildMs = performance.now() - queryBuildStartedAt;
 
     resultDbStartedAt = performance.now();
-    const rows = source === "target"
-      ? await buildTargetSessionSearchQuery(
-          principal,
-          cutoff.toISOString(),
-          searchPattern,
-          maxResults,
-        )
-      : await db
-          .select({
-            docId: memoryEntries.sourceId,
-            title: memoryEntries.title,
-            content: memoryEntries.content,
-            metadata: memoryEntries.metadata,
-            updatedAt: memoryEntries.processedAt,
-          })
-          .from(memoryEntries)
-          .where(
-            combineWithVisibleScope(
-              principal,
-              chatDocumentScopeColumns,
-              and(
-                eq(memoryEntries.layer, "workspace"),
-                eq(memoryEntries.source, "chat"),
-                sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text) >= ${cutoff.toISOString()}`,
-                sql`coalesce((${memoryEntries.metadata}->>'messageCount')::int, 0) > 0`,
-                or(ilike(memoryEntries.title, searchPattern), ilike(memoryEntries.content, searchPattern)),
-              ),
-            ),
-          )
-          .orderBy(desc(sql`coalesce(${memoryEntries.metadata}->>'updatedAt', ${memoryEntries.processedAt}::text, ${memoryEntries.createdAt}::text)`))
-          .limit(Math.max(1, Math.min(maxResults, 100)));
+    const rows = await buildTargetSessionSearchQuery(
+      principal,
+      cutoff.toISOString(),
+      searchPattern,
+      maxResults,
+    );
     resultDbMs = performance.now() - resultDbStartedAt;
     resultDbStartedAt = undefined;
 
