@@ -21,19 +21,25 @@ interface NativeMeetingStartResult {
   sourceKey: string;
 }
 
+interface MeetingAudioFrame {
+  type: "audio_frame";
+  pcm: ArrayBuffer;
+  level: number;
+}
+
 interface ActiveNativeMeeting {
   sessionId: string;
   stream: MediaStream;
   audioContext: AudioContext;
   source: MediaStreamAudioSourceNode;
   processor: AudioWorkletNode;
-  mute: GainNode;
   socket: WebSocket;
 }
 
 interface NativeMeetingTranscriptionContextValue {
   activeSessionId: string | null;
   isStarting: boolean;
+  readAudioLevel: () => number;
   start: () => Promise<NativeMeetingStartResult | null>;
   stopLocalCapture: (sessionId?: string) => void;
 }
@@ -56,26 +62,33 @@ function permissionMessage(error: unknown): string {
 
 function waitForSocketReady(socket: WebSocket): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => reject(new Error("Transcription connection timed out.")), SOCKET_READY_TIMEOUT_MS);
-    const cleanup = () => window.clearTimeout(timeout);
+    let recognitionReady = false;
+    let audioReceived = false;
+    let settled = false;
+    const settle = (error?: Error) => {
+      if (settled) return;
+      if (!error && (!recognitionReady || !audioReceived)) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve();
+    };
+    const timeout = window.setTimeout(
+      () => settle(new Error("No microphone audio reached Mantra. Check the selected microphone and try again.")),
+      SOCKET_READY_TIMEOUT_MS,
+    );
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(String(event.data)) as { type?: string };
-        if (message.type !== "ready") return;
-        cleanup();
-        resolve();
+        if (message.type === "ready") recognitionReady = true;
+        if (message.type === "audio_started") audioReceived = true;
+        settle();
       } catch {
         // Ignore non-control frames.
       }
     };
-    socket.onerror = () => {
-      cleanup();
-      reject(new Error("Could not connect the microphone to Mantra."));
-    };
-    socket.onclose = (event) => {
-      cleanup();
-      reject(new Error(event.reason || "The transcription connection closed."));
-    };
+    socket.onerror = () => settle(new Error("Could not connect the microphone to Mantra."));
+    socket.onclose = (event) => settle(new Error(event.reason || "The transcription connection closed."));
   });
 }
 
@@ -83,6 +96,7 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
   const { toast } = useToast();
   const focus = useFocusSession();
   const activeRef = useRef<ActiveNativeMeeting | null>(null);
+  const audioLevelRef = useRef(0);
   const startPromiseRef = useRef<Promise<NativeMeetingStartResult | null> | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
@@ -98,7 +112,7 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
     capture.stream.getTracks().forEach((track) => track.stop());
     capture.source.disconnect();
     capture.processor.disconnect();
-    capture.mute.disconnect();
+    audioLevelRef.current = 0;
     void capture.audioContext.close();
   }, []);
 
@@ -109,6 +123,8 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
     setActiveSessionId(null);
     release(active);
   }, [release]);
+
+  const readAudioLevel = useCallback((): number => audioLevelRef.current, []);
 
   const start = useCallback(async (): Promise<NativeMeetingStartResult | null> => {
     if (startPromiseRef.current) return startPromiseRef.current;
@@ -147,11 +163,10 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
           numberOfOutputs: 1,
           outputChannelCount: [1],
         });
-        const mute = audioContext.createGain();
-        mute.gain.value = 0;
         source.connect(processor);
-        processor.connect(mute);
-        mute.connect(audioContext.destination);
+        // AudioWorklet processing is destination-pulled. The processor writes no
+        // output samples, so this keeps capture live while remaining silent.
+        processor.connect(audioContext.destination);
 
         const socket = new WebSocket(nativeMeetingSocketUrl(sessionId));
         capture = {
@@ -160,11 +175,12 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
           audioContext,
           source,
           processor,
-          mute,
           socket,
         };
-        processor.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-          if (socket.readyState === WebSocket.OPEN) socket.send(event.data);
+        processor.port.onmessage = (event: MessageEvent<MeetingAudioFrame>) => {
+          if (event.data?.type !== "audio_frame") return;
+          audioLevelRef.current = Math.max(0, Math.min(1, event.data.level));
+          if (socket.readyState === WebSocket.OPEN) socket.send(event.data.pcm);
         };
         await waitForSocketReady(socket);
         socket.onclose = (event) => {
@@ -204,6 +220,13 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
         }
       } catch (error) {
         stream?.getTracks().forEach((track) => track.stop());
+        if (sessionId) {
+          try {
+            await apiRequest("POST", `/api/meetings/${encodeURIComponent(sessionId)}/leave`);
+          } catch (cleanupError) {
+            log.warn("Native transcription startup cleanup failed", { sessionId, error: cleanupError });
+          }
+        }
         const description = permissionMessage(error);
         log.error("Native transcription start failed", { sessionId, error });
         toast({ title: "Could not start transcription", description, variant: "destructive" });
@@ -222,9 +245,10 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
   const value = useMemo<NativeMeetingTranscriptionContextValue>(() => ({
     activeSessionId,
     isStarting,
+    readAudioLevel,
     start,
     stopLocalCapture,
-  }), [activeSessionId, isStarting, start, stopLocalCapture]);
+  }), [activeSessionId, isStarting, readAudioLevel, start, stopLocalCapture]);
 
   return (
     <NativeMeetingTranscriptionContext.Provider value={value}>
