@@ -83,17 +83,17 @@ export function SimpleFeedContent() {
         <div className="flex min-h-[360px] items-center justify-center text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
         </div>
-      ) : query.isError || !query.data ? (
+      ) : query.isError && !query.data ? (
         <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 text-center">
-          <div className="text-lg font-semibold">Simple is catching up</div>
+          <div className="text-lg font-semibold">Simple couldn't load</div>
           <Button variant="outline" size="sm" onClick={refresh} className="gap-2">
             <RefreshCw className="h-4 w-4" />
             Try again
           </Button>
         </div>
-      ) : (
+      ) : query.data ? (
         <SimpleFeedView feed={query.data} />
-      )}
+      ) : null}
     </div>
   );
 }

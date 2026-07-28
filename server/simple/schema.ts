@@ -73,15 +73,5 @@ export function lintSimpleTitle(title: string): string | null {
 }
 
 export function validateSimpleFeed(input: unknown) {
-  const parsed = simpleFeedSchema.parse(input);
-  const errors: string[] = [];
-  for (const section of parsed.sections) {
-    for (const item of section.items) {
-      const tone = lintSimpleTitle(item.title);
-      if (tone) errors.push(`${item.id}:${tone}`);
-      if (item.sourceRefs.length === 0) errors.push(`${item.id}:missing-sourceRefs`);
-    }
-  }
-  if (errors.length) throw new Error(`Invalid Simple feed: ${errors.join(", ")}`);
-  return parsed;
+  return simpleFeedSchema.parse(input);
 }

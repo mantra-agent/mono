@@ -17,7 +17,7 @@ const HIDDEN_SECTIONS = new Set(["done", "snoozed", "earlier"]);
  * dragging the heavy session providers into the entrance shell.
  */
 export function ImmersiveSimpleRail() {
-  const { data, isLoading } = useHomeFeed({ refresh: false });
+  const { data, isLoading, isError } = useHomeFeed({ refresh: false });
 
   const sections = (data?.sections ?? []).filter(
     (section) => !HIDDEN_SECTIONS.has(section.section) && section.items.length > 0,
@@ -33,6 +33,8 @@ export function ImmersiveSimpleRail() {
           <div className="flex h-24 items-center justify-center text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
           </div>
+        ) : isError && !data ? (
+          <div className="px-2 py-1.5 text-sm text-error">Simple couldn't load</div>
         ) : sections.length === 0 ? (
           <div className="px-2 py-1.5 text-sm text-muted-foreground">Nothing yet</div>
         ) : (
