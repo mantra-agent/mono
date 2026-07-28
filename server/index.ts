@@ -1122,6 +1122,24 @@ function startDeferredBackgroundServices(): void {
         `stage legacy-memory quarantine rollout failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+
+    try {
+      const { requestLiveLegacyMemoryQuarantinePrepareAfterReadiness } =
+        await import("./memory/live-legacy-memory-quarantine-operation");
+      const outcome =
+        await requestLiveLegacyMemoryQuarantinePrepareAfterReadiness(
+          runtimeIdentity,
+        );
+      if (outcome === "prepared" || outcome === "already_prepared") {
+        serverLog.info(
+          `live legacy-memory quarantine prepare-only rollout: ${outcome} (no tables moved)`,
+        );
+      }
+    } catch (error) {
+      serverLog.error(
+        `live legacy-memory quarantine prepare rollout failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   });
 }
 
