@@ -223,12 +223,24 @@ function classifyStartFailure(err: unknown, ctx: { signedUrlReceived: boolean })
 export function VoiceSessionProvider({
   children,
   onboardingToken,
+  suppressChimes = false,
 }: {
   children: ReactNode;
   onboardingToken?: string;
+  /**
+   * Silence the connection/disconnection chimes for this provider. Used by the
+   * immersive claim crossfade so the provisional→authenticated voice swap has
+   * no audible chime while the two transports briefly overlap and hand off.
+   * Defaults false — every existing caller is unchanged.
+   */
+  suppressChimes?: boolean;
 }) {
   const isNative = isNativeVoiceBridge();
   const nativeListenerCleanupRef = useRef<(() => void) | null>(null);
+  const suppressChimesRef = useRef(suppressChimes);
+  useEffect(() => {
+    suppressChimesRef.current = suppressChimes;
+  }, [suppressChimes]);
 
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [agentMode, setAgentMode] = useState<"listening" | "speaking">("listening");
@@ -409,6 +421,7 @@ export function VoiceSessionProvider({
   const playDisconnectChimeOnce = useCallback(() => {
     if (disconnectChimePlayedRef.current) return;
     disconnectChimePlayedRef.current = true;
+    if (suppressChimesRef.current) return;
     playDisconnectionChime();
   }, []);
 
@@ -923,7 +936,7 @@ export function VoiceSessionProvider({
           case "voice.connected": {
             const elapsed = Date.now() - sessionStartTs;
             connectionEstablishedAtRef.current = Date.now();
-            playConnectionChime();
+            if (!suppressChimesRef.current) playConnectionChime();
             if (wsConnectResolveRef.current) {
               wsConnectResolveRef.current();
               wsConnectResolveRef.current = null;
@@ -1079,7 +1092,7 @@ export function VoiceSessionProvider({
       onConnect: () => {
         const elapsed = Date.now() - sessionStartTs;
         connectionEstablishedAtRef.current = Date.now();
-        playConnectionChime();
+        if (!suppressChimesRef.current) playConnectionChime();
         if (wsConnectResolveRef.current) {
           wsConnectResolveRef.current();
           wsConnectResolveRef.current = null;

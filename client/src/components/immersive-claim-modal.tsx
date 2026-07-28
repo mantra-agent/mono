@@ -16,8 +16,12 @@ interface ClaimResolveResponse {
 
 interface ImmersiveClaimModalProps {
   onboardingToken: string;
-  /** Fired once the claim succeeds and the authenticated session is established. */
-  onClaimed: () => void;
+  /**
+   * Fired once the claim succeeds and the authenticated session cookie is
+   * established. Carries the claimed display name so the shell can complete
+   * onboarding and warm the authenticated FTUE voice session.
+   */
+  onClaimed: (name: string) => void;
 }
 
 /**
@@ -102,7 +106,7 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
       });
       const data = await res.json();
       queryClient.setQueryData(["/api/auth/me"], data);
-      onClaimed();
+      onClaimed(name.trim());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // apiRequest throws `${status}: ${body}`.

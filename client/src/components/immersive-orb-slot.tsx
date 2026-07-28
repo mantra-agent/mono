@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AgentOrb } from "@/components/agent-orb";
-import { useVoiceSession } from "@/hooks/use-voice-session";
+import { useLiveVoice } from "@/hooks/use-live-voice";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("ImmersiveOrbSlot");
 
 /** Entrance settle window before the orb follows live voice state. */
 const ENTRANCE_SETTLE_MS = 3_200;
@@ -9,34 +12,28 @@ const ENTRANCE_SETTLE_MS = 3_200;
  * The single persistent orb instance mounted in the center slot of the app
  * shell's immersive-orb presentation mode (see `AppShellImmersive`).
  *
- * Behavior is a verbatim relocation of the former standalone
- * `ProvisionalVoiceVisualizer`: on mount it starts the provisional voice
- * session (mic permission, greeting, `POST /api/voice/start`, custom-LLM
- * transport, hash-keyed lease — all owned by the surrounding
- * `VoiceSessionProvider onboardingToken=...`), plays the one-shot entrance for
- * `ENTRANCE_SETTLE_MS`, then follows the live canonical voice visual state while
- * sampling audio amplitude for reactivity. Ending the session is cleaned up on
- * unmount.
- *
- * This component owns no auth, routing, or rail state. It fills its parent slot
- * so the shell can reveal rails around it later WITHOUT remounting the orb
- * (FR-17 orb persistence).
+ * It is a PURE visual bound to the LiveVoice bridge (`useLiveVoice`), mounted
+ * ONCE ABOVE both the provisional and authenticated voice providers. The
+ * provisional→authenticated claim swap changes which transport publishes to the
+ * bridge, but never remounts this component — the orb DOM node persists across
+ * the swap (FR-17). Transport lifecycle (start/end) is owned by the voice
+ * controllers (`ProvisionalVoiceController` / `AuthenticatedVoiceController`),
+ * not by the orb. The mount/unmount logs below make the no-remount guarantee
+ * observable: exactly one mount, no unmount, across the entire swap.
  */
 export function ImmersiveOrbSlot() {
-  const voiceSession = useVoiceSession();
+  const { visualState, readAudioLevel } = useLiveVoice();
   const [entranceActive, setEntranceActive] = useState(true);
   const frameRef = useRef<number>();
   const [audioLevel, setAudioLevel] = useState(0);
 
   useEffect(() => {
+    log.info("Immersive orb mounted (persistent instance)");
     const timer = window.setTimeout(() => setEntranceActive(false), ENTRANCE_SETTLE_MS);
-    void voiceSession.startSession();
     return () => {
       window.clearTimeout(timer);
-      void voiceSession.endSession();
+      log.info("Immersive orb unmounted");
     };
-    // Mount-once lifecycle: the provisional session starts and ends with this slot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -45,13 +42,13 @@ export function ImmersiveOrbSlot() {
       frameRef.current = requestAnimationFrame(sample);
       if (now - lastSampleAt < 1000 / 30) return;
       lastSampleAt = now;
-      setAudioLevel(voiceSession.readAudioLevel());
+      setAudioLevel(readAudioLevel());
     };
     frameRef.current = requestAnimationFrame(sample);
     return () => {
       if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
     };
-  }, [voiceSession.readAudioLevel]);
+  }, [readAudioLevel]);
 
   return (
     <main
@@ -59,7 +56,7 @@ export function ImmersiveOrbSlot() {
       aria-label="Mantra voice conversation"
     >
       <AgentOrb
-        state={entranceActive ? "entrance" : voiceSession.visualState}
+        state={entranceActive ? "entrance" : visualState}
         audioLevel={audioLevel}
         maxFrameRate={60}
         className="absolute inset-0"
