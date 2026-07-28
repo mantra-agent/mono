@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { acquireLibraryParentLocks, db } from "./db";
+import { acquireLibraryParentLocks, db, runWithDatabaseTransaction } from "./db";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import { createNamedSystemPrincipal } from "./principal";
@@ -451,11 +451,21 @@ export async function ensureMantraLibraryVault(
  * timestamp and is excluded here by the live-only guard, so restoring
  * this unit will not resurrect a separately-trashed child. That is why no
  * `trashRootId`/`deletedBatchId` column is required.
+ *
+ * `options.precondition` lets an owning producer prove a deletion invariant
+ * (for example, that a duplicate container is still empty and unreferenced)
+ * atomically. It runs inside this transaction after both the root's parent lock
+ * AND the root's own child-parent lock are held, so a concurrent
+ * `createFiledLibraryPage` adding a child under `rootId` — which locks its
+ * `parentId = rootId` — is serialized against it and cannot slip a new child in
+ * between the emptiness proof and the subtree stamp. A false result aborts the
+ * delete and reports `preconditionFailed` without mutating anything.
  */
 export async function softDeleteLibrarySubtree(
   principal: Principal,
   rootId: string,
-): Promise<{ trashedCount: number; trashedIds: string[] }> {
+  options?: { precondition?: () => Promise<boolean> },
+): Promise<{ trashedCount: number; trashedIds: string[]; preconditionFailed?: boolean }> {
   return db.transaction(async (tx) => {
     const [root] = await tx
       .select({ id: libraryPages.id, parentId: libraryPages.parentId })
@@ -471,8 +481,18 @@ export async function softDeleteLibrarySubtree(
     if (!root) return { trashedCount: 0, trashedIds: [] };
 
     // Serialize against concurrent reparent/reorder of the root's siblings,
-    // matching the advisory-lock discipline used by move/reorder.
-    await acquireLibraryParentLocks(tx, [root.parentId]);
+    // matching the advisory-lock discipline used by move/reorder. When a
+    // precondition is supplied, also lock the root itself so a concurrent child
+    // insert (which locks its parentId = root.id) cannot race the proof.
+    await acquireLibraryParentLocks(
+      tx,
+      options?.precondition ? [root.parentId, root.id] : [root.parentId],
+    );
+
+    if (options?.precondition) {
+      const ok = await runWithDatabaseTransaction(tx, () => options.precondition!());
+      if (!ok) return { trashedCount: 0, trashedIds: [], preconditionFailed: true };
+    }
 
     // Gather the whole descendant subtree by parent_id. UNION (not UNION ALL)
     // guarantees termination even if a cycle ever exists. IDs only — no content.

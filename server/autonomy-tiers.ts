@@ -39,6 +39,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   // remains hard-gated for autonomous/timer/hook origins; the news-curation skill does not need it.
   news: { default: 1, actions: { summary: 0, list_signals: 0, get_signal: 0, list_sources: 0, list_scan_runs: 0, interest_graph: 0, scan: 2 } },
   goals: { default: 1, actions: { list: 0, get: 0, search: 0 } },
+  plan: { default: 1, actions: { get: 0, list: 0 } },
 
   rules: { default: 1, actions: { list: 0, get: 0 } },
   priorities: { default: 1 },
