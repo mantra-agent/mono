@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { MantraLogo } from "@/components/mantra-logo";
 import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
@@ -36,29 +38,14 @@ const needs = [
   ["connection", "Keeping everything connected"],
 ] as const;
 
-const readiness = [
-  ["ready", "I’m ready to explore that now"],
-  ["possible", "Possibly, if it proves valuable"],
-  ["lower_cost", "I’d prefer a lower-cost plan later"],
-  ["curious", "I’m mainly curious"],
-] as const;
+type WaitlistStep = "role" | "needs" | "email";
 
-type WaitlistStep = "role" | "needs" | "readiness" | "email";
-
-const stepOrder: WaitlistStep[] = ["role", "needs", "readiness", "email"];
+const stepOrder: WaitlistStep[] = ["role", "needs", "email"];
 
 const stepTitles: Record<WaitlistStep, string> = {
   role: "Which best describes you?",
   needs: "Where would support help most?",
-  readiness: "Would early access fit?",
   email: "Where should we reach you?",
-};
-
-const stepHints: Record<WaitlistStep, string> = {
-  role: "This helps us understand who Mantra can serve first.",
-  needs: "Choose up to three.",
-  readiness: "Early memberships include a personalized setup fee and cost $500/month.",
-  email: "We’ll only use this to contact you about Mantra.",
 };
 
 interface WaitlistResult {
@@ -87,10 +74,9 @@ export default function WaitlistPage() {
   const [step, setStep] = useState<WaitlistStep>("role");
   const [role, setRole] = useState("");
   const [selectedNeeds, setSelectedNeeds] = useState<string[]>([]);
-  const [commercialReadiness, setCommercialReadiness] = useState("");
   const [email, setEmail] = useState("");
   const [website, setWebsite] = useState("");
-  const [consent, setConsent] = useState(true);
+  const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<WaitlistResult | null>(null);
@@ -118,7 +104,6 @@ export default function WaitlistPage() {
   const canContinue =
     step === "role" ? !!role :
     step === "needs" ? selectedNeeds.length > 0 :
-    step === "readiness" ? !!commercialReadiness :
     /^\S+@\S+\.\S+$/.test(email) && consent;
 
   function goBack() {
@@ -148,7 +133,7 @@ export default function WaitlistPage() {
       const response = await fetch("/api/public/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, role, needs: selectedNeeds, readiness: commercialReadiness, attribution, consent, website }),
+        body: JSON.stringify({ email, role, needs: selectedNeeds, attribution, consent, website }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "We couldn’t save your place.");
@@ -196,16 +181,17 @@ export default function WaitlistPage() {
             <h1 className={authTitleClass}>{stepTitles[step]}</h1>
             <form onSubmit={handleSubmit} className={authFormClass}>
               <div className="space-y-2">
-                <p className="text-center text-sm text-muted-foreground">{stepHints[step]}</p>
                 {step === "role" ? roles.map(([value, label]) => (
                   <OptionButton key={value} selected={role === value} onClick={() => setRole(value)}>{label}</OptionButton>
                 )) : null}
-                {step === "needs" ? needs.map(([value, label]) => (
-                  <OptionButton key={value} selected={selectedNeeds.includes(value)} onClick={() => toggleNeed(value)}>{label}</OptionButton>
-                )) : null}
-                {step === "readiness" ? readiness.map(([value, label]) => (
-                  <OptionButton key={value} selected={commercialReadiness === value} onClick={() => setCommercialReadiness(value)}>{label}</OptionButton>
-                )) : null}
+                {step === "needs" ? (
+                  <>
+                    <p className="text-center text-sm text-muted-foreground">Choose up to three.</p>
+                    {needs.map(([value, label]) => (
+                      <OptionButton key={value} selected={selectedNeeds.includes(value)} onClick={() => toggleNeed(value)}>{label}</OptionButton>
+                    ))}
+                  </>
+                ) : null}
                 {step === "email" ? (
                   <>
                     <Input
@@ -228,15 +214,31 @@ export default function WaitlistPage() {
                       onChange={(e) => setWebsite(e.target.value)}
                       className="absolute -left-[9999px]"
                     />
-                    <label className="flex items-start gap-2 pt-1 text-xs leading-5 text-muted-foreground">
-                      <input
-                        type="checkbox"
+                    <div className="flex items-start gap-2 pt-1">
+                      <Checkbox
+                        id="waitlist-terms"
                         checked={consent}
-                        onChange={(e) => setConsent(e.target.checked)}
-                        className="mt-0.5 accent-cta"
+                        onCheckedChange={(checked) => setConsent(checked === true)}
+                        disabled={submitting}
+                        className="mt-0.5 border-border data-[state=checked]:border-cta data-[state=checked]:bg-cta data-[state=checked]:text-cta-foreground"
                       />
-                      <span>I agree to receive email about my Mantra waitlist status and invitation.</span>
-                    </label>
+                      <Label
+                        htmlFor="waitlist-terms"
+                        className="cursor-pointer text-sm font-normal leading-5 text-muted-foreground"
+                      >
+                        I have read and agree to the{" "}
+                        <a
+                          href="https://www.trymantra.ai/terms"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-cta underline underline-offset-4 hover:text-active"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          Terms of Service
+                        </a>
+                        .
+                      </Label>
+                    </div>
                   </>
                 ) : null}
                 {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
@@ -248,7 +250,7 @@ export default function WaitlistPage() {
                   disabled={!canContinue || submitting}
                   data-testid="button-waitlist-continue"
                 >
-                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : step === "email" ? "Join the waitlist" : "Continue"}
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Continue"}
                 </Button>
                 {step !== "role" ? (
                   <Button
