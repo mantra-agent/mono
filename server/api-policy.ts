@@ -27,6 +27,7 @@ const PUBLIC_RULES: ApiPolicyRule[] = [
   { classification: "public", methods: ["GET"], exact: [SUPERVISOR_HEALTH_PATH], reason: "process-local capability health probe" },
   { classification: "public", prefixes: ["/api/public", "/api/meeting-output"], reason: "explicit public capability-token or acquisition route" },
   { classification: "public", exact: ["/api/auth/login", "/api/auth/logout", "/api/auth/setup", "/api/auth/register", "/api/auth/reset"], reason: "authentication and setup flow" },
+  { classification: "public", methods: ["POST"], exact: ["/api/auth/claim", "/api/auth/claim/resolve"], reason: "onboarding capability resolution and provisional account claim with route-owned token, state, consent, and mutation guards" },
   { classification: "public", pattern: /^\/api\/auth\/(?:invite|reset)\/[^/]+$/, reason: "single-use authentication capability redemption" },
   { classification: "public", prefixes: ["/api/voice/llm/"], reason: "voice provider callback ingress" },
   { classification: "public", methods: ["POST"], exact: ["/api/voice/start", "/api/voice/diagnostic"], reason: "provisional onboarding voice start (auth enforced at route via requireAuthenticatedOrProvisionalVoice) and unauthenticated voice telemetry sink" },
