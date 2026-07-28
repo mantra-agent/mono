@@ -25,12 +25,24 @@ const recapPageScopeColumns = {
   vaultId: libraryPages.vaultId,
 };
 
-interface DistributionCapability {
+export interface DistributionCapability {
+  distributionId: string;
   sessionId: string;
   ownerUserId: string | null;
   accountId: string | null;
   attendeeEmail: string;
   accessExpiresAt: Date;
+}
+
+export interface RecipientSharedParticipant {
+  name: string;
+  email: string;
+}
+
+export interface RecipientRecapMaterializationSource {
+  capability: DistributionCapability;
+  projection: RecipientRecapProjection;
+  participants: RecipientSharedParticipant[];
 }
 
 type SecuritySubject =
@@ -114,7 +126,7 @@ async function loadRecapContent(meeting: MeetingSessionMeta): Promise<RecipientR
 
 async function projectRecipientRecap(
   capability: DistributionCapability,
-): Promise<RecipientRecapProjection | null> {
+): Promise<RecipientRecapMaterializationSource | null> {
   if (!capability.ownerUserId || !capability.accountId) return null;
   const session = await resolveMeetingTransportSession(capability.sessionId);
   const meeting = session?.meeting;
@@ -129,12 +141,40 @@ async function projectRecipientRecap(
     const grantedTasks = subject
       ? await loadGrantedTasks(subject, capability.sessionId)
       : [];
+    const sharedByEmail = new Map<string, RecipientSharedParticipant>();
+    const addParticipant = (name: string | undefined, email: string | undefined) => {
+      if (!email) return;
+      const normalizedEmail = normalizeEmailAddress(email);
+      if (!normalizedEmail || !normalizedEmail.includes("@")) return;
+      sharedByEmail.set(normalizedEmail, {
+        name: name?.trim() || normalizedEmail,
+        email: normalizedEmail,
+      });
+    };
+    addParticipant(undefined, capability.attendeeEmail);
+    for (const participant of meeting.participants) {
+      if (participant.calendarEmail) {
+        addParticipant(participant.label, participant.calendarEmail);
+        continue;
+      }
+      if (!participant.personId) continue;
+      const person = await peopleStorage.getPerson(participant.personId);
+      const email = person?.contactInfo
+        .filter(contact => contact.type === "email")
+        .map(contact => contact.value.trim())
+        .find(value => value.includes("@"));
+      addParticipant(person?.name || participant.label, email);
+    }
     return {
-      meetingTitle: meeting.title?.trim() || meeting.recap?.pageTitle || "Meeting recap",
-      startedAt: meeting.startedAt ?? meeting.eventStart ?? null,
-      recap,
-      tasks: grantedTasks,
-      expiresAt: capability.accessExpiresAt.toISOString(),
+      capability,
+      projection: {
+        meetingTitle: meeting.title?.trim() || meeting.recap?.pageTitle || "Meeting recap",
+        startedAt: meeting.startedAt ?? meeting.eventStart ?? null,
+        recap,
+        tasks: grantedTasks,
+        expiresAt: capability.accessExpiresAt.toISOString(),
+      },
+      participants: [...sharedByEmail.values()].slice(0, 100),
     };
   });
 }
@@ -160,6 +200,7 @@ export async function getAuthenticatedOnboardingRecapProjectionByMeeting(
   if (!normalizedMeetingSessionId || normalizedMeetingSessionId.length > 128) return null;
   const normalizedEmail = normalizeEmailAddress(authenticatedEmail);
   const [distribution] = await db.select({
+    distributionId: meetingRecapDistributions.id,
     sessionId: meetingRecapDistributions.sessionId,
     ownerUserId: meetingRecapDistributions.ownerUserId,
     accountId: meetingRecapDistributions.accountId,
@@ -173,17 +214,19 @@ export async function getAuthenticatedOnboardingRecapProjectionByMeeting(
     gt(meetingRecapDistributions.accessExpiresAt, new Date()),
   )).limit(1);
   if (!distribution?.accessExpiresAt) return null;
-  return projectRecipientRecap(distribution as DistributionCapability);
+  const source = await projectRecipientRecap(distribution as DistributionCapability);
+  return source?.projection ?? null;
 }
 
-export async function getAuthenticatedOnboardingRecapProjection(
+export async function getAuthenticatedOnboardingRecapMaterializationSource(
   token: string,
   authenticatedEmail: string,
-): Promise<RecipientRecapProjection | null> {
+): Promise<RecipientRecapMaterializationSource | null> {
   const normalizedToken = token.trim();
   if (!normalizedToken || normalizedToken.length > 200) return null;
   const normalizedEmail = normalizeEmailAddress(authenticatedEmail);
   const [distribution] = await db.select({
+    distributionId: meetingRecapDistributions.id,
     sessionId: meetingRecapDistributions.sessionId,
     ownerUserId: meetingRecapDistributions.ownerUserId,
     accountId: meetingRecapDistributions.accountId,
@@ -201,6 +244,14 @@ export async function getAuthenticatedOnboardingRecapProjection(
   )).limit(1);
   if (!distribution?.accessExpiresAt) return null;
   return projectRecipientRecap(distribution as DistributionCapability);
+}
+
+export async function getAuthenticatedOnboardingRecapProjection(
+  token: string,
+  authenticatedEmail: string,
+): Promise<RecipientRecapProjection | null> {
+  const source = await getAuthenticatedOnboardingRecapMaterializationSource(token, authenticatedEmail);
+  return source?.projection ?? null;
 }
 
 function sectionContent(markdown: string, heading: string): string {

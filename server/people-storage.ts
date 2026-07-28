@@ -1,6 +1,11 @@
 import { randomBytes } from "crypto";
 import { createLogger } from "./log";
-import { db } from "./db";
+import {
+  acquireAdvisoryTransactionLock,
+  ADVISORY_LOCK_NS,
+  db,
+  runWithDatabaseTransaction,
+} from "./db";
 import { getSetting, setSetting } from "./system-settings";
 import { calendarEventPeople, personEmails as personEmailsTable, personMergeAliases, personVaultMemberships, persons, vaults } from "@shared/schema";
 import { and, eq, inArray } from "drizzle-orm";
@@ -716,27 +721,38 @@ export class PeopleStorage {
     executor: Pick<PeopleTransaction, "select" | "delete" | "insert">,
     person: Person,
   ): Promise<void> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      throw new Error("Person email indexing requires an authenticated user account");
+    }
     const emails = [...new Set(
       (person.contactInfo || [])
         .filter(contact => contact.type === "email" && contact.value.trim().length > 0)
-        .map(contact => contact.value.trim().toLowerCase())
-        .filter(email => email.includes("@")),
+        .map(contact => normalizePersonEmail(contact.value)),
     )];
     if (emails.length > 0) {
       const conflicts = await executor
         .select({ email: personEmailsTable.email, personId: personEmailsTable.personId })
         .from(personEmailsTable)
-        .where(inArray(personEmailsTable.email, emails));
+        .where(and(
+          eq(personEmailsTable.accountId, principal.accountId),
+          inArray(personEmailsTable.email, emails),
+        ));
       if (conflicts.some(row => row.personId !== person.id)) {
-        throw new Error("Email is already assigned to another Person");
+        throw new Error("Email is already assigned to another Person in this account");
       }
     }
 
-    await executor.delete(personEmailsTable).where(eq(personEmailsTable.personId, person.id));
+    await executor.delete(personEmailsTable).where(and(
+      eq(personEmailsTable.accountId, principal.accountId),
+      eq(personEmailsTable.personId, person.id),
+    ));
 
     const now = new Date();
     for (const email of emails) {
       await executor.insert(personEmailsTable).values({
+        accountId: principal.accountId,
+        ownerUserId: principal.userId,
         email,
         personId: person.id,
         personName: person.name,
@@ -747,23 +763,14 @@ export class PeopleStorage {
     }
   }
 
-  static async rebuildEmailIndex(): Promise<number> {
-    const storage = peopleStorage;
-    const people = await storage.listPeople();
-    let count = 0;
-    for (const entry of people) {
-      const person = await storage.getPerson(entry.id);
-      if (!person) continue;
-      await db.transaction(tx => storage.syncPersonEmails(tx, person));
-      const emailCount = (person.contactInfo || []).filter(ci => ci.type === "email" && ci.value).length;
-      count += emailCount;
-    }
-    return count;
-  }
-
   static async lookupPersonByEmail(email: string): Promise<{ id: string; name: string } | null> {
-    const normalized = email.toLowerCase().trim();
-    const rows = await db.select().from(personEmailsTable).where(eq(personEmailsTable.email, normalized));
+    const normalized = normalizePersonEmail(email);
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType !== "user" || !principal.accountId) return null;
+    const rows = await db.select().from(personEmailsTable).where(and(
+      eq(personEmailsTable.accountId, principal.accountId),
+      eq(personEmailsTable.email, normalized),
+    ));
     if (rows.length === 0) return null;
     return { id: rows[0].personId, name: rows[0].personName };
   }
@@ -1155,6 +1162,9 @@ export class PeopleStorage {
       .from(personEmailsTable)
       .innerJoin(persons, eq(persons.id, personEmailsTable.personId))
       .where(and(
+        principal.accountId
+          ? eq(personEmailsTable.accountId, principal.accountId)
+          : eq(personEmailsTable.accountId, "__no_account__"),
         eq(personEmailsTable.email, normalizedEmail),
         visiblePersonPredicate(principal),
       ))
@@ -1194,6 +1204,63 @@ export class PeopleStorage {
     return resolvedIds
       .map(id => byId.get(id) ?? null)
       .filter((person): person is Person => person !== null);
+  }
+
+  async resolveOrCreateMeetingParticipant(input: {
+    name: string;
+    email: string;
+    isSelf?: boolean;
+  }): Promise<Person> {
+    const principal = getCurrentPrincipalOrSystem();
+    if (
+      principal.actorType !== "user"
+      || !principal.userId
+      || !principal.accountId
+      || !principal.activeVaultId
+    ) {
+      throw new Error("Meeting participant import requires an authenticated user with an active Vault");
+    }
+    const email = normalizePersonEmail(input.email);
+    const name = input.name.trim().replace(/\s+/g, " ").slice(0, 200) || email;
+    const person = await db.transaction(async transaction => runWithDatabaseTransaction(transaction, async () => {
+      await acquireAdvisoryTransactionLock(
+        transaction,
+        ADVISORY_LOCK_NS.PERSON_EMAIL,
+        `${principal.accountId}:${email}`,
+      );
+      const existing = await this.getPersonByEmail(email);
+      if (existing) return existing;
+      if (input.isSelf) {
+        const selfEntry = (await this.listPeople()).find(entry => entry.cabinetLevel === "user");
+        if (selfEntry) {
+          const self = await this.getPerson(selfEntry.id);
+          if (!self) throw new Error("Recipient self Person became unavailable");
+          return this.updatePerson(self.id, {
+            contactInfo: [
+              ...self.contactInfo.filter(contact => contact.type !== "email" || contact.value.trim().toLowerCase() !== email),
+              { type: "email", label: "primary", value: email },
+            ],
+          });
+        }
+      }
+      return this.createPerson({
+        name,
+        nicknames: [],
+        cabinetLevel: input.isSelf ? "user" : "network",
+        familiarity: input.isSelf ? "deep" : "surface",
+        trust: input.isSelf ? "ally" : "none",
+        relation: input.isSelf ? "self" : undefined,
+        socialProfiles: {},
+        contactInfo: [{ type: "email", label: "primary", value: email }],
+        importantDates: [],
+        notes: [],
+        interactions: [],
+        tags: ["meeting-participant"],
+        private: false,
+      });
+    }));
+    this.invalidateListCache();
+    return person;
   }
 
   async createPerson(data: Omit<Person, "id" | "createdAt" | "updatedAt">): Promise<Person> {
