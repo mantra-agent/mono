@@ -19,6 +19,7 @@ const DASHBOARD_LOAD_BUDGET_MS = 1_000;
 const CALENDAR_INTERACTION_CACHE_TTL_MS = 15 * 60_000;
 const CALENDAR_INTERACTION_MAX_EVENTS = 2500;
 const CALENDAR_METADATA_BATCH_SIZE = 100;
+const INTERACTION_TRACKING_START_DATE = "2026-06-01";
 const calendarInteractionCache = new TTLCache<Map<string, number>>(
   "DashboardCalendarInteractions",
   CALENDAR_INTERACTION_CACHE_TTL_MS,
@@ -243,9 +244,13 @@ export async function queryActivityDashboard(
   const corePromise = includeCore
     ? Promise.all([
         timedSource("opportunity_interactions", timings, async () => {
+          if (date < INTERACTION_TRACKING_START_DATE) return new Map<string, number>();
+          const interactionStartDate = dates[0] < INTERACTION_TRACKING_START_DATE
+            ? INTERACTION_TRACKING_START_DATE
+            : dates[0];
           const [interactionEvents, calendarMeetings] = await Promise.all([
-            queryNonMeetingInteractionEventSeries(dates[0], date, principal),
-            queryCalendarMeetingSeries(dates[0], date, principal).catch((error) => {
+            queryNonMeetingInteractionEventSeries(interactionStartDate, date, principal),
+            queryCalendarMeetingSeries(interactionStartDate, date, principal).catch((error) => {
               log.warn("Dashboard calendar interactions unavailable; returning persisted interaction events", {
                 error: error instanceof Error ? error.message : String(error),
               });
