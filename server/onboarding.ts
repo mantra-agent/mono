@@ -6,6 +6,7 @@ import { createLogger } from "./log";
 import { requireAuth } from "./auth";
 import { ensureUserIdentityFoundation, getPrincipal, type Principal } from "./principal";
 import { ownedInsertValues } from "./scoped-storage";
+import { runWithPrincipal } from "./principal-context";
 import { peopleStorage } from "./people-storage";
 import { seedFtuePrioritiesForUser } from "./ftue-goals";
 import {
@@ -439,7 +440,18 @@ export async function createUserWorkspace(
       const { DEFAULT_ACTIVITY_ROUTING } = await import("./job-profiles");
       const defaultTier = DEFAULT_ACTIVITY_ROUTING.chat || "high";
       const recapMeetingSessionId = cleanText(input.recapMeetingSessionId, 128);
-      const result = await chatFileStorage.createSessionOnce(
+      let ftueAgenda = recapMeetingSessionId ? createRecapFtueAgenda() : undefined;
+      if (recapMeetingSessionId) {
+        try {
+          const { agendaDefinitionStorage } = await import("./agenda-storage");
+          ftueAgenda = await agendaDefinitionStorage.instantiateFtue(workspacePrincipal);
+        } catch (error) {
+          log.warn("Canonical FTUE agenda unavailable; using bootstrap snapshot", {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        }
+      }
+      const result = await runWithPrincipal(workspacePrincipal, () => chatFileStorage.createSessionOnce(
         "Welcome",
         `ftue:${principal.userId}`,
         defaultTier,
@@ -453,9 +465,9 @@ export async function createUserWorkspace(
                 triggerName: RECAP_FTUE_TRIGGER_NAME,
               }
             : { triggerType: "system", triggerName: "ftue_welcome" },
-          agenda: recapMeetingSessionId ? createRecapFtueAgenda() : undefined,
+          agenda: ftueAgenda,
         },
-      );
+      ));
       ftueSessionId = result.session.id;
       log.info("FTUE welcome session resolved", {
         userId: principal.userId,
