@@ -25,6 +25,7 @@ function assertSafeFieldName(field: string): void {
 
 export interface WorkspaceDocCompat {
   id: number;
+  documentStoreId: number;
   docType: string;
   docId: string;
   path: string;
@@ -54,6 +55,7 @@ export interface InterruptedChatRecoveryCandidate {
 function targetToDoc(entry: DocumentStoreDocument): WorkspaceDocCompat {
   return {
     id: entry.sourceMemoryEntryId ?? entry.id,
+    documentStoreId: entry.id,
     docType: entry.documentType,
     docId: entry.documentId,
     path: entry.path || "",
@@ -151,6 +153,7 @@ export class DocumentStorage {
       log.verbose(() => `upsertDocument docType=${docType} docId=${docId} (no-return)`);
       return {
         id: 0,
+        documentStoreId: 0,
         docType,
         docId,
         path,
