@@ -1,9 +1,11 @@
 import {
   useSidebar,
 } from "@/components/ui/sidebar";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
+import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
 import {
   Activity,
   BookOpen,
@@ -59,6 +61,8 @@ import { useOrientationActivity } from "@/hooks/use-orientation-activity";
 import { useEnvActivity } from "@/hooks/use-env-activity";
 import { ActiveStatusSpinner, getStatusClasses, type NavDotLevel } from "./nav-dot";
 import { AgentOrb } from "@/components/agent-orb";
+import { VoiceEntranceOrb } from "@/components/voice-entrance-orb";
+import type { AgentVisualState } from "@shared/agent-visualizer";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   Collapsible,
@@ -229,7 +233,22 @@ const statusRingColors: Record<string, string> = {
   not_installed: "ring-neutral/20",
 };
 
-function NavigationOrb({ status, onClick }: { status: string; onClick?: () => void }) {
+interface NavigationOrbProps {
+  status: string;
+  visualState: AgentVisualState;
+  audioLevel: number;
+  voiceSession: ReturnType<typeof useVoiceSessionOptional>;
+  onClick?: () => void;
+}
+
+function NavigationOrb({ status, visualState, audioLevel, voiceSession, onClick }: NavigationOrbProps) {
+  const orbProps = {
+    state: visualState,
+    audioLevel,
+    maxFrameRate: 20,
+    className: "pointer-events-none absolute inset-0",
+  } as const;
+
   return (
     <button
       type="button"
@@ -243,12 +262,13 @@ function NavigationOrb({ status, onClick }: { status: string; onClick?: () => vo
       )}
       aria-label="Open main navigation"
       data-testid="button-sidebar-toggle"
+      data-voice-state={visualState}
     >
-      <AgentOrb
-        state="listening"
-        maxFrameRate={20}
-        className="pointer-events-none absolute inset-0"
-      />
+      {voiceSession ? (
+        <VoiceEntranceOrb voiceSession={voiceSession} {...orbProps} />
+      ) : (
+        <AgentOrb {...orbProps} />
+      )}
     </button>
   );
 }
@@ -257,8 +277,45 @@ export function NavigationOrbButton() {
   const { data: gatewayStatus } = useExecutorStatus();
   const { toggleSidebar, openMobile } = useSidebar();
   const { setWidgetOpen } = useFocusSession();
+  const voiceSession = useVoiceSessionOptional();
+  const nativeTranscription = useNativeMeetingTranscription();
   const isMobile = useIsMobile();
   const status = gatewayStatus?.status || "not_installed";
+  const voiceVisualActive = voiceSession?.status !== undefined && voiceSession.status !== "idle";
+  const nativeVisualActive = nativeTranscription.activeSessionId !== null;
+  const visualState = voiceVisualActive
+    ? voiceSession.visualState
+    : nativeVisualActive
+      ? "listening"
+      : "idle";
+  const readAudioLevel = voiceVisualActive
+    ? voiceSession.readAudioLevel
+    : nativeVisualActive
+      ? nativeTranscription.readAudioLevel
+      : null;
+  const [audioLevel, setAudioLevel] = useState(0);
+  const frameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!readAudioLevel) {
+      setAudioLevel(0);
+      return;
+    }
+
+    let lastSampleAt = 0;
+    const sample = (now: number) => {
+      frameRef.current = requestAnimationFrame(sample);
+      if (now - lastSampleAt < 1000 / 20) return;
+      lastSampleAt = now;
+      setAudioLevel(readAudioLevel());
+    };
+    frameRef.current = requestAnimationFrame(sample);
+
+    return () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    };
+  }, [readAudioLevel]);
 
   const handleClick = useCallback(() => {
     if (isMobile && !openMobile) {
@@ -267,7 +324,15 @@ export function NavigationOrbButton() {
     toggleSidebar();
   }, [isMobile, openMobile, setWidgetOpen, toggleSidebar]);
 
-  return <NavigationOrb status={status} onClick={handleClick} />;
+  return (
+    <NavigationOrb
+      status={status}
+      visualState={visualState}
+      audioLevel={audioLevel}
+      voiceSession={voiceVisualActive ? voiceSession : null}
+      onClick={handleClick}
+    />
+  );
 }
 
 const STORAGE_KEY = "nav-sections-collapsed";
