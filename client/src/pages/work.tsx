@@ -5,7 +5,8 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useSearch, useLocation } from "wouter";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { useFocusSession } from "@/hooks/use-focus-session";
-import { useVaults } from "@/hooks/use-vaults";
+import { useVaults, type Vault } from "@/hooks/use-vaults";
+import { vaultTitleColor, MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getInstanceName } from "@/lib/instance-config";
 import { Card } from "@/components/ui/card";
@@ -846,6 +847,8 @@ function TaskRow({
   isDone,
   onDiscuss,
   discussPending,
+  vaultById,
+  activeVaultId,
 }: {
   task: Task;
   project?: Project;
@@ -858,6 +861,8 @@ function TaskRow({
   isDone?: boolean;
   onDiscuss: (item: DiscussableWorkItem) => void;
   discussPending: boolean;
+  vaultById: Map<string, Vault>;
+  activeVaultId: string | null;
 }) {
   const { openTaskModal } = useTaskModal();
   const [editTitle, setEditTitle] = useState(task.title);
@@ -891,6 +896,13 @@ function TaskRow({
     : isCompleted
       ? "text-muted-foreground/45"
       : "text-muted-foreground";
+  // Task titles take their driving vault's color — muted when completed.
+  const taskTitleColor = vaultTitleColor(
+    task.vaultId ? [task.vaultId] : undefined,
+    vaultById,
+    activeVaultId,
+    isCompleted ? MUTED_TITLE_ALPHA : 1,
+  );
 
   return (
     <div data-testid={`tree-node-task-${task.id}`}>
@@ -912,7 +924,7 @@ function TaskRow({
         }}
         data-testid={`check-task-${task.id}`}
       />
-      <ListTodo className="h-3.5 w-3.5 shrink-0 text-muted-foreground" data-testid={`icon-task-${task.id}`} />
+      <ListTodo className="h-3.5 w-3.5 shrink-0 text-muted-foreground" style={taskTitleColor ? { color: taskTitleColor } : undefined} data-testid={`icon-task-${task.id}`} />
 
       {isEditing ? (
         <Input
@@ -928,6 +940,7 @@ function TaskRow({
       ) : (
         <span
           className="truncate flex-1 min-w-0 rounded px-1 -mx-1 hover:bg-accent/70"
+          style={taskTitleColor ? { color: taskTitleColor } : undefined}
           onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
           data-testid={`text-task-title-${task.id}`}
         >
@@ -1172,11 +1185,12 @@ function TaskRow({
 
 function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null }) {
   const { toast } = useToast();
-  const { vaults, visibleVaultIds } = useVaults();
+  const { vaults, visibleVaultIds, activeVaultId } = useVaults();
   const visibleVaults = useMemo(
     () => vaults.filter(vault => !vault.isArchived && visibleVaultIds.includes(vault.id)),
     [vaults, visibleVaultIds],
   );
+  const vaultById = useMemo(() => new Map(vaults.map(vault => [vault.id, vault])), [vaults]);
   const [, setLocation] = useLocation();
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const [showCreate, setShowCreate] = useState(false);
@@ -1470,6 +1484,8 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
                     onUpdateVaults={(vaultIds) => vaultMembershipMutation.mutate({ projectId: project.id, vaultIds })}
                     vaultMembershipPending={vaultMembershipMutation.isPending}
                     vaults={visibleVaults}
+                    vaultById={vaultById}
+                    activeVaultId={activeVaultId}
                     onUpdateMilestone={(milestoneId, data) => updateMilestoneMutation.mutate({ projectId: project.id, milestoneId, data })}
                     onDiscuss={discussWorkItem}
                     discussPending={discussMutation.isPending}
@@ -1700,6 +1716,8 @@ function ProjectTreeNode({
   onUpdateVaults,
   vaultMembershipPending,
   vaults,
+  vaultById,
+  activeVaultId,
   onUpdateMilestone,
   onDiscuss,
   discussPending,
@@ -1735,6 +1753,8 @@ function ProjectTreeNode({
   onUpdateVaults: (vaultIds: string[]) => void;
   vaultMembershipPending: boolean;
   vaults: Array<{ id: string; name: string }>;
+  vaultById: Map<string, Vault>;
+  activeVaultId: string | null;
   onUpdateMilestone: (milestoneId: number, data: Partial<Milestone>) => void;
   onDiscuss: (item: DiscussableWorkItem) => void;
   discussPending: boolean;
@@ -1767,6 +1787,13 @@ function ProjectTreeNode({
 
   const projectDueLabel = formatWorkDueDate(project.dueDate);
   const isActive = project.status === "active";
+  // Project titles take their driving vault's color — muted when completed.
+  const projectTitleColor = vaultTitleColor(
+    project.vaultIds,
+    vaultById,
+    activeVaultId,
+    project.status === "completed" ? MUTED_TITLE_ALPHA : 1,
+  );
   const isAddingMilestone = addingMilestoneProjectId === project.id;
   const sortedMilestones = stablePartition(project.milestones || [], milestone => milestone.status === "completed");
   const tasksByMilestone = new Map<number, Task[]>();
@@ -1821,7 +1848,7 @@ function ProjectTreeNode({
             onClick={onOpenProject}
             data-testid={`card-project-${project.id}`}
           >
-            <FolderKanban className="h-3.5 w-3.5 shrink-0" data-testid={`icon-project-${project.id}`} />
+            <FolderKanban className="h-3.5 w-3.5 shrink-0" style={projectTitleColor ? { color: projectTitleColor } : undefined} data-testid={`icon-project-${project.id}`} />
             {editingProjectTitle ? (
               <Input
                 value={projectTitleDraft}
@@ -1839,6 +1866,7 @@ function ProjectTreeNode({
             ) : (
               <span
                 className="truncate flex-1 min-w-0 rounded px-1 -mx-1 hover:bg-accent/70"
+                style={projectTitleColor ? { color: projectTitleColor } : undefined}
                 onClick={(e) => {
                   e.stopPropagation();
                   setProjectTitleDraft(project.title);
@@ -2082,6 +2110,13 @@ function ProjectTreeNode({
             const milestoneExpanded = isMilestoneExpanded(milestone);
             const milestoneDueLabel = formatWorkDueDate(milestone.dueDate);
             const milestoneCompleted = milestone.status === "completed";
+            // Milestones have no own vault — they inherit their project's.
+            const milestoneTitleColor = vaultTitleColor(
+              project.vaultIds,
+              vaultById,
+              activeVaultId,
+              milestoneCompleted ? MUTED_TITLE_ALPHA : 1,
+            );
             return (
               <div key={milestone.id} className="space-y-0">
                 <div className="flex min-w-0 max-w-full items-stretch overflow-hidden" style={{ paddingLeft: Math.min(WORK_INDENT_STEP_PX, WORK_MAX_INDENT_PX) }}>
@@ -2096,7 +2131,7 @@ function ProjectTreeNode({
                         }}
                         data-testid={`check-tree-milestone-${milestone.id}`}
                       />
-                      <Flag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <Flag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" style={milestoneTitleColor ? { color: milestoneTitleColor } : undefined} />
                       {editingMilestoneId === milestone.id ? (
                         <Input
                           value={milestoneNameDraft}
@@ -2122,6 +2157,7 @@ function ProjectTreeNode({
                       ) : (
                         <span
                           className={cn("truncate flex-1 min-w-0 rounded px-1 -mx-1 hover:bg-accent/70", milestoneCompleted && "line-through text-muted-foreground")}
+                          style={milestoneTitleColor ? { color: milestoneTitleColor } : undefined}
                           onClick={(e) => {
                             e.stopPropagation();
                             setMilestoneNameDraft(milestone.name);
@@ -2287,6 +2323,8 @@ function ProjectTreeNode({
                         isDone={task.status === "done"}
                         onDiscuss={onDiscuss}
                         discussPending={discussPending}
+                        vaultById={vaultById}
+                        activeVaultId={activeVaultId}
                       />
                     </div>
                   </div>
@@ -2331,6 +2369,8 @@ function ProjectTreeNode({
                   isDone={task.status === "done"}
                   onDiscuss={onDiscuss}
                   discussPending={discussPending}
+                  vaultById={vaultById}
+                  activeVaultId={activeVaultId}
                 />
               </div>
             </div>

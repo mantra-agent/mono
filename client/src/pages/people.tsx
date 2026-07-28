@@ -21,6 +21,7 @@ import { CompanyReferenceField } from "@/components/people/company-reference-fie
 import { PERSONAL_RELATION_OPTIONS, PROFESSIONAL_RELATION_OPTIONS } from "@shared/people-metadata";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useVaults, type Vault } from "@/hooks/use-vaults";
+import { vaultTitleColor, MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -377,41 +378,8 @@ function fuzzyTokenMatch(queryToken: string, targetToken: string): number {
 // ── Vault-colored list titles ────────────────────────────────────────────
 // A person's list title takes their driving vault's color: full color when
 // unread, a muted (reduced-alpha) variant when read. Applies to the list row
-// only — the detail view is unaffected.
-
-const READ_TITLE_ALPHA = 0.5;
-
-function hexToRgba(hex: string, alpha: number): string | null {
-  const cleaned = hex.trim().replace(/^#/, "");
-  const full = cleaned.length === 3 ? cleaned.split("").map(ch => ch + ch).join("") : cleaned;
-  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
-  const int = parseInt(full, 16);
-  return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
-}
-
-/**
- * Resolve the single vault whose color drives a person's list title. The active
- * vault wins when the person belongs to it; otherwise the lowest-position member
- * vault with a color. Returns null when no colored membership applies.
- */
-function resolveDrivingVault(
-  vaultIds: string[] | undefined,
-  vaultById: Map<string, Vault>,
-  activeVaultId: string | null,
-): Vault | null {
-  if (!vaultIds || vaultIds.length === 0) return null;
-  if (activeVaultId && vaultIds.includes(activeVaultId)) {
-    const active = vaultById.get(activeVaultId);
-    if (active?.color) return active;
-  }
-  let best: Vault | null = null;
-  for (const id of vaultIds) {
-    const vault = vaultById.get(id);
-    if (!vault?.color) continue;
-    if (!best || vault.position < best.position) best = vault;
-  }
-  return best;
-}
+// only — the detail view is unaffected. The resolver is shared with Work
+// (Projects/Milestones/Tasks) — see @/lib/vault-title-color.
 
 /** Title color for a person row, or null to fall back to default text classes. */
 function personTitleColor(
@@ -420,9 +388,7 @@ function personTitleColor(
   activeVaultId: string | null,
   full: boolean,
 ): string | null {
-  const vault = resolveDrivingVault(vaultIds, vaultById, activeVaultId);
-  if (!vault?.color) return null;
-  return hexToRgba(vault.color, full ? 1 : READ_TITLE_ALPHA);
+  return vaultTitleColor(vaultIds, vaultById, activeVaultId, full ? 1 : MUTED_TITLE_ALPHA);
 }
 
 function fuzzyMatchPeople(query: string, people: PersonIndex[], limit: number): PersonIndex[] {
