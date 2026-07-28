@@ -132,11 +132,20 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
     operation = (async () => {
       setIsStarting(true);
       let stream: MediaStream | null = null;
+      let audioContext: AudioContext | null = null;
       let sessionId: string | null = null;
       try {
         if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
           throw new Error("Microphone transcription requires a secure browser connection.");
         }
+
+        // WebKit requires Web Audio activation to begin inside the original
+        // user gesture. Do this before the permission promise yields control.
+        audioContext = new AudioContext();
+        const audioContextActivation = audioContext.state === "running"
+          ? Promise.resolve()
+          : audioContext.resume();
+
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: { ideal: 1 },
@@ -147,11 +156,14 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
           video: false,
         });
 
-        const audioContext = new AudioContext();
         let capture: ActiveNativeMeeting | null = null;
         try {
+          await audioContextActivation;
+          if (audioContext.state !== "running") await audioContext.resume();
+          if (audioContext.state !== "running") {
+            throw new Error("The microphone audio engine did not start. Tap New Transcription and try again.");
+          }
           await audioContext.audioWorklet.addModule("/voice/meeting-pcm-processor.worklet.js");
-          await audioContext.resume();
 
           const idempotencyKey = crypto.randomUUID();
           const response = await apiRequest("POST", "/api/meetings/native", { idempotencyKey });
@@ -220,6 +232,7 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
         }
       } catch (error) {
         stream?.getTracks().forEach((track) => track.stop());
+        if (audioContext && audioContext.state !== "closed") void audioContext.close();
         if (sessionId) {
           try {
             await apiRequest("POST", `/api/meetings/${encodeURIComponent(sessionId)}/leave`);
