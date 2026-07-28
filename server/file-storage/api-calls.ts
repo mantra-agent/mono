@@ -371,9 +371,9 @@ export class FileApiCallStorage {
     const { query, params } = buildSinceQuery(
       `SELECT COUNT(*)::int AS total_calls,
         COALESCE(SUM(cost_total), 0) AS total_cost,
-        COALESCE(SUM(input_tokens), 0)::int AS total_input_tokens,
-        COALESCE(SUM(output_tokens), 0)::int AS total_output_tokens,
-        COALESCE(SUM(total_tokens), 0)::int AS total_tokens
+        COALESCE(SUM(input_tokens), 0)::float8 AS total_input_tokens,
+        COALESCE(SUM(output_tokens), 0)::float8 AS total_output_tokens,
+        COALESCE(SUM(total_tokens), 0)::float8 AS total_tokens
         FROM api_calls`,
       since
     );
@@ -406,7 +406,7 @@ export class FileApiCallStorage {
     }
     const result = await pool.query<DateAggRow>(
       `SELECT ${dateExpr} AS date, COUNT(*)::int AS calls,
-        COALESCE(SUM(cost_total), 0) AS cost, COALESCE(SUM(total_tokens), 0)::int AS tokens
+        COALESCE(SUM(cost_total), 0) AS cost, COALESCE(SUM(total_tokens), 0)::float8 AS tokens
         FROM api_calls ${where} GROUP BY ${dateGroup} ORDER BY date`,
       params
     );
@@ -434,7 +434,7 @@ export class FileApiCallStorage {
     }
     const result = await pool.query<HourAggRow>(
       `SELECT ${hourExpr} AS hour, COUNT(*)::int AS calls,
-        COALESCE(SUM(cost_total), 0) AS cost, COALESCE(SUM(total_tokens), 0)::int AS tokens
+        COALESCE(SUM(cost_total), 0) AS cost, COALESCE(SUM(total_tokens), 0)::float8 AS tokens
         FROM api_calls ${where} GROUP BY ${hourGroup} ORDER BY hour`,
       params
     );
@@ -449,10 +449,10 @@ export class FileApiCallStorage {
   async getApiCallsByModel(since?: Date): Promise<Array<{ provider: string; model: string; calls: number; cost: number; tokens: number; avgDuration: number | null; inputTokens: number; outputTokens: number }>> {
     const { query: baseQuery, params } = buildSinceQuery(
       `SELECT provider, model, COUNT(*)::int AS calls,
-        COALESCE(SUM(cost_total), 0) AS cost, COALESCE(SUM(total_tokens), 0)::int AS tokens,
+        COALESCE(SUM(cost_total), 0) AS cost, COALESCE(SUM(total_tokens), 0)::float8 AS tokens,
         AVG(duration_ms) AS avg_duration,
-        COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-        COALESCE(SUM(output_tokens), 0)::int AS output_tokens
+        COALESCE(SUM(input_tokens), 0)::float8 AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::float8 AS output_tokens
         FROM api_calls`,
       since
     );
@@ -485,9 +485,9 @@ export class FileApiCallStorage {
     }
     const result = await pool.query<ModelDateRow>(
       `SELECT ${dateExpr} AS date, model, COALESCE(SUM(cost_total), 0) AS cost,
-        COALESCE(SUM(total_tokens), 0)::int AS tokens,
-        COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-        COALESCE(SUM(output_tokens), 0)::int AS output_tokens
+        COALESCE(SUM(total_tokens), 0)::float8 AS tokens,
+        COALESCE(SUM(input_tokens), 0)::float8 AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::float8 AS output_tokens
         FROM api_calls ${where} GROUP BY ${dateGroup}, model ORDER BY date`,
       params
     );
@@ -517,9 +517,9 @@ export class FileApiCallStorage {
     }
     const result = await pool.query<ModelHourRow>(
       `SELECT ${hourExpr} AS hour, model, COALESCE(SUM(cost_total), 0) AS cost,
-        COALESCE(SUM(total_tokens), 0)::int AS tokens,
-        COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-        COALESCE(SUM(output_tokens), 0)::int AS output_tokens
+        COALESCE(SUM(total_tokens), 0)::float8 AS tokens,
+        COALESCE(SUM(input_tokens), 0)::float8 AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::float8 AS output_tokens
         FROM api_calls ${where} GROUP BY ${hourGroup}, model ORDER BY hour`,
       params
     );
@@ -536,11 +536,11 @@ export class FileApiCallStorage {
   async getApiCallsByProfile(since?: Date): Promise<Array<{ profile: string; calls: number; cost: number; tokens: number; avgDuration: number | null; totalDuration: number; inputTokens: number; outputTokens: number }>> {
     const { query: baseQuery, params } = buildSinceQuery(
       `SELECT COALESCE(profile, 'unknown') AS profile, COUNT(*)::int AS calls,
-        COALESCE(SUM(cost_total), 0) AS cost, COALESCE(SUM(total_tokens), 0)::int AS tokens,
+        COALESCE(SUM(cost_total), 0) AS cost, COALESCE(SUM(total_tokens), 0)::float8 AS tokens,
         AVG(duration_ms) AS avg_duration,
-        COALESCE(SUM(duration_ms), 0)::int AS total_duration,
-        COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-        COALESCE(SUM(output_tokens), 0)::int AS output_tokens
+        COALESCE(SUM(duration_ms), 0)::float8 AS total_duration,
+        COALESCE(SUM(input_tokens), 0)::float8 AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::float8 AS output_tokens
         FROM api_calls`,
       since
     );
@@ -581,9 +581,9 @@ export class FileApiCallStorage {
     const ownership = ownershipClause("api_calls", 2);
     const result = await pool.query<SessionAggRow>(
       `SELECT COUNT(*)::int AS calls,
-        COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-        COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
-        COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+        COALESCE(SUM(input_tokens), 0)::float8 AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::float8 AS output_tokens,
+        COALESCE(SUM(total_tokens), 0)::float8 AS total_tokens,
         COALESCE(SUM(cost_total), 0) AS cost,
         COALESCE(MAX(input_tokens), 0)::int AS peak_input_tokens
       FROM api_calls WHERE metadata->>'runId' = $1 AND ${ownership.clause}`,
@@ -597,9 +597,9 @@ export class FileApiCallStorage {
     const ownership = ownershipClause("api_calls", 3);
     const result = await pool.query<SessionAggRow>(
       `SELECT COUNT(*)::int AS calls,
-        COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-        COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
-        COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+        COALESCE(SUM(input_tokens), 0)::float8 AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::float8 AS output_tokens,
+        COALESCE(SUM(total_tokens), 0)::float8 AS total_tokens,
         COALESCE(SUM(cost_total), 0) AS cost,
         COALESCE(MAX(input_tokens), 0)::int AS peak_input_tokens
       FROM api_calls
@@ -651,9 +651,9 @@ export class FileApiCallStorage {
     const ownership = ownershipClause("api_calls", 2);
     const result = await pool.query<SessionAggRow>(
       `SELECT COUNT(*)::int AS calls,
-        COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-        COALESCE(SUM(output_tokens), 0)::int AS output_tokens,
-        COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+        COALESCE(SUM(input_tokens), 0)::float8 AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::float8 AS output_tokens,
+        COALESCE(SUM(total_tokens), 0)::float8 AS total_tokens,
         COALESCE(SUM(cost_total), 0) AS cost,
         COALESCE(MAX(input_tokens), 0)::int AS peak_input_tokens
       FROM api_calls WHERE session_key = $1 AND ${ownership.clause}`,

@@ -247,6 +247,23 @@ export function usePublishSummary(sourcePlatformEnvironmentId: number, targetPla
   });
 }
 
+// Environment-independent publish run status. The publish run is a global
+// singleton, so callers that only need its status (e.g. the sidebar Build
+// indicator) read it here rather than the env-scoped summary, which requires
+// source/target environment IDs.
+export function usePublishRun() {
+  return useQuery<{ run: PublishRun | null }, Error, PublishRun | null>({
+    queryKey: ["/api/railway/publish/run"],
+    refetchInterval: (query) => {
+      const data = query.state.data as { run: PublishRun | null } | undefined;
+      return data?.run?.status === "running" ? 2000 : 30000;
+    },
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+    select: (data) => data.run,
+  });
+}
+
 // ─── Small components ──────────────────────────────────────────────────────────
 
 function StageIcon({ status }: { status: StageStatus }) {

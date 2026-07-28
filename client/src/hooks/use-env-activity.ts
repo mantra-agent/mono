@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { NavDotLevel } from "@/components/nav-dot";
 import { statusFamily } from "@/components/build-status-panel";
-import { usePublishSummary } from "@/components/dev-publish-tab";
+import { usePublishRun } from "@/components/dev-publish-tab";
 
 interface RailwayStatus {
   configured?: boolean;
@@ -96,14 +96,14 @@ export function useEnvActivity(): NavDotLevel | null {
     refetchInterval: (query) => isExpoBuildActive(getLatestRemoteBuild(query.state.data?.builds)?.status) ? 5000 : 30_000,
     retry: false,
   });
-  const { data: publishSummary } = usePublishSummary();
+  const { data: publishRun } = usePublishRun();
 
   const devLevel = devStatus?.configured ? deploymentLevel(devStatus.deployment?.status) : null;
-  const prodLevel = publishSummary?.run?.status === "running" ? "active" as const : null;
+  const prodLevel = publishRun?.status === "running" ? "active" as const : null;
 
   const devId = devStatus?.configured ? devStatus.deployment?.id : undefined;
   const devFamily = statusFamily(devStatus?.deployment?.status);
-  const isPublishing = publishSummary?.run?.status === "running";
+  const isPublishing = publishRun?.status === "running";
   const devKey = `dev-${devFamily}-${devId ?? "none"}`;
   const prodKey = `prod-${isPublishing ? "publishing" : "idle"}`;
 
