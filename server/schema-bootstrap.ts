@@ -6043,7 +6043,7 @@ export async function runSchemaBootstrap(
         AND draft.purpose = 'ordinary'
     `);
     await pool.query(`
-      DO $
+      DO $meeting_recap_distribution$
       BEGIN
         IF NOT EXISTS (
           SELECT 1
@@ -6055,7 +6055,7 @@ export async function runSchemaBootstrap(
           ADD CONSTRAINT unique_mrd_session_attendee
           UNIQUE (account_id, session_id, attendee_email);
         END IF;
-      END $$;
+      END $meeting_recap_distribution$;
     `);
   });
 
