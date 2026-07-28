@@ -152,18 +152,7 @@ function SetupForm({ onStepChange, onError }: { onStepChange: (step: SetupStep) 
       onError({ title: "Password must be at least 8 characters" });
       return;
     }
-    setup.mutate(
-      { email: email.trim(), password },
-      {
-        onSuccess: () => setStep("name"),
-        onError: (err: any) => {
-          onError({
-            title: err.message?.includes("400") ? "Invalid setup data" : "Setup failed",
-            detail: err?.message,
-          });
-        },
-      }
-    );
+    setStep("name");
   };
 
   const handleNameSubmit = async (e: React.FormEvent) => {
@@ -171,10 +160,14 @@ function SetupForm({ onStepChange, onError }: { onStepChange: (step: SetupStep) 
     if (!name.trim() || savingName) return;
     setSavingName(true);
     try {
+      await setup.mutateAsync({ email: email.trim(), password, name: name.trim() });
       const result = await completeStartupOnboarding(name);
       setLocation(getStartupOnboardingDestination(result), { replace: true });
     } catch (err: any) {
-      onError({ title: err?.message || "Could not save name", detail: err?.message });
+      onError({
+        title: err.message?.includes("400") ? "Invalid setup data" : err?.message || "Setup failed",
+        detail: err?.message,
+      });
       setSavingName(false);
     }
   };
@@ -239,14 +232,9 @@ function SetupForm({ onStepChange, onError }: { onStepChange: (step: SetupStep) 
           <Button
             type="submit"
             className={authButtonClass}
-            disabled={setup.isPending}
             data-testid="button-setup-submit"
           >
-            {setup.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              "Continue"
-            )}
+            Continue
           </Button>
           <Button
             type="button"

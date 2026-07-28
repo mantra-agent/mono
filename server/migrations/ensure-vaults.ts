@@ -1,5 +1,6 @@
+import { deriveUserFirstName } from "@shared/identity-name";
 import { LEGACY_VAULT_COLOR_MIGRATIONS, PERSONAL_VAULT_COLOR } from "@shared/models/vaults";
-import { pool } from "../db";
+import { ADVISORY_LOCK_NS, fnv1a32, pool } from "../db";
 import { createLogger } from "../log";
 
 const log = createLogger("EnsureVaults");
@@ -10,7 +11,7 @@ const log = createLogger("EnsureVaults");
  * 1. Create `vaults` table if not exists
  * 2. Add `active_vault_id` and `visible_vault_ids` to `users`
  * 3. Add `vault_id` to all Phase-1 owned tables
- * 4. Create a "Personal" vault for every account that lacks one
+ * 4. Create a first-name default Personal Vault for every account that lacks one
  * 5. Backfill vault_id on all owned rows to the account's Personal vault
  * 6. Set users.active_vault_id and visible_vault_ids defaults
  *
@@ -198,31 +199,78 @@ export async function ensureVaults(): Promise<void> {
       END $drop_persons_vault$;
     `);
 
-    // ── 4. Create "Personal" vault per account ─────────────────────
-    // Uses accounts table as the canonical account registry.
-    // The Personal vault is the default vault for each account.
-    const { rowCount: createdCount } = await pool.query(`
-      INSERT INTO vaults (account_id, name, icon, color, position, is_default)
-      SELECT a.id, 'Personal', 'P', $1, 0, true
+    // ── 4. Create a first-name Personal vault per missing account ───
+    // This is compatibility repair for accounts that predate runtime identity
+    // provisioning. It creates only when no default exists and never renames an
+    // existing Vault. Runtime account activation uses the same shared parser.
+    const missingDefaults = await pool.query<{
+      account_id: string;
+      owner_user_id: string;
+      email: string;
+      preferred_name: string | null;
+      display_name: string | null;
+    }>(`
+      SELECT a.id AS account_id,
+             a.owner_user_id,
+             u.email,
+             up.preferred_name,
+             up.display_name
       FROM accounts a
-      WHERE NOT EXISTS (
-        SELECT 1 FROM vaults v
-        WHERE v.account_id = a.id AND v.is_default = true
-      )
-    `, [PERSONAL_VAULT_COLOR]);
-    if (createdCount && createdCount > 0) {
-      log.log(`Created ${createdCount} Personal vault(s)`);
+      JOIN users u ON u.id = a.owner_user_id
+      LEFT JOIN user_profiles up ON up.user_id = u.id
+      WHERE a.kind = 'personal'
+        AND a.owner_user_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM vaults v
+          WHERE v.account_id = a.id AND v.is_default = true
+        )
+      ORDER BY a.created_at ASC, a.id ASC
+    `);
+    let createdCount = 0;
+    for (const row of missingDefaults.rows) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          "SELECT pg_advisory_xact_lock($1::int4, $2::int4)",
+          [ADVISORY_LOCK_NS.USER_IDENTITY, fnv1a32(row.owner_user_id)],
+        );
+        const name = deriveUserFirstName({
+          preferredName: row.preferred_name,
+          displayName: row.display_name,
+          email: row.email,
+        }, "Personal");
+        const result = await client.query(`
+          INSERT INTO vaults (account_id, name, icon, color, position, is_default)
+          SELECT $1, $2, $3, $4, 0, true
+          WHERE NOT EXISTS (
+            SELECT 1 FROM vaults v
+            WHERE v.account_id = $1 AND v.is_default = true
+          )
+          RETURNING id
+        `, [row.account_id, name, name.slice(0, 1).toUpperCase(), PERSONAL_VAULT_COLOR]);
+        createdCount += result.rowCount ?? 0;
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    if (createdCount > 0) {
+      log.log(`Created ${createdCount} first-name Personal Vault(s)`);
     }
 
-    // Personal is the neutral default partition. Converge only Personal vaults
-    // still carrying the retired product default; explicit custom choices stay.
+    // The canonical default partition is neutral regardless of its user-derived
+    // name. Converge only defaults still carrying the retired product color;
+    // explicit custom choices stay.
     const retiredPersonalColor = LEGACY_VAULT_COLOR_MIGRATIONS[0].from;
     const { rowCount: migratedPersonalColorCount } = await pool.query(`
       UPDATE vaults
       SET color = $1,
           updated_at = CURRENT_TIMESTAMP
-      WHERE name = 'Personal'
-        AND is_default = true
+      WHERE is_default = true
         AND upper(color) = upper($2)
         AND color IS DISTINCT FROM $1
     `, [PERSONAL_VAULT_COLOR, retiredPersonalColor]);
@@ -373,7 +421,7 @@ export async function ensureVaults(): Promise<void> {
 
     // ── 6. Set users.active_vault_id and visible_vault_ids ─────────
     // For each user whose active_vault_id is NULL, set it to the
-    // Personal vault of their account (via memberships).
+    // default Personal Vault of their account (via memberships).
     const { rowCount: usersUpdated } = await pool.query(`
       UPDATE users u
       SET

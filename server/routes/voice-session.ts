@@ -1,8 +1,6 @@
 import type { Express, NextFunction, Request, Response } from "express";
-import { eq } from "drizzle-orm";
 import { requireAuth } from "../auth";
 import { createLogger } from "../log";
-import { db } from "../db";
 import { storage } from "../storage";
 import { eventBus } from "../event-bus";
 import { VoiceEvents } from "@shared/event-catalog";
@@ -779,27 +777,18 @@ export async function registerVoiceSessionRoutes(app: Express) {
           const { chatFileStorage } = await import("../chat-file-storage");
           const sessionMeta = await chatFileStorage.getSession(chatSessionId);
           if (sessionMeta?.ftueWelcome) {
-            const { userProfiles: userProfilesTable } = await import("@shared/schema");
-            const { getCurrentPrincipal } = await import("../principal-context");
-            const principal = getCurrentPrincipal();
-            if (principal?.userId) {
-              const [userProfile] = await db
-                .select({ preferredName: userProfilesTable.preferredName, displayName: userProfilesTable.displayName })
-                .from(userProfilesTable)
-                .where(eq(userProfilesTable.userId, principal.userId))
-                .limit(1);
-              const userName = userProfile?.preferredName || userProfile?.displayName || "there";
-              const openItem = firstOpenAgendaItem(sessionMeta.agenda);
-              firstMessage = isRecapFtueSession(sessionMeta)
-                ? openItem
-                  ? `Welcome in, ${userName}. Let's begin with ${openItem.title.toLowerCase()}. What's one goal you'd like us to build around?`
-                  : `Welcome back, ${userName}. Your onboarding agenda is complete. What should we move forward next?`
-                : `Hey ${userName}! I'm ${FTUE_AGENT_NAME}. I help you keep track of what matters and turn it into action. To start, what's one goal you'd like me to help move forward?`;
-              voiceLog.info("FTUE first message composed", {
-                recapAware: isRecapFtueSession(sessionMeta),
-                openAgendaItemId: openItem?.id,
-              });
-            }
+            const { resolveCurrentProfileIdentity } = await import("../profile-identity");
+            const { userFirstName } = await resolveCurrentProfileIdentity();
+            const openItem = firstOpenAgendaItem(sessionMeta.agenda);
+            firstMessage = isRecapFtueSession(sessionMeta)
+              ? openItem
+                ? `Hello ${userFirstName}. Let's begin with ${openItem.title.toLowerCase()}. What's one goal you'd like us to build around?`
+                : `Hello ${userFirstName}. Your onboarding agenda is complete. What should we move forward next?`
+              : `Hello ${userFirstName}. I'm ${FTUE_AGENT_NAME}. I help you keep track of what matters and turn it into action. To start, what's one goal you'd like me to help move forward?`;
+            voiceLog.info("FTUE first message composed", {
+              recapAware: isRecapFtueSession(sessionMeta),
+              openAgendaItemId: openItem?.id,
+            });
           }
         } catch (err: unknown) {
           voiceLog.warn(`FTUE firstMessage composition failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);

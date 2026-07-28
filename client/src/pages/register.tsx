@@ -84,18 +84,8 @@ export default function RegisterPage() {
       setAuthError({ title: "Password must be at least 8 characters" });
       return;
     }
-    register.mutate(
-      { email: inviteEmail.trim(), password, inviteToken: token || undefined },
-      {
-        onSuccess: () => setStep("name"),
-        onError: (err: any) => {
-          const msg = err.message?.includes("400")
-            ? "Invalid registration data"
-            : "Registration failed";
-          setAuthError({ title: msg, detail: err?.message });
-        },
-      }
-    );
+    setAuthError(null);
+    setStep("name");
   };
 
   const handleNameSubmit = async (e: React.FormEvent) => {
@@ -103,10 +93,19 @@ export default function RegisterPage() {
     if (!name.trim() || savingName) return;
     setSavingName(true);
     try {
+      await register.mutateAsync({
+        email: inviteEmail.trim(),
+        password,
+        name: name.trim(),
+        inviteToken: token || undefined,
+      });
       const result = await completeStartupOnboarding(name);
       setLocation(getStartupOnboardingDestination(result), { replace: true });
     } catch (err: any) {
-      setAuthError({ title: err?.message || "Could not save name", detail: err?.message });
+      const msg = err.message?.includes("400")
+        ? "Invalid registration data"
+        : err?.message || "Registration failed";
+      setAuthError({ title: msg, detail: err?.message });
       setSavingName(false);
     }
   };
@@ -218,14 +217,9 @@ export default function RegisterPage() {
               <Button
                 type="submit"
                 className={authButtonClass}
-                disabled={register.isPending}
                 data-testid="button-register-submit"
               >
-                {register.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Continue"
-                )}
+                Continue
               </Button>
               <Button
                 type="button"

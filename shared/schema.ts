@@ -220,6 +220,7 @@ export const loginSchema = z.object({
 export const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
+  name: z.string().min(1).max(120),
   inviteToken: z.string().optional(),
 });
 

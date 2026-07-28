@@ -105,7 +105,7 @@ export function useLogout() {
 
 export function useSetup() {
   return useMutation({
-    mutationFn: async (data: { email: string; password: string }) => {
+    mutationFn: async (data: { email: string; password: string; name: string }) => {
       const res = await apiRequest("POST", "/api/auth/setup", data);
       const body = await res.json() as { user: AuthUser; principal?: AuthPrincipal | null };
       return body;
@@ -120,7 +120,7 @@ export function useSetup() {
 
 export function useRegister() {
   return useMutation({
-    mutationFn: async (data: { email: string; password: string; inviteToken?: string }) => {
+    mutationFn: async (data: { email: string; password: string; name: string; inviteToken?: string }) => {
       authLog.info("register:start", { emailHashHint: data.email.slice(0, 2) + "***" });
       const res = await apiRequest("POST", "/api/auth/register", data);
       authLog.info("register:response", { status: res.status, ok: res.ok, type: res.type, url: res.url });

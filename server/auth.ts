@@ -14,7 +14,7 @@ import crypto from "crypto";
 import { storage } from "./storage";
 import { getSetting, setSetting } from "./system-settings";
 import { getAutomationAuthToken } from "./automation-auth-token";
-import { loginSchema, registerSchema, userProfiles, users, type User } from "@shared/schema";
+import { loginSchema, registerSchema, users, type User } from "@shared/schema";
 import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import {
@@ -40,6 +40,7 @@ import { claimInvitedSubjectInTransaction } from "./invited-subject-service";
 const setupSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
+  name: z.string().min(1).max(120),
 });
 
 // Invite-authorized account claim. The onboarding token is the sole
@@ -312,8 +313,14 @@ function userResponse(user: User, principal?: Principal | null) {
   };
 }
 
-async function completeUserAuth(req: Request, res: Response, user: User, context: string) {
-  await ensureUserIdentityFoundation(user);
+async function completeUserAuth(
+  req: Request,
+  res: Response,
+  user: User,
+  context: string,
+  identityName?: string,
+) {
+  await ensureUserIdentityFoundation(user, { identityName });
   await regenerateSession(req);
   delete req.session.servicePrincipal;
   req.session.userId = user.id;
@@ -618,12 +625,12 @@ export function setupAuth(app: Express) {
           });
       }
       const email = normalizeEmailAddress(parsed.data.email);
-      const { password } = parsed.data;
+      const { password, name } = parsed.data;
 
       const hashed = await bcrypt.hash(password, 12);
       const authenticatedUser = await storage.createInitialAdmin({ email, password: hashed });
       if (!authenticatedUser) return res.status(403).json({ error: "Setup already completed" });
-      const principal = await completeUserAuth(req, res, authenticatedUser, "setup");
+      const principal = await completeUserAuth(req, res, authenticatedUser, "setup", name);
       res.json(userResponse(authenticatedUser, principal));
     } catch (error: any) {
       if (error.message?.includes("unique")) {
@@ -661,7 +668,6 @@ export function setupAuth(app: Express) {
           email,
           password: hashedPlaceholder,
         });
-        await ensureUserIdentityFoundation(user);
         await setUserPermissionOverrides(user.id, []);
         await storage.updateUser(user.id, {
           inviteToken: capabilityDigest(token),
@@ -700,7 +706,7 @@ export function setupAuth(app: Express) {
       }
 
       const email = normalizeEmailAddress(parsed.data.email);
-      const { password, inviteToken } = parsed.data;
+      const { password, inviteToken, name } = parsed.data;
 
       const hashed = await bcrypt.hash(password, 12);
       let user;
@@ -735,7 +741,7 @@ export function setupAuth(app: Express) {
         });
       }
 
-      const principal = await completeUserAuth(req, res, user, "register");
+      const principal = await completeUserAuth(req, res, user, "register", name);
       res.json(userResponse(user, principal));
     } catch (error: any) {
       const message = error instanceof Error ? error.message : String(error);
@@ -826,6 +832,7 @@ export function setupAuth(app: Express) {
         return res.status(400).json({ error: "Invalid claim data", details: parsed.error.flatten() });
       }
       const { token, name, password } = parsed.data;
+      const displayName = name.trim().replace(/\s+/g, " ").slice(0, 120);
 
       // 1. Re-resolve via the canonical pure-read path. Dynamic import avoids
       //    any module-load cycle between auth and the meeting subsystem.
@@ -882,17 +889,7 @@ export function setupAuth(app: Express) {
 
       // 4. Establish the authenticated session for the new principal. This also
       //    ensures the identity foundation (account, membership, profile rows).
-      const principal = await completeUserAuth(req, res, claimResult.user, "claim");
-
-      // Persist the recipient-provided display name on the freshly created
-      // profile row (created with null names by ensureUserIdentityFoundation).
-      const displayName = name.trim().slice(0, 120);
-      if (displayName) {
-        await db
-          .update(userProfiles)
-          .set({ displayName, preferredName: displayName, updatedAt: sql`CURRENT_TIMESTAMP` })
-          .where(eq(userProfiles.userId, claimResult.user.id));
-      }
+      const principal = await completeUserAuth(req, res, claimResult.user, "claim", displayName);
 
       log.info("[AuthClaim] Provisional recipient claimed account", {
         userId: claimResult.user.id,
