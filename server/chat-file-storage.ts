@@ -1355,6 +1355,11 @@ export interface IChatFileStorage {
     meeting: MeetingSessionMeta,
     sessionKey?: string,
   ): Promise<FileSession>;
+  createMeetingSessionOnce(
+    title: string,
+    meeting: MeetingSessionMeta,
+    sessionKey: string,
+  ): Promise<{ outcome: "created" | "existing"; session: FileSession }>;
   findMeetingSessionForOccurrence(input: {
     occurrenceKey: string;
     calendarAccountId?: string;
@@ -2516,6 +2521,47 @@ export const chatFileStorage: IChatFileStorage = {
       invalidateSessionsCache({ action: "created", sessionId: id, session: meta });
       return meta;
     })));
+  },
+
+  async createMeetingSessionOnce(
+    title: string,
+    meeting: MeetingSessionMeta,
+    sessionKey: string,
+  ) {
+    const normalizedSessionKey = sessionKey.trim();
+    if (!normalizedSessionKey) throw new Error("Replay-safe Meeting creation requires a session key");
+    const principal = getCurrentPrincipalOrSystem();
+    if (!principal.userId || !principal.accountId || principal.actorType !== "user") {
+      throw new Error("Replay-safe Meeting creation requires a user principal");
+    }
+    return db.transaction(async transaction => runWithDatabaseTransaction(transaction, async () => {
+      await acquireAdvisoryTransactionLock(
+        transaction,
+        ADVISORY_LOCK_NS.CHAT_SESSION_KEY,
+        `${principal.accountId}:${principal.userId}:${normalizedSessionKey}`,
+      );
+      const [existing] = await transaction
+        .select({ documentId: documentStoreDocuments.documentId })
+        .from(documentStoreDocuments)
+        .where(combineWithWritableScope(
+          principal,
+          targetChatDocumentScopeColumns,
+          and(
+            eq(documentStoreDocuments.documentType, "chat"),
+            sql`${documentStoreDocuments.metadata}->>'type' = 'meeting'`,
+            sql`${documentStoreDocuments.metadata}->>'sessionKey' = ${normalizedSessionKey}`,
+          ),
+        ))
+        .orderBy(documentStoreDocuments.createdAt)
+        .limit(1);
+      if (existing) {
+        const session = await chatFileStorage.getSession(existing.documentId);
+        if (!session?.meeting) throw new Error("Existing recipient Meeting projection is malformed");
+        return { outcome: "existing" as const, session };
+      }
+      const session = await chatFileStorage.createMeetingSession(title, meeting, normalizedSessionKey);
+      return { outcome: "created" as const, session };
+    }));
   },
 
   async updateMeetingMeta(

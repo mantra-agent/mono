@@ -17,6 +17,7 @@ import {
 } from "@shared/schema";
 import { ADVISORY_LOCK_NS, db, fnv1a32 } from "./db";
 import type { Principal } from "./principal";
+import { getCurrentPrincipalOrSystem } from "./principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -609,6 +610,10 @@ async function repointReferences(
 }
 
 async function syncEmailIndex(tx: Tx, sourceId: string, target: Person): Promise<void> {
+  const principal = getCurrentPrincipalOrSystem();
+  if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+    throw new Error("Person merge email indexing requires an authenticated user account");
+  }
   const emails = [...new Set(
     target.contactInfo
       .filter(contact => contact.type === "email" && contact.value.includes("@"))
@@ -618,21 +623,29 @@ async function syncEmailIndex(tx: Tx, sourceId: string, target: Person): Promise
     const conflicts = await tx
       .select({ email: personEmails.email, personId: personEmails.personId })
       .from(personEmails)
-      .where(inArray(personEmails.email, emails));
+      .where(and(
+        eq(personEmails.accountId, principal.accountId),
+        inArray(personEmails.email, emails),
+      ));
     const foreign = conflicts.find(
       row => row.personId !== sourceId && row.personId !== target.id,
     );
     if (foreign) {
       throw new Error(
-        "Cannot merge because one of the merged emails is indexed to a different Person",
+        "Cannot merge because one of the merged emails is indexed to a different Person in this account",
       );
     }
   }
 
-  await tx.delete(personEmails).where(inArray(personEmails.personId, [sourceId, target.id]));
+  await tx.delete(personEmails).where(and(
+    eq(personEmails.accountId, principal.accountId),
+    inArray(personEmails.personId, [sourceId, target.id]),
+  ));
   const now = new Date();
   for (const email of emails) {
     await tx.insert(personEmails).values({
+      accountId: principal.accountId,
+      ownerUserId: principal.userId,
       email,
       personId: target.id,
       personName: target.name,

@@ -815,6 +815,8 @@ export const ADVISORY_LOCK_NS = {
   WORKFLOW_ARTIFACTS: 0x57464152, // 'WFAR' — serializes child-session artifact projection per stage attempt
   USER_IDENTITY: 0x55494446, // 'UIDF' — serializes personal account, membership, profile, and default Vault provisioning
   AGENDA_DEFINITION: 0x41474446, // 'AGDF' — serializes agenda definition mutations and reserved seeding per owner/account
+  PERSON_EMAIL: 0x50454d4c, // 'PEML' — serializes account-local Person identity by normalized email
+  RECIPIENT_RECAP: 0x52524350, // 'RRCP' — serializes one recipient-owned recap materialization
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";

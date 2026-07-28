@@ -1097,13 +1097,19 @@ export type InsertEmailMessage = z.infer<typeof insertEmailMessageSchema>;
 
 
 export const personEmails = pgTable("person_emails", {
-  email: text("email").primaryKey(),
-  personId: text("person_id").notNull(),
+  accountId: text("account_id").notNull(),
+  ownerUserId: text("owner_user_id").notNull(),
+  email: text("email").notNull(),
+  personId: text("person_id").notNull().references(() => persons.id, { onDelete: "cascade" }),
   personName: text("person_name").notNull(),
   source: text("source").notNull().default("contact_info"),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => [
+  primaryKey({ columns: [table.accountId, table.email] }),
+  index("idx_person_emails_person").on(table.personId),
+  index("idx_person_emails_owner").on(table.ownerUserId, table.accountId),
+]);
 
 export type PersonEmail = typeof personEmails.$inferSelect;
 
