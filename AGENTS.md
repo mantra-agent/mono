@@ -285,8 +285,8 @@ Layer 6: Intelligence    — Skills, prompt modules, scoring, campaigns, council
 Layer 5: Interface       — Chat streaming, voice (ElevenLabs), 56 UI pages, Focus widget
 Layer 4: Orchestration   — Agent executor, timer scheduler, admission controller, hooks
 Layer 3: Domain Services — Memory, people, finance, wellness, library, email, social
-Layer 2: Storage         — PostgreSQL, S3 object storage, document store, TTL caches
-Layer 1: Infrastructure  — Express server, WebSocket, event bus, DB pool, auth
+Layer 2: Storage         — PostgreSQL SQL tables + PostgreSQL document store, S3 object storage, process-local TTL caches
+Layer 1: Infrastructure  — Express server, WebSocket, event bus, PostgreSQL pools, auth
 ```
 
 ## Composition Roots
@@ -303,14 +303,14 @@ Plus: `registerChatRoutes`, `registerPeopleRoutes`, `registerGoalRoutes`, `regis
 
 | Domain | Storage | Key Tables/Files |
 |--------|---------|-----------------|
-| Memory + graph | PostgreSQL + pgvector | `memory_entries`, `memory_links` |
-| Conversations | Document store (JSON blobs) | `workspace_documents` |
+| Memory + graph | PostgreSQL + pgvector | `memory_vnext_claims`, `memory_vnext_claim_links`, `memory_vnext_sources`; legacy `memory_entries` closure pending quarantine |
+| Conversations | PostgreSQL document store (whole-session JSON text + indexed JSONB metadata) | `document_store_documents` via `DocumentStorage` / `chat-file-storage.ts` |
 | Intentions | PostgreSQL | `intention_items` |
-| Timers | PostgreSQL + TTLCache | `timers`, `timer_schedules` |
+| Timers | PostgreSQL + TTLCache | `timers` (`schedules` JSONB column), `responsibility_runs` |
 | Skills | PostgreSQL | `skills`, `skill_runs` |
 | Prompt modules | PostgreSQL | `prompt_modules`, `prompt_module_versions` |
 | Session artifacts | PostgreSQL | `session_artifacts` (join table: sessions → Library pages, files, memory, content, docx) |
-| People | Document store | `workspace_documents` (type: person) |
+| People | PostgreSQL relational storage | `persons`, `person_vault_memberships`, `person_emails`, `person_merge_aliases` |
 | Library | PostgreSQL | `library_pages` (TipTap JSON) |
 | Email | PostgreSQL | `email_messages`, `email_enrichments` (7 tables) |
 | Finance | PostgreSQL (Plaid) | 26 tables in `shared/models/finance.ts` |
@@ -325,6 +325,11 @@ Plus: `registerChatRoutes`, `registerPeopleRoutes`, `registerGoalRoutes`, `regis
 | Persistent files | Object storage (R2) | Cloud |
 | Scratch workspace | Local filesystem | Ephemeral |
 
+### PostgreSQL Runtime Shape
+
+`server/db.ts` is the ordinary application boundary: one instrumented Drizzle proxy selects a 26-connection general pool or reserved 4-connection voice pool by AsyncLocalStorage (30 configured connections per app process). Authentication adds a separate 5-connection `connect-pg-simple` pool, and diagnosed export/watchdog operations may open short-lived dedicated clients. Raw SQL remains common for DDL, catalog queries, PostgreSQL-specific operators, bulk SQL, and migrations; Drizzle is not an exclusive abstraction. See `server/AGENTS.md` § Database Architecture for the current access paths, timeout model, workload classes, operating rules, and explicitly labeled gaps.
+
+Schema ownership is currently distributed: `runSchemaBootstrap()` performs extensive blocking pre-readiness DDL and repair, several subsystem schema owners run in ordered boot phases, Library still performs compatibility DDL during route registration, and document-search trigram indexes converge after readiness with concurrent index operations. Do not describe the migration-file directory or Drizzle schema declarations as the sole deployed-schema authority.
 
 ### Skills vs Prompt Modules
 
@@ -353,10 +358,11 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 ## Known Structural Gaps
 
 1. **`bridge-tools.ts` is a 587KB monolith** — 126 handlers, no domain isolation
-2. **Two parallel storage strategies** — SQL-direct (newer) vs document-backed (older), no unified abstraction
-3. **Session blob storage** — Full JSON rewrite on every message, no pagination
-4. **voice-llm.ts is 3,104 lines** — Session management, SSE, keepalive, persistence in one file
-5. **Timer execution is strictly serial** — One slow skill blocks all subsequent timers
+2. **Fragmented PostgreSQL access** — Ordinary work crosses the `db` proxy, but raw general-pool calls, a separate auth pool, route-time DDL, and exceptional dedicated clients remain; instrumentation, lane selection, and shutdown ownership are not universal
+3. **Session blob storage** — `document_store_documents.content` rewrites the full session JSON under a per-session advisory transaction lock; no message-row pagination
+4. **Distributed schema convergence** — Migration SQL, `runSchemaBootstrap`, subsystem ensures, route registration, and post-ready index maintenance all participate in deployed schema state
+5. **Memory source queue claim race** — Poll and `markProcessing` are separate unguarded statements, so multiple app replicas can select and process the same settled source
+6. **Timer execution is strictly serial per app process** — One slow timer blocks that process's queue; PostgreSQL run-slot claims provide selected cross-replica idempotency, not a universal scheduler lease
 
 ## Subdirectory Context
 
