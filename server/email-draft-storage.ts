@@ -1,7 +1,19 @@
-import { db } from "./db";
-import { eq, and, sql, inArray, desc } from "drizzle-orm";
+import {
+  acquireAdvisoryTransactionLock,
+  ADVISORY_LOCK_NS,
+  db,
+  runWithDatabaseTransaction,
+} from "./db";
+import { eq, and, sql, inArray, desc, isNull } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { emailDrafts, meetingRecapDistributions, type EmailDraft } from "@shared/schema";
+import {
+  emailDrafts,
+  meetingRecapDistributions,
+  personEmails,
+  persons,
+  users,
+  type EmailDraft,
+} from "@shared/schema";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import {
@@ -10,6 +22,19 @@ import {
   ownedInsertValues,
   assertWritable,
 } from "./scoped-storage";
+import { visiblePersonPredicate } from "./person-vault-access";
+import { normalizeEmailAddress } from "./email-normalization";
+import { resolveOrCreateInvitedSubjectInTransaction } from "./invited-subject-service";
+import {
+  createRecipientEntryCapability,
+  onboardingEntryUrl,
+  recapCapabilityHashesFromBody,
+} from "./meeting/recap-capability";
+import {
+  buildRecapEmailContent,
+  replaceRecapEntryUrl,
+} from "./meeting/recap-email-content";
+import { resolveMeetingTransportSession } from "./meeting/owner-principal";
 
 const log = createLogger("EmailDraftStorage");
 
@@ -27,6 +52,7 @@ const recapDistributionScopeColumns = {
 
 export interface CreateEmailDraftInput {
   sessionId?: string;
+  purpose?: "ordinary" | "meeting_recap";
   gmailAccountId?: string;
   to: string[];
   cc?: string[];
@@ -57,8 +83,47 @@ export type EmailDraftBodyMutationResult =
   | { status: "updated"; draft: EmailDraft; bodyHash: string }
   | { status: Exclude<EmailDraftBodyMutationStatus, "updated">; bodyHash?: string };
 
+export interface RecapDraftRecipientProjection {
+  personId: string;
+  name: string;
+  email: string;
+}
+
+export type EmailDraftRecipientMode =
+  | { mode: "freeform" }
+  | { mode: "recap_person"; selected: RecapDraftRecipientProjection | null };
+
+export type RecapRecipientMutationResult = {
+  draft: EmailDraft;
+  recipientMode: Extract<EmailDraftRecipientMode, { mode: "recap_person" }>;
+};
+
 function hashDraftBody(body: string): string {
   return createHash("sha256").update(body, "utf8").digest("hex");
+}
+
+function firstName(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized.split(/\s+/)[0] || null : null;
+}
+
+function updateRecapRecipientBody(
+  body: string,
+  priorRecipientName: string | null,
+  recipientName: string,
+  recapEntryUrl: string,
+): string {
+  const priorGreeting = firstName(priorRecipientName);
+  const nextGreeting = firstName(recipientName);
+  const rotated = replaceRecapEntryUrl(body, recapEntryUrl);
+  if (!nextGreeting) return rotated;
+  if (priorGreeting && rotated.startsWith(`Hi ${priorGreeting},`)) {
+    return `Hi ${nextGreeting},${rotated.slice(`Hi ${priorGreeting},`.length)}`;
+  }
+  if (rotated.startsWith("Hi,")) {
+    return `Hi ${nextGreeting},${rotated.slice(3)}`;
+  }
+  return rotated;
 }
 
 function countExactMatches(body: string, find: string): number {
@@ -139,6 +204,7 @@ export class EmailDraftStorage {
         ...owned,
         createdByUserId: principal.userId ?? null,
         sessionId: input.sessionId ?? null,
+        purpose: input.purpose ?? "ordinary",
         gmailAccountId: input.gmailAccountId ?? null,
         to: input.to,
         cc: input.cc ?? [],
@@ -167,6 +233,38 @@ export class EmailDraftStorage {
     return row ?? null;
   }
 
+  async getRecipientMode(
+    principal: Principal,
+    draft: EmailDraft,
+  ): Promise<EmailDraftRecipientMode> {
+    if (draft.purpose !== "meeting_recap") return { mode: "freeform" };
+    const [distribution] = await db
+      .select({
+        personId: meetingRecapDistributions.recipientPersonId,
+        name: meetingRecapDistributions.attendeeName,
+        email: meetingRecapDistributions.attendeeEmail,
+      })
+      .from(meetingRecapDistributions)
+      .where(combineWithVisibleScope(
+        principal,
+        recapDistributionScopeColumns,
+        and(
+          eq(meetingRecapDistributions.draftId, draft.id),
+          isNull(meetingRecapDistributions.accessRevokedAt),
+        ),
+      ))
+      .limit(1);
+    if (!distribution?.personId) return { mode: "recap_person", selected: null };
+    return {
+      mode: "recap_person",
+      selected: {
+        personId: distribution.personId,
+        name: distribution.name?.trim() || distribution.email,
+        email: distribution.email,
+      },
+    };
+  }
+
   /**
    * List drafts visible to the principal that are linked to any of the given
    * Gmail thread IDs. Used by the Comms Review tab to show linked drafts per thread.
@@ -188,20 +286,20 @@ export class EmailDraftStorage {
     id: string,
     mutation: EmailDraftBodyMutation,
   ): Promise<EmailDraftBodyMutationResult> {
+    const current = await this.getById(principal, id);
+    if (!current) return { status: "not_found" };
     return db.transaction(async (tx) => {
       const writable = combineWithWritableScope(
         principal,
         scopeColumns,
         eq(emailDrafts.id, id),
       );
-      const rows = await tx.execute(sql`
-        SELECT *
-        FROM ${emailDrafts}
-        WHERE ${writable}
-        LIMIT 1
-        FOR UPDATE
-      `);
-      const existing = rows.rows[0] as EmailDraft | undefined;
+      const [existing] = await tx
+        .select()
+        .from(emailDrafts)
+        .where(writable)
+        .limit(1)
+        .for("update");
       if (!existing) return { status: "not_found" };
       if (existing.status !== "draft") return { status: "immutable_draft" };
 
@@ -227,6 +325,17 @@ export class EmailDraftStorage {
     id: string,
     patch: UpdateEmailDraftInput,
   ): Promise<EmailDraft | null> {
+    const initial = await this.getById(principal, id);
+    if (!initial) return null;
+    if (
+      initial.purpose === "meeting_recap"
+      && (patch.to !== undefined || patch.cc !== undefined || patch.bcc !== undefined)
+    ) {
+      throw Object.assign(
+        new Error("Recap recipients must be changed through the Person-linked recipient selector"),
+        { status: 400 },
+      );
+    }
     if (patch.body !== undefined) {
       const bodyResult = await this.mutateBody(principal, id, {
         type: "replace_body",
@@ -243,8 +352,7 @@ export class EmailDraftStorage {
       }
     }
 
-    const existing = await this.getById(principal, id);
-    if (!existing) return null;
+    const existing = initial;
     assertWritable(principal, existing, "email_draft");
 
     if (existing.status !== "draft") {
@@ -281,6 +389,284 @@ export class EmailDraftStorage {
     return updated ?? null;
   }
 
+  async setRecapRecipient(
+    principal: Principal,
+    draftId: string,
+    personId: string,
+    email: string,
+  ): Promise<RecapRecipientMutationResult> {
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      throw Object.assign(new Error("Recap recipient changes require an authenticated user"), { status: 403 });
+    }
+    const normalizedPersonId = personId.trim();
+    let normalizedEmail: string;
+    try {
+      normalizedEmail = normalizeEmailAddress(email);
+    } catch {
+      throw Object.assign(new Error("A valid Person-linked email is required"), { status: 400 });
+    }
+    if (!normalizedPersonId || !normalizedEmail) {
+      throw Object.assign(new Error("A Person and linked email are required"), { status: 400 });
+    }
+
+    return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+      await acquireAdvisoryTransactionLock(
+        tx,
+        ADVISORY_LOCK_NS.RECAP_DRAFT_RECIPIENT,
+        `${principal.accountId}:${draftId}`,
+      );
+      const [draft] = await tx
+        .select()
+        .from(emailDrafts)
+        .where(combineWithWritableScope(principal, scopeColumns, eq(emailDrafts.id, draftId)))
+        .limit(1)
+        .for("update");
+      if (!draft) throw Object.assign(new Error("Draft not found"), { status: 404 });
+      if (draft.status !== "draft") {
+        throw Object.assign(new Error(`Cannot edit draft in '${draft.status}' status`), { status: 400 });
+      }
+      if (draft.purpose !== "meeting_recap" || !draft.sessionId) {
+        throw Object.assign(new Error("Draft is not a meeting recap"), { status: 400 });
+      }
+
+      const [person] = await tx
+        .select({ id: persons.id, name: persons.name })
+        .from(personEmails)
+        .innerJoin(persons, eq(persons.id, personEmails.personId))
+        .where(and(
+          eq(personEmails.email, normalizedEmail),
+          eq(personEmails.personId, normalizedPersonId),
+          visiblePersonPredicate(principal),
+        ))
+        .limit(1);
+      if (!person) {
+        throw Object.assign(
+          new Error("Selected email is not linked to that visible Person"),
+          { status: 400 },
+        );
+      }
+
+      let [existing] = await tx
+        .select()
+        .from(meetingRecapDistributions)
+        .where(combineWithWritableScope(
+          principal,
+          recapDistributionScopeColumns,
+          eq(meetingRecapDistributions.draftId, draftId),
+        ))
+        .limit(1)
+        .for("update");
+      if (!existing) {
+        [existing] = await tx
+          .select()
+          .from(meetingRecapDistributions)
+          .where(combineWithWritableScope(
+            principal,
+            recapDistributionScopeColumns,
+            and(
+              eq(meetingRecapDistributions.sessionId, draft.sessionId),
+              eq(meetingRecapDistributions.attendeeEmail, normalizedEmail),
+              eq(meetingRecapDistributions.status, "failed"),
+            ),
+          ))
+          .limit(1)
+          .for("update");
+        if (existing) {
+          await tx
+            .update(meetingRecapDistributions)
+            .set({ draftId })
+            .where(combineWithWritableScope(
+              principal,
+              recapDistributionScopeColumns,
+              eq(meetingRecapDistributions.id, existing.id),
+            ));
+        }
+      }
+      const existingBodyHashes = recapCapabilityHashesFromBody(draft.body);
+      if (
+        existing
+        && existing.recipientPersonId === person.id
+        && normalizeEmailAddress(existing.attendeeEmail) === normalizedEmail
+        && existing.status === "draft_created"
+        && !existing.accessRevokedAt
+        && draft.to.length === 1
+        && normalizeEmailAddress(draft.to[0]) === normalizedEmail
+        && draft.cc.length === 0
+        && draft.bcc.length === 0
+        && !!existing.onboardingTokenHash
+        && existingBodyHashes.length === 1
+        && existingBodyHashes[0] === existing.onboardingTokenHash
+      ) {
+        return {
+          draft,
+          recipientMode: {
+            mode: "recap_person",
+            selected: { personId: person.id, name: person.name, email: normalizedEmail },
+          },
+        };
+      }
+
+      const meetingSession = await resolveMeetingTransportSession(draft.sessionId);
+      const meeting = meetingSession?.meeting;
+      const recap = meeting?.recap;
+      if (!meeting || !recap || recap.status !== "ready") {
+        throw Object.assign(new Error("Canonical meeting recap is not ready"), { status: 409 });
+      }
+      if (meeting.ownerUserId !== principal.userId || meeting.principalAccountId !== principal.accountId) {
+        throw Object.assign(new Error("Meeting recap is not owned by the current principal"), { status: 403 });
+      }
+
+      const capability = createRecipientEntryCapability();
+      const body = existingBodyHashes.length > 0
+        ? updateRecapRecipientBody(
+            draft.body,
+            existing?.attendeeName ?? null,
+            person.name,
+            onboardingEntryUrl(capability.token),
+          )
+        : await buildRecapEmailContent(
+            recap,
+            meeting,
+            { personId: person.id, name: person.name, email: normalizedEmail },
+            null,
+            principal,
+            onboardingEntryUrl(capability.token),
+          );
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.INVITED_SUBJECT, normalizedEmail);
+      const [existingUser] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(sql`LOWER(BTRIM(${users.email})) = ${normalizedEmail}`)
+        .limit(1);
+      if (!existingUser) {
+        await resolveOrCreateInvitedSubjectInTransaction(tx, normalizedEmail, person.name);
+      }
+
+      let distributionId = existing?.id;
+      if (existing) {
+        await tx
+          .update(meetingRecapDistributions)
+          .set({
+            attendeeEmail: normalizedEmail,
+            attendeeName: person.name,
+            recipientPersonId: person.id,
+            isMantraUser: !!existingUser,
+            accessTokenHash: null,
+            onboardingTokenHash: capability.tokenHash,
+            accessExpiresAt: capability.expiresAt,
+            accessRevokedAt: null,
+            sendMethod: "gmail_draft",
+            status: "draft_created",
+            error: null,
+            discardedAt: null,
+            updatedAt: sql`CURRENT_TIMESTAMP`,
+          })
+          .where(combineWithWritableScope(
+            principal,
+            recapDistributionScopeColumns,
+            eq(meetingRecapDistributions.id, existing.id),
+          ));
+      } else {
+        const [created] = await tx
+          .insert(meetingRecapDistributions)
+          .values({
+            ...ownedInsertValues(principal, recapDistributionScopeColumns),
+            sessionId: draft.sessionId,
+            attendeeEmail: normalizedEmail,
+            attendeeName: person.name,
+            recipientPersonId: person.id,
+            isMantraUser: !!existingUser,
+            onboardingTokenHash: capability.tokenHash,
+            accessExpiresAt: capability.expiresAt,
+            draftId,
+            sendMethod: "gmail_draft",
+            status: "draft_created",
+          })
+          .returning({ id: meetingRecapDistributions.id });
+        distributionId = created?.id;
+      }
+      if (!distributionId) throw new Error("Recap distribution was not persisted");
+
+      const [updatedDraft] = await tx
+        .update(emailDrafts)
+        .set({
+          to: [normalizedEmail],
+          cc: [],
+          bcc: [],
+          body,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .where(combineWithWritableScope(
+          principal,
+          scopeColumns,
+          and(eq(emailDrafts.id, draftId), eq(emailDrafts.status, "draft")),
+        ))
+        .returning();
+      if (!updatedDraft) throw Object.assign(new Error("Draft became immutable during recipient change"), { status: 409 });
+      log.info(`rotated recap recipient capability draft=${draftId} distribution=${distributionId}`);
+      return {
+        draft: updatedDraft,
+        recipientMode: {
+          mode: "recap_person",
+          selected: { personId: person.id, name: person.name, email: normalizedEmail },
+        },
+      };
+    }));
+  }
+
+  private async assertRecapSendConsistency(
+    principal: Principal,
+    draft: EmailDraft,
+  ): Promise<void> {
+    if (draft.purpose !== "meeting_recap") return;
+    if (draft.to.length !== 1 || draft.cc.length !== 0 || draft.bcc.length !== 0) {
+      throw Object.assign(
+        new Error("Repair this recap recipient before sending: recap drafts require exactly one To recipient and no CC/BCC"),
+        { status: 409 },
+      );
+    }
+    const [distribution] = await db
+      .select()
+      .from(meetingRecapDistributions)
+      .where(combineWithVisibleScope(
+        principal,
+        recapDistributionScopeColumns,
+        and(
+          eq(meetingRecapDistributions.draftId, draft.id),
+          eq(meetingRecapDistributions.status, "draft_created"),
+          isNull(meetingRecapDistributions.accessRevokedAt),
+        ),
+      ))
+      .limit(1);
+    if (!distribution?.recipientPersonId || !distribution.onboardingTokenHash) {
+      throw Object.assign(
+        new Error("Select a Person-linked recap recipient before sending"),
+        { status: 409 },
+      );
+    }
+    const normalizedTo = normalizeEmailAddress(draft.to[0]);
+    if (normalizedTo !== normalizeEmailAddress(distribution.attendeeEmail)) {
+      throw Object.assign(new Error("Repair this recap recipient before sending: envelope and recipient identity differ"), { status: 409 });
+    }
+    const person = await db
+      .select({ id: persons.id })
+      .from(personEmails)
+      .innerJoin(persons, eq(persons.id, personEmails.personId))
+      .where(and(
+        eq(personEmails.email, normalizedTo),
+        eq(personEmails.personId, distribution.recipientPersonId),
+        visiblePersonPredicate(principal),
+      ))
+      .limit(1);
+    const bodyHashes = recapCapabilityHashesFromBody(draft.body);
+    if (!person[0] || bodyHashes.length !== 1 || bodyHashes[0] !== distribution.onboardingTokenHash) {
+      throw Object.assign(
+        new Error("Repair this recap recipient before sending: the identity-bound recap link is stale"),
+        { status: 409 },
+      );
+    }
+  }
+
   private async markRecapDistributionSent(principal: Principal, draftId: string): Promise<void> {
     await db.update(meetingRecapDistributions).set({
       status: "sent",
@@ -307,37 +693,76 @@ export class EmailDraftStorage {
     ));
   }
 
+  private async claimForProviderSend(
+    principal: Principal,
+    id: string,
+  ): Promise<EmailDraft> {
+    if (!principal.accountId) {
+      throw Object.assign(new Error("Email sending requires an account-bound principal"), { status: 403 });
+    }
+    return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+      await acquireAdvisoryTransactionLock(
+        tx,
+        ADVISORY_LOCK_NS.RECAP_DRAFT_RECIPIENT,
+        `${principal.accountId}:${id}`,
+      );
+      const [existing] = await tx
+        .select()
+        .from(emailDrafts)
+        .where(combineWithWritableScope(principal, scopeColumns, eq(emailDrafts.id, id)))
+        .limit(1)
+        .for("update");
+      if (!existing) throw Object.assign(new Error("Draft not found"), { status: 404 });
+      if (existing.status === "sent") return existing;
+      if (existing.status === "sending") {
+        throw Object.assign(new Error("Email delivery is already in progress"), { status: 409 });
+      }
+      if (existing.status !== "draft") {
+        throw Object.assign(
+          new Error(`Cannot send draft in '${existing.status}' status`),
+          { status: 400 },
+        );
+      }
+
+      await this.assertRecapSendConsistency(principal, existing);
+      const [claimed] = await tx
+        .update(emailDrafts)
+        .set({ status: "sending", updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(combineWithWritableScope(
+          principal,
+          scopeColumns,
+          and(eq(emailDrafts.id, id), eq(emailDrafts.status, "draft")),
+        ))
+        .returning();
+      if (!claimed) {
+        throw Object.assign(new Error("Email delivery state changed before send admission"), { status: 409 });
+      }
+      return claimed;
+    }));
+  }
+
   /**
    * Send a draft. ONLY callable by user principals (actorType === 'user').
-   * Idempotent: if already sent, returns the existing sent record.
+   * Idempotent after provider identity is persisted; concurrent sends fail closed.
    */
   async send(
     principal: Principal,
     id: string,
     sendFn: (draft: EmailDraft) => Promise<{ messageId: string; gmailAccountId: string }>,
   ): Promise<EmailDraft> {
-    const existing = await this.getById(principal, id);
-    if (!existing) {
-      throw Object.assign(new Error("Draft not found"), { status: 404 });
-    }
-    assertWritable(principal, existing, "email_draft");
+    const claimed = await this.claimForProviderSend(principal, id);
 
     // Idempotent: already sent. The route may replay downstream projection,
     // but provider delivery must never execute twice.
-    if (existing.status === "sent") {
+    if (claimed.status === "sent") {
       await this.markRecapDistributionSent(principal, id);
-      return existing;
+      return claimed;
     }
 
-    if (existing.status !== "draft") {
-      throw Object.assign(
-        new Error(`Cannot send draft in '${existing.status}' status`),
-        { status: 400 },
-      );
-    }
-
-    // Execute the actual Gmail send
-    const result = await sendFn(existing);
+    // Execute Gmail only after the exact envelope/body/capability aggregate is
+    // durably frozen. An ambiguous provider failure intentionally leaves the
+    // draft in `sending`; replay must not risk duplicate delivery.
+    const result = await sendFn(claimed);
 
     const [sent] = await db
       .update(emailDrafts)
@@ -349,9 +774,19 @@ export class EmailDraftStorage {
         updatedAt: sql`CURRENT_TIMESTAMP`,
       })
       .where(
-        combineWithWritableScope(principal, scopeColumns, eq(emailDrafts.id, id)),
+        combineWithWritableScope(
+          principal,
+          scopeColumns,
+          and(eq(emailDrafts.id, id), eq(emailDrafts.status, "sending")),
+        ),
       )
       .returning();
+    if (!sent) {
+      throw Object.assign(
+        new Error("Gmail sent the message, but the frozen draft could not be finalized"),
+        { status: 500 },
+      );
+    }
     await this.markRecapDistributionSent(principal, id);
     log.info(`sent draft ${id}, messageId=${result.messageId}`);
     return sent;

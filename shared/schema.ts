@@ -1199,10 +1199,12 @@ export const insertEmailSyncCursorSchema = createInsertSchema(emailSyncCursors).
 export type EmailSyncCursor = typeof emailSyncCursors.$inferSelect;
 export type InsertEmailSyncCursor = z.infer<typeof insertEmailSyncCursorSchema>;
 
-export const emailDraftStatuses = ["draft", "sent", "discarded"] as const;
+export const emailDraftStatuses = ["draft", "sending", "sent", "discarded"] as const;
 export const emailDraftStatusSchema = z.enum(emailDraftStatuses);
 export const emailDraftBodyFormats = ["text", "markdown"] as const;
 export const emailDraftBodyFormatSchema = z.enum(emailDraftBodyFormats);
+export const emailDraftPurposes = ["ordinary", "meeting_recap"] as const;
+export const emailDraftPurposeSchema = z.enum(emailDraftPurposes);
 
 export const emailDrafts = pgTable("email_drafts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -1212,6 +1214,7 @@ export const emailDrafts = pgTable("email_drafts", {
   createdByUserId: text("created_by_user_id"),
   vaultId: text("vault_id"),
   sessionId: text("session_id"),
+  purpose: text("purpose", { enum: emailDraftPurposes }).notNull().default("ordinary"),
   gmailAccountId: text("gmail_account_id"),
   to: text("to").array().notNull().default(sql`'{}'::text[]`),
   cc: text("cc").array().notNull().default(sql`'{}'::text[]`),
@@ -1987,6 +1990,7 @@ export const meetingRecapDistributions = pgTable("meeting_recap_distributions", 
   scope: text("scope").notNull().default("user"),
   attendeeEmail: text("attendee_email").notNull(),
   attendeeName: text("attendee_name"),
+  recipientPersonId: text("recipient_person_id").references(() => persons.id, { onDelete: "restrict" }),
   isMantraUser: boolean("is_mantra_user").notNull().default(false),
   accessTokenHash: text("access_token_hash"),
   accessExpiresAt: timestamp("access_expires_at", { withTimezone: true }),
