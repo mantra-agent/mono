@@ -1,5 +1,6 @@
 import { lazy } from "react";
 import { createLogger } from "@/lib/logger";
+import { markNavigationLazyReady } from "@/lib/navigation-trace";
 
 const log = createLogger("lazyWithRetry");
 
@@ -15,6 +16,7 @@ export function lazyWithRetry<T extends React.ComponentType<any>>(
     factory()
       .then((mod) => {
         sessionStorage.removeItem(RETRY_COUNT_KEY);
+        markNavigationLazyReady();
         return mod;
       })
       .catch((err) => {
@@ -24,9 +26,11 @@ export function lazyWithRetry<T extends React.ComponentType<any>>(
             factory()
               .then((mod) => {
                 sessionStorage.removeItem(RETRY_COUNT_KEY);
+                markNavigationLazyReady();
                 resolve(mod);
               })
               .catch((retryErr) => {
+                markNavigationLazyReady(true);
                 log.error("chunk load retry failed:", retryErr);
                 const lastReload = Number(
                   sessionStorage.getItem(LAST_RELOAD_KEY) || "0",

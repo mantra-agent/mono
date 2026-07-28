@@ -12,6 +12,7 @@ import { initialStreamingContent } from "@shared/streaming-types";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import { createLogger } from "@/lib/logger";
 import { markChatStreamProgress, streamingContentHasText } from "@/lib/browser-telemetry";
+import { noteNavigationStreamPressure } from "@/lib/navigation-trace";
 
 const log = createLogger("SessionSub");
 
@@ -129,6 +130,13 @@ export function useSessionSubscriptions(
   const [wsConnected, setWsConnected] = useState(false);
 
   const normalizedKey = useMemo(() => normalizeSessionIds(sessionIds).join("\u0000"), [sessionIds]);
+
+  useEffect(() => {
+    const states = Object.values(streams);
+    const active = states.filter((state) => state.runActive || state.status === "streaming").length;
+    const maxSegments = states.reduce((max, state) => Math.max(max, state.streamingContent?.segments.length ?? 0), 0);
+    noteNavigationStreamPressure(sessionIds.length, active, maxSegments);
+  }, [sessionIds.length, streams]);
 
   const setStreamConnected = useCallback((connected: boolean) => {
     wsConnectedRef.current = connected;

@@ -6,8 +6,12 @@ import {
   BROWSER_TELEMETRY_BUDGETS,
   BROWSER_TELEMETRY_EVENT_KINDS,
   BROWSER_TELEMETRY_LIMITS,
+  NAVIGATION_TRACE_DIAGNOSES,
   type BrowserTelemetryEventInput,
   type BrowserTelemetrySummary,
+  type NavigationTraceDiagnosis,
+  type NavigationTraceIncident,
+  type NavigationTraceOutcome,
 } from "@shared/browser-telemetry";
 import { db } from "./db";
 import type { Principal } from "./principal";
@@ -176,6 +180,7 @@ function shouldIncludeForPercentile(kind: string, visibility: string | null): bo
 }
 
 function exceedsBrowserBudget(kind: string, value: number): boolean {
+  if (kind === "navigation") return value > BROWSER_TELEMETRY_BUDGETS.navigation.p95Ms;
   if (kind === "long_task") return value > BROWSER_TELEMETRY_BUDGETS.longTaskP95Ms;
   if (kind === "frame_contention") return value > BROWSER_TELEMETRY_BUDGETS.frameContentionP95Ms;
   if (kind === "transport_gap") return value > BROWSER_TELEMETRY_BUDGETS.transportGapP95Ms;
@@ -186,6 +191,38 @@ function exceedsBrowserBudget(kind: string, value: number): boolean {
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function metadataNumber(metadata: Record<string, unknown>, key: string): number {
+  const value = metadata[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function optionalMetadataNumber(metadata: Record<string, unknown>, key: string): number | null {
+  const value = metadata[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string {
+  return typeof metadata[key] === "string" ? String(metadata[key]) : "unknown";
+}
+
+function navigationDiagnosis(metadata: Record<string, unknown>): NavigationTraceDiagnosis {
+  const diagnosis = metadataString(metadata, "diagnosis");
+  return NAVIGATION_TRACE_DIAGNOSES.includes(diagnosis as NavigationTraceDiagnosis)
+    ? diagnosis as NavigationTraceDiagnosis
+    : "incomplete_or_unknown";
+}
+
+function navigationOutcome(metadata: Record<string, unknown>): NavigationTraceOutcome {
+  const outcome = metadataString(metadata, "outcome");
+  return outcome === "completed" || outcome === "deadline" || outcome === "pagehide" || outcome === "superseded"
+    ? outcome
+    : "deadline";
+}
 
 export async function getBrowserTelemetrySummary(principal: Principal, windowHours = 24): Promise<BrowserTelemetrySummary> {
   const hours = Math.min(Math.max(Math.floor(windowHours), 1), 168);
@@ -202,6 +239,7 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
     value: browserPerformanceTelemetry.value,
     unit: browserPerformanceTelemetry.unit,
     routeKey: browserPerformanceTelemetry.routeKey,
+    metadata: browserPerformanceTelemetry.metadata,
     occurredAt: browserPerformanceTelemetry.occurredAt,
     receivedAt: browserPerformanceTelemetry.receivedAt,
     visibility: browserPerformanceTelemetry.visibility,
@@ -249,6 +287,45 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
       occurredAt: row.occurredAt instanceof Date ? row.occurredAt.toISOString() : new Date().toISOString(),
     }));
 
+  const navigationRows = rows.filter((row) => row.kind === "navigation" && row.name === "spa_navigation" && shouldIncludeForPercentile(row.kind, row.visibility));
+  const navigationDurations = navigationRows.map((row) => Number(row.value)).filter(Number.isFinite).sort((a, b) => a - b);
+  const navigationPick = (pct: number) => navigationDurations.length
+    ? navigationDurations[Math.min(navigationDurations.length - 1, Math.floor((navigationDurations.length - 1) * pct))]
+    : null;
+  const diagnosisCounts = Object.fromEntries(NAVIGATION_TRACE_DIAGNOSES.map((diagnosis) => [diagnosis, 0])) as Record<NavigationTraceDiagnosis, number>;
+  let completedCount = 0;
+  const navigationIncidents: NavigationTraceIncident[] = [];
+  for (const row of navigationRows) {
+    const metadata = metadataRecord(row.metadata);
+    const diagnosis = navigationDiagnosis(metadata);
+    const outcome = navigationOutcome(metadata);
+    diagnosisCounts[diagnosis] += 1;
+    if (outcome === "completed") completedCount += 1;
+    if (diagnosis === "healthy" && outcome === "completed") continue;
+    navigationIncidents.push({
+      traceId: metadataString(metadata, "traceId"),
+      fromRoute: metadataString(metadata, "fromRoute"),
+      toRoute: row.routeKey ?? "unknown",
+      durationMs: Number(row.value),
+      outcome,
+      diagnosis,
+      occurredAt: row.occurredAt instanceof Date ? row.occurredAt.toISOString() : new Date().toISOString(),
+      evidence: {
+        fallbackMs: optionalMetadataNumber(metadata, "fallbackMs"),
+        lazyReadyMs: optionalMetadataNumber(metadata, "lazyReadyMs"),
+        dataReadyMs: optionalMetadataNumber(metadata, "dataReadyMs"),
+        firstCommitMs: optionalMetadataNumber(metadata, "firstCommitMs"),
+        queriesActiveAtEnd: metadataNumber(metadata, "queriesActiveAtEnd"),
+        peakQueries: metadataNumber(metadata, "peakQueries"),
+        longTaskMaxMs: metadataNumber(metadata, "longTaskMaxMs"),
+        slowFrameMaxMs: metadataNumber(metadata, "slowFrameMaxMs"),
+        streamActiveMax: metadataNumber(metadata, "streamActiveMax"),
+        streamSegmentsMax: metadataNumber(metadata, "streamSegmentsMax"),
+      },
+    });
+    if (navigationIncidents.length >= 12) break;
+  }
+
   const sampleHealth = rows.length === 0 ? "empty" : rows.length < 20 ? "thin" : "healthy";
 
   return {
@@ -260,6 +337,15 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
     budgets: BROWSER_TELEMETRY_BUDGETS,
     metrics,
     recentDegradations,
+    navigationTraces: {
+      count: navigationRows.length,
+      completedCount,
+      incompleteCount: navigationRows.length - completedCount,
+      p50Ms: navigationPick(0.5),
+      p95Ms: navigationPick(0.95),
+      diagnosisCounts,
+    },
+    recentNavigationIncidents: navigationIncidents,
     hiddenSampleCount,
   };
 }
