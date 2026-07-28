@@ -4582,9 +4582,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       let importMs = 0;
       const limit = Math.min(args.limit || 10, 50);
       let diagnosticsStatus: "success" | "failure" = "failure";
-      let diagnosticsSource: "target" | "legacy" | undefined;
+      let diagnosticsSource: "projection" | "legacy" | undefined;
       let resultCount = 0;
       let totalCount = 0;
+      let coverageIncomplete = false;
+      let projectedSegmentCount = 0;
+      let eligibleSegmentCount = 0;
+      let truncatedSegmentCount = 0;
       let queryBuildMs = 0;
       let resultDbMs = 0;
       let countDbMs = 0;
@@ -4613,6 +4617,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           resultDbMs = diagnostics.resultDbMs;
           countDbMs = diagnostics.countDbMs;
           snippetHydrationMs = diagnostics.snippetHydrationMs;
+          coverageIncomplete = diagnostics.coverageIncomplete;
+          projectedSegmentCount = diagnostics.projectedSegmentCount;
+          eligibleSegmentCount = diagnostics.eligibleSegmentCount;
+          truncatedSegmentCount = diagnostics.truncatedSegmentCount;
           searchTotalMs = diagnostics.totalMs;
         });
         handlerPhase = "formatting";
@@ -4629,6 +4637,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           resultCount,
           totalCount,
           candidateDbMs: 0,
+          coverageIncomplete,
+          projectedSegmentCount,
+          eligibleSegmentCount,
+          truncatedSegmentCount,
           queryBuildMs: Number(queryBuildMs.toFixed(2)),
           resultDbMs: Number(resultDbMs.toFixed(2)),
           countDbMs: Number(countDbMs.toFixed(2)),
@@ -4653,6 +4665,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           resultCount,
           totalCount,
           candidateDbMs: 0,
+          coverageIncomplete,
+          projectedSegmentCount,
+          eligibleSegmentCount,
+          truncatedSegmentCount,
           queryBuildMs: Number(queryBuildMs.toFixed(2)),
           resultDbMs: Number(resultDbMs.toFixed(2)),
           countDbMs: Number(countDbMs.toFixed(2)),

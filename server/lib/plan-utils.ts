@@ -408,7 +408,8 @@ export function formatPlanSummary(meta: PlanMeta, title: string): string {
   const stepLines = meta.steps.map((s, i) => {
     const icon = { pending: "□", running: "⏳", completed: "✅", failed: "❌", skipped: "⏭️", blocked: "⛔", needs_review: "👀" }[s.status] || "□";
     const duration = s.duration ? ` (${formatDuration(s.duration)})` : "";
-    return `  ${i + 1}. ${icon} ${s.title}${duration}`;
+    const session = s.sessionId ? ` · @session:${s.sessionId}` : "";
+    return `  ${i + 1}. ${icon} ${s.title}${duration}${session}`;
   });
 
   const breakdown: string[] = [];

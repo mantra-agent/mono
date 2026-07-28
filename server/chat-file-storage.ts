@@ -4,6 +4,7 @@ import {
   acquireAdvisoryTransactionLock,
   BOOT_ID,
   db,
+  hasAmbientDatabaseTransaction,
   runOutsideDatabaseTransaction,
   runWithDatabaseTransaction,
 } from "./db";
@@ -11,8 +12,10 @@ import { accounts, users, documentStoreDocuments, planStepAttempts, planSteps, s
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import {
+  buildLegacySessionSearchQuery,
   buildLiteralSubstringPattern,
-  buildTargetSessionSearchQuery,
+  buildProjectionSessionSearchQuery,
+  hasIncompleteSessionSearchProjection,
 } from "./memory/session-search-query";
 import { generateId } from "./file-storage/utils";
 import { createLogger } from "./log";
@@ -802,15 +805,33 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
   };
 }
 
-async function writeConv(data: SessionData): Promise<void> {
-  await documentStorage.upsertDocument(
+async function writeConvDocumentAndProjection(data: SessionData): Promise<void> {
+  const sourceContent = JSON.stringify(data);
+  const document = await documentStorage.upsertDocument(
     "chat",
     data.id,
     `chat/text/conv-${data.id}.json`,
     data.title,
-    JSON.stringify(data),
+    sourceContent,
     buildConvDocumentMetadata(data),
   );
+  const { replaceSessionSearchProjection } = await import("./memory/session-search-projection");
+  await replaceSessionSearchProjection({
+    documentId: document.documentStoreId,
+    source: data,
+    sourceContent,
+    sourceUpdatedAt: new Date(data.updatedAt),
+  });
+}
+
+async function writeConv(data: SessionData): Promise<void> {
+  if (hasAmbientDatabaseTransaction()) {
+    await writeConvDocumentAndProjection(data);
+  } else {
+    await db.transaction((transaction) =>
+      runWithDatabaseTransaction(transaction, () => writeConvDocumentAndProjection(data)),
+    );
+  }
   if (
     data.parentSessionId ||
     data.spawnReason ||
@@ -3304,6 +3325,13 @@ export const chatFileStorage: IChatFileStorage = {
             if (updated.length !== 1) {
               throw new Error(`Locked chat document update failed: chat/${id}`);
             }
+            const { replaceSessionSearchProjection } = await import("./memory/session-search-projection");
+            await replaceSessionSearchProjection({
+              documentId: locked.id,
+              source: data,
+              sourceContent: JSON.stringify(data),
+              sourceUpdatedAt: new Date(data.updatedAt),
+            });
             invalidateSessionsCache({
               action: "updated",
               sessionId: id,
@@ -4081,7 +4109,11 @@ export type SessionSearchDiagnostics = {
   totalMs: number;
   resultCount: number;
   totalCount: number;
-  source: "target" | "legacy";
+  source: "projection" | "legacy";
+  coverageIncomplete: boolean;
+  projectedSegmentCount: number;
+  eligibleSegmentCount: number;
+  truncatedSegmentCount: number;
 };
 
 export class SessionSearchError extends Error {
@@ -4136,35 +4168,60 @@ export async function searchSessionSummaries(
   let snippetHydrationMs = 0;
   let resultDbStartedAt: number | undefined;
   let snippetHydrationStartedAt: number | undefined;
-  const source: SessionSearchDiagnostics["source"] = "target";
+  let source: SessionSearchDiagnostics["source"] = "projection";
+  let coverageIncomplete = false;
+  let projectedSegmentCount = 0;
+  let eligibleSegmentCount = 0;
+  let truncatedSegmentCount = 0;
 
   try {
     const queryBuildStartedAt = performance.now();
     const cutoff = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
+    const cutoffIso = cutoff.toISOString();
     buildLiteralSubstringPattern(trimmed);
     const principal = getCurrentPrincipalOrSystem();
+    const forceLegacy = process.env.SESSION_SEARCH_READ_SOURCE === "legacy";
     queryBuildMs = performance.now() - queryBuildStartedAt;
 
     resultDbStartedAt = performance.now();
-    const rows = await executeBoundedSessionSearch(() =>
-      buildTargetSessionSearchQuery(
-        principal,
-        cutoff.toISOString(),
-        trimmed,
-        maxResults,
-      ),
-    );
+    coverageIncomplete = forceLegacy
+      ? true
+      : await executeBoundedSessionSearch(() =>
+          hasIncompleteSessionSearchProjection(principal, cutoffIso),
+        );
+    source = forceLegacy || coverageIncomplete ? "legacy" : "projection";
+    const rows = source === "legacy"
+      ? await executeBoundedSessionSearch(() =>
+          buildLegacySessionSearchQuery(principal, cutoffIso, trimmed, maxResults),
+        )
+      : await executeBoundedSessionSearch(() =>
+          buildProjectionSessionSearchQuery(principal, cutoffIso, trimmed, maxResults),
+        );
     resultDbMs = performance.now() - resultDbStartedAt;
     resultDbStartedAt = undefined;
 
     snippetHydrationStartedAt = performance.now();
-    const summaries = await buildSessionSummaries(rows.filter((row): row is {
-      docId: string;
-      title: string | null;
-      content: string;
-      metadata: unknown;
-      updatedAt: Date | null;
-    } => Boolean(row.docId)));
+    const summaries = source === "legacy"
+      ? await buildSessionSummaries(rows.filter((row): row is {
+          docId: string;
+          title: string | null;
+          content: string;
+          metadata: unknown;
+          updatedAt: Date | null;
+        } => "content" in row && Boolean(row.docId)))
+      : rows.flatMap((row) => {
+          if (!("snippet" in row) || !row.docId) return [];
+          projectedSegmentCount += Number(row.projectedSegmentCount ?? 0);
+          eligibleSegmentCount += Number(row.eligibleSegmentCount ?? 0);
+          truncatedSegmentCount += Number(row.truncatedSegmentCount ?? 0);
+          const meta = row.metadata as Record<string, unknown>;
+          return [{
+            id: row.docId,
+            title: row.title || "Untitled",
+            updatedAt: (meta?.updatedAt as string) || row.updatedAt?.toISOString?.() || "",
+            snippet: row.snippet.slice(0, 500),
+          }];
+        });
     snippetHydrationMs = performance.now() - snippetHydrationStartedAt;
     snippetHydrationStartedAt = undefined;
     onDiagnostics?.({
@@ -4177,6 +4234,10 @@ export async function searchSessionSummaries(
       resultCount: summaries.length,
       totalCount: summaries.length,
       source,
+      coverageIncomplete,
+      projectedSegmentCount,
+      eligibleSegmentCount,
+      truncatedSegmentCount,
     });
     return summaries;
   } catch (err) {
@@ -4197,6 +4258,10 @@ export async function searchSessionSummaries(
       resultCount: 0,
       totalCount: 0,
       source,
+      coverageIncomplete,
+      projectedSegmentCount,
+      eligibleSegmentCount,
+      truncatedSegmentCount,
     });
     const sqlState = sessionSearchSqlState(err);
     const kind = sqlState === "57014" ? "timeout" : "unavailable";

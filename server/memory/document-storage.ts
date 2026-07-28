@@ -24,6 +24,9 @@ function assertSafeFieldName(field: string): void {
 }
 
 export interface WorkspaceDocCompat {
+  /** Physical document_store_documents primary key for derived FK relations. */
+  documentStoreId: number;
+  /** Legacy workspace identity retained for compatibility callers. */
   id: number;
   docType: string;
   docId: string;
@@ -53,6 +56,7 @@ export interface InterruptedChatRecoveryCandidate {
 
 function targetToDoc(entry: DocumentStoreDocument): WorkspaceDocCompat {
   return {
+    documentStoreId: entry.id,
     id: entry.sourceMemoryEntryId ?? entry.id,
     docType: entry.documentType,
     docId: entry.documentId,
@@ -150,6 +154,7 @@ export class DocumentStorage {
       await withQueryAttributionAsync("document-write", () => query, "document-upsert");
       log.verbose(() => `upsertDocument docType=${docType} docId=${docId} (no-return)`);
       return {
+        documentStoreId: 0,
         id: 0,
         docType,
         docId,

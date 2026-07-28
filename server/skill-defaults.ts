@@ -298,7 +298,7 @@ Do NOT use the \`priorities\` tool with action "set_brief" for Daily Brief visib
     category: "system",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.3",
+    version: "1.7",
     addToMemory: true,
     pinnedToContext: false,
     whenToUse: "Used for recurring autonomous scan-and-execute work. Replaces the retired advance and prioritize skills.",
@@ -334,6 +334,16 @@ Select exactly one mode from current time, calendar pressure, recent runs, and a
 5. Open decisions and workflows.
 6. System health: issues, logs, failed runs, timers, Sentry, and deployment state when relevant.
 7. News, email, finance, and wellness only when they can materially change action.
+
+## Execution-ledger reconciliation
+
+Sessions remain the universal execution ledger, but routine verification is provenance-first:
+
+1. Read the canonical timer run, skill run, Plan, or Workflow record first.
+2. Follow its exact session IDs: timer runs expose \`sessionId\`; skill runs expose \`sessionId\`; Plan steps expose canonical \`@session:<id>\` references; Workflow run details expose stage attempts and linked sessions.
+3. Inspect the exact session with \`session.get\` and \`session.get_messages\` when transcript evidence is needed. Verify terminal state, outcome, and linked artifacts against the owning run record.
+4. Use \`session.search\` only for historical discovery or when canonical provenance is genuinely missing. Never fuzzy-search for an execution whose owning run already names its session.
+5. If provenance is missing, record the fallback and reconcile the canonical producer when a safe generic link exists; do not invent identity from title similarity alone.
 
 ## Work tracking invariant
 

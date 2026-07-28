@@ -28,6 +28,9 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
   // streaming text documents, then immediately restores each persisted owner
   // before reading or mutating the session document.
   "chat-recovery",
+  // Session discovery projection backfill enumerates bounded canonical chat
+  // identities, then rebuilds each document inside its persisted owner scope.
+  "session-search-backfill",
 
   // Memory maintenance — sleep cycle processes all memories for decay,
   // reinforcement, NREM merge across all vaults for the owning user

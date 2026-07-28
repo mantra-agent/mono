@@ -207,6 +207,37 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_key ON document_store_documents(migration_key)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_source_hashes ON document_store_documents(source_content_hash, source_metadata_hash, source_identity_hash)`);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS session_search_projections (
+      document_id INTEGER PRIMARY KEY REFERENCES document_store_documents(id) ON DELETE CASCADE,
+      projection_version INTEGER NOT NULL,
+      source_updated_at TIMESTAMPTZ(6) NOT NULL,
+      source_content_hash TEXT NOT NULL,
+      segment_count INTEGER NOT NULL,
+      eligible_segment_count INTEGER NOT NULL,
+      truncated_segment_count INTEGER NOT NULL DEFAULT 0,
+      projected_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT session_search_projection_counts CHECK (
+        segment_count >= 0
+        AND eligible_segment_count >= segment_count
+        AND truncated_segment_count = eligible_segment_count - segment_count
+      )
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_search_projection_source_updated ON session_search_projections(source_updated_at)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS session_search_segments (
+      document_id INTEGER NOT NULL REFERENCES document_store_documents(id) ON DELETE CASCADE,
+      segment_key TEXT NOT NULL,
+      segment_kind TEXT NOT NULL,
+      source_ordinal INTEGER NOT NULL,
+      text TEXT NOT NULL,
+      created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT uk_session_search_segment_key UNIQUE(document_id, segment_key),
+      CONSTRAINT session_search_segment_text_bounds CHECK (char_length(text) BETWEEN 1 AND 4096)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_search_segments_document ON session_search_segments(document_id)`);
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS document_store_migration_runs (
       id TEXT PRIMARY KEY,
       migration_key TEXT NOT NULL,
@@ -3635,6 +3666,7 @@ export async function runSchemaBootstrap(
       deprecateRetiredBuiltinSkills,
       migrateSkillProcessUpdates,
       migrateAutonomyCanonicalMeetingPrep,
+      migrateAutonomyProvenanceFirst,
       migrateDailyBriefCanonicalMeetingPrep,
       migrateSentryRecentChangelistGate,
       migrateLegacySkillPersonaPreferences,
@@ -3650,6 +3682,7 @@ export async function runSchemaBootstrap(
     await deprecateRetiredBuiltinSkills();
     await migrateSkillProcessUpdates();
     await migrateAutonomyCanonicalMeetingPrep();
+    await migrateAutonomyProvenanceFirst();
     await migrateDailyBriefCanonicalMeetingPrep();
     await migrateSentryRecentChangelistGate();
     await deleteZombieSkills();

@@ -97,17 +97,7 @@ export type InsertWorkspaceDocument = z.infer<
   typeof insertWorkspaceDocumentSchema
 >;
 
-export const DOCUMENT_STORE_CHAT_SEARCH_INDEXES = {
-  title: "idx_document_store_chat_title_trgm_v2",
-  content: "idx_document_store_chat_content_trgm_v4",
-} as const;
-
-export const RETIRED_DOCUMENT_STORE_CHAT_SEARCH_INDEXES = [
-  "idx_document_store_chat_content_trgm_v1",
-  "idx_document_store_chat_title_trgm_v1",
-  "idx_document_store_chat_content_trgm_v2",
-  "idx_document_store_chat_content_trgm_v3",
-] as const;
+export const SESSION_SEARCH_SEGMENT_TEXT_INDEX = "idx_session_search_segments_text_trgm_v1";
 
 export const documentStoreDocuments = pgTable(
   "document_store_documents",
@@ -168,13 +158,6 @@ export const documentStoreDocuments = pgTable(
     index("idx_document_store_source_row").on(table.sourceTable, table.sourceRowId),
     index("idx_document_store_path").on(table.path),
     index("idx_document_store_updated_at").on(table.updatedAt),
-    index(DOCUMENT_STORE_CHAT_SEARCH_INDEXES.title)
-      .using("gin", sql`${table.title} gin_trgm_ops`)
-      .where(sql`${table.documentType} = 'chat'`),
-    index(DOCUMENT_STORE_CHAT_SEARCH_INDEXES.content)
-      .using("gin", sql`${table.content} gin_trgm_ops`)
-      .where(sql`${table.documentType} = 'chat'`)
-      .with({ fastupdate: "off" }),
     index("idx_document_store_migration_key").on(table.migrationKey),
     index("idx_document_store_source_hashes").on(
       table.sourceContentHash,
@@ -196,6 +179,57 @@ export type DocumentStoreDocument = typeof documentStoreDocuments.$inferSelect;
 export type InsertDocumentStoreDocument = z.infer<
   typeof insertDocumentStoreDocumentSchema
 >;
+
+/**
+ * Rebuildable discovery state derived from one canonical chat document.
+ * Ownership and Vault visibility intentionally remain on document_store_documents;
+ * every read joins that canonical row so authorization cannot diverge.
+ */
+export const sessionSearchProjections = pgTable(
+  "session_search_projections",
+  {
+    documentId: integer("document_id")
+      .primaryKey()
+      .references(() => documentStoreDocuments.id, { onDelete: "cascade" }),
+    projectionVersion: integer("projection_version").notNull(),
+    sourceUpdatedAt: timestamp("source_updated_at", { withTimezone: true, precision: 6 }).notNull(),
+    sourceContentHash: text("source_content_hash").notNull(),
+    segmentCount: integer("segment_count").notNull(),
+    eligibleSegmentCount: integer("eligible_segment_count").notNull(),
+    truncatedSegmentCount: integer("truncated_segment_count").notNull().default(0),
+    projectedAt: timestamp("projected_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    index("idx_session_search_projection_source_updated").on(table.sourceUpdatedAt),
+  ],
+);
+
+export const sessionSearchSegments = pgTable(
+  "session_search_segments",
+  {
+    documentId: integer("document_id")
+      .notNull()
+      .references(() => documentStoreDocuments.id, { onDelete: "cascade" }),
+    segmentKey: text("segment_key").notNull(),
+    segmentKind: text("segment_kind").notNull(),
+    sourceOrdinal: integer("source_ordinal").notNull(),
+    text: text("text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_session_search_segment_key").on(table.documentId, table.segmentKey),
+    index("idx_session_search_segments_document").on(table.documentId),
+    index(SESSION_SEARCH_SEGMENT_TEXT_INDEX).using("gin", sql`${table.text} gin_trgm_ops`),
+    check("session_search_segment_text_bounds", sql`char_length(${table.text}) BETWEEN 1 AND 4096`),
+  ],
+);
+
+export type SessionSearchProjection = typeof sessionSearchProjections.$inferSelect;
+export type SessionSearchSegment = typeof sessionSearchSegments.$inferSelect;
 
 export const memoryLayers = ["short", "mid", "long", "workspace"] as const;
 export type MemoryLayer = (typeof memoryLayers)[number];

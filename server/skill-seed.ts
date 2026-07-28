@@ -544,6 +544,56 @@ export async function migrateAutonomyCanonicalMeetingPrep(): Promise<void> {
   }
 }
 
+const AUTONOMY_PROVENANCE_FIRST_V17 = `## Execution-ledger reconciliation
+
+Sessions remain the universal execution ledger, but routine verification is provenance-first:
+
+1. Read the canonical timer run, skill run, Plan, or Workflow record first.
+2. Follow its exact session IDs: timer runs expose \`sessionId\`; skill runs expose \`sessionId\`; Plan steps expose canonical \`@session:<id>\` references; Workflow run details expose stage attempts and linked sessions.
+3. Inspect the exact session with \`session.get\` and \`session.get_messages\` when transcript evidence is needed. Verify terminal state, outcome, and linked artifacts against the owning run record.
+4. Use \`session.search\` only for historical discovery or when canonical provenance is genuinely missing. Never fuzzy-search for an execution whose owning run already names its session.
+5. If provenance is missing, record the fallback and reconcile the canonical producer when a safe generic link exists; do not invent identity from title similarity alone.`;
+
+export async function migrateAutonomyProvenanceFirst(): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [existing] = await db
+      .select({
+        id: skills.id,
+        author: skills.author,
+        customized: skills.customized,
+        version: skills.version,
+        process: skills.process,
+      })
+      .from(skills)
+      .where(eq(skills.name, "autonomy"));
+    if (!existing || existing.author !== "system" || existing.customized === true) return;
+    const versionOrder = compareSkillVersions(existing.version, "1.7");
+    if (versionOrder === null || versionOrder >= 0) return;
+    if (existing.process.includes(AUTONOMY_PROVENANCE_FIRST_V17)) return;
+    const marker = "## Work tracking invariant";
+    const markerIndex = existing.process.indexOf(marker);
+    if (markerIndex < 0) {
+      log.warn(`Skipped autonomy provenance-first migration from ${existing.version}: work-tracking marker was not found`);
+      return;
+    }
+    const process = `${existing.process.slice(0, markerIndex)}${AUTONOMY_PROVENANCE_FIRST_V17}\n\n${existing.process.slice(markerIndex)}`;
+    const updated = await db
+      .update(skills)
+      .set({ process, version: "1.7", updatedAt: new Date() })
+      .where(and(
+        eq(skills.id, existing.id),
+        eq(skills.author, "system"),
+        eq(skills.customized, false),
+        eq(skills.version, existing.version),
+      ))
+      .returning({ id: skills.id });
+    if (updated.length > 0) {
+      log.info(`Migrated autonomy verification policy ${existing.version} → 1.7 with exact execution-session provenance`);
+      return;
+    }
+  }
+}
+
 export async function migrateDailyBriefCanonicalMeetingPrep(): Promise<void> {
   const [existing] = await db
     .select({ id: skills.id, author: skills.author, customized: skills.customized, version: skills.version, process: skills.process })
