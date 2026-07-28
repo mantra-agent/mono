@@ -454,13 +454,15 @@ async function resolveSessionAgenda(request: ContextRequest): Promise<string> {
     if (!conv?.agenda?.items.length) return "";
     const items = conv.agenda.items.map((item, index) => {
       const resolution = item.resolution ? `\n   Resolution: ${item.resolution}` : "";
-      return `${index + 1}. [${item.status.toUpperCase()}] ${item.title}\n   ${item.description}${resolution}`;
+      return `${index + 1}. [${item.status.toUpperCase()}] ${item.title} (id: ${item.id})\n   ${item.description}${resolution}`;
     });
     return [
       "**Conversation Agenda Protocol**",
       "",
       "This session has an ordered conversation agenda. Keep the exchange natural, but steer it back to the agenda whenever it drifts.",
-      "Work from top to bottom and update each item through `session.update_agenda_item` as soon as its state changes.",
+      "Work from top to bottom. Use one narrow session action as soon as an item changes: `complete_agenda_item` with a resolution, `skip_agenda_item` without one, or `defer_agenda_item` without one.",
+      "Use the exact item IDs shown below. If an ID is ever uncertain, call `session.list_agenda`, wait for the result, then mutate; never guess IDs, parallelize a dependent read and write, or issue conflicting updates for one item.",
+      "Send sparse action-specific payloads only; omit irrelevant blank fields. The backward-compatible `update_agenda_item` action is reserved for title/description edits or reopening an item.",
       "- Open: the item remains to be addressed.",
       "- Complete: use only after a discrete resolution exists, and persist that resolution.",
       "- Skipped: terminal without a resolution; do not revisit it.",

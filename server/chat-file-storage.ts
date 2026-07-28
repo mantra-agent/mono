@@ -232,6 +232,16 @@ function normalizeAgendaStatus(value: unknown): SessionAgendaItemStatus {
   return value as SessionAgendaItemStatus;
 }
 
+function normalizeOptionalAgendaPatchText(
+  value: unknown,
+  label: string,
+  maxChars: number,
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string" && !value.trim()) return undefined;
+  return boundedAgendaText(value, label, maxChars);
+}
+
 function normalizeAgendaItem(
   input: SessionAgendaItemInput,
   existingIds: Set<string>,
@@ -1848,21 +1858,37 @@ export const chatFileStorage: IChatFileStorage = {
       const data = await readConv(id);
       if (!data?.agenda) return null;
       const index = data.agenda.items.findIndex((item) => item.id === itemId);
-      if (index < 0) return null;
+      if (index < 0) {
+        const validIds = data.agenda.items.map((item) => item.id);
+        throw new Error(
+          `Agenda item "${itemId}" not found. Valid agenda item IDs: ${validIds.length > 0 ? validIds.join(", ") : "none"}`,
+        );
+      }
       const current = data.agenda.items[index];
       const nextStatus = patch.status === undefined ? current.status : normalizeAgendaStatus(patch.status);
-      const nextResolution = patch.resolution === undefined
-        ? current.resolution
-        : boundedAgendaText(patch.resolution, "Agenda item resolution", SESSION_AGENDA_RESOLUTION_MAX_CHARS);
+      const suppliedResolution = normalizeOptionalAgendaPatchText(
+        patch.resolution,
+        "Agenda item resolution",
+        SESSION_AGENDA_RESOLUTION_MAX_CHARS,
+      );
+      const nextResolution = suppliedResolution ?? current.resolution;
       if (nextStatus === "complete" && !nextResolution) {
         throw new Error("Complete agenda items require a resolution");
       }
+      const suppliedTitle = normalizeOptionalAgendaPatchText(
+        patch.title,
+        "Agenda item title",
+        SESSION_AGENDA_TITLE_MAX_CHARS,
+      );
+      const suppliedDescription = normalizeOptionalAgendaPatchText(
+        patch.description,
+        "Agenda item description",
+        SESSION_AGENDA_DESCRIPTION_MAX_CHARS,
+      );
       const next: SessionAgendaItem = {
         id: current.id,
-        title: patch.title === undefined ? current.title : normalizeAgendaTitle(patch.title),
-        description: patch.description === undefined
-          ? current.description
-          : boundedAgendaText(patch.description, "Agenda item description", SESSION_AGENDA_DESCRIPTION_MAX_CHARS),
+        title: suppliedTitle === undefined ? current.title : normalizeAgendaTitle(suppliedTitle),
+        description: suppliedDescription ?? current.description,
         status: nextStatus,
         ...(nextStatus === "complete" ? { resolution: nextResolution } : {}),
       };

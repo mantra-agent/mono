@@ -4460,7 +4460,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return { result: parts.join("\n") };
     }
 
-    if (action === "get_agenda") {
+    if (action === "get_agenda" || action === "list_agenda") {
       const targetId = args.sessionId || sessionId;
       const conv = await chatFileStorage.getSession(targetId);
       if (!conv) return { result: `Session "${targetId}" not found`, error: true };
@@ -4479,16 +4479,33 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    if (action === "update_agenda_item") {
+    const agendaTransitionStatus = action === "complete_agenda_item"
+      ? "complete"
+      : action === "skip_agenda_item"
+        ? "skipped"
+        : action === "defer_agenda_item"
+          ? "deferred"
+          : null;
+
+    if (action === "update_agenda_item" || agendaTransitionStatus) {
       const targetId = args.sessionId || sessionId;
       const itemId = typeof args.itemId === "string" ? args.itemId.trim() : "";
-      if (!itemId) return { result: "Missing 'itemId' for update_agenda_item", error: true };
-      if (!args.item || typeof args.item !== "object" || Array.isArray(args.item)) {
+      if (!itemId) return { result: `Missing 'itemId' for ${action}`, error: true };
+      const patch = agendaTransitionStatus
+        ? {
+            status: agendaTransitionStatus,
+            ...(agendaTransitionStatus === "complete" ? { resolution: args.resolution } : {}),
+          }
+        : args.item;
+      if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
         return { result: "Missing sparse 'item' patch for update_agenda_item", error: true };
       }
+      if (agendaTransitionStatus === "complete" && (typeof args.resolution !== "string" || !args.resolution.trim())) {
+        return { result: "Missing 'resolution' for complete_agenda_item", error: true };
+      }
       try {
-        const updated = await chatFileStorage.updateSessionAgendaItem(targetId, itemId, args.item);
-        if (!updated?.agenda) return { result: `Session or agenda item not found: ${targetId}/${itemId}`, error: true };
+        const updated = await chatFileStorage.updateSessionAgendaItem(targetId, itemId, patch);
+        if (!updated?.agenda) return { result: `Session "${targetId}" has no agenda`, error: true };
         const item = updated.agenda.items.find((candidate) => candidate.id === itemId);
         return { result: safeStringify({ sessionId: targetId, item, agenda: updated.agenda }, { label: "bridge.session.agenda.item" }) };
       } catch (err: unknown) {
@@ -4832,7 +4849,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    return { result: `Unknown session action: ${action}. Available: get, get_agenda, set_agenda, update_agenda_item, set_status, end, list, search, get_messages, spawn_child, send_message`, error: true };
+    return { result: `Unknown session action: ${action}. Available: get, get_agenda, list_agenda, set_agenda, update_agenda_item, complete_agenda_item, skip_agenda_item, defer_agenda_item, set_status, end, list, search, get_messages, spawn_child, send_message`, error: true };
   },
 
   async create_task(args) {
