@@ -82,6 +82,8 @@ export type StreamEvent = ExecutorStreamEvent;
 export interface ExecutorRunOptions {
   sessionKey: string;
   sessionId?: string;
+  /** Canonical run identity when the caller begins durable work before executor initialization. */
+  runId?: string;
   messages: ExecutorMessage[];
   contextPressure?: {
     preRunTokens: number;
@@ -1943,7 +1945,7 @@ export class AgentExecutor extends EventEmitter {
     routingDecision: ModelRoutingDecision;
     ctx: RunIterationContext;
   }> {
-    const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const runId = options.runId ?? `run-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const abortController = new AbortController();
     const startTime = Date.now();
 

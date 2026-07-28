@@ -1867,6 +1867,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     },
     onEvent?: Parameters<typeof agentExecutor.run>[0]["onEvent"],
     routingTier?: string,
+    runId?: string,
     diagnosticTurnId?: string,
     refreshAfterPersonaSwitch?: Parameters<typeof agentExecutor.run>[0]["refreshAfterPersonaSwitch"],
     refreshToolSchema?: Parameters<typeof agentExecutor.run>[0]["refreshToolSchema"],
@@ -1903,6 +1904,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     return agentExecutor.run({
       sessionKey,
       sessionId,
+      runId,
       messages,
       tools: toolDefs,
       toolExecutor,
@@ -2011,8 +2013,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let assistantDraftCheckpointWrite: Promise<void> = Promise.resolve();
     let settlement: { status: "completed" | "failed"; assistantMessageId?: string; error?: string } | null = null;
 
-    const diagnosticRunId = `pre-run-${lease.generation}-${randomUUID().slice(0, 8)}`;
-    const diagnosticTurnId = `system-turn-${diagnosticRunId}`;
+    // This identity begins before executor initialization because pre-executor
+    // checkpoints are already durable. The executor must publish this same ID;
+    // otherwise one logical turn acquires conflicting persisted/live owners.
+    const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const diagnosticTurnId = `system-turn-${runId}`;
     const turnStartedAt = Date.now();
     // Update the pre-initialized turn step with actual IDs and timing
     turnStepInitial.id = diagnosticTurnId;
@@ -2051,7 +2056,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // orientation. DO NOT emit live during pre-executor phase; emit atomically
       // after context assembly completes. This ensures the entire tree arrives
       // in one event, so parent-child relationships are always resolvable.
-      // publishChatStreamEvent(sessionKey, sessionId, { type: "run_start", runId: diagnosticRunId });
+      // publishChatStreamEvent(sessionKey, sessionId, { type: "run_start", runId });
       // publishChatStreamEvent(sessionKey, sessionId, {
       //   type: "system_step",
       //   step: "turn",
@@ -2261,7 +2266,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
       assistantDraft = await chatStorage.createAssistantDraft(sessionId, {
         model: chatModel,
-        runId: diagnosticRunId,
+        runId,
       });
       chatRunLifecycle.assertCurrent(lease);
       let assistantDraftLastCheckpoint = 0;
@@ -2391,7 +2396,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         onCtxProgress,
         currentMessageIds,
         lease.generation,
-        diagnosticRunId,
+        runId,
         onCompactionActivity,
       );
       chatRunLifecycle.assertCurrent(lease);
@@ -2475,7 +2480,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           })),
           model: routingDecision.modelString,
           sessionId,
-          contextBuildId: `${diagnosticRunId}:persona-refresh`,
+          contextBuildId: `${runId}:persona-refresh`,
           currentMessage: enrichedContent,
           meetingContext,
         });
@@ -2534,6 +2539,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
         },
         chatRoutingTier,
+        runId,
         diagnosticTurnId,
         refreshAfterPersonaSwitch,
         refreshToolSchema,
