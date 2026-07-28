@@ -66,7 +66,7 @@ import {
   thesisEvidence,
   thesisPredictions,
 } from "@shared/schema";
-import { workspaceDocuments, memoryEntries, memorySourceRefs, memoryLinks, memoryTransitions, memoryContentBlocks, memoryEvents, memoryEntityLinks, codeEmbeddings } from "@shared/models/memory";
+import { workspaceDocuments, codeEmbeddings } from "@shared/models/memory";
 import { chatSessions, messages } from "@shared/models/chat";
 import { strategies, strategyActors, strategyMoveDefinitions, strategyMoveInstances, strategyAssumptions, strategyEndConditions, strategyContextEntries, strategyArtifacts, strategySimulationRuns, strategyStates, strategyAssumptionLinks, strategyMoveEndConditionEffects, decisions, decisionUpdates, decisionLinks } from "@shared/models/strategy";
 import { skills, skillReferences, skillRuns, skillFailureDismissals } from "@shared/models/skills";
@@ -258,13 +258,6 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "calendar_event_artifacts", table: calendarEventArtifacts, domain: "calendar", hasSerial: true, dependsOn: ["calendar_event_metadata", "library_pages"] },
 
   { key: "workspace_documents", table: workspaceDocuments, domain: "memory", hasSerial: true },
-  { key: "memory_entries", table: memoryEntries, domain: "memory", hasSerial: true },
-  { key: "memory_sources", table: memorySourceRefs, domain: "memory", hasSerial: true, dependsOn: ["memory_entries"] },
-  { key: "memory_links", table: memoryLinks, domain: "memory", hasSerial: true, dependsOn: ["memory_entries"] },
-  { key: "memory_transitions", table: memoryTransitions, domain: "memory", hasSerial: true, dependsOn: ["memory_entries"] },
-  { key: "memory_content_blocks", table: memoryContentBlocks, domain: "memory", hasSerial: true, dependsOn: ["memory_entries"] },
-  { key: "memory_events", table: memoryEvents, domain: "memory", hasSerial: true, dependsOn: ["memory_entries"] },
-  { key: "memory_entity_links", table: memoryEntityLinks, domain: "memory", hasSerial: true, dependsOn: ["memory_entries"] },
   { key: "code_embeddings", table: codeEmbeddings, domain: "memory", hasSerial: true },
 
   { key: "sessions", table: chatSessions, domain: "chat", hasSerial: true },
@@ -312,7 +305,7 @@ export const TABLE_REGISTRY: TableRegistryEntry[] = [
   { key: "thesis_predictions", table: thesisPredictions, domain: "world", hasSerial: false, dependsOn: ["theses"] },
 
   { key: "info_notes", table: infoNotes, domain: "info", hasSerial: true, serialCol: "note_id" },
-  { key: "library_pages", table: libraryPages, domain: "info", hasSerial: true, serialCol: "page_id", dependsOn: ["memory_entries"] },
+  { key: "library_pages", table: libraryPages, domain: "info", hasSerial: true, serialCol: "page_id" },
   { key: "library_page_links", table: libraryPageLinks, domain: "info", hasSerial: true, serialCol: "id", dependsOn: ["library_pages"] },
   { key: "library_annotations", table: libraryAnnotations, domain: "info", hasSerial: false, dependsOn: ["library_pages"] },
   { key: "library_page_views", table: libraryPageViews, domain: "info", hasSerial: false, dependsOn: ["library_pages"] },
@@ -366,7 +359,6 @@ const EXPORT_BATCH_SIZE = 5000;
 // per-tick JSON.stringify time, mid-table progress callbacks. See
 // .local/tasks/task-1017.md for the post-mortem.
 const LARGE_ROW_TABLES = new Set<string>([
-  "memory_entries",
   "workspace_documents",
   // email_messages.body_html is frequently hundreds of KB per row.
   // The buffered EXPORT_BATCH_SIZE=5000 path was loading ~5000 rows
@@ -400,10 +392,6 @@ function columnsExcept<T extends Record<string, unknown>>(
 }
 
 // Data-mode projections: every column EXCEPT embedding vectors.
-export const memoryEntryDataColumns = columnsExcept(
-  getTableColumns(memoryEntries),
-  ["embedding"] as const,
-);
 export const workspaceDocDataColumns = columnsExcept(
   getTableColumns(workspaceDocuments),
   ["embedding"] as const,
@@ -731,7 +719,6 @@ function columnsForMode(key: string, mode: ExportMode): ColumnProjection | null 
   }
   // mode === "data": every column EXCEPT embedding vectors.
   if (key === "code_embeddings") return null;
-  if (key === "memory_entries") return memoryEntryDataColumns as ColumnProjection;
   if (key === "workspace_documents") return workspaceDocDataColumns as ColumnProjection;
   return undefined;
 }

@@ -819,7 +819,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   });
-  const [pendingDeleteLogItem, setPendingDeleteLogItem] = useState<{ kind: "interaction" | "note" | "memory"; id: string; label: string } | null>(null);
+  const [pendingDeleteLogItem, setPendingDeleteLogItem] = useState<{ kind: "interaction" | "note"; id: string; label: string } | null>(null);
   const [deleteLogDialogOpen, setDeleteLogDialogOpen] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
@@ -1031,15 +1031,6 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     </>
   );
 
-  const { data: linkedMemories = [] } = useQuery<LinkedMemoryEntry[]>({
-    queryKey: ["/api/memory/entity-links", "person", person.id],
-    queryFn: async () => {
-      const res = await fetch(`/api/memory/entity-links/person/${person.id}`);
-      if (!res.ok) throw new Error("Failed to fetch linked memories");
-      return res.json();
-    },
-  });
-
   const { data: relationshipMemories = [] } = useQuery<RelationshipMemory[]>({
     queryKey: ["/api/people", person.id, "relationship-memories"],
     queryFn: async () => {
@@ -1049,26 +1040,12 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
     },
   });
 
-  const unlinkMemoryMutation = useMutation({
-    mutationFn: async (memoryId: number) => {
-      await apiRequest("DELETE", `/api/memory/entity-links/${memoryId}/person/${person.id}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/memory/entity-links", "person", person.id] });
-      toast({ title: "Memory unlinked" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to unlink memory", description: err.message, variant: "destructive" });
-    },
-  });
-
   const sorted = useMemo(() => {
     const interactionItems = person.interactions.map((interaction) => ({ kind: "interaction" as const, id: interaction.id, date: interaction.date, interaction }));
     const noteItems = person.notes.map((note) => ({ kind: "note" as const, id: note.id, date: note.createdAt, note }));
-    const memoryItems = linkedMemories.map((memory) => ({ kind: "memory" as const, id: String(memory.id), date: memory.createdAt || new Date(0).toISOString(), memory }));
     const relationshipMemoryItems = relationshipMemories.map((relationshipMemory) => ({ kind: "relationshipMemory" as const, id: relationshipMemory.id, date: relationshipMemory.createdAt || new Date(0).toISOString(), relationshipMemory }));
-    return [...interactionItems, ...noteItems, ...memoryItems, ...relationshipMemoryItems].sort((a, b) => parseDateString(b.date).getTime() - parseDateString(a.date).getTime());
-  }, [person.interactions, person.notes, linkedMemories, relationshipMemories]);
+    return [...interactionItems, ...noteItems, ...relationshipMemoryItems].sort((a, b) => parseDateString(b.date).getTime() - parseDateString(a.date).getTime());
+  }, [person.interactions, person.notes, relationshipMemories]);
 
   const monthGroups = useMemo(() => {
     const groups: Array<{ monthKey: string; label: string; defaultOpen: boolean; items: typeof sorted }> = [];
@@ -1189,20 +1166,17 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
             <LogMonthSection key={group.monthKey} monthKey={group.monthKey} label={group.label} defaultOpen={group.defaultOpen}>
               {group.items.map((item) => {
             const isNote = item.kind === "note";
-            const isMemory = item.kind === "memory";
             const isRelationshipMemory = item.kind === "relationshipMemory";
             const interaction = item.kind === "interaction" ? item.interaction : null;
             const note = isNote ? item.note : null;
-            const memory = isMemory ? item.memory : null;
             const relationshipMemory = isRelationshipMemory ? item.relationshipMemory : null;
-            const Icon = isNote ? FileText : (isMemory || isRelationshipMemory) ? Brain : INTERACTION_ICONS[interaction?.type || ""] || MessageSquare;
+            const Icon = isNote ? FileText : isRelationshipMemory ? Brain : INTERACTION_ICONS[interaction?.type || ""] || MessageSquare;
             const d = parseDateString(item.date);
             const DirectionIcon = interaction?.direction === "inbound" ? ArrowDownLeft : interaction?.direction === "outbound" ? ArrowUpRight : null;
             const title = d.toLocaleDateString("en-US", { month: "numeric", day: "2-digit" });
-            const memoryTitle = memory?.title || memory?.summary || memory?.content || "Memory";
             const relationshipMemoryTitle = relationshipMemory?.title || relationshipMemory?.content || "Relationship memory";
             const noteTitle = note?.title && note.title !== "Untitled" ? note.title : null;
-            const preview = isNote ? (noteTitle || note?.content || "Note") : isMemory ? memoryTitle : isRelationshipMemory ? relationshipMemoryTitle : (interaction?.summary || "");
+            const preview = isNote ? (noteTitle || note?.content || "Note") : isRelationshipMemory ? relationshipMemoryTitle : (interaction?.summary || "");
             if (interaction) {
               return (
                 <ExpandableInteractionRow
@@ -1249,17 +1223,6 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                           )}
                           {note?.updatedAt && note.updatedAt !== note.createdAt && <p className="mt-2 text-[10px] text-muted-foreground">edited {formatShortDate(note.updatedAt)}</p>}
                         </div>
-                      ) : isMemory ? (
-                        <div>
-                          <p className="font-semibold text-white">{memoryTitle}</p>
-                          {memory?.summary && memory.title && <p className="mt-2 whitespace-pre-wrap text-[14px] leading-tight text-white">{memory.summary}</p>}
-                          <p className="mt-2 whitespace-pre-wrap text-[14px] leading-tight text-white">{memory?.content}</p>
-                          <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-                            <Badge variant="outline" className="text-[10px] leading-none">{memory?.layer}</Badge>
-                            <Badge variant="outline" className="text-[10px] leading-none">{memory?.source}</Badge>
-                            {memory?.tags?.map((tag) => <Badge key={tag} variant="outline" className="text-[10px] leading-none">{tag}</Badge>)}
-                          </div>
-                        </div>
                       ) : isRelationshipMemory ? (
                         <div>
                           <p className="font-semibold text-white">{relationshipMemoryTitle}</p>
@@ -1291,7 +1254,7 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
                       onClick={() => {
-                        setPendingDeleteLogItem({ kind: isNote ? "note" : "memory", id: item.id, label: preview });
+                        setPendingDeleteLogItem({ kind: "note", id: item.id, label: preview });
                         setDeleteLogDialogOpen(true);
                       }}
                     >
@@ -1337,7 +1300,6 @@ function InteractionsTab({ person, onUpdate, showAdd, setShowAdd }: { person: Pe
                 setDeleteLogDialogOpen(false);
                 window.setTimeout(() => {
                   if (target.kind === "note") deleteNoteMutation.mutate(target.id);
-                  else if (target.kind === "memory") unlinkMemoryMutation.mutate(Number(target.id));
                   else deleteMutation.mutate(target.id);
                   setPendingDeleteLogItem(null);
                 }, 0);
@@ -1912,20 +1874,6 @@ function ProfileSummaryEditor({
   );
 }
 
-interface LinkedMemoryEntry {
-  id: number;
-  content: string;
-  title?: string;
-  summary?: string;
-  layer: string;
-  source: string;
-  sourceId?: string;
-  tags?: string[];
-  createdAt?: string;
-  metadata?: Record<string, unknown>;
-  linkId: number;
-}
-
 const RM_CATEGORY_MAP: Record<string, { label: string; icon: string }> = {
   "dynamic": { label: "Dynamics", icon: "🔄" },
   "preference": { label: "Preferences", icon: "💡" },
@@ -1947,20 +1895,6 @@ interface RelationshipMemory {
   tags: string[];
   createdAt: string | null;
   personName: string | null;
-}
-
-function isPersonModelEntry(memory: LinkedMemoryEntry): boolean {
-  return memory.tags?.includes("person-model") ?? false;
-}
-
-function getPersonModelCategory(memory: LinkedMemoryEntry): { tag: string; label: string } | null {
-  if (!memory.tags) return null;
-  for (const tag of memory.tags) {
-    if (tag.startsWith("pm-cat:") && PM_CATEGORY_MAP[tag]) {
-      return { tag, label: PM_CATEGORY_MAP[tag].label };
-    }
-  }
-  return null;
 }
 
 function getConfidenceColor(confidence: number): string {

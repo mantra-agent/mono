@@ -56,9 +56,7 @@ import {
   FileText,
   Building2,
   Shield,
-  Brain,
   Link2,
-  Unlink,
   Upload,
   Download,
   File as FileIcon,
@@ -1145,82 +1143,6 @@ function SimulationProgressBar({
   );
 }
 
-interface LinkedMemoryEntry {
-  id: number;
-  content: string;
-  title?: string;
-  summary?: string;
-  layer: string;
-  source: string;
-  tags?: string[];
-  createdAt?: string;
-  linkId: number;
-}
-
-function StrategyLinkedMemories({ moveId, goalId }: { moveId: string; goalId: string }) {
-  const { toast } = useToast();
-  const { data: memories, isLoading } = useQuery<LinkedMemoryEntry[]>({
-    queryKey: ["/api/memory/entity-links", "strategy", goalId],
-    queryFn: async () => {
-      const res = await fetch(`/api/memory/entity-links/strategy/${goalId}`);
-      if (!res.ok) throw new Error("Failed to fetch linked memories");
-      return res.json();
-    },
-  });
-
-  const unlinkMutation = useMutation({
-    mutationFn: async (memoryId: number) => {
-      await apiRequest("DELETE", `/api/memory/entity-links/${memoryId}/strategy/${goalId}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/memory/entity-links", "strategy", goalId] });
-      toast({ title: "Memory unlinked" });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to unlink", description: err.message, variant: "destructive" });
-    },
-  });
-
-  if (isLoading) return <Skeleton className="h-16 w-full" />;
-  if (!memories || memories.length === 0) return null;
-
-  return (
-    <Card className="p-4" data-testid="card-strategy-linked-memories">
-      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider block mb-2 flex items-center gap-1">
-        <Brain className="h-3 w-3" />
-        Linked Memories ({memories.length})
-      </span>
-      <div className="space-y-2">
-        {memories.map((memory) => (
-          <div
-            key={memory.id}
-            className="flex items-center gap-2 px-3 py-2 rounded-md bg-muted/30 border border-border/50"
-            data-testid={`strategy-memory-${memory.id}`}
-          >
-            <Brain className="h-3 w-3 text-muted-foreground/70 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm truncate text-foreground/80">{memory.title || memory.summary || memory.content.slice(0, 80)}</p>
-              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                <Badge variant="outline" className="text-xs">{memory.layer}</Badge>
-                <Badge variant="outline" className="text-xs">{memory.source}</Badge>
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => unlinkMutation.mutate(memory.id)}
-              disabled={unlinkMutation.isPending}
-              data-testid={`button-unlink-strategy-memory-${memory.id}`}
-            >
-              <Unlink className="h-3 w-3 text-muted-foreground" />
-            </Button>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
 function StateDetailPanel({
   state,
   allMoves,
@@ -1873,8 +1795,6 @@ function MoveDetailPanel({
         </Card>
 
         <EvaluateMoveButton moveId={move.id} goalId={goalId} isAnyEvaluating={activeRuns.length > 0} />
-
-        <StrategyLinkedMemories moveId={move.id} goalId={goalId} />
       </div>
     </div>
   );

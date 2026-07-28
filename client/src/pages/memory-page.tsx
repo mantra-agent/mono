@@ -102,7 +102,6 @@ import {
   SlidersHorizontal,
   ListFilter,
   Share2,
-  GitBranch,
   Target,
   Unlink,
   ShieldCheck,
@@ -188,7 +187,6 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useEventStream } from "@/hooks/use-event-stream";
 import { useTimezone } from "@/hooks/use-timezone";
-import { useMyelination } from "@/hooks/use-myelination";
 import { cn } from "@/lib/utils";
 
 const log = createLogger("MemoryPage");
@@ -561,88 +559,6 @@ function formatPeriodLabel(date: Date, granularity: LogGranularity, timezone: st
   }
 }
 
-
-function MyelinationProgressBar() {
-  const m = useMyelination();
-  if (!m.isMyelinating && !m.isPaused && m.phase !== "complete") return null;
-
-  const percentage = m.total > 0 ? Math.round((m.current / m.total) * 100) : 0;
-  const phaseLabel = m.phase === "summarize" ? "Summarizing" : m.phase === "embed" ? "Embedding" : m.phase === "link" ? "Linking" : m.phase === "complete" ? "Complete" : m.phase === "starting" ? "Starting" : m.phase;
-
-  return (
-    <div className="w-full space-y-1.5" data-testid="myelination-progress">
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-medium text-foreground">{phaseLabel}</span>
-        {m.total > 0 && <span className="text-muted-foreground tabular-nums">{m.current}/{m.total} ({percentage}%)</span>}
-      </div>
-      <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-300 ${m.phase === "complete" ? "bg-success" : "bg-primary"}`}
-          style={{ width: `${m.phase === "complete" ? 100 : Math.max(2, percentage)}%` }}
-          data-testid="myelination-progress-bar"
-        />
-      </div>
-      <p className="text-xs text-muted-foreground/70 truncate">{m.detail}</p>
-    </div>
-  );
-}
-
-interface GraphMyelinationStatus {
-  running: boolean;
-  total: number;
-  remaining: number;
-  current: number;
-  detail: string;
-  startedAt: number | null;
-  ungraphedCount: number;
-}
-
-function useGraphMyelinationStatus() {
-  const { data, isLoading } = useQuery<GraphMyelinationStatus>({
-    queryKey: ["/api/memory/graph-myelination/status"],
-    refetchInterval: (query) => {
-      const d = query.state.data as GraphMyelinationStatus | undefined;
-      return d?.running ? 1000 : 10000;
-    },
-  });
-  return { status: data, isLoading };
-}
-
-function GraphMyelinationProgressBar({ status }: { status: GraphMyelinationStatus | undefined }) {
-  if (!status?.running || status.total === 0) return null;
-
-  const processed = status.current;
-  const total = status.total;
-  const pct = Math.min((processed / total) * 100, 100);
-
-  return (
-    <div className="w-full space-y-1.5 px-3 py-2 bg-success/5 border-b border-success/10" data-testid="graph-myelination-progress">
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-medium text-foreground flex items-center gap-1.5">
-          <GitBranch className="h-3 w-3 text-success" />
-          Myelinating long → graph
-        </span>
-        <span className="text-muted-foreground tabular-nums">
-          {status.remaining} remaining
-        </span>
-      </div>
-      <div className="relative h-2 w-full bg-muted rounded-full" data-testid="graph-myelination-progress-track">
-        <div
-          className="h-full rounded-full transition-all duration-700 bg-success"
-          style={{ width: `${Math.max(0.5, pct)}%` }}
-          data-testid="graph-myelination-progress-bar"
-        />
-      </div>
-      <div className="flex items-center justify-between text-xs text-muted-foreground/60">
-        <span>{processed}/{total} processed</span>
-        <span>{status.remaining} → 0</span>
-      </div>
-      {status.detail && (
-        <p className="text-xs text-muted-foreground/70 truncate">{status.detail}</p>
-      )}
-    </div>
-  );
-}
 
 interface ExchangeBlock {
   role: "user" | "assistant" | "xyz" | "thinking" | "tools";
@@ -1876,7 +1792,6 @@ function LayersTab() {
   const { timezone } = useTimezone();
   const [openStages, setOpenStages] = useState<Set<string>>(() => new Set(MEMORY_VNEXT_PIPELINE_STAGES.map(stage => stage.value)));
   const [expandedClaimIds, setExpandedClaimIds] = useState<Set<number>>(new Set());
-  const { status: graphMyelinationStatus } = useGraphMyelinationStatus();
   const [layersSearchQuery, setLayersSearchQuery] = useState("");
 
   const { events } = useEventStream();
@@ -1926,8 +1841,6 @@ function LayersTab() {
 
   return (
     <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="layers-tab">
-      <GraphMyelinationProgressBar status={graphMyelinationStatus} />
-
       <div className={cn("flex items-center gap-2", MEMORY_PANEL_HEADER_CLASS)}>
         <div className="relative flex-1">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />

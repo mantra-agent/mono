@@ -159,9 +159,6 @@ export function registerReferenceRoutes(app: Express) {
             case "page": {
               const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
               const matchers = [eq(libraryPages.slug, id), eq(libraryPages.id, id)];
-              // Heal legacy refs authored with a memory entry ID instead of a page slug/id.
-              const numId = Number(id);
-              if (Number.isInteger(numId)) matchers.push(eq(libraryPages.memoryEntryId, numId));
               const rows = await db
                 .select({ title: libraryPages.title })
                 .from(libraryPages)
