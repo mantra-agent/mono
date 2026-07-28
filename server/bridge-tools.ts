@@ -10911,8 +10911,27 @@ ${refs}` : ""),
         return chain.length > 0 ? chain.join(" > ") : "root";
       }
 
+      // ── Vault helpers ──────────────────────────────────────────
+      // `vaults` is the sole vault-identity authority; library_pages.vault_id
+      // is canonical page membership. Resolve id -> name once per call.
+      async function buildVaultMap(): Promise<Map<string, { name: string }>> {
+        const map = new Map<string, { name: string }>();
+        if (!principal.accountId) return map;
+        const { vaults } = await import("@shared/models/vaults");
+        const rows = await db.select({
+          id: vaults.id, name: vaults.name,
+        }).from(vaults).where(eq(vaults.accountId, principal.accountId));
+        for (const v of rows) map.set(v.id, { name: v.name });
+        return map;
+      }
+      function vaultLabel(vaultId: string | null, vmap: Map<string, { name: string }>): string {
+        if (!vaultId) return "Unassigned";
+        return vmap.get(vaultId)?.name ?? `vault ${vaultId.slice(0, 8)}`;
+      }
+
       // ── Library page actions ──────────────────────────────────────
       if (action === "list_library_pages" || action === "list") {
+        const vaultFilter = typeof args.vaultId === "string" && args.vaultId ? eq(libraryPages.vaultId, args.vaultId) : undefined;
         const pages = await db.select({
           id: libraryPages.id,
           title: libraryPages.title,
@@ -10920,15 +10939,17 @@ ${refs}` : ""),
           parentId: libraryPages.parentId,
           oneLiner: libraryPages.oneLiner,
           summary: libraryPages.summary,
+          vaultId: libraryPages.vaultId,
           updatedAt: libraryPages.updatedAt,
-        }).from(libraryPages).where(visibleLib()).orderBy(desc(libraryPages.updatedAt)).limit(50);
+        }).from(libraryPages).where(visibleLib(vaultFilter)).orderBy(desc(libraryPages.updatedAt)).limit(50);
         if (pages.length === 0) return { result: "No library pages found." };
         const bcMap = await buildBreadcrumbMap();
+        const vmap = await buildVaultMap();
         return { result: `Library pages (${pages.length}):\n${pages.map(p => {
           const location = getBreadcrumb(p.id, bcMap);
           const ol = p.oneLiner ? ` — ${p.oneLiner}` : "";
           const sum = p.summary ? `\n  ${p.summary}` : "";
-          return `- [${p.id}] **${p.title}** in ${location} (/${p.slug})${ol}${sum}`;
+          return `- [${p.id}] **${p.title}** · vault: ${vaultLabel(p.vaultId, vmap)} · in ${location} (/${p.slug})${ol}${sum}`;
         }).join("\n")}` };
       }
 
@@ -10946,6 +10967,7 @@ ${refs}` : ""),
           )
         );
         const whereClause = wordConditions.length === 1 ? wordConditions[0] : and(...wordConditions);
+        const vaultFilter = typeof args.vaultId === "string" && args.vaultId ? eq(libraryPages.vaultId, args.vaultId) : undefined;
         const pages = await db.select({
           id: libraryPages.id,
           title: libraryPages.title,
@@ -10953,21 +10975,24 @@ ${refs}` : ""),
           parentId: libraryPages.parentId,
           oneLiner: libraryPages.oneLiner,
           summary: libraryPages.summary,
+          vaultId: libraryPages.vaultId,
           plainTextContent: libraryPages.plainTextContent,
-        }).from(libraryPages).where(visibleLib(whereClause)).limit(20);
+        }).from(libraryPages).where(visibleLib(vaultFilter ? and(whereClause, vaultFilter) : whereClause)).limit(20);
         if (pages.length === 0) return { result: `No library pages matching "${q}".` };
         const bcMap = await buildBreadcrumbMap();
+        const vmap = await buildVaultMap();
         return { result: `Search results for "${q}":\n${pages.map(p => {
           const breadcrumb = getBreadcrumb(p.id, bcMap);
           const path = breadcrumb === "root" ? p.title : `${breadcrumb} > ${p.title}`;
           const ol = p.oneLiner ? `\n  ${p.oneLiner}` : "";
           const sum = p.summary ? `\n  ${p.summary}` : "";
           const snippet = (!p.oneLiner && !p.summary) ? `\n  ${(p.plainTextContent || "").slice(0, 500)}` : "";
-          return `- [${p.id}] **${p.title}** (${path})${ol}${sum}${snippet}`;
+          return `- [${p.id}] **${p.title}** · vault: ${vaultLabel(p.vaultId, vmap)} (${path})${ol}${sum}${snippet}`;
         }).join("\n\n")}` };
       }
 
       if (action === "browse_tree" || action === "tree") {
+        const vaultFilter = typeof args.vaultId === "string" && args.vaultId ? eq(libraryPages.vaultId, args.vaultId) : undefined;
         const allPages = await db.select({
           id: libraryPages.id,
           title: libraryPages.title,
@@ -10975,18 +11000,13 @@ ${refs}` : ""),
           parentId: libraryPages.parentId,
           emoji: libraryPages.emoji,
           oneLiner: libraryPages.oneLiner,
-        }).from(libraryPages).where(visibleLib()).orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title));
+          vaultId: libraryPages.vaultId,
+        }).from(libraryPages).where(visibleLib(vaultFilter)).orderBy(asc(libraryPages.sortOrder), asc(libraryPages.title));
 
         if (allPages.length === 0) return { result: "No library pages found." };
 
         type TreeNode = (typeof allPages)[number] & { children: TreeNode[] };
-        const buildTree = (parentId: string | null): TreeNode[] => {
-          return allPages
-            .filter(p => p.parentId === parentId)
-            .map(p => ({ ...p, children: buildTree(p.id) }));
-        };
-
-        const formatTree = (nodes: TreeNode[], indent: number = 0): string => {
+        const formatTree = (nodes: TreeNode[], indent: number): string => {
           return nodes.map(n => {
             const prefix = "  ".repeat(indent) + "- ";
             const emoji = n.emoji ? `${n.emoji} ` : "";
@@ -10997,8 +11017,47 @@ ${refs}` : ""),
           }).join("\n");
         };
 
-        const tree = buildTree(null);
-        return { result: `Library tree (${allPages.length} pages):\n${formatTree(tree)}` };
+        // Group strictly by Vault so every page renders under its own Vault.
+        // Within a Vault, a page is a root when it has no parent or its parent
+        // is not part of the same Vault's visible page set (surfaces orphans
+        // instead of silently dropping them).
+        const byVault = new Map<string, TreeNode[]>();
+        for (const p of allPages) {
+          const key = p.vaultId ?? "__unassigned__";
+          if (!byVault.has(key)) byVault.set(key, []);
+          byVault.get(key)!.push({ ...p, children: [] });
+        }
+
+        const vmap = await buildVaultMap();
+        const visSet = principal.visibleVaultIds && principal.visibleVaultIds.length > 0 ? new Set(principal.visibleVaultIds) : null;
+
+        const orderedKeys = Array.from(byVault.keys()).sort((a, b) => {
+          if (a === "__unassigned__") return 1;
+          if (b === "__unassigned__") return -1;
+          return vaultLabel(a, vmap).localeCompare(vaultLabel(b, vmap));
+        });
+
+        const sections = orderedKeys.map(key => {
+          const nodes = byVault.get(key)!;
+          const idSet = new Set(nodes.map(n => n.id));
+          const nodeById = new Map(nodes.map(n => [n.id, n]));
+          const roots: TreeNode[] = [];
+          for (const n of nodes) {
+            if (n.parentId && idSet.has(n.parentId)) {
+              nodeById.get(n.parentId)!.children.push(n);
+            } else {
+              roots.push(n);
+            }
+          }
+          const name = key === "__unassigned__" ? "Unassigned (no Vault)" : vaultLabel(key, vmap);
+          const idTag = key === "__unassigned__" ? "" : ` [${key}]`;
+          const flags = key === "__unassigned__"
+            ? ""
+            : ` (${visSet ? (visSet.has(key) ? "visible" : "hidden") : "visible"}${principal.activeVaultId === key ? ", active" : ""})`;
+          return `## ${name}${idTag}${flags} — ${nodes.length} pages\n${formatTree(roots, 0)}`;
+        });
+
+        return { result: `Library tree — ${byVault.size} groups, ${allPages.length} pages:\n\n${sections.join("\n\n")}` };
       }
 
       if (action === "get_library_page" || action === "get") {
@@ -11014,9 +11073,39 @@ ${refs}` : ""),
         const statusLine = page.status ? `\n**Status:** ${page.status}` : "";
         const surfaceLine = page.surface && page.surfaceUntil ? `\n**Surfaced Until:** ${page.surfaceUntil instanceof Date ? page.surfaceUntil.toISOString() : page.surfaceUntil}` : "";
         const tagsLine = page.tags && page.tags.length > 0 ? `\n**Tags:** ${page.tags.join(", ")}` : "";
+        const getVmap = await buildVaultMap();
+        const vaultLine = `\n**Vault:** ${vaultLabel(page.vaultId ?? null, getVmap)}${page.vaultId ? ` [${page.vaultId}]` : ""}`;
         const { tiptapToMarkdown } = await import("@shared/markdown-tiptap");
         const mdContent = page.content ? tiptapToMarkdown(page.content as any) : (page.plainTextContent || "[no content]");
-        return { result: `# ${page.title}${tagsLine}${statusLine}${surfaceLine}\n\n${mdContent}${annotationText}\n\n**Parent ID:** ${page.parentId || "none"}` };
+        return { result: `# ${page.title}${tagsLine}${statusLine}${surfaceLine}${vaultLine}\n\n${mdContent}${annotationText}\n\n**Parent ID:** ${page.parentId || "none"}` };
+      }
+
+      if (action === "list_vaults") {
+        if (!principal.accountId) return { result: "No account in context; cannot list vaults.", error: true };
+        const { vaults } = await import("@shared/models/vaults");
+        const vaultRows = await db.select({
+          id: vaults.id, name: vaults.name, isDefault: vaults.isDefault, isArchived: vaults.isArchived,
+        }).from(vaults).where(eq(vaults.accountId, principal.accountId)).orderBy(asc(vaults.position), asc(vaults.createdAt));
+        if (vaultRows.length === 0) return { result: "No vaults found for this account." };
+        // Live page counts per vault, account-scoped (independent of visibility toggles),
+        // so the inventory is complete even for vaults hidden from the current view.
+        const countRows = await db.select({
+          vaultId: libraryPages.vaultId, n: sql<number>`count(*)::int`,
+        }).from(libraryPages).where(and(eq(libraryPages.accountId, principal.accountId), libraryPageIsLive())).groupBy(libraryPages.vaultId);
+        const countMap = new Map<string, number>();
+        let unassigned = 0;
+        for (const r of countRows) { if (r.vaultId) countMap.set(r.vaultId, Number(r.n)); else unassigned = Number(r.n); }
+        const visSet = principal.visibleVaultIds && principal.visibleVaultIds.length > 0 ? new Set(principal.visibleVaultIds) : null;
+        const lines = vaultRows.map(v => {
+          const flags: string[] = [];
+          if (v.isDefault) flags.push("default");
+          if (v.isArchived) flags.push("archived");
+          flags.push(visSet ? (visSet.has(v.id) ? "visible" : "hidden") : "visible");
+          if (principal.activeVaultId === v.id) flags.push("active");
+          return `- **${v.name}** [${v.id}] — ${countMap.get(v.id) ?? 0} pages (${flags.join(", ")})`;
+        });
+        const unassignedLine = unassigned > 0 ? `\n- **(Unassigned — no Vault)** — ${unassigned} pages` : "";
+        return { result: `Vaults (${vaultRows.length}) for this account:\n${lines.join("\n")}${unassignedLine}` };
       }
 
       // ─── Library page mutations ────────────────────────────────────────
@@ -11325,7 +11414,7 @@ ${refs}` : ""),
         return { result: `Annotation added to page [${page.id}] **${page.title}**: [${annotation.annotationType}] ${annotation.content}` };
       }
 
-      return { result: `Unknown library action: ${action}. Available: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate`, error: true };
+      return { result: `Unknown library action: ${action}. Available: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, list_vaults, link_pages, annotate`, error: true };
     } catch (err: any) {
       return { result: `library tool error: ${err.message}`, error: true };
     }

@@ -273,6 +273,8 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       edit_library_page: { description: "Surgical find-and-replace edit on a library page's content. Preferred over update_library_page for targeted changes — avoids re-transmitting the entire document. Uses old_string/new_string semantics (same as scratch edit).", requiredParams: ["id", "old_string", "new_string"], optionalParams: ["replace_all", "surface", "surfaceDurationHours", "surfaceReason", "surfaceSection"] },
       dismiss_library_page: { description: "Clear surfacing fields so a Library page disappears from Home/Simple Inbox without deleting the page.", requiredParams: ["id"], optionalParams: [] },
       update_library_page: { description: "Full replacement of a library page's content and/or metadata. Use edit_library_page instead when making targeted changes to large pages.", requiredParams: ["id"], optionalParams: ["title", "plainTextContent", "parentId", "tags", "status", "oneLiner", "summary", "surface", "surfaceDurationHours", "surfaceReason", "surfaceSection"] },
+      browse_tree: { description: "Render the page hierarchy grouped by Vault as an indented outline; each top-level node is a Vault and pages nest beneath their owning Vault. Optional vaultId renders a single Vault.", requiredParams: [], optionalParams: ["vaultId"] },
+      list_vaults: { description: "Enumerate the account's Vaults with id, name, live page count, and whether each is currently visible/active. The id-to-name key for resolving which Vault a page belongs to.", requiredParams: [], optionalParams: [] },
     },
   },
   converse: {
