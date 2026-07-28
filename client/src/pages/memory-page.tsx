@@ -1173,10 +1173,10 @@ function VnextJournalTab() {
   return (
     <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden bg-background text-foreground" data-testid="log-tab">
       <div
-        className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-background md:w-1/3 md:min-w-80 md:shrink-0 md:border-r md:border-border"
+        className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-background md:w-1/3 md:min-w-80 md:shrink-0"
         data-testid="journal-tree-panel"
       >
-        <div className="border-b border-border p-2">
+        <div className="p-2">
           <div className="flex items-center gap-1">
             <div className="relative min-w-0 flex-1">
               <HierarchySearchInput
