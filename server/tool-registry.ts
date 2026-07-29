@@ -43,13 +43,14 @@ export interface ToolMeta {
 
 export const TOOLS: Record<string, ToolMeta> = {
   ui: {
-    description: "Interact with the authenticated application UI in the browser tab containing the originating session. `execute` performs the same registered action as the user control. `guide` reveals and spotlights that control, locks interaction outside it, and completes when the intended outcome occurs or the user cancels. Targets cover the primary sidebar navigation controls.",
+    description: "Interact with the authenticated application UI in the browser tab containing the originating session. `execute` performs the same registered action as the user control. `guide` narrates first: it requires an `introduction` that names the control and explicitly asks the user to click it, then reveals and spotlights that control, locks interaction outside it, and completes when the intended outcome occurs or the user cancels. In voice, the spotlight waits until you finish speaking. Targets cover the primary sidebar navigation controls.",
     category: "browser",
     parameters: {
       type: "object",
       properties: {
         target: { type: "string", enum: UI_INTERACTION_TARGETS, description: "Stable semantic UI target." },
         mode: { type: "string", enum: ["execute", "guide"], description: "Execute the action directly or guide the user through the real control." },
+        introduction: { type: "string", description: "Required for guide mode. One or two sentences, in your own voice, that name the control and explicitly ask the user to click it (for example: \"Open Meetings in the left sidebar to see your notes — go ahead and click it.\"). Shown beside the spotlight; in voice, say it before the spotlight appears." },
       },
       required: ["target", "mode"],
     },

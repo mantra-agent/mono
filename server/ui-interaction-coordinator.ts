@@ -6,6 +6,7 @@ import type {
   UiInteractionTarget,
   UiInteractionTerminalResult,
 } from "@shared/ui-interaction";
+import { UI_INTERACTION_INTRODUCTION_MAX_LENGTH } from "@shared/ui-interaction";
 import { createLogger } from "./log";
 import { sessionManager } from "./session-manager";
 
@@ -48,6 +49,8 @@ export function requestUiInteraction(input: {
   clientId?: string;
   target: UiInteractionTarget;
   mode: UiInteractionMode;
+  /** Required narration for guide mode; ignored for execute. */
+  introduction?: string;
 }): Promise<UiInteractionTerminalResult> {
   if (pendingCommands.size >= MAX_PENDING_COMMANDS) {
     return Promise.resolve({
@@ -70,13 +73,22 @@ export function requestUiInteraction(input: {
 
   const commandId = `ui-${randomUUID()}`;
   const expiresAt = Date.now() + COMMAND_TIMEOUT_MS;
-  const command: UiInteractionCommand = {
-    type: "ui.interaction.command",
-    commandId,
-    target: input.target,
-    mode: input.mode,
-    expiresAt,
-  };
+  const command: UiInteractionCommand = input.mode === "guide"
+    ? {
+        type: "ui.interaction.command",
+        commandId,
+        target: input.target,
+        mode: "guide",
+        introduction: (input.introduction ?? "").slice(0, UI_INTERACTION_INTRODUCTION_MAX_LENGTH),
+        expiresAt,
+      }
+    : {
+        type: "ui.interaction.command",
+        commandId,
+        target: input.target,
+        mode: "execute",
+        expiresAt,
+      };
 
   return new Promise<UiInteractionTerminalResult>((resolve) => {
     const timer = setTimeout(() => settlePending(commandId, "unavailable", "timed_out"), COMMAND_TIMEOUT_MS);

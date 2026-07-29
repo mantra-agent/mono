@@ -25,6 +25,7 @@ import { useSidebar } from "@/components/ui/sidebar";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/hooks/use-auth";
+import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
 
 const log = createLogger("UiInteraction");
 const WS_OWNER = "ui-interaction";
@@ -49,7 +50,7 @@ interface UiInteractionContextValue {
 
 const UiInteractionContext = createContext<UiInteractionContextValue | null>(null);
 
-function GuideSpotlight({ target, onCancel }: { target: HTMLElement; onCancel: () => void }) {
+function GuideSpotlight({ target, introduction, onCancel }: { target: HTMLElement; introduction: string; onCancel: () => void }) {
   const [rect, setRect] = useState<TargetRect | null>(null);
 
   useEffect(() => {
@@ -74,6 +75,14 @@ function GuideSpotlight({ target, onCancel }: { target: HTMLElement; onCancel: (
   const width = Math.max(0, rect.right - rect.left);
   const height = Math.max(0, rect.bottom - rect.top);
 
+  // Anchor the narration beside the highlighted control, flipping above it when
+  // the control sits low in the viewport so the caption is never clipped.
+  const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 0;
+  const placeAbove = viewportHeight > 0 && rect.bottom > viewportHeight * 0.6;
+  const captionStyle = placeAbove
+    ? { bottom: Math.max(16, viewportHeight - rect.top + 12), left: Math.max(16, rect.left) }
+    : { top: rect.bottom + 12, left: Math.max(16, rect.left) };
+
   return (
     <div className="pointer-events-none fixed inset-0 z-[90]" role="presentation">
       <div className="pointer-events-auto absolute inset-x-0 top-0 bg-background/80" style={{ height: Math.max(0, rect.top) }} />
@@ -84,6 +93,14 @@ function GuideSpotlight({ target, onCancel }: { target: HTMLElement; onCancel: (
         className="absolute rounded-md ring-2 ring-cta ring-offset-2 ring-offset-background"
         style={{ top: rect.top, left: rect.left, width, height }}
       />
+      <div
+        className="pointer-events-auto absolute z-[91] w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-card-border bg-card p-4 shadow-xl"
+        style={captionStyle}
+        role="status"
+        aria-live="polite"
+      >
+        <p className="text-sm leading-relaxed text-foreground">{introduction}</p>
+      </div>
       <button
         type="button"
         data-ui-interaction-cancel
@@ -103,11 +120,19 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
   const { hasPermission } = useAuth();
   const { setOpen, setOpenMobile, closeSidebar } = useSidebar();
   const { setWidgetOpen } = useFocusSession();
+  // Optional: when a voice transport is mounted, gate the guide reveal on the
+  // agent finishing its spoken introduction. Absent voice, this stays false and
+  // the guide reveals immediately (text-mode behavior).
+  const voiceSession = useVoiceSessionOptional();
+  const agentSpeaking = voiceSession?.agentMode === "speaking";
   const targetsRef = useRef<TargetRegistry>(new Map());
   const sharedWSRef = useRef<ReturnType<typeof acquireSharedWS> | null>(null);
   const [targetVersion, setTargetVersion] = useState(0);
   const [activeCommand, setActiveCommand] = useState<UiInteractionCommand | null>(null);
   const activeCommandRef = useRef<UiInteractionCommand | null>(null);
+  // Latches true once a guide's spotlight has been revealed, so a later spoken
+  // turn cannot retract an already-visible highlight.
+  const [guideRevealed, setGuideRevealed] = useState(false);
 
   const sendResult = useCallback((
     command: UiInteractionCommand,
@@ -135,6 +160,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
     if (!command) return;
     activeCommandRef.current = null;
     setActiveCommand(null);
+    setGuideRevealed(false);
     sendResult(command, outcome, reason);
   }, [sendResult]);
 
@@ -196,9 +222,11 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
       }
       activeCommandRef.current = message;
       setActiveCommand(message);
+      setGuideRevealed(false);
 
+      // Execute acts immediately. Guide reveal is deferred to the speech-gated
+      // effect below so the spotlight never appears mid-introduction.
       if (message.mode === "execute") invokeRef.current(message.target);
-      else revealRef.current(message.target);
     });
     ws.addCloseHandler(HANDLER_ID, () => settle("unavailable", "client_disconnected"));
     return () => {
@@ -230,15 +258,29 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [activeCommand, settle]);
 
-  const activeTargetElement = activeCommand?.mode === "guide"
+  // Reveal the guide only once the agent has finished speaking its
+  // introduction. While speaking, the control surface and spotlight stay hidden;
+  // when speech settles we open the sidebar and latch, so the highlight is never
+  // yanked open mid-sentence. Text mode never enters "speaking", so this reveals
+  // immediately.
+  useEffect(() => {
+    if (!activeCommand || activeCommand.mode !== "guide" || guideRevealed) return;
+    if (agentSpeaking) return;
+    revealRef.current(activeCommand.target);
+    setGuideRevealed(true);
+  }, [activeCommand, agentSpeaking, guideRevealed]);
+
+  const activeTargetElement = activeCommand?.mode === "guide" && guideRevealed
     ? targetsRef.current.get(activeCommand.target) ?? null
     : null;
 
+  // Start the target-availability clock only after the guide has been revealed,
+  // so waiting for the agent to finish speaking never counts against it.
   useEffect(() => {
-    if (!activeCommand || activeCommand.mode !== "guide" || activeTargetElement) return;
+    if (!activeCommand || activeCommand.mode !== "guide" || !guideRevealed || activeTargetElement) return;
     const timer = window.setTimeout(() => settle("unavailable", "target_unavailable"), TARGET_WAIT_MS);
     return () => window.clearTimeout(timer);
-  }, [activeCommand, activeTargetElement, settle, targetVersion]);
+  }, [activeCommand, activeTargetElement, guideRevealed, settle, targetVersion]);
 
   useEffect(() => {
     if (!activeCommand || activeCommand.mode !== "guide" || !activeTargetElement) return;
@@ -282,17 +324,18 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
   }, [activeCommand, activeTargetElement, settle]);
 
   const value = useMemo<UiInteractionContextValue>(() => ({
-    guidedTarget: activeCommand?.mode === "guide" ? activeCommand.target : null,
+    guidedTarget: activeCommand?.mode === "guide" && guideRevealed ? activeCommand.target : null,
     invoke,
     registerTarget,
-  }), [activeCommand, invoke, registerTarget]);
+  }), [activeCommand, guideRevealed, invoke, registerTarget]);
 
   return (
     <UiInteractionContext.Provider value={value}>
       {children}
-      {activeTargetElement ? (
+      {activeTargetElement && activeCommand?.mode === "guide" ? (
         <GuideSpotlight
           target={activeTargetElement}
+          introduction={activeCommand.introduction}
           onCancel={() => settle("cancelled", "user_cancelled")}
         />
       ) : null}
