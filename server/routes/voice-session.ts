@@ -8,6 +8,7 @@ import { getSecretSync } from "../secrets-store";
 import crypto from "crypto";
 import { FTUE_AGENT_NAME } from "../onboarding";
 import {
+  composeFtueFirstMessage,
   firstOpenAgendaItem,
   FTUE_FIRST_MESSAGE_ARTIFACT_KEY,
   isRecapFtueSession,
@@ -780,11 +781,12 @@ export async function registerVoiceSessionRoutes(app: Express) {
             const { resolveCurrentProfileIdentity } = await import("../profile-identity");
             const { userFirstName } = await resolveCurrentProfileIdentity();
             const openItem = firstOpenAgendaItem(sessionMeta.agenda);
-            firstMessage = isRecapFtueSession(sessionMeta)
-              ? openItem
-                ? `Hello ${userFirstName}. Let's begin with ${openItem.title.toLowerCase()}. What's one goal you'd like us to build around?`
-                : `Hello ${userFirstName}. Your onboarding agenda is complete. What should we move forward next?`
-              : `Hello ${userFirstName}. I'm ${FTUE_AGENT_NAME}. I help you keep track of what matters and turn it into action. To start, what's one goal you'd like me to help move forward?`;
+            firstMessage = composeFtueFirstMessage({
+              recapAware: isRecapFtueSession(sessionMeta),
+              userFirstName,
+              agentName: FTUE_AGENT_NAME,
+              openItem,
+            });
             voiceLog.info("FTUE first message composed", {
               recapAware: isRecapFtueSession(sessionMeta),
               openAgendaItemId: openItem?.id,
