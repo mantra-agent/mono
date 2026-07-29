@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Loader2,
   Mic2,
+  Plus,
   Search,
   UserRound,
 } from "lucide-react";
@@ -18,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
 import type {
   MeetingAudioSourceMode,
   MeetingParticipant,
@@ -186,17 +188,16 @@ function PersonAssignmentControl({
   participant,
   sessionId,
   people,
-  speakerLabel,
 }: {
   participant: MeetingParticipant;
   sessionId: string;
   people: SpeakerPersonOption[];
-  speakerLabel: string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const { toast } = useToast();
   const assignedPerson = people.find((person) => person.id === participant.personId);
+  const assignedPersonLabel = assignedPerson?.name || participant.label;
   const normalizedSearch = search.trim().toLowerCase();
   const options = useMemo(() => people
     .filter((person) => !normalizedSearch || [person.name, ...(person.nicknames || [])]
@@ -241,9 +242,10 @@ function PersonAssignmentControl({
           variant="ghost"
           size="sm"
           className={cn(
-            "h-5 min-h-5 max-w-full min-w-0 justify-start rounded-md border border-transparent px-1.5 py-0 text-xs font-normal shadow-none",
-            open && "border-input bg-muted/50",
-            !participant.personId && "text-muted-foreground",
+            participant.personId
+              ? "h-5 min-h-5 max-w-full min-w-0 justify-start rounded-md border border-transparent px-1.5 py-0 text-xs font-normal shadow-none"
+              : cn(HIERARCHY_PRIMARY_ACTION_CLASS, "h-auto justify-start font-normal shadow-none"),
+            open && participant.personId && "border-input bg-muted/50",
           )}
           disabled={assignment.isPending}
           aria-expanded={open}
@@ -251,20 +253,20 @@ function PersonAssignmentControl({
         >
           {assignment.isPending ? (
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-          ) : assignedPerson && participant.personId ? (
+          ) : participant.personId ? (
             <ReferenceRenderer
               refValue={createReferenceRef({
                 type: "person",
                 id: participant.personId,
-                metadata: { label: assignedPerson.name, href: `/people/${participant.personId}` },
+                metadata: { label: assignedPersonLabel, href: `/people/${participant.personId}` },
               })}
               surface="chat-inline"
               className="mx-0 max-w-full pointer-events-none"
             />
           ) : (
             <>
-              <UserRound className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{speakerLabel}</span>
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              <span>Set Speaker</span>
             </>
           )}
           {open && <ChevronDown className="ml-1 h-3 w-3 shrink-0 text-muted-foreground" />}
@@ -346,11 +348,11 @@ function ExpectedPerson({ participant }: { participant: MeetingParticipant }) {
 }
 
 function SpeakerState({
-  participant,
   stream,
+  ordinal,
 }: {
-  participant: MeetingParticipant;
   stream?: MeetingRecognitionStream;
+  ordinal?: number;
 }) {
   const failed = stream?.status === "failed" || stream?.status === "fallback";
   const active = stream?.status === "active";
@@ -364,7 +366,7 @@ function SpeakerState({
         active && "text-active",
         failed && "text-destructive",
       )} />
-      <span className="truncate">{participant.key ? speakerDisplayLabel(participant) : "No speaker detected"}</span>
+      <span className="truncate">{ordinal == null ? "No speaker detected" : `Speaker ${ordinal}`}</span>
     </div>
   );
 }
@@ -380,6 +382,9 @@ export function MeetingSpeakerAssignments({
   const assignableSpeakers = rows
     .map((row) => row.participant)
     .filter((participant): participant is MeetingParticipant => !!participant?.key);
+  const speakerOrdinals = new Map(
+    assignableSpeakers.map((participant, index) => [participant.key!, index + 1]),
+  );
   const { data } = useQuery<{ people: SpeakerPersonOption[] }>({
     queryKey: ["/api/people"],
     enabled: assignableSpeakers.length > 0,
@@ -413,7 +418,6 @@ export function MeetingSpeakerAssignments({
                       participant={participant}
                       sessionId={sessionId}
                       people={data?.people || []}
-                      speakerLabel={speakerDisplayLabel(participant)}
                     />
                   </div>
                 ) : participant ? (
@@ -426,7 +430,10 @@ export function MeetingSpeakerAssignments({
                 )}
               </div>
               {participant ? (
-                <SpeakerState participant={participant} stream={row.stream} />
+                <SpeakerState
+                  stream={row.stream}
+                  ordinal={participant.key ? speakerOrdinals.get(participant.key) : undefined}
+                />
               ) : null}
               {meeting.botStatus === "live" && meeting.transport !== "native" && row.stream ? (
                 <div className="flex items-center px-1 sm:pr-2">
