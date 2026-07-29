@@ -1929,6 +1929,49 @@ export const insertWorkflowRunSchema = createInsertSchema(workflowRuns).omit({ c
 export const meetingTurnAssemblyStatuses = ["collecting", "complete"] as const;
 export const meetingTurnParticipationStatuses = ["pending", "claimed", "respond", "silent", "failed"] as const;
 export const meetingTurnExecutionStatuses = ["waiting", "pending", "claimed", "completed", "failed", "not_applicable"] as const;
+export const meetingTurnEnrollmentStatuses = ["pending", "enrolled", "failed"] as const;
+
+/**
+ * Durable handoff from the canonical transcript document into turn orchestration.
+ * Transcript text remains in the session document; this sidecar stores only the
+ * replay-safe enrollment metadata and outcome.
+ */
+export const meetingTurnEnrollments = pgTable("meeting_turn_enrollments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: text("session_id").notNull(),
+  sessionKey: text("session_key").notNull(),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  sourceTurnId: text("source_turn_id").notNull(),
+  sourceMessageId: text("source_message_id").notNull(),
+  speakerKey: text("speaker_key").notNull(),
+  speakerLabel: text("speaker_label").notNull(),
+  participationMode: text("participation_mode").notNull().default("contextual"),
+  executionAffinityBootId: text("execution_affinity_boot_id"),
+  status: text("status", { enum: meetingTurnEnrollmentStatuses }).notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  enrolledTurnId: uuid("enrolled_turn_id"),
+  postgresCode: text("postgres_code"),
+  errorType: text("error_type"),
+  enrolledAt: timestamp("enrolled_at", { withTimezone: true }),
+  failedAt: timestamp("failed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uk_meeting_turn_enrollment_source")
+    .on(table.ownerUserId, table.accountId, table.sessionId, table.sourceTurnId),
+  index("idx_meeting_turn_enrollments_due").on(table.status, table.nextAttemptAt),
+  index("idx_meeting_turn_enrollments_session").on(table.sessionId, table.createdAt),
+  index("idx_meeting_turn_enrollments_owner").on(table.ownerUserId),
+  index("idx_meeting_turn_enrollments_account").on(table.accountId),
+  check("meeting_turn_enrollments_status_check", sql`${table.status} IN ('pending', 'enrolled', 'failed')`),
+  check("meeting_turn_enrollments_participation_mode_check", sql`${table.participationMode} IN ('contextual', 'always')`),
+]);
+
+export type MeetingTurnEnrollment = typeof meetingTurnEnrollments.$inferSelect;
 
 /**
  * Durable orchestration for live-meeting turns. Transcript words remain canonical

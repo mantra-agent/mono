@@ -7,6 +7,7 @@ import {
   type DeepgramWord,
 } from "../integrations/deepgram/streaming";
 import type { SpeechRecognitionHints } from "../speech-recognition-hints";
+import { createSerialAsyncDelivery } from "../utils/serial-async-delivery";
 
 const log = createLogger("VoiceSTT");
 
@@ -144,6 +145,16 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
     let sequence = 0;
     let closing = false;
     let errorReported = false;
+    const utteranceDelivery = createSerialAsyncDelivery(onUtterance, {
+      label: "Scribe utterance",
+      onFailure: (error) => {
+        log.error("scribe utterance consumer failed", {
+          streamId: stream.streamId,
+          errorType: error instanceof Error ? error.name : typeof error,
+          pending: utteranceDelivery.pending(),
+        });
+      },
+    });
 
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Scribe realtime connection timed out")), 10_000);
@@ -186,7 +197,7 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
         const startSeconds = first?.start_timestamp ?? first?.start;
         const endSeconds = last?.end_timestamp ?? last?.end;
         const utteranceId = `scribe:${sessionId}:${stream.participant.transportId}:${++sequence}`;
-        void onUtterance({
+        utteranceDelivery.enqueue({
           utteranceId,
           streamId: stream.streamId,
           participant: stream.participant,

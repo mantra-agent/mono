@@ -1417,6 +1417,13 @@ export interface IChatFileStorage {
     content: string,
     speaker: MessageSpeakerMeta,
     turnId?: string,
+    enrollment?: {
+      sessionKey: string;
+      speakerKey: string;
+      speakerLabel: string;
+      participationMode?: "contextual" | "always";
+      executionAffinityBootId?: string;
+    },
   ): Promise<
     | { outcome: "created" | "duplicate"; message: FileMessage }
     | { outcome: "session_not_found" }
@@ -2981,6 +2988,13 @@ export const chatFileStorage: IChatFileStorage = {
     content: string,
     speaker: MessageSpeakerMeta,
     turnId?: string,
+    enrollment?: {
+      sessionKey: string;
+      speakerKey: string;
+      speakerLabel: string;
+      participationMode?: "contextual" | "always";
+      executionAffinityBootId?: string;
+    },
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -2994,6 +3008,15 @@ export const chatFileStorage: IChatFileStorage = {
         ? data.messages.find((message) => message.role === "user" && message.turnId === turnId)
         : undefined;
       if (existing) {
+        if (turnId && enrollment) {
+          const { ensurePendingMeetingTurnEnrollment } = await import("./meeting/turn-enrollment");
+          await ensurePendingMeetingTurnEnrollment({
+            sessionId,
+            sourceTurnId: turnId,
+            sourceMessageId: existing.id,
+            ...enrollment,
+          });
+        }
         log.debug(`[ChatFileStorage] duplicate meeting turn accepted session=${sessionId} turnId=${turnId}`);
         return { outcome: "duplicate" as const, message: existing };
       }
@@ -3015,6 +3038,15 @@ export const chatFileStorage: IChatFileStorage = {
       data.messages.push(msg);
       data.updatedAt = now;
       await writeConv(data);
+      if (turnId && enrollment) {
+        const { ensurePendingMeetingTurnEnrollment } = await import("./meeting/turn-enrollment");
+        await ensurePendingMeetingTurnEnrollment({
+          sessionId,
+          sourceTurnId: turnId,
+          sourceMessageId: msg.id,
+          ...enrollment,
+        });
+      }
       invalidateSessionsCache();
       return { outcome: "created" as const, message: msg };
     });

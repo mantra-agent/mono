@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { getSecretSync } from "../../secrets-store";
 import { createLogger } from "../../log";
+import { createSerialAsyncDelivery } from "../../utils/serial-async-delivery";
 
 const log = createLogger("DeepgramStreaming");
 
@@ -71,6 +72,15 @@ export async function connectDeepgramStreaming(
   });
   let closing = false;
   let errorReported = false;
+  const transcriptDelivery = createSerialAsyncDelivery(onTranscript, {
+    label: "Deepgram transcript",
+    onFailure: (error) => {
+      log.error("Deepgram transcript consumer failed", {
+        errorType: error instanceof Error ? error.name : typeof error,
+        pending: transcriptDelivery.pending(),
+      });
+    },
+  });
 
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Deepgram connection timed out")), 10_000);
@@ -103,7 +113,7 @@ export async function connectDeepgramStreaming(
       const alternative = message.channel?.alternatives?.[0];
       const text = alternative?.transcript?.trim() || "";
       if (!text) return;
-      void onTranscript({
+      transcriptDelivery.enqueue({
         text,
         words: alternative?.words || [],
         isFinal: message.is_final === true,
