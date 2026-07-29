@@ -15,8 +15,15 @@ export interface AgendaDiscussionLaunch {
   pendingKey: string;
   /** New session title (trimmed and length-capped by the launcher). */
   title: string;
-  /** Preloaded first message content. */
-  message: string;
+  /**
+   * Optional agenda definition to instantiate as the new session's structured
+   * SESSION AGENDA before the first message is posted, so the first agent turn
+   * sees the agenda in context. When present, the agenda lives in session state
+   * rather than being dumped into the chat as prose.
+   */
+  applyAgendaId?: string;
+  /** Optional preloaded first message content. */
+  message?: string;
   /** Stable suffix for the replay-safe clientTurnId. */
   clientTurnSuffix: string;
 }
@@ -29,15 +36,24 @@ export function useAgendaDiscussion() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ title, message, clientTurnSuffix }: AgendaDiscussionLaunch) => {
+    mutationFn: async ({ title, applyAgendaId, message, clientTurnSuffix }: AgendaDiscussionLaunch) => {
       const response = await apiRequest("POST", "/api/sessions", {
         title: title.trim().slice(0, 80) || "Agenda Discussion",
       });
       const session: CreatedSession = await response.json();
-      await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
-        content: message,
-        clientTurnId: `agenda-discuss-${session.id}-${clientTurnSuffix}`.slice(0, 120),
-      });
+      // Instantiate the agenda into structured session state BEFORE posting any
+      // message, so the first agent turn sees the agenda in context.
+      if (applyAgendaId) {
+        await apiRequest("POST", `/api/sessions/${session.id}/agenda`, {
+          agendaId: applyAgendaId,
+        });
+      }
+      if (message) {
+        await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
+          content: message,
+          clientTurnId: `agenda-discuss-${session.id}-${clientTurnSuffix}`.slice(0, 120),
+        });
+      }
       return session;
     },
     onSuccess: (session) => {

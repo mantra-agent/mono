@@ -72,6 +72,8 @@ import { and, eq, inArray, isNull, notInArray, sql as drizzleSql, type SQL } fro
 import { combineWithVisibleScope } from "../../scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { planExecutions } from "@shared/schema";
+import { agendaDefinitionStorage } from "../../agenda-storage";
+import { instantiateAgendaDefinition } from "@shared/models/agendas";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
 import { getCurrentPrincipalOrSystem } from "../../principal-context";
@@ -3274,6 +3276,57 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         chatLog.error("Error sending message:", error);
         if (!res.headersSent) {
           res.status(500).json({ error: "Failed to send message" });
+        }
+      }
+    },
+  );
+
+  // Instantiate a reusable agenda DEFINITION as this session's structured
+  // SESSION AGENDA. Sibling of the messages route above: it reuses the exact
+  // same principal-scoped `chatStorage.getSession` ownership check, so a
+  // session the caller does not own fails closed as not-found. The agenda is
+  // written only through the one canonical `setSessionAgenda` path; the route
+  // trusts only `agendaId` and never accepts caller-supplied agenda items.
+  app.post(
+    "/api/sessions/:id/agenda",
+    async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.params.id as string;
+        const rawAgendaId = req.body?.agendaId;
+        const agendaId = typeof rawAgendaId === "string" ? rawAgendaId.trim() : "";
+        if (!agendaId) {
+          return res.status(400).json({ error: "agendaId is required" });
+        }
+
+        const session = await chatStorage.getSession(sessionId);
+        if (!session) {
+          return res.status(404).json({ error: "Session not found" });
+        }
+
+        // Server-authoritative: resolve the definition through the
+        // principal-scoped definition store, then instantiate a fresh all-open
+        // Session snapshot. Instantiation logic is not duplicated here.
+        const def = await agendaDefinitionStorage.get(agendaId);
+        if (!def) {
+          return res.status(404).json({ error: "Agenda not found" });
+        }
+        const agenda = instantiateAgendaDefinition(def);
+
+        // Canonical session-agenda write path — the only way agenda state is
+        // mutated on a session.
+        const updated = await chatStorage.setSessionAgenda(sessionId, agenda.items);
+        if (!updated) {
+          return res.status(404).json({ error: "Session not found" });
+        }
+
+        chatLog.info(
+          `session agenda instantiated sessionId=${sessionId} itemCount=${agenda.items.length}`,
+        );
+        res.json(updated);
+      } catch (error) {
+        chatLog.error("Error instantiating session agenda:", error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Failed to set session agenda" });
         }
       }
     },

@@ -35,7 +35,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useAgendaDiscussion } from "@/hooks/use-agenda-discussion";
-import { buildAgendaDefinitionDiscussionMessage } from "@/lib/agenda-discussion";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -318,7 +317,8 @@ function AgendaRow({ agenda, open, onToggle }: { agenda: AgendaDefinition; open:
                 discuss.mutate({
                   pendingKey: agenda.id,
                   title: agenda.name,
-                  message: buildAgendaDefinitionDiscussionMessage(agenda),
+                  applyAgendaId: agenda.id,
+                  message: "Let's work through this agenda together.",
                   clientTurnSuffix: agenda.id,
                 });
               }}
