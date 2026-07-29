@@ -14,7 +14,8 @@
     "build:preview": "eas build --profile preview --platform ios",
     "build:prod": "eas build --profile production --platform ios",
     "submit": "eas submit -p ios",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "eas-build-pre-install": "npm install --package-lock-only --legacy-peer-deps"
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "10.0.0",
