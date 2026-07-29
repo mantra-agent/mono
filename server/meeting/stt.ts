@@ -28,7 +28,11 @@ import {
   resolveMeetingTransportSession,
   runWithMeetingOwnerPrincipal,
 } from "./owner-principal";
-import { publishMeetingAudioLevel, syncMeetingVisualizerBotStatus } from "./output-media";
+import {
+  noteMeetingParticipantAudio,
+  publishMeetingAudioLevel,
+  syncMeetingVisualizerBotStatus,
+} from "./output-media";
 import {
   createSpeechRecognitionHints,
   resolveSpeechRecognitionHints,
@@ -40,6 +44,10 @@ const MAX_PARTICIPANT_STREAMS = 16;
 const MAX_PENDING_AUDIO_BYTES = 512 * 1024;
 const AUDIO_TOKEN_TTL_MS = 12 * 60 * 60_000;
 const AUDIO_TOKEN_PURPOSE = "meeting-participant-audio";
+// Recall audio_separate_raw frames are 16kHz s16le mono PCM per the realtime
+// audio contract; used to convert a frame's byte length into a duration for
+// barge-in onset accumulation.
+const RECALL_PCM_SAMPLE_RATE_HZ = 16_000;
 
 // A realtime STT provider socket (Scribe/Deepgram) can drop mid-meeting on
 // idle silence, provider max-duration limits, or transient network faults.
@@ -842,7 +850,14 @@ export function registerMeetingSTTAudioTransport(
         }
         if (stream.recognition.status === "excluded") return;
         const bytes = Buffer.from(audioBase64, "base64");
-        publishMeetingAudioLevel(sessionId, pcm16Rms(bytes));
+        const rms = pcm16Rms(bytes);
+        publishMeetingAudioLevel(sessionId, rms);
+        // Raw-audio barge-in: this frame is a real human participant (the bot's
+        // own output stream is excluded above), pre-transcription and free of
+        // echo-drop/turn classification — the low-latency onset signal the STT
+        // pipeline could never provide.
+        const frameMs = (Math.floor(bytes.length / 2) / RECALL_PCM_SAMPLE_RATE_HZ) * 1000;
+        noteMeetingParticipantAudio(sessionId, rms, frameMs);
         if (stream.stt) stream.stt.sendAudio(bytes);
         else if (stream.recognition.status === "connecting") appendPendingAudio(stream, bytes);
       } catch (error) {

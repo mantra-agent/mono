@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AgentOrb } from "@/components/agent-orb";
 import type { OrbState } from "@/components/agent-orb";
 import { createLogger } from "@/lib/logger";
@@ -97,10 +97,12 @@ function useMeetingVisualizerFeed(token: string): {
   state: OrbState;
   remoteAudioLevel: number;
   connected: boolean;
+  interruptNonce: number;
 } {
   const [state, setState] = useState<OrbState>(token ? "idle" : "degraded");
   const [remoteAudioLevel, setRemoteAudioLevel] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [interruptNonce, setInterruptNonce] = useState(0);
 
   useEffect(() => {
     if (!token) return;
@@ -121,6 +123,7 @@ function useMeetingVisualizerFeed(token: string): {
           const event = JSON.parse(String(message.data)) as AgentVisualizerEvent;
           if (event.type === "agent.state") setState(event.state);
           if (event.type === "audio.level") setRemoteAudioLevel(event.level);
+          if (event.type === "speech.interrupt") setInterruptNonce((nonce) => nonce + 1);
         } catch (error) {
           log.warn("Invalid visualizer state event", error);
         }
@@ -147,29 +150,30 @@ function useMeetingVisualizerFeed(token: string): {
     };
   }, [token]);
 
-  return { state: connected ? state : "degraded", remoteAudioLevel, connected };
+  return { state: connected ? state : "degraded", remoteAudioLevel, connected, interruptNonce };
 }
 
-function useMeetingSpeech(token: string, enabled: boolean): void {
+function useMeetingSpeech(token: string, enabled: boolean, interruptNonce: number): void {
+  const activeAudioRef = useRef<HTMLAudioElement | undefined>(undefined);
+
   useEffect(() => {
     if (!token || !enabled) return;
     let stopped = false;
-    let activeAudio: HTMLAudioElement | undefined;
 
     const loop = async () => {
       while (!stopped) {
         try {
-          activeAudio = new Audio(meetingAudioEndpoint(token));
-          activeAudio.preload = "auto";
-          await activeAudio.play();
+          const audio = new Audio(meetingAudioEndpoint(token));
+          audio.preload = "auto";
+          activeAudioRef.current = audio;
+          await audio.play();
           await new Promise<void>((resolve, reject) => {
-            if (!activeAudio) return reject(new Error("Meeting audio element unavailable"));
-            activeAudio.onended = () => resolve();
-            activeAudio.onerror = () => reject(new Error("Meeting audio playback failed"));
+            audio.onended = () => resolve();
+            audio.onerror = () => reject(new Error("Meeting audio playback failed"));
           });
-          activeAudio.removeAttribute("src");
-          activeAudio.load();
-          activeAudio = undefined;
+          audio.removeAttribute("src");
+          audio.load();
+          if (activeAudioRef.current === audio) activeAudioRef.current = undefined;
         } catch (error) {
           if (stopped) return;
           log.debug("Meeting speech poll retry", error);
@@ -181,16 +185,32 @@ function useMeetingSpeech(token: string, enabled: boolean): void {
     void loop();
     return () => {
       stopped = true;
-      activeAudio?.pause();
-      activeAudio?.removeAttribute("src");
+      activeAudioRef.current?.pause();
+      activeAudioRef.current?.removeAttribute("src");
+      activeAudioRef.current = undefined;
     };
   }, [enabled, token]);
+
+  // Barge-in: when the server signals an interrupt, immediately stop the audio
+  // the element already buffered. Destroying the server stream ends delivery but
+  // not playback; this halts the sound. The loop's onerror path then unwinds and
+  // resumes polling for the next turn.
+  useEffect(() => {
+    if (!interruptNonce) return;
+    const audio = activeAudioRef.current;
+    if (!audio) return;
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    activeAudioRef.current = undefined;
+    log.info("Meeting speech stopped by barge-in");
+  }, [interruptNonce]);
 }
 
 function RecallMeetingVisualizer({ token, search }: { token: string; search: URLSearchParams }) {
   const feed = useMeetingVisualizerFeed(token);
   const recallMeetingLevel = useRecallMeetingLevel(Boolean(token));
-  useMeetingSpeech(token, Boolean(token));
+  useMeetingSpeech(token, Boolean(token), feed.interruptNonce);
 
   const state = token ? feed.state : previewState(search);
   const audioLevel = token
