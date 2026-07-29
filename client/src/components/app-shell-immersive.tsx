@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { VoiceSessionProvider } from "@/hooks/use-voice-session";
-import { LiveVoiceProvider } from "@/hooks/use-live-voice";
+import { LiveVoiceProvider, useLiveVoice } from "@/hooks/use-live-voice";
 import { ImmersiveOrbSlot } from "@/components/immersive-orb-slot";
 import { ImmersiveClaimModal } from "@/components/immersive-claim-modal";
 import { ProvisionalVoiceController } from "@/components/immersive-voice";
@@ -14,11 +14,17 @@ import { createLogger } from "@/lib/logger";
 const log = createLogger("AppShellImmersive");
 
 /**
- * Delay before the claim affordance appears over the orb, so the provisional
- * agent's greeting plays first. Aligned with the orb entrance settle window
- * (see `ImmersiveOrbSlot`) so the form arrives just after the entrance.
+ * The claim affordance appears only once the provisional entrance has settled
+ * AND the agent has delivered and finished its first greeting, so the card never
+ * overlaps the opening utterance. These bounds keep that reveal honest without
+ * ever trapping the user behind a voice event that may never arrive.
  */
-const CLAIM_REVEAL_DELAY_MS = 3_600;
+/** Entrance settle window, aligned with the orb entrance (see `ImmersiveOrbSlot`). */
+const CLAIM_ENTRANCE_SETTLE_MS = 3_200;
+/** No greeting began by this point: there is nothing to protect, so reveal. */
+const CLAIM_REVEAL_NO_SPEECH_MS = 6_000;
+/** Absolute ceiling: never wait past this for a greeting to settle. */
+const CLAIM_REVEAL_MAX_MS = 12_000;
 
 interface AppShellImmersiveProps {
   /**
@@ -28,6 +34,84 @@ interface AppShellImmersiveProps {
    * authorization.
    */
   onboardingToken: string;
+}
+
+interface ImmersiveClaimGateProps {
+  onboardingToken: string;
+  claimed: boolean;
+  onClaimed: (name: string) => void;
+}
+
+/**
+ * Owns the claim-affordance reveal decision from live orb/voice state instead of
+ * a blind timer. The form appears only once the entrance has settled and the
+ * agent has finished its first greeting (the first real `speaking` → resting
+ * transition), so the card never overlaps the opening utterance.
+ *
+ * Three bounded fail-open paths guarantee the form still arrives when voice is
+ * imperfect: an explicit `degraded` transport reveals immediately, a no-greeting
+ * deadline reveals when nothing ever speaks, and an absolute ceiling reveals if
+ * a greeting begins but never settles. The reveal latches — later speaking turns
+ * (answering a product question) never hide the form again.
+ */
+function ImmersiveClaimGate({ onboardingToken, claimed, onClaimed }: ImmersiveClaimGateProps) {
+  const { visualState } = useLiveVoice();
+  const [revealed, setRevealed] = useState(false);
+  const [entranceSettled, setEntranceSettled] = useState(false);
+  const [greetingSettled, setGreetingSettled] = useState(false);
+  const hasSpokenRef = useRef(false);
+
+  // Entrance settle, aligned with the orb entrance window.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setEntranceSettled(true), CLAIM_ENTRANCE_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // Track the first real greeting: mark once the agent speaks, then settle when
+  // it returns to a resting state. A `degraded` transport reveals immediately so
+  // a voice failure never traps the user behind a silent orb.
+  useEffect(() => {
+    if (visualState === "speaking") {
+      hasSpokenRef.current = true;
+      return;
+    }
+    if (visualState === "degraded") {
+      setRevealed(true);
+      return;
+    }
+    if (hasSpokenRef.current && (visualState === "listening" || visualState === "idle")) {
+      setGreetingSettled(true);
+    }
+  }, [visualState]);
+
+  // Bounded fail-open. Reveal if no greeting ever begins, and enforce an absolute
+  // ceiling if one begins but never settles.
+  useEffect(() => {
+    const noSpeech = window.setTimeout(() => {
+      if (!hasSpokenRef.current) {
+        log.warn("Claim reveal fail-open: no greeting detected before deadline");
+        setRevealed(true);
+      }
+    }, CLAIM_REVEAL_NO_SPEECH_MS);
+    const ceiling = window.setTimeout(() => {
+      setRevealed((current) => {
+        if (!current) log.warn("Claim reveal fail-open: greeting settle ceiling reached");
+        return true;
+      });
+    }, CLAIM_REVEAL_MAX_MS);
+    return () => {
+      window.clearTimeout(noSpeech);
+      window.clearTimeout(ceiling);
+    };
+  }, []);
+
+  // Reveal once both the entrance and the greeting have settled; latch true.
+  useEffect(() => {
+    if (entranceSettled && greetingSettled) setRevealed(true);
+  }, [entranceSettled, greetingSettled]);
+
+  if (!revealed || claimed) return null;
+  return <ImmersiveClaimModal onboardingToken={onboardingToken} onClaimed={onClaimed} />;
 }
 
 /**
@@ -42,14 +126,8 @@ interface AppShellImmersiveProps {
  * never grow a parallel authenticated Home, Simple, Session, or provider tree.
  */
 export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
-  const [claimRevealed, setClaimRevealed] = useState(false);
   const [claimed, setClaimed] = useState(false);
   const handoffStartedRef = useRef(false);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setClaimRevealed(true), CLAIM_REVEAL_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, []);
 
   const handleClaimed = useCallback(async (claimedName: string) => {
     setClaimed(true);
@@ -89,9 +167,11 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
 
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <ImmersiveOrbSlot />
-          {claimRevealed && !claimed ? (
-            <ImmersiveClaimModal onboardingToken={onboardingToken} onClaimed={handleClaimed} />
-          ) : null}
+          <ImmersiveClaimGate
+            onboardingToken={onboardingToken}
+            claimed={claimed}
+            onClaimed={handleClaimed}
+          />
         </div>
       </div>
     </LiveVoiceProvider>
