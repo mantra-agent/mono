@@ -1007,12 +1007,15 @@ function VnextLinksSection({
   claimId,
   graphNeighbors,
   onGraphNeighborSelect,
+  variant = "inline",
 }: {
   claimId: number;
   graphNeighbors?: GraphNeighborTarget[];
   onGraphNeighborSelect?: (nodeId: number) => void;
+  variant?: "inline" | "compact-framed";
 }) {
   const usesGraphProjection = graphNeighbors !== undefined;
+  const isCompactFramed = variant === "compact-framed";
   const {
     data: sourceData,
     isLoading: sourcesLoading,
@@ -1051,18 +1054,30 @@ function VnextLinksSection({
   if (!usesGraphProjection && !isLoading && !isError && targets.length === 0) return null;
 
   return (
-    <div data-testid={`memory-vnext-links-${claimId}`}>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    <div
+      className={cn(
+        isCompactFramed
+          && "max-h-32 overflow-y-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-2 py-1.5 scrollbar-thin",
+      )}
+      data-testid={`memory-vnext-links-${claimId}`}
+    >
+      <div className={cn("flex flex-wrap items-center", isCompactFramed ? "gap-x-1.5 gap-y-0.5" : "gap-x-2 gap-y-1")}>
         {usesGraphProjection
           ? visibleGraphNeighbors.map((neighbor) => (
               <button
                 key={`graph:${neighbor.nodeId}`}
                 type="button"
-                className="inline-flex min-w-0 items-center gap-1 text-sm text-cta hover:text-active"
+                className={cn(
+                  "inline-flex min-w-0 items-center gap-1 text-cta hover:text-active",
+                  isCompactFramed ? "text-xs leading-tight" : "text-sm",
+                )}
                 title={neighbor.label}
                 onClick={() => onGraphNeighborSelect?.(neighbor.nodeId)}
               >
-                <MemorySourceIcon source={neighbor.source} className="h-3 w-3 shrink-0" />
+                <MemorySourceIcon
+                  source={neighbor.source}
+                  className={cn("shrink-0", isCompactFramed ? "h-2.5 w-2.5" : "h-3 w-3")}
+                />
                 <span className="max-w-48 truncate">{neighbor.label}</span>
               </button>
             ))
@@ -1621,6 +1636,7 @@ function GraphTab({
               claimId={detailNode.id}
               graphNeighbors={uniqueDetailGraphNeighbors}
               onGraphNeighborSelect={handleNodeSelect}
+              variant="compact-framed"
             />
           </div>
         )}
