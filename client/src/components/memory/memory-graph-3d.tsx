@@ -132,6 +132,11 @@ const LARGE_GRAPH_THRESHOLD = 1_000;
 const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
 const MIN_NODE_HIT_RADIUS_PX = 12;
+// Nodes are world-space orbs, so far/low-degree nodes otherwise shrink to sub-pixel
+// and read darker than the edges, which hold a 1px screen-space linewidth floor plus
+// a 0.5 distance-visibility floor. Give nodes their own screen-space presence floor so
+// they always stay at least as visible as the edges when the camera pulls back.
+const MIN_NODE_SCREEN_RADIUS_PX = 3;
 const ACTIVITY_RECENCY_THRESHOLD = 0.25;
 const ACTIVITY_PACKET_BEADS = 5;
 const ACTIVITY_PACKET_DURATION_MS = 1_150;
@@ -290,7 +295,9 @@ function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[])
       vx: 0,
       vy: 0,
       vz: 0,
-      radius: 2 + Math.pow(degreeRatio, 0.6) * 38,
+      // Smallest nodes doubled (2 -> 4) without moving the largest: floor + range
+      // still sum to 40, so low-degree claims read at distance instead of vanishing.
+      radius: 4 + Math.pow(degreeRatio, 0.6) * 36,
     };
   });
   const nodeIndex = new Map(sceneNodes.map((node, index) => [node.id, index]));
@@ -685,9 +692,23 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function syncNodeMatrices() {
+      camera.updateMatrixWorld();
+      const viewportHeight = Math.max(1, host.clientHeight);
+      const pixelsPerRadian = viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
       sceneNodes.forEach((node, index) => {
+        const worldRadius = node.radius * getNodeScale(index);
+        // Enforce a screen-space presence floor: if the node would project smaller
+        // than MIN_NODE_SCREEN_RADIUS_PX, grow its world radius just enough to hold
+        // that pixel size, so distant nodes never dim/vanish before the edges.
+        cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
+        const depth = -cameraSpace.z;
+        let renderRadius = worldRadius;
+        if (depth > 0) {
+          const minWorldRadius = MIN_NODE_SCREEN_RADIUS_PX * depth / pixelsPerRadian;
+          if (renderRadius < minWorldRadius) renderRadius = minWorldRadius;
+        }
         transform.position.set(node.x, node.y, node.z);
-        transform.scale.setScalar(node.radius * getNodeScale(index));
+        transform.scale.setScalar(renderRadius);
         transform.updateMatrix();
         nodeMesh.setMatrixAt(index, transform.matrix);
       });
@@ -1120,6 +1141,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function renderNow() {
       renderFrame = 0;
+      // Node scale now depends on the camera (screen-space size floor), so matrices
+      // must re-sync whenever the view changes (zoom/pan/rotate), not only on ticks.
+      syncNodeMatrices();
       syncLabels();
       syncLinkVisibility();
       renderer.render(scene, camera);
