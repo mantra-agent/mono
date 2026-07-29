@@ -326,10 +326,11 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
   const titleHref = firstExternalUrl(item.title);
   const mapHref = isMeetingLocationItem(item) ? mapsSearchHref(item.title) : null;
   const displayTitle = mapHref ? placeNameFromAddress(item.title) : item.title;
-
-  useEffect(() => {
-    if (guidedDescendant && canExpand) setExpanded(true);
-  }, [canExpand, guidedDescendant]);
+  // Guidance reveals the complete path to the canonical resource without
+  // rewriting ordinary row disclosure. The user's activation still crosses the
+  // native row/link behavior; when the guide ends, only explicit user state
+  // remains.
+  const displayedExpanded = expanded || (guidedDescendant && canExpand);
 
   const rowRef = useRef<HTMLDivElement>(null);
   const autoExpandHandledRef = useRef<string | null>(null);
@@ -495,9 +496,9 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
               type="button"
               className="rounded p-0.5 hover:bg-accent/60"
               onClick={(e) => { e.stopPropagation(); toggleExpanded(); }}
-              aria-label={expanded ? "Collapse" : "Expand"}
+              aria-label={displayedExpanded ? "Collapse" : "Expand"}
             >
-              <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", expanded && "rotate-90")} />
+              <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", displayedExpanded && "rotate-90")} />
             </button>
           ) : null}
         </span>
@@ -542,18 +543,18 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
       </div>
 
       {/* Expanded content */}
-      {expanded && agendaPageId && agendaPageSlug ? (
+      {displayedExpanded && agendaPageId && agendaPageSlug ? (
         <div className="pb-2 pl-0 pr-1.5">
           <InlineLibraryPageEditor page={{ id: agendaPageId, title: item.title, slug: agendaPageSlug }} />
         </div>
-      ) : expanded && inlineExpandedContent ? (
+      ) : displayedExpanded && inlineExpandedContent ? (
         <div className="pb-2 pl-0 pr-1.5">
           <SimpleTextFrame content={inlineExpandedContent} />
         </div>
       ) : null}
 
       {/* Expanded children */}
-      {expanded && hasChildren && (
+      {displayedExpanded && hasChildren && (
         <div>
           {item.children!.map(child => (
             <SimpleTreeRow key={child.id} item={child} depth={depth + 1} layout={layout} />

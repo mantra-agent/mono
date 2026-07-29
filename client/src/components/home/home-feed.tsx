@@ -27,25 +27,12 @@ import { SurfacedEmailRow } from "@/components/email/surfaced-email-row";
 import { SimpleCheckCircle } from "./home-check-circle";
 import { SimpleTextFrame } from "./simple-text-frame";
 import { useUiInteraction } from "@/hooks/use-ui-interaction";
+import { useHomeSectionDisclosure } from "@/hooks/use-home-section-disclosure";
 
 const log = createLogger("SimpleFeed");
 
 
 type CreatedSession = { id: string };
-
-/** Sections that default to closed to keep the Home feed anchored on nearer horizons. */
-const DEFAULT_CLOSED_SECTIONS = new Set([
-  "earlier",
-  "this_month",
-  "next_month",
-  "this_quarter",
-  "next_quarter",
-  "this_year",
-  "next_year",
-  "three_years",
-  "lifetime",
-  "snoozed",
-]);
 
 export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const now = useMemo(() => new Date(feed.generatedAt), [feed.generatedAt]);
@@ -105,13 +92,20 @@ function SimpleSectionGroup({
 }) {
   const { section: sectionKey, items, planArtifact, planSkillName, planCadence } = section;
   const { guidedResource } = useUiInteraction();
-  const [open, setOpen] = useState(!DEFAULT_CLOSED_SECTIONS.has(sectionKey));
+  const { open: preferredOpen, setOpen: setPreferredOpen } = useHomeSectionDisclosure(sectionKey);
+  const [guideOpened, setGuideOpened] = useState(false);
   const containsGuidedResource = Boolean(guidedResource && items.some((item) => simpleItemContainsReference(item, guidedResource)));
   const hasPlanRow = planArtifact !== undefined;
+  const open = preferredOpen || guideOpened || containsGuidedResource;
 
   useEffect(() => {
-    if (containsGuidedResource) setOpen(true);
+    if (containsGuidedResource) setGuideOpened(true);
   }, [containsGuidedResource]);
+
+  const setOpen = (nextOpen: boolean) => {
+    setGuideOpened(false);
+    setPreferredOpen(nextOpen);
+  };
 
   return (
     <section className="scroll-mt-6">
