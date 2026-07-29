@@ -75,6 +75,13 @@ function normalizeDefinitionItems(value: unknown): AgendaDefinitionItem[] {
   return normalized.items.map(({ id, title, description }) => ({ id, title, description }));
 }
 
+/**
+ * Boot-validated canonical FTUE fixture. Normalizing at module load makes an
+ * over-limit or malformed fixture fail deploy loudly at server boot instead of
+ * failing a user's first onboarding at runtime.
+ */
+const FTUE_DEFINITION_ITEMS: AgendaDefinitionItem[] = normalizeDefinitionItems(RECAP_FTUE_AGENDA_ITEMS);
+
 function mapDefinition(row: typeof agendaDefinitions.$inferSelect): AgendaDefinition {
   return {
     id: row.id,
@@ -232,7 +239,7 @@ export class AgendaDefinitionStorage {
         return mapDefinition(adopted);
       }
 
-      const items = normalizeDefinitionItems(RECAP_FTUE_AGENDA_ITEMS);
+      const items = FTUE_DEFINITION_ITEMS;
       const [created] = await tx
         .insert(agendaDefinitions)
         .values({

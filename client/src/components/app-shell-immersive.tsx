@@ -22,10 +22,20 @@ const log = createLogger("AppShellImmersive");
  */
 /** Entrance settle window, aligned with the orb entrance (see `ImmersiveOrbSlot`). */
 const CLAIM_ENTRANCE_SETTLE_MS = 3_200;
-/** No greeting began by this point: there is nothing to protect, so reveal. */
-const CLAIM_REVEAL_NO_SPEECH_MS = 6_000;
-/** Absolute ceiling: never wait past this for a greeting to settle. */
-const CLAIM_REVEAL_MAX_MS = 12_000;
+/**
+ * No greeting began by this point: reveal rather than trap the user behind a
+ * silent orb. Generous because production greeting TTFT can run tens of
+ * seconds; a premature reveal puts the account card on top of the intro.
+ */
+const CLAIM_REVEAL_NO_SPEECH_MS = 20_000;
+/** Absolute settle ceiling anchored to the first real speech, never to mount. */
+const CLAIM_REVEAL_MAX_AFTER_SPEECH_MS = 30_000;
+/**
+ * The resting state must hold this long before the greeting counts as settled:
+ * multi-sentence intros dip to listening between utterances, and a momentary
+ * dip must not fire the claim card mid-greeting.
+ */
+const CLAIM_GREETING_SETTLE_HOLD_MS = 2_000;
 
 interface AppShellImmersiveProps {
   /**
@@ -61,6 +71,7 @@ function ImmersiveClaimGate({ onboardingToken, claimed, onClaimed }: ImmersiveCl
   const [entranceSettled, setEntranceSettled] = useState(false);
   const [greetingSettled, setGreetingSettled] = useState(false);
   const hasSpokenRef = useRef(false);
+  const speechCeilingRef = useRef<number | undefined>(undefined);
 
   // Entrance settle, aligned with the orb entrance window.
   useEffect(() => {
@@ -73,7 +84,18 @@ function ImmersiveClaimGate({ onboardingToken, claimed, onClaimed }: ImmersiveCl
   // a voice failure never traps the user behind a silent orb.
   useEffect(() => {
     if (visualState === "speaking") {
-      hasSpokenRef.current = true;
+      if (!hasSpokenRef.current) {
+        hasSpokenRef.current = true;
+        // Ceiling starts at the first real speech so a late greeting (slow
+        // TTFT) still gets its full settle window instead of a mount-anchored
+        // timer cutting it off mid-intro.
+        speechCeilingRef.current = window.setTimeout(() => {
+          setRevealed((current) => {
+            if (!current) log.warn("Claim reveal fail-open: greeting settle ceiling reached");
+            return true;
+          });
+        }, CLAIM_REVEAL_MAX_AFTER_SPEECH_MS);
+      }
       return;
     }
     if (visualState === "degraded") {
@@ -81,12 +103,16 @@ function ImmersiveClaimGate({ onboardingToken, claimed, onClaimed }: ImmersiveCl
       return;
     }
     if (hasSpokenRef.current && (visualState === "listening" || visualState === "idle")) {
-      setGreetingSettled(true);
+      const settleHold = window.setTimeout(() => setGreetingSettled(true), CLAIM_GREETING_SETTLE_HOLD_MS);
+      return () => window.clearTimeout(settleHold);
     }
   }, [visualState]);
 
-  // Bounded fail-open. Reveal if no greeting ever begins, and enforce an absolute
-  // ceiling if one begins but never settles.
+  useEffect(() => () => {
+    if (speechCeilingRef.current !== undefined) window.clearTimeout(speechCeilingRef.current);
+  }, []);
+
+  // Bounded fail-open: reveal when no greeting ever begins.
   useEffect(() => {
     const noSpeech = window.setTimeout(() => {
       if (!hasSpokenRef.current) {
@@ -94,16 +120,7 @@ function ImmersiveClaimGate({ onboardingToken, claimed, onClaimed }: ImmersiveCl
         setRevealed(true);
       }
     }, CLAIM_REVEAL_NO_SPEECH_MS);
-    const ceiling = window.setTimeout(() => {
-      setRevealed((current) => {
-        if (!current) log.warn("Claim reveal fail-open: greeting settle ceiling reached");
-        return true;
-      });
-    }, CLAIM_REVEAL_MAX_MS);
-    return () => {
-      window.clearTimeout(noSpeech);
-      window.clearTimeout(ceiling);
-    };
+    return () => window.clearTimeout(noSpeech);
   }, []);
 
   // Reveal once both the entrance and the greeting have settled; latch true.
