@@ -19,16 +19,31 @@ export function isRecoverablePostgresConnectionError(error: unknown): boolean {
   );
 }
 
-export function getPostgresErrorCode(error: unknown): string {
+export interface PostgresErrorDetails {
+  code: string;
+  errorType: string;
+  causeDepth: number;
+}
+
+export function getPostgresErrorDetails(error: unknown): PostgresErrorDetails {
   let current: unknown = error;
   const seen = new Set<unknown>();
+  const fallbackType = error instanceof Error ? error.name || "Error" : typeof error;
   for (let depth = 0; depth < 5 && current && !seen.has(current); depth++) {
     seen.add(current);
     const candidate = current as { code?: unknown; cause?: unknown };
     if (typeof candidate.code === "string" && candidate.code.length > 0) {
-      return candidate.code;
+      return {
+        code: candidate.code,
+        errorType: current instanceof Error ? current.name || fallbackType : fallbackType,
+        causeDepth: depth,
+      };
     }
     current = candidate.cause;
   }
-  return "unknown";
+  return { code: "unknown", errorType: fallbackType, causeDepth: 0 };
+}
+
+export function getPostgresErrorCode(error: unknown): string {
+  return getPostgresErrorDetails(error).code;
 }

@@ -260,7 +260,7 @@ async function appendMeetingTurnFragmentOnce(input: {
 }
 
 function appendRetryable(error: unknown): boolean {
-  return isSerializationConflict(error) || getPostgresErrorCode(error) === "55P03";
+  return isSerializationConflict(error);
 }
 
 export async function appendMeetingTurnFragment(input: {

@@ -3573,19 +3573,28 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     kickFinalization();
 
     const sourceTurnId = event.turnId || `${sessionId}:${Date.now()}:${randomUUID().slice(0, 8)}`;
+    const speakerKey = resolution.speaker.key
+      || resolution.speaker.personId
+      || resolution.speaker.label.toLowerCase();
     const transcriptAcceptance = await chatStorage.createMeetingUserMessage(
       sessionId,
       event.text,
       resolution.speaker,
       sourceTurnId,
+      {
+        sessionKey,
+        speakerKey,
+        speakerLabel: resolution.speaker.label,
+        participationMode: event.participationMode,
+        executionAffinityBootId: event.executionAffinityBootId,
+      },
     );
     if (transcriptAcceptance.outcome === "session_not_found") {
       return { ok: false, status: 404, error: "Meeting session disappeared during transcript persistence" };
     }
-    const persistedMessage = transcriptAcceptance.message;
-    // Provider retries must cross the queue boundary again. Queue enrollment is
-    // idempotent on sourceTurnId, so a crash between these two durable writes
-    // repairs itself on replay instead of stranding a transcript-only turn.
+    // Transcript acceptance and the pending enrollment receipt committed in one
+    // transaction. Immediate processing minimizes latency; the coordinator can
+    // replay the receipt after any process or database interruption.
     if (transcriptAcceptance.outcome === "created") {
       publishChatStreamEvent(sessionKey, sessionId, {
         type: "user_message",
@@ -3595,29 +3604,25 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       });
     }
 
-    const { appendMeetingTurnFragment } = await import("../../meeting/turn-queue");
-    const assembled = await appendMeetingTurnFragment({
-      sessionId,
-      sessionKey,
-      speakerKey: resolution.speaker.key || resolution.speaker.personId || resolution.speaker.label.toLowerCase(),
-      speakerLabel: resolution.speaker.label,
-      participationMode: event.participationMode,
-      executionAffinityBootId: event.executionAffinityBootId,
-      text: event.text,
-      sourceTurnId,
-      sourceMessageId: persistedMessage.id,
-    });
-    chatLog.debug(
-      `meeting turn buffered sessionId=${sessionId} turnId=${assembled.id} revision=${assembled.revision} fragments=${assembled.sourceTurnIds.length} readyAt=${assembled.readyAt.toISOString()}`,
-    );
-    meetingTurnCoordinator.schedule();
+    const { processMeetingTurnEnrollment } = await import("../../meeting/turn-enrollment");
+    const enrollment = await processMeetingTurnEnrollment(sessionId, sourceTurnId, event.text);
+    if (enrollment.outcome === "enrolled") {
+      const assembled = enrollment.turn;
+      chatLog.debug(
+        `meeting turn buffered sessionId=${sessionId} turnId=${assembled.id} revision=${assembled.revision} fragments=${assembled.sourceTurnIds.length} readyAt=${assembled.readyAt.toISOString()}`,
+      );
+    }
+    meetingTurnCoordinator.schedule(enrollment.outcome === "enrolled" ? undefined : 25);
 
     return {
-      ok: true,
+      ok: enrollment.outcome !== "failed",
+      ...(enrollment.outcome === "failed"
+        ? { status: 503, error: "Meeting transcript persisted but turn enrollment failed" }
+        : {}),
       sessionId,
       sessionKey,
       speaker: resolution.speaker,
-      queued: true,
+      queued: enrollment.outcome !== "failed",
     };
   }
 
