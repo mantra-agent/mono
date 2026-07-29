@@ -483,6 +483,8 @@ interface SessionData {
   contextFlags?: Record<string, boolean>;
   archivedAt?: string | null;
   ftueWelcome?: boolean;
+  /** Recipient-owned recap Meeting guided in place during FTUE. */
+  ftueRecapMeetingSessionId?: string;
   memoryEntryId?: number | null;
   memoryOneLiner?: string | null;
   memorySummary?: string | null;
@@ -809,6 +811,8 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
     rootSessionId: data.rootSessionId,
     depth: data.depth,
     archivedAt: data.archivedAt || null,
+    ftueWelcome: data.ftueWelcome || undefined,
+    ftueRecapMeetingSessionId: data.ftueRecapMeetingSessionId || undefined,
     memoryEntryId: data.memoryEntryId ?? null,
     memoryOneLiner: data.memoryOneLiner || null,
     memorySummary: data.memorySummary || null,
@@ -1079,6 +1083,7 @@ function convToMeta(data: SessionData): FileSession {
     depth: data.depth,
     archivedAt: data.archivedAt || null,
     ftueWelcome: data.ftueWelcome || undefined,
+    ftueRecapMeetingSessionId: data.ftueRecapMeetingSessionId || undefined,
     memoryEntryId: data.memoryEntryId ?? null,
     memoryOneLiner: data.memoryOneLiner || null,
     memorySummary: data.memorySummary || null,
@@ -1238,6 +1243,7 @@ function docMetadataToSession(doc: {
     depth: metadataNumber(meta, "depth"),
     archivedAt: (meta.archivedAt as string | null | undefined) || null,
     ftueWelcome: metadataBool(meta, "ftueWelcome") || undefined,
+    ftueRecapMeetingSessionId: metadataString(meta, "ftueRecapMeetingSessionId"),
     memoryEntryId: metadataNumber(meta, "memoryEntryId") ?? null,
     memoryOneLiner: metadataString(meta, "memoryOneLiner") || null,
     memorySummary: metadataString(meta, "memorySummary") || null,
@@ -1263,6 +1269,7 @@ export interface IChatFileStorage {
       pageContext?: PageContext;
       provenance?: SessionProvenanceInput;
       ftueWelcome?: boolean;
+      ftueRecapMeetingSessionId?: string;
       personaId?: number | null;
       agenda?: SessionAgenda;
     },
@@ -1276,6 +1283,7 @@ export interface IChatFileStorage {
       pageContext?: PageContext;
       provenance?: SessionProvenanceInput;
       ftueWelcome?: boolean;
+      ftueRecapMeetingSessionId?: string;
       personaId?: number | null;
       agenda?: SessionAgenda;
     },
@@ -1698,6 +1706,7 @@ export const chatFileStorage: IChatFileStorage = {
       pageContext?: PageContext;
       provenance?: SessionProvenanceInput;
       ftueWelcome?: boolean;
+      ftueRecapMeetingSessionId?: string;
       personaId?: number | null;
       agenda?: SessionAgenda;
     },
@@ -1722,6 +1731,7 @@ export const chatFileStorage: IChatFileStorage = {
       isPinned: false,
       pageContext: options?.pageContext,
       ftueWelcome: options?.ftueWelcome || undefined,
+      ftueRecapMeetingSessionId: options?.ftueRecapMeetingSessionId?.trim() || undefined,
       agenda: options?.agenda ? normalizeSessionAgenda(options.agenda.items) : undefined,
       triggerType: provenance.triggerType,
       triggerId: provenance.triggerId,
@@ -1744,6 +1754,7 @@ export const chatFileStorage: IChatFileStorage = {
       pageContext?: PageContext;
       provenance?: SessionProvenanceInput;
       ftueWelcome?: boolean;
+      ftueRecapMeetingSessionId?: string;
       personaId?: number | null;
       agenda?: SessionAgenda;
     },

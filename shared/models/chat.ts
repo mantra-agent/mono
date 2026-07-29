@@ -969,6 +969,8 @@ export interface ChatSession {
   hasActiveDescendant?: boolean;
   archivedAt?: string | null;
   ftueWelcome?: boolean;
+  /** Recipient-owned Meeting row guided in place during recap FTUE. Distinct from the private source meeting triggerId. */
+  ftueRecapMeetingSessionId?: string;
   reminder?: {
     active: boolean;
     timerId?: string;

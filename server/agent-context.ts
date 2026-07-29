@@ -735,7 +735,10 @@ export async function assembleContext(options: {
           const { getCurrentRecipientOnboardingRecapProjectionByMeeting } = await import("./meeting/recipient-projection");
           const recap = await getCurrentRecipientOnboardingRecapProjectionByMeeting(conv.triggerId);
           if (!recap) throw new Error("Recipient-safe recap projection is unavailable");
-          systemPrompt += `\n\n<ftue_recap_context>\n${JSON.stringify(recap)}\n</ftue_recap_context>`;
+          const meetingResource = conv.ftueRecapMeetingSessionId
+            ? `@meeting:${conv.ftueRecapMeetingSessionId}`
+            : undefined;
+          systemPrompt += `\n\n<ftue_recap_context>\n${JSON.stringify({ ...recap, meetingResource })}\n</ftue_recap_context>`;
         }
       }
     } catch (ftueErr: unknown) {
