@@ -9,6 +9,7 @@ import { sendNextMeetingAudio } from "../meeting/output-media";
 import { meetingRecognitionCapabilities } from "../meeting/stt";
 import { getPrincipal } from "../principal";
 import { resolveCurrentProfileIdentity } from "../profile-identity";
+import { peopleStorage } from "../people-storage";
 import {
   getMeetingCounts,
   getMeetingRecord,
@@ -95,6 +96,16 @@ export function registerMeetingsRoutes(app: Express): void {
           const title = nativeMeetingTitle(now);
           const sourceKey = "native:microphone";
           const identity = await resolveCurrentProfileIdentity();
+          let ownerPersonId: string | undefined;
+          try {
+            ownerPersonId = (await peopleStorage.listPeople())
+              .find((person) => person.cabinetLevel === "user")
+              ?.id;
+          } catch (error) {
+            log.warn("native meeting owner Person lookup failed", {
+              errorType: error instanceof Error ? error.name : "UnknownError",
+            });
+          }
           const session = await chatStorage.createMeetingSession(
             title,
             {
@@ -104,6 +115,7 @@ export function registerMeetingsRoutes(app: Express): void {
               participants: identity.userName
                 ? [{
                     label: identity.userName,
+                    ...(ownerPersonId ? { personId: ownerPersonId } : {}),
                     identitySource: "transport",
                     transportParticipantId: "native-microphone",
                   }]
