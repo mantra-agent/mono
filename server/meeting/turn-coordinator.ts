@@ -11,6 +11,7 @@ import {
   inferMeetingParticipation,
 } from "./addressed-turn";
 import { runWithMeetingOwnerIdentity } from "./owner-principal";
+import { recoverPendingMeetingTurnEnrollments } from "./turn-enrollment";
 import {
   claimPendingMeetingTurnExecution,
   claimReadyMeetingTurn,
@@ -230,6 +231,7 @@ export function createMeetingTurnCoordinator(
     running = true;
     try {
       await runWithPrincipal(workerPrincipal, async () => {
+        await recoverPendingMeetingTurnEnrollments(20);
         await recoverStaleMeetingTurnClaims();
         const sessions = await listActionableMeetingSessions(20);
         for (const identity of sessions) {

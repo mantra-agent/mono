@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { getSecretSync } from "../../secrets-store";
 import { createLogger } from "../../log";
+import { createSerialAsyncDelivery } from "../../utils/serial-async-delivery";
 
 const log = createLogger("DeepgramStreaming");
 
@@ -71,8 +72,15 @@ export async function connectDeepgramStreaming(
   });
   let closing = false;
   let errorReported = false;
-  let transcriptCallbackFailed = false;
-  let transcriptCallbackQueue = Promise.resolve();
+  const transcriptDelivery = createSerialAsyncDelivery(onTranscript, {
+    label: "Deepgram transcript",
+    onFailure: (error) => {
+      log.error("Deepgram transcript consumer failed", {
+        errorType: error instanceof Error ? error.name : typeof error,
+        pending: transcriptDelivery.pending(),
+      });
+    },
+  });
 
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Deepgram connection timed out")), 10_000);
@@ -105,35 +113,14 @@ export async function connectDeepgramStreaming(
       const alternative = message.channel?.alternatives?.[0];
       const text = alternative?.transcript?.trim() || "";
       if (!text) return;
-      if (transcriptCallbackFailed) return;
-      const event: DeepgramTranscriptEvent = {
+      transcriptDelivery.enqueue({
         text,
         words: alternative?.words || [],
         isFinal: message.is_final === true,
         speechFinal: message.speech_final === true,
         requestId: message.request_id,
         receivedAtMs: Date.now(),
-      };
-      transcriptCallbackQueue = transcriptCallbackQueue
-        .then(() => {
-          if (transcriptCallbackFailed || closing) return;
-          return onTranscript(event);
-        })
-        .catch((error) => {
-          if (transcriptCallbackFailed || closing) return;
-          transcriptCallbackFailed = true;
-          errorReported = true;
-          log.error("Deepgram transcript callback failed", {
-            errorType: error instanceof Error ? error.name : typeof error,
-          });
-          try {
-            onError(new Error("Deepgram transcript processing failed"));
-          } catch (reportError) {
-            log.error("Deepgram transcript failure handler failed", {
-              errorType: reportError instanceof Error ? reportError.name : typeof reportError,
-            });
-          }
-        });
+      });
     } catch (error) {
       log.warn(`invalid Deepgram message: ${error instanceof Error ? error.message : String(error)}`);
     }
