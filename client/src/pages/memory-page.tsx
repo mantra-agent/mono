@@ -1,6 +1,7 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -1984,11 +1985,28 @@ function LayersTab() {
 }
 
 
+/** Maps legacy/alias tab query values onto the canonical memory tab ids. */
+function normalizeMemoryTab(raw: string | null): string {
+  const tab = raw || "memories";
+  if (tab === "query") return "extraction";
+  if (tab === "working" || tab === "layers") return "memories";
+  if (tab === "log" || tab === "tags") return "maintenance";
+  return tab;
+}
+
 export default function MemoryPageFull() {
-  const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
-  const rawInitialTab = urlParams.get("tab") || "memories";
-  const initialTab = rawInitialTab === "query" ? "extraction" : rawInitialTab === "working" || rawInitialTab === "layers" ? "memories" : rawInitialTab === "log" || rawInitialTab === "tags" ? "maintenance" : rawInitialTab;
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const [, navigate] = useLocation();
+  const search = useSearch();
+  // Tab state is derived from the URL, not a one-time snapshot, so same-route
+  // query navigation (a guided jump to /memory?tab=graph while Memory is already
+  // mounted on another tab) selects the right tab. Every tab change writes the
+  // canonical URL, keeping the route the single source of truth.
+  const activeTab = normalizeMemoryTab(new URLSearchParams(search).get("tab"));
+  const setActiveTab = useCallback((tab: string) => {
+    const params = new URLSearchParams(search);
+    params.set("tab", tab);
+    navigate(`/memory?${params.toString()}`);
+  }, [navigate, search]);
   const [graphFullscreenOpen, setGraphFullscreenOpen] = useState(false);
 
   usePageHeader({
