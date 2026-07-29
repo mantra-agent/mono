@@ -739,6 +739,7 @@ export function SessionTranscriptPanel({
         runActive={isSessionActive}
         msgsLoading={msgsLoading}
         voiceActive={voiceActive}
+        voiceSession={voiceTranscriptOwnsSession ? voiceSession : null}
         voiceStatus={voiceTranscriptOwnsSession ? voiceSession?.status ?? "idle" : "idle"}
         voiceTranscript={voiceTranscriptOwnsSession ? voiceSession?.transcript ?? [] : []}
         voiceThinking={voiceTranscriptOwnsSession ? voiceSession?.voiceThinking ?? false : false}
