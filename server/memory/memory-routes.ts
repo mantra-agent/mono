@@ -33,6 +33,8 @@ import { fileProjectStorage } from "../file-storage/projects";
 import { libraryPages, libraryPageLinks } from "@shared/models/info";
 import { chatFileStorage } from "../chat-file-storage";
 import { listMeetingGraphRecords, type MeetingIndexRecord } from "../meetings/meeting-index";
+import { parseReferenceText } from "@shared/reference-parser";
+import type { ReferenceRef } from "@shared/references";
 
 const log = createLogger("MemoryRoutes");
 
@@ -814,7 +816,57 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       }
     }
 
-    log.debug(`[vnext] graph claims=${claims.length} goals=${currentGoals.length} projects=${currentProjectRows.length} meetings=${meetingRecords.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} structuralLinks=${structuralLinkCount} nodes=${entries.length} links=${links.length}`);
+    // Page → referenced-entity edges. A Library page's inline @type:id reference
+    // chips (the same references the Library page renderer shows) are projected as
+    // graph edges so a page visibly connects to the people, goals, projects,
+    // meetings, and sessions it names. We parse the page's plainTextContent with the
+    // shared reference parser and emit an edge only when the referenced target is
+    // already a projected node; dangling references (e.g. tasks, which have no graph
+    // node) are skipped, matching the deterministic structural-edge policy above.
+    // Page→page links are already produced from library_page_links, so the `page`
+    // type is intentionally not re-emitted here.
+    function resolveReferenceNodeId(ref: ReferenceRef): number | null {
+      switch (ref.type) {
+        case "person": return entityNodeIds.get(`person:${ref.id}`) ?? null;
+        case "goal": return entityNodeIds.get(`goal:${ref.id}`) ?? null;
+        case "project": return entityNodeIds.get(`project:${ref.id}`) ?? null;
+        case "meeting": return meetingNodeIds.get(`meeting:${ref.id}`) ?? sourceNodeIds.get(`session:${ref.id}`) ?? null;
+        case "session": return sourceNodeIds.get(`session:${ref.id}`) ?? null;
+        default: return null;
+      }
+    }
+
+    const referencePageNodes = new Map<string, { plainTextContent: string; updatedAt: Date; nodeId: number }>();
+    for (const page of sourcePageById.values()) {
+      if (referencePageNodes.has(page.id)) continue;
+      const nodeId = sourceNodeIds.get(`page:${page.id}`);
+      if (nodeId === undefined) continue;
+      referencePageNodes.set(page.id, { plainTextContent: page.plainTextContent, updatedAt: page.updatedAt, nodeId });
+    }
+
+    let nextReferenceLinkId = -4_000_000;
+    let referenceLinkCount = 0;
+    for (const page of referencePageNodes.values()) {
+      const seenTargets = new Set<number>();
+      for (const part of parseReferenceText(page.plainTextContent || "")) {
+        if (part.kind !== "reference") continue;
+        const toId = resolveReferenceNodeId(part.ref);
+        if (toId === null || toId === page.nodeId || seenTargets.has(toId)) continue;
+        seenTargets.add(toId);
+        links.push({
+          id: nextReferenceLinkId--,
+          fromId: page.nodeId,
+          toId,
+          relationship: `references_${part.ref.type}`,
+          strength: 0.55,
+          createdAt: serializeDate(page.updatedAt),
+          relationshipType: "page_reference",
+        });
+        referenceLinkCount++;
+      }
+    }
+
+    log.debug(`[vnext] graph claims=${claims.length} goals=${currentGoals.length} projects=${currentProjectRows.length} meetings=${meetingRecords.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} structuralLinks=${structuralLinkCount} pageReferenceLinks=${referenceLinkCount} nodes=${entries.length} links=${links.length}`);
     res.json({ storage: "memory_vnext", entries, links, linkSource: "claim_links", semantics: "personal-intelligence" });
   } catch (error: unknown) {
     log.error(`[vnext] graph failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);
