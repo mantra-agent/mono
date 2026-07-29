@@ -862,7 +862,6 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       setFocusNeighborhoodNodeIds(focusNode == null ? [] : [focusNode.id, ...neighborNodeIds]);
       syncNodeAppearance();
       syncLinkVisibility();
-      syncActivityWithFocus();
     }
 
     // Frame the selected node together with its one-hop neighborhood (item 2).
@@ -946,10 +945,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function activityCanRun() {
+      // Focus (hover/selection) intentionally does not gate the pulse stream:
+      // activity keeps flowing while a node is hovered or selected.
       return activityIsEnabled
         && !document.hidden
-        && hoveredIndex == null
-        && selectedIndex == null
         && activityPaths.length > 0;
     }
 
@@ -1088,10 +1087,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         clearActivityVisuals();
         return;
       }
-      syncActivityWithFocus();
+      syncActivityRunState();
     }
 
-    function syncActivityWithFocus() {
+    function syncActivityRunState() {
       if (!activityCanRun()) {
         if (activityTimer !== null) clearTimeout(activityTimer);
         activityTimer = null;
@@ -1219,11 +1218,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function handleVisibilityChange() {
       if (document.hidden) {
-        syncActivityWithFocus();
+        syncActivityRunState();
         return;
       }
       requestRender();
-      syncActivityWithFocus();
+      syncActivityRunState();
     }
 
     const linkForce = forceLink<SceneNode, SceneLink>(simulationLinks)
