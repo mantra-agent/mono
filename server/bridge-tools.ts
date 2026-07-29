@@ -4484,6 +4484,26 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
+    if (action === "apply_agenda_template") {
+      const targetId = args.sessionId || sessionId;
+      const agendaId = typeof args.agendaId === "string" ? args.agendaId.trim() : "";
+      if (!agendaId) return { result: "Missing 'agendaId' for apply_agenda_template", error: true };
+      const [{ agendaDefinitionStorage }, { instantiateAgendaDefinition }] = await Promise.all([
+        import("./agenda-storage"),
+        import("@shared/models/agendas"),
+      ]);
+      const definition = await agendaDefinitionStorage.get(agendaId);
+      if (!definition) return { result: `Agenda template "${agendaId}" not found`, error: true };
+      try {
+        const instantiated = instantiateAgendaDefinition(definition);
+        const updated = await chatFileStorage.setSessionAgenda(targetId, instantiated.items);
+        if (!updated?.agenda) return { result: `Session "${targetId}" not found`, error: true };
+        return { result: safeStringify({ sessionId: targetId, appliedTemplate: { id: definition.id, name: definition.name }, agenda: updated.agenda }, { label: "bridge.session.agenda.apply" }) };
+      } catch (err: unknown) {
+        return { result: `Invalid session agenda from template: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      }
+    }
+
     const agendaTransitionStatus = action === "complete_agenda_item"
       ? "complete"
       : action === "skip_agenda_item"
@@ -4854,7 +4874,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    return { result: `Unknown session action: ${action}. Available: get, get_agenda, list_agenda, set_agenda, update_agenda_item, complete_agenda_item, skip_agenda_item, defer_agenda_item, set_status, end, list, search, get_messages, spawn_child, send_message`, error: true };
+    return { result: `Unknown session action: ${action}. Available: get, get_agenda, list_agenda, set_agenda, apply_agenda_template, update_agenda_item, complete_agenda_item, skip_agenda_item, defer_agenda_item, set_status, end, list, search, get_messages, spawn_child, send_message`, error: true };
   },
 
   async create_task(args) {
