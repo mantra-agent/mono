@@ -25,19 +25,19 @@ export function firstOpenAgendaItem(
 
 export const RECAP_FTUE_AGENDA_ITEMS = [
   {
-    id: "set-first-goal",
-    title: "Set first goal",
-    description: "Elicit one meaningful goal, create it through the canonical goals tool, then use ui target navigation.goals.open in guide mode so the user sees the real Goals surface. Complete this item only after the goal exists.",
-  },
-  {
     id: "review-meeting-notes",
     title: "Review meeting notes",
-    description: "Review the recipient-safe meeting recap supplied in context, including decisions, questions, action items, and assigned tasks. Then use ui target navigation.meetings.open in guide mode to show where the user's future captured meetings will live. Never attempt to open the meeting owner's private session or Library page.",
+    description: "Open on the recipient-safe meeting recap supplied in context, walking through summary, decisions, open questions, action items, and assigned tasks. Then use ui target navigation.meetings.open in guide mode so the user can open this meeting's recap and see where their future captured meetings will live. Never attempt to open the meeting owner's private session or Library page.",
+  },
+  {
+    id: "set-first-goal",
+    title: "Set first goal",
+    description: "Elicit one meaningful goal and create it through the canonical goals tool. The new goal surfaces on Simple automatically through the data:goals_changed event; do not navigate to Goals. Complete this item only after the goal exists.",
   },
   {
     id: "plan-goal-as-project",
     title: "Plan goal as project",
-    description: "Turn the first goal into a canonical project linked to that goal, with measurable milestones and concrete tasks using work and tasks. Then use ui target navigation.projects.open in guide mode. Complete only after the project, milestones, and tasks exist.",
+    description: "Turn the first goal into a canonical project linked to that goal, with measurable milestones and concrete tasks using work and tasks. The project, milestones, and tasks surface on Simple's hierarchy automatically; do not navigate to Projects. Complete only after the project, milestones, and tasks exist.",
   },
   {
     id: "show-the-memory-graph",
@@ -60,4 +60,30 @@ export function createRecapFtueAgenda(): SessionAgenda {
   return {
     items: RECAP_FTUE_AGENDA_ITEMS.map((item) => ({ ...item, status: "open" as const })),
   };
+}
+
+/**
+ * Composes the authenticated FTUE greeting (the replay-safe first assistant
+ * message). Recap onboarding opens on the first open agenda mission rather than
+ * a hardcoded goal ask, so the greeting always matches whatever the agenda leads
+ * with. Keyed on the canonical first item so a future reorder cannot reintroduce
+ * a stale goal question.
+ */
+export function composeFtueFirstMessage(params: {
+  recapAware: boolean;
+  userFirstName: string;
+  agentName: string;
+  openItem: SessionAgendaItem | undefined;
+}): string {
+  const { recapAware, userFirstName, agentName, openItem } = params;
+  if (!recapAware) {
+    return `Hello ${userFirstName}. I'm ${agentName}. I help you keep track of what matters and turn it into action. To start, what's one goal you'd like me to help move forward?`;
+  }
+  if (!openItem) {
+    return `Hello ${userFirstName}. Your onboarding agenda is complete. What should we move forward next?`;
+  }
+  if (openItem.id === "review-meeting-notes") {
+    return `Hello ${userFirstName}. Your meeting notes are ready. Let's start by walking through them together.`;
+  }
+  return `Hello ${userFirstName}. Let's pick up with ${openItem.title.toLowerCase()}.`;
 }
