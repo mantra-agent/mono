@@ -21,6 +21,12 @@ import {
   type VoiceStartResponse,
 } from "@/lib/voice-start-transport";
 import { getClientTabId } from "@/lib/client-tab-identity";
+import {
+  createVoiceFinalizationRequest,
+  isVoiceFinalizationResponse,
+  type VoiceFinalizationSettlement,
+  type VoiceFinalizationSystemStep,
+} from "@shared/voice-finalization";
 export type { VoiceStartResponse } from "@/lib/voice-start-transport";
 import {
   playConnectionChime,
@@ -156,6 +162,19 @@ function toBoundedLogError(err: unknown): { name?: string; message: string } {
 
 function safeDiagnosticText(value: unknown): string {
   return getErrorMessage(value).slice(0, 300);
+}
+
+function isTransportError(error: unknown): boolean {
+  return error instanceof TypeError
+    || (error instanceof DOMException && error.name === "AbortError");
+}
+
+async function parseJsonResponse(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
 }
 
 interface TentativeUserTranscriptDebugEvent {
@@ -558,46 +577,149 @@ export function VoiceSessionProvider({
     sendDiag();
   }, []);
 
-  const finalizeSession = useCallback((convId: string, sessionId: string | null, retryCount = 0, errorMessage?: string, systemSteps?: Array<{ name: string; status: "done" | "error"; detail?: string }>) => {
-    const payload: Record<string, unknown> = {};
-    if (sessionId) payload.sessionId = sessionId;
-    if (errorMessage) payload.errorMessage = errorMessage;
-    if (systemSteps && systemSteps.length > 0) payload.systemSteps = systemSteps;
-    const body = Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined;
-    fetch(`/api/sessions/${convId}/voice-finalize`, {
-      method: "POST",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body,
-    })
-      .then((res) => {
-        if (!res.ok) {
-          return res.json().then((data) => {
-            throw new Error(data?.error || `HTTP ${res.status}`);
-          });
-        }
-        emitSessionListChanged("voice-finalize");
-        emitSessionChanged(convId, "voice-finalize");
-      })
-      .catch((err: unknown) => {
-        const msg = getErrorMessage(err);
-        const logFinalizeFailure = retryCount === 0 ? log.warn : log.error;
-        logFinalizeFailure("VOICE:FINALIZE:FAILED", { hasConversationId: Boolean(convId), attempt: retryCount + 1, error: msg.slice(0, 300) });
-        phoneDiag("finalize_failed", { convId, attempt: retryCount + 1, error: msg }, { critical: true });
-
-        if (retryCount === 0) {
-          setTimeout(() => {
-            log.debug("VOICE:FINALIZE:RETRY", { hasConversationId: Boolean(convId), attempt: retryCount + 2 });
-            finalizeSession(convId, sessionId, 1, errorMessage, systemSteps);
-          }, 2000);
-        } else {
-          toast({
-            title: "Session not saved",
-            description: "The voice session couldn't be saved cleanly. Your conversation may be incomplete.",
-            variant: "destructive",
-          });
-        }
+  const reconcileFinalization = useCallback(async (
+    convId: string,
+    voiceSessionId: string,
+  ): Promise<VoiceFinalizationSettlement> => {
+    try {
+      const response = await fetch(`/api/sessions/${convId}`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
       });
-  }, [queryClient, toast, phoneDiag]);
+      if (response.status === 404) {
+        return { outcome: "not_finalized", reason: "session_not_found" };
+      }
+      if (!response.ok) {
+        return { outcome: "unknown", reason: `reconciliation_http_${response.status}` };
+      }
+      const session = await parseJsonResponse(response) as {
+        status?: unknown;
+        voiceSessionId?: unknown;
+      } | null;
+      if (session?.status === "saved" && session.voiceSessionId === voiceSessionId) {
+        return { outcome: "finalized", source: "reconciliation" };
+      }
+      return {
+        outcome: "unknown",
+        reason: session?.voiceSessionId === voiceSessionId
+          ? `persisted_status_${String(session.status || "missing")}`
+          : "voice_finalization_identity_unconfirmed",
+      };
+    } catch (error) {
+      return {
+        outcome: "unknown",
+        reason: isTransportError(error) ? "reconciliation_transport" : "reconciliation_error",
+      };
+    }
+  }, []);
+
+  const finalizeSession = useCallback(async (
+    convId: string,
+    sessionId: string | null,
+    errorMessage?: string,
+    systemSteps?: VoiceFinalizationSystemStep[],
+  ): Promise<VoiceFinalizationSettlement> => {
+    if (!sessionId) {
+      const settlement = { outcome: "unknown", reason: "missing_voice_session_id" } as const;
+      log.warn("VOICE:FINALIZE:UNCONFIRMED", settlement);
+      toast({
+        title: "Save not yet confirmed",
+        description: "The conversation may already be saved; confirmation was interrupted.",
+      });
+      return settlement;
+    }
+
+    const request = createVoiceFinalizationRequest({ sessionId, errorMessage, systemSteps });
+    const body = JSON.stringify(request);
+    let lastUnknownReason = "transport_acknowledgement_lost";
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const response = await fetch(`/api/sessions/${convId}/voice-finalize`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body,
+          keepalive: true,
+        });
+        const payload = await parseJsonResponse(response);
+        if (isVoiceFinalizationResponse(payload)) {
+          if (payload.outcome === "finalized") {
+            const settlement = {
+              outcome: "finalized",
+              source: "response",
+              replayed: payload.replayed,
+            } as const;
+            log.info("VOICE:FINALIZE:SETTLED", { attempt, ...settlement });
+            emitSessionListChanged("voice-finalize");
+            emitSessionChanged(convId, "voice-finalize");
+            return settlement;
+          }
+          if (payload.outcome === "not_finalized") {
+            const settlement = { outcome: "not_finalized", reason: payload.reason } as const;
+            log.error("VOICE:FINALIZE:NOT_FINALIZED", { attempt, reason: payload.reason });
+            phoneDiag("finalize_not_finalized", { attempt, reason: payload.reason }, { critical: true });
+            toast({
+              title: "Session not saved",
+              description: "The server could not finalize this voice session.",
+              variant: "destructive",
+            });
+            return settlement;
+          }
+          lastUnknownReason = payload.reason;
+        } else {
+          lastUnknownReason = `invalid_response_http_${response.status}`;
+        }
+      } catch (error) {
+        lastUnknownReason = isTransportError(error)
+          ? "transport_acknowledgement_lost"
+          : "finalization_request_error";
+        log.warn("VOICE:FINALIZE:ACK_UNKNOWN", {
+          attempt,
+          reason: lastUnknownReason,
+          error: safeDiagnosticText(error),
+        });
+      }
+
+      if (attempt === 1) {
+        log.debug("VOICE:FINALIZE:RETRY", { attempt: 2, reason: lastUnknownReason });
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+    }
+
+    const reconciled = await reconcileFinalization(convId, sessionId);
+    if (reconciled.outcome === "finalized") {
+      log.info("VOICE:FINALIZE:RECONCILED", reconciled);
+      emitSessionListChanged("voice-finalize-reconciled");
+      emitSessionChanged(convId, "voice-finalize-reconciled");
+      return reconciled;
+    }
+    if (reconciled.outcome === "not_finalized") {
+      log.error("VOICE:FINALIZE:NOT_FINALIZED", reconciled);
+      phoneDiag("finalize_not_finalized", reconciled, { critical: true });
+      toast({
+        title: "Session not saved",
+        description: "The saved conversation is no longer available.",
+        variant: "destructive",
+      });
+      return reconciled;
+    }
+
+    const settlement = {
+      outcome: "unknown",
+      reason: `${lastUnknownReason}:${reconciled.reason}`,
+    } as const;
+    log.warn("VOICE:FINALIZE:UNCONFIRMED", settlement);
+    phoneDiag("finalize_unconfirmed", settlement, { critical: true });
+    toast({
+      title: "Save not yet confirmed",
+      description: "The conversation may already be saved; confirmation was interrupted.",
+    });
+    return settlement;
+  }, [phoneDiag, reconcileFinalization, toast]);
 
   const cleanupSession = useCallback((reason: string, errorMessage?: string) => {
     log.info("VOICE:CLEANUP", { reason, hasError: Boolean(errorMessage) });
@@ -607,7 +729,7 @@ export function VoiceSessionProvider({
     const steps = accumulatedVoiceStepsRef.current.length > 0 ? [...accumulatedVoiceStepsRef.current] : undefined;
     accumulatedVoiceStepsRef.current = [];
     if (cid) {
-      finalizeSession(cid, sid, 0, errorMessage, steps);
+      void finalizeSession(cid, sid, errorMessage, steps);
     }
     invalidateVoiceRelatedQueries(`cleanup-${reason}`);
     chatConversationIdRef.current = null;
@@ -840,7 +962,7 @@ export function VoiceSessionProvider({
       const cid = chatConversationIdRef.current;
       const sid = voiceSessionIdRef.current;
       if (cid) {
-        finalizeSession(cid, sid, 0, `Voice error: ${errorMsg || "An error occurred in the voice session."}`);
+        void finalizeSession(cid, sid, `Voice error: ${errorMsg || "An error occurred in the voice session."}`);
       }
       setStatus("idle");
     }

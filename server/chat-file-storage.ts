@@ -1333,6 +1333,11 @@ export interface IChatFileStorage {
     | { outcome: "created" | "duplicate"; message: FileMessage }
     | { outcome: "session_not_found" }
   >;
+  applyVoiceFinalizationAnnotations(
+    sessionId: string,
+    voiceSessionId: string,
+    input: { errorMessage?: string; systemSteps?: SystemStepRecord[] },
+  ): Promise<{ outcome: "applied" | "unchanged" | "session_not_found" }>;
   createUserMessageOnce(
     sessionId: string,
     content: string,
@@ -2301,6 +2306,94 @@ export const chatFileStorage: IChatFileStorage = {
         payload: { source: "chat_storage", sessionId, messageId: message.id },
       });
       return { outcome: "created" as const, message };
+    });
+  },
+
+
+  async applyVoiceFinalizationAnnotations(
+    sessionId: string,
+    voiceSessionId: string,
+    input: { errorMessage?: string; systemSteps?: SystemStepRecord[] },
+  ) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) return { outcome: "session_not_found" as const };
+
+      let changed = data.voiceSessionId !== voiceSessionId;
+      data.voiceSessionId = voiceSessionId;
+      if (input.errorMessage) {
+        const artifactKey = `voice-finalization-error:${voiceSessionId}`;
+        const existing = data.messages.some(
+          (message) => message.role === "assistant" && message.artifactKey === artifactKey,
+        );
+        if (!existing) {
+          const now = new Date().toISOString();
+          data.messages.push({
+            id: generateId(),
+            sessionId,
+            role: "assistant",
+            content: stripRoleMarkers(input.errorMessage, sessionId),
+            thinking: null,
+            toolCalls: null,
+            systemSteps: input.systemSteps?.length ? input.systemSteps : null,
+            model: null,
+            createdAt: now,
+            updatedAt: now,
+            artifactKey,
+            isError: true,
+            persona: await resolvePersonaSnapshot(data.personaId),
+          });
+          data.updatedAt = now;
+          changed = true;
+        }
+      } else if (input.systemSteps?.length) {
+        const lastAssistant = [...data.messages]
+          .reverse()
+          .find((message) => message.role === "assistant");
+        if (lastAssistant) {
+          const existingSteps = lastAssistant.systemSteps || [];
+          const existingKeys = new Set(
+            existingSteps.map((step) => `${step.name}:${step.status}:${step.detail || ""}`),
+          );
+          const missingSteps = input.systemSteps.filter(
+            (step) => !existingKeys.has(`${step.name}:${step.status}:${step.detail || ""}`),
+          );
+          if (missingSteps.length > 0) {
+            lastAssistant.systemSteps = [...existingSteps, ...missingSteps];
+            lastAssistant.updatedAt = new Date().toISOString();
+            data.updatedAt = lastAssistant.updatedAt;
+            changed = true;
+          }
+        } else {
+          const now = new Date().toISOString();
+          data.messages.push({
+            id: generateId(),
+            sessionId,
+            role: "assistant",
+            content: "",
+            thinking: null,
+            toolCalls: null,
+            systemSteps: input.systemSteps,
+            model: null,
+            createdAt: now,
+            updatedAt: now,
+            artifactKey: `voice-finalization-steps:${voiceSessionId}`,
+            persona: await resolvePersonaSnapshot(data.personaId),
+          });
+          data.updatedAt = now;
+          changed = true;
+        }
+      }
+
+      if (!changed) return { outcome: "unchanged" as const };
+      await writeConv(data);
+      invalidateSessionsCache();
+      eventBus.publish({
+        category: "system",
+        event: "data:session_messages_changed",
+        payload: { source: "voice_finalize", sessionId },
+      });
+      return { outcome: "applied" as const };
     });
   },
 

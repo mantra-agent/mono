@@ -20,20 +20,32 @@ export interface FinalizeVoiceSessionInput {
  * Replacement/reconnect cleanup stays in session.ts. This boundary is only for
  * terminal completion of the chat session visible to the user.
  */
-export async function finalizeVoiceSession(input: FinalizeVoiceSessionInput): Promise<void> {
+export type FinalizeVoiceSessionResult =
+  | { outcome: "finalized"; replayed: boolean }
+  | { outcome: "not_finalized"; reason: "not_completable" };
+
+export async function finalizeVoiceSession(
+  input: FinalizeVoiceSessionInput,
+): Promise<FinalizeVoiceSessionResult> {
   const { chatSessionId, voiceSessionId, principal, title } = input;
 
   if (!voiceSessionId) {
-    throw new Error("Voice session ID is required for finalization");
+    return { outcome: "not_finalized", reason: "not_completable" };
   }
 
-  const completed = await storage.completeOwnedVoiceSession(
+  const leaseOutcome = await storage.completeOwnedVoiceSession(
     voiceSessionId,
     chatSessionId,
     principal,
   );
-  if (!completed) {
-    throw new Error("Voice session is not active for this chat");
+  if (leaseOutcome === "not_completable") {
+    return { outcome: "not_finalized", reason: "not_completable" };
+  }
+  if (leaseOutcome === "superseded") {
+    log.warn(
+      `replayed completion is superseded chatSessionId=${chatSessionId} voiceSessionId=${voiceSessionId}`,
+    );
+    return { outcome: "finalized", replayed: true };
   }
   endVoiceSession(voiceSessionId, "user_finalize");
 
@@ -42,5 +54,9 @@ export async function finalizeVoiceSession(input: FinalizeVoiceSessionInput): Pr
   sessionManager.finalizeSession(chatSessionId);
   await chatFileStorage.saveSession(chatSessionId, title || "Voice Chat");
 
-  log.log(`completed chatSessionId=${chatSessionId} voiceSessionId=${voiceSessionId}`);
+  const replayed = leaseOutcome === "already_complete";
+  log.log(
+    `completed chatSessionId=${chatSessionId} voiceSessionId=${voiceSessionId} replayed=${replayed}`,
+  );
+  return { outcome: "finalized", replayed };
 }
