@@ -108,7 +108,13 @@ export async function persistAssistantMessage(
   turnId?: string,
 ): Promise<void> {
   if (!session.chatSessionId) return;
-  const sanitizedAssistant = resultContent && resultContent.trim() ? resultContent : null;
+  const deliveredContent = turnCtx?.segmentChronology
+    ?.filter((entry): entry is { s: "content"; c: string } => entry.s === "content")
+    .map((entry) => entry.c)
+    .join("\n\n")
+    .trim();
+  const assistantContent = deliveredContent || resultContent;
+  const sanitizedAssistant = assistantContent && assistantContent.trim() ? assistantContent : null;
 
   const releaseLock = await acquireSessionTurnLock(session.id);
   let turnToolCalls: VoiceToolCall[];

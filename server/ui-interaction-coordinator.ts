@@ -3,11 +3,13 @@ import { WebSocket } from "ws";
 import type {
   UiInteractionCommand,
   UiInteractionMode,
+  UiInteractionNarrationState,
   UiInteractionResourceSurface,
   UiInteractionTarget,
   UiInteractionTerminalResult,
 } from "@shared/ui-interaction";
 import { UI_INTERACTION_INTRODUCTION_MAX_LENGTH } from "@shared/ui-interaction";
+import { stripExpressionTags } from "@shared/expression-tags";
 import { createLogger } from "./log";
 import { sessionManager } from "./session-manager";
 
@@ -74,6 +76,7 @@ export function requestUiInteraction(input: {
   mode: UiInteractionMode;
   /** Required narration for guide mode; ignored for execute. */
   introduction?: string;
+  narrationState?: UiInteractionNarrationState;
 }): Promise<UiInteractionTerminalResult> {
   if (pendingCommands.size >= MAX_PENDING_COMMANDS) {
     const pending = { subject: input.subject, mode: input.mode } as PendingCommand;
@@ -89,6 +92,8 @@ export function requestUiInteraction(input: {
   const commandId = `ui-${randomUUID()}`;
   const expiresAt = Date.now() + COMMAND_TIMEOUT_MS;
   const introduction = (input.introduction ?? "").slice(0, UI_INTERACTION_INTRODUCTION_MAX_LENGTH);
+  const displayIntroduction = stripExpressionTags(introduction).slice(0, UI_INTERACTION_INTRODUCTION_MAX_LENGTH);
+  const narrationState = input.narrationState ?? "not_applicable";
   const command: UiInteractionCommand = input.subject.type === "resource"
     ? {
         type: "ui.interaction.command",
@@ -98,6 +103,8 @@ export function requestUiInteraction(input: {
         resource: input.subject.resource,
         surface: input.subject.surface,
         introduction,
+        displayIntroduction,
+        narrationState,
         expiresAt,
       }
     : input.mode === "guide"
@@ -107,6 +114,8 @@ export function requestUiInteraction(input: {
           target: input.subject.target,
           mode: "guide",
           introduction,
+          displayIntroduction,
+          narrationState,
           expiresAt,
         }
       : {

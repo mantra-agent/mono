@@ -12,7 +12,8 @@
  */
 import { createLogger } from "../log";
 import { eventBus } from "../event-bus";
-import type { ToolMiddleware, ToolResult, ToolExecutionContext } from "../tool-execution";
+import type { ToolMiddleware } from "../tool-execution";
+import { normalizeExpressionText } from "@shared/expression-tags";
 
 const log = createLogger("VoiceToolMW");
 
@@ -34,6 +35,10 @@ export interface VoiceToolContext {
   onVoiceEvent?: (event: string, payload: Record<string, unknown>) => void;
   /** Callback to push tool call to session's toolCalls array (may be async for lock acquisition) */
   onToolCallComplete?: (name: string, args: Record<string, unknown>, result: string, callId: string) => void | Promise<void>;
+  /** Visible assistant prose already delivered through this turn's tracked voice stream. */
+  getDeliveredSpeech?: () => string;
+  /** Inject speech into that same stream and flush it before the guide command dispatches. */
+  speakGuideIntroduction?: (introduction: string) => void;
 }
 
 /**
@@ -62,6 +67,35 @@ export function createVoiceSessionInterceptor(voiceCtx: VoiceToolContext): ToolM
 }
 
 // park_idea middleware removed — intentions system deprecated
+
+/**
+ * Guides must be narrated in voice, but the model may already have spoken the
+ * same introduction immediately before calling the tool. Compare sighted-text
+ * projections to avoid double speech; otherwise inject the raw, expression-tag-
+ * capable introduction into the existing tracked custom-LLM stream.
+ */
+export function createVoiceGuideNarrator(voiceCtx: VoiceToolContext): ToolMiddleware {
+  return async (name, args, toolCtx, next) => {
+    const isGuide = name === "ui" && args.mode === "guide";
+    const introduction = typeof args.introduction === "string" ? args.introduction.trim() : "";
+    if (!isGuide || !introduction) return next();
+
+    const delivered = normalizeExpressionText(voiceCtx.getDeliveredSpeech?.() ?? "");
+    const requested = normalizeExpressionText(introduction);
+    const alreadySpoken = requested.length > 0 && delivered.includes(requested);
+
+    if (alreadySpoken) {
+      toolCtx.uiNarrationState = "already_spoken";
+      log.debug(`guide narration reused session=${voiceCtx.voiceSessionId} turn=${voiceCtx.originTurn ?? "?"}`);
+    } else if (voiceCtx.speakGuideIntroduction) {
+      voiceCtx.speakGuideIntroduction(introduction);
+      toolCtx.uiNarrationState = "streamed";
+      log.debug(`guide narration streamed session=${voiceCtx.voiceSessionId} turn=${voiceCtx.originTurn ?? "?"}`);
+    }
+
+    return next();
+  };
+}
 
 /**
  * Create a voice journal logger middleware.
@@ -146,6 +180,7 @@ export function createVoiceJournalLogger(voiceCtx: VoiceToolContext): ToolMiddle
 export function createVoiceMiddlewareStack(voiceCtx: VoiceToolContext): ToolMiddleware[] {
   return [
     createVoiceSessionInterceptor(voiceCtx),
+    createVoiceGuideNarrator(voiceCtx),
     createVoiceJournalLogger(voiceCtx),
   ];
 }

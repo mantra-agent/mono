@@ -99,6 +99,9 @@ export type UiInteractionResourceSurface = typeof UI_INTERACTION_RESOURCE_SURFAC
 export const UI_INTERACTION_OUTCOMES = ["completed", "cancelled", "unavailable"] as const;
 export type UiInteractionOutcome = typeof UI_INTERACTION_OUTCOMES[number];
 
+export const UI_INTERACTION_NARRATION_STATES = ["not_applicable", "already_spoken", "streamed"] as const;
+export type UiInteractionNarrationState = typeof UI_INTERACTION_NARRATION_STATES[number];
+
 export const UI_INTERACTION_REASONS = [
   "user_cancelled",
   "target_unavailable",
@@ -123,13 +126,12 @@ interface UiInteractionCommandBase {
 }
 
 interface UiInteractionNarratedCommand {
-  /**
-   * User-visible narration that names the target and explicitly asks the user
-   * to act. Required for every guide, so a spotlight can never appear without
-   * first telling the user what it is and what to do. In voice the client also
-   * waits for this to be spoken before revealing the spotlight.
-   */
+  /** Speech-capable narration. May retain expression tags for TTS. */
   introduction: string;
+  /** Producer-derived sighted-UI projection with speech-only tags removed. */
+  displayIntroduction: string;
+  /** Whether this voice turn delivered the narration, or no voice narration applied. */
+  narrationState: UiInteractionNarrationState;
 }
 
 export interface UiInteractionExecuteCommand extends UiInteractionCommandBase {
@@ -206,6 +208,10 @@ export function isUiInteractionOutcome(value: unknown): value is UiInteractionOu
   return typeof value === "string" && (UI_INTERACTION_OUTCOMES as readonly string[]).includes(value);
 }
 
+export function isUiInteractionNarrationState(value: unknown): value is UiInteractionNarrationState {
+  return typeof value === "string" && (UI_INTERACTION_NARRATION_STATES as readonly string[]).includes(value);
+}
+
 export function isUiInteractionReason(value: unknown): value is UiInteractionReason {
   return typeof value === "string" && (UI_INTERACTION_REASONS as readonly string[]).includes(value);
 }
@@ -227,7 +233,11 @@ export function isUiInteractionCommand(value: unknown): value is UiInteractionCo
       && isUiInteractionResourceSurface(command.surface)
       && typeof command.introduction === "string"
       && command.introduction.trim().length > 0
-      && command.introduction.length <= UI_INTERACTION_INTRODUCTION_MAX_LENGTH;
+      && command.introduction.length <= UI_INTERACTION_INTRODUCTION_MAX_LENGTH
+      && typeof command.displayIntroduction === "string"
+      && command.displayIntroduction.trim().length > 0
+      && command.displayIntroduction.length <= UI_INTERACTION_INTRODUCTION_MAX_LENGTH
+      && isUiInteractionNarrationState(command.narrationState);
   }
 
   if (command.subject === undefined || command.subject === "control") {
@@ -235,7 +245,11 @@ export function isUiInteractionCommand(value: unknown): value is UiInteractionCo
     if (command.mode === "execute") return true;
     return typeof command.introduction === "string"
       && command.introduction.trim().length > 0
-      && command.introduction.length <= UI_INTERACTION_INTRODUCTION_MAX_LENGTH;
+      && command.introduction.length <= UI_INTERACTION_INTRODUCTION_MAX_LENGTH
+      && typeof command.displayIntroduction === "string"
+      && command.displayIntroduction.trim().length > 0
+      && command.displayIntroduction.length <= UI_INTERACTION_INTRODUCTION_MAX_LENGTH
+      && isUiInteractionNarrationState(command.narrationState);
   }
 
   return false;

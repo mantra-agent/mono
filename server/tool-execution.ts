@@ -21,6 +21,8 @@ export interface ToolExecutionContext {
   origin?: import("./agent-authority").ToolInvocationOrigin;
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation;
   clientId?: string;
+  /** Server-derived guide narration disposition for the current tool call. */
+  uiNarrationState?: import("@shared/ui-interaction").UiInteractionNarrationState;
 }
 
 export interface ToolResult {
@@ -89,6 +91,7 @@ export function createToolExecutor(
         sessionId: ctx.sessionId || "",
         sessionKey: ctx.sessionKey,
         clientId: ctx.clientId,
+        uiNarrationState: ctx.uiNarrationState,
         authority: {
           origin: ctx.origin ?? (ctx.voiceSessionId ? "voice" : "interactive"),
           trustedDelegation: ctx.trustedDelegation,
