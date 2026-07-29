@@ -286,6 +286,8 @@ export function AgentOrb({
       renderer.render(scene, camera);
     }
 
+    let firstFrameFired = false;
+
     function scheduleFrame() {
       frameHandle = sustainFrameProduction
         ? window.setTimeout(() => animate(performance.now()), frameIntervalMs)
@@ -294,6 +296,13 @@ export function AgentOrb({
 
     function animate(now: number) {
       applyVisuals(now);
+      // Report the first frame only after it has actually painted, so consumers
+      // (e.g. the claim visual bridge) reveal a real rendered orb rather than an
+      // empty container that pops in a frame later.
+      if (!firstFrameFired) {
+        firstFrameFired = true;
+        onFirstFrameRef.current?.(container);
+      }
       scheduleFrame();
     }
 
@@ -315,7 +324,6 @@ export function AgentOrb({
     resizeObserver.observe(container);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     resize();
-    onFirstFrameRef.current?.(container);
     scheduleFrame();
 
     return () => {
