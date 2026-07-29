@@ -144,15 +144,15 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
     if (handoffStartedRef.current) return;
     handoffStartedRef.current = true;
 
-    // Begin the exit fade immediately, in parallel with onboarding completion,
-    // and never navigate before it has finished so the exit reads as a smooth
-    // fade to black rather than a hard cut.
-    setLeaving(true);
-    const minFade = new Promise<void>((resolve) => window.setTimeout(resolve, CLAIM_EXIT_FADE_MS));
-
+    // Resolve the destination while the orb stays alive. The visitor just spoke
+    // to it, so a living orb — not a dead black hold — covers the brief
+    // onboarding write. The FTUE deep link is only known once completion returns,
+    // so the fade must wait for it; the wait happens over the orb, and the
+    // fade-to-black is a crisp final beat immediately before navigation.
+    let destination = "/home";
     try {
       const status = await completeStartupOnboarding(claimedName, { recapToken: onboardingToken });
-      const destination = getStartupOnboardingDestination(status);
+      destination = getStartupOnboardingDestination(status);
       if (status.ftueSessionId) {
         log.info("Claim complete: entering canonical authenticated FTUE", {
           sessionId: status.ftueSessionId,
@@ -160,20 +160,22 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
       } else {
         log.warn("Claim complete without FTUE session: entering authenticated Home");
       }
-      await minFade;
-      beginClaimVisualHandoff();
-      window.location.replace(destination);
     } catch (err) {
       // Account claim has already established the authenticated cookie. Never
       // trap that principal inside the capability-scoped entrance if optional
-      // onboarding completion fails.
+      // onboarding completion fails; fall through to authenticated Home.
       log.error("Claim onboarding completion failed: entering authenticated Home", {
         error: err instanceof Error ? err.message : String(err),
       });
-      await minFade;
-      beginClaimVisualHandoff();
-      window.location.replace("/home");
     }
+
+    // Now the crisp, symmetric fade to black, then the hard ownership handoff.
+    // The next document boots already-black and the claim visual bridge fades the
+    // canonical orb back in once it paints, so this reads as one continuous orb.
+    setLeaving(true);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, CLAIM_EXIT_FADE_MS));
+    beginClaimVisualHandoff();
+    window.location.replace(destination);
   }, [onboardingToken]);
 
   return (
