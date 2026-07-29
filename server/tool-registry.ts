@@ -43,16 +43,18 @@ export interface ToolMeta {
 
 export const TOOLS: Record<string, ToolMeta> = {
   ui: {
-    description: "Interact with the authenticated application UI in the browser tab containing the originating session. `execute` performs the same registered action as the user control. `guide` narrates first: it requires an `introduction` that names the control and explicitly asks the user to click it, then reveals and spotlights that control, locks interaction outside it, and completes when the intended outcome occurs or the user cancels. In voice, the spotlight waits until you finish speaking. Targets cover the primary sidebar navigation controls.",
+    description: "Interact with the authenticated application UI in the browser tab containing the originating session. Provide exactly one subject: `target` for a stable semantic control, or `resource` plus `surface=home` for an in-place Simple/Home feed object. `execute` performs a registered control action. `guide` requires a non-empty `introduction`, narrates first, reveals and spotlights the real target, locks interaction outside it, and completes when the user activates it or cancels. Resource guides expand and highlight the matching canonical object without navigating away. In voice, every spotlight waits until narration finishes.",
     category: "browser",
     parameters: {
       type: "object",
       properties: {
-        target: { type: "string", enum: UI_INTERACTION_TARGETS, description: "Stable semantic UI target." },
-        mode: { type: "string", enum: ["execute", "guide"], description: "Execute the action directly or guide the user through the real control." },
-        introduction: { type: "string", description: "Required for guide mode. One or two sentences, in your own voice, that name the control and explicitly ask the user to click it (for example: \"Open Meetings in the left sidebar to see your notes — go ahead and click it.\"). Shown beside the spotlight; in voice, say it before the spotlight appears." },
+        target: { type: "string", enum: UI_INTERACTION_TARGETS, description: "Stable semantic UI control target. Mutually exclusive with resource." },
+        resource: { type: "string", description: "Canonical @type:id reference for a Simple/Home feed object to expand and spotlight in place. Mutually exclusive with target; guide mode only." },
+        surface: { type: "string", enum: ["home"], description: "Owning surface for a resource guide. Required with resource." },
+        mode: { type: "string", enum: ["execute", "guide"], description: "Execute a control directly or narrate and guide the user through a real control/resource." },
+        introduction: { type: "string", description: "Required for guide mode. One or two sentences, in your own voice, that name the target and explicitly ask the user to act (for example: \"These are your meeting notes. Open this row to see what was captured.\"). Shown beside the spotlight; in voice, say it before the spotlight appears." },
       },
-      required: ["target", "mode"],
+      required: ["mode"],
     },
   },
   scratch: {
