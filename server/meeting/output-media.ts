@@ -77,6 +77,66 @@ export function interruptMeetingSpeech(sessionId: string, reason = "user_speech"
   return true;
 }
 
+/**
+ * Whether the agent currently owns active or queued meeting speech for a
+ * session. Cheap process-local check over the same barge-in state
+ * interruptMeetingSpeech acts on. Used to gate speech-onset detection so a
+ * human talking while the agent is silent is treated as ordinary input, not an
+ * interruption.
+ */
+function isMeetingSpeaking(sessionId: string): boolean {
+  const controller = speechAbortControllers.get(sessionId);
+  if (controller && !controller.signal.aborted) return true;
+  if ((audioQueues.get(sessionId)?.length ?? 0) > 0) return true;
+  if ((liveSpeechStreams.get(sessionId)?.size ?? 0) > 0) return true;
+  return false;
+}
+
+// Speech-onset barge-in. The transcript-bound interrupt call fires only after a
+// full diarized segment is ingested — seconds late, and silent during the exact
+// overlap where a speaker talks over the agent. This detector runs on the same
+// per-frame participant energy already computed for the visualizer, so it can
+// preempt agent speech the moment a human starts talking. The bot's own output
+// never reaches this path (its stream returns as "excluded" upstream before
+// energy is measured), so the agent cannot interrupt itself. Threshold and
+// sustain are the sensitivity knobs: sustain rejects transient clicks, and the
+// gap reset stops interleaved silent frames from other participants from
+// breaking an in-progress onset.
+const MEETING_BARGE_IN_ENERGY_THRESHOLD = 0.15;
+const MEETING_BARGE_IN_SUSTAIN_MS = 150;
+const MEETING_BARGE_IN_GAP_RESET_MS = 400;
+const speechOnsetState = new Map<string, { onsetStartedAt: number; lastLoudAt: number }>();
+
+/**
+ * Feed one participant audio frame's RMS energy into speech-onset barge-in.
+ * A no-op unless the agent is currently speaking. Fires interruptMeetingSpeech
+ * once sustained human energy proves the speaker is talking over the agent;
+ * idempotency in interruptMeetingSpeech makes repeat frames cheap no-ops.
+ */
+export function observeMeetingParticipantSpeechEnergy(sessionId: string, energy: number): void {
+  if (!isMeetingSpeaking(sessionId)) {
+    speechOnsetState.delete(sessionId);
+    return;
+  }
+  if (energy < MEETING_BARGE_IN_ENERGY_THRESHOLD) return;
+  const now = Date.now();
+  const state = speechOnsetState.get(sessionId);
+  if (!state || now - state.lastLoudAt > MEETING_BARGE_IN_GAP_RESET_MS) {
+    speechOnsetState.set(sessionId, { onsetStartedAt: now, lastLoudAt: now });
+    return;
+  }
+  state.lastLoudAt = now;
+  if (now - state.onsetStartedAt >= MEETING_BARGE_IN_SUSTAIN_MS) {
+    speechOnsetState.delete(sessionId);
+    interruptMeetingSpeech(sessionId, "meeting_participant_vad");
+  }
+}
+
+/** Clear per-session speech-onset state when a meeting audio connection ends. */
+export function resetMeetingSpeechDetection(sessionId: string): void {
+  speechOnsetState.delete(sessionId);
+}
+
 const visualizerClients = new Map<string, Set<WebSocket>>();
 const visualizerSignals = new Map<string, Map<VisualizerStateSource, AgentVisualState>>();
 const visualizerStates = new Map<string, AgentVisualState>();

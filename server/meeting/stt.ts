@@ -28,7 +28,12 @@ import {
   resolveMeetingTransportSession,
   runWithMeetingOwnerPrincipal,
 } from "./owner-principal";
-import { publishMeetingAudioLevel, syncMeetingVisualizerBotStatus } from "./output-media";
+import {
+  observeMeetingParticipantSpeechEnergy,
+  publishMeetingAudioLevel,
+  resetMeetingSpeechDetection,
+  syncMeetingVisualizerBotStatus,
+} from "./output-media";
 import {
   createSpeechRecognitionHints,
   resolveSpeechRecognitionHints,
@@ -842,7 +847,12 @@ export function registerMeetingSTTAudioTransport(
         }
         if (stream.recognition.status === "excluded") return;
         const bytes = Buffer.from(audioBase64, "base64");
-        publishMeetingAudioLevel(sessionId, pcm16Rms(bytes));
+        const participantEnergy = pcm16Rms(bytes);
+        publishMeetingAudioLevel(sessionId, participantEnergy);
+        // Same echo-free per-frame energy drives low-latency speech-onset
+        // barge-in: a human talking over the agent preempts TTS immediately,
+        // instead of waiting for a full transcribed segment to be ingested.
+        observeMeetingParticipantSpeechEnergy(sessionId, participantEnergy);
         if (stream.stt) stream.stt.sendAudio(bytes);
         else if (stream.recognition.status === "connecting") appendPendingAudio(stream, bytes);
       } catch (error) {
@@ -863,7 +873,10 @@ export function registerMeetingSTTAudioTransport(
         stream.stt?.close();
       }
       liveConnections.delete(connection);
-      for (const sessionId of meetings.keys()) meetingHints.delete(sessionId);
+      for (const sessionId of meetings.keys()) {
+        meetingHints.delete(sessionId);
+        resetMeetingSpeechDetection(sessionId);
+      }
       for (const [sessionId, meeting] of meetings) {
         persistRecognition(sessionId, meeting, streams, true).catch((error) =>
           log.error(`failed to persist closed recognition state sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`),
