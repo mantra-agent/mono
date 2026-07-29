@@ -209,7 +209,7 @@ export default function WaitlistPage() {
                       onChange={(e) => setWebsite(e.target.value)}
                       className="absolute -left-[9999px]"
                     />
-                    <div className="flex items-start gap-2 pt-1">
+                    <div className="flex items-start justify-center gap-2 pt-1">
                       <Checkbox
                         id="waitlist-terms"
                         checked={consent}
