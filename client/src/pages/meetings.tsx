@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearch } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Loader2, Plus } from "lucide-react";
 import type { SimpleFeedItem } from "@shared/models/simple";
@@ -60,6 +61,7 @@ interface MeetingSectionProps {
   query: string;
   forceOpen: boolean;
   onDelete: (item: SimpleFeedItem) => void;
+  autoExpandItemId: string | null;
 }
 
 function meetingRecordsEndpoint(section: MeetingSectionDefinition, query: string): string {
@@ -74,7 +76,7 @@ function meetingRecordsEndpoint(section: MeetingSectionDefinition, query: string
   return `/api/meetings/records?${params.toString()}`;
 }
 
-function MeetingSection({ section, query, forceOpen, onDelete }: MeetingSectionProps) {
+function MeetingSection({ section, query, forceOpen, onDelete, autoExpandItemId }: MeetingSectionProps) {
   const [open, setOpen] = useState(section.defaultOpen);
   const shouldFetch = open || forceOpen;
   const endpoint = meetingRecordsEndpoint(section, query);
@@ -106,7 +108,7 @@ function MeetingSection({ section, query, forceOpen, onDelete }: MeetingSectionP
         ) : (
           <div className="min-w-0">
             {data.items.map((item) => (
-              <SimpleWidgetRenderer key={item.id} item={item} onDelete={onDelete} />
+              <SimpleWidgetRenderer key={item.id} item={item} onDelete={onDelete} autoExpandItemId={autoExpandItemId} />
             ))}
           </div>
         )}
@@ -124,6 +126,12 @@ export default function MeetingsPage() {
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SimpleFeedItem | null>(null);
   usePageHeader({ title: "Meetings" });
+  const routeSearch = useSearch();
+  const targetMeetingId = useMemo(
+    () => new URLSearchParams(routeSearch).get("meeting")?.trim() || null,
+    [routeSearch],
+  );
+  const autoExpandItemId = targetMeetingId ? `meeting-${targetMeetingId}` : null;
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const nativeTranscription = useNativeMeetingTranscription();
@@ -203,8 +211,9 @@ export default function MeetingsPage() {
               key={section.id}
               section={section}
               query={query}
-              forceOpen={Boolean(query)}
+              forceOpen={Boolean(query) || Boolean(targetMeetingId)}
               onDelete={setDeleteTarget}
+              autoExpandItemId={autoExpandItemId}
             />
           ))}
         </div>

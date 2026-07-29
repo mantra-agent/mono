@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ChevronRight, Loader2, MessageSquare, MoreHorizontal, Plus, Trash2, User } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleAction, SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
@@ -177,12 +177,14 @@ interface SimpleTreeRowProps {
   children?: ReactNode;
   /** Page-owned destructive action. Omitted on surfaces that do not own deletion. */
   onDelete?: (item: SimpleFeedItem) => void;
+  /** When equal to this row's item id, auto-expand the row and scroll it into view (deep-link entry). */
+  autoExpandItemId?: string | null;
 }
 
 const INDENT_PX = 24;
 const CONNECTOR_CLASS = "border-muted-foreground/50";
 
-export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDelete }: SimpleTreeRowProps) {
+export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDelete, autoExpandItemId }: SimpleTreeRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [entryOpen, setEntryOpen] = useState(false);
   const [entryContent, setEntryContent] = useState("");
@@ -329,6 +331,16 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
     if (guidedDescendant && canExpand) setExpanded(true);
   }, [canExpand, guidedDescendant]);
 
+  const rowRef = useRef<HTMLDivElement>(null);
+  const autoExpandHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!autoExpandItemId || autoExpandItemId !== item.id || !canExpand) return;
+    if (autoExpandHandledRef.current === autoExpandItemId) return;
+    autoExpandHandledRef.current = autoExpandItemId;
+    setExpanded(true);
+    rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [autoExpandItemId, item.id, canExpand]);
+
   const toggleExpanded = () => {
     if (!canExpand) return;
     setExpanded(v => !v);
@@ -405,6 +417,7 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
     <>
       <div ref={resourceRef}>
       <div
+        ref={rowRef}
         className={cn(
           "group flex items-center py-1 transition-colors duration-200",
           !item.completable && "hover:bg-accent/50 rounded-md",

@@ -16,16 +16,17 @@ interface SimpleWidgetRendererProps {
   item: SimpleFeedItem;
   depth?: number;
   onDelete?: (item: SimpleFeedItem) => void;
+  autoExpandItemId?: string | null;
 }
 
-export function SimpleWidgetRenderer({ item, depth = 0, onDelete }: SimpleWidgetRendererProps) {
+export function SimpleWidgetRenderer({ item, depth = 0, onDelete, autoExpandItemId }: SimpleWidgetRendererProps) {
   const content = getInlineContent(item);
 
   // State widget is a special full-width display, not a tree row
   if (item.widgetType === "state") return <StateWidget item={item} />;
 
   return (
-    <SimpleTreeRow item={item} depth={depth} onDelete={onDelete}>
+    <SimpleTreeRow item={item} depth={depth} onDelete={onDelete} autoExpandItemId={autoExpandItemId}>
       {content}
     </SimpleTreeRow>
   );
