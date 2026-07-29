@@ -20,11 +20,13 @@ import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
+import { simpleItemContainsReference } from "@shared/simple-references";
 import { SurfacedPersonRow, surfacedDateLabel } from "@/components/people/surfaced-person-row";
 import { SurfacedNewsRow } from "@/components/news/surfaced-news-row";
 import { SurfacedEmailRow } from "@/components/email/surfaced-email-row";
 import { SimpleCheckCircle } from "./home-check-circle";
 import { SimpleTextFrame } from "./simple-text-frame";
+import { useUiInteraction } from "@/hooks/use-ui-interaction";
 
 const log = createLogger("SimpleFeed");
 
@@ -102,8 +104,14 @@ function SimpleSectionGroup({
   timezone: string;
 }) {
   const { section: sectionKey, items, planArtifact, planSkillName, planCadence } = section;
+  const { guidedResource } = useUiInteraction();
   const [open, setOpen] = useState(!DEFAULT_CLOSED_SECTIONS.has(sectionKey));
+  const containsGuidedResource = Boolean(guidedResource && items.some((item) => simpleItemContainsReference(item, guidedResource)));
   const hasPlanRow = planArtifact !== undefined;
+
+  useEffect(() => {
+    if (containsGuidedResource) setOpen(true);
+  }, [containsGuidedResource]);
 
   return (
     <section className="scroll-mt-6">

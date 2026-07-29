@@ -1,4 +1,4 @@
-import type { SimpleSourceRef } from "./models/simple";
+import type { SimpleFeedItem, SimpleSourceRef } from "./models/simple";
 import { createReferenceRef, type ReferenceRef } from "./references";
 
 export function sourceRefToReferenceRef(sourceRef: SimpleSourceRef): ReferenceRef | null {
@@ -43,4 +43,13 @@ export function sourceRefsToReferenceRefs(sourceRefs: SimpleSourceRef[]): Refere
     refs.push(ref);
   }
   return refs;
+}
+
+export function simpleItemReferenceRefs(item: SimpleFeedItem): ReferenceRef[] {
+  return item.references?.length ? item.references : sourceRefsToReferenceRefs(item.sourceRefs ?? []);
+}
+
+export function simpleItemContainsReference(item: SimpleFeedItem, canonical: string): boolean {
+  return simpleItemReferenceRefs(item).some((ref) => ref.canonical === canonical)
+    || item.children?.some((child) => simpleItemContainsReference(child, canonical)) === true;
 }

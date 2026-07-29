@@ -1,10 +1,10 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ChevronRight, Loader2, MessageSquare, MoreHorizontal, Plus, Trash2, User } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleAction, SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
 import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import type { MeetingAttendeePromotion } from "@shared/meeting-feed-items";
-import { sourceRefToReferenceRef, sourceRefsToReferenceRefs } from "@shared/simple-references";
+import { simpleItemContainsReference, simpleItemReferenceRefs, sourceRefToReferenceRef, sourceRefsToReferenceRefs } from "@shared/simple-references";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import { useFocusSession } from "@/hooks/use-focus-session";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MeetingAgentToggle } from "./widgets/meeting-agent-toggle";
 import { InlineLibraryPageEditor } from "@/components/library/inline-library-page";
+import { useUiInteraction, useUiInteractionResource } from "@/hooks/use-ui-interaction";
 
 // ─── Helpers ───
 
@@ -71,7 +72,7 @@ function primaryReference(item: SimpleFeedItem) {
   // Only render explicit references for generic rows; typed widgets may still derive
   // their primary reference from sourceRefs.
   if (item.widgetType === "generic") return item.references?.[0] ?? null;
-  return item.references?.[0] ?? (item.sourceRefs?.[0] ? sourceRefToReferenceRef(item.sourceRefs[0]) : null);
+  return simpleItemReferenceRefs(item)[0] ?? null;
 }
 
 function markItemDone(feed: SimpleFeed | undefined, itemId: string): SimpleFeed | undefined {
@@ -189,6 +190,12 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
   const [promotedSummary, setPromotedSummary] = useState<string | null>(null);
   const [promotedInteraction, setPromotedInteraction] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const { guidedResource } = useUiInteraction();
+  const ownGuidedResource = guidedResource && simpleItemReferenceRefs(item).some((ref) => ref.canonical === guidedResource)
+    ? guidedResource
+    : null;
+  const guidedDescendant = Boolean(guidedResource && simpleItemContainsReference(item, guidedResource));
+  const resourceRef = useUiInteractionResource(ownGuidedResource);
   const { toast } = useToast();
   const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
   const action = completeAction(item);
@@ -318,6 +325,10 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
   const mapHref = isMeetingLocationItem(item) ? mapsSearchHref(item.title) : null;
   const displayTitle = mapHref ? placeNameFromAddress(item.title) : item.title;
 
+  useEffect(() => {
+    if (guidedDescendant && canExpand) setExpanded(true);
+  }, [canExpand, guidedDescendant]);
+
   const toggleExpanded = () => {
     if (!canExpand) return;
     setExpanded(v => !v);
@@ -392,6 +403,7 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
 
   return (
     <>
+      <div ref={resourceRef}>
       <div
         className={cn(
           "group flex items-center py-1 transition-colors duration-200",
@@ -535,6 +547,7 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
           ))}
         </div>
       )}
+      </div>
 
       {entryUi ? (
         <Dialog open={entryOpen} onOpenChange={(open) => {

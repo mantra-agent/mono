@@ -1,7 +1,7 @@
 import {
   useSidebar,
 } from "@/components/ui/sidebar";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefCallback } from "react";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
@@ -240,10 +240,11 @@ interface NavigationOrbProps {
   visualState: AgentVisualState;
   audioLevel: number;
   voiceSession: ReturnType<typeof useVoiceSessionOptional>;
+  targetRef?: RefCallback<HTMLButtonElement>;
   onClick?: () => void;
 }
 
-function NavigationOrb({ status, visualState, audioLevel, voiceSession, onClick }: NavigationOrbProps) {
+function NavigationOrb({ status, visualState, audioLevel, voiceSession, targetRef, onClick }: NavigationOrbProps) {
   const orbProps = {
     state: visualState,
     audioLevel,
@@ -253,6 +254,7 @@ function NavigationOrb({ status, visualState, audioLevel, voiceSession, onClick 
 
   return (
     <button
+      ref={targetRef}
       type="button"
       onClick={(e) => {
         e.stopPropagation();
@@ -276,6 +278,7 @@ function NavigationOrb({ status, visualState, audioLevel, voiceSession, onClick 
 }
 
 export function NavigationOrbButton() {
+  const targetRef = useUiInteractionTarget("navigation.sidebar.toggle");
   const { data: gatewayStatus } = useExecutorStatus();
   const { toggleSidebar, openMobile } = useSidebar();
   const { setWidgetOpen } = useFocusSession();
@@ -328,6 +331,7 @@ export function NavigationOrbButton() {
 
   return (
     <NavigationOrb
+      targetRef={targetRef}
       status={status}
       visualState={visualState}
       audioLevel={audioLevel}

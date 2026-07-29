@@ -1,4 +1,8 @@
+import { parseReferenceText } from "./reference-parser";
+import type { ReferenceRef } from "./references";
+
 export const UI_INTERACTION_TARGET_ROUTES = {
+  "navigation.sidebar.toggle": { href: "" },
   "navigation.home.open": { href: "/home" },
   "navigation.dashboard.open": { href: "/dashboard", permission: "system:read" },
   "navigation.news.open": { href: "/news" },
@@ -71,6 +75,7 @@ export function isUiInteractionTargetOpen(
   search: string,
 ): boolean {
   const href = getUiInteractionTargetHref(target);
+  if (!href) return false;
   const queryIndex = href.indexOf("?");
   const targetPath = queryIndex === -1 ? href : href.slice(0, queryIndex);
   if (path !== targetPath) return false;
@@ -86,6 +91,9 @@ export function isUiInteractionTargetOpen(
 
 export const UI_INTERACTION_MODES = ["execute", "guide"] as const;
 export type UiInteractionMode = typeof UI_INTERACTION_MODES[number];
+
+export const UI_INTERACTION_RESOURCE_SURFACES = ["home"] as const;
+export type UiInteractionResourceSurface = typeof UI_INTERACTION_RESOURCE_SURFACES[number];
 
 export const UI_INTERACTION_OUTCOMES = ["completed", "cancelled", "unavailable"] as const;
 export type UiInteractionOutcome = typeof UI_INTERACTION_OUTCOMES[number];
@@ -110,30 +118,50 @@ export const UI_INTERACTION_INTRODUCTION_MAX_LENGTH = 400;
 interface UiInteractionCommandBase {
   type: "ui.interaction.command";
   commandId: string;
-  target: UiInteractionTarget;
   expiresAt: number;
 }
 
-export interface UiInteractionExecuteCommand extends UiInteractionCommandBase {
-  mode: "execute";
-}
-
-export interface UiInteractionGuideCommand extends UiInteractionCommandBase {
-  mode: "guide";
+interface UiInteractionNarratedCommand {
   /**
-   * User-visible narration that names the control and explicitly asks the user
-   * to click it. Required for every guide, so a spotlight can never appear
-   * without first telling the user what it is and what to do. In voice the
-   * client also waits for this to be spoken before revealing the spotlight.
+   * User-visible narration that names the target and explicitly asks the user
+   * to act. Required for every guide, so a spotlight can never appear without
+   * first telling the user what it is and what to do. In voice the client also
+   * waits for this to be spoken before revealing the spotlight.
    */
   introduction: string;
 }
 
+export interface UiInteractionExecuteCommand extends UiInteractionCommandBase {
+  /** Optional on control commands for rolling compatibility with the original protocol. */
+  subject?: "control";
+  target: UiInteractionTarget;
+  mode: "execute";
+}
+
+export interface UiInteractionGuideCommand extends UiInteractionCommandBase, UiInteractionNarratedCommand {
+  /** Optional on control commands for rolling compatibility with the original protocol. */
+  subject?: "control";
+  target: UiInteractionTarget;
+  mode: "guide";
+}
+
+export interface UiInteractionResourceGuideCommand extends UiInteractionCommandBase, UiInteractionNarratedCommand {
+  subject: "resource";
+  mode: "guide";
+  /** Canonical durable-object reference, e.g. `@meeting:abc`. */
+  resource: string;
+  /** Surface that owns resource discovery, reveal, expansion, and spotlight. */
+  surface: UiInteractionResourceSurface;
+}
+
 /**
- * Discriminated so a guide-without-introduction is unrepresentable: the
- * narration invariant lives in the type, not in a downstream guard.
+ * Subject and mode are jointly discriminated. Resource interactions are
+ * guide-only, and every guide structurally requires narration.
  */
-export type UiInteractionCommand = UiInteractionExecuteCommand | UiInteractionGuideCommand;
+export type UiInteractionCommand =
+  | UiInteractionExecuteCommand
+  | UiInteractionGuideCommand
+  | UiInteractionResourceGuideCommand;
 
 export interface UiInteractionResult {
   type: "ui.interaction.result";
@@ -142,12 +170,15 @@ export interface UiInteractionResult {
   reason?: UiInteractionReason;
 }
 
-export interface UiInteractionTerminalResult {
-  target: UiInteractionTarget;
+interface UiInteractionTerminalResultBase {
   mode: UiInteractionMode;
   outcome: UiInteractionOutcome;
   reason?: UiInteractionReason;
 }
+
+export type UiInteractionTerminalResult =
+  | (UiInteractionTerminalResultBase & { subject: "control"; target: UiInteractionTarget })
+  | (UiInteractionTerminalResultBase & { subject: "resource"; resource: string; surface: UiInteractionResourceSurface });
 
 export function isUiInteractionTarget(value: unknown): value is UiInteractionTarget {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(UI_INTERACTION_TARGET_ROUTES, value);
@@ -155,6 +186,19 @@ export function isUiInteractionTarget(value: unknown): value is UiInteractionTar
 
 export function isUiInteractionMode(value: unknown): value is UiInteractionMode {
   return typeof value === "string" && (UI_INTERACTION_MODES as readonly string[]).includes(value);
+}
+
+export function isUiInteractionResourceSurface(value: unknown): value is UiInteractionResourceSurface {
+  return typeof value === "string" && (UI_INTERACTION_RESOURCE_SURFACES as readonly string[]).includes(value);
+}
+
+export function parseUiInteractionResource(value: unknown): ReferenceRef | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  const parts = parseReferenceText(trimmed);
+  if (parts.length !== 1 || parts[0]?.kind !== "reference") return null;
+  const ref = parts[0].ref;
+  return ref.raw === trimmed && !ref.legacy ? ref : null;
 }
 
 export function isUiInteractionOutcome(value: unknown): value is UiInteractionOutcome {
@@ -167,22 +211,33 @@ export function isUiInteractionReason(value: unknown): value is UiInteractionRea
 
 export function isUiInteractionCommand(value: unknown): value is UiInteractionCommand {
   if (!value || typeof value !== "object") return false;
-  const command = value as Partial<UiInteractionGuideCommand>;
+  const command = value as Partial<UiInteractionCommand>;
   const baseValid = command.type === "ui.interaction.command"
     && typeof command.commandId === "string"
     && command.commandId.length > 0
     && command.commandId.length <= 120
-    && isUiInteractionTarget(command.target)
-    && isUiInteractionMode(command.mode)
     && typeof command.expiresAt === "number"
     && Number.isFinite(command.expiresAt);
   if (!baseValid) return false;
-  if (command.mode === "guide") {
+
+  if (command.subject === "resource") {
+    return command.mode === "guide"
+      && parseUiInteractionResource(command.resource) !== null
+      && isUiInteractionResourceSurface(command.surface)
+      && typeof command.introduction === "string"
+      && command.introduction.trim().length > 0
+      && command.introduction.length <= UI_INTERACTION_INTRODUCTION_MAX_LENGTH;
+  }
+
+  if (command.subject === undefined || command.subject === "control") {
+    if (!isUiInteractionTarget(command.target) || !isUiInteractionMode(command.mode)) return false;
+    if (command.mode === "execute") return true;
     return typeof command.introduction === "string"
       && command.introduction.trim().length > 0
       && command.introduction.length <= UI_INTERACTION_INTRODUCTION_MAX_LENGTH;
   }
-  return true;
+
+  return false;
 }
 
 export function isUiInteractionResult(value: unknown): value is UiInteractionResult {

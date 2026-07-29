@@ -33,6 +33,7 @@ const HANDLER_ID = "ui-interaction-command";
 const TARGET_WAIT_MS = 2_000;
 
 type TargetRegistry = Map<UiInteractionTarget, HTMLElement>;
+type ResourceRegistry = Map<string, HTMLElement>;
 type UiInteractionOutcome = "completed" | "cancelled" | "unavailable";
 
 interface TargetRect {
@@ -44,8 +45,10 @@ interface TargetRect {
 
 interface UiInteractionContextValue {
   guidedTarget: UiInteractionTarget | null;
+  guidedResource: string | null;
   invoke: (target: UiInteractionTarget) => void;
   registerTarget: (target: UiInteractionTarget, element: HTMLElement | null) => void;
+  registerResource: (resource: string, element: HTMLElement | null) => void;
 }
 
 const UiInteractionContext = createContext<UiInteractionContextValue | null>(null);
@@ -126,6 +129,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
   const voiceSession = useVoiceSessionOptional();
   const agentSpeaking = voiceSession?.agentMode === "speaking";
   const targetsRef = useRef<TargetRegistry>(new Map());
+  const resourcesRef = useRef<ResourceRegistry>(new Map());
   const sharedWSRef = useRef<ReturnType<typeof acquireSharedWS> | null>(null);
   const [targetVersion, setTargetVersion] = useState(0);
   const [activeCommand, setActiveCommand] = useState<UiInteractionCommand | null>(null);
@@ -147,7 +151,10 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
     }) ?? false;
     log.info("interaction settled", {
       commandId: command.commandId,
-      target: command.target,
+      subject: command.subject ?? "control",
+      ...(command.subject === "resource"
+        ? { resource: command.resource, surface: command.surface }
+        : { target: command.target }),
       mode: command.mode,
       outcome,
       reason: reason ?? null,
@@ -171,12 +178,18 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
 
   const invoke = useCallback((target: UiInteractionTarget) => {
     if (!canInvoke(target)) return;
+    if (target === "navigation.sidebar.toggle") {
+      if (isMobile) setOpenMobile((open) => !open);
+      else setOpen((open) => !open);
+      return;
+    }
     if (isMobile) setWidgetOpen(false);
     navigate(getUiInteractionTargetHref(target));
     closeSidebar();
-  }, [canInvoke, closeSidebar, isMobile, navigate, setWidgetOpen]);
+  }, [canInvoke, closeSidebar, isMobile, navigate, setOpen, setOpenMobile, setWidgetOpen]);
 
-  const reveal = useCallback((_target: UiInteractionTarget) => {
+  const revealControl = useCallback((target: UiInteractionTarget) => {
+    if (target === "navigation.sidebar.toggle") return;
     if (isMobile) {
       setWidgetOpen(false);
       setOpenMobile(true);
@@ -185,18 +198,34 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
     }
   }, [isMobile, setOpen, setOpenMobile, setWidgetOpen]);
 
+  const revealResource = useCallback(() => {
+    if (isMobile) setWidgetOpen(false);
+    navigate("/home");
+    closeSidebar();
+  }, [closeSidebar, isMobile, navigate, setWidgetOpen]);
+
   const canInvokeRef = useRef(canInvoke);
   const invokeRef = useRef(invoke);
-  const revealRef = useRef(reveal);
+  const revealControlRef = useRef(revealControl);
+  const revealResourceRef = useRef(revealResource);
   canInvokeRef.current = canInvoke;
   invokeRef.current = invoke;
-  revealRef.current = reveal;
+  revealControlRef.current = revealControl;
+  revealResourceRef.current = revealResource;
 
   const registerTarget = useCallback((target: UiInteractionTarget, element: HTMLElement | null) => {
     const previous = targetsRef.current.get(target) ?? null;
     if (previous === element) return;
     if (element) targetsRef.current.set(target, element);
     else targetsRef.current.delete(target);
+    setTargetVersion((value) => value + 1);
+  }, []);
+
+  const registerResource = useCallback((resource: string, element: HTMLElement | null) => {
+    const previous = resourcesRef.current.get(resource) ?? null;
+    if (previous === element) return;
+    if (element) resourcesRef.current.set(resource, element);
+    else resourcesRef.current.delete(resource);
     setTargetVersion((value) => value + 1);
   }, []);
 
@@ -210,7 +239,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (!canInvokeRef.current(message.target)) {
+      if (message.subject !== "resource" && !canInvokeRef.current(message.target)) {
         sendResult(message, "unavailable", "target_unavailable");
         return;
       }
@@ -226,7 +255,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
 
       // Execute acts immediately. Guide reveal is deferred to the speech-gated
       // effect below so the spotlight never appears mid-introduction.
-      if (message.mode === "execute") invokeRef.current(message.target);
+      if (message.subject !== "resource" && message.mode === "execute") invokeRef.current(message.target);
     });
     ws.addCloseHandler(HANDLER_ID, () => settle("unavailable", "client_disconnected"));
     return () => {
@@ -241,7 +270,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
   }, [sendResult, settle]);
 
   useEffect(() => {
-    if (!activeCommand) return;
+    if (!activeCommand || activeCommand.subject === "resource") return;
     if (isUiInteractionTargetOpen(activeCommand.target, location, search)) {
       settle("completed");
     }
@@ -266,12 +295,15 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!activeCommand || activeCommand.mode !== "guide" || guideRevealed) return;
     if (agentSpeaking) return;
-    revealRef.current(activeCommand.target);
+    if (activeCommand.subject === "resource") revealResourceRef.current();
+    else revealControlRef.current(activeCommand.target);
     setGuideRevealed(true);
   }, [activeCommand, agentSpeaking, guideRevealed]);
 
   const activeTargetElement = activeCommand?.mode === "guide" && guideRevealed
-    ? targetsRef.current.get(activeCommand.target) ?? null
+    ? activeCommand.subject === "resource"
+      ? resourcesRef.current.get(activeCommand.resource) ?? null
+      : targetsRef.current.get(activeCommand.target) ?? null
     : null;
 
   // Start the target-availability clock only after the guide has been revealed,
@@ -324,10 +356,16 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
   }, [activeCommand, activeTargetElement, settle]);
 
   const value = useMemo<UiInteractionContextValue>(() => ({
-    guidedTarget: activeCommand?.mode === "guide" && guideRevealed ? activeCommand.target : null,
+    guidedTarget: activeCommand?.mode === "guide" && guideRevealed && activeCommand.subject !== "resource"
+      ? activeCommand.target
+      : null,
+    guidedResource: activeCommand?.mode === "guide" && guideRevealed && activeCommand.subject === "resource"
+      ? activeCommand.resource
+      : null,
     invoke,
     registerTarget,
-  }), [activeCommand, guideRevealed, invoke, registerTarget]);
+    registerResource,
+  }), [activeCommand, guideRevealed, invoke, registerResource, registerTarget]);
 
   return (
     <UiInteractionContext.Provider value={value}>
@@ -352,4 +390,11 @@ export function useUiInteraction(): UiInteractionContextValue {
 export function useUiInteractionTarget(target: UiInteractionTarget): RefCallback<HTMLElement> {
   const { registerTarget } = useUiInteraction();
   return useCallback((element: HTMLElement | null) => registerTarget(target, element), [registerTarget, target]);
+}
+
+export function useUiInteractionResource(resource: string | null): RefCallback<HTMLElement> {
+  const { registerResource } = useUiInteraction();
+  return useCallback((element: HTMLElement | null) => {
+    if (resource) registerResource(resource, element);
+  }, [registerResource, resource]);
 }
