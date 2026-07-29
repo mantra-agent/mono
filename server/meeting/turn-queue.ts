@@ -11,8 +11,9 @@ import {
   type SQL,
 } from "drizzle-orm";
 import { meetingTurns, type MeetingTurn } from "@shared/schema";
-import { BOOT_ID, db, fnv1a32 } from "../db";
+import { BOOT_ID, db, fnv1a32, isSerializationConflict } from "../db";
 import { createLogger } from "../log";
+import { getPostgresErrorCode } from "../postgres-errors";
 import type { Principal } from "../principal";
 import { getCurrentPrincipal } from "../principal-context";
 import {
@@ -31,6 +32,8 @@ const PARTICIPATION_LEASE_MS = 30_000;
 const EXECUTION_LEASE_MS = 45 * 60_000;
 const MAX_EXECUTION_ATTEMPTS = 3;
 const CONTENTION_RETRY_MS = 1_000;
+const APPEND_MAX_ATTEMPTS = 3;
+const APPEND_RETRY_BASE_MS = 25;
 
 const meetingTurnScope = {
   scope: meetingTurns.scope,
@@ -133,7 +136,7 @@ function executableOnThisBoot(): SQL {
   )!;
 }
 
-export async function appendMeetingTurnFragment(input: {
+async function appendMeetingTurnFragmentOnce(input: {
   sessionId: string;
   sessionKey: string;
   speakerKey: string;
@@ -172,7 +175,9 @@ export async function appendMeetingTurnFragment(input: {
           principal,
           and(
             eq(meetingTurns.sessionId, input.sessionId),
-            inArray(meetingTurns.executionStatus, ["waiting", "pending"]),
+            eq(meetingTurns.assemblyStatus, "collecting"),
+            eq(meetingTurns.participationStatus, "pending"),
+            eq(meetingTurns.executionStatus, "waiting"),
           ),
         ),
       )
@@ -196,9 +201,9 @@ export async function appendMeetingTurnFragment(input: {
       const [updated] = await tx
         .update(meetingTurns)
         .set({
-          text: sql`CONCAT_WS(' ', NULLIF(${meetingTurns.text}, ''), ${input.text.trim()})`,
-          sourceTurnIds: sql`array_append(${meetingTurns.sourceTurnIds}, ${input.sourceTurnId})`,
-          sourceMessageIds: sql`array_append(${meetingTurns.sourceMessageIds}, ${input.sourceMessageId})`,
+          text: [open.text, input.text.trim()].filter(Boolean).join(" "),
+          sourceTurnIds: [...open.sourceTurnIds, input.sourceTurnId],
+          sourceMessageIds: [...open.sourceMessageIds, input.sourceMessageId],
           speakerLabel: input.speakerLabel,
           revision: sql`${meetingTurns.revision} + 1`,
           assemblyStatus: "collecting",
@@ -252,6 +257,49 @@ export async function appendMeetingTurnFragment(input: {
     );
     return mapTurn(created);
   });
+}
+
+function appendRetryable(error: unknown): boolean {
+  return isSerializationConflict(error) || getPostgresErrorCode(error) === "55P03";
+}
+
+export async function appendMeetingTurnFragment(input: {
+  sessionId: string;
+  sessionKey: string;
+  speakerKey: string;
+  speakerLabel: string;
+  participationMode?: "contextual" | "always";
+  executionAffinityBootId?: string;
+  text: string;
+  sourceTurnId: string;
+  sourceMessageId: string;
+}): Promise<MeetingTurnRecord> {
+  for (let attempt = 1; attempt <= APPEND_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await appendMeetingTurnFragmentOnce(input);
+    } catch (error) {
+      const code = getPostgresErrorCode(error);
+      const willRetry = attempt < APPEND_MAX_ATTEMPTS && appendRetryable(error);
+      if (!willRetry) {
+        log.error("meeting turn fragment append failed", {
+          sessionId: input.sessionId,
+          attempt,
+          postgresCode: code,
+          errorType: error instanceof Error ? error.name : typeof error,
+        });
+        throw error;
+      }
+      const delayMs = APPEND_RETRY_BASE_MS * attempt;
+      log.warn("meeting turn fragment append retrying", {
+        sessionId: input.sessionId,
+        attempt,
+        postgresCode: code,
+        delayMs,
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw new Error("Meeting turn fragment append retry budget exhausted");
 }
 
 export async function claimReadyMeetingTurn(sessionId: string): Promise<MeetingTurnRecord | null> {

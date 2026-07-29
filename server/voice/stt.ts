@@ -144,6 +144,8 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
     let sequence = 0;
     let closing = false;
     let errorReported = false;
+    let utteranceCallbackFailed = false;
+    let utteranceCallbackQueue = Promise.resolve();
 
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("Scribe realtime connection timed out")), 10_000);
@@ -185,9 +187,9 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
         const last = words.at(-1);
         const startSeconds = first?.start_timestamp ?? first?.start;
         const endSeconds = last?.end_timestamp ?? last?.end;
-        const utteranceId = `scribe:${sessionId}:${stream.participant.transportId}:${++sequence}`;
-        void onUtterance({
-          utteranceId,
+        if (utteranceCallbackFailed) return;
+        const utterance: STTUtterance = {
+          utteranceId: `scribe:${sessionId}:${stream.participant.transportId}:${++sequence}`,
           streamId: stream.streamId,
           participant: stream.participant,
           text,
@@ -197,7 +199,27 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
           provider: this.provider,
           model: this.model,
           fallback: false,
-        });
+        };
+        utteranceCallbackQueue = utteranceCallbackQueue
+          .then(() => {
+            if (utteranceCallbackFailed || closing) return;
+            return onUtterance(utterance);
+          })
+          .catch((error) => {
+            if (utteranceCallbackFailed || closing) return;
+            utteranceCallbackFailed = true;
+            errorReported = true;
+            log.error("Scribe utterance callback failed", {
+              errorType: error instanceof Error ? error.name : typeof error,
+            });
+            try {
+              onError(new Error("Scribe transcript processing failed"));
+            } catch (reportError) {
+              log.error("Scribe transcript failure handler failed", {
+                errorType: reportError instanceof Error ? reportError.name : typeof reportError,
+              });
+            }
+          });
       } catch (error) {
         onError(error instanceof Error ? error : new Error(String(error)));
       }
