@@ -38,6 +38,8 @@ export interface SessionTranscriptSurfaceProps {
   meeting?: MeetingSessionMeta | null;
   agenda?: SessionAgenda;
   sessionTitle?: string;
+  parentSessionId?: string;
+  parentSessionTitle?: string;
   scrollContainerRef: React.RefObject<HTMLDivElement>;
   onScroll: React.UIEventHandler<HTMLDivElement>;
   onUserScrollIntent: React.UIEventHandler<HTMLDivElement>;
@@ -72,6 +74,8 @@ export function SessionTranscriptSurface({
   meeting,
   agenda,
   sessionTitle,
+  parentSessionId,
+  parentSessionTitle,
   scrollContainerRef,
   onScroll,
   onUserScrollIntent,
@@ -99,7 +103,14 @@ export function SessionTranscriptSurface({
           sessionTitle={sessionTitle}
         />
       )}
-      <SessionAgendaTree key={activeSession} sessionId={activeSession} agenda={agenda} />
+      <SessionAgendaTree
+        key={activeSession}
+        sessionId={activeSession}
+        sessionTitle={sessionTitle}
+        parentSessionId={parentSessionId}
+        parentSessionTitle={parentSessionTitle}
+        agenda={agenda}
+      />
       {!wsConnected && sessionStatus === "streaming" && !voiceActive && (
         <div
           className="flex items-center gap-2 px-4 py-2 bg-warning/5 dark:bg-warning/5 border-b border-warning/20 text-warning-foreground text-xs"
