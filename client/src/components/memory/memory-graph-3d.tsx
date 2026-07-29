@@ -142,6 +142,17 @@ const ACTIVITY_PACKET_BEADS = 5;
 const ACTIVITY_PACKET_DURATION_MS = 1_150;
 const ACTIVITY_IMPACT_DURATION_MS = 520;
 const ACTIVITY_IMPACT_HOLD_RATIO = 0.18;
+// Each traversal/arrival deposits bounded energy into the existing graph visuals.
+// Exponential decay keeps the network briefly legible after a pulse passes, while
+// additive deposits let genuinely busy paths stay brighter without washing out
+// hover/selection or growing unbounded.
+const ACTIVITY_AFTERGLOW_HALF_LIFE_MS = 2_600;
+const ACTIVITY_AFTERGLOW_EPSILON = 0.004;
+const ACTIVITY_LINK_AFTERGLOW_DEPOSIT = 0.18;
+const ACTIVITY_LINK_AFTERGLOW_CEILING = 1;
+const ACTIVITY_LINK_AFTERGLOW_BRIGHTNESS = 0.22;
+const ACTIVITY_NODE_AFTERGLOW_DEPOSIT = 0.12;
+const ACTIVITY_NODE_AFTERGLOW_CEILING = 0.55;
 // Global emission runs ~10x faster than before; a tight max clamp removes the
 // dead-air gaps that made the field look intermittently idle.
 const ACTIVITY_MEAN_EMIT_GAP_MS = 17;
@@ -569,6 +580,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const focusedLinkPositions = new Float32Array(focusedLinkCapacity * CURVE_SEGMENTS * 6);
     const focusedLinkColors = new Float32Array(focusedLinkCapacity * CURVE_SEGMENTS * 6);
     const linkBrightness = new Float32Array(renderedLinks.length);
+    const visibleLinkBrightness = new Float32Array(renderedLinks.length);
     const nodeLinkVisibility = new Float32Array(sceneNodes.length);
     const linkGeometry = new LineSegmentsGeometry();
     const focusedLinkGeometry = new LineSegmentsGeometry();
@@ -657,7 +669,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let simulationTick = 0;
     const activePackets: ActivityPacket[] = [];
     const activeImpacts: ActivityImpact[] = [];
+    const nodeAfterglow = new Float32Array(sceneNodes.length);
+    const linkAfterglow = new Float32Array(renderedLinks.length);
     const lastPulseAtByNodeIndex = new Map<number, number>();
+    let afterglowUpdatedAt = 0;
     const activityPoint = new THREE.Vector3();
     const renderedLinkPaths: QuadraticLinkPath[] = renderedLinks.map(() => ({
       fromX: 0,
@@ -802,6 +817,26 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       }
     }
 
+    function syncLinkColors() {
+      renderedLinks.forEach((_link, linkIndex) => {
+        const brightness = visibleLinkBrightness[linkIndex]
+          + linkAfterglow[linkIndex] * ACTIVITY_LINK_AFTERGLOW_BRIGHTNESS;
+        for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
+          const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
+          linkColors[offset] = baseLinkColor.r * brightness;
+          linkColors[offset + 1] = baseLinkColor.g * brightness;
+          linkColors[offset + 2] = baseLinkColor.b * brightness;
+          linkColors[offset + 3] = baseLinkColor.r * brightness;
+          linkColors[offset + 4] = baseLinkColor.g * brightness;
+          linkColors[offset + 5] = baseLinkColor.b * brightness;
+        }
+      });
+      const instanceColorStart = linkGeometry.getAttribute("instanceColorStart");
+      if (instanceColorStart && "data" in instanceColorStart) {
+        (instanceColorStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
+      }
+    }
+
     function syncLinkVisibility() {
       camera.updateMatrixWorld();
       const focusIndex = hoveredIndex ?? selectedIndex;
@@ -826,22 +861,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       renderedLinks.forEach((link, linkIndex) => {
         const endpointVisibility = Math.min(nodeLinkVisibility[link.fromIndex], nodeLinkVisibility[link.toIndex]);
         const focusDim = focusIndex != null && !focusedRenderedLinkIndices.has(linkIndex) ? 0.42 : 1;
-        const brightness = linkBrightness[linkIndex] * endpointVisibility * focusDim;
-        for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
-          const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
-          linkColors[offset] = baseLinkColor.r * brightness;
-          linkColors[offset + 1] = baseLinkColor.g * brightness;
-          linkColors[offset + 2] = baseLinkColor.b * brightness;
-          linkColors[offset + 3] = baseLinkColor.r * brightness;
-          linkColors[offset + 4] = baseLinkColor.g * brightness;
-          linkColors[offset + 5] = baseLinkColor.b * brightness;
-        }
+        visibleLinkBrightness[linkIndex] = linkBrightness[linkIndex] * endpointVisibility * focusDim;
       });
+      syncLinkColors();
       syncFocusedLinkGeometry();
-      const instanceColorStart = linkGeometry.getAttribute("instanceColorStart");
-      if (instanceColorStart && "data" in instanceColorStart) {
-        (instanceColorStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
-      }
     }
 
     function syncNodeAppearance() {
@@ -995,7 +1018,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       activePackets.length = 0;
       activeImpacts.length = 0;
       impact.fill(0);
+      nodeAfterglow.fill(0);
+      linkAfterglow.fill(0);
+      afterglowUpdatedAt = 0;
       activityMesh.count = 0;
+      syncLinkColors();
       (nodeGeometry.getAttribute("aImpact") as THREE.InstancedBufferAttribute).needsUpdate = true;
       if (activityFrame !== 0) cancelAnimationFrame(activityFrame);
       activityFrame = 0;
@@ -1021,6 +1048,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const path = weightedActivityPath(eligibleActivityPaths(now));
       if (!path) return false;
       activePackets.push({ ...path, startedAt: now });
+      linkAfterglow[path.linkIndex] = Math.min(
+        ACTIVITY_LINK_AFTERGLOW_CEILING,
+        linkAfterglow[path.linkIndex] + ACTIVITY_LINK_AFTERGLOW_DEPOSIT,
+      );
+      if (afterglowUpdatedAt === 0) afterglowUpdatedAt = now;
       lastPulseAtByNodeIndex.set(path.destinationIndex, now);
       return true;
     }
@@ -1072,6 +1104,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         if (hasReachedDestination) {
           activePackets.splice(packetIndex, 1);
           activeImpacts.push({ nodeIndex: packet.destinationIndex, startedAt: now });
+          nodeAfterglow[packet.destinationIndex] = Math.min(
+            ACTIVITY_NODE_AFTERGLOW_CEILING,
+            nodeAfterglow[packet.destinationIndex] + ACTIVITY_NODE_AFTERGLOW_DEPOSIT,
+          );
           continue;
         }
         for (let bead = 0; bead < ACTIVITY_PACKET_BEADS; bead += 1) {
@@ -1092,7 +1128,23 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       activityMesh.count = beadInstance;
       activityMesh.instanceMatrix.needsUpdate = true;
 
-      impact.fill(0);
+      const elapsedAfterglowMs = afterglowUpdatedAt === 0 ? 0 : Math.max(0, now - afterglowUpdatedAt);
+      const afterglowDecay = Math.pow(0.5, elapsedAfterglowMs / ACTIVITY_AFTERGLOW_HALF_LIFE_MS);
+      let hasAfterglow = false;
+      nodeAfterglow.forEach((energy, nodeIndex) => {
+        const decayedEnergy = energy * afterglowDecay;
+        nodeAfterglow[nodeIndex] = decayedEnergy < ACTIVITY_AFTERGLOW_EPSILON ? 0 : decayedEnergy;
+        if (nodeAfterglow[nodeIndex] > 0) hasAfterglow = true;
+      });
+      linkAfterglow.forEach((energy, linkIndex) => {
+        const decayedEnergy = energy * afterglowDecay;
+        linkAfterglow[linkIndex] = decayedEnergy < ACTIVITY_AFTERGLOW_EPSILON ? 0 : decayedEnergy;
+        if (linkAfterglow[linkIndex] > 0) hasAfterglow = true;
+      });
+      afterglowUpdatedAt = hasAfterglow ? now : 0;
+      syncLinkColors();
+
+      impact.set(nodeAfterglow);
       for (let impactIndex = activeImpacts.length - 1; impactIndex >= 0; impactIndex -= 1) {
         const currentImpact = activeImpacts[impactIndex];
         const progress = (now - currentImpact.startedAt) / ACTIVITY_IMPACT_DURATION_MS;
@@ -1105,15 +1157,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           ACTIVITY_IMPACT_HOLD_RATIO,
           1,
         );
-        impact[currentImpact.nodeIndex] = Math.max(
-          impact[currentImpact.nodeIndex],
-          flashStrength,
+        impact[currentImpact.nodeIndex] = Math.min(
+          1,
+          impact[currentImpact.nodeIndex] + flashStrength,
         );
       }
       (nodeGeometry.getAttribute("aImpact") as THREE.InstancedBufferAttribute).needsUpdate = true;
       renderer.render(scene, camera);
 
-      if (activePackets.length > 0 || activeImpacts.length > 0) {
+      if (activePackets.length > 0 || activeImpacts.length > 0 || hasAfterglow) {
         activityFrame = requestAnimationFrame(animateActivity);
       }
     }
