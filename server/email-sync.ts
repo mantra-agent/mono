@@ -657,12 +657,12 @@ async function reconcileEmailAttentionState(accountId: string): Promise<number> 
   return reconciled;
 }
 
-async function syncAccount(accountId: string): Promise<{ ok: boolean; error?: string }> {
+async function syncAccount(accountId: string): Promise<{ ok: boolean; error?: string; mutated: boolean }> {
   const owner = await resolveEmailAccountOwner(accountId, "active_vault");
   return syncAccountForOwner(accountId, owner);
 }
 
-async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner): Promise<{ ok: boolean; error?: string }> {
+async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner): Promise<{ ok: boolean; error?: string; mutated: boolean }> {
   await backfillEmailOwnership(accountId, owner);
   const syncLog = await storage.recordSyncStart(accountId);
   const runLabel = `syncId=${syncLog.id} account=${accountId}`;
@@ -718,7 +718,7 @@ async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner):
     });
     await storage.recordSyncComplete(syncLog.id, result.count, nextHistoryId || undefined, reconciled);
     log.log(`[syncAccount] ${runLabel} stage=completed status=success mode=${mode} cursorAdvanced=${nextHistoryId ? "yes" : "no"} cursorState=${nextHistoryId || "none"} messagesSynced=${result.count} reconciled=${reconciled} totalCached=${totalCached}`);
-    return { ok: true };
+    return { ok: true, mutated: result.count > 0 || reconciled > 0 };
   } catch (err: any) {
     log.error(`[syncAccount] ${runLabel} stage=failed error=${err.message}`);
     await upsertCursor(accountId, {
@@ -726,11 +726,11 @@ async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner):
       lastSyncError: err.message,
     });
     await storage.recordSyncError(syncLog.id, err.message);
-    return { ok: false, error: err.message };
+    return { ok: false, error: err.message, mutated: false };
   }
 }
 
-export async function runEmailSync(): Promise<{ accountsDiscovered: number; accountsSynced: number; errors: string[] }> {
+export async function runEmailSync(): Promise<{ accountsDiscovered: number; accountsSynced: number; errors: string[]; mutated: boolean }> {
   requireCurrentUserPrincipal();
 
   const accounts = await listGmailAccounts();
@@ -740,18 +740,20 @@ export async function runEmailSync(): Promise<{ accountsDiscovered: number; acco
 
   if (accounts.length === 0) {
     log.debug(`[runEmailSync] No Gmail accounts visible to owner, skipping sync`);
-    return { accountsDiscovered: 0, accountsSynced: 0, errors: [] };
+    return { accountsDiscovered: 0, accountsSynced: 0, errors: [], mutated: false };
   }
 
   log.log(`[runEmailSync] Starting owner-scoped email sync cycle accounts=${accounts.length}`);
   const errors: string[] = [];
   let synced = 0;
+  let mutated = false;
 
   for (const account of accounts) {
     try {
       const result = await syncAccount(account.id);
       if (result.ok) {
         synced++;
+        if (result.mutated) mutated = true;
       } else {
         errors.push(`account=${account.id}: ${result.error || "Email sync failed"}`);
       }
@@ -763,7 +765,7 @@ export async function runEmailSync(): Promise<{ accountsDiscovered: number; acco
   }
 
   log.log(`[runEmailSync] Completed: ${synced}/${accounts.length} accounts synced, ${errors.length} errors`);
-  return { accountsDiscovered: accounts.length, accountsSynced: synced, errors };
+  return { accountsDiscovered: accounts.length, accountsSynced: synced, errors, mutated };
 }
 
 export async function getSyncStatus() {
