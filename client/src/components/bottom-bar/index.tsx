@@ -62,6 +62,11 @@ interface AgendasResponse {
   agendas: AgendaDefinition[];
 }
 
+interface PendingAgendaApplication {
+  agenda: AgendaDefinition;
+  sessionId: string;
+}
+
 const HIDDEN_ROUTES = new Set(["/login", "/register", "/voice", "/glasses"]);
 const MODEL_TIER_OPTIONS: Array<{ value: "auto" | SessionModelTierOverride; label: string }> = [
   { value: "auto", label: "Auto" },
@@ -161,7 +166,7 @@ function BottomBarMenu({
   const { toast } = useToast();
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [pendingAgenda, setPendingAgenda] = useState<AgendaDefinition | null>(null);
+  const [pendingAgenda, setPendingAgenda] = useState<PendingAgendaApplication | null>(null);
 
   // Look up focused session metadata from the sessions cache for parentSessionId
   const { data: sessions = [] } = useQuery<Session[]>({
@@ -175,7 +180,7 @@ function BottomBarMenu({
   // Agenda templates for the "Agenda" submenu. Shares the exact ["/api/agendas"]
   // query key with the Agendas page, so both views read one cache entry and
   // cannot drift. Only fetched when a session is focused (the apply target).
-  const { data: agendaData } = useQuery<AgendasResponse>({
+  const { data: agendaData, isLoading: agendasLoading, error: agendasError } = useQuery<AgendasResponse>({
     queryKey: ["/api/agendas"],
     enabled: !!focusedSessionId,
   });
@@ -285,14 +290,13 @@ function BottomBarMenu({
   // server route, which resolves the scoped definition, instantiates a fresh
   // all-open snapshot, and writes through the one setSessionAgenda path.
   const applyAgendaMutation = useMutation({
-    mutationFn: async (agendaId: string) => {
-      if (!focusedSessionId) return;
-      await apiRequest("POST", `/api/sessions/${focusedSessionId}/agenda`, { agendaId });
+    mutationFn: async ({ agendaId, sessionId }: { agendaId: string; sessionId: string }) => {
+      await apiRequest("POST", `/api/sessions/${sessionId}/agenda`, { agendaId });
+      return { sessionId };
     },
-    onSuccess: () => {
-      if (!focusedSessionId) return;
-      emitSessionChanged(focusedSessionId, "bottom-bar-agenda-apply");
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions", focusedSessionId] });
+    onSuccess: ({ sessionId }) => {
+      emitSessionChanged(sessionId, "bottom-bar-agenda-apply");
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
     },
     onError: (err) => {
@@ -303,10 +307,11 @@ function BottomBarMenu({
   // Apply means replace. If the session already has agenda items, confirm
   // before overwriting a hand-built agenda; an empty agenda applies instantly.
   const handleAgendaSelect = (agenda: AgendaDefinition) => {
+    if (!focusedSessionId) return;
     if ((focusedSession?.agenda?.items?.length ?? 0) > 0) {
-      setPendingAgenda(agenda);
+      setPendingAgenda({ agenda, sessionId: focusedSessionId });
     } else {
-      applyAgendaMutation.mutate(agenda.id);
+      applyAgendaMutation.mutate({ agendaId: agenda.id, sessionId: focusedSessionId });
     }
   };
 
@@ -368,7 +373,11 @@ function BottomBarMenu({
                 Agenda
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
-                {agendaDefinitions.length === 0 ? (
+                {agendasLoading ? (
+                  <DropdownMenuItem disabled>Loading agendas…</DropdownMenuItem>
+                ) : agendasError ? (
+                  <DropdownMenuItem disabled>Agendas unavailable</DropdownMenuItem>
+                ) : agendaDefinitions.length === 0 ? (
                   <DropdownMenuItem disabled>No agendas yet</DropdownMenuItem>
                 ) : (
                   agendaDefinitions.map((agenda) => (
@@ -450,14 +459,16 @@ function BottomBarMenu({
           <AlertDialogHeader>
             <AlertDialogTitle>Replace agenda?</AlertDialogTitle>
             <AlertDialogDescription>
-              This conversation already has an agenda. Applying “{pendingAgenda?.name}” replaces the current agenda and its progress.
+              This conversation already has an agenda. Applying “{pendingAgenda?.agenda.name}” replaces the current agenda and its progress.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                if (pendingAgenda) applyAgendaMutation.mutate(pendingAgenda.id);
+                if (pendingAgenda) {
+                  applyAgendaMutation.mutate({ agendaId: pendingAgenda.agenda.id, sessionId: pendingAgenda.sessionId });
+                }
                 setPendingAgenda(null);
               }}
             >
