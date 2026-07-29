@@ -44,7 +44,7 @@ const stepOrder: WaitlistStep[] = ["role", "needs", "email"];
 
 const stepTitles: Record<WaitlistStep, string> = {
   role: "Which best describes you?",
-  needs: "Where would support help most?",
+  needs: "What would help most?",
   email: "Where should we reach you?",
 };
 
@@ -158,7 +158,7 @@ export default function WaitlistPage() {
 
   return (
     <div className="flex min-h-screen justify-center bg-background p-4 pt-[14vh]">
-      <div className={authShellClass}>
+      <div className={cn(authShellClass, step === "email" && !result && "md:max-w-sm")}>
         <div className="flex h-24 justify-center">
           <MantraLogo className={authLogoClass} />
         </div>
@@ -184,14 +184,9 @@ export default function WaitlistPage() {
                 {step === "role" ? roles.map(([value, label]) => (
                   <OptionButton key={value} selected={role === value} onClick={() => setRole(value)}>{label}</OptionButton>
                 )) : null}
-                {step === "needs" ? (
-                  <>
-                    <p className="text-center text-sm text-muted-foreground">Choose up to three.</p>
-                    {needs.map(([value, label]) => (
-                      <OptionButton key={value} selected={selectedNeeds.includes(value)} onClick={() => toggleNeed(value)}>{label}</OptionButton>
-                    ))}
-                  </>
-                ) : null}
+                {step === "needs" ? needs.map(([value, label]) => (
+                  <OptionButton key={value} selected={selectedNeeds.includes(value)} onClick={() => toggleNeed(value)}>{label}</OptionButton>
+                )) : null}
                 {step === "email" ? (
                   <>
                     <Input
@@ -224,7 +219,7 @@ export default function WaitlistPage() {
                       />
                       <Label
                         htmlFor="waitlist-terms"
-                        className="cursor-pointer text-sm font-normal leading-5 text-muted-foreground"
+                        className="cursor-pointer text-sm font-normal leading-5 text-muted-foreground md:whitespace-nowrap"
                       >
                         I have read and agree to the{" "}
                         <a
