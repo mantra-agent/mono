@@ -291,16 +291,29 @@ export function registerRailwayRoutes(app: Express) {
   // commits that *would* be promoted, and the current/last in-flight run.
   app.get("/api/railway/publish/summary", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const context = parsePublishContext(req.query);
-      if (!context.success) return res.status(400).json({ error: "sourcePlatformEnvironmentId and targetPlatformEnvironmentId are required." });
-      const prereqs = await checkPrereqs(context.data.sourcePlatformEnvironmentId, context.data.targetPlatformEnvironmentId);
+      const parsedContext = parsePublishContext(req.query);
       const run = await getDisplayRun();
-      const versioning = await getReleaseVersionSummary(context.data.targetPlatformEnvironmentId);
+      let context = parsedContext.success ? parsedContext.data : null;
+      const query = req.query as Record<string, unknown>;
+      const hasPartialContext = query.sourcePlatformEnvironmentId !== undefined || query.targetPlatformEnvironmentId !== undefined;
+      if (!context && !hasPartialContext && run) {
+        context = {
+          sourcePlatformEnvironmentId: run.sourcePlatformEnvironmentId,
+          targetPlatformEnvironmentId: run.targetPlatformEnvironmentId,
+        };
+        log.warn("Publish summary used persisted-run context fallback", {
+          sourcePlatformEnvironmentId: context.sourcePlatformEnvironmentId,
+          targetPlatformEnvironmentId: context.targetPlatformEnvironmentId,
+        });
+      }
+      if (!context) return res.status(400).json({ error: "sourcePlatformEnvironmentId and targetPlatformEnvironmentId are required." });
+      const prereqs = await checkPrereqs(context.sourcePlatformEnvironmentId, context.targetPlatformEnvironmentId);
+      const versioning = await getReleaseVersionSummary(context.targetPlatformEnvironmentId);
 
       const summary: PublishSummaryResponse = {
         ready: prereqs.ready,
-        sourcePlatformEnvironmentId: context.data.sourcePlatformEnvironmentId,
-        targetPlatformEnvironmentId: context.data.targetPlatformEnvironmentId,
+        sourcePlatformEnvironmentId: context.sourcePlatformEnvironmentId,
+        targetPlatformEnvironmentId: context.targetPlatformEnvironmentId,
         reason: prereqs.reason,
         repo: prereqs.repo ? `${prereqs.repo.owner}/${prereqs.repo.repo}` : null,
         devBranch: prereqs.devBranch,
