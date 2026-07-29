@@ -72,9 +72,64 @@ export function interruptMeetingSpeech(sessionId: string, reason = "user_speech"
   if (live) {
     for (const audio of live) audio.stream.destroy(interruption);
   }
+  bargeInState.delete(sessionId);
+  // Destroying the server stream ends the HTTP response, but the visualizer
+  // page's <audio> element keeps playing whatever it already buffered. Tell it
+  // to stop now so barge-in is audible, not just structural.
+  broadcastVisualizerEvent(sessionId, nextVisualizerEvent({ type: "speech.interrupt", reason }));
   clearMeetingVisualizerState(sessionId, "speech");
   log.info(`meeting speech interrupted sessionId=${sessionId} reason=${reason}`);
   return true;
+}
+
+// Low-latency barge-in trigger, driven by raw per-participant audio energy
+// (pre-transcription, pre-echo-drop, pre-turn-classification). The prior design
+// only fired off the STT/turn pipeline, which lands 5–10s late — after the
+// speech stream has already completed — making barge-in a no-op. Onset detection
+// here reacts within ~200ms of the user actually speaking over the agent.
+const BARGE_IN_RMS_THRESHOLD = 0.18;
+const BARGE_IN_ONSET_MS = 200;
+const BARGE_IN_COOLDOWN_MS = 1200;
+type BargeInState = { activeMs: number; lastInterruptAt: number };
+const bargeInState = new Map<string, BargeInState>();
+
+/**
+ * Feed one participant audio frame's energy into barge-in onset detection. Cheap
+ * no-op unless the agent is currently speaking, so it stays safe on the hot
+ * per-frame ingest path. Sustained speech-level energy for BARGE_IN_ONSET_MS
+ * preempts the agent's in-flight speech via the single interrupt primitive.
+ * Semantically free: any speech onset interrupts, including "stop talking" that
+ * the turn classifier marks shouldRespond=false.
+ */
+export function noteMeetingParticipantAudio(sessionId: string, rms: number, frameMs: number): void {
+  const controller = speechAbortControllers.get(sessionId);
+  const speaking =
+    Boolean(controller && !controller.signal.aborted) ||
+    (audioQueues.get(sessionId)?.length ?? 0) > 0 ||
+    (liveSpeechStreams.get(sessionId)?.size ?? 0) > 0;
+  if (!speaking) {
+    if (bargeInState.has(sessionId)) bargeInState.delete(sessionId);
+    return;
+  }
+
+  const state = bargeInState.get(sessionId) ?? { activeMs: 0, lastInterruptAt: 0 };
+  if (rms < BARGE_IN_RMS_THRESHOLD) {
+    state.activeMs = 0;
+    bargeInState.set(sessionId, state);
+    return;
+  }
+  state.activeMs += frameMs;
+  const now = Date.now();
+  if (state.activeMs >= BARGE_IN_ONSET_MS && now - state.lastInterruptAt >= BARGE_IN_COOLDOWN_MS) {
+    state.lastInterruptAt = now;
+    state.activeMs = 0;
+    bargeInState.set(sessionId, state);
+    if (interruptMeetingSpeech(sessionId, "participant_voice_activity")) {
+      log.info(`meeting barge-in via voice activity sessionId=${sessionId} rms=${rms.toFixed(3)}`);
+    }
+    return;
+  }
+  bargeInState.set(sessionId, state);
 }
 
 const visualizerClients = new Map<string, Set<WebSocket>>();
