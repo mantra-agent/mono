@@ -3,6 +3,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -574,28 +575,33 @@ export default function StrategyDetailPage() {
   }, [moveTree]);
 
   useEffect(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "event" && msg.event) {
-          const evt = msg.event;
-          if (
-            evt.category === "strategy" ||
-            evt.event?.startsWith("strategy.simulation") ||
-            evt.event?.startsWith("strategy.evaluation")
-          ) {
-            queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals", goalId, "simulation-runs"] });
-            queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals", goalId, "move-tree"] });
-            queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals", goalId, "optimal-path"] });
-          }
-        }
-      } catch {}
-    };
+    const ownerId = `strategyDetail:${goalId}`;
+    const handlerId = `strategyDetailEvents:${goalId}`;
+    const sharedWS = acquireSharedWS(ownerId);
+    sharedWS.addMessageHandler(handlerId, (message) => {
+      const msg = message as { type?: unknown; event?: unknown; events?: unknown };
+      const incomingEvents = msg.type === "event"
+        ? [msg.event]
+        : msg.type === "history" && Array.isArray(msg.events)
+          ? msg.events
+          : [];
+      const strategyChanged = incomingEvents.some((event) => {
+        if (!event || typeof event !== "object") return false;
+        const evt = event as { category?: unknown; event?: unknown };
+        return evt.category === "strategy"
+          || (typeof evt.event === "string" && (
+            evt.event.startsWith("strategy.simulation")
+            || evt.event.startsWith("strategy.evaluation")
+          ));
+      });
+      if (!strategyChanged) return;
+      queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals", goalId, "simulation-runs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals", goalId, "move-tree"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals", goalId, "optimal-path"] });
+    });
     return () => {
-      ws.onclose = null;
-      ws.close();
+      sharedWS.removeMessageHandler(handlerId);
+      releaseSharedWS(ownerId);
     };
   }, [goalId]);
 

@@ -3,6 +3,7 @@ import { createContext, useContext, useState, useRef, useCallback, useEffect, us
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
+import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 
 import { stripExpressionTags } from "@/components/chat-shared";
 import { Conversation } from "@elevenlabs/client";
@@ -281,6 +282,7 @@ export function VoiceSessionProvider({
   const connectAbortRef = useRef<AbortController | null>(null);
   const voiceRequestIdRef = useRef<string | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectVisibilityCleanupRef = useRef<(() => void) | null>(null);
   const chatConversationIdRef = useRef<string | null>(null);
   const voiceSessionIdRef = useRef<string | null>(null);
   const sessionPersonaRef = useRef<{ id: number; name: string; icon: string } | null>(null);
@@ -504,6 +506,10 @@ export function VoiceSessionProvider({
         clearTimeout(disconnectGraceTimerRef.current);
         disconnectGraceTimerRef.current = null;
       }
+      if (reconnectVisibilityCleanupRef.current) {
+        reconnectVisibilityCleanupRef.current();
+        reconnectVisibilityCleanupRef.current = null;
+      }
       if (nativeListenerCleanupRef.current) {
         nativeListenerCleanupRef.current();
         nativeListenerCleanupRef.current = null;
@@ -580,16 +586,18 @@ export function VoiceSessionProvider({
       })
       .catch((err: unknown) => {
         const msg = getErrorMessage(err);
-        const logFinalizeFailure = retryCount === 0 ? log.warn : log.error;
-        logFinalizeFailure("VOICE:FINALIZE:FAILED", { hasConversationId: Boolean(convId), attempt: retryCount + 1, error: msg.slice(0, 300) });
-        phoneDiag("finalize_failed", { convId, attempt: retryCount + 1, error: msg }, { critical: true });
-
         if (retryCount === 0) {
+          // A browser transport error can arrive after the server committed and
+          // returned 200. The server accepts completed-session retries, so wait
+          // for the retry before declaring failure or emitting a critical diagnostic.
+          log.warn("VOICE:FINALIZE:RESPONSE_AMBIGUOUS", { hasConversationId: Boolean(convId), attempt: 1, error: msg.slice(0, 300) });
           setTimeout(() => {
-            log.debug("VOICE:FINALIZE:RETRY", { hasConversationId: Boolean(convId), attempt: retryCount + 2 });
+            log.debug("VOICE:FINALIZE:RETRY", { hasConversationId: Boolean(convId), attempt: 2 });
             finalizeSession(convId, sessionId, 1, errorMessage, systemSteps);
           }, 2000);
         } else {
+          log.error("VOICE:FINALIZE:FAILED", { hasConversationId: Boolean(convId), attempt: 2, error: msg.slice(0, 300) });
+          phoneDiag("finalize_failed", { convId, attempt: 2, error: msg }, { critical: true });
           toast({
             title: "Session not saved",
             description: "The voice session couldn't be saved cleanly. Your conversation may be incomplete.",
@@ -601,6 +609,8 @@ export function VoiceSessionProvider({
 
   const cleanupSession = useCallback((reason: string, errorMessage?: string) => {
     log.info("VOICE:CLEANUP", { reason, hasError: Boolean(errorMessage) });
+    reconnectVisibilityCleanupRef.current?.();
+    reconnectVisibilityCleanupRef.current = null;
     reconnectInProgressRef.current = false;
     const cid = chatConversationIdRef.current;
     const sid = voiceSessionIdRef.current;
@@ -710,6 +720,21 @@ export function VoiceSessionProvider({
         try {
           if (intentionalEndRef.current) {
             log.debug("VOICE:RECONNECT:CANCELLED", { reason: "intentional_end", attempt });
+            return;
+          }
+          if (!isNative && document.visibilityState === "hidden") {
+            log.info("VOICE:RECONNECT:DEFERRED_HIDDEN", { attempt });
+            const resumeWhenVisible = () => {
+              if (document.visibilityState !== "visible") return;
+              reconnectVisibilityCleanupRef.current?.();
+              reconnectVisibilityCleanupRef.current = null;
+              reconnectInProgressRef.current = false;
+              reconnectAttemptRef.current = Math.max(0, reconnectAttemptRef.current - 1);
+              attemptReconnect(`${source}-foreground`, { ...context, deferredWhileHidden: true });
+            };
+            reconnectVisibilityCleanupRef.current?.();
+            document.addEventListener("visibilitychange", resumeWhenVisible);
+            reconnectVisibilityCleanupRef.current = () => document.removeEventListener("visibilitychange", resumeWhenVisible);
             return;
           }
           log.debug("VOICE:RECONNECT:START", { attempt, maxAttempts: maxReconnectAttempts });
@@ -1395,72 +1420,23 @@ export function VoiceSessionProvider({
   useEffect(() => {
     if (onboardingToken) return;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    let ws: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-    let reconnectAttempts = 0;
-    let lastMessageAt = Date.now();
+    const ownerId = "voiceSession";
+    const handlerId = "voiceSessionEvents";
+    const sharedWS = acquireSharedWS(ownerId);
+    const appliedVoiceEventIds = new Set<string>();
     let lastVoiceEventId: string | null = null;
     let lastVoiceEventTimestamp = 0;
-    const appliedVoiceEventIds = new Set<string>();
-    let disposed = false;
 
-    const HEARTBEAT_INTERVAL_MS = 15_000;
-    const HEARTBEAT_TIMEOUT_MS = 30_000;
-    const RECONNECT_BASE_MS = 1_000;
-    const RECONNECT_MAX_MS = 10_000;
-
-    const getReconnectDelay = (): number => {
-      const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts), RECONNECT_MAX_MS);
-      return delay;
+    const resumeVoiceEvents = () => {
+      sharedWS.send({
+        type: "events.resume",
+        ...(lastVoiceEventId ? { afterEventId: lastVoiceEventId } : {}),
+        category: "voice",
+        ...(chatConversationIdRef.current ? { chatSessionId: chatConversationIdRef.current } : {}),
+      });
     };
 
-    const clearHeartbeat = () => {
-      if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
-    };
-
-    const startHeartbeat = () => {
-      clearHeartbeat();
-      heartbeatTimer = setInterval(() => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        const sinceLastMessage = Date.now() - lastMessageAt;
-        if (sinceLastMessage >= HEARTBEAT_TIMEOUT_MS) {
-          log.warn("VOICE:EVENT_WS:HEARTBEAT_TIMEOUT", { sinceLastMessageMs: sinceLastMessage });
-          ws.close();
-        }
-      }, HEARTBEAT_INTERVAL_MS);
-    };
-
-    const scheduleReconnect = () => {
-      if (disposed) return;
-      const delay = getReconnectDelay();
-      log.debug("VOICE:EVENT_WS:RECONNECT_SCHEDULED", { delayMs: delay, attempt: reconnectAttempts + 1 });
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        reconnectAttempts++;
-        connectEventWs();
-      }, delay);
-    };
-
-    const connectEventWs = () => {
-      if (disposed) return;
-      ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
-
-      ws.onopen = () => {
-        log.info("VOICE:EVENT_WS:CONNECTED", { reconnectAttempts });
-        reconnectAttempts = 0;
-        lastMessageAt = Date.now();
-        startHeartbeat();
-        ws?.send(JSON.stringify({
-          type: "events.resume",
-          afterEventId: lastVoiceEventId,
-          category: "voice",
-          chatSessionId: chatConversationIdRef.current,
-        }));
-      };
-
-      const applyVoiceEvent = (event: Record<string, any>) => {
+    const applyVoiceEvent = (event: Record<string, any>) => {
         if (event?.category !== "voice") return;
         const activeChatSessionId = chatConversationIdRef.current;
         const eventChatSessionId = typeof event?.payload?.chatSessionId === "string"
@@ -1733,47 +1709,35 @@ export function VoiceSessionProvider({
           }
       };
 
-      ws.onmessage = (e) => {
-        lastMessageAt = Date.now();
-        try {
-          const msg = JSON.parse(e.data);
-          if (msg.type === "event" && msg.event) {
-            applyVoiceEvent(msg.event);
-          } else if (msg.type === "history" && Array.isArray(msg.events)) {
-            for (const event of msg.events) applyVoiceEvent(event);
-          } else if (msg.type === "events.resume.complete") {
-            log.debug("VOICE:EVENT_WS:RESUME_COMPLETE", {
-              cursorFound: Boolean(msg.cursorFound),
-              replayed: Number(msg.replayed || 0),
-            });
-          } else if (msg.type === "events.resume.error") {
-            log.warn("VOICE:EVENT_WS:RESUME_FAILED", { message: String(msg.message || "unknown") });
+    sharedWS.addMessageHandler(handlerId, (message) => {
+      try {
+        const msg = message as { type?: unknown; event?: unknown; events?: unknown };
+        if (msg.type === "event" && msg.event && typeof msg.event === "object") {
+          applyVoiceEvent(msg.event as Record<string, any>);
+        } else if (msg.type === "history" && Array.isArray(msg.events)) {
+          for (const event of msg.events) {
+            if (event && typeof event === "object") applyVoiceEvent(event as Record<string, any>);
           }
-        } catch (err: unknown) {
-          log.error("VOICE:EVENT_WS:MESSAGE_PROCESSING_FAILED", toBoundedLogError(err));
         }
-      };
-
-      ws.onclose = (ev) => {
-        log.info("VOICE:EVENT_WS:CLOSED", { code: ev.code, hasReason: Boolean(ev.reason), reason: ev.reason.slice(0, 160) });
-        ws = null;
-        clearHeartbeat();
-        scheduleReconnect();
-      };
-      ws.onerror = () => { ws?.close(); };
-    };
-
-    connectEventWs();
+      } catch (err: unknown) {
+        log.error("VOICE:EVENT_WS:MESSAGE_PROCESSING_FAILED", toBoundedLogError(err));
+      }
+    });
+    sharedWS.addOpenHandler(handlerId, resumeVoiceEvents);
+    if (sharedWS.getReadyState() === WebSocket.OPEN) resumeVoiceEvents();
 
     return () => {
-      disposed = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      clearHeartbeat();
-      if (ws) { ws.onclose = null; ws.close(); }
+      sharedWS.removeMessageHandler(handlerId);
+      sharedWS.removeOpenHandler(handlerId);
+      releaseSharedWS(ownerId);
     };
   }, [queryClient, stopUIRefresh, finalizeSession, cleanupSession, playDisconnectChimeOnce, onboardingToken]);
 
   const startSession = useCallback(async () => {
+    if (!isNative && document.visibilityState === "hidden") {
+      log.warn("VOICE:START_SESSION:IGNORED", { reason: "document_hidden" });
+      return;
+    }
     // Synchronous guard. Set BEFORE any async work or React state updates
     // so a second invocation in the same React tick observes the flag and
     // bails — this is the part that can't rely on `status !== "idle"`
@@ -1841,6 +1805,10 @@ export function VoiceSessionProvider({
     if (disconnectGraceTimerRef.current) {
       clearTimeout(disconnectGraceTimerRef.current);
       disconnectGraceTimerRef.current = null;
+    }
+    if (reconnectVisibilityCleanupRef.current) {
+      reconnectVisibilityCleanupRef.current();
+      reconnectVisibilityCleanupRef.current = null;
     }
     if (connectAbortRef.current) {
       log.info("VOICE:END_SESSION:ABORT_IN_FLIGHT_CONNECTION");
