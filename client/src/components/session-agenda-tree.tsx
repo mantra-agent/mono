@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight,
   Circle,
@@ -11,9 +10,8 @@ import {
   SkipForward,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { apiRequest } from "@/lib/queryClient";
-import { useFocusSession } from "@/hooks/use-focus-session";
-import { useToast } from "@/hooks/use-toast";
+import { useAgendaDiscussion } from "@/hooks/use-agenda-discussion";
+import { buildSessionAgendaDiscussionMessage } from "@/lib/agenda-discussion";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import {
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -51,57 +49,6 @@ interface AgendaItemRowProps {
   discussPending: boolean;
   discussDisabled: boolean;
   onDiscuss: (item: SessionAgendaItem) => void;
-}
-
-type CreatedSession = { id: string };
-
-interface AgendaDiscussionSource {
-  sessionId: string;
-  sessionTitle?: string;
-  parentSessionId?: string;
-  parentSessionTitle?: string;
-  agenda: SessionAgenda;
-  item: SessionAgendaItem;
-}
-
-function agendaItemLine(item: SessionAgendaItem): string {
-  return [
-    `- ${item.title}`,
-    `  - ID: ${item.id}`,
-    `  - Description: ${item.description}`,
-    `  - Status: ${item.status}`,
-    `  - Resolution: ${item.resolution ?? "None"}`,
-  ].join("\n");
-}
-
-function buildAgendaDiscussionMessage({
-  sessionId,
-  sessionTitle,
-  parentSessionId,
-  parentSessionTitle,
-  agenda,
-  item,
-}: AgendaDiscussionSource): string {
-  const parts = [
-    `Let's discuss this agenda item: **${item.title}**`,
-    "",
-    "Source conversation:",
-    `- Session ID: ${sessionId}`,
-  ];
-  if (sessionTitle) parts.push(`- Title: ${sessionTitle}`);
-  if (parentSessionId) {
-    parts.push(`- Parent session ID: ${parentSessionId}`);
-    if (parentSessionTitle) parts.push(`- Parent title: ${parentSessionTitle}`);
-  }
-  parts.push(
-    "",
-    "Selected agenda item:",
-    agendaItemLine(item),
-    "",
-    "Full agenda:",
-    agenda.items.map(agendaItemLine).join("\n"),
-  );
-  return parts.join("\n");
 }
 
 function AgendaStatusIcon({
@@ -212,43 +159,7 @@ export function SessionAgendaTree({
   const hasItems = items.length > 0;
   const allItemsComplete = hasItems && items.every((item) => item.status === "complete");
   const [open, setOpen] = useState(() => !allItemsComplete);
-  const queryClient = useQueryClient();
-  const { route, setSessionForRoute, setWidgetOpen } = useFocusSession();
-  const { toast } = useToast();
-
-  const discussMutation = useMutation({
-    mutationFn: async (item: SessionAgendaItem) => {
-      if (!agenda) throw new Error("Agenda context is unavailable");
-      const response = await apiRequest("POST", "/api/sessions", {
-        title: item.title.trim().slice(0, 80) || "Agenda Discussion",
-      });
-      const session: CreatedSession = await response.json();
-      await apiRequest("POST", `/api/sessions/${session.id}/messages`, {
-        content: buildAgendaDiscussionMessage({
-          sessionId,
-          sessionTitle,
-          parentSessionId,
-          parentSessionTitle,
-          agenda,
-          item,
-        }),
-        clientTurnId: `agenda-discuss-${session.id}-${item.id}`.slice(0, 120),
-      });
-      return session;
-    },
-    onSuccess: (session) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
-      setSessionForRoute(route, session.id);
-      setWidgetOpen(true);
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Could not start discussion",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
+  const discussMutation = useAgendaDiscussion();
 
   useEffect(() => {
     if (hasItems) setOpen(!allItemsComplete);
@@ -279,10 +190,23 @@ export function SessionAgendaTree({
                 item={item}
                 current={item.id === currentItemId}
                 continues={index < items.length - 1}
-                discussPending={discussMutation.isPending && discussMutation.variables?.id === item.id}
+                discussPending={discussMutation.isPending && discussMutation.variables?.pendingKey === item.id}
                 discussDisabled={discussMutation.isPending}
                 onDiscuss={(selectedItem) => {
-                  if (!discussMutation.isPending) discussMutation.mutate(selectedItem);
+                  if (discussMutation.isPending || !agenda) return;
+                  discussMutation.mutate({
+                    pendingKey: selectedItem.id,
+                    title: selectedItem.title,
+                    message: buildSessionAgendaDiscussionMessage({
+                      sessionId,
+                      sessionTitle,
+                      parentSessionId,
+                      parentSessionTitle,
+                      agenda,
+                      item: selectedItem,
+                    }),
+                    clientTurnSuffix: selectedItem.id,
+                  });
                 }}
               />
             ))}
