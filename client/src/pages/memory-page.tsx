@@ -145,6 +145,12 @@ interface CanonicalLinkTarget {
   id: string;
 }
 
+interface GraphNeighborTarget {
+  nodeId: number;
+  label: string;
+  source: string;
+}
+
 function CanonicalLink({ type, id }: { type: string; id: string }) {
   return (
     <ReferenceRenderer
@@ -996,7 +1002,16 @@ function VnextClaimRow({ claim, expanded, onToggle, timezone }: { claim: VnextCl
   );
 }
 
-function VnextLinksSection({ claimId }: { claimId: number }) {
+function VnextLinksSection({
+  claimId,
+  graphNeighbors,
+  onGraphNeighborSelect,
+}: {
+  claimId: number;
+  graphNeighbors?: GraphNeighborTarget[];
+  onGraphNeighborSelect?: (nodeId: number) => void;
+}) {
+  const usesGraphProjection = graphNeighbors !== undefined;
   const {
     data: sourceData,
     isLoading: sourcesLoading,
@@ -1008,7 +1023,7 @@ function VnextLinksSection({ claimId }: { claimId: number }) {
       if (!res.ok) throw new Error("Failed to load vNext claim sources");
       return res.json();
     },
-    enabled: !!claimId,
+    enabled: !!claimId && !usesGraphProjection,
   });
   const {
     data: entityData,
@@ -1021,7 +1036,7 @@ function VnextLinksSection({ claimId }: { claimId: number }) {
       if (!res.ok) throw new Error("Failed to fetch vNext entity links");
       return res.json();
     },
-    enabled: !!claimId,
+    enabled: !!claimId && !usesGraphProjection,
   });
 
   const targets = getCanonicalLinkTargets(
@@ -1030,23 +1045,36 @@ function VnextLinksSection({ claimId }: { claimId: number }) {
   );
   const isLoading = sourcesLoading || entitiesLoading;
   const isError = sourcesError || entitiesError;
-  if (!isLoading && !isError && targets.length === 0) return null;
+  const visibleGraphNeighbors = graphNeighbors ?? [];
+  if (usesGraphProjection && visibleGraphNeighbors.length === 0) return null;
+  if (!usesGraphProjection && !isLoading && !isError && targets.length === 0) return null;
 
   return (
     <div data-testid={`memory-vnext-links-${claimId}`}>
-      {isLoading ? (
-        <div className="flex items-center py-1.5 text-muted-foreground" data-testid={`memory-vnext-links-loading-${claimId}`}>
-          <Loader2 className="h-4 w-4 animate-spin" />
-        </div>
-      ) : isError ? (
-        <div className="py-1.5 text-sm text-error" data-testid={`memory-vnext-links-error-${claimId}`}>Links could not be loaded.</div>
-      ) : (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          {targets.map((target) => (
-            <CanonicalLink key={target.key} type={target.type} id={target.id} />
-          ))}
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {usesGraphProjection
+          ? visibleGraphNeighbors.map((neighbor) => (
+              <button
+                key={`graph:${neighbor.nodeId}`}
+                type="button"
+                className="inline-flex min-w-0 items-center gap-1 text-sm text-cta hover:text-active"
+                title={neighbor.label}
+                onClick={() => onGraphNeighborSelect?.(neighbor.nodeId)}
+              >
+                <MemorySourceIcon source={neighbor.source} className="h-3 w-3 shrink-0" />
+                <span className="max-w-48 truncate">{neighbor.label}</span>
+              </button>
+            ))
+          : targets.map((target) => (
+              <CanonicalLink key={target.key} type={target.type} id={target.id} />
+            ))}
+        {!usesGraphProjection && isLoading && (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" data-testid={`memory-vnext-links-loading-${claimId}`} />
+        )}
+        {!usesGraphProjection && isError && (
+          <span className="text-sm text-error" data-testid={`memory-vnext-links-error-${claimId}`}>Links could not be loaded.</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -1531,11 +1559,26 @@ function GraphTab({
     return <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="memory-graph-empty">No linked vNext claims yet.</div>;
   }
 
-  const pinnedMetadata = (selectedNode?.metadata ?? {}) as Record<string, unknown>;
-  const selectedIsClaim = pinnedMetadata.nodeKind === "claim" || !pinnedMetadata.nodeKind;
   const hoveredNode = hoveredNodeId === null ? null : entryMap.get(hoveredNodeId) ?? null;
   const detailNode = hoveredNode ?? selectedNode;
   const detailPinned = selectedNode !== null && detailNode?.id === selectedNode.id;
+  const detailGraphNeighbors = detailNode
+    ? graphLinks.flatMap((link): GraphNeighborTarget[] => {
+        if (link.fromId !== detailNode.id && link.toId !== detailNode.id) return [];
+        const neighborId = link.fromId === detailNode.id ? link.toId : link.fromId;
+        const neighborEntry = entryMap.get(neighborId);
+        if (!neighborEntry || !visibleNodeIds.has(neighborId)) return [];
+        const visual = getGraphNodeVisual(neighborEntry);
+        return [{
+          nodeId: neighborId,
+          label: neighborEntry.title?.trim() || neighborEntry.oneLiner?.trim() || firstLine(neighborEntry.content, 72) || visual.label,
+          source: visual.source,
+        }];
+      })
+    : [];
+  const uniqueDetailGraphNeighbors = [...new Map(
+    detailGraphNeighbors.map((neighbor) => [neighbor.nodeId, neighbor]),
+  ).values()];
   const detailVisual = detailNode ? getGraphNodeVisual(detailNode) : null;
   const DetailIcon = detailVisual?.Icon;
   const nodeDetail = detailNode && DetailIcon ? {
@@ -1544,7 +1587,7 @@ function GraphTab({
     content: (
       <div
         className={cn(
-          "w-[min(20rem,calc(100vw-2rem))] rounded-md border border-card-border bg-popover p-3 text-sm text-popover-foreground shadow-md",
+          "w-[min(20rem,calc(100vw-2rem))] text-sm text-foreground",
           detailPinned && "max-h-72 overflow-y-auto scrollbar-thin",
         )}
         data-testid={detailPinned ? "memory-graph-detail" : `memory-graph-tooltip-${detailNode.id}`}
@@ -1573,7 +1616,11 @@ function GraphTab({
                 ? new Date(detailNode.createdAt).toLocaleString("en-US", { timeZone: timezone, month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
                 : "Unknown date"}
             </div>
-            {selectedIsClaim && <VnextLinksSection claimId={detailNode.id} />}
+            <VnextLinksSection
+              claimId={detailNode.id}
+              graphNeighbors={uniqueDetailGraphNeighbors}
+              onGraphNeighborSelect={handleNodeSelect}
+            />
           </div>
         )}
       </div>
