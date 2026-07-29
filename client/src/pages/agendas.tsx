@@ -264,38 +264,52 @@ function AgendaRow({ agenda, open, onToggle }: { agenda: AgendaDefinition; open:
   const discuss = useAgendaDiscussion();
   return (
     <div data-testid={`agenda-row-${agenda.id}`}>
-      <div className="group relative min-w-0">
-        <button
-          type="button"
-          onClick={onToggle}
-          className={cn(
-            HIERARCHY_SESSION_ROW_CLASS,
-            "min-w-0 pr-9 hover:bg-accent/70",
-            open && "bg-accent text-foreground",
-          )}
-          aria-expanded={open}
-        >
-          <ClipboardList className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate">{agenda.name}</span>
-          <span className="shrink-0 text-xs text-muted-foreground">{agenda.items.length} {agenda.items.length === 1 ? "item" : "items"}</span>
-          <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
-        </button>
-        <DropdownMenu modal={false}>
+      {/* Row grammar mirrors the Home/Simple feed row (SimpleTreeRow): a clickable
+          row container whose trailing rail places an always-present expand chevron
+          and a group-hover/focus-revealed overflow menu as adjacent sibling controls. */}
+      <div
+        className={cn(
+          HIERARCHY_SESSION_ROW_CLASS,
+          "min-w-0 hover:bg-accent/70",
+          open && "bg-accent text-foreground",
+        )}
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggle();
+          }
+        }}
+      >
+        <ClipboardList className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">{agenda.name}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{agenda.items.length} {agenda.items.length === 1 ? "item" : "items"}</span>
+        <span className="ml-1 flex w-5 shrink-0 items-center justify-center">
+          <button
+            type="button"
+            className="rounded p-0.5 hover:bg-accent/60"
+            onClick={(event) => { event.stopPropagation(); onToggle(); }}
+            aria-label={open ? "Collapse agenda" : "Expand agenda"}
+          >
+            <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", open && "rotate-90")} />
+          </button>
+        </span>
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className={cn(
-                "absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-border/40 bg-background text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
-                open && "bg-accent text-foreground",
-              )}
+              className="flex w-5 shrink-0 items-center justify-center rounded p-0.5 opacity-0 transition-opacity hover:bg-accent/60 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
               data-testid={`button-agenda-menu-${agenda.id}`}
               onClick={(event) => event.stopPropagation()}
               aria-label={`Actions for ${agenda.name}`}
             >
-              <MoreHorizontal className="h-3.5 w-3.5" />
+              <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(event) => event.preventDefault()}>
+          <DropdownMenuContent align="end" className="w-44" onCloseAutoFocus={(event) => event.preventDefault()}>
             <DropdownMenuItem
               disabled={discuss.isPending}
               onClick={(event) => {
