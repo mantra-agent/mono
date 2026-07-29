@@ -486,6 +486,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     const signalColor = colorFromToken("--cta");
     const activeColor = colorFromToken("--active");
+    const selectedColor = colorFromToken("--foreground");
     const deletionColor = colorFromToken("--destructive");
     // Recency heat ramp, tokens only: recency 1.0 glows the brighter interactive blue
     // (--active); at ~0.5 it cools to the darker CTA blue (--cta); below that the node
@@ -790,18 +791,23 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     function syncNodeAppearance() {
       const focusIndex = hoveredIndex ?? selectedIndex;
       sceneNodes.forEach((node, index) => {
+        const isSelected = selectedIndex === index;
         const isFocus = focusIndex === index;
         const neighbor = focusNeighborIndices.has(index);
         const searchMatch = highlightedNodeIdsRef.current.has(node.id);
         const unrelated = focusIndex != null && !isFocus && !neighbor;
-        emphasis[index] = isFocus ? 1 : neighbor ? 0.58 : searchMatch ? 0.72 : unrelated ? -0.35 : 0;
-        const tint = node.pendingDeletion
-          ? deletionColor
-          : isFocus || neighbor || searchMatch
-            ? activeColor
-            : nodeBaseColors[index];
+        emphasis[index] = isSelected || isFocus ? 1 : neighbor ? 0.58 : searchMatch ? 0.72 : unrelated ? -0.35 : 0;
+        const tint = isSelected
+          ? selectedColor
+          : node.pendingDeletion
+            ? deletionColor
+            : isFocus || neighbor || searchMatch
+              ? activeColor
+              : nodeBaseColors[index];
         tint.toArray(tints, index * 3);
-        visibility[index] = recencyToVisibility(node.recency) * (unrelated ? 0.62 : 1);
+        visibility[index] = isSelected
+          ? 1
+          : recencyToVisibility(node.recency) * (unrelated ? 0.62 : 1);
       });
       syncNodeMatrices();
       (nodeGeometry.getAttribute("aVisibility") as THREE.InstancedBufferAttribute).needsUpdate = true;
