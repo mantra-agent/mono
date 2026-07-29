@@ -1,5 +1,4 @@
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
-import { meetingRecapDistributions, sessionArtifacts, users } from "@shared/schema";
+import { sessionArtifacts } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
 import { syncContentFields } from "@shared/markdown-tiptap";
 import type { MeetingParticipant, MeetingSessionMeta } from "@shared/models/chat";
@@ -15,10 +14,9 @@ import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { peopleStorage } from "../people-storage";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { hashRecapCapabilityToken } from "./recap-capability";
 import { stripPrivateAgendaFromRecap } from "./recap-content";
 import {
-  getAuthenticatedOnboardingRecapMaterializationSource,
+  getLockedAuthenticatedRecapMaterializationSource,
   type RecipientRecapMaterializationSource,
 } from "./recipient-projection";
 
@@ -49,37 +47,6 @@ function recipientRecapMarkdown(
     `## Open Questions\n\n${listOrNone(projection.recap.openQuestions)}`,
     `## Action Items\n\n${listOrNone(projection.recap.actionItems)}`,
   ].filter(Boolean).join("\n\n"));
-}
-
-async function revalidateCapability(
-  source: RecipientRecapMaterializationSource,
-  rawToken: string,
-  recipientUserId: string,
-): Promise<boolean> {
-  const normalizedEmail = normalizeEmailAddress(source.capability.attendeeEmail);
-  const tokenHash = hashRecapCapabilityToken(rawToken.trim());
-  const [row] = await db
-    .select({ id: meetingRecapDistributions.id })
-    .from(meetingRecapDistributions)
-    .innerJoin(users, and(
-      eq(users.id, recipientUserId),
-      sql`LOWER(BTRIM(${users.email})) = ${normalizedEmail}`,
-    ))
-    .where(and(
-      eq(meetingRecapDistributions.id, source.capability.distributionId),
-      eq(meetingRecapDistributions.sessionId, source.capability.sessionId),
-      sql`LOWER(BTRIM(${meetingRecapDistributions.attendeeEmail})) = ${normalizedEmail}`,
-      or(
-        eq(meetingRecapDistributions.onboardingTokenHash, tokenHash),
-        eq(meetingRecapDistributions.accessTokenHash, tokenHash),
-      ),
-      sql`${meetingRecapDistributions.status} IN ('draft_created', 'sent')`,
-      isNull(meetingRecapDistributions.accessRevokedAt),
-      gt(meetingRecapDistributions.accessExpiresAt, new Date()),
-    ))
-    .limit(1)
-    .for("update");
-  return Boolean(row);
 }
 
 async function materializeParticipants(
@@ -119,19 +86,18 @@ export async function materializeAuthenticatedRecipientRecap(
   const normalizedAuthenticatedEmail = normalizeEmailAddress(authenticatedEmail);
   if (!normalizedAuthenticatedEmail || !normalizedAuthenticatedEmail.includes("@")) return null;
 
-  const source = await getAuthenticatedOnboardingRecapMaterializationSource(
-    rawToken,
-    authenticatedEmail,
-  );
-  if (!source) return null;
-
   return db.transaction(async transaction => runWithDatabaseTransaction(transaction, async () => {
+    const source = await getLockedAuthenticatedRecapMaterializationSource(
+      rawToken,
+      normalizedAuthenticatedEmail,
+      principal.userId,
+    );
+    if (!source) return null;
     await acquireAdvisoryTransactionLock(
       transaction,
       ADVISORY_LOCK_NS.RECIPIENT_RECAP,
       `${principal.accountId}:${principal.userId}:${source.capability.distributionId}`,
     );
-    if (!await revalidateCapability(source, rawToken, principal.userId)) return null;
 
     const participants = await materializeParticipants(source);
     const sessionKey = `recipient-recap:${source.capability.distributionId}`;
