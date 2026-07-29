@@ -454,24 +454,41 @@ export async function createUserWorkspace(
           });
         }
       }
-      const result = await runWithPrincipal(workspacePrincipal, () => chatFileStorage.createSessionOnce(
-        "Welcome",
-        `ftue:${principal.userId}`,
-        defaultTier,
-        {
-          sessionType: "user",
-          ftueWelcome: true,
-          ftueRecapMeetingSessionId: cleanText(input.ftueRecapMeetingSessionId, 128),
-          provenance: recapMeetingSessionId
-            ? {
-                triggerType: "meeting",
-                triggerId: recapMeetingSessionId,
-                triggerName: RECAP_FTUE_TRIGGER_NAME,
-              }
-            : { triggerType: "system", triggerName: "ftue_welcome" },
-          agenda: ftueAgenda,
-        },
-      ));
+      const sessionOptions = {
+        sessionType: "user" as const,
+        ftueWelcome: true,
+        ftueRecapMeetingSessionId: cleanText(input.ftueRecapMeetingSessionId, 128),
+        provenance: recapMeetingSessionId
+          ? {
+              triggerType: "meeting" as const,
+              triggerId: recapMeetingSessionId,
+              triggerName: RECAP_FTUE_TRIGGER_NAME,
+            }
+          : { triggerType: "system" as const, triggerName: "ftue_welcome" },
+      };
+      let result: Awaited<ReturnType<typeof chatFileStorage.createSessionOnce>>;
+      try {
+        result = await runWithPrincipal(workspacePrincipal, () => chatFileStorage.createSessionOnce(
+          "Welcome",
+          `ftue:${principal.userId}`,
+          defaultTier,
+          { ...sessionOptions, agenda: ftueAgenda },
+        ));
+      } catch (error) {
+        if (!ftueAgenda) throw error;
+        // The Welcome session is the FTUE-critical deliverable; the agenda only
+        // enriches it. Agenda validation must never strand a fresh signup on a
+        // bare Home without its Welcome session and deep link.
+        log.error("FTUE welcome session creation failed with agenda; retrying without agenda", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        result = await runWithPrincipal(workspacePrincipal, () => chatFileStorage.createSessionOnce(
+          "Welcome",
+          `ftue:${principal.userId}`,
+          defaultTier,
+          sessionOptions,
+        ));
+      }
       ftueSessionId = result.session.id;
       log.info("FTUE welcome session resolved", {
         userId: principal.userId,
@@ -480,7 +497,7 @@ export async function createUserWorkspace(
         recapAware: Boolean(recapMeetingSessionId),
       });
     } catch (err) {
-      log.warn("Failed to create FTUE welcome session:", err instanceof Error ? err.message : String(err));
+      log.error("Failed to create FTUE welcome session:", err instanceof Error ? err.message : String(err));
     }
   }
 
