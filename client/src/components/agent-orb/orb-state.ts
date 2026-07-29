@@ -11,6 +11,7 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
     flowSpeed: 0.12, flowStrength: 0.28, coherence: 0.86,
     attractorStrength: 0, knotStrength: 0.08, orbitPrecision: 0,
     waveEnergy: 0.05, coreDarkness: 0.72,
+    fieldAnimationRate: 1.0, rotationRate: 1.0,
   },
   idle: {
     rimPower: 3.0, rimIntensity: 0.7, coreGlow: 0.02,
@@ -21,6 +22,7 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
     flowSpeed: 0.12, flowStrength: 0.28, coherence: 0.86,
     attractorStrength: 0, knotStrength: 0.08, orbitPrecision: 0,
     waveEnergy: 0.05, coreDarkness: 0.72,
+    fieldAnimationRate: 1.0, rotationRate: 1.0,
   },
   listening: {
     rimPower: 2.5, rimIntensity: 1.0, coreGlow: 0.05,
@@ -31,6 +33,7 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
     flowSpeed: 0.55, flowStrength: 0.52, coherence: 0.8,
     attractorStrength: 0, knotStrength: 0.24, orbitPrecision: 0,
     waveEnergy: 0.24, coreDarkness: 0.64,
+    fieldAnimationRate: 1.0, rotationRate: 1.0,
   },
   thinking: {
     rimPower: 3.2, rimIntensity: 0.74, coreGlow: 0.1,
@@ -41,6 +44,7 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
     flowSpeed: 0.78, flowStrength: 0.68, coherence: 0.9,
     attractorStrength: 1.06, knotStrength: 1.08, orbitPrecision: 0,
     waveEnergy: 0.12, coreDarkness: 0.52,
+    fieldAnimationRate: 2.0, rotationRate: 1.5,
   },
   tool_call: {
     rimPower: 2.0, rimIntensity: 0.9, coreGlow: 0.03,
@@ -51,6 +55,7 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
     flowSpeed: 0.24, flowStrength: 0.2, coherence: 1.0,
     attractorStrength: 0, knotStrength: 0.04, orbitPrecision: 1.0,
     waveEnergy: 0.04, coreDarkness: 0.76,
+    fieldAnimationRate: 2.0, rotationRate: 1.5,
   },
   speaking: {
     rimPower: 2.0, rimIntensity: 1.3, coreGlow: 0.1,
@@ -61,6 +66,7 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
     flowSpeed: 0.28, flowStrength: 0.38, coherence: 0.9,
     attractorStrength: 0, knotStrength: 0.05, orbitPrecision: 0,
     waveEnergy: 1.0, coreDarkness: 0.58,
+    fieldAnimationRate: 1.0, rotationRate: 1.0,
   },
   degraded: {
     rimPower: 3.2, rimIntensity: 0.44, coreGlow: 0.028,
@@ -71,6 +77,7 @@ export const STATE_VISUALS: Record<OrbState, OrbVisuals> = {
     flowSpeed: 0.05, flowStrength: 0.12, coherence: 0.22,
     attractorStrength: 0, knotStrength: 0, orbitPrecision: 0,
     waveEnergy: 0, coreDarkness: 0.82,
+    fieldAnimationRate: 1.0, rotationRate: 1.0,
   },
 };
 
@@ -87,6 +94,7 @@ const VOICE_ENTRANCE_VISUALS: OrbVisuals = {
   flowSpeed: 0.08, flowStrength: 0.12, coherence: 0.96,
   attractorStrength: 0.72, knotStrength: 0.24, orbitPrecision: 0,
   waveEnergy: 0, coreDarkness: 0.84,
+  fieldAnimationRate: 1.0, rotationRate: 1.0,
 };
 
 export interface EntranceVeil {
@@ -103,6 +111,7 @@ const ENTRANCE_REVEAL_VISUALS: OrbVisuals = {
   flowSpeed: 0.42, flowStrength: 0.46, coherence: 0.94,
   attractorStrength: 0.88, knotStrength: 0.52, orbitPrecision: 0,
   waveEnergy: 0.08, coreDarkness: 0.42,
+  fieldAnimationRate: 1.0, rotationRate: 1.0,
 };
 
 function smoothstep(t: number): number {
@@ -170,6 +179,12 @@ export interface AnimationState {
   transitionDuration: number;
   currentVisuals: OrbVisuals;
   time: number;
+  /** Field-shader clock; advances at fieldAnimationRate so interior speed changes stay continuous. */
+  fieldTime: number;
+  /** Accumulated whole-orb yaw; integrating angular velocity keeps rotation-rate changes continuous. */
+  rotationY: number;
+  /** Accumulated phase for the orb's x-axis sway oscillation. */
+  rotationXPhase: number;
   effectiveAudioLevel: number;
   entranceElapsed: number;
   initialEntrance: AgentOrbInitialEntrance | null;
@@ -193,6 +208,9 @@ export function createAnimationState(
     transitionDuration: TRANSITION_DURATION,
     currentVisuals,
     time: 0,
+    fieldTime: 0,
+    rotationY: 0,
+    rotationXPhase: 0,
     effectiveAudioLevel: 0,
     entranceElapsed: 0,
     initialEntrance: initialEntrance ?? null,
@@ -271,6 +289,10 @@ export function tickAnimation(
     targetAudio,
     Math.min(1, dt * 12),
   );
+
+  // Interior field clock advances on its own rate so thinking/tool-use can run the
+  // volumetric math faster without a phase jump when the multiplier changes.
+  anim.fieldTime += dt * anim.currentVisuals.fieldAnimationRate;
 
   return anim.currentVisuals;
 }
