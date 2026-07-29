@@ -356,7 +356,12 @@ async function artifactMapForSessions(sessions: FileSession[]): Promise<Map<stri
     if (!meeting) return [];
     return [
       hasCredibleCalendarBinding(session) ? meeting.agendaPage?.id : undefined,
-      hasCredibleCalendarBinding(session) ? meeting.recap?.pageId : undefined,
+      // A recap page is derived from the meeting itself, not a calendar event, so
+      // it must hydrate even for non-calendar meetings — most importantly the
+      // recipient-claimed recap materialized during onboarding, which has no
+      // calendar binding. Presence is already gated by recap.pageId, which only
+      // exists once a recap was genuinely generated.
+      meeting.recap?.pageId,
     ].filter((id): id is string => Boolean(id));
   })));
   const directPages = directPageIds.length === 0 ? [] : await db
@@ -438,7 +443,12 @@ async function projectRecords(snapshots: MeetingSessionSnapshot[]): Promise<Meet
       botStatus: session.meeting?.botStatus ?? "unknown",
       transcriptCount,
       hasNotes: transcriptCount > 0,
-      recapStatus: hasCredibleCalendarBinding(session) ? session.meeting?.recap?.status ?? null : null,
+      // Surface recap status whenever a recap page exists (a calendar-bound
+      // meeting or a materialized recipient recap), not only for calendar-bound
+      // meetings, so the row honestly reflects that notes are ready.
+      recapStatus: session.meeting?.recap?.pageId || hasCredibleCalendarBinding(session)
+        ? session.meeting?.recap?.status ?? null
+        : null,
       summary: recap?.summary ?? recap?.oneLiner ?? null,
       calendarEvent: calendarEventIdentity(session),
       participants: projectParticipants(session, peopleById, peopleByEmail),
