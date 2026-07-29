@@ -143,6 +143,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "claude-cli", name: "Claude Code CLI", icon: Settings, statusFields: ["claudeCli"], route: "claude-cli" },
   { id: "twitter", name: "X (Twitter)", icon: () => <SiX className="h-5 w-5" />, statusFields: ["twitter"], route: "twitter" },
   { id: "plaid", name: "Plaid", icon: Landmark, statusFields: ["plaid"], route: "plaid" },
+  { id: "quickbooks", name: "QuickBooks", icon: Landmark, statusFields: ["quickbooks"], healthField: "quickbooksHealthy", route: "quickbooks" },
   { id: "brave", name: "Brave Search", icon: Globe, statusFields: ["brave"], route: "brave" },
   { id: "github", name: "GitHub", icon: Github, statusFields: ["github"], route: "github" },
   { id: "railway", name: "Railway", icon: Train, statusFields: [], route: "railway" },
@@ -2586,6 +2587,147 @@ function PlaidAccountsSection() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+interface QuickBooksAccountSummary {
+  accountId: string;
+  companyName: string;
+  legalName: string | null;
+  country: string | null;
+  healthy: boolean;
+  healthError: string | null;
+  lastCompanyInfoSyncAt: string | null;
+  vaultId: string | null;
+  readOnly: true;
+}
+
+interface QuickBooksStatus {
+  configured: boolean;
+  connected: boolean;
+  healthy?: boolean;
+  readOnly: true;
+  accounts: QuickBooksAccountSummary[];
+}
+
+function QuickBooksAccountsSection() {
+  const { toast } = useToast();
+  const { vaults, activeVaultId } = useVaults();
+  const [selectedVaultId, setSelectedVaultId] = useState(activeVaultId || "");
+
+  useEffect(() => {
+    if (!selectedVaultId && activeVaultId) setSelectedVaultId(activeVaultId);
+  }, [activeVaultId, selectedVaultId]);
+
+  const { data: status, isLoading } = useQuery<QuickBooksStatus>({
+    queryKey: ["/api/quickbooks/status"],
+  });
+
+  const startMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/quickbooks/oauth/start", { vaultId: selectedVaultId });
+      return response.json() as Promise<{ url: string }>;
+    },
+    onSuccess: ({ url }) => {
+      window.open(url, "_blank", "width=500,height=700");
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/quickbooks/status"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/setup/secrets-status"] });
+      }, 5000);
+    },
+    onError: (error: Error) => toast({ title: "Connection failed", description: error.message, variant: "destructive" }),
+  });
+
+  const refreshMutation = useMutation({
+    mutationFn: async (accountId: string) => {
+      const response = await apiRequest("POST", `/api/quickbooks/accounts/${accountId}/company-info`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/quickbooks/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/setup/secrets-status"] });
+      toast({ title: "Company refreshed" });
+    },
+    onError: (error: Error) => toast({ title: "Refresh failed", description: error.message, variant: "destructive" }),
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: async (accountId: string) => apiRequest("DELETE", `/api/quickbooks/accounts/${accountId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/quickbooks/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/setup/secrets-status"] });
+      toast({ title: "QuickBooks disconnected" });
+    },
+    onError: (error: Error) => toast({ title: "Disconnect failed", description: error.message, variant: "destructive" }),
+  });
+
+  if (isLoading) {
+    return <div className="space-y-2 px-2 py-1.5"><Skeleton className="h-8" /><Skeleton className="h-8" /></div>;
+  }
+
+  const accounts = status?.accounts || [];
+  return (
+    <IntegrationTreeSection label="Companies" initialOpen testIdPrefix="quickbooks">
+      {!status?.configured ? (
+        <p className="px-2 py-1.5 text-sm text-muted-foreground">Add the QuickBooks client ID, client secret, and environment under Credentials.</p>
+      ) : accounts.length === 0 ? (
+        <p className="px-2 py-1.5 text-sm text-muted-foreground">No QuickBooks companies connected.</p>
+      ) : accounts.map((account) => (
+        <ProfileTreeRow
+          key={account.accountId}
+          label={account.companyName}
+          icon={account.healthy ? <CheckCircle2 className="h-3.5 w-3.5 text-active" /> : <XCircle className="h-3.5 w-3.5 text-destructive" />}
+          value={account.healthy ? "Read-only" : "Needs attention"}
+          showEmpty
+          defaultOpen={!account.healthy}
+          testId={`quickbooks-account-${account.accountId}`}
+          expandedContentClassName="min-w-0 space-y-3"
+          expandedContent={
+            <>
+              <div className="space-y-1 text-sm">
+                {account.legalName ? <p>{account.legalName}</p> : null}
+                <p className="text-muted-foreground">{account.country || "Company connected"}{account.lastCompanyInfoSyncAt ? ` · Updated ${new Date(account.lastCompanyInfoSyncAt).toLocaleString()}` : ""}</p>
+                {account.healthError ? <p className="text-destructive">{account.healthError}</p> : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => refreshMutation.mutate(account.accountId)} disabled={refreshMutation.isPending}>
+                  <RefreshCw className={cn("h-3.5 w-3.5", refreshMutation.isPending && "animate-spin")} />
+                  Refresh
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => disconnectMutation.mutate(account.accountId)} disabled={disconnectMutation.isPending}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Disconnect
+                </Button>
+              </div>
+            </>
+          }
+        />
+      ))}
+
+      {status?.configured ? (
+        <div className="flex flex-wrap items-center gap-2 px-2 py-1.5">
+          <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
+            <SelectTrigger className="w-48" aria-label="Select QuickBooks Vault"><SelectValue placeholder="Select Vault" /></SelectTrigger>
+            <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
+          </Select>
+          <Button onClick={() => startMutation.mutate()} disabled={!selectedVaultId || startMutation.isPending} data-testid="button-connect-quickbooks">
+            {startMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            Connect
+          </Button>
+        </div>
+      ) : null}
+    </IntegrationTreeSection>
+  );
+}
+
+function QuickBooksDetail() {
+  return (
+    <div className="min-w-0 space-y-2">
+      <QuickBooksAccountsSection />
+      <IntegrationTreeSection label="Credentials" testIdPrefix="quickbooks">
+        <div className="min-w-0 px-2 py-1.5"><SecretsForSection section="quickbooks" /></div>
+      </IntegrationTreeSection>
+    </div>
   );
 }
 
@@ -5964,6 +6106,8 @@ function IntegrationDetail({ provider }: { provider: string }) {
           <TwitterAccountsSection />
         </div>
       )}
+
+      {provider === "quickbooks" && <QuickBooksDetail />}
 
       {provider === "plaid" && (
         <div className="space-y-4">

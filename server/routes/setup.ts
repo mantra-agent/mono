@@ -53,7 +53,7 @@ export async function registerSetupRoutes(app: Express) {
   });
 
   app.get("/api/setup/secrets-status", async (_req, res) => {
-    const [elevenlabsConnected, gmailReadAccess, gmailHealthResult, openaiSubscriptionConnected] = await Promise.all([
+    const [elevenlabsConnected, gmailReadAccess, gmailHealthResult, openaiSubscriptionConnected, quickbooksStatus] = await Promise.all([
       !!getSecretSync("ELEVENLABS_API_KEY"),
       (async () => {
         try {
@@ -90,6 +90,23 @@ export async function registerSetupRoutes(app: Express) {
           return !!acct;
         } catch { return false; }
       })(),
+      (async () => {
+        try {
+          const { listVisibleConnectedAccounts } = await import("../connected-accounts");
+          const accounts = await listVisibleConnectedAccounts("quickbooks");
+          return {
+            configured: !!(
+              getSecretSync("QUICKBOOKS_CLIENT_ID") &&
+              getSecretSync("QUICKBOOKS_CLIENT_SECRET") &&
+              ["sandbox", "production"].includes(getSecretSync("QUICKBOOKS_ENV") || "")
+            ),
+            connected: accounts.length > 0,
+            healthy: accounts.length > 0 ? accounts.every((account) => account.healthy !== false) : undefined,
+          };
+        } catch {
+          return { configured: false, connected: false, healthy: undefined };
+        }
+      })(),
     ]);
 
     res.json({
@@ -108,6 +125,8 @@ export async function registerSetupRoutes(app: Express) {
       })(),
       notion: !!getSecretSync("NOTION_API_KEY"),
       plaid: !!getSecretSync("PLAID_CLIENT_ID"),
+      quickbooks: quickbooksStatus.connected || quickbooksStatus.configured,
+      quickbooksHealthy: quickbooksStatus.connected ? quickbooksStatus.healthy : undefined,
       github: await (async () => {
         try {
           const { credentialCount } = await import("../github-credentials");

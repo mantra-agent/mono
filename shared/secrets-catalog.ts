@@ -7,6 +7,7 @@ export type SecretSection =
   | "brave"
   | "notion"
   | "plaid"
+  | "quickbooks"
   | "google"
   | "github"
   | "oura"
@@ -40,6 +41,9 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "PLAID_CLIENT_ID", section: "plaid", label: "Plaid Client ID" },
   { name: "PLAID_SECRET", section: "plaid", label: "Plaid Secret" },
   { name: "PLAID_ENV", section: "plaid", label: "Plaid Environment", description: "sandbox | development | production" },
+  { name: "QUICKBOOKS_CLIENT_ID", section: "quickbooks", label: "QuickBooks OAuth Client ID" },
+  { name: "QUICKBOOKS_CLIENT_SECRET", section: "quickbooks", label: "QuickBooks OAuth Client Secret" },
+  { name: "QUICKBOOKS_ENV", section: "quickbooks", label: "QuickBooks Environment", description: "sandbox | production" },
   { name: "GOOGLE_CLIENT_ID", section: "google", label: "Google OAuth Client ID" },
   { name: "GOOGLE_CLIENT_SECRET", section: "google", label: "Google OAuth Client Secret" },
   { name: "EXPO_ACCESS_TOKEN", section: "expo", label: "Expo Access Token", description: "Personal access token from expo.dev/accounts/[account]/settings/access-tokens. Enables EAS builds, project linking, and deployment status." },
