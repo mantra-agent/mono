@@ -56,7 +56,6 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
-import { HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-header";
 import {
   ChevronLeft,
   ChevronRight,
@@ -112,6 +111,10 @@ import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { ReferenceText } from "@/components/references/reference-text";
 import { createReferenceRef } from "@shared/references";
 import { SimpleTextFrame } from "@/components/home/simple-text-frame";
+import {
+  PROFILE_DESCRIPTION_FRAME_CLASS,
+  PROFILE_DESCRIPTION_TEXT_CLASS,
+} from "@/components/profile-description-style";
 import { MemoryGraph3D, type MemoryGraph3DHandle, type MemoryGraph3DLink, type MemoryGraph3DNode } from "@/components/memory/memory-graph-3d";
 import {
   getAvailableMemoryGraphNodeTypes,
@@ -146,8 +149,8 @@ function CanonicalLink({ type, id }: { type: string; id: string }) {
   return (
     <ReferenceRenderer
       refValue={createReferenceRef({ type, id })}
-      surface="simple-chip"
-      className="mx-0 max-w-full text-sm"
+      surface="chat-inline"
+      className="max-w-full text-sm"
     />
   );
 }
@@ -1030,16 +1033,15 @@ function VnextLinksSection({ claimId }: { claimId: number }) {
   if (!isLoading && !isError && targets.length === 0) return null;
 
   return (
-    <div className="space-y-0.5" data-testid={`memory-vnext-links-${claimId}`}>
-      <div className={HIERARCHY_SECTION_HEADER_CLASS}>Links</div>
+    <div data-testid={`memory-vnext-links-${claimId}`}>
       {isLoading ? (
-        <div className="flex items-center px-2 py-1.5 text-muted-foreground" data-testid={`memory-vnext-links-loading-${claimId}`}>
+        <div className="flex items-center py-1.5 text-muted-foreground" data-testid={`memory-vnext-links-loading-${claimId}`}>
           <Loader2 className="h-4 w-4 animate-spin" />
         </div>
       ) : isError ? (
-        <div className="px-2 py-1.5 text-sm text-error" data-testid={`memory-vnext-links-error-${claimId}`}>Links could not be loaded.</div>
+        <div className="py-1.5 text-sm text-error" data-testid={`memory-vnext-links-error-${claimId}`}>Links could not be loaded.</div>
       ) : (
-        <div className="flex flex-col items-start gap-1 px-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {targets.map((target) => (
             <CanonicalLink key={target.key} type={target.type} id={target.id} />
           ))}
@@ -1554,8 +1556,10 @@ function GraphTab({
         {detailNode.content && (
           <div
             className={cn(
-              "mt-2 text-xs leading-relaxed text-popover-foreground/80 prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5",
-              !detailPinned && "line-clamp-4",
+              PROFILE_DESCRIPTION_FRAME_CLASS,
+              PROFILE_DESCRIPTION_TEXT_CLASS,
+              "mt-2 prose prose-sm dark:prose-invert prose-headings:text-white prose-p:text-white prose-li:text-white prose-strong:text-white prose-em:text-white prose-code:text-white prose-blockquote:text-white [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-0.5 [&_ol]:my-0.5 [&_li]:my-0",
+              !detailPinned && "line-clamp-4 max-h-none overflow-hidden",
             )}
             data-testid="graph-detail-content"
           >

@@ -24,6 +24,10 @@ import { useVaults, type Vault } from "@/hooks/use-vaults";
 import { vaultTitleColor, MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import {
+  PROFILE_DESCRIPTION_FRAME_CLASS,
+  PROFILE_DESCRIPTION_TEXT_CLASS,
+} from "@/components/profile-description-style";
 import { useAuth } from "@/hooks/use-auth";
 import { formatRelativeDate } from "@/lib/local-date";
 import {
@@ -1861,13 +1865,16 @@ function ProfileSummaryEditor({
   };
 
   return (
-    <div className="max-h-80 max-w-none overflow-auto rounded-xl rounded-bl-sm border border-primary/20 bg-card/70 px-3 py-2 text-[14px] leading-tight text-white scrollbar-thin">
+    <div className={PROFILE_DESCRIPTION_FRAME_CLASS}>
       <Textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
         placeholder="Add summary"
-        className="min-h-24 w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-tight text-white shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]"
+        className={cn(
+          "min-h-24 w-full resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-muted-foreground focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:text-[14px]",
+          PROFILE_DESCRIPTION_TEXT_CLASS,
+        )}
         data-testid="textarea-quick-summary"
       />
     </div>
@@ -2230,7 +2237,7 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
         )}
         testId="section-profile"
         collapsedContent={!person.private && person.quickSummary ? (
-          <div className="text-[14px] leading-tight text-white/80 whitespace-pre-wrap" data-testid="profile-summary-collapsed">
+          <div className={cn(PROFILE_DESCRIPTION_TEXT_CLASS, "whitespace-pre-wrap text-white/80")} data-testid="profile-summary-collapsed">
             {person.quickSummary}
           </div>
         ) : undefined}
