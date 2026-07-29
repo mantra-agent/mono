@@ -489,6 +489,17 @@ export async function listMeetingsForPage(filter: MeetingIndexFilter = {}): Prom
   };
 }
 
+/**
+ * Every meeting-type session projected for the memory graph, regardless of
+ * botStatus completion. The graph shows meetings and their attendees as
+ * first-class nodes, so it must not inherit the Meetings page's active/completed
+ * lifecycle filter. Terminal duplicates are still collapsed by hydration.
+ */
+export async function listMeetingGraphRecords(): Promise<MeetingIndexRecord[]> {
+  const snapshots = await hydrateMeetingSessions();
+  return projectRecords(snapshots);
+}
+
 export async function getMeetingRecord(id: string): Promise<MeetingIndexRecord | null> {
   const session = await chatFileStorage.getSession(id);
   if (!session?.meeting || session.type !== "meeting") return null;
