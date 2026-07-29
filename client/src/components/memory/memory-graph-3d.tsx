@@ -599,7 +599,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       maxActivityPackets * ACTIVITY_PACKET_BEADS,
     );
     activityMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    activityMesh.instanceCount = 0;
+    activityMesh.count = 0;
     activityMesh.frustumCulled = false;
     scene.add(activityMesh);
 
@@ -945,7 +945,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       activePackets.length = 0;
       activeImpacts.length = 0;
       impact.fill(0);
-      activityMesh.instanceCount = 0;
+      activityMesh.count = 0;
       (nodeGeometry.getAttribute("aImpact") as THREE.InstancedBufferAttribute).needsUpdate = true;
       if (activityFrame !== 0) cancelAnimationFrame(activityFrame);
       activityFrame = 0;
@@ -1052,7 +1052,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           beadInstance += 1;
         }
       }
-      activityMesh.instanceCount = beadInstance;
+      activityMesh.count = beadInstance;
       activityMesh.instanceMatrix.needsUpdate = true;
 
       impact.fill(0);
