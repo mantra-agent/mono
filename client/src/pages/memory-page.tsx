@@ -119,6 +119,8 @@ import {
   MemorySourceIcon,
 } from "@/components/memory/memory-source-icon";
 
+const MEMORY_GRAPH_ACTIVITY_STORAGE_KEY = "memory-graph-activity-enabled";
+
 const SOURCE_REF_TYPE_MAP: Record<string, string> = {
   chat_journal: "session",
   library: "page",
@@ -1362,6 +1364,20 @@ function GraphTab({
   const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(() => new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
   const [graphSearchQuery, setGraphSearchQuery] = useState("");
+  const [activityPreference, setActivityPreference] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem(MEMORY_GRAPH_ACTIVITY_STORAGE_KEY);
+      if (stored === "0") return false;
+      if (stored === "1") return true;
+      return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    }
+  });
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => (
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  ));
+  const activityEnabled = activityPreference && !prefersReducedMotion;
 
   useFocusContext(
     selectedNode
@@ -1468,6 +1484,25 @@ function GraphTab({
     handleNodeSelect(nodeId);
     setGraphSearchQuery("");
   }, [handleNodeSelect]);
+
+  const toggleActivity = useCallback(() => {
+    setActivityPreference((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(MEMORY_GRAPH_ACTIVITY_STORAGE_KEY, next ? "1" : "0");
+      } catch {
+        // The in-memory preference still applies when browser storage is unavailable.
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handleMotionPreferenceChange = () => setPrefersReducedMotion(mediaQuery.matches);
+    mediaQuery.addEventListener("change", handleMotionPreferenceChange);
+    return () => mediaQuery.removeEventListener("change", handleMotionPreferenceChange);
+  }, []);
 
   useEffect(() => {
     if (selectedNode && !entryMap.has(selectedNode.id)) dismissGraphDetail();
@@ -1578,6 +1613,7 @@ function GraphTab({
             links={visibleGraphLinks}
             selectedNodeId={selectedNode?.id ?? null}
             highlightedNodeIds={graphSearchMatchIds}
+            activityEnabled={activityEnabled}
             nodeDetail={nodeDetail}
             onNodeSelect={handleNodeSelect}
             onNodeHover={handleNodeHover}
@@ -1585,6 +1621,19 @@ function GraphTab({
           />
 
           <div className="absolute bottom-3 left-3 z-10 flex flex-col gap-1" data-testid="memory-graph-controls">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={toggleActivity}
+              aria-label={prefersReducedMotion ? "Graph activity disabled by reduced motion" : "Toggle graph activity"}
+              aria-pressed={activityEnabled}
+              title={prefersReducedMotion ? "Activity unavailable with reduced motion" : activityEnabled ? "Pause activity" : "Play activity"}
+              disabled={prefersReducedMotion}
+              data-testid="button-graph-activity"
+              className={activityEnabled ? "border-foreground/30 bg-card/90 text-active" : "bg-card/80"}
+            >
+              <Activity className="h-3.5 w-3.5" />
+            </Button>
             <Popover>
               <PopoverTrigger asChild>
                 <Button
