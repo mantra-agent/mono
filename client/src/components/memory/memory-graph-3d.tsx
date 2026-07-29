@@ -83,6 +83,7 @@ interface ProjectedLabel {
 
 interface GraphAdjacency {
   neighborsByNodeId: Map<number, Set<number>>;
+  simulationLinksByNodeId: Map<number, SceneLink[]>;
   renderedLinkIndicesByNodeId: Map<number, Set<number>>;
 }
 
@@ -183,16 +184,19 @@ function createInitialPosition(nodeId: number, index: number, count: number): [n
 
 function buildGraphAdjacency(sceneNodes: SceneNode[], simulationLinks: SceneLink[], renderedLinks: SceneLink[]): GraphAdjacency {
   const neighborsByNodeId = new Map(sceneNodes.map((node) => [node.id, new Set<number>()]));
+  const simulationLinksByNodeId = new Map(sceneNodes.map((node) => [node.id, [] as SceneLink[]]));
   const renderedLinkIndicesByNodeId = new Map(sceneNodes.map((node) => [node.id, new Set<number>()]));
   simulationLinks.forEach((link) => {
     neighborsByNodeId.get(link.fromId)?.add(link.toId);
     neighborsByNodeId.get(link.toId)?.add(link.fromId);
+    simulationLinksByNodeId.get(link.fromId)?.push(link);
+    simulationLinksByNodeId.get(link.toId)?.push(link);
   });
   renderedLinks.forEach((link, index) => {
     renderedLinkIndicesByNodeId.get(link.fromId)?.add(index);
     renderedLinkIndicesByNodeId.get(link.toId)?.add(index);
   });
-  return { neighborsByNodeId, renderedLinkIndicesByNodeId };
+  return { neighborsByNodeId, simulationLinksByNodeId, renderedLinkIndicesByNodeId };
 }
 
 function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[]) {
@@ -423,8 +427,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     const linkPositions = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
     const linkColors = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
-    const focusedLinkPositions = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
-    const focusedLinkColors = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
+    const focusedLinkCapacity = Math.max(
+      0,
+      ...[...adjacency.simulationLinksByNodeId.values()].map((incidentLinks) => incidentLinks.length),
+    );
+    const focusedLinkPositions = new Float32Array(focusedLinkCapacity * CURVE_SEGMENTS * 6);
+    const focusedLinkColors = new Float32Array(focusedLinkCapacity * CURVE_SEGMENTS * 6);
     const linkBrightness = new Float32Array(renderedLinks.length);
     const nodeLinkVisibility = new Float32Array(sceneNodes.length);
     const linkGeometry = new LineSegmentsGeometry();
@@ -479,6 +487,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let selectedIndex = selectedNodeIdRef.current == null ? null : nodeIndex.get(selectedNodeIdRef.current) ?? null;
     let hoveredIndex: number | null = null;
     let focusNeighborIndices = new Set<number>();
+    let focusedSimulationLinks: SceneLink[] = [];
     let focusedRenderedLinkIndices = new Set<number>();
     let pointerDown = { x: 0, y: 0 };
     let pendingPointer = { x: 0, y: 0 };
@@ -504,64 +513,61 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       nodeMesh.instanceMatrix.needsUpdate = true;
     }
 
+    function writeLinkCurve(positions: Float32Array, link: SceneLink, linkIndex: number) {
+      const from = sceneNodes[link.fromIndex];
+      const to = sceneNodes[link.toIndex];
+      let dx = to.x - from.x;
+      let dy = to.y - from.y;
+      let dz = to.z - from.z;
+      const distance = Math.max(0.001, Math.sqrt(dx * dx + dy * dy + dz * dz));
+      dx /= distance;
+      dy /= distance;
+      dz /= distance;
+      const fromX = from.x + dx * from.radius * 0.94;
+      const fromY = from.y + dy * from.radius * 0.94;
+      const fromZ = from.z + dz * from.radius * 0.94;
+      const toX = to.x - dx * to.radius * 0.94;
+      const toY = to.y - dy * to.radius * 0.94;
+      const toZ = to.z - dz * to.radius * 0.94;
+      let perpendicularX: number;
+      let perpendicularY: number;
+      let perpendicularZ: number;
+      if (Math.abs(dy) < 0.85) {
+        perpendicularX = -dz;
+        perpendicularY = 0;
+        perpendicularZ = dx;
+      } else {
+        perpendicularX = 0;
+        perpendicularY = dz;
+        perpendicularZ = -dy;
+      }
+      const perpendicularLength = Math.max(0.001, Math.sqrt(
+        perpendicularX * perpendicularX + perpendicularY * perpendicularY + perpendicularZ * perpendicularZ,
+      ));
+      const arc = Math.min(14, 2 + distance * 0.05) * (0.75 + seededUnit(link.id, 21) * 0.5);
+      const controlX = (fromX + toX) * 0.5 + perpendicularX / perpendicularLength * arc;
+      const controlY = (fromY + toY) * 0.5 + perpendicularY / perpendicularLength * arc;
+      const controlZ = (fromZ + toZ) * 0.5 + perpendicularZ / perpendicularLength * arc;
+      for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
+        const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
+        writeQuadraticPoint(positions, offset, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, segment / CURVE_SEGMENTS);
+        writeQuadraticPoint(positions, offset + 3, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, (segment + 1) / CURVE_SEGMENTS);
+      }
+    }
+
     function syncLinkPositions() {
-      renderedLinks.forEach((link, linkIndex) => {
-        const from = sceneNodes[link.fromIndex];
-        const to = sceneNodes[link.toIndex];
-        let dx = to.x - from.x;
-        let dy = to.y - from.y;
-        let dz = to.z - from.z;
-        const distance = Math.max(0.001, Math.sqrt(dx * dx + dy * dy + dz * dz));
-        dx /= distance;
-        dy /= distance;
-        dz /= distance;
-        const fromX = from.x + dx * from.radius * 0.94;
-        const fromY = from.y + dy * from.radius * 0.94;
-        const fromZ = from.z + dz * from.radius * 0.94;
-        const toX = to.x - dx * to.radius * 0.94;
-        const toY = to.y - dy * to.radius * 0.94;
-        const toZ = to.z - dz * to.radius * 0.94;
-        let perpendicularX: number;
-        let perpendicularY: number;
-        let perpendicularZ: number;
-        if (Math.abs(dy) < 0.85) {
-          perpendicularX = -dz;
-          perpendicularY = 0;
-          perpendicularZ = dx;
-        } else {
-          perpendicularX = 0;
-          perpendicularY = dz;
-          perpendicularZ = -dy;
-        }
-        const perpendicularLength = Math.max(0.001, Math.sqrt(
-          perpendicularX * perpendicularX + perpendicularY * perpendicularY + perpendicularZ * perpendicularZ,
-        ));
-        const arc = Math.min(14, 2 + distance * 0.05) * (0.75 + seededUnit(link.id, 21) * 0.5);
-        const controlX = (fromX + toX) * 0.5 + perpendicularX / perpendicularLength * arc;
-        const controlY = (fromY + toY) * 0.5 + perpendicularY / perpendicularLength * arc;
-        const controlZ = (fromZ + toZ) * 0.5 + perpendicularZ / perpendicularLength * arc;
-        for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
-          const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
-          writeQuadraticPoint(linkPositions, offset, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, segment / CURVE_SEGMENTS);
-          writeQuadraticPoint(linkPositions, offset + 3, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, (segment + 1) / CURVE_SEGMENTS);
-        }
-      });
+      renderedLinks.forEach((link, linkIndex) => writeLinkCurve(linkPositions, link, linkIndex));
       const instanceStartAttr = linkGeometry.getAttribute("instanceStart");
       if (instanceStartAttr && "data" in instanceStartAttr) (instanceStartAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
     }
 
     function syncFocusedLinkGeometry() {
-      let focusedLinkIndex = 0;
-      focusedRenderedLinkIndices.forEach((linkIndex) => {
-        const endpointVisibility = Math.min(
-          nodeLinkVisibility[renderedLinks[linkIndex].fromIndex],
-          nodeLinkVisibility[renderedLinks[linkIndex].toIndex],
-        );
-        const brightness = Math.min(1, endpointVisibility * 1.45);
+      focusedSimulationLinks.forEach((link, focusedLinkIndex) => {
+        writeLinkCurve(focusedLinkPositions, link, focusedLinkIndex);
+        const normalizedStrength = THREE.MathUtils.clamp(link.strength, 0, 1);
+        const brightness = 0.55 + Math.pow(normalizedStrength, 1.25) * 0.45;
         for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
-          const sourceOffset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
           const focusedOffset = (focusedLinkIndex * CURVE_SEGMENTS + segment) * 6;
-          focusedLinkPositions.set(linkPositions.subarray(sourceOffset, sourceOffset + 6), focusedOffset);
           focusedLinkColors[focusedOffset] = activeColor.r * brightness;
           focusedLinkColors[focusedOffset + 1] = activeColor.g * brightness;
           focusedLinkColors[focusedOffset + 2] = activeColor.b * brightness;
@@ -569,10 +575,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           focusedLinkColors[focusedOffset + 4] = activeColor.g * brightness;
           focusedLinkColors[focusedOffset + 5] = activeColor.b * brightness;
         }
-        focusedLinkIndex += 1;
       });
-      focusedLinkGeometry.instanceCount = focusedLinkIndex * CURVE_SEGMENTS;
-      focusedLinkLines.visible = focusedLinkIndex > 0;
+      focusedLinkGeometry.instanceCount = focusedSimulationLinks.length * CURVE_SEGMENTS;
+      focusedLinkLines.visible = focusedSimulationLinks.length > 0;
       const focusedInstanceStart = focusedLinkGeometry.getAttribute("instanceStart");
       if (focusedInstanceStart && "data" in focusedInstanceStart) {
         (focusedInstanceStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
@@ -664,6 +669,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const focusIndex = hoveredIndex ?? selectedIndex;
       const focusNode = focusIndex == null ? null : sceneNodes[focusIndex];
       focusNeighborIndices = neighborIndicesOf(focusIndex);
+      focusedSimulationLinks = focusNode == null
+        ? []
+        : adjacency.simulationLinksByNodeId.get(focusNode.id) ?? [];
       focusedRenderedLinkIndices = focusNode == null
         ? new Set<number>()
         : new Set(adjacency.renderedLinkIndicesByNodeId.get(focusNode.id) ?? []);
