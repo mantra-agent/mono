@@ -991,13 +991,22 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       for (let packetIndex = activePackets.length - 1; packetIndex >= 0; packetIndex -= 1) {
         const packet = activePackets[packetIndex];
         const progress = (now - packet.startedAt) / ACTIVITY_PACKET_DURATION_MS;
-        if (progress >= 1) {
+        const link = renderedLinks[packet.linkIndex];
+        const forward = packet.sourceIndex === link.fromIndex;
+        const destination = sceneNodes[packet.destinationIndex];
+        setQuadraticPoint(
+          activityPoint,
+          renderedLinkPaths[packet.linkIndex],
+          forward ? progress : 1 - progress,
+        );
+        const arrivalRadius = destination.radius + ACTIVITY_BEAD_RADIUS;
+        const hasReachedDestination = progress >= 1
+          || activityPoint.distanceToSquared(destination) <= arrivalRadius * arrivalRadius;
+        if (hasReachedDestination) {
           activePackets.splice(packetIndex, 1);
           activeImpacts.push({ nodeIndex: packet.destinationIndex, startedAt: now });
           continue;
         }
-        const link = renderedLinks[packet.linkIndex];
-        const forward = packet.sourceIndex === link.fromIndex;
         for (let bead = 0; bead < ACTIVITY_PACKET_BEADS; bead += 1) {
           const beadProgress = progress - bead * ACTIVITY_BEAD_SPACING;
           if (beadProgress < 0) continue;
