@@ -51,6 +51,7 @@ interface MemoryGraph3DProps {
   links: MemoryGraph3DLink[];
   selectedNodeId: number | null;
   highlightedNodeIds: ReadonlySet<number>;
+  activityEnabled: boolean;
   nodeDetail?: MemoryGraph3DNodeDetail | null;
   onNodeSelect: (nodeId: number) => void;
   onNodeHover: (nodeId: number | null) => void;
@@ -81,6 +82,34 @@ interface ProjectedLabel {
   distance: number;
 }
 
+interface ActivityPath {
+  linkIndex: number;
+  sourceIndex: number;
+  destinationIndex: number;
+  destinationRecency: number;
+}
+
+interface ActivityPacket extends ActivityPath {
+  startedAt: number;
+}
+
+interface ActivityImpact {
+  nodeIndex: number;
+  startedAt: number;
+}
+
+interface QuadraticLinkPath {
+  fromX: number;
+  fromY: number;
+  fromZ: number;
+  controlX: number;
+  controlY: number;
+  controlZ: number;
+  toX: number;
+  toY: number;
+  toZ: number;
+}
+
 interface GraphAdjacency {
   neighborsByNodeId: Map<number, Set<number>>;
   simulationLinksByNodeId: Map<number, SceneLink[]>;
@@ -93,6 +122,7 @@ interface GraphRuntime {
   nodes: SceneNode[];
   requestRender: () => void;
   refreshAppearance: () => void;
+  setActivityEnabled: (enabled: boolean) => void;
   setSelectedNodeId: (nodeId: number | null) => void;
 }
 
@@ -102,6 +132,19 @@ const LARGE_GRAPH_THRESHOLD = 1_000;
 const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
 const MIN_NODE_HIT_RADIUS_PX = 12;
+const ACTIVITY_RECENCY_THRESHOLD = 0.25;
+const ACTIVITY_PACKET_BEADS = 5;
+const ACTIVITY_PACKET_DURATION_MS = 1_150;
+const ACTIVITY_IMPACT_DURATION_MS = 520;
+const ACTIVITY_MIN_GAP_MS = 850;
+const ACTIVITY_MAX_GAP_MS = 2_600;
+const ACTIVITY_MIN_NODE_COOLDOWN_MS = 1_800;
+const ACTIVITY_MAX_NODE_COOLDOWN_MS = 10_000;
+const ACTIVITY_MAX_DESKTOP_PACKETS = 3;
+const ACTIVITY_MAX_MOBILE_PACKETS = 1;
+const ACTIVITY_MOBILE_BREAKPOINT_PX = 768;
+const ACTIVITY_BEAD_SPACING = 0.035;
+const ACTIVITY_BEAD_RADIUS = 1.1;
 // Cold claims never disappear entirely: they hold a faint floor so the field keeps its ghosts.
 const RECENCY_OPACITY_FLOOR = 0.08;
 
@@ -113,12 +156,14 @@ function recencyToVisibility(recency: number): number {
 const nodeVertexShader = `
   attribute float aVisibility;
   attribute float aEmphasis;
+  attribute float aImpact;
   attribute vec3 aTint;
   varying vec3 vNormal;
   varying vec3 vViewDirection;
   varying vec3 vTint;
   varying float vVisibility;
   varying float vEmphasis;
+  varying float vImpact;
 
   void main() {
     vec4 worldPosition = modelMatrix * instanceMatrix * vec4(position, 1.0);
@@ -127,6 +172,7 @@ const nodeVertexShader = `
     vTint = aTint;
     vVisibility = aVisibility;
     vEmphasis = aEmphasis;
+    vImpact = aImpact;
     gl_Position = projectionMatrix * viewMatrix * worldPosition;
   }
 `;
@@ -137,14 +183,16 @@ const nodeFragmentShader = `
   varying vec3 vTint;
   varying float vVisibility;
   varying float vEmphasis;
+  varying float vImpact;
 
   void main() {
     float facing = abs(dot(normalize(vNormal), normalize(vViewDirection)));
     float edge = 1.0 - facing;
     float rim = pow(edge, 1.6);
     float emphasis = 1.0 + vEmphasis * 0.5;
-    vec3 color = vTint * rim * emphasis;
-    gl_FragColor = vec4(color, vVisibility);
+    vec3 baseColor = vTint * rim * emphasis;
+    vec3 impactColor = mix(baseColor, vec3(1.0), vImpact);
+    gl_FragColor = vec4(impactColor, max(vVisibility, vImpact * 0.92));
   }
 `;
 
@@ -278,12 +326,53 @@ function writeQuadraticPoint(
   positions[offset + 2] = inverse * inverse * fromZ + 2 * inverse * progress * controlZ + progress * progress * toZ;
 }
 
+function setQuadraticPoint(target: THREE.Vector3, path: QuadraticLinkPath, progress: number) {
+  const clampedProgress = THREE.MathUtils.clamp(progress, 0, 1);
+  const inverse = 1 - clampedProgress;
+  target.set(
+    inverse * inverse * path.fromX + 2 * inverse * clampedProgress * path.controlX + clampedProgress * clampedProgress * path.toX,
+    inverse * inverse * path.fromY + 2 * inverse * clampedProgress * path.controlY + clampedProgress * clampedProgress * path.toY,
+    inverse * inverse * path.fromZ + 2 * inverse * clampedProgress * path.controlZ + clampedProgress * clampedProgress * path.toZ,
+  );
+}
+
+function weightedActivityPath(paths: ActivityPath[]): ActivityPath | null {
+  const pathsByDestination = new Map<number, ActivityPath[]>();
+  paths.forEach((path) => {
+    const destinationPaths = pathsByDestination.get(path.destinationIndex) ?? [];
+    destinationPaths.push(path);
+    pathsByDestination.set(path.destinationIndex, destinationPaths);
+  });
+  const destinations = [...pathsByDestination.values()];
+  const totalWeight = destinations.reduce(
+    (total, destinationPaths) => total + destinationPaths[0].destinationRecency ** 2,
+    0,
+  );
+  if (totalWeight <= 0) return null;
+  let roll = Math.random() * totalWeight;
+  for (const destinationPaths of destinations) {
+    roll -= destinationPaths[0].destinationRecency ** 2;
+    if (roll <= 0) {
+      return destinationPaths[Math.floor(Math.random() * destinationPaths.length)] ?? null;
+    }
+  }
+  const fallbackPaths = destinations.at(-1);
+  return fallbackPaths?.[Math.floor(Math.random() * fallbackPaths.length)] ?? null;
+}
+
+function activityGapMs(recency: number) {
+  const heat = THREE.MathUtils.smoothstep(recency, ACTIVITY_RECENCY_THRESHOLD, 1);
+  const baseGap = THREE.MathUtils.lerp(ACTIVITY_MAX_GAP_MS, ACTIVITY_MIN_GAP_MS, heat);
+  return baseGap * THREE.MathUtils.lerp(0.72, 1.28, Math.random());
+}
+
 export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>(function MemoryGraph3D(
   {
     nodes,
     links,
     selectedNodeId,
     highlightedNodeIds,
+    activityEnabled,
     nodeDetail,
     onNodeSelect,
     onNodeHover,
@@ -302,6 +391,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   selectedNodeIdRef.current = selectedNodeId;
   const highlightedNodeIdsRef = useRef(highlightedNodeIds);
   highlightedNodeIdsRef.current = highlightedNodeIds;
+  const activityEnabledRef = useRef(activityEnabled);
+  activityEnabledRef.current = activityEnabled;
   const onNodeSelectRef = useRef(onNodeSelect);
   onNodeSelectRef.current = onNodeSelect;
   const onNodeHoverRef = useRef(onNodeHover);
@@ -349,6 +440,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   useEffect(() => {
     runtimeRef.current?.refreshAppearance();
   }, [highlightedNodeIds]);
+
+  useEffect(() => {
+    runtimeRef.current?.setActivityEnabled(activityEnabled);
+  }, [activityEnabled]);
 
   useEffect(() => {
     runtimeRef.current?.requestRender();
@@ -403,6 +498,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const nodeGeometry = new THREE.IcosahedronGeometry(1, 2);
     const visibility = new Float32Array(sceneNodes.length);
     const emphasis = new Float32Array(sceneNodes.length);
+    const impact = new Float32Array(sceneNodes.length);
     const tints = new Float32Array(sceneNodes.length * 3);
     sceneNodes.forEach((node, index) => {
       visibility[index] = recencyToVisibility(node.recency);
@@ -410,6 +506,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     });
     nodeGeometry.setAttribute("aVisibility", new THREE.InstancedBufferAttribute(visibility, 1));
     nodeGeometry.setAttribute("aEmphasis", new THREE.InstancedBufferAttribute(emphasis, 1));
+    nodeGeometry.setAttribute("aImpact", new THREE.InstancedBufferAttribute(impact, 1));
     nodeGeometry.setAttribute("aTint", new THREE.InstancedBufferAttribute(tints, 3));
 
     const nodeMaterial = new THREE.ShaderMaterial({
@@ -479,6 +576,27 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     scene.add(linkLines);
     scene.add(focusedLinkLines);
 
+    const maxActivityPackets = host.clientWidth < ACTIVITY_MOBILE_BREAKPOINT_PX
+      ? ACTIVITY_MAX_MOBILE_PACKETS
+      : ACTIVITY_MAX_DESKTOP_PACKETS;
+    const activityGeometry = new THREE.SphereGeometry(ACTIVITY_BEAD_RADIUS, 8, 8);
+    const activityMaterial = new THREE.MeshBasicMaterial({
+      color: activeColor,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const activityMesh = new THREE.InstancedMesh(
+      activityGeometry,
+      activityMaterial,
+      maxActivityPackets * ACTIVITY_PACKET_BEADS,
+    );
+    activityMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    activityMesh.instanceCount = 0;
+    activityMesh.frustumCulled = false;
+    scene.add(activityMesh);
+
     const transform = new THREE.Object3D();
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -493,7 +611,37 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let pendingPointer = { x: 0, y: 0 };
     let renderFrame = 0;
     let pointerFrame = 0;
+    let activityFrame = 0;
+    let activityTimer: ReturnType<typeof setTimeout> | null = null;
+    let activityIsEnabled = activityEnabledRef.current;
     let simulationTick = 0;
+    const activePackets: ActivityPacket[] = [];
+    const activeImpacts: ActivityImpact[] = [];
+    const lastPulseAtByNodeIndex = new Map<number, number>();
+    const activityPoint = new THREE.Vector3();
+    const renderedLinkPaths: QuadraticLinkPath[] = renderedLinks.map(() => ({
+      fromX: 0,
+      fromY: 0,
+      fromZ: 0,
+      controlX: 0,
+      controlY: 0,
+      controlZ: 0,
+      toX: 0,
+      toY: 0,
+      toZ: 0,
+    }));
+    const activityPaths: ActivityPath[] = renderedLinks.flatMap((link, linkIndex) => {
+      const fromRecency = sceneNodes[link.fromIndex].recency;
+      const toRecency = sceneNodes[link.toIndex].recency;
+      const paths: ActivityPath[] = [];
+      if (toRecency >= ACTIVITY_RECENCY_THRESHOLD) {
+        paths.push({ linkIndex, sourceIndex: link.fromIndex, destinationIndex: link.toIndex, destinationRecency: toRecency });
+      }
+      if (fromRecency >= ACTIVITY_RECENCY_THRESHOLD) {
+        paths.push({ linkIndex, sourceIndex: link.toIndex, destinationIndex: link.fromIndex, destinationRecency: fromRecency });
+      }
+      return paths;
+    });
 
     function getNodeScale(index: number) {
       const focusIndex = hoveredIndex ?? selectedIndex;
@@ -513,7 +661,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       nodeMesh.instanceMatrix.needsUpdate = true;
     }
 
-    function writeLinkCurve(positions: Float32Array, link: SceneLink, linkIndex: number) {
+    function writeLinkCurve(positions: Float32Array, link: SceneLink, linkIndex: number, captureActivityPath = false) {
       const from = sceneNodes[link.fromIndex];
       const to = sceneNodes[link.toIndex];
       let dx = to.x - from.x;
@@ -548,6 +696,18 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const controlX = (fromX + toX) * 0.5 + perpendicularX / perpendicularLength * arc;
       const controlY = (fromY + toY) * 0.5 + perpendicularY / perpendicularLength * arc;
       const controlZ = (fromZ + toZ) * 0.5 + perpendicularZ / perpendicularLength * arc;
+      if (captureActivityPath) {
+        const path = renderedLinkPaths[linkIndex];
+        path.fromX = fromX;
+        path.fromY = fromY;
+        path.fromZ = fromZ;
+        path.controlX = controlX;
+        path.controlY = controlY;
+        path.controlZ = controlZ;
+        path.toX = toX;
+        path.toY = toY;
+        path.toZ = toZ;
+      }
       for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
         const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
         writeQuadraticPoint(positions, offset, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, segment / CURVE_SEGMENTS);
@@ -556,7 +716,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function syncLinkPositions() {
-      renderedLinks.forEach((link, linkIndex) => writeLinkCurve(linkPositions, link, linkIndex));
+      renderedLinks.forEach((link, linkIndex) => writeLinkCurve(linkPositions, link, linkIndex, true));
       const instanceStartAttr = linkGeometry.getAttribute("instanceStart");
       if (instanceStartAttr && "data" in instanceStartAttr) (instanceStartAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
     }
@@ -679,6 +839,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       setFocusNeighborhoodNodeIds(focusNode == null ? [] : [focusNode.id, ...neighborNodeIds]);
       syncNodeAppearance();
       syncLinkVisibility();
+      syncActivityWithFocus();
     }
 
     // Frame the selected node together with its one-hop neighborhood (item 2).
@@ -759,6 +920,142 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           element.style.zIndex = String(focused ? 2_000 : selected ? 1_500 : Math.max(1, Math.round(1_000 - distance)));
         });
       syncDetail();
+    }
+
+    function activityCanRun() {
+      return activityIsEnabled
+        && !document.hidden
+        && hoveredIndex == null
+        && selectedIndex == null
+        && activityPaths.length > 0;
+    }
+
+    function clearActivityVisuals() {
+      activePackets.length = 0;
+      activeImpacts.length = 0;
+      impact.fill(0);
+      activityMesh.instanceCount = 0;
+      (nodeGeometry.getAttribute("aImpact") as THREE.InstancedBufferAttribute).needsUpdate = true;
+      if (activityFrame !== 0) cancelAnimationFrame(activityFrame);
+      activityFrame = 0;
+      requestRender();
+    }
+
+    function eligibleActivityPaths(now: number) {
+      const activeDestinations = new Set(activePackets.map((packet) => packet.destinationIndex));
+      return activityPaths.filter((path) => {
+        if (activeDestinations.has(path.destinationIndex)) return false;
+        const heat = THREE.MathUtils.smoothstep(path.destinationRecency, ACTIVITY_RECENCY_THRESHOLD, 1);
+        const cooldown = THREE.MathUtils.lerp(
+          ACTIVITY_MAX_NODE_COOLDOWN_MS,
+          ACTIVITY_MIN_NODE_COOLDOWN_MS,
+          heat,
+        );
+        return now - (lastPulseAtByNodeIndex.get(path.destinationIndex) ?? Number.NEGATIVE_INFINITY) >= cooldown;
+      });
+    }
+
+    function scheduleNextActivity(delayMs: number) {
+      if (activityTimer !== null) clearTimeout(activityTimer);
+      activityTimer = setTimeout(() => {
+        activityTimer = null;
+        if (!activityCanRun()) {
+          clearActivityVisuals();
+          return;
+        }
+        if (activePackets.length >= maxActivityPackets) {
+          scheduleNextActivity(600);
+          return;
+        }
+        const now = performance.now();
+        const path = weightedActivityPath(eligibleActivityPaths(now));
+        if (!path) {
+          scheduleNextActivity(600);
+          return;
+        }
+        activePackets.push({ ...path, startedAt: now });
+        lastPulseAtByNodeIndex.set(path.destinationIndex, now);
+        if (activityFrame === 0) activityFrame = requestAnimationFrame(animateActivity);
+        scheduleNextActivity(activityGapMs(path.destinationRecency));
+      }, delayMs);
+    }
+
+    function animateActivity(now: number) {
+      activityFrame = 0;
+      if (!activityCanRun()) {
+        clearActivityVisuals();
+        return;
+      }
+
+      let beadInstance = 0;
+      for (let packetIndex = activePackets.length - 1; packetIndex >= 0; packetIndex -= 1) {
+        const packet = activePackets[packetIndex];
+        const progress = (now - packet.startedAt) / ACTIVITY_PACKET_DURATION_MS;
+        if (progress >= 1) {
+          activePackets.splice(packetIndex, 1);
+          activeImpacts.push({ nodeIndex: packet.destinationIndex, startedAt: now });
+          continue;
+        }
+        const link = renderedLinks[packet.linkIndex];
+        const forward = packet.sourceIndex === link.fromIndex;
+        for (let bead = 0; bead < ACTIVITY_PACKET_BEADS; bead += 1) {
+          const beadProgress = progress - bead * ACTIVITY_BEAD_SPACING;
+          if (beadProgress < 0) continue;
+          setQuadraticPoint(
+            activityPoint,
+            renderedLinkPaths[packet.linkIndex],
+            forward ? beadProgress : 1 - beadProgress,
+          );
+          transform.position.copy(activityPoint);
+          transform.scale.setScalar(1 - bead * 0.12);
+          transform.updateMatrix();
+          activityMesh.setMatrixAt(beadInstance, transform.matrix);
+          beadInstance += 1;
+        }
+      }
+      activityMesh.instanceCount = beadInstance;
+      activityMesh.instanceMatrix.needsUpdate = true;
+
+      impact.fill(0);
+      for (let impactIndex = activeImpacts.length - 1; impactIndex >= 0; impactIndex -= 1) {
+        const currentImpact = activeImpacts[impactIndex];
+        const progress = (now - currentImpact.startedAt) / ACTIVITY_IMPACT_DURATION_MS;
+        if (progress >= 1) {
+          activeImpacts.splice(impactIndex, 1);
+          continue;
+        }
+        impact[currentImpact.nodeIndex] = Math.max(
+          impact[currentImpact.nodeIndex],
+          Math.pow(1 - progress, 2),
+        );
+      }
+      (nodeGeometry.getAttribute("aImpact") as THREE.InstancedBufferAttribute).needsUpdate = true;
+      renderer.render(scene, camera);
+
+      if (activePackets.length > 0 || activeImpacts.length > 0) {
+        activityFrame = requestAnimationFrame(animateActivity);
+      }
+    }
+
+    function setActivityEnabled(enabled: boolean) {
+      activityIsEnabled = enabled;
+      if (!enabled) {
+        if (activityTimer !== null) clearTimeout(activityTimer);
+        activityTimer = null;
+        clearActivityVisuals();
+        return;
+      }
+      syncActivityWithFocus();
+    }
+
+    function syncActivityWithFocus() {
+      if (!activityCanRun()) {
+        if (activityTimer !== null) clearTimeout(activityTimer);
+        activityTimer = null;
+        clearActivityVisuals();
+      } else if (activityTimer === null) {
+        scheduleNextActivity(500);
+      }
     }
 
     function renderNow() {
@@ -878,7 +1175,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function handleVisibilityChange() {
-      if (!document.hidden) requestRender();
+      if (document.hidden) {
+        syncActivityWithFocus();
+        return;
+      }
+      requestRender();
+      syncActivityWithFocus();
     }
 
     const linkForce = forceLink<SceneNode, SceneLink>(simulationLinks)
@@ -943,9 +1245,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         syncNodeAppearance();
         requestRender();
       },
+      setActivityEnabled,
       setSelectedNodeId,
     };
     requestRender();
+    if (activityIsEnabled) scheduleNextActivity(600);
 
     return () => {
       simulation.stop();
@@ -953,6 +1257,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       simulation.on("end", null);
       if (renderFrame !== 0) cancelAnimationFrame(renderFrame);
       if (pointerFrame !== 0) cancelAnimationFrame(pointerFrame);
+      if (activityFrame !== 0) cancelAnimationFrame(activityFrame);
+      if (activityTimer !== null) clearTimeout(activityTimer);
       runtimeRef.current = null;
       resizeObserver.disconnect();
       controls.removeEventListener("change", handleControlsChange);
@@ -968,6 +1274,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       linkMaterial.dispose();
       focusedLinkGeometry.dispose();
       focusedLinkMaterial.dispose();
+      activityGeometry.dispose();
+      activityMaterial.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     };
