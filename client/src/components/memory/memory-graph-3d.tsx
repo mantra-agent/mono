@@ -133,19 +133,25 @@ const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
 const MIN_NODE_HIT_RADIUS_PX = 12;
 const ACTIVITY_RECENCY_THRESHOLD = 0.25;
-const ACTIVITY_VOLUME_MULTIPLIER = 10;
 const ACTIVITY_PACKET_BEADS = 5;
 const ACTIVITY_PACKET_DURATION_MS = 1_150;
 const ACTIVITY_IMPACT_DURATION_MS = 520;
 const ACTIVITY_IMPACT_HOLD_RATIO = 0.18;
-const ACTIVITY_MEAN_EMIT_GAP_MS = 170;
-const ACTIVITY_MIN_EMIT_GAP_MS = 45;
-const ACTIVITY_MAX_EMIT_GAP_MS = 900;
-const ACTIVITY_RETRY_GAP_MS = 600;
-const ACTIVITY_MIN_NODE_COOLDOWN_MS = 1_800;
-const ACTIVITY_MAX_NODE_COOLDOWN_MS = 10_000;
-const ACTIVITY_MAX_DESKTOP_PACKETS = 3 * ACTIVITY_VOLUME_MULTIPLIER;
-const ACTIVITY_MAX_MOBILE_PACKETS = ACTIVITY_VOLUME_MULTIPLIER;
+// Global emission runs ~10x faster than before; a tight max clamp removes the
+// dead-air gaps that made the field look intermittently idle.
+const ACTIVITY_MEAN_EMIT_GAP_MS = 17;
+const ACTIVITY_MIN_EMIT_GAP_MS = 10;
+const ACTIVITY_MAX_EMIT_GAP_MS = 160;
+const ACTIVITY_RETRY_GAP_MS = 60;
+// Hot nodes recycle quickly so traffic concentrates where recency is high; cold
+// nodes stay eligible but rarely selected, leaving a faint scattered background.
+const ACTIVITY_MIN_NODE_COOLDOWN_MS = 220;
+const ACTIVITY_MAX_NODE_COOLDOWN_MS = 4_000;
+// Destination selection probability scales with recency to this power, sharpening
+// concentration so pulse density visibly tracks node brightness (recency^2.2).
+const ACTIVITY_RECENCY_WEIGHT_EXPONENT = 3;
+const ACTIVITY_MAX_DESKTOP_PACKETS = 90;
+const ACTIVITY_MAX_MOBILE_PACKETS = 24;
 const ACTIVITY_MOBILE_BREAKPOINT_PX = 768;
 const ACTIVITY_BEAD_SPACING = 0.035;
 const ACTIVITY_BEAD_RADIUS = 1.1;
@@ -350,13 +356,13 @@ function weightedActivityPath(paths: ActivityPath[]): ActivityPath | null {
   });
   const destinations = [...pathsByDestination.values()];
   const totalWeight = destinations.reduce(
-    (total, destinationPaths) => total + destinationPaths[0].destinationRecency ** 2,
+    (total, destinationPaths) => total + destinationPaths[0].destinationRecency ** ACTIVITY_RECENCY_WEIGHT_EXPONENT,
     0,
   );
   if (totalWeight <= 0) return null;
   let roll = Math.random() * totalWeight;
   for (const destinationPaths of destinations) {
-    roll -= destinationPaths[0].destinationRecency ** 2;
+    roll -= destinationPaths[0].destinationRecency ** ACTIVITY_RECENCY_WEIGHT_EXPONENT;
     if (roll <= 0) {
       return destinationPaths[Math.floor(Math.random() * destinationPaths.length)] ?? null;
     }
@@ -365,12 +371,12 @@ function weightedActivityPath(paths: ActivityPath[]): ActivityPath | null {
   return fallbackPaths?.[Math.floor(Math.random() * fallbackPaths.length)] ?? null;
 }
 
-// Continuous Poisson emission: hotter fields emit faster, and exponential
-// inter-arrival spacing keeps the stream organic rather than metronomic.
-function activityEmitGapMs(recency: number) {
-  const heat = THREE.MathUtils.smoothstep(recency, ACTIVITY_RECENCY_THRESHOLD, 1);
-  const meanGap = THREE.MathUtils.lerp(ACTIVITY_MEAN_EMIT_GAP_MS * 1.8, ACTIVITY_MEAN_EMIT_GAP_MS, heat);
-  const poissonGap = -Math.log(1 - Math.random()) * meanGap;
+// Continuous Poisson emission at a constant global rate: exponential inter-arrival
+// spacing keeps the stream organic rather than metronomic. Density stays uniform in
+// time; per-node concentration is handled entirely by weighted selection, not by
+// throttling the stream (throttling on the last node's recency created idle gaps).
+function activityEmitGapMs() {
+  const poissonGap = -Math.log(1 - Math.random()) * ACTIVITY_MEAN_EMIT_GAP_MS;
   return THREE.MathUtils.clamp(poissonGap, ACTIVITY_MIN_EMIT_GAP_MS, ACTIVITY_MAX_EMIT_GAP_MS);
 }
 
@@ -955,10 +961,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       requestRender();
     }
 
-    function eligibleActivityPaths(now: number, excludedDestinations = new Set<number>()) {
-      const activeDestinations = new Set(activePackets.map((packet) => packet.destinationIndex));
+    function eligibleActivityPaths(now: number) {
+      // No active-destination exclusion: a hot node may carry several concurrent
+      // beads at once, which is what makes busy regions read as concentrated.
+      // Its short cooldown still spaces re-selection so it never floods every tick.
       return activityPaths.filter((path) => {
-        if (activeDestinations.has(path.destinationIndex) || excludedDestinations.has(path.destinationIndex)) return false;
         const heat = THREE.MathUtils.smoothstep(path.destinationRecency, ACTIVITY_RECENCY_THRESHOLD, 1);
         const cooldown = THREE.MathUtils.lerp(
           ACTIVITY_MAX_NODE_COOLDOWN_MS,
@@ -969,12 +976,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       });
     }
 
-    function launchActivityPacket(now: number): number | null {
+    function launchActivityPacket(now: number): boolean {
       const path = weightedActivityPath(eligibleActivityPaths(now));
-      if (!path) return null;
+      if (!path) return false;
       activePackets.push({ ...path, startedAt: now });
       lastPulseAtByNodeIndex.set(path.destinationIndex, now);
-      return path.destinationRecency;
+      return true;
     }
 
     function scheduleNextActivity(delayMs: number) {
@@ -990,13 +997,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           return;
         }
         const now = performance.now();
-        const emittedRecency = launchActivityPacket(now);
-        if (emittedRecency == null) {
+        if (!launchActivityPacket(now)) {
           scheduleNextActivity(ACTIVITY_RETRY_GAP_MS);
           return;
         }
         if (activityFrame === 0) activityFrame = requestAnimationFrame(animateActivity);
-        scheduleNextActivity(activityEmitGapMs(emittedRecency));
+        scheduleNextActivity(activityEmitGapMs());
       }, delayMs);
     }
 
