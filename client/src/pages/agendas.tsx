@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ChevronRight, ClipboardList, Loader2, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, ClipboardList, Loader2, MessageSquare, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import type {
   AgendaDefinition,
   AgendaDefinitionCreate,
@@ -26,8 +26,16 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useAgendaDiscussion } from "@/hooks/use-agenda-discussion";
+import { buildAgendaDefinitionDiscussionMessage } from "@/lib/agenda-discussion";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -253,23 +261,65 @@ function AgendaEditor({ agenda, onClose }: { agenda?: AgendaDefinition; onClose:
 }
 
 function AgendaRow({ agenda, open, onToggle }: { agenda: AgendaDefinition; open: boolean; onToggle: () => void }) {
+  const discuss = useAgendaDiscussion();
   return (
     <div data-testid={`agenda-row-${agenda.id}`}>
-      <button
-        type="button"
-        onClick={onToggle}
-        className={cn(
-          HIERARCHY_SESSION_ROW_CLASS,
-          "hover:bg-accent/70",
-          open && "bg-accent text-foreground",
-        )}
-        aria-expanded={open}
-      >
-        <ClipboardList className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate">{agenda.name}</span>
-        <span className="shrink-0 text-xs text-muted-foreground">{agenda.items.length} {agenda.items.length === 1 ? "item" : "items"}</span>
-        <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
-      </button>
+      <div className="group relative min-w-0">
+        <button
+          type="button"
+          onClick={onToggle}
+          className={cn(
+            HIERARCHY_SESSION_ROW_CLASS,
+            "min-w-0 pr-9 hover:bg-accent/70",
+            open && "bg-accent text-foreground",
+          )}
+          aria-expanded={open}
+        >
+          <ClipboardList className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">{agenda.name}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">{agenda.items.length} {agenda.items.length === 1 ? "item" : "items"}</span>
+          <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} />
+        </button>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-border/40 bg-background text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
+                open && "bg-accent text-foreground",
+              )}
+              data-testid={`button-agenda-menu-${agenda.id}`}
+              onClick={(event) => event.stopPropagation()}
+              aria-label={`Actions for ${agenda.name}`}
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[140px]" onCloseAutoFocus={(event) => event.preventDefault()}>
+            <DropdownMenuItem
+              disabled={discuss.isPending}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (discuss.isPending) return;
+                discuss.mutate({
+                  pendingKey: agenda.id,
+                  title: agenda.name,
+                  message: buildAgendaDefinitionDiscussionMessage(agenda),
+                  clientTurnSuffix: agenda.id,
+                });
+              }}
+              data-testid={`menu-agenda-discuss-${agenda.id}`}
+            >
+              {discuss.isPending ? (
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <MessageSquare className="mr-2 h-3.5 w-3.5" />
+              )}
+              Discuss
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       {open && <AgendaEditor agenda={agenda} onClose={onToggle} />}
     </div>
   );
