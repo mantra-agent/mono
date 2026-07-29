@@ -20,6 +20,15 @@ export function isRecoverablePostgresConnectionError(error: unknown): boolean {
 }
 
 export function getPostgresErrorCode(error: unknown): string {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" && code.length > 0 ? code : "unknown";
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 5 && current && !seen.has(current); depth++) {
+    seen.add(current);
+    const candidate = current as { code?: unknown; cause?: unknown };
+    if (typeof candidate.code === "string" && candidate.code.length > 0) {
+      return candidate.code;
+    }
+    current = candidate.cause;
+  }
+  return "unknown";
 }

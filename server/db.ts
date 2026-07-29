@@ -872,7 +872,7 @@ export async function acquireLibraryParentLocks(
 // True for Postgres serialization-conflict error codes. Caller can map these
 // to a 409 with a "retry" hint.
 export function isSerializationConflict(err: unknown): boolean {
-  const code = (err as any)?.code;
+  const code = getPostgresErrorCode(err);
   return code === "40P01" /* deadlock_detected */ || code === "40001" /* serialization_failure */;
 }
 
