@@ -400,6 +400,7 @@ function publishChatStreamEvent(
 export async function registerChatRoutes(app: Express): Promise<void> {
   const {
     clearMeetingVisualizerState,
+    interruptMeetingSpeech,
     outputMediaSession,
     registerMeetingVisualizerTransport,
     sendNextMeetingAudio,
@@ -3551,6 +3552,16 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     if (event.speakerLabel?.trim().toLowerCase() === "mantra agent") {
       chatLog.debug(`meeting ingest: ignored bot echo sessionId=${sessionId}`);
       return { ok: true, sessionId, sessionKey, queued: false };
+    }
+
+    // Barge-in: a human speaking preempts any in-flight agent speech at once,
+    // mirroring the direct voice path's auto-cancel contract. The bot echo is
+    // already dropped above, so any remaining text here is a real participant.
+    // interruptMeetingSpeech is a cheap no-op when the agent is not speaking.
+    if (interruptMeetingSpeech(sessionId, "meeting_participant_speech")) {
+      chatLog.debug(
+        `meeting barge-in: interrupted agent speech sessionId=${sessionId} speaker=${event.speakerLabel || "unknown"}`,
+      );
     }
 
     // Speaker attribution against the session's participant roster

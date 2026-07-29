@@ -17,6 +17,65 @@ const AUDIO_FRAME_INTERVAL_MS = 1000 / 15;
 const audioQueues = new Map<string, VoiceAudioStream[]>();
 const waiters = new Map<string, Array<(audio: VoiceAudioStream | null) => void>>();
 const speechLocks = new Map<string, Promise<void>>();
+// Per-session barge-in state. The active speech turn registers its abort
+// controller and every synthesized stream it owns (queued or currently piping)
+// so a user speaking can preempt in-flight agent audio immediately.
+const speechAbortControllers = new Map<string, AbortController>();
+const liveSpeechStreams = new Map<string, Set<VoiceAudioStream>>();
+
+/**
+ * Raised when meeting speech is preempted by user barge-in. Distinguished from
+ * synthesis faults so the speech loop treats interruption as a clean stop
+ * rather than a failure that degrades the visualizer or logs an error.
+ */
+export class MeetingSpeechInterruptedError extends Error {
+  override name = "MeetingSpeechInterruptedError";
+}
+
+function trackSpeechStream(sessionId: string, audio: VoiceAudioStream): void {
+  const set = liveSpeechStreams.get(sessionId) ?? new Set<VoiceAudioStream>();
+  set.add(audio);
+  liveSpeechStreams.set(sessionId, set);
+}
+
+function untrackSpeechStream(sessionId: string, audio: VoiceAudioStream): void {
+  const set = liveSpeechStreams.get(sessionId);
+  if (!set) return;
+  set.delete(audio);
+  if (set.size === 0) liveSpeechStreams.delete(sessionId);
+}
+
+/**
+ * Barge-in primitive: preempt any queued or currently-playing agent speech for
+ * a meeting session. Aborts the active speech turn (stopping retries), drops
+ * queued-but-unplayed audio so a waiting poll cannot start it, and tears down
+ * the stream currently piping to the transport so playback stops mid-utterance.
+ * Idempotent and cheap: a no-op when the agent is not speaking. Returns whether
+ * any in-flight speech was actually interrupted.
+ */
+export function interruptMeetingSpeech(sessionId: string, reason = "user_speech"): boolean {
+  const controller = speechAbortControllers.get(sessionId);
+  const queued = audioQueues.get(sessionId);
+  const live = liveSpeechStreams.get(sessionId);
+  const hadSpeech =
+    Boolean(controller && !controller.signal.aborted) ||
+    (queued?.length ?? 0) > 0 ||
+    (live?.size ?? 0) > 0;
+  if (!hadSpeech) return false;
+
+  const interruption = new MeetingSpeechInterruptedError(`Meeting speech interrupted: ${reason}`);
+  if (controller && !controller.signal.aborted) controller.abort(interruption);
+  if (queued) {
+    for (const audio of queued) audio.stream.destroy(interruption);
+    audioQueues.delete(sessionId);
+  }
+  if (live) {
+    for (const audio of live) audio.stream.destroy(interruption);
+  }
+  clearMeetingVisualizerState(sessionId, "speech");
+  log.info(`meeting speech interrupted sessionId=${sessionId} reason=${reason}`);
+  return true;
+}
 
 const visualizerClients = new Map<string, Set<WebSocket>>();
 const visualizerSignals = new Map<string, Map<VisualizerStateSource, AgentVisualState>>();
@@ -291,16 +350,27 @@ export async function sendNextMeetingAudio(
 export async function speakMeetingResponse(sessionId: string, text: string): Promise<void> {
   const prior = speechLocks.get(sessionId) ?? Promise.resolve();
   const current = prior.catch(() => undefined).then(async () => {
-    let speechFailed = false;
     const session = await chatStorage.getSession(sessionId);
     if (!session?.meeting || session.meeting.botStatus !== "live") throw new Error("Meeting bot is not live");
+
+    // One interruption controller per speech turn. User barge-in aborts it,
+    // which stops synthesis retries and lets the loop unwind as a clean stop.
+    const abort = new AbortController();
+    speechAbortControllers.set(sessionId, abort);
+    let outcome: "spoken" | "interrupted" | "failed" = "failed";
     setMeetingVisualizerState(sessionId, "speech", "speaking");
     await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "speaking" });
     try {
       const maxAttempts = 2;
       let spokenVia = "";
       for (let attempt = 1; ; attempt++) {
+        if (abort.signal.aborted) throw new MeetingSpeechInterruptedError("Meeting speech interrupted before synthesis");
         const audio = await streamVoiceAudio(text);
+        if (abort.signal.aborted) {
+          audio.stream.destroy();
+          throw new MeetingSpeechInterruptedError("Meeting speech interrupted before playback");
+        }
+        trackSpeechStream(sessionId, audio);
         enqueue(sessionId, audio);
         log.info(`queued speech stream sessionId=${sessionId} provider=${audio.provider} attempt=${attempt}`);
         try {
@@ -308,27 +378,42 @@ export async function speakMeetingResponse(sessionId: string, text: string): Pro
           spokenVia = audio.provider;
           break;
         } catch (error) {
+          if (abort.signal.aborted) {
+            throw new MeetingSpeechInterruptedError("Meeting speech interrupted during playback");
+          }
           if (error instanceof EmptyVoiceStreamError && attempt < maxAttempts) {
             log.warn(`empty speech stream, retrying sessionId=${sessionId} attempt=${attempt}`);
             continue;
           }
           throw error;
+        } finally {
+          untrackSpeechStream(sessionId, audio);
         }
       }
+      outcome = "spoken";
       await chatStorage.updateMeetingMeta(sessionId, {
         speechStatus: "spoken",
         speechStatusDetail: `Spoken via ${spokenVia}`,
       });
       log.info(`completed speech stream sessionId=${sessionId} provider=${spokenVia}`);
     } catch (error) {
+      if (error instanceof MeetingSpeechInterruptedError || abort.signal.aborted) {
+        outcome = "interrupted";
+        await chatStorage.updateMeetingMeta(sessionId, {
+          speechStatus: "interrupted",
+          speechStatusDetail: "Interrupted by speaker",
+        });
+        log.info(`speech interrupted sessionId=${sessionId}`);
+        return;
+      }
       const detail = error instanceof Error ? error.message : String(error);
       await chatStorage.updateMeetingMeta(sessionId, { speechStatus: "failed", speechStatusDetail: detail });
-      speechFailed = true;
       setMeetingVisualizerState(sessionId, "speech", "degraded");
       log.error(`speech failed sessionId=${sessionId}: ${detail}`);
       throw error;
     } finally {
-      if (!speechFailed) clearMeetingVisualizerState(sessionId, "speech");
+      if (speechAbortControllers.get(sessionId) === abort) speechAbortControllers.delete(sessionId);
+      if (outcome !== "failed") clearMeetingVisualizerState(sessionId, "speech");
     }
   });
   speechLocks.set(sessionId, current);

@@ -844,7 +844,7 @@ export interface MeetingSessionMeta {
   /** Signed Output Media page URL attached to the Recall bot. */
   outputMediaUrl?: string;
   /** Last meeting speech attempt, surfaced so failures are never silent. */
-  speechStatus?: "speaking" | "spoken" | "failed";
+  speechStatus?: "speaking" | "spoken" | "failed" | "interrupted";
   speechStatusDetail?: string;
   /** Speaker routing policy snapshotted from calendar metadata before bot dispatch. */
   speakerPolicy?: MeetingSpeakerPolicy;
