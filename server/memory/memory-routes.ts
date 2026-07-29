@@ -32,6 +32,7 @@ import { goalsService } from "../goals-service";
 import { fileProjectStorage } from "../file-storage/projects";
 import { libraryPages, libraryPageLinks } from "@shared/models/info";
 import { chatFileStorage } from "../chat-file-storage";
+import { listMeetingGraphRecords, type MeetingIndexRecord } from "../meetings/meeting-index";
 
 const log = createLogger("MemoryRoutes");
 
@@ -333,7 +334,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       accountId: memoryVnextClaimLinks.accountId,
     };
 
-    const [claims, currentGoalIndex, currentProjects] = await Promise.all([
+    const [claims, currentGoalIndex, currentProjects, meetingRecords] = await Promise.all([
       db
         .select()
         .from(memoryVnextClaims)
@@ -345,6 +346,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
         .orderBy(desc(memoryVnextClaims.createdAt)),
       goalsService.listAll(),
       fileProjectStorage.getProjects(),
+      listMeetingGraphRecords(),
     ]);
     const currentGoalIds = currentGoalIndex
       .filter((goal) => goal.status !== "achieved")
@@ -453,6 +455,18 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       entitySummaryByKey.set(key, project.description || `${project.status} project`);
       entityTimestampByKey.set(key, { createdAt: project.createdAt, updatedAt: project.updatedAt });
     }
+    // Resolve titles/summaries for meeting attendees so people who appear only as
+    // meeting participants (not yet mentioned by any claim) still render named nodes.
+    for (const meeting of meetingRecords) {
+      for (const participant of meeting.participants) {
+        if (!participant.personId) continue;
+        const key = `person:${participant.personId}`;
+        if (participant.name && !entityTitleByKey.has(key)) entityTitleByKey.set(key, participant.name);
+        if (participant.profileSummary && !entitySummaryByKey.has(key)) {
+          entitySummaryByKey.set(key, participant.profileSummary);
+        }
+      }
+    }
 
     const sourcePageIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "library_page" || ref.sourceType === "library").map((ref) => ref.sourceId))];
     const sourceSessionIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "session").map((ref) => ref.sourceId))];
@@ -527,6 +541,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
 
     const entityNodeIds = new Map<string, number>();
     const sourceNodeIds = new Map<string, number>();
+    const meetingNodeIds = new Map<string, number>();
     let nextSyntheticNodeId = -1;
     const entries: VnextGraphNode[] = claims.map((claim) => ({
       id: claim.id,
@@ -599,6 +614,50 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
     for (const goal of currentGoals) ensureEntityNode("goal", goal.id, goal.updatedAt);
     for (const project of currentProjectRows) ensureEntityNode("project", String(project.id), project.updatedAt);
 
+    // Project the meeting session itself and its attendee people as first-class
+    // nodes. Meetings are chat sessions; when a claim also references the meeting
+    // session, the shared `session:<id>` key routes provenance edges to this same
+    // node instead of creating a duplicate source node.
+    function ensureMeetingNode(meeting: MeetingIndexRecord): number {
+      const key = `meeting:${meeting.id}`;
+      const existingNodeId = meetingNodeIds.get(key);
+      if (existingNodeId !== undefined) return existingNodeId;
+      const meetingNodeId = nextSyntheticNodeId--;
+      meetingNodeIds.set(key, meetingNodeId);
+      sourceNodeIds.set(`session:${meeting.id}`, meetingNodeId);
+      const attendeeNames = meeting.participants.map((participant) => participant.name).filter(Boolean);
+      const attendeeSummary = attendeeNames.length > 0 ? `Meeting · ${attendeeNames.join(", ")}` : "Meeting";
+      entries.push({
+        id: meetingNodeId,
+        content: meeting.summary || attendeeSummary,
+        title: meeting.title,
+        summary: meeting.summary || attendeeSummary,
+        layer: "long",
+        source: "meeting",
+        sourceId: meeting.id,
+        tags: ["meeting"],
+        graphed: true,
+        metadata: {
+          graphStorage: "vnext",
+          nodeKind: "meeting",
+          reference: `@meeting:${meeting.id}`,
+          botStatus: meeting.botStatus,
+          transcriptCount: meeting.transcriptCount,
+        },
+        createdAt: serializeDate(meeting.startedAt),
+        updatedAt: serializeDate(meeting.endedAt || meeting.startedAt),
+        recency: computeNodeRecency(meeting.startedAt, meeting.endedAt),
+      });
+      return meetingNodeId;
+    }
+
+    for (const meeting of meetingRecords) {
+      ensureMeetingNode(meeting);
+      for (const participant of meeting.participants) {
+        if (!participant.personId) continue;
+        ensureEntityNode("person", participant.personId, meeting.endedAt || meeting.startedAt);
+      }
+    }
 
     function ensureSourceNode(normalizedType: "page" | "session", sourceId: string, createdAt?: Date | string | null): number | null {
       const page = normalizedType === "page" ? sourcePageById.get(sourceId) : undefined;
@@ -711,7 +770,51 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       });
     }
 
-    log.debug(`[vnext] graph claims=${claims.length} goals=${currentGoals.length} projects=${currentProjectRows.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} nodes=${entries.length} links=${links.length}`);
+    // Deterministic structural edges derived from existing domain relationships,
+    // rather than waiting for probabilistic claim-links: project→goal from
+    // project.goalId and meeting→attendee from meeting participants. Both endpoints
+    // must already be projected as nodes; dangling references are skipped.
+    let nextStructuralLinkId = -3_000_000;
+    let structuralLinkCount = 0;
+    for (const project of currentProjectRows) {
+      if (!project.goalId) continue;
+      const fromId = entityNodeIds.get(`project:${project.id}`);
+      const toId = entityNodeIds.get(`goal:${project.goalId}`);
+      if (!fromId || !toId) continue;
+      links.push({
+        id: nextStructuralLinkId--,
+        fromId,
+        toId,
+        relationship: "pursues_goal",
+        strength: 1,
+        createdAt: serializeDate(project.updatedAt),
+        relationshipType: "project_goal",
+      });
+      structuralLinkCount++;
+    }
+    for (const meeting of meetingRecords) {
+      const fromId = meetingNodeIds.get(`meeting:${meeting.id}`);
+      if (!fromId) continue;
+      const seenAttendee = new Set<string>();
+      for (const participant of meeting.participants) {
+        if (!participant.personId || seenAttendee.has(participant.personId)) continue;
+        seenAttendee.add(participant.personId);
+        const toId = entityNodeIds.get(`person:${participant.personId}`);
+        if (!toId) continue;
+        links.push({
+          id: nextStructuralLinkId--,
+          fromId,
+          toId,
+          relationship: "has_attendee",
+          strength: 1,
+          createdAt: serializeDate(meeting.endedAt || meeting.startedAt),
+          relationshipType: "meeting_attendee",
+        });
+        structuralLinkCount++;
+      }
+    }
+
+    log.debug(`[vnext] graph claims=${claims.length} goals=${currentGoals.length} projects=${currentProjectRows.length} meetings=${meetingRecords.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} structuralLinks=${structuralLinkCount} nodes=${entries.length} links=${links.length}`);
     res.json({ storage: "memory_vnext", entries, links, linkSource: "claim_links", semantics: "personal-intelligence" });
   } catch (error: unknown) {
     log.error(`[vnext] graph failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);

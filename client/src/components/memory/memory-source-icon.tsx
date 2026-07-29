@@ -11,6 +11,7 @@ import {
   MessageSquare,
   Mic,
   Pencil,
+  Video,
   Target,
   User,
   Wrench,
@@ -24,7 +25,7 @@ export interface MemoryGraphNodeTypeConfig {
   iconSource: string;
 }
 
-const MEMORY_GRAPH_NODE_TYPE_ORDER = ["people", "companies", "claims", "pages", "sessions", "goals", "projects"];
+const MEMORY_GRAPH_NODE_TYPE_ORDER = ["people", "companies", "claims", "pages", "sessions", "meetings", "goals", "projects"];
 
 const MEMORY_GRAPH_NODE_TYPE_BY_SOURCE: Record<string, MemoryGraphNodeTypeConfig> = {
   person: { id: "people", label: "People", iconSource: "person" },
@@ -37,6 +38,7 @@ const MEMORY_GRAPH_NODE_TYPE_BY_SOURCE: Record<string, MemoryGraphNodeTypeConfig
   library: { id: "pages", label: "Pages", iconSource: "page" },
   library_page: { id: "pages", label: "Pages", iconSource: "page" },
   session: { id: "sessions", label: "Sessions", iconSource: "session" },
+  meeting: { id: "meetings", label: "Meetings", iconSource: "meeting" },
   goal: { id: "goals", label: "Goals", iconSource: "goal" },
   project: { id: "projects", label: "Projects", iconSource: "project" },
 };
@@ -101,6 +103,8 @@ export function getMemorySourceIcon(source: string): LucideIcon {
     case "library":
     case "page":
       return FileText;
+    case "meeting":
+      return Video;
     case "goal":
       return Target;
     case "person":
