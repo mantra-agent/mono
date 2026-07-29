@@ -136,7 +136,10 @@ export function registerMeetingDistributionRoutes(app: Express): void {
           res.status(404).json({ error: "Recap unavailable" });
           return;
         }
-        const response: RecipientRecapProjectionResponse = { projection: materialized.projection };
+        const response: RecipientRecapProjectionResponse = {
+          projection: materialized.projection,
+          meetingSessionId: materialized.meetingSessionId,
+        };
         res.setHeader("Cache-Control", "private, no-store");
         res.setHeader("Referrer-Policy", "no-referrer");
         res.json(response);

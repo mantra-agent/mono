@@ -24,4 +24,10 @@ export interface RecipientRecapProjection {
 
 export interface RecipientRecapProjectionResponse {
   projection: RecipientRecapProjection;
+  /**
+   * Canonical recipient-owned Meeting session id produced by materialization.
+   * Authenticated recap-link entry uses this to deep-link into the in-app
+   * Meetings surface with the meeting expanded.
+   */
+  meetingSessionId: string;
 }
