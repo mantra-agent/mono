@@ -3,6 +3,7 @@ import type {
   SessionAgenda,
   SessionAgendaItem,
 } from "@shared/models/chat";
+import { AGENT_WORK_DEADLINE_INSTRUCTION } from "./planning-instructions";
 
 export const RECAP_FTUE_TRIGGER_NAME = "recap_ftue";
 export const FTUE_FIRST_MESSAGE_ARTIFACT_KEY = "ftue:first-message:v1";
@@ -37,7 +38,7 @@ export const RECAP_FTUE_AGENDA_ITEMS = [
   {
     id: "plan-goal-as-project",
     title: "Plan goal as project",
-    description: "Turn the first goal into a canonical project linked to that goal, with measurable milestones and concrete tasks using work and tasks. The project, milestones, and tasks surface on Simple's hierarchy automatically; do not navigate to Projects. Complete only after the project, milestones, and tasks exist.",
+    description: `Turn the first goal into a canonical project linked to that goal, with measurable milestones and concrete tasks using work and tasks. ${AGENT_WORK_DEADLINE_INSTRUCTION} The project, milestones, and tasks surface on Simple's hierarchy automatically; do not navigate to Projects. Complete only after the project, milestones, and tasks exist with their required dates.`,
   },
   {
     id: "show-the-memory-graph",
