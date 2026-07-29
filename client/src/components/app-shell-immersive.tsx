@@ -10,6 +10,7 @@ import {
 } from "@/lib/startup-onboarding";
 import { beginClaimVisualHandoff } from "@/lib/claim-visual-handoff";
 import { createLogger } from "@/lib/logger";
+import { cn } from "@/lib/utils";
 
 const log = createLogger("AppShellImmersive");
 
@@ -125,14 +126,29 @@ function ImmersiveClaimGate({ onboardingToken, claimed, onClaimed }: ImmersiveCl
  * `AuthGate → BootGate → VaultProvider → AppShell`; this provisional shell must
  * never grow a parallel authenticated Home, Simple, Session, or provider tree.
  */
+/**
+ * Exit fade duration before the hard claim navigation. The entrance orb fades
+ * smoothly to black, the next document boots already-black (pre-hydration theme
+ * in index.html), and the claim visual bridge fades the canonical orb back in
+ * once it actually paints. Symmetric fades on both sides keep it one orb.
+ */
+const CLAIM_EXIT_FADE_MS = 320;
+
 export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
   const [claimed, setClaimed] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const handoffStartedRef = useRef(false);
 
   const handleClaimed = useCallback(async (claimedName: string) => {
     setClaimed(true);
     if (handoffStartedRef.current) return;
     handoffStartedRef.current = true;
+
+    // Begin the exit fade immediately, in parallel with onboarding completion,
+    // and never navigate before it has finished so the exit reads as a smooth
+    // fade to black rather than a hard cut.
+    setLeaving(true);
+    const minFade = new Promise<void>((resolve) => window.setTimeout(resolve, CLAIM_EXIT_FADE_MS));
 
     try {
       const status = await completeStartupOnboarding(claimedName, { recapToken: onboardingToken });
@@ -144,6 +160,7 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
       } else {
         log.warn("Claim complete without FTUE session: entering authenticated Home");
       }
+      await minFade;
       beginClaimVisualHandoff();
       window.location.replace(destination);
     } catch (err) {
@@ -153,10 +170,11 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
       log.error("Claim onboarding completion failed: entering authenticated Home", {
         error: err instanceof Error ? err.message : String(err),
       });
+      await minFade;
       beginClaimVisualHandoff();
       window.location.replace("/home");
     }
-  }, []);
+  }, [onboardingToken]);
 
   return (
     <LiveVoiceProvider>
@@ -171,6 +189,14 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
             onboardingToken={onboardingToken}
             claimed={claimed}
             onClaimed={handleClaimed}
+          />
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-0 z-50 bg-black transition-opacity ease-out motion-reduce:transition-none",
+              leaving ? "opacity-100" : "opacity-0",
+            )}
+            style={{ transitionDuration: `${CLAIM_EXIT_FADE_MS}ms` }}
+            aria-hidden="true"
           />
         </div>
       </div>
