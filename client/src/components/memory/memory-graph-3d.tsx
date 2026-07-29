@@ -156,11 +156,27 @@ const ACTIVITY_MOBILE_BREAKPOINT_PX = 768;
 const ACTIVITY_BEAD_SPACING = 0.035;
 const ACTIVITY_BEAD_RADIUS = 1.1;
 // Cold claims never disappear entirely: they hold a faint floor so the field keeps its ghosts.
-const RECENCY_OPACITY_FLOOR = 0.08;
+// Recency → opacity is a gentle high-ceiling curve. The most recent nodes/links
+// settle near the ceiling (deliberately below 1 so hover/selection still reads as
+// brighter), while the oldest keep a clearly visible floor instead of dropping to
+// near-invisible. Recency differences stay legible without the field going dark.
+const RECENCY_OPACITY_FLOOR = 0.22;
+const RECENCY_OPACITY_CEILING = 0.85;
 
 function recencyToVisibility(recency: number): number {
   const heat = THREE.MathUtils.clamp(recency, 0, 1);
-  return RECENCY_OPACITY_FLOOR + (1 - RECENCY_OPACITY_FLOOR) * Math.pow(heat, 2.2);
+  return RECENCY_OPACITY_FLOOR + (RECENCY_OPACITY_CEILING - RECENCY_OPACITY_FLOOR) * Math.pow(heat, 1.4);
+}
+
+const GRAPH_LABEL_MAX_WORDS = 3;
+
+// Keep on-graph labels scannable: Page/Session titles can be long, so the visible
+// overlay label is capped at a few words with an ellipsis. The full title stays in
+// the hover tooltip and the selected-node detail panel.
+function truncateLabelToWords(label: string, maxWords = GRAPH_LABEL_MAX_WORDS): string {
+  const words = label.trim().split(/\s+/);
+  if (words.length <= maxWords) return label;
+  return `${words.slice(0, maxWords).join(" ")}…`;
 }
 
 const nodeVertexShader = `
@@ -570,7 +586,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const linkMaterial = new LineMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0.45,
+      // +50% opacity over the prior 0.45: resting (non-hovered) links were too
+      // dark against the canvas. Hover still reads brighter via focusedLinkMaterial.
+      opacity: 0.68,
       linewidth: 1,
       depthWrite: false,
       resolution: new THREE.Vector2(host.clientWidth, host.clientHeight),
@@ -1342,7 +1360,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
             </span>
             {nodeDetail?.nodeId !== node.id && (
               <span className="mt-0.5 max-w-[180px] truncate whitespace-nowrap rounded-md bg-card/80 px-1.5 py-0.5 text-[10px] font-medium text-foreground/90 shadow-sm backdrop-blur-sm">
-                {node.label}
+                {truncateLabelToWords(node.label)}
               </span>
             )}
           </div>
