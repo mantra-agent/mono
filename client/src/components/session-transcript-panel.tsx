@@ -753,6 +753,8 @@ export function SessionTranscriptPanel({
         meeting={ownedSessionData?.meeting}
         agenda={ownedSessionData?.agenda}
         sessionTitle={ownedSessionData?.title}
+        parentSessionId={ownedSessionData?.parentSessionId}
+        parentSessionTitle={ownedSessionData?.parentSessionId ? sessionTitleById[ownedSessionData.parentSessionId] : undefined}
         scrollContainerRef={scrollContainerRef}
         onUserScrollIntent={handleUserScrollIntent}
         onScroll={handleScroll}
