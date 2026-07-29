@@ -100,34 +100,39 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
   const audioLevelRef = useRef(0);
   const speechPlaybackEnabledRef = useRef(false);
   const speechPollAbortRef = useRef<AbortController | null>(null);
-  const speechSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const speechAudioRef = useRef<HTMLAudioElement | null>(null);
   const speechGenerationRef = useRef(0);
   const startPromiseRef = useRef<Promise<NativeMeetingStartResult | null> | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+
+  const releaseSpeechAudio = useCallback((audio: HTMLAudioElement | null) => {
+    if (!audio) return;
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  }, []);
 
   const stopSpeechPlayback = useCallback(() => {
     speechPlaybackEnabledRef.current = false;
     speechGenerationRef.current += 1;
     speechPollAbortRef.current?.abort();
     speechPollAbortRef.current = null;
-    const source = speechSourceRef.current;
-    speechSourceRef.current = null;
-    if (source) {
-      try {
-        source.stop();
-      } catch {
-        // The source may already have ended.
-      }
-      source.disconnect();
-    }
-  }, []);
+    const audio = speechAudioRef.current;
+    speechAudioRef.current = null;
+    releaseSpeechAudio(audio);
+  }, [releaseSpeechAudio]);
 
   const runSpeechPlayback = useCallback((capture: ActiveNativeMeeting) => {
     if (speechPollAbortRef.current || !speechPlaybackEnabledRef.current) return;
     const generation = ++speechGenerationRef.current;
     const abortController = new AbortController();
     speechPollAbortRef.current = abortController;
+
+    const audio = new Audio();
+    audio.preload = "auto";
+    speechAudioRef.current = audio;
+    const endpoint = `/api/meetings/${encodeURIComponent(capture.sessionId)}/native-audio`;
 
     const loop = async () => {
       while (
@@ -136,46 +141,54 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
         && activeRef.current === capture
         && speechGenerationRef.current === generation
       ) {
+        audio.src = endpoint;
         try {
-          const response = await fetch(
-            `/api/meetings/${encodeURIComponent(capture.sessionId)}/native-audio`,
-            { credentials: "include", signal: abortController.signal },
-          );
-          if (response.status === 204) continue;
-          if (!response.ok) {
-            await new Promise((resolve) => window.setTimeout(resolve, 1_500));
-            continue;
-          }
-          const encodedAudio = await response.arrayBuffer();
-          if (abortController.signal.aborted || encodedAudio.byteLength === 0) continue;
-          if (capture.audioContext.state !== "running") await capture.audioContext.resume();
-          const decodedAudio = await capture.audioContext.decodeAudioData(encodedAudio);
-          if (abortController.signal.aborted || speechGenerationRef.current !== generation) continue;
-          const source = capture.audioContext.createBufferSource();
-          source.buffer = decodedAudio;
-          source.connect(capture.audioContext.destination);
-          speechSourceRef.current = source;
-          await new Promise<void>((resolve) => {
-            source.onended = () => resolve();
-            source.start();
+          await new Promise<void>((resolve, reject) => {
+            const settle = (error?: unknown) => {
+              abortController.signal.removeEventListener("abort", handleAbort);
+              if (error) reject(error);
+              else resolve();
+            };
+            const handleAbort = () => settle();
+            abortController.signal.addEventListener("abort", handleAbort, { once: true });
+            audio.onended = () => settle();
+            audio.onerror = () => settle(new Error("Native meeting speech playback failed"));
+            void audio.play().catch(settle);
           });
-          if (speechSourceRef.current === source) speechSourceRef.current = null;
-          source.disconnect();
         } catch (error) {
           if (abortController.signal.aborted) return;
+          if (error instanceof DOMException && error.name === "NotAllowedError") {
+            stopSpeechPlayback();
+            log.error("Native meeting speech playback activation failed", {
+              sessionId: capture.sessionId,
+              error: error.message,
+            });
+            toast({
+              title: "Could not enable spoken replies",
+              description: "Tap Listen mode again to retry audio playback.",
+              variant: "destructive",
+            });
+            return;
+          }
           log.warn("Native meeting speech playback retry", {
             sessionId: capture.sessionId,
             error: error instanceof Error ? error.message : String(error),
           });
           await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+        } finally {
+          audio.onended = null;
+          audio.onerror = null;
+          releaseSpeechAudio(audio);
         }
       }
     };
 
     void loop().finally(() => {
       if (speechPollAbortRef.current === abortController) speechPollAbortRef.current = null;
+      if (speechAudioRef.current === audio) speechAudioRef.current = null;
+      releaseSpeechAudio(audio);
     });
-  }, []);
+  }, [releaseSpeechAudio, stopSpeechPlayback, toast]);
 
   const setSpeechPlaybackEnabled = useCallback((enabled: boolean, sessionId?: string) => {
     const capture = activeRef.current;
@@ -185,19 +198,11 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
     }
     if (!capture || (sessionId && capture.sessionId !== sessionId)) return;
     speechPlaybackEnabledRef.current = true;
-    void capture.audioContext.resume().then(() => runSpeechPlayback(capture)).catch((error) => {
-      speechPlaybackEnabledRef.current = false;
-      log.error("Native meeting speech playback activation failed", {
-        sessionId: capture.sessionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      toast({
-        title: "Could not enable spoken replies",
-        description: "Tap Listen mode again to retry audio playback.",
-        variant: "destructive",
-      });
-    });
-  }, [runSpeechPlayback, stopSpeechPlayback, toast]);
+
+    // The async loop runs synchronously through its first audio.play() call,
+    // preserving the Listen Mode user gesture while later requests poll in order.
+    runSpeechPlayback(capture);
+  }, [runSpeechPlayback, stopSpeechPlayback]);
 
   const release = useCallback((capture: ActiveNativeMeeting | null) => {
     if (!capture) return;
