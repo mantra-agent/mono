@@ -1763,20 +1763,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     log.debug(`nested ${nestedItemIds.size} Simple hierarchy children, items ${before} → ${items.length}`);
   }
 
-  // Empty state fallback
-  if (!items.length && !errors.length) {
-    items.push({
-      id: "state-quiet-now",
-      section: "now",
-      widgetType: "state",
-      title: "Quiet now",
-      status: "active",
-      priority: 999,
-      sourceRefs: [{ type: "agent", id: "simple-empty-state", label: "Simple empty state", observedAt: generatedAt }],
-      references: sourceRefsToReferenceRefs([{ type: "agent", id: "simple-empty-state", label: "Simple empty state", observedAt: generatedAt }]),
-      payload: { tone: "calm" },
-    });
-  }
-
+  // A truly empty Simple surface emits no invented object; the client renders
+  // its own genuine empty state rather than a synthetic "Quiet now" row.
   return { generatedAt, timezone, items, errors };
 }
