@@ -772,7 +772,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
         const depth = -cameraSpace.z;
         const projectedRadius = depth > 0 ? node.radius * pixelsPerRadian / depth : 0;
-        const distanceVisibility = THREE.MathUtils.smoothstep(projectedRadius, 0.75, 3.5);
+        // Distance fade at half strength: distant edges dim toward a 0.5 floor
+        // instead of vanishing, so the field keeps depth cues without going hollow.
+        const distanceFade = THREE.MathUtils.smoothstep(projectedRadius, 0.75, 3.5);
+        const distanceVisibility = 0.5 + 0.5 * distanceFade;
         const unrelated = focusIndex != null
           && focusIndex !== index
           && !focusNeighborIndices.has(index);
