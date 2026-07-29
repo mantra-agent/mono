@@ -54,6 +54,7 @@ import {
   RULES_TOOL_DESCRIPTION,
   UNIVERSAL_CONVERSATION_CONTEXT,
 } from "./personal-rule-policy";
+import { AGENT_WORK_DEADLINE_INSTRUCTION } from "./planning-instructions";
 
 const STRUCTURAL_TAG_PATTERN = /(<\/?(?:entry|turn|concept|thought|link|claim|evidence)(?:\s[^>]*)?>)/g;
 
@@ -2062,7 +2063,8 @@ async function resolvePlanningInstructions(): Promise<string> {
     "",
     "Compact pointer — the full planning process is not inlined. The load-bearing rules:",
     "",
-    "- Work-tracking invariant: before non-trivial work, create or identify a task attached to a project and/or milestone, with a deliberate due date (today for same-session tracking). If placement is unclear, pause and align before doing untracked work.",
+    "- Work-tracking invariant: before non-trivial work, create or identify a task attached to a project and/or milestone. If placement is unclear, pause and align before doing untracked work.",
+    `- Deadline invariant: ${AGENT_WORK_DEADLINE_INSTRUCTION}`,
     "- Plan when work needs more than ~3 turns, spans systems, touches core architecture, needs research, or is expensive to reverse. Skip for single clear actions or brainstorming.",
     "- Before planning, resolve silently: goal/definition-of-done, assumptions, research needed, domain docs to load, simplest approach, and any genuine forks worth asking about.",
     "- Order steps by dependency; each step independently executable in a child session; begin execution immediately after creation.",
