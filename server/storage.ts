@@ -157,7 +157,11 @@ export interface IStorage {
   getVoiceSessionStartByRequest(requestId: string, principal: Principal): Promise<VoiceSessionActive | undefined>;
   getOwnedActiveVoiceSession(sessionId: string, bootId: string): Promise<VoiceSessionActive | undefined>;
   endVoiceSessionActive(sessionId: string, status: "complete" | "abandoned", authority: VoiceLeaseMutationAuthority): Promise<void>;
-  completeOwnedVoiceSession(sessionId: string, chatSessionId: string, principal: Principal): Promise<boolean>;
+  completeOwnedVoiceSession(
+    sessionId: string,
+    chatSessionId: string,
+    principal: Principal,
+  ): Promise<"completed" | "already_complete" | "superseded" | "not_completable">;
   updateVoiceSessionInflight(sessionId: string, inflightTurn: number, bootId: string): Promise<void>;
   clearVoiceSessionInflight(sessionId: string, bootId: string): Promise<void>;
   abandonExpiredVoiceSessions(staleBefore: Date): Promise<VoiceSessionActive[]>;
@@ -946,23 +950,57 @@ export class HybridStorage implements IStorage {
       .where(voiceLeaseWritablePredicate(sessionId, authority));
   }
 
-  async completeOwnedVoiceSession(sessionId: string, chatSessionId: string, principal: Principal): Promise<boolean> {
-    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) return false;
+  async completeOwnedVoiceSession(
+    sessionId: string,
+    chatSessionId: string,
+    principal: Principal,
+  ): Promise<"completed" | "already_complete" | "superseded" | "not_completable"> {
+    if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+      return "not_completable";
+    }
     return db.transaction(async (tx) => {
       const lockKey = fnv1a32(`${principal.accountId}:${chatSessionId}`);
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${0x56535452}::int4, ${lockKey}::int4)`);
-      const [row] = await tx.update(voiceSessionActive)
-        .set({ status: "complete", endedAt: new Date(), inflightTurn: 0 })
+      const [lease] = await tx.select({ status: voiceSessionActive.status })
+        .from(voiceSessionActive)
         .where(and(
           eq(voiceSessionActive.sessionId, sessionId),
           eq(voiceSessionActive.chatSessionId, chatSessionId),
-          inArray(voiceSessionActive.status, ["active", "complete"]),
           eq(voiceSessionActive.scope, "user"),
           eq(voiceSessionActive.ownerUserId, principal.userId),
           eq(voiceSessionActive.accountId, principal.accountId),
         ))
-        .returning({ sessionId: voiceSessionActive.sessionId });
-      return !!row;
+        .limit(1);
+
+      if (!lease || (lease.status !== "active" && lease.status !== "complete")) {
+        return "not_completable";
+      }
+      if (lease.status === "complete") {
+        const [newerActiveLease] = await tx.select({ sessionId: voiceSessionActive.sessionId })
+          .from(voiceSessionActive)
+          .where(and(
+            eq(voiceSessionActive.chatSessionId, chatSessionId),
+            eq(voiceSessionActive.status, "active"),
+            eq(voiceSessionActive.scope, "user"),
+            eq(voiceSessionActive.ownerUserId, principal.userId),
+            eq(voiceSessionActive.accountId, principal.accountId),
+            ne(voiceSessionActive.sessionId, sessionId),
+          ))
+          .limit(1);
+        return newerActiveLease ? "superseded" : "already_complete";
+      }
+
+      await tx.update(voiceSessionActive)
+        .set({ status: "complete", endedAt: new Date(), inflightTurn: 0 })
+        .where(and(
+          eq(voiceSessionActive.sessionId, sessionId),
+          eq(voiceSessionActive.chatSessionId, chatSessionId),
+          eq(voiceSessionActive.status, "active"),
+          eq(voiceSessionActive.scope, "user"),
+          eq(voiceSessionActive.ownerUserId, principal.userId),
+          eq(voiceSessionActive.accountId, principal.accountId),
+        ));
+      return "completed";
     });
   }
 
