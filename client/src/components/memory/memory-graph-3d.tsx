@@ -133,15 +133,19 @@ const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
 const MIN_NODE_HIT_RADIUS_PX = 12;
 const ACTIVITY_RECENCY_THRESHOLD = 0.25;
+const ACTIVITY_VOLUME_MULTIPLIER = 10;
 const ACTIVITY_PACKET_BEADS = 5;
 const ACTIVITY_PACKET_DURATION_MS = 1_150;
 const ACTIVITY_IMPACT_DURATION_MS = 520;
+const ACTIVITY_IMPACT_HOLD_RATIO = 0.18;
+const ACTIVITY_BURST_STAGGER_MS = 45;
 const ACTIVITY_MIN_GAP_MS = 850;
 const ACTIVITY_MAX_GAP_MS = 2_600;
+const ACTIVITY_RETRY_GAP_MS = 600;
 const ACTIVITY_MIN_NODE_COOLDOWN_MS = 1_800;
 const ACTIVITY_MAX_NODE_COOLDOWN_MS = 10_000;
-const ACTIVITY_MAX_DESKTOP_PACKETS = 3;
-const ACTIVITY_MAX_MOBILE_PACKETS = 1;
+const ACTIVITY_MAX_DESKTOP_PACKETS = 3 * ACTIVITY_VOLUME_MULTIPLIER;
+const ACTIVITY_MAX_MOBILE_PACKETS = ACTIVITY_VOLUME_MULTIPLIER;
 const ACTIVITY_MOBILE_BREAKPOINT_PX = 768;
 const ACTIVITY_BEAD_SPACING = 0.035;
 const ACTIVITY_BEAD_RADIUS = 1.1;
@@ -192,7 +196,8 @@ const nodeFragmentShader = `
     float emphasis = 1.0 + vEmphasis * 0.5;
     vec3 baseColor = vTint * rim * emphasis;
     vec3 impactColor = mix(baseColor, vec3(1.0), vImpact);
-    gl_FragColor = vec4(impactColor, max(vVisibility, vImpact * 0.92));
+    float impactAlpha = mix(vVisibility, 1.0, vImpact);
+    gl_FragColor = vec4(impactColor, impactAlpha);
   }
 `;
 
@@ -947,10 +952,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       requestRender();
     }
 
-    function eligibleActivityPaths(now: number) {
+    function eligibleActivityPaths(now: number, excludedDestinations = new Set<number>()) {
       const activeDestinations = new Set(activePackets.map((packet) => packet.destinationIndex));
       return activityPaths.filter((path) => {
-        if (activeDestinations.has(path.destinationIndex)) return false;
+        if (activeDestinations.has(path.destinationIndex) || excludedDestinations.has(path.destinationIndex)) return false;
         const heat = THREE.MathUtils.smoothstep(path.destinationRecency, ACTIVITY_RECENCY_THRESHOLD, 1);
         const cooldown = THREE.MathUtils.lerp(
           ACTIVITY_MAX_NODE_COOLDOWN_MS,
@@ -959,6 +964,27 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         );
         return now - (lastPulseAtByNodeIndex.get(path.destinationIndex) ?? Number.NEGATIVE_INFINITY) >= cooldown;
       });
+    }
+
+    function launchActivityBurst(now: number) {
+      const burstDestinations = new Set<number>();
+      const burstSize = Math.min(
+        ACTIVITY_VOLUME_MULTIPLIER,
+        maxActivityPackets - activePackets.length,
+      );
+      let hottestDestinationRecency = ACTIVITY_RECENCY_THRESHOLD;
+      for (let packetOffset = 0; packetOffset < burstSize; packetOffset += 1) {
+        const path = weightedActivityPath(eligibleActivityPaths(now, burstDestinations));
+        if (!path) break;
+        activePackets.push({
+          ...path,
+          startedAt: now + packetOffset * ACTIVITY_BURST_STAGGER_MS,
+        });
+        burstDestinations.add(path.destinationIndex);
+        lastPulseAtByNodeIndex.set(path.destinationIndex, now);
+        hottestDestinationRecency = Math.max(hottestDestinationRecency, path.destinationRecency);
+      }
+      return burstDestinations.size > 0 ? hottestDestinationRecency : null;
     }
 
     function scheduleNextActivity(delayMs: number) {
@@ -970,19 +996,17 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           return;
         }
         if (activePackets.length >= maxActivityPackets) {
-          scheduleNextActivity(600);
+          scheduleNextActivity(ACTIVITY_RETRY_GAP_MS);
           return;
         }
         const now = performance.now();
-        const path = weightedActivityPath(eligibleActivityPaths(now));
-        if (!path) {
-          scheduleNextActivity(600);
+        const burstRecency = launchActivityBurst(now);
+        if (burstRecency == null) {
+          scheduleNextActivity(ACTIVITY_RETRY_GAP_MS);
           return;
         }
-        activePackets.push({ ...path, startedAt: now });
-        lastPulseAtByNodeIndex.set(path.destinationIndex, now);
         if (activityFrame === 0) activityFrame = requestAnimationFrame(animateActivity);
-        scheduleNextActivity(activityGapMs(path.destinationRecency));
+        scheduleNextActivity(activityGapMs(burstRecency));
       }, delayMs);
     }
 
@@ -1039,9 +1063,14 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           activeImpacts.splice(impactIndex, 1);
           continue;
         }
+        const flashStrength = 1 - THREE.MathUtils.smoothstep(
+          progress,
+          ACTIVITY_IMPACT_HOLD_RATIO,
+          1,
+        );
         impact[currentImpact.nodeIndex] = Math.max(
           impact[currentImpact.nodeIndex],
-          Math.pow(1 - progress, 2),
+          flashStrength,
         );
       }
       (nodeGeometry.getAttribute("aImpact") as THREE.InstancedBufferAttribute).needsUpdate = true;
