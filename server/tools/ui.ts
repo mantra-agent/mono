@@ -1,6 +1,7 @@
 import type { ToolHandler } from "../bridge-tools";
 import {
   isUiInteractionMode,
+  isUiInteractionNarrationState,
   isUiInteractionResourceSurface,
   isUiInteractionTarget,
   parseUiInteractionResource,
@@ -11,6 +12,9 @@ export const handleUiInteraction: ToolHandler = async (args) => {
   const sessionId = typeof args._sessionId === "string" ? args._sessionId : "";
   const clientId = typeof args._clientId === "string" ? args._clientId : undefined;
   const origin = args._authorityContext?.origin;
+  const narrationState = isUiInteractionNarrationState(args._uiNarrationState)
+    ? args._uiNarrationState
+    : "not_applicable";
 
   if (!sessionId || !clientId || (origin !== "interactive" && origin !== "voice")) {
     return { result: "UI interaction requires a session-bound interactive or voice run from an active browser tab.", error: true };
@@ -55,6 +59,7 @@ export const handleUiInteraction: ToolHandler = async (args) => {
       : { type: "control", target: args.target },
     mode: args.mode,
     introduction: introduction ? introduction.slice(0, UI_INTERACTION_INTRODUCTION_MAX_LENGTH) : undefined,
+    narrationState,
   });
 
   return {

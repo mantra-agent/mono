@@ -233,6 +233,14 @@ export async function runExecutorPhase(
     },
     onJournal: (type, extra) => writeVoiceJournal(session, type as import("../chat-journal").JournalEntryType, extra),
     onVoiceEvent: (event, payload) => publishVoiceEvent(session, event, payload),
+    getDeliveredSpeech: () => ctx.segmentChronology
+      .filter((entry): entry is { s: "content"; c: string } => entry.s === "content")
+      .map((entry) => entry.c)
+      .join("\n\n"),
+    speakGuideIntroduction: (introduction) => {
+      sendChunk(introduction);
+      flushCoalesceBuffer("guide_introduction", true);
+    },
     onToolCallComplete: async (name, args, result, callId) => {
       const releaseLock = await acquireSessionTurnLock(session.id);
       try {

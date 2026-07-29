@@ -31,6 +31,7 @@ const log = createLogger("UiInteraction");
 const WS_OWNER = "ui-interaction";
 const HANDLER_ID = "ui-interaction-command";
 const TARGET_WAIT_MS = 2_000;
+const NARRATION_SETTLE_TIMEOUT_MS = 8_000;
 
 type TargetRegistry = Map<UiInteractionTarget, HTMLElement>;
 type ResourceRegistry = Map<string, HTMLElement>;
@@ -137,6 +138,8 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
   // Latches true once a guide's spotlight has been revealed, so a later spoken
   // turn cannot retract an already-visible highlight.
   const [guideRevealed, setGuideRevealed] = useState(false);
+  const narrationSpeakingObservedRef = useRef(false);
+  const narrationReceivedAtRef = useRef(0);
 
   const sendResult = useCallback((
     command: UiInteractionCommand,
@@ -250,6 +253,8 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
         sendResult(previous, "cancelled", "superseded");
       }
       activeCommandRef.current = message;
+      narrationSpeakingObservedRef.current = false;
+      narrationReceivedAtRef.current = Date.now();
       setActiveCommand(message);
       setGuideRevealed(false);
 
@@ -287,17 +292,43 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [activeCommand, settle]);
 
-  // Reveal the guide only once the agent has finished speaking its
-  // introduction. While speaking, the control surface and spotlight stay hidden;
-  // when speech settles we open the sidebar and latch, so the highlight is never
-  // yanked open mid-sentence. Text mode never enters "speaking", so this reveals
-  // immediately.
+  // A voice guide with newly streamed narration reveals only after provider
+  // speaking starts and settles. Already-spoken and text-mode guides reveal
+  // immediately. If provider mode evidence is lost, fail open after a bounded
+  // wait rather than trapping FTUE behind an invisible guide.
   useEffect(() => {
     if (!activeCommand || activeCommand.mode !== "guide" || guideRevealed) return;
-    if (agentSpeaking) return;
-    if (activeCommand.subject === "resource") revealResourceRef.current();
-    else revealControlRef.current(activeCommand.target);
-    setGuideRevealed(true);
+    if (activeCommand.narrationState !== "streamed") {
+      if (activeCommand.subject === "resource") revealResourceRef.current();
+      else revealControlRef.current(activeCommand.target);
+      setGuideRevealed(true);
+      return;
+    }
+
+    if (agentSpeaking) {
+      narrationSpeakingObservedRef.current = true;
+      return;
+    }
+    if (narrationSpeakingObservedRef.current) {
+      if (activeCommand.subject === "resource") revealResourceRef.current();
+      else revealControlRef.current(activeCommand.target);
+      setGuideRevealed(true);
+      return;
+    }
+
+    const remainingMs = Math.max(
+      0,
+      NARRATION_SETTLE_TIMEOUT_MS - (Date.now() - narrationReceivedAtRef.current),
+    );
+    const timer = window.setTimeout(() => {
+      log.warn("guide narration speaking state timed out; revealing", {
+        commandId: activeCommand.commandId,
+      });
+      if (activeCommand.subject === "resource") revealResourceRef.current();
+      else revealControlRef.current(activeCommand.target);
+      setGuideRevealed(true);
+    }, remainingMs);
+    return () => window.clearTimeout(timer);
   }, [activeCommand, agentSpeaking, guideRevealed]);
 
   const activeTargetElement = activeCommand?.mode === "guide" && guideRevealed
@@ -373,7 +404,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
       {activeTargetElement && activeCommand?.mode === "guide" ? (
         <GuideSpotlight
           target={activeTargetElement}
-          introduction={activeCommand.introduction}
+          introduction={activeCommand.displayIntroduction}
           onCancel={() => settle("cancelled", "user_cancelled")}
         />
       ) : null}

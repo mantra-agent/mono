@@ -167,13 +167,14 @@ import { WorkflowWidget } from "@/components/workflow-widget";
 import type { WorkflowWidgetRun } from "@/components/workflow-shared";
 import type { PlanData } from "@/components/plan-shared";
 import { parseReferenceText } from "@shared/reference-parser";
+import { stripExpressionTags } from "@shared/expression-tags";
+
+export { stripExpressionTags } from "@shared/expression-tags";
 
 const log = createLogger("ChatShared");
 
 export type { ChatStreamEvent, ToolCallInfo };
 
-const EXPRESSION_TAG_REGEX =
-  /(?:<[a-z][a-z\s,/]*>|(?<!!)\[[a-z][a-z\s,/]*\])/gi;
 const VISIBLE_EXPRESSION_TAGS = new Set([
   "excited",
   "calm",
@@ -186,10 +187,6 @@ const VISIBLE_EXPRESSION_TAGS = new Set([
   "gravitas",
 ]);
 const LEADING_EXPRESSION_TAG_REGEX = /^\s*\[([a-z]+)\]\s*/;
-
-export function stripExpressionTags(text: string): string {
-  return text.replace(EXPRESSION_TAG_REGEX, "").replace(/  +/g, " ").trim();
-}
 
 function parseLeadingExpressionTags(text: string): {
   tags: string[];

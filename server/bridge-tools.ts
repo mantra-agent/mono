@@ -82,6 +82,7 @@ export interface BridgeToolContext {
   sessionKey: string;
   sessionId: string;
   clientId?: string;
+  uiNarrationState?: import("@shared/ui-interaction").UiInteractionNarrationState;
   orientationPersonaPolicy?: "replace" | "preserve_existing";
   authority?: import("./agent-authority").AgentAuthorityContext;
 }
@@ -16410,6 +16411,7 @@ export async function executeTool(
   if (context?.sessionId) enrichedArgs._sessionId = context.sessionId;
   if (context?.sessionKey) enrichedArgs._sessionKey = context.sessionKey;
   if (context?.clientId) enrichedArgs._clientId = context.clientId;
+  if (context?.uiNarrationState) enrichedArgs._uiNarrationState = context.uiNarrationState;
   enrichedArgs._authorityContext = {
     ...context?.authority,
     sessionId: context?.sessionId,
