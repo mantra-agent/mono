@@ -51,6 +51,10 @@ import { SESSION_REMINDER_PREFIX } from "../../routes/session-reminder";
 import { getPrincipal } from "../../principal";
 import { completeFtueSayHello } from "../../ftue-goals";
 import type { Timer } from "@shared/models/timers";
+import {
+  parseVoiceFinalizationRequest,
+  type VoiceFinalizationResponse,
+} from "@shared/voice-finalization";
 
 import {
   normalizePageContext,
@@ -4014,113 +4018,59 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
   app.post(
     "/api/sessions/:id/voice-finalize",
-    async (req: Request, res: Response) => {
+    async (req: Request, res: Response<VoiceFinalizationResponse>) => {
+      const chatSessionId = req.params.id as string;
+      const parsed = parseVoiceFinalizationRequest(req.body);
+      if (!parsed.ok) {
+        return res.status(400).json({ outcome: "not_finalized", reason: "invalid_request" });
+      }
+
       try {
-        const chatSessionId = req.params.id as string;
-        const voiceSessionId = req.body?.sessionId as string | undefined;
-        const errorMessage = req.body?.errorMessage as string | undefined;
-        const rawSystemSteps = req.body?.systemSteps as
-          | Array<{ name: string; status: "done" | "error"; detail?: string }>
-          | undefined;
         const session = await chatStorage.getSession(chatSessionId);
         if (!session) {
-          return res.status(404).json({ error: "Session not found" });
-        }
-
-        const { chatFileStorage } = await import("../../chat-file-storage");
-
-        if (errorMessage) {
-          try {
-            await chatFileStorage.createMessage(
-              chatSessionId,
-              "assistant",
-              errorMessage,
-              undefined,
-              undefined,
-              undefined,
-              rawSystemSteps,
-            );
-            chatLog.log(
-              `VoiceFinalize persisted error message chatSessionId=${chatSessionId} error="${errorMessage.slice(0, 80)}" systemSteps=${rawSystemSteps?.length || 0}`,
-            );
-          } catch (errPersist: unknown) {
-            const msg =
-              errPersist instanceof Error
-                ? errPersist.message
-                : String(errPersist);
-            chatLog.warn(
-              `VoiceFinalize: failed to persist error message: ${msg}`,
-            );
-          }
-        } else if (rawSystemSteps && rawSystemSteps.length > 0) {
-          try {
-            const messages =
-              await chatFileStorage.getMessagesBySession(chatSessionId);
-            const lastAssistant = [...messages]
-              .reverse()
-              .find((m) => m.role === "assistant");
-            if (lastAssistant) {
-              const existingSteps = lastAssistant.systemSteps || [];
-              const existingKeys = new Set(
-                existingSteps.map((s) => `${s.name}:${s.detail}`),
-              );
-              const deduped = rawSystemSteps.filter(
-                (s) => !existingKeys.has(`${s.name}:${s.detail}`),
-              );
-              if (deduped.length === 0) {
-                chatLog.log(
-                  `VoiceFinalize systemSteps already present (retry dedup) chatSessionId=${chatSessionId}`,
-                );
-              } else {
-                const mergedSteps = [...existingSteps, ...deduped];
-                await chatFileStorage.updateMessageSystemSteps(
-                  lastAssistant.id,
-                  chatSessionId,
-                  mergedSteps,
-                );
-                chatLog.log(
-                  `VoiceFinalize merged systemSteps onto last assistant message chatSessionId=${chatSessionId} messageId=${lastAssistant.id} steps=${mergedSteps.length}`,
-                );
-              }
-            } else {
-              await chatFileStorage.createMessage(
-                chatSessionId,
-                "assistant",
-                "",
-                undefined,
-                undefined,
-                undefined,
-                rawSystemSteps,
-              );
-              chatLog.log(
-                `VoiceFinalize created assistant message for systemSteps chatSessionId=${chatSessionId} steps=${rawSystemSteps.length}`,
-              );
-            }
-          } catch (errSteps: unknown) {
-            const msg =
-              errSteps instanceof Error ? errSteps.message : String(errSteps);
-            chatLog.warn(
-              `VoiceFinalize: failed to persist system steps: ${msg}`,
-            );
-          }
+          return res.status(404).json({ outcome: "not_finalized", reason: "not_completable" });
         }
 
         const { finalizeVoiceSession } = await import("../../voice/finalize");
-        await finalizeVoiceSession({
+        const finalization = await finalizeVoiceSession({
           chatSessionId,
-          voiceSessionId,
+          voiceSessionId: parsed.value.sessionId,
           principal: req.principal!,
           title: session.title || "Voice Chat",
         });
-        chatLog.log(
-          `VoiceFinalize completed chatSessionId=${chatSessionId} voiceSessionId=${voiceSessionId || "none"} title="${session.title}"`,
-        );
+        if (finalization.outcome === "not_finalized") {
+          return res.status(409).json(finalization);
+        }
 
-        res.json({ finalized: true });
+        const { chatFileStorage } = await import("../../chat-file-storage");
+        try {
+          const annotations = await chatFileStorage.applyVoiceFinalizationAnnotations(
+            chatSessionId,
+            parsed.value.sessionId,
+            {
+              errorMessage: parsed.value.errorMessage,
+              systemSteps: parsed.value.systemSteps,
+            },
+          );
+          if (annotations.outcome === "session_not_found") {
+            chatLog.warn(
+              `VoiceFinalize durable chat disappeared after lease completion chatSessionId=${chatSessionId}`,
+            );
+            return res.status(500).json({ outcome: "unknown", reason: "internal_error" });
+          }
+
+          chatLog.log(
+            `VoiceFinalize completed chatSessionId=${chatSessionId} voiceSessionId=${parsed.value.sessionId} replayed=${finalization.replayed} annotations=${annotations.outcome}`,
+          );
+          return res.status(200).json(finalization);
+        } catch (annotationError) {
+          chatLog.error("VoiceFinalize annotations failed after terminal session commit:", annotationError);
+          return res.status(500).json({ outcome: "unknown", reason: "internal_error" });
+        }
       } catch (error) {
         chatLog.error("VoiceFinalize error:", error);
         if (!res.headersSent) {
-          res.status(500).json({ error: "Failed to finalize voice session" });
+          return res.status(500).json({ outcome: "unknown", reason: "internal_error" });
         }
       }
     },
