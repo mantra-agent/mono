@@ -52,7 +52,10 @@ export interface CreateUserWorkspaceInput {
   markStarted?: boolean;
   markCompleted?: boolean;
   enterDemo?: boolean;
+  /** Private source Meeting used only to derive the recipient-safe recap projection. */
   recapMeetingSessionId?: string;
+  /** Recipient-owned materialized Meeting surfaced and guided on Home/Simple. */
+  ftueRecapMeetingSessionId?: string;
 }
 
 function requireUserPrincipal(req: Request): Principal & { userId: string; accountId: string } {
@@ -458,6 +461,7 @@ export async function createUserWorkspace(
         {
           sessionType: "user",
           ftueWelcome: true,
+          ftueRecapMeetingSessionId: cleanText(input.ftueRecapMeetingSessionId, 128),
           provenance: recapMeetingSessionId
             ? {
                 triggerType: "meeting",
@@ -578,6 +582,7 @@ export function registerOnboardingRoutes(app: Express): void {
       if (!parsed.success) return res.status(400).json({ error: "Invalid onboarding data", details: parsed.error.flatten() });
       const principal = requireUserPrincipal(req);
       let recapMeetingSessionId: string | undefined;
+      let ftueRecapMeetingSessionId: string | undefined;
       if (parsed.data.recapToken) {
         const user = await getUserOrThrow(principal.userId);
         const { resolveOnboardingToken } = await import("./meeting/distribution");
@@ -591,11 +596,19 @@ export function registerOnboardingRoutes(app: Express): void {
           return;
         }
         recapMeetingSessionId = resolution.meetingSessionId;
+        const { materializeAuthenticatedRecipientRecap } = await import("./meeting/recipient-materialization");
+        const materialized = await materializeAuthenticatedRecipientRecap(parsed.data.recapToken, user.email);
+        if (!materialized) {
+          res.status(404).json({ error: "Recap onboarding unavailable" });
+          return;
+        }
+        ftueRecapMeetingSessionId = materialized.meetingSessionId;
       }
       const { recapToken: _recapToken, ...onboardingInput } = parsed.data;
       const status = await createUserWorkspace(principal, {
         ...onboardingInput,
         recapMeetingSessionId,
+        ftueRecapMeetingSessionId,
         markStarted: true,
         markCompleted: true,
       });

@@ -28,22 +28,22 @@ export const RECAP_FTUE_AGENDA_ITEMS = [
   {
     id: "review-meeting-notes",
     title: "Review meeting notes",
-    description: "Open on the recipient-safe meeting recap supplied in context, walking through summary, decisions, open questions, action items, and assigned tasks. Then use ui target navigation.meetings.open in guide mode so the user can open this meeting's recap and see where their future captured meetings will live. Never attempt to open the meeting owner's private session or Library page.",
+    description: "Open on the recipient-safe meeting recap supplied in context, walking through summary, decisions, open questions, action items, and assigned tasks. Stay on Home/Simple. Use ui in guide mode with the exact recipient-owned meetingResource from ftue_recap_context and surface=home; this expands and highlights the real recap row inline without navigating to Meetings. Never use the source meeting triggerId, open the meeting owner's private session or Library page, or navigate away from Home for this beat. Complete only after the user has activated the highlighted recap row and reviewed what was captured.",
   },
   {
     id: "set-first-goal",
     title: "Set first goal",
-    description: "Elicit one meaningful goal and create it through the canonical goals tool. The new goal surfaces on Simple automatically through the data:goals_changed event; do not navigate to Goals. Complete this item only after the goal exists.",
+    description: "Elicit one meaningful goal and create it through the canonical goals tool while the user remains on Home/Simple. The new goal surfaces there automatically through the data:goals_changed event; do not navigate to Goals or any other page. Complete this item only after the goal exists and is visible in the live Home view.",
   },
   {
     id: "plan-goal-as-project",
     title: "Plan goal as project",
-    description: `Turn the first goal into a canonical project linked to that goal, with measurable milestones and concrete tasks using work and tasks. ${AGENT_WORK_DEADLINE_INSTRUCTION} The project, milestones, and tasks surface on Simple's hierarchy automatically; do not navigate to Projects. Complete only after the project, milestones, and tasks exist with their required dates.`,
+    description: `Turn the first goal into a canonical project linked to that goal, with measurable milestones and concrete tasks using work and tasks while the user remains on Home/Simple. ${AGENT_WORK_DEADLINE_INSTRUCTION} The project, milestones, and tasks surface in the live Simple hierarchy automatically; do not navigate to Projects or any other page. Complete only after the project, milestones, and tasks exist with their required dates and are visible on Home.`,
   },
   {
     id: "show-the-memory-graph",
     title: "Show the memory graph",
-    description: "Use ui target navigation.memoryGraph.open in guide mode. Explain briefly how conversation-derived memory compounds and connect the visible graph to what the user has shared; do not invent claims or create parallel onboarding state.",
+    description: "Move to the Memory Graph with exactly two sequential narrated ui guides. First call ui with target navigation.sidebar.toggle in guide mode and ask the user to activate the persistent Agent orb that expands or collapses the main navigation; wait for that guide to complete. Then call ui with target navigation.memoryGraph.open in guide mode and ask the user to choose Graph; wait for activation and land on /memory?tab=graph. Do not skip the sidebar beat, issue both guides in parallel, navigate directly, invent claims, or create parallel onboarding state. Once on Graph, explain briefly how conversation-derived memory compounds and connect the visible graph to what the user has shared.",
   },
   {
     id: "highlight-relevant-other-features",
