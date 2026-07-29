@@ -104,13 +104,36 @@ export const UI_INTERACTION_REASONS = [
 
 export type UiInteractionReason = typeof UI_INTERACTION_REASONS[number];
 
-export interface UiInteractionCommand {
+/** Upper bound on the guide introduction so the dispatched command stays small. */
+export const UI_INTERACTION_INTRODUCTION_MAX_LENGTH = 400;
+
+interface UiInteractionCommandBase {
   type: "ui.interaction.command";
   commandId: string;
   target: UiInteractionTarget;
-  mode: UiInteractionMode;
   expiresAt: number;
 }
+
+export interface UiInteractionExecuteCommand extends UiInteractionCommandBase {
+  mode: "execute";
+}
+
+export interface UiInteractionGuideCommand extends UiInteractionCommandBase {
+  mode: "guide";
+  /**
+   * User-visible narration that names the control and explicitly asks the user
+   * to click it. Required for every guide, so a spotlight can never appear
+   * without first telling the user what it is and what to do. In voice the
+   * client also waits for this to be spoken before revealing the spotlight.
+   */
+  introduction: string;
+}
+
+/**
+ * Discriminated so a guide-without-introduction is unrepresentable: the
+ * narration invariant lives in the type, not in a downstream guard.
+ */
+export type UiInteractionCommand = UiInteractionExecuteCommand | UiInteractionGuideCommand;
 
 export interface UiInteractionResult {
   type: "ui.interaction.result";
@@ -144,8 +167,8 @@ export function isUiInteractionReason(value: unknown): value is UiInteractionRea
 
 export function isUiInteractionCommand(value: unknown): value is UiInteractionCommand {
   if (!value || typeof value !== "object") return false;
-  const command = value as Partial<UiInteractionCommand>;
-  return command.type === "ui.interaction.command"
+  const command = value as Partial<UiInteractionGuideCommand>;
+  const baseValid = command.type === "ui.interaction.command"
     && typeof command.commandId === "string"
     && command.commandId.length > 0
     && command.commandId.length <= 120
@@ -153,6 +176,13 @@ export function isUiInteractionCommand(value: unknown): value is UiInteractionCo
     && isUiInteractionMode(command.mode)
     && typeof command.expiresAt === "number"
     && Number.isFinite(command.expiresAt);
+  if (!baseValid) return false;
+  if (command.mode === "guide") {
+    return typeof command.introduction === "string"
+      && command.introduction.trim().length > 0
+      && command.introduction.length <= UI_INTERACTION_INTRODUCTION_MAX_LENGTH;
+  }
+  return true;
 }
 
 export function isUiInteractionResult(value: unknown): value is UiInteractionResult {
