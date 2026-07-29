@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { createLogger } from "@/lib/logger";
-import { Mic, MicOff, ArrowUp, Square, Paperclip, MoreHorizontal, Eye, X, FileText, Bug, Gauge } from "lucide-react";
+import { Mic, MicOff, ArrowUp, Square, Paperclip, MoreHorizontal, Eye, X, FileText, Bug, Gauge, ClipboardList } from "lucide-react";
 import { useMentionAutocomplete } from "@/hooks/use-mention-autocomplete";
 import { MentionPopover } from "@/components/mention-popover";
 import { EditableReferenceInput, type EditableReferenceInputHandle } from "@/components/references/editable-reference-input";
@@ -48,6 +48,7 @@ import {
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import type { ChatSession as Session, PageContext, SessionModelTierOverride } from "@shared/models/chat";
+import type { AgendaDefinition } from "@shared/models/agendas";
 import { StatusLine } from "./status-line";
 import { PreviewChip } from "./preview-chip";
 import { ExpandedDialogue } from "./expanded-dialogue";
@@ -56,6 +57,15 @@ import type { ExecutionStep, StreamingContent } from "@shared/streaming-types";
 const log = createLogger("BottomBar");
 
 type BarState = "idle" | "working" | "complete";
+
+interface AgendasResponse {
+  agendas: AgendaDefinition[];
+}
+
+interface PendingAgendaApplication {
+  agenda: AgendaDefinition;
+  sessionId: string;
+}
 
 const HIDDEN_ROUTES = new Set(["/login", "/register", "/voice", "/glasses"]);
 const MODEL_TIER_OPTIONS: Array<{ value: "auto" | SessionModelTierOverride; label: string }> = [
@@ -156,6 +166,7 @@ function BottomBarMenu({
   const { toast } = useToast();
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [pendingAgenda, setPendingAgenda] = useState<PendingAgendaApplication | null>(null);
 
   // Look up focused session metadata from the sessions cache for parentSessionId
   const { data: sessions = [] } = useQuery<Session[]>({
@@ -165,6 +176,15 @@ function BottomBarMenu({
   const focusedSession = focusedSessionId
     ? sessions.find((s) => s.id === focusedSessionId)
     : null;
+
+  // Agenda templates for the "Agenda" submenu. Shares the exact ["/api/agendas"]
+  // query key with the Agendas page, so both views read one cache entry and
+  // cannot drift. Only fetched when a session is focused (the apply target).
+  const { data: agendaData, isLoading: agendasLoading, error: agendasError } = useQuery<AgendasResponse>({
+    queryKey: ["/api/agendas"],
+    enabled: !!focusedSessionId,
+  });
+  const agendaDefinitions = agendaData?.agendas ?? [];
 
   const archiveMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -266,6 +286,35 @@ function BottomBarMenu({
     },
   });
 
+  // Apply an agenda template to the focused session via the canonical
+  // server route, which resolves the scoped definition, instantiates a fresh
+  // all-open snapshot, and writes through the one setSessionAgenda path.
+  const applyAgendaMutation = useMutation({
+    mutationFn: async ({ agendaId, sessionId }: { agendaId: string; sessionId: string }) => {
+      await apiRequest("POST", `/api/sessions/${sessionId}/agenda`, { agendaId });
+      return { sessionId };
+    },
+    onSuccess: ({ sessionId }) => {
+      emitSessionChanged(sessionId, "bottom-bar-agenda-apply");
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+    },
+    onError: (err) => {
+      toast({ title: "Failed to set agenda", description: String(err), variant: "destructive" });
+    },
+  });
+
+  // Apply means replace. If the session already has agenda items, confirm
+  // before overwriting a hand-built agenda; an empty agenda applies instantly.
+  const handleAgendaSelect = (agenda: AgendaDefinition) => {
+    if (!focusedSessionId) return;
+    if ((focusedSession?.agenda?.items?.length ?? 0) > 0) {
+      setPendingAgenda({ agenda, sessionId: focusedSessionId });
+    } else {
+      applyAgendaMutation.mutate({ agendaId: agenda.id, sessionId: focusedSessionId });
+    }
+  };
+
   return (
     <>
       <DropdownMenu>
@@ -317,6 +366,29 @@ function BottomBarMenu({
               </DropdownMenuRadioGroup>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
+          {focusedSessionId && (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <ClipboardList className="h-3.5 w-3.5 mr-2" />
+                Agenda
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {agendasLoading ? (
+                  <DropdownMenuItem disabled>Loading agendas…</DropdownMenuItem>
+                ) : agendasError ? (
+                  <DropdownMenuItem disabled>Agendas unavailable</DropdownMenuItem>
+                ) : agendaDefinitions.length === 0 ? (
+                  <DropdownMenuItem disabled>No agendas yet</DropdownMenuItem>
+                ) : (
+                  agendaDefinitions.map((agenda) => (
+                    <DropdownMenuItem key={agenda.id} onClick={() => handleAgendaSelect(agenda)}>
+                      {agenda.name}
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          )}
           {typeof window !== "undefined" && (window as any).ReactNativeWebView && (
             <DropdownMenuItem
               onClick={() => {
@@ -376,6 +448,31 @@ function BottomBarMenu({
               }}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Replace agenda confirmation dialog */}
+      <AlertDialog open={!!pendingAgenda} onOpenChange={(open) => { if (!open) setPendingAgenda(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Replace agenda?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This conversation already has an agenda. Applying “{pendingAgenda?.agenda.name}” replaces the current agenda and its progress.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingAgenda) {
+                  applyAgendaMutation.mutate({ agendaId: pendingAgenda.agenda.id, sessionId: pendingAgenda.sessionId });
+                }
+                setPendingAgenda(null);
+              }}
+            >
+              Replace
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
