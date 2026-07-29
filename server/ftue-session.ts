@@ -30,6 +30,11 @@ export const RECAP_FTUE_AGENDA_ITEMS = [
     description: "Open on the recipient-safe meeting recap supplied in context, walking through summary, decisions, open questions, action items, and assigned tasks without leaving Home/Simple. Use ui in guide mode with the exact recipient-owned meetingResource from ftue_recap_context and surface=home so the real recap row expands and highlights inline. Never use the source meeting triggerId or open the meeting owner's private session or Library page. Complete only after the user has activated the highlighted recap row and reviewed what was captured.",
   },
   {
+    id: "capture-meeting-detail-preference",
+    title: "Set meeting detail level",
+    description: "Ask one focused question about how much detail the user wants in their meeting notes and follow-ups, for example concise highlights versus thorough detail. Persist their answer immediately as a durable personal Rule through the rules tool with action save, scope contextual, and context naming meeting-notes detail level, so future recaps honor it. Keep this to a single exchange while the user stays on Home/Simple; do not navigate anywhere. Complete this item once the preference Rule is saved, then move to the goal step.",
+  },
+  {
     id: "set-first-goal",
     title: "Set first goal",
     description: "Elicit one meaningful goal and create it through the canonical goals tool while the user remains on Home/Simple. The new goal surfaces there automatically through the data:goals_changed event; do not navigate to Goals or any other page. Complete this item only after the goal exists and is visible in the live Home view.",
