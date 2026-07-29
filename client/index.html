@@ -24,7 +24,28 @@
       // Pre-hydration: apply the theme class before React mounts so the document
       // never flashes the light default background — critical across the claim
       // hard navigation, where a white flash would break the one-orb illusion.
-      (function(){var t=localStorage.getItem('theme');document.documentElement.classList.add(t==='light'?'light':'dark');})();
+      //
+      // The provisional immersive-orb entrance (/visualizer?i=<token>) is the one
+      // exception. It continues directly from the marketing landing's white flash,
+      // so it must boot WHITE and let the orb's white entrance veil resolve into
+      // its black field — never a dark document boot between the two whites. The
+      // exit side keeps the dark boot so the post-claim /home still rises from
+      // black. Keep this URL contract in sync with lib/immersive-entrance.ts.
+      (function(){
+        var loc=window.location;
+        var params=new URLSearchParams(loc.search);
+        var i=(params.get('i')||'').trim();
+        var meetingToken=(params.get('token')||'').trim();
+        var isImmersiveEntrance=loc.pathname==='/visualizer'&&!!i&&!meetingToken;
+        document.documentElement.classList.add('dark');
+        if(isImmersiveEntrance){
+          document.documentElement.style.backgroundColor='#ffffff';
+          if(document.body)document.body.style.backgroundColor='#ffffff';
+          return;
+        }
+        var t=localStorage.getItem('theme');
+        if(t==='light'){document.documentElement.classList.remove('dark');document.documentElement.classList.add('light');}
+      })();
     </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

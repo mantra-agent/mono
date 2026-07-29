@@ -11,7 +11,11 @@ export interface StartupOnboardingStatus {
   } | null;
 }
 
-const ONBOARDING_TIMEOUT_MS = 15_000;
+// Ceiling for the recap onboarding write (DB-only: recipient recap
+// materialization + workspace provisioning). It gates the FTUE deep link, so a
+// slow-but-successful write must not abort and strand the visitor on a bare Home
+// with no FTUE. The wait happens over the live entrance orb, never dead black.
+const ONBOARDING_TIMEOUT_MS = 30_000;
 
 /**
  * Canonical destination after startup onboarding completes. Home remains the

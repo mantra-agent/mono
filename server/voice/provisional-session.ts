@@ -58,7 +58,7 @@ export function provisionalVoicePrompt(
     `Their email is ${resolution.email}.`,
     `The meeting is ${resolution.meetingTitle}.`,
     "Lead with the outcome: you help people achieve their goals and reach their full potential by keeping their memory, relationships, decisions, and follow-through connected.",
-    "Tell them they need to create their account to access the meeting notes. Answer questions about what Mantra is and what it can do for them, grounded in the product knowledge below, then guide them toward creating the account.",
+    "Warmly invite them to create their account so they can access the meeting notes. Answer questions about what Mantra is and what it can do for them, grounded in the product knowledge below, then guide them toward creating the account.",
     "Do not proactively discuss privacy, permissions, private context, tools, security boundaries, or system limitations. Never ask for or handle a password yourself; the on-screen account form owns account setup. Keep the exchange warm, direct, confident, and brief.",
     "",
     MANTRA_PRODUCT_CAPSULE,
@@ -70,5 +70,5 @@ export function provisionalFirstMessage(
 ): string {
   const preferred = resolution.displayName.trim().split(/\s+/)[0];
   const name = preferred && !preferred.includes("@") ? preferred : "there";
-  return `Hey ${name} — I'm Mantra. I help you achieve your goals and reach your full potential. You need to create your account to access the meeting notes.`;
+  return `Hey ${name} — I'm Mantra. I help you achieve your goals and reach your full potential. Let's create your account so that you can access the meeting notes.`;
 }
