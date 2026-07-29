@@ -146,8 +146,8 @@ function ImmersiveClaimGate({ onboardingToken, claimed, onClaimed }: ImmersiveCl
 /**
  * Exit fade duration before the hard claim navigation. The entrance orb fades
  * smoothly to black, the next document boots already-black (pre-hydration theme
- * in index.html), and the claim visual bridge fades the canonical orb back in
- * once it actually paints. Symmetric fades on both sides keep it one orb.
+ * in index.html), and its handoff veil lifts once the canonical authenticated
+ * orb actually paints. No second orb crosses the ownership boundary.
  */
 const CLAIM_EXIT_FADE_MS = 320;
 
@@ -186,9 +186,9 @@ export function AppShellImmersive({ onboardingToken }: AppShellImmersiveProps) {
       });
     }
 
-    // Now the crisp, symmetric fade to black, then the hard ownership handoff.
-    // The next document boots already-black and the claim visual bridge fades the
-    // canonical orb back in once it paints, so this reads as one continuous orb.
+    // Now the crisp fade to black, then the hard ownership handoff. The next
+    // document boots already-black and lifts its veil only after the canonical
+    // authenticated orb paints, avoiding any duplicate visual owner.
     setLeaving(true);
     await new Promise<void>((resolve) => window.setTimeout(resolve, CLAIM_EXIT_FADE_MS));
     beginClaimVisualHandoff();

@@ -130,60 +130,30 @@ function useIsDesktop() {
  * (which owns its own WS subscription) when open.
  */
 export function FocusWidget({ contained = false }: { contained?: boolean } = {}) {
-  const { route, widgetOpen, setWidgetOpen, setSessionForRoute } = useFocusSession();
+  const { route, widgetOpen, setWidgetOpen } = useFocusSession();
   const { openMobile, isMobile: sidebarIsMobile } = useSidebar();
-  const voiceSession = useVoiceSessionOptional();
   const { data: agentStatus } = useExecutorStatus();
   const isDesktop = useIsDesktop();
   const isAgentRunning = agentStatus?.status === "running";
-  const deepLinkHandled = useRef(false);
-  const pendingAutoVoiceSession = useRef<string | null>(null);
 
-  // Deep links can arrive while the widget is closed, especially during FTUE.
-  // Desktop keeps the existing background behavior because the SessionWindow is
-  // already mounted. Mobile must open the full-screen SessionWindow before
-  // starting the voice hello sequence.
+  // The outer shell owns only making the Session Window available. It leaves
+  // selection, URL consumption, and auto-voice to the mounted panel so there is
+  // exactly one owner of the deep-link lifecycle.
   useEffect(() => {
-    if (deepLinkHandled.current) return;
     try {
       const params = new URLSearchParams(window.location.search);
-      const targetSessionId = params.get("c");
-      if (!targetSessionId) return;
-      deepLinkHandled.current = true;
-      const hasAutoVoice = params.get("autoVoice") === "1";
-      const url = new URL(window.location.href);
-      url.searchParams.delete("c");
-      url.searchParams.delete("autoVoice");
-      window.history.replaceState({}, "", url.toString());
-      log.info("Deep link: handling session", { sessionId: targetSessionId, autoVoice: hasAutoVoice, isDesktop });
-      setSessionForRoute(route, targetSessionId);
-      if (hasAutoVoice) {
-        pendingAutoVoiceSession.current = targetSessionId;
-      }
-      if (!isDesktop || route === "/session") {
-        setWidgetOpen(true);
-      }
+      if (!params.get("c")) return;
+      if (!isDesktop || route === "/session") setWidgetOpen(true);
     } catch (err) {
-      log.warn("Deep link handling failed:", err);
+      log.warn("Deep link window activation failed:", err);
     }
-  }, [route, isDesktop, setSessionForRoute, setWidgetOpen]);
+  }, [route, isDesktop, setWidgetOpen]);
 
   useEffect(() => {
     if (route === "/session" && !widgetOpen && !(sidebarIsMobile && openMobile)) {
       setWidgetOpen(true);
     }
   }, [route, widgetOpen, setWidgetOpen, sidebarIsMobile, openMobile]);
-
-  useEffect(() => {
-    const sessionId = pendingAutoVoiceSession.current;
-    if (!sessionId || !voiceSession) return;
-    if (!isDesktop && !widgetOpen) return;
-    if (voiceSession.status !== "idle") return;
-    pendingAutoVoiceSession.current = null;
-    log.info("Deep link auto-voice: starting voice session", { sessionId, isDesktop });
-    voiceSession.setActiveConversationId(sessionId);
-    voiceSession.startSession();
-  }, [voiceSession, voiceSession?.status, widgetOpen, isDesktop]);
 
   if (HIDDEN_ROUTES.has(route)) return null;
 
@@ -198,6 +168,22 @@ export function FocusWidget({ contained = false }: { contained?: boolean } = {})
 interface FocusWidgetPanelProps {
   isAgentRunning: boolean;
   contained: boolean;
+}
+
+interface PendingSessionDeepLink {
+  sessionId: string;
+  autoVoice: boolean;
+}
+
+function readPendingSessionDeepLink(): PendingSessionDeepLink | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get("c");
+    if (!sessionId) return null;
+    return { sessionId, autoVoice: params.get("autoVoice") === "1" };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -311,9 +297,11 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   const [searchQuery, setSearchQuery] = useState("");
 
 
-  // Deep link refs — declared early so widget-open effect can check them.
-  const deepLinkHandled = useRef(false);
-  const deepLinkAutoVoice = useRef(false);
+  // Captured once by the mounted Session Window. The URL remains intact until
+  // this owner has selected the canonical session, then is consumed exactly
+  // once. This prevents the shell and panel from racing the same command.
+  const [pendingDeepLink, setPendingDeepLink] = useState<PendingSessionDeepLink | null>(readPendingSessionDeepLink);
+  const autoVoiceStartedRef = useRef(false);
 
   // Mobile preserves the old overlay behavior: opening the session menu returns
   // to the list unless a deep link selected a session. Desktop keeps the
@@ -321,14 +309,12 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   // the currently focused conversation.
   const prevWidgetOpenRef = useRef(false);
   useEffect(() => {
-    if (widgetOpen && !prevWidgetOpenRef.current && !isDesktop) {
-      if (!deepLinkHandled.current) {
-        setPanelView({ mode: "list" });
-        clearSessionForRoute(route);
-      }
+    if (widgetOpen && !prevWidgetOpenRef.current && !isDesktop && !pendingDeepLink) {
+      setPanelView({ mode: "list" });
+      clearSessionForRoute(route);
     }
     prevWidgetOpenRef.current = widgetOpen;
-  }, [widgetOpen, isDesktop, route, clearSessionForRoute]);
+  }, [widgetOpen, isDesktop, pendingDeepLink, route, clearSessionForRoute]);
 
   // Mobile SessionMenu requests are explicit navigation commands. They must
   // work even when the full-screen SessionWindow is already open, where
@@ -389,39 +375,41 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
     }
   }, [route, widgetOpen, setWidgetOpen]);
 
-  // Fallback deep link handler for legacy entry points where the outer widget
-  // did not consume the params first. The panel is already mounted here, so
-  // selecting the session puts the user directly into the SessionWindow before
-  // any auto-voice start.
+  // Select first, then consume the URL. Auto-voice remains pending until the
+  // panel's active-session discriminant equals the exact command identity.
   useEffect(() => {
-    if (deepLinkHandled.current) return;
+    if (!pendingDeepLink) return;
+    setPanelView({ mode: "session", sessionId: pendingDeepLink.sessionId });
+    setSessionForRoute(route, pendingDeepLink.sessionId);
     try {
-      const params = new URLSearchParams(window.location.search);
-      const targetSessionId = params.get("c");
-      if (!targetSessionId) return;
-      deepLinkHandled.current = true;
-      const hasAutoVoice = params.get("autoVoice") === "1";
-      if (hasAutoVoice) deepLinkAutoVoice.current = true;
       const url = new URL(window.location.href);
       url.searchParams.delete("c");
       url.searchParams.delete("autoVoice");
       window.history.replaceState({}, "", url.toString());
-      log.info("Deep link: selecting session", { sessionId: targetSessionId, autoVoice: hasAutoVoice });
-      setPanelView({ mode: "session", sessionId: targetSessionId });
     } catch (err) {
-      log.warn("Deep link handling failed:", err);
+      log.warn("Deep link URL cleanup failed:", err);
     }
-  }, []);
+    log.info("Deep link: selected canonical session", {
+      sessionId: pendingDeepLink.sessionId,
+      autoVoice: pendingDeepLink.autoVoice,
+    });
+    if (!pendingDeepLink.autoVoice) setPendingDeepLink(null);
+  }, [pendingDeepLink, route, setSessionForRoute]);
 
-  // Deep link auto-voice: start voice once session + voiceSession are ready
+  // Deep link auto-voice: start only after the Session Window authoritatively
+  // displays the exact session. `setActiveConversationId` synchronously updates
+  // the voice owner ref before `startSession`, so same-tick startup is safe.
   useEffect(() => {
-    if (!deepLinkAutoVoice.current || !activeSession || !voiceSession) return;
-    if (voiceSession.status !== "idle") return;
-    deepLinkAutoVoice.current = false;
-    log.info("Deep link auto-voice: starting voice session", { sessionId: activeSession });
-    voiceSession.setActiveConversationId(activeSession);
-    voiceSession.startSession();
-  }, [activeSession, voiceSession]);
+    if (!pendingDeepLink?.autoVoice || !voiceSession) return;
+    if (activeSession !== pendingDeepLink.sessionId) return;
+    if (voiceSession.status !== "idle" || autoVoiceStartedRef.current) return;
+    autoVoiceStartedRef.current = true;
+    const sessionId = pendingDeepLink.sessionId;
+    setPendingDeepLink(null);
+    log.info("Deep link auto-voice: starting canonical session", { sessionId });
+    voiceSession.setActiveConversationId(sessionId);
+    void voiceSession.startSession();
+  }, [activeSession, pendingDeepLink, voiceSession]);
 
   const focusCtx = useFocusContextValue();
   // Reactive URL search string — many pages encode the active tab as ?tab=...
