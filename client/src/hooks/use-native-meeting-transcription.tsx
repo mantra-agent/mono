@@ -93,6 +93,56 @@ function waitForSocketReady(socket: WebSocket): Promise<void> {
   });
 }
 
+/**
+ * Build a short, guaranteed-decodable silent WAV as an object URL. Playing it
+ * synchronously inside the Listen Mode gesture unlocks the reused audio element
+ * for autoplay on iOS/WebKit, where a later fetch-driven play() would otherwise
+ * be blocked. Bytes are assembled by construction so decoding never fails.
+ */
+function buildSilentWavUrl(): string {
+  const sampleRate = 8000;
+  const frames = 160; // ~20ms of 8-bit mono silence.
+  const bytes = new ArrayBuffer(44 + frames);
+  const view = new DataView(bytes);
+  const writeAscii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + frames, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate, true); // byteRate = sampleRate * 1ch * 1byte
+  view.setUint16(32, 1, true); // blockAlign
+  view.setUint16(34, 8, true); // bits per sample
+  writeAscii(36, "data");
+  view.setUint32(40, frames, true);
+  for (let i = 0; i < frames; i++) view.setUint8(44 + i, 128); // 8-bit PCM silence
+  return URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+}
+
+/** Abortable delay used for playback backoff between failed long-poll attempts. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export function NativeMeetingTranscriptionProvider({ children }: { children: ReactNode }) {
   const { toast } = useToast();
   const focus = useFocusSession();
@@ -101,27 +151,26 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
   const speechPlaybackEnabledRef = useRef(false);
   const speechPollAbortRef = useRef<AbortController | null>(null);
   const speechAudioRef = useRef<HTMLAudioElement | null>(null);
+  const silentUnlockUrlRef = useRef<string | null>(null);
   const speechGenerationRef = useRef(0);
   const startPromiseRef = useRef<Promise<NativeMeetingStartResult | null> | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
-
-  const releaseSpeechAudio = useCallback((audio: HTMLAudioElement | null) => {
-    if (!audio) return;
-    audio.pause();
-    audio.removeAttribute("src");
-    audio.load();
-  }, []);
 
   const stopSpeechPlayback = useCallback(() => {
     speechPlaybackEnabledRef.current = false;
     speechGenerationRef.current += 1;
     speechPollAbortRef.current?.abort();
     speechPollAbortRef.current = null;
+    // Flush any in-flight utterance but keep the element so its iOS autoplay
+    // authorization survives across mute/leave/re-enable cycles.
     const audio = speechAudioRef.current;
-    speechAudioRef.current = null;
-    releaseSpeechAudio(audio);
-  }, [releaseSpeechAudio]);
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+  }, []);
 
   const runSpeechPlayback = useCallback((capture: ActiveNativeMeeting) => {
     if (speechPollAbortRef.current || !speechPlaybackEnabledRef.current) return;
@@ -129,10 +178,48 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
     const abortController = new AbortController();
     speechPollAbortRef.current = abortController;
 
-    const audio = new Audio();
-    audio.preload = "auto";
-    speechAudioRef.current = audio;
+    // One reused element for the whole meeting. It is unlocked synchronously
+    // below inside the Listen Mode gesture so later utterances — assigned after
+    // an awaited fetch — keep playing without a fresh user gesture.
+    let element = speechAudioRef.current;
+    if (!element) {
+      element = new Audio();
+      element.preload = "auto";
+      speechAudioRef.current = element;
+    }
+    const audio = element;
+
+    // Guaranteed-decodable silent play() inside the user gesture grants this
+    // element autoplay authorization on iOS/WebKit for the session.
+    if (!silentUnlockUrlRef.current) silentUnlockUrlRef.current = buildSilentWavUrl();
+    audio.src = silentUnlockUrlRef.current;
+    void audio.play().catch(() => undefined);
+
     const endpoint = `/api/meetings/${encodeURIComponent(capture.sessionId)}/native-audio`;
+
+    // Play one buffered utterance through the unlocked element. Progressive
+    // streaming from a long-poll endpoint is impossible with a bare media
+    // element (it cannot see the idle 204) and MSE is unsupported on iPhone
+    // Safari, so each 200 utterance plays from its own object URL.
+    const playClip = (url: string) =>
+      new Promise<void>((resolve, reject) => {
+        const settle = (error?: unknown) => {
+          abortController.signal.removeEventListener("abort", handleAbort);
+          audio.onended = null;
+          audio.onerror = null;
+          if (error) reject(error);
+          else resolve();
+        };
+        const handleAbort = () => {
+          audio.pause();
+          settle();
+        };
+        abortController.signal.addEventListener("abort", handleAbort, { once: true });
+        audio.onended = () => settle();
+        audio.onerror = () => settle(new Error("Native meeting speech playback failed"));
+        audio.src = url;
+        void audio.play().catch(settle);
+      });
 
     const loop = async () => {
       while (
@@ -141,25 +228,33 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
         && activeRef.current === capture
         && speechGenerationRef.current === generation
       ) {
-        audio.src = endpoint;
+        let clipUrl: string | null = null;
         try {
-          await new Promise<void>((resolve, reject) => {
-            const settle = (error?: unknown) => {
-              abortController.signal.removeEventListener("abort", handleAbort);
-              if (error) reject(error);
-              else resolve();
-            };
-            const handleAbort = () => settle();
-            abortController.signal.addEventListener("abort", handleAbort, { once: true });
-            audio.onended = () => settle();
-            audio.onerror = () => settle(new Error("Native meeting speech playback failed"));
-            void audio.play().catch(settle);
+          // Long-poll with fetch so HTTP status is visible: an idle 204 re-polls
+          // immediately instead of reaching the media element as an undecodable
+          // body (the source of the "operation is not supported" failures).
+          const response = await fetch(endpoint, {
+            method: "GET",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { Accept: "audio/mpeg" },
+            signal: abortController.signal,
           });
+          if (response.status === 204) continue;
+          if (!response.ok) {
+            await sleep(1_000, abortController.signal);
+            continue;
+          }
+          const clip = await response.blob();
+          if (clip.size === 0) continue;
+          clipUrl = URL.createObjectURL(clip);
+          await playClip(clipUrl);
         } catch (error) {
           if (abortController.signal.aborted) return;
+          if (error instanceof DOMException && error.name === "AbortError") return;
           if (error instanceof DOMException && error.name === "NotAllowedError") {
             stopSpeechPlayback();
-            log.error("Native meeting speech playback activation failed", {
+            log.error("Native meeting speech playback blocked", {
               sessionId: capture.sessionId,
               error: error.message,
             });
@@ -174,21 +269,17 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
             sessionId: capture.sessionId,
             error: error instanceof Error ? error.message : String(error),
           });
-          await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+          await sleep(1_500, abortController.signal);
         } finally {
-          audio.onended = null;
-          audio.onerror = null;
-          releaseSpeechAudio(audio);
+          if (clipUrl) URL.revokeObjectURL(clipUrl);
         }
       }
     };
 
     void loop().finally(() => {
       if (speechPollAbortRef.current === abortController) speechPollAbortRef.current = null;
-      if (speechAudioRef.current === audio) speechAudioRef.current = null;
-      releaseSpeechAudio(audio);
     });
-  }, [releaseSpeechAudio, stopSpeechPlayback, toast]);
+  }, [stopSpeechPlayback, toast]);
 
   const setSpeechPlaybackEnabled = useCallback((enabled: boolean, sessionId?: string) => {
     const capture = activeRef.current;
@@ -199,8 +290,8 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
     if (!capture || (sessionId && capture.sessionId !== sessionId)) return;
     speechPlaybackEnabledRef.current = true;
 
-    // The async loop runs synchronously through its first audio.play() call,
-    // preserving the Listen Mode user gesture while later requests poll in order.
+    // runSpeechPlayback performs a synchronous silent play() inside this Listen
+    // Mode gesture to unlock iOS autoplay before any awaited network round-trip.
     runSpeechPlayback(capture);
   }, [runSpeechPlayback, stopSpeechPlayback]);
 
@@ -358,6 +449,22 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
   }, [focus, stopLocalCapture, toast]);
 
   useEffect(() => () => release(activeRef.current), [release]);
+
+  // Provider unmount: fully drop the reused speech element and its silent-unlock
+  // object URL. stopSpeechPlayback deliberately keeps them alive across meetings.
+  useEffect(() => () => {
+    const audio = speechAudioRef.current;
+    speechAudioRef.current = null;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    if (silentUnlockUrlRef.current) {
+      URL.revokeObjectURL(silentUnlockUrlRef.current);
+      silentUnlockUrlRef.current = null;
+    }
+  }, []);
 
   const value = useMemo<NativeMeetingTranscriptionContextValue>(() => ({
     activeSessionId,
