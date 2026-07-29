@@ -138,9 +138,9 @@ const ACTIVITY_PACKET_BEADS = 5;
 const ACTIVITY_PACKET_DURATION_MS = 1_150;
 const ACTIVITY_IMPACT_DURATION_MS = 520;
 const ACTIVITY_IMPACT_HOLD_RATIO = 0.18;
-const ACTIVITY_BURST_STAGGER_MS = 45;
-const ACTIVITY_MIN_GAP_MS = 850;
-const ACTIVITY_MAX_GAP_MS = 2_600;
+const ACTIVITY_MEAN_EMIT_GAP_MS = 170;
+const ACTIVITY_MIN_EMIT_GAP_MS = 45;
+const ACTIVITY_MAX_EMIT_GAP_MS = 900;
 const ACTIVITY_RETRY_GAP_MS = 600;
 const ACTIVITY_MIN_NODE_COOLDOWN_MS = 1_800;
 const ACTIVITY_MAX_NODE_COOLDOWN_MS = 10_000;
@@ -365,10 +365,13 @@ function weightedActivityPath(paths: ActivityPath[]): ActivityPath | null {
   return fallbackPaths?.[Math.floor(Math.random() * fallbackPaths.length)] ?? null;
 }
 
-function activityGapMs(recency: number) {
+// Continuous Poisson emission: hotter fields emit faster, and exponential
+// inter-arrival spacing keeps the stream organic rather than metronomic.
+function activityEmitGapMs(recency: number) {
   const heat = THREE.MathUtils.smoothstep(recency, ACTIVITY_RECENCY_THRESHOLD, 1);
-  const baseGap = THREE.MathUtils.lerp(ACTIVITY_MAX_GAP_MS, ACTIVITY_MIN_GAP_MS, heat);
-  return baseGap * THREE.MathUtils.lerp(0.72, 1.28, Math.random());
+  const meanGap = THREE.MathUtils.lerp(ACTIVITY_MEAN_EMIT_GAP_MS * 1.8, ACTIVITY_MEAN_EMIT_GAP_MS, heat);
+  const poissonGap = -Math.log(1 - Math.random()) * meanGap;
+  return THREE.MathUtils.clamp(poissonGap, ACTIVITY_MIN_EMIT_GAP_MS, ACTIVITY_MAX_EMIT_GAP_MS);
 }
 
 export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>(function MemoryGraph3D(
@@ -966,25 +969,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       });
     }
 
-    function launchActivityBurst(now: number) {
-      const burstDestinations = new Set<number>();
-      const burstSize = Math.min(
-        ACTIVITY_VOLUME_MULTIPLIER,
-        maxActivityPackets - activePackets.length,
-      );
-      let hottestDestinationRecency = ACTIVITY_RECENCY_THRESHOLD;
-      for (let packetOffset = 0; packetOffset < burstSize; packetOffset += 1) {
-        const path = weightedActivityPath(eligibleActivityPaths(now, burstDestinations));
-        if (!path) break;
-        activePackets.push({
-          ...path,
-          startedAt: now + packetOffset * ACTIVITY_BURST_STAGGER_MS,
-        });
-        burstDestinations.add(path.destinationIndex);
-        lastPulseAtByNodeIndex.set(path.destinationIndex, now);
-        hottestDestinationRecency = Math.max(hottestDestinationRecency, path.destinationRecency);
-      }
-      return burstDestinations.size > 0 ? hottestDestinationRecency : null;
+    function launchActivityPacket(now: number): number | null {
+      const path = weightedActivityPath(eligibleActivityPaths(now));
+      if (!path) return null;
+      activePackets.push({ ...path, startedAt: now });
+      lastPulseAtByNodeIndex.set(path.destinationIndex, now);
+      return path.destinationRecency;
     }
 
     function scheduleNextActivity(delayMs: number) {
@@ -1000,13 +990,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           return;
         }
         const now = performance.now();
-        const burstRecency = launchActivityBurst(now);
-        if (burstRecency == null) {
+        const emittedRecency = launchActivityPacket(now);
+        if (emittedRecency == null) {
           scheduleNextActivity(ACTIVITY_RETRY_GAP_MS);
           return;
         }
         if (activityFrame === 0) activityFrame = requestAnimationFrame(animateActivity);
-        scheduleNextActivity(activityGapMs(burstRecency));
+        scheduleNextActivity(activityEmitGapMs(emittedRecency));
       }, delayMs);
     }
 
