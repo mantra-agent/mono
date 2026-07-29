@@ -827,6 +827,24 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  create_calendar_block: {
+    description: "Create a single timed block on the user's OWN primary Google Calendar (e.g. travel, focus, or personal blocks). Timed events only. This tool cannot invite other people — it never touches attendees and only writes to the primary calendar. Requires a connected Google account with Calendar Create enabled and Calendar authorization; if either is missing it returns a clear error telling the user to enable/re-authorize Calendar in Settings → Integrations.",
+    category: "calendar",
+
+    parameters: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "Event title (required)" },
+        start: { type: "string", description: "Start time as an ISO 8601 datetime, e.g. 2026-07-29T14:00:00 (required; timed events only)" },
+        end: { type: "string", description: "End time as an ISO 8601 datetime, e.g. 2026-07-29T15:00:00 (required; must be after start)" },
+        timeZone: { type: "string", description: "IANA time zone for start/end (default: America/Chicago)" },
+        location: { type: "string", description: "Optional location" },
+        description: { type: "string", description: "Optional event description/notes" },
+        accountId: { type: "string", description: "Optional connected Google account ID, label, or email to write to (defaults to the user's connected calendar account)" },
+      },
+      required: ["summary", "start", "end"],
+    },
+  },
   git: {
     description: "Interact with Git repositories — clone, pull, browse history, diff, branch, checkout, show, and write changes (add, commit, push, create_pr). Write actions only work on cloned repos in repos/.",
     category: "work",

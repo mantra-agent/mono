@@ -5620,6 +5620,88 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
+  // Guarded, single-purpose calendar-write tool: creates one timed block on the
+  // user's OWN primary Google Calendar. External invites are unrepresentable by
+  // construction — there is no attendees input — so this tool can never fan out
+  // beyond the user's own calendar.
+  async create_calendar_block(args) {
+    try {
+      const summary = typeof args.summary === "string" ? args.summary.trim() : "";
+      if (!summary) return { result: "Missing event title (summary).", error: true };
+
+      const start = typeof args.start === "string" ? args.start.trim() : "";
+      const end = typeof args.end === "string" ? args.end.trim() : "";
+      if (!start || !end) {
+        return { result: "Both start and end are required as ISO 8601 datetimes (timed events only).", error: true };
+      }
+      const startMs = Date.parse(start);
+      const endMs = Date.parse(end);
+      if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
+        return { result: "start and end must be valid ISO 8601 datetimes, e.g. 2026-07-29T14:00:00.", error: true };
+      }
+      if (endMs <= startMs) {
+        return { result: "end must be after start.", error: true };
+      }
+
+      // GATE 1 — calendarCreate permission. checkGmailPermission resolves the
+      // account through principal-scoped helpers before checking permission.
+      const permCheck = await checkGmailPermission(args.accountId, "calendarCreate", "create calendar events");
+      if (permCheck.denied) {
+        toolExec.warn(`create_calendar_block blocked: calendarCreate denied (account=${args.accountId ?? "auto"})`);
+        return permCheck.result;
+      }
+
+      const { getAccountScopes, listGmailAccounts } = await import("./gmail");
+      const { hasCalendarAccess, createEvent } = await import("./google-calendar");
+
+      // Resolve the concrete primary-calendar account (principal-scoped). When no
+      // account was supplied, pick the first visible account with calendar access.
+      let accountId = permCheck.resolvedAccountId;
+      if (!accountId) {
+        const accounts = await listGmailAccounts();
+        for (const a of accounts) {
+          if (await hasCalendarAccess(a.id)) { accountId = a.id; break; }
+        }
+      }
+      if (!accountId) {
+        toolExec.warn("create_calendar_block blocked: no connected Google account with calendar access");
+        return { result: "No connected Google account has Calendar access. Connect or re-authorize Google Calendar in Settings → Integrations.", error: true };
+      }
+
+      // GATE 2 — calendar scope on the chosen account. Fail loudly with a helpful message.
+      const scopes = await getAccountScopes(accountId);
+      if (!scopes.hasCalendar) {
+        toolExec.warn(`create_calendar_block blocked: account=${accountId} missing calendar scope`);
+        return { result: "That Google account is not authorized for Calendar. Re-authorize Google Calendar in Settings → Integrations.", error: true };
+      }
+
+      const timeZone = typeof args.timeZone === "string" && args.timeZone.trim() ? args.timeZone.trim() : "America/Chicago";
+      const description = typeof args.description === "string" && args.description.trim() ? args.description.trim() : undefined;
+      const location = typeof args.location === "string" && args.location.trim() ? args.location.trim() : undefined;
+
+      // Reuse the canonical createEvent write path. calendarId is always 'primary'
+      // and there is deliberately no attendees field.
+      const created = await createEvent(accountId, "primary", {
+        summary,
+        ...(description ? { description } : {}),
+        ...(location ? { location } : {}),
+        start: { dateTime: start, timeZone },
+        end: { dateTime: end, timeZone },
+      });
+
+      await safeInvalidateCalendarCache("create_calendar_block");
+      toolExec.info(`create_calendar_block created event id=${created.id} account=${accountId} start=${created.start?.dateTime ?? start}`);
+      const startStr = created.start?.dateTime ?? start;
+      const endStr = created.end?.dateTime ?? end;
+      return {
+        result: `Calendar block created: "${created.summary}" ${startStr} → ${endStr} (id ${created.id})${created.htmlLink ? ` — ${created.htmlLink}` : ""}`,
+      };
+    } catch (err: any) {
+      toolExec.error(`create_calendar_block failed: ${err?.message ?? err}`);
+      return { result: `Failed to create calendar block: ${err?.message ?? "unknown error"}. If Google Calendar access was revoked, re-authorize it in Settings → Integrations.`, error: true };
+    }
+  },
+
   async list_meetings(args) {
     try {
       const calPermCheck = await checkGmailPermission(args.accountId, "calendarView", "view calendar events");

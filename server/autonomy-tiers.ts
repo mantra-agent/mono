@@ -30,6 +30,8 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   gmail: { default: 0, actions: { draft: 1 } },
   twitter: { default: 0, actions: { post: 2, reply: 2, delete: 2 } },
   meetings: { default: 0, actions: { add: 2, update: 2, delete: 2 } },
+  // External effect: writes a timed event to the user's own Google Calendar.
+  create_calendar_block: { default: 2 },
   converse: { default: 2 },
   content: { default: 1, actions: { list: 0, suggest_times: 0 } },
   finance: { default: 0 },
