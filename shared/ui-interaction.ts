@@ -34,6 +34,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.memoryJournal.open": { href: "/memory?tab=maintenance" },
   "navigation.platforms.open": { href: "/platforms", permission: "build:read" },
   "navigation.design.open": { href: "/design", permission: "build:read" },
+  "navigation.toast.open": { href: "/dev/toast", permission: "build:read" },
   "navigation.database.open": { href: "/database", permission: "build:read" },
   "navigation.issues.open": { href: "/build?tab=issues", permission: "build:read" },
   "navigation.performance.open": { href: "/system?tab=resources", permission: "system:read" },
