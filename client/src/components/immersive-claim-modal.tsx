@@ -147,12 +147,7 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
         aria-label="Create your Mantra account"
       >
         <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-lg font-semibold text-foreground">Create Your Account</h2>
-            <p className="text-sm text-muted-foreground">
-              Create your account to access the meeting notes and continue with Mantra.
-            </p>
-          </div>
+          <h2 className="text-lg font-semibold text-foreground">Create Your Account</h2>
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="claim-name">Name</Label>
@@ -217,7 +212,7 @@ export function ImmersiveClaimModal({ onboardingToken, onClaimed }: ImmersiveCla
                 aria-invalid={termsInvalid}
                 aria-describedby={termsInvalid ? "claim-terms-error" : undefined}
                 className={cn(
-                  "mt-0.5 border-border data-[state=checked]:border-cta data-[state=checked]:bg-cta data-[state=checked]:text-cta-foreground",
+                  "mt-0.5 border-foreground transition-colors motion-reduce:transition-none hover:bg-foreground/10 data-[state=checked]:border-cta data-[state=checked]:bg-cta data-[state=checked]:text-cta-foreground data-[state=checked]:hover:bg-cta",
                   termsInvalid && "border-destructive ring-2 ring-destructive ring-offset-2 ring-offset-card",
                 )}
               />

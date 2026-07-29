@@ -8,11 +8,13 @@ import type {
 } from "@shared/meeting-recipient-recap";
 import type { MeetingSessionMeta } from "@shared/models/chat";
 import type { PriorityLevel, TaskStatus } from "@shared/models/work";
-import { db } from "../db";
+import { db, hasAmbientDatabaseTransaction } from "../db";
 import { normalizeEmailAddress } from "../email-normalization";
 import { chatStorage } from "../integrations/chat/storage";
+import { peopleStorage } from "../people-storage";
+import { createNamedSystemPrincipal } from "../principal";
 import { combineWithVisibleScope } from "../scoped-storage";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
 import { resolveMeetingTransportSession, runWithMeetingOwnerPrincipal } from "./owner-principal";
 import { stripPrivateAgendaFromRecap } from "./recap-content";
 
@@ -128,55 +130,60 @@ async function projectRecipientRecap(
   capability: DistributionCapability,
 ): Promise<RecipientRecapMaterializationSource | null> {
   if (!capability.ownerUserId || !capability.accountId) return null;
-  const session = await resolveMeetingTransportSession(capability.sessionId);
-  const meeting = session?.meeting;
-  if (!meeting
-    || meeting.ownerUserId !== capability.ownerUserId
-    || meeting.principalAccountId !== capability.accountId) return null;
+  return runWithPrincipal(
+    createNamedSystemPrincipal("recipient-recap-source", ["system:read"]),
+    async () => {
+      const session = await resolveMeetingTransportSession(capability.sessionId);
+      const meeting = session?.meeting;
+      if (!meeting
+        || meeting.ownerUserId !== capability.ownerUserId
+        || meeting.principalAccountId !== capability.accountId) return null;
 
-  return runWithMeetingOwnerPrincipal(meeting, async () => {
-    const recap = await loadRecapContent(meeting);
-    if (!recap) return null;
-    const subject = await resolveSecuritySubject(capability.attendeeEmail);
-    const grantedTasks = subject
-      ? await loadGrantedTasks(subject, capability.sessionId)
-      : [];
-    const sharedByEmail = new Map<string, RecipientSharedParticipant>();
-    const addParticipant = (name: string | undefined, email: string | undefined) => {
-      if (!email) return;
-      const normalizedEmail = normalizeEmailAddress(email);
-      if (!normalizedEmail || !normalizedEmail.includes("@")) return;
-      sharedByEmail.set(normalizedEmail, {
-        name: name?.trim() || normalizedEmail,
-        email: normalizedEmail,
+      return runWithMeetingOwnerPrincipal(meeting, async () => {
+        const recap = await loadRecapContent(meeting);
+        if (!recap) return null;
+        const subject = await resolveSecuritySubject(capability.attendeeEmail);
+        const grantedTasks = subject
+          ? await loadGrantedTasks(subject, capability.sessionId)
+          : [];
+        const sharedByEmail = new Map<string, RecipientSharedParticipant>();
+        const addParticipant = (name: string | undefined, email: string | undefined) => {
+          if (!email) return;
+          const normalizedEmail = normalizeEmailAddress(email);
+          if (!normalizedEmail || !normalizedEmail.includes("@")) return;
+          sharedByEmail.set(normalizedEmail, {
+            name: name?.trim() || normalizedEmail,
+            email: normalizedEmail,
+          });
+        };
+        addParticipant(undefined, capability.attendeeEmail);
+        for (const participant of meeting.participants) {
+          if (participant.calendarEmail) {
+            addParticipant(participant.label, participant.calendarEmail);
+            continue;
+          }
+          if (!participant.personId) continue;
+          const person = await peopleStorage.getPerson(participant.personId);
+          const email = person?.contactInfo
+            .filter(contact => contact.type === "email")
+            .map(contact => contact.value.trim())
+            .find(value => value.includes("@"));
+          addParticipant(person?.name || participant.label, email);
+        }
+        return {
+          capability,
+          projection: {
+            meetingTitle: meeting.title?.trim() || meeting.recap?.pageTitle || "Meeting recap",
+            startedAt: meeting.startedAt ?? meeting.eventStart ?? null,
+            recap,
+            tasks: grantedTasks,
+            expiresAt: capability.accessExpiresAt.toISOString(),
+          },
+          participants: [...sharedByEmail.values()].slice(0, 100),
+        };
       });
-    };
-    addParticipant(undefined, capability.attendeeEmail);
-    for (const participant of meeting.participants) {
-      if (participant.calendarEmail) {
-        addParticipant(participant.label, participant.calendarEmail);
-        continue;
-      }
-      if (!participant.personId) continue;
-      const person = await peopleStorage.getPerson(participant.personId);
-      const email = person?.contactInfo
-        .filter(contact => contact.type === "email")
-        .map(contact => contact.value.trim())
-        .find(value => value.includes("@"));
-      addParticipant(person?.name || participant.label, email);
-    }
-    return {
-      capability,
-      projection: {
-        meetingTitle: meeting.title?.trim() || meeting.recap?.pageTitle || "Meeting recap",
-        startedAt: meeting.startedAt ?? meeting.eventStart ?? null,
-        recap,
-        tasks: grantedTasks,
-        expiresAt: capability.accessExpiresAt.toISOString(),
-      },
-      participants: [...sharedByEmail.values()].slice(0, 100),
-    };
-  });
+    },
+  );
 }
 
 export async function getCurrentRecipientOnboardingRecapProjectionByMeeting(
@@ -216,6 +223,41 @@ export async function getAuthenticatedOnboardingRecapProjectionByMeeting(
   if (!distribution?.accessExpiresAt) return null;
   const source = await projectRecipientRecap(distribution as DistributionCapability);
   return source?.projection ?? null;
+}
+
+export async function getLockedAuthenticatedRecapMaterializationSource(
+  token: string,
+  authenticatedEmail: string,
+  recipientUserId: string,
+): Promise<RecipientRecapMaterializationSource | null> {
+  if (!hasAmbientDatabaseTransaction()) {
+    throw new Error("Recipient recap materialization source requires an ambient transaction");
+  }
+  const normalizedToken = token.trim();
+  if (!normalizedToken || normalizedToken.length > 200) return null;
+  const normalizedEmail = normalizeEmailAddress(authenticatedEmail);
+  const [distribution] = await db.select({
+    distributionId: meetingRecapDistributions.id,
+    sessionId: meetingRecapDistributions.sessionId,
+    ownerUserId: meetingRecapDistributions.ownerUserId,
+    accountId: meetingRecapDistributions.accountId,
+    attendeeEmail: meetingRecapDistributions.attendeeEmail,
+    accessExpiresAt: meetingRecapDistributions.accessExpiresAt,
+  }).from(meetingRecapDistributions).innerJoin(users, and(
+    eq(users.id, recipientUserId),
+    sql`LOWER(BTRIM(${users.email})) = ${normalizedEmail}`,
+  )).where(and(
+    or(
+      eq(meetingRecapDistributions.onboardingTokenHash, hashCapabilityToken(normalizedToken)),
+      eq(meetingRecapDistributions.accessTokenHash, hashCapabilityToken(normalizedToken)),
+    ),
+    sql`LOWER(BTRIM(${meetingRecapDistributions.attendeeEmail})) = ${normalizedEmail}`,
+    sql`${meetingRecapDistributions.status} IN ('draft_created', 'sent')`,
+    isNull(meetingRecapDistributions.accessRevokedAt),
+    gt(meetingRecapDistributions.accessExpiresAt, new Date()),
+  )).limit(1).for("update");
+  if (!distribution?.accessExpiresAt) return null;
+  return projectRecipientRecap(distribution as DistributionCapability);
 }
 
 export async function getAuthenticatedOnboardingRecapMaterializationSource(
