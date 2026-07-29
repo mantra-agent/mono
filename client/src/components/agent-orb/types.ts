@@ -59,4 +59,8 @@ export interface OrbVisuals {
   orbitPrecision: number;
   waveEnergy: number;
   coreDarkness: number;
+  /** Time-rate multiplier for the internal volumetric field animation (1.0 = baseline). */
+  fieldAnimationRate: number;
+  /** Angular-velocity multiplier for whole-orb rotation (1.0 = baseline). */
+  rotationRate: number;
 }

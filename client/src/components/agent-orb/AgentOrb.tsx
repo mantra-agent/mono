@@ -229,7 +229,7 @@ export function AgentOrb({
           : 'transparent';
       }
 
-      fieldUniforms.uTime.value = anim.time;
+      fieldUniforms.uTime.value = anim.fieldTime;
       fieldUniforms.uAudioLevel.value = audio;
       fieldUniforms.uDimming.value = visuals.dimming;
       fieldUniforms.uFieldEnergy.value = visuals.fieldEnergy;
@@ -259,8 +259,13 @@ export function AgentOrb({
       orbUniforms.uBreathPhase.value = breath;
 
       const visualMotion = visuals.flowSpeed + visuals.swirlSpeed * 0.55 + visuals.attractorStrength * 0.18;
-      bodyGroup.rotation.y = anim.time * visualMotion * 0.18;
-      bodyGroup.rotation.x = Math.sin(anim.time * visualMotion * 0.42) * visuals.flowStrength * 0.08;
+      // Integrate angular velocity rather than scaling absolute time, so the per-state
+      // rotationRate boost (thinking/tool-use) changes spin speed continuously instead
+      // of snapping the accumulated angle when the multiplier shifts mid-transition.
+      anim.rotationY += dt * visualMotion * visuals.rotationRate * 0.18;
+      anim.rotationXPhase += dt * visualMotion * visuals.rotationRate * 0.42;
+      bodyGroup.rotation.y = anim.rotationY;
+      bodyGroup.rotation.x = Math.sin(anim.rotationXPhase) * visuals.flowStrength * 0.08;
       bodyGroup.rotation.z = 0;
       haloMesh.rotation.x = bodyGroup.rotation.x * 0.72;
       haloMesh.rotation.y = -bodyGroup.rotation.y * 0.42;
