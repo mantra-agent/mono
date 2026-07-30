@@ -3,69 +3,80 @@ import { createLogger } from "@/lib/logger";
 import { markNavigationLazyReady } from "@/lib/navigation-trace";
 
 const log = createLogger("lazyWithRetry");
+const IMPORT_ATTEMPT_TIMEOUT_MS = 6_000;
+const RETRY_DELAY_MS = 500;
 
-const LAST_RELOAD_KEY = "lazyLastReloadTs";
-const RETRY_COUNT_KEY = "lazyRetryCount";
-const RELOAD_COOLDOWN_MS = 10000;
-const MAX_RELOADS = 2;
+export class RouteLoadError extends Error {
+  readonly attempts: number;
+  readonly causeName: string;
+
+  constructor(message: string, attempts: number, cause: unknown) {
+    super(message);
+    this.name = "RouteLoadError";
+    this.attempts = attempts;
+    this.causeName = cause instanceof Error ? cause.name : typeof cause;
+  }
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function loadWithTimeout<T>(
+  factory: () => Promise<{ default: T }>,
+  attempt: number,
+): Promise<{ default: T }> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new RouteLoadError("Page module request timed out.", attempt, new Error("timeout")));
+    }, IMPORT_ATTEMPT_TIMEOUT_MS);
+
+    factory().then(
+      (module) => {
+        window.clearTimeout(timer);
+        resolve(module);
+      },
+      (error: unknown) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 export function lazyWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>,
 ) {
-  return lazy(() =>
-    factory()
-      .then((mod) => {
-        sessionStorage.removeItem(RETRY_COUNT_KEY);
-        markNavigationLazyReady();
-        return mod;
-      })
-      .catch((err) => {
-        log.warn("chunk load failed, attempting retry:", err);
-        return new Promise<{ default: T }>((resolve, reject) => {
-          setTimeout(() => {
-            factory()
-              .then((mod) => {
-                sessionStorage.removeItem(RETRY_COUNT_KEY);
-                markNavigationLazyReady();
-                resolve(mod);
-              })
-              .catch((retryErr) => {
-                markNavigationLazyReady(true);
-                log.error("chunk load retry failed:", retryErr);
-                const lastReload = Number(
-                  sessionStorage.getItem(LAST_RELOAD_KEY) || "0",
-                );
-                const now = Date.now();
-                if (now - lastReload < RELOAD_COOLDOWN_MS) {
-                  log.error("reload cooldown active, not reloading again");
-                  sessionStorage.removeItem(RETRY_COUNT_KEY);
-                  reject(
-                    new Error("Failed to load page. Please hard-refresh."),
-                  );
-                  return;
-                }
-                const count = Number(
-                  sessionStorage.getItem(RETRY_COUNT_KEY) || "0",
-                );
-                if (count < MAX_RELOADS) {
-                  log.warn(
-                    `reloading page (attempt ${count + 1}/${MAX_RELOADS})`,
-                  );
-                  sessionStorage.setItem(RETRY_COUNT_KEY, String(count + 1));
-                  sessionStorage.setItem(LAST_RELOAD_KEY, String(now));
-                  window.location.reload();
-                  resolve(new Promise(() => {}) as never);
-                } else {
-                  sessionStorage.removeItem(RETRY_COUNT_KEY);
-                  reject(
-                    new Error(
-                      "Failed to load page after retries. Please hard-refresh.",
-                    ),
-                  );
-                }
-              });
-          }, 1000);
-        });
-      }),
-  );
+  return lazy(async () => {
+    try {
+      const module = await loadWithTimeout(factory, 1);
+      markNavigationLazyReady();
+      return module;
+    } catch (firstError) {
+      log.warn("page module load failed; retrying", {
+        attempt: 1,
+        errorName: firstError instanceof Error ? firstError.name : typeof firstError,
+      });
+    }
+
+    await wait(RETRY_DELAY_MS);
+
+    try {
+      const module = await loadWithTimeout(factory, 2);
+      markNavigationLazyReady();
+      return module;
+    } catch (retryError) {
+      markNavigationLazyReady(true);
+      const error = new RouteLoadError(
+        "Failed to load the page module after two bounded attempts.",
+        2,
+        retryError,
+      );
+      log.error("page module load exhausted", {
+        attempts: error.attempts,
+        errorName: error.causeName,
+      });
+      throw error;
+    }
+  });
 }
