@@ -295,23 +295,38 @@ export async function seedBuiltinSkills(): Promise<void> {
         continue;
       }
 
+      // Supply a complete canonical row for every NOT NULL column rather than
+      // relying on database column defaults. Deployed databases restored from a
+      // baseline can preserve NOT NULL while losing declared SQL defaults, which
+      // makes any `default`-keyword insert fail with 23502. Explicit values keep
+      // built-in seeding independent of that drift, matching the createSkill path.
       await db.insert(skills).values({
         ...(def.name === "regression" ? { id: CANONICAL_REGRESSION_SKILL_ID } : {}),
         name: def.name,
         description: def.description,
         category: def.category,
         activity: def.activity,
+        authority: "full",
+        writeCategory: "read-only",
+        allowedTools: [],
+        inputs: [],
+        estimatedTokens: 0,
+        estimatedDuration: "5min",
         process: def.process,
         whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
         outputSpec: def.outputSpec ?? "See process instructions",
         qualityCriteria: "",
+        checklist: def.checklist ?? [],
         status: "active",
         author: def.author || "system",
         version: defVersion,
         addToMemory: def.addToMemory ?? true,
-        ...(def.checklist !== undefined && { checklist: def.checklist }),
         budgetBehavior: null,
         pinnedToContext: def.pinnedToContext ?? false,
+        customized: false,
+        scope: "global",
+        successCount: 0,
+        failureCount: 0,
       });
       inserted++;
     } catch (err: any) {
