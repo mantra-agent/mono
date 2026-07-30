@@ -13,7 +13,6 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { useInterfaceMode } from "@/hooks/use-interface-mode";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
-import { Loader2 } from "lucide-react";
 import { openIssueCaptureDialog } from "@/components/issue-capture";
 import { BootGate } from "@/components/boot-gate";
 import { PageHeaderProvider } from "@/hooks/use-page-header";
@@ -38,9 +37,10 @@ import { useMobileViewportRestoration } from "@/hooks/use-mobile-viewport-restor
 import NotFound from "@/pages/not-found";
 import { AppShellImmersive } from "@/components/app-shell-immersive";
 import { getProvisionalOnboardingToken } from "@/lib/immersive-entrance";
-import { markNavigationDestinationCommit, markNavigationFallback } from "@/lib/navigation-trace";
+import { markNavigationDestinationCommit } from "@/lib/navigation-trace";
 import { UiInteractionProvider } from "@/hooks/use-ui-interaction";
 import { ClaimVisualHandoff } from "@/components/claim-visual-handoff";
+import { PageFallback, RouteLoadBoundary } from "@/components/route-load-boundary";
 
 const log = createLogger("App");
 
@@ -201,17 +201,6 @@ interface OnboardingStatus {
   onboardingStatus: string;
 }
 
-function PageFallback() {
-  useEffect(() => {
-    markNavigationFallback();
-  }, []);
-  return (
-    <div className="flex h-screen items-center justify-center bg-background">
-      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-    </div>
-  );
-}
-
 function ForbiddenPage() {
   return (
     <div className="flex h-full items-center justify-center p-6">
@@ -255,8 +244,10 @@ function RouteCommitObserver() {
 }
 
 function Router() {
+  const [location] = useLocation();
+
   return (
-    <Suspense fallback={<PageFallback />}>
+    <RouteLoadBoundary routeKey={location}>
       <RouteCommitObserver />
       <Switch>
         <Route path="/"><Redirect to="/home" /></Route>
@@ -338,7 +329,7 @@ function Router() {
         <Route path="/account" component={UserDetailsPage} />
         <Route component={NotFound} />
       </Switch>
-    </Suspense>
+    </RouteLoadBoundary>
   );
 }
 
@@ -347,47 +338,43 @@ function AuthGate({ children }: { children: ReactNode }) {
   const [location] = useLocation();
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-background">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <PageFallback label="Checking your session…" />;
   }
 
   if (location === "/waitlist") {
     const query = window.location.search;
     window.history.replaceState(null, "", `/start${query}`);
     return (
-      <Suspense fallback={<PageFallback />}>
+      <RouteLoadBoundary routeKey="/start">
         <WaitlistPage />
-      </Suspense>
+      </RouteLoadBoundary>
     );
   }
 
   if (location === "/start") {
     return (
-      <Suspense fallback={<PageFallback />}>
+      <RouteLoadBoundary routeKey="/start">
         <WaitlistPage />
-      </Suspense>
+      </RouteLoadBoundary>
     );
   }
 
   if (location === "/login") {
     return (
-      <Suspense fallback={<PageFallback />}>
+      <RouteLoadBoundary routeKey="/login">
         <LoginPage />
-      </Suspense>
+      </RouteLoadBoundary>
     );
   }
 
   if (location === "/register" || location.startsWith("/register/")) {
     return (
-      <Suspense fallback={<PageFallback />}>
+      <RouteLoadBoundary routeKey={location}>
         <Switch>
           <Route path="/register" component={RegisterPage} />
           <Route path="/register/:token" component={RegisterPage} />
         </Switch>
-      </Suspense>
+      </RouteLoadBoundary>
     );
   }
 
@@ -399,17 +386,17 @@ function AuthGate({ children }: { children: ReactNode }) {
 
   if (location === "/glasses") {
     return (
-      <Suspense fallback={<PageFallback />}>
+      <RouteLoadBoundary routeKey="/glasses">
         <GlassesStandalone />
-      </Suspense>
+      </RouteLoadBoundary>
     );
   }
 
   if (!isAuthenticated) {
     return (
-      <Suspense fallback={<PageFallback />}>
+      <RouteLoadBoundary routeKey="/login">
         <LoginPage />
-      </Suspense>
+      </RouteLoadBoundary>
     );
   }
 
@@ -443,9 +430,16 @@ function AppLayout({ mobileSurfaceActive, previewRouteOwnsCanvas }: { mobileSurf
             {mobileSessionSurfaceOpen ? (
               <FocusWidget contained />
             ) : (
-              <main className="@container flex-1 min-w-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
+              <main className="@container relative flex-1 min-w-0 overflow-hidden">
                 <ContainerWidthProvider>
-                  {navOpen ? <NavPage /> : <Router />}
+                  <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
+                    <Router />
+                  </div>
+                  {navOpen && (
+                    <div className="absolute inset-0 z-40 flex min-h-0 bg-background" data-testid="nav-overlay">
+                      <NavPage />
+                    </div>
+                  )}
                 </ContainerWidthProvider>
               </main>
             )}
