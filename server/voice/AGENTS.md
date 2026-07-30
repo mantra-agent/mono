@@ -71,7 +71,8 @@ Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIter
 - The thinking filter is stateful per-turn — always create a fresh one via `createThinkingFilter()`
 - Never block the SSE response — use fire-and-forget for non-critical logging
 - STT adapters consume `SpeechRecognitionHints`; meeting/voice entry points resolve user-owned identity, roster, and People vocabulary once and providers only translate that contract to their wire format
-- Each provider socket owns one bounded serial async-delivery chain for recognition callbacks. Consumer/database failures settle and log at that boundary; they must never become unhandled rejections or be reported as provider transport failures.
+- `SpeechRecognitionStreamCoordinator` owns protocol-ready candidate startup, bounded audio buffering/backpressure, same-binding reconnect with a fresh attempt ID, and graceful finish for Recall and native meeting capture. Adapters own only wire protocol and provider EOS.
+- Every coordinator attempt owns one bounded serialized recognition sink. Consumer/database failures settle and log separately from provider transport failures and never become unhandled rejections.
 
 ### Speech Synthesis Ownership
 Normal voice configuration is the sole source of truth for voice identity, model, expression tags, pronunciation, and voice settings. `voice/synthesis.ts` owns the portable provider request: `streamVoiceAudio()` returns progressive audio, and buffered consumers derive bytes through `synthesizeVoiceAudio()` rather than opening a second provider path. Meeting/Recall and phone/Twilio may deliver, buffer, or transcode that audio, but must not own provider selection or speech configuration.

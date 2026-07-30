@@ -3,10 +3,10 @@ import type { Socket } from "net";
 import { WebSocketServer, WebSocket } from "ws";
 import crypto from "crypto";
 import {
-  createSerializedRecognitionSink,
-  mintRecognitionAttemptId,
-  resolveLegacySpeechRecognitionBinding,
+  speechRecognitionStreamCoordinator,
+  type CoordinatedSpeechRecognitionStream,
   type ResolvedSpeechRecognitionBinding,
+  type SpeechRecognitionCoordinatorState,
 } from "../speech-recognition";
 import { createLogger } from "../log";
 import { chatStorage } from "../integrations/chat/storage";
@@ -15,7 +15,6 @@ import {
   HIGH_QUALITY_SCRIBE_POLICY,
   ScribeRealtimeSTTProvider,
   type STTProvider,
-  type STTProviderSession,
   type STTUtterance,
 } from "../voice/stt";
 import type {
@@ -48,19 +47,8 @@ import {
 
 const log = createLogger("MeetingSTT");
 const MAX_PARTICIPANT_STREAMS = 16;
-const MAX_PENDING_AUDIO_BYTES = 512 * 1024;
 const AUDIO_TOKEN_TTL_MS = 12 * 60 * 60_000;
 const AUDIO_TOKEN_PURPOSE = "meeting-participant-audio";
-
-// A realtime STT provider socket (Scribe/Deepgram) can drop mid-meeting on
-// idle silence, provider max-duration limits, or transient network faults.
-// Reconnect the participant session with bounded backoff before declaring
-// recognition failed, buffering incoming audio across the gap so speech is not
-// lost. Without this, a single drop freezes transcript delivery for the rest of
-// a long meeting.
-const STT_RECONNECT_MAX_ATTEMPTS = 5;
-const STT_RECONNECT_BASE_DELAY_MS = 500;
-const STT_RECONNECT_MAX_DELAY_MS = 8_000;
 
 function audioTokenSignature(sessionId: string, expiresAt: number): string {
   const secret = process.env.SESSION_SECRET;
@@ -133,10 +121,7 @@ interface StreamIdentity {
 interface ParticipantStream {
   identity: StreamIdentity;
   recognition: MeetingRecognitionStream;
-  pendingAudio: Buffer[];
-  pendingBytes: number;
-  stt?: STTProviderSession;
-  connectPromise: Promise<void>;
+  stt?: CoordinatedSpeechRecognitionStream;
   binding?: ResolvedSpeechRecognitionBinding;
 }
 
@@ -166,10 +151,6 @@ export function unavailableMeetingRecognitionDetail(mode: MeetingAudioSourceMode
   return mode === "shared_room"
     ? "Shared-room speaker separation requires a configured real-time machine-diarization provider. Deepgram Nova-3 is the current adapter."
     : "Participant-stream recognition requires ElevenLabs Scribe Realtime.";
-}
-
-function isConfigurationError(detail: string): boolean {
-  return /not configured/i.test(detail);
 }
 
 function sessionIdFromPayload(payload: RecallAudioPayload): string | null {
@@ -221,7 +202,7 @@ async function persistRecognition(
     .map((stream) => stream.recognition);
   const anyActive = recognitionStreams.some((stream) => stream.status === "active");
   const degradedDetail = recognitionStreams.find(
-    (stream) => stream.status === "failed" || stream.status === "fallback",
+    (stream) => stream.status === "failed" || stream.status === "fallback" || stream.detail,
   )?.detail;
   // Meeting meta is user-owned state; this transport runs from a raw WebSocket
   // with no request principal, so every write must restore the meeting owner.
@@ -238,7 +219,9 @@ async function persistRecognition(
       // utterance arrives, closing the meeting-start duplication race.
       ...(!closing && anyActive
         ? { sttSource: "recall_participant_audio" as const, sttFallback: false }
-        : {}),
+        : recognitionStreams.some((stream) => stream.status === "failed")
+          ? { sttFallback: true }
+          : {}),
       sttStatus: closing
         ? "inactive"
         : recognitionStreams.some((stream) => stream.status === "failed" || stream.status === "fallback")
@@ -293,15 +276,6 @@ async function ingestFinalUtterance(
     },
   });
   if (!result.ok) throw new Error(result.error);
-}
-
-function appendPendingAudio(stream: ParticipantStream, bytes: Buffer): void {
-  stream.pendingAudio.push(bytes);
-  stream.pendingBytes += bytes.length;
-  while (stream.pendingBytes > MAX_PENDING_AUDIO_BYTES && stream.pendingAudio.length > 0) {
-    const dropped = stream.pendingAudio.shift();
-    stream.pendingBytes -= dropped?.length || 0;
-  }
 }
 
 function pcm16Rms(bytes: Buffer): number {
@@ -414,12 +388,6 @@ export function registerMeetingSTTAudioTransport(
     const meetings = new Map<string, MeetingSessionMeta>();
     const policyRefreshes = new Map<string, Promise<MeetingSessionMeta>>();
     const policyRefreshedAt = new Map<string, number>();
-    // Reconnect budget + pending timers per participant stream (keyed by
-    // streamMapKey), stable across in-place session rebuilds. The attempt count
-    // resets whenever a stream reaches "active" so each independent drop over a
-    // long meeting gets a fresh, bounded retry budget.
-    const sttReconnectAttempts = new Map<string, number>();
-    const sttReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
     let closed = false;
 
     const streamMapKey = (sessionId: string, transportId: string): string => `${sessionId}:${transportId}`;
@@ -450,97 +418,44 @@ export function registerMeetingSTTAudioTransport(
       return refresh;
     };
 
-    const failStream = async (stream: ParticipantStream, detail: string): Promise<void> => {
-      const mapKey = streamMapKey(stream.identity.sessionId, stream.identity.transportId);
-      if (
-        closed ||
-        streams.get(mapKey) !== stream ||
-        ["closed", "excluded"].includes(stream.recognition.status)
-      ) {
-        log.debug(
-          `ignored meeting STT error after stream close sessionId=${stream.identity.sessionId} stream=${stream.identity.streamId} detail=${detail}`,
-        );
-        return;
-      }
-      const meeting = meetings.get(stream.identity.sessionId);
-      if (meeting) {
-        const currentSession = await runWithMeetingOwnerPrincipal(
-          meeting,
-          () => chatStorage.getSession(stream.identity.sessionId),
-        );
-        const currentMeeting = currentSession?.meeting;
-        if (
-          currentMeeting &&
-          ["leaving", "ended", "denied", "failed"].includes(currentMeeting.botStatus)
-        ) {
-          meetings.set(stream.identity.sessionId, currentMeeting);
-          stream.recognition = { ...stream.recognition, status: "closed", detail: undefined };
-          await persistRecognition(stream.identity.sessionId, currentMeeting, streams, true).catch((error) =>
-            log.error(`failed to persist closed recognition state sessionId=${stream.identity.sessionId}: ${error instanceof Error ? error.message : String(error)}`),
-          );
-          log.info(
-            `meeting STT stream closed with meeting lifecycle sessionId=${stream.identity.sessionId} stream=${stream.identity.streamId} botStatus=${currentMeeting.botStatus}`,
-          );
-          return;
-        }
-      }
-      stream.recognition = { ...stream.recognition, status: "failed", detail: detail.slice(0, 500) };
-      if (meeting) {
-        await persistRecognition(stream.identity.sessionId, meeting, streams).catch((error) =>
-          log.error(`failed to persist degraded recognition state sessionId=${stream.identity.sessionId}: ${error instanceof Error ? error.message : String(error)}`),
-        );
-      }
-      log.warn(`meeting STT stream failed sessionId=${stream.identity.sessionId} stream=${stream.identity.streamId} detail=${detail}`);
-    };
+    const coordinatorStateToRecognition = (
+      identity: StreamIdentity,
+      diarized: boolean,
+      state: SpeechRecognitionCoordinatorState,
+    ): MeetingRecognitionStream => ({
+      streamKey: identity.streamId,
+      transportParticipantId: identity.transportId,
+      transportLabel: identity.label,
+      sourcePolicy: diarized ? "shared_room" : "participant_streams",
+      attribution: diarized ? "diarized" : "participant",
+      bindingId: state.binding?.bindingId,
+      adapterKind: state.binding?.adapterKind,
+      attemptId: state.attemptId,
+      configFingerprint: state.binding?.configFingerprint,
+      provider: state.binding?.provider || (diarized ? "deepgram" : "scribe_realtime"),
+      model: state.binding?.model || (diarized ? "nova-3" : "scribe_v2_realtime"),
+      status: state.status === "reconnecting" ? "connecting" : state.status,
+      ...(state.detail ? { detail: state.detail.slice(0, 500) } : {}),
+    });
 
     const connectStream = (
       identity: StreamIdentity,
       meeting: MeetingSessionMeta,
       route: Extract<StreamRoute, { kind: "participant" | "diarized" }>,
+      hints: SpeechRecognitionHints,
       isCurrent: (stream: ParticipantStream) => boolean = () => true,
     ): ParticipantStream => {
       const provider = route.provider;
       const diarized = route.kind === "diarized";
-      const attemptId = mintRecognitionAttemptId();
-      const recognition: MeetingRecognitionStream = {
-        streamKey: identity.streamId,
-        transportParticipantId: identity.transportId,
-        transportLabel: identity.label,
-        sourcePolicy: diarized ? "shared_room" : "participant_streams",
-        attribution: diarized ? "diarized" : "participant",
-        adapterKind: provider.adapterKind,
-        attemptId,
-        provider: provider.provider,
-        model: provider.model,
-        status: "connecting",
-      };
-      const stream = {} as ParticipantStream;
-      stream.identity = identity;
-      stream.recognition = recognition;
-      stream.pendingAudio = [];
-      stream.pendingBytes = 0;
-      stream.connectPromise = (async () => {
-        const binding = await resolveLegacySpeechRecognitionBinding(provider.adapterKind as "elevenlabs-scribe-realtime" | "deepgram-realtime");
-        if (!binding) {
-          throw new Error(`${provider.provider} is not configured for ${diarized ? "shared-room" : "participant"} recognition`);
-        }
-        stream.binding = binding;
-        stream.recognition = {
-          ...stream.recognition,
-          bindingId: binding.bindingId,
-          configFingerprint: binding.configFingerprint,
-        };
-        const sink = createSerializedRecognitionSink(
-          async (utterance) => {
-            if (utterance.isFinal && isCurrent(stream)) {
-              await ingestFinalUtterance(deps.ingestMeetingEvent, identity.sessionId, utterance, diarized);
-            }
-          },
-          (error) => void scheduleSttReconnect(stream, error.message),
-        );
-        return provider.connect(
-          binding,
-          {
+      const stream = {
+        identity,
+        recognition: coordinatorStateToRecognition(identity, diarized, { status: "connecting" }),
+      } as ParticipantStream;
+      stream.stt = speechRecognitionStreamCoordinator.open(
+        {
+          useCase: diarized ? "meeting_shared_room" : "meeting_participant_stream",
+          adapterKinds: [provider.adapterKind],
+          stream: {
             streamId: `${identity.sessionId}:meeting:${identity.streamId}`,
             participant: {
               transportId: identity.transportId,
@@ -551,24 +466,39 @@ export function registerMeetingSTTAudioTransport(
             encoding: "pcm_s16le",
             sampleRateHz: 16000,
             channels: 1,
-            hints: await recognitionHintsForMeeting(identity.sessionId, meeting),
+            hints,
           },
-          sink,
-          attemptId,
-        );
-      })().then(async (stt) => {
-        stream.stt = stt;
-        stream.recognition = { ...stream.recognition, status: "active" };
-        sttReconnectAttempts.delete(streamMapKey(identity.sessionId, identity.transportId));
-        syncMeetingVisualizerBotStatus(identity.sessionId, "live");
-        for (const packet of stream.pendingAudio) {
-          if (stt.tryWriteAudio(packet) !== "accepted") break;
-        }
-        stream.pendingAudio = [];
-        stream.pendingBytes = 0;
-        await persistRecognition(identity.sessionId, meeting, streams);
-        log.info(`meeting STT participant connected sessionId=${identity.sessionId} participantId=${identity.transportId} provider=${provider.provider} model=${provider.model} attribution=${recognition.attribution}`);
-      }).catch((error) => scheduleSttReconnect(stream, error instanceof Error ? error.message : String(error)));
+        },
+        {
+          onState: (state) => {
+            if (!isCurrent(stream) || closed) return;
+            stream.binding = state.binding;
+            stream.recognition = coordinatorStateToRecognition(identity, diarized, state);
+            if (state.status === "active") syncMeetingVisualizerBotStatus(identity.sessionId, "live");
+            void persistRecognition(identity.sessionId, meeting, streams).catch((error) =>
+              log.error("meeting recognition state persistence failed", {
+                sessionId: identity.sessionId,
+                streamId: identity.streamId,
+                status: state.status,
+                errorType: error instanceof Error ? error.name : typeof error,
+              }),
+            );
+          },
+          onFailure: (failure) => {
+            log.warn("meeting speech recognition failed", {
+              sessionId: identity.sessionId,
+              streamId: identity.streamId,
+              kind: failure.kind,
+              retryable: failure.retryable,
+            });
+          },
+          onUtterance: async (utterance) => {
+            if (isCurrent(stream)) {
+              await ingestFinalUtterance(deps.ingestMeetingEvent, identity.sessionId, utterance, diarized);
+            }
+          },
+        },
+      );
       return stream;
     };
 
@@ -578,33 +508,20 @@ export function registerMeetingSTTAudioTransport(
     ): Promise<void> => {
       const meeting = await loadMeeting(stream.identity.sessionId);
       if (stream.recognition.attribution === "excluded") return;
-      if (stream.recognition.sourcePolicy === mode && ["connecting", "active"].includes(stream.recognition.status)) {
-        return;
-      }
+      if (stream.recognition.sourcePolicy === mode && ["connecting", "active"].includes(stream.recognition.status)) return;
       stream.stt?.abort("Meeting audio source reconfigured");
-      stream.stt = undefined;
-      stream.pendingAudio = [];
-      stream.pendingBytes = 0;
       const route = routeStream(mode, stream.identity, {
         scribe: scribeProvider,
         deepgram: deepgramProvider,
       });
       if (route.kind === "excluded") return;
       const mapKey = streamMapKey(stream.identity.sessionId, stream.identity.transportId);
-      // A deliberate mode change supersedes any in-flight reconnect for this
-      // stream. Cancel the pending timer and reset the budget so the fresh
-      // session starts clean.
-      const pendingReconnect = sttReconnectTimers.get(mapKey);
-      if (pendingReconnect) {
-        clearTimeout(pendingReconnect);
-        sttReconnectTimers.delete(mapKey);
-      }
-      sttReconnectAttempts.delete(mapKey);
-      let replacement: ParticipantStream;
-      replacement = connectStream(
+      const hints = await recognitionHintsForMeeting(stream.identity.sessionId, meeting);
+      const replacement = connectStream(
         stream.identity,
         meeting,
         route,
+        hints,
         (candidate) => streams.get(mapKey) === candidate,
       );
       streams.set(mapKey, replacement);
@@ -629,172 +546,30 @@ export function registerMeetingSTTAudioTransport(
         status: "excluded",
         detail,
       },
-      pendingAudio: [],
-      pendingBytes: 0,
-      connectPromise: Promise.resolve(),
     });
 
-    // Rebuild a dropped participant STT session in place, preserving the map
-    // slot, stream identity, and any audio buffered during the outage so speech
-    // is replayed in order once the provider reconnects.
-    const reconnectStreamNow = async (
-      previous: ParticipantStream,
-      mapKey: string,
-    ): Promise<void> => {
-      sttReconnectTimers.delete(mapKey);
-      if (
-        closed ||
-        streams.get(mapKey) !== previous ||
-        ["closed", "excluded"].includes(previous.recognition.status)
-      ) {
-        return;
-      }
-      let meeting: MeetingSessionMeta;
-      try {
-        meeting = await loadMeeting(previous.identity.sessionId);
-      } catch (error) {
-        await failStream(
-          previous,
-          `meeting unavailable during STT reconnect: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        return;
-      }
-      // Re-check after the async gap: a lifecycle terminal or stream swap may
-      // have superseded this reconnect.
-      if (closed || streams.get(mapKey) !== previous) return;
-      const mode = meeting.audioSourcePolicies?.[previous.identity.streamId]?.mode
-        || previous.recognition.sourcePolicy;
-      const route = routeStream(mode, previous.identity, {
-        scribe: scribeProvider,
-        deepgram: deepgramProvider,
-      });
-      if (route.kind === "excluded") {
-        streams.set(mapKey, excludeStream(previous.identity, route.detail));
-        await persistRecognition(previous.identity.sessionId, meeting, streams).catch((error) =>
-          log.error(`failed to persist excluded recognition during reconnect sessionId=${previous.identity.sessionId}: ${error instanceof Error ? error.message : String(error)}`),
-        );
-        return;
-      }
-      const replacement = connectStream(
-        previous.identity,
-        meeting,
-        route,
-        (candidate) => streams.get(mapKey) === candidate,
-      );
-      // Carry buffered audio forward (shared array reference) so speech during
-      // the outage is flushed in order when the replacement connects.
-      replacement.pendingAudio = previous.pendingAudio;
-      replacement.pendingBytes = previous.pendingBytes;
-      streams.set(mapKey, replacement);
-      await persistRecognition(previous.identity.sessionId, meeting, streams).catch((error) =>
-        log.error(`failed to persist reconnecting recognition state sessionId=${previous.identity.sessionId}: ${error instanceof Error ? error.message : String(error)}`),
-      );
-      log.info(`meeting STT reconnecting sessionId=${previous.identity.sessionId} participantId=${previous.identity.transportId} stream=${previous.identity.streamId} mode=${mode}`);
-    };
-
-    // Bounded, replay-safe recovery for a provider drop or connect failure.
-    // A terminal meeting lifecycle is a clean stop, not a fault to retry. Once
-    // the bounded budget is exhausted the stream is marked failed via the
-    // canonical failStream boundary.
-    const scheduleSttReconnect = async (
-      stream: ParticipantStream,
-      detail: string,
-    ): Promise<void> => {
-      const mapKey = streamMapKey(stream.identity.sessionId, stream.identity.transportId);
-      if (
-        closed ||
-        streams.get(mapKey) !== stream ||
-        ["closed", "excluded"].includes(stream.recognition.status)
-      ) {
-        log.debug(
-          `ignored meeting STT reconnect after stream close sessionId=${stream.identity.sessionId} stream=${stream.identity.streamId} detail=${detail}`,
-        );
-        return;
-      }
-      const meeting = meetings.get(stream.identity.sessionId);
-      if (meeting) {
-        const currentMeeting = await runWithMeetingOwnerPrincipal(
-          meeting,
-          () => chatStorage.getSession(stream.identity.sessionId),
-        )
-          .then((session) => session?.meeting)
-          .catch(() => undefined);
-        if (
-          currentMeeting &&
-          ["leaving", "ended", "denied", "failed"].includes(currentMeeting.botStatus)
-        ) {
-          await failStream(stream, detail);
-          return;
-        }
-      }
-      if (isConfigurationError(detail)) {
-        await failStream(stream, detail);
-        return;
-      }
-      const attempts = (sttReconnectAttempts.get(mapKey) ?? 0) + 1;
-      if (attempts > STT_RECONNECT_MAX_ATTEMPTS) {
-        sttReconnectAttempts.delete(mapKey);
-        log.error(
-          `meeting STT reconnect exhausted sessionId=${stream.identity.sessionId} stream=${stream.identity.streamId} attempts=${STT_RECONNECT_MAX_ATTEMPTS} detail=${detail}`,
-        );
-        await failStream(
-          stream,
-          `${detail} (recognition reconnect exhausted after ${STT_RECONNECT_MAX_ATTEMPTS} attempts)`,
-        );
-        return;
-      }
-      sttReconnectAttempts.set(mapKey, attempts);
-      // Tear down the dead provider session and enter a visible recovering
-      // state. Incoming audio buffers via the connecting-status branch in the
-      // socket message handler until the replacement connects.
-      stream.stt?.abort("Recognition reconnect scheduled");
-      stream.stt = undefined;
-      stream.recognition = {
-        ...stream.recognition,
-        status: "connecting",
-        detail: `Reconnecting speech recognition after provider drop (attempt ${attempts}/${STT_RECONNECT_MAX_ATTEMPTS}): ${detail}`.slice(0, 500),
-      };
-      if (meeting) {
-        await persistRecognition(stream.identity.sessionId, meeting, streams).catch((error) =>
-          log.error(`failed to persist reconnecting recognition state sessionId=${stream.identity.sessionId}: ${error instanceof Error ? error.message : String(error)}`),
-        );
-      }
-      const delay = Math.min(
-        STT_RECONNECT_MAX_DELAY_MS,
-        STT_RECONNECT_BASE_DELAY_MS * 2 ** (attempts - 1),
-      );
-      log.warn(
-        `meeting STT reconnect scheduled sessionId=${stream.identity.sessionId} stream=${stream.identity.streamId} attempt=${attempts}/${STT_RECONNECT_MAX_ATTEMPTS} delayMs=${delay} detail=${detail}`,
-      );
-      const existingTimer = sttReconnectTimers.get(mapKey);
-      if (existingTimer) clearTimeout(existingTimer);
-      const timer = setTimeout(() => {
-        void reconnectStreamNow(stream, mapKey);
-      }, delay);
-      timer.unref?.();
-      sttReconnectTimers.set(mapKey, timer);
-    };
-
-    // Force an immediate, budget-resetting rebuild of every live recognition
-    // stream for one meeting. The in-place recovery path for the meeting Reset
-    // control: used when the bot is still in the call but recognition is wedged
-    // (e.g. reconnect budget exhausted). Buffered audio and stream identity are
-    // preserved by reconnectStreamNow.
     const resetRecognition = async (sessionId: string): Promise<void> => {
       for (const [mapKey, stream] of streams) {
         if (stream.identity.sessionId !== sessionId) continue;
         if (["excluded", "closed"].includes(stream.recognition.status)) continue;
-        const timer = sttReconnectTimers.get(mapKey);
-        if (timer) {
-          clearTimeout(timer);
-          sttReconnectTimers.delete(mapKey);
-        }
-        sttReconnectAttempts.delete(mapKey);
-        await reconnectStreamNow(stream, mapKey).catch((error) =>
-          log.error(
-            `meeting recognition reset rebuild failed sessionId=${sessionId} stream=${stream.identity.streamId}: ${error instanceof Error ? error.message : String(error)}`,
-          ),
+        const meeting = await loadMeeting(sessionId);
+        const mode = meeting.audioSourcePolicies?.[stream.identity.streamId]?.mode
+          || stream.recognition.sourcePolicy;
+        const route = routeStream(mode, stream.identity, {
+          scribe: scribeProvider,
+          deepgram: deepgramProvider,
+        });
+        if (route.kind === "excluded") continue;
+        stream.stt?.abort("Meeting recognition reset");
+        const hints = await recognitionHintsForMeeting(sessionId, meeting);
+        const replacement = connectStream(
+          stream.identity,
+          meeting,
+          route,
+          hints,
+          (candidate) => streams.get(mapKey) === candidate,
         );
+        streams.set(mapKey, replacement);
       }
     };
 
@@ -837,9 +612,16 @@ export function registerMeetingSTTAudioTransport(
         scribe: scribeProvider,
         deepgram: deepgramProvider,
       });
+      const mapKey = streamMapKey(sessionId, transportId);
       const stream = route.kind === "excluded"
         ? excludeStream(identity, route.detail)
-        : connectStream(identity, meeting, route);
+        : connectStream(
+            identity,
+            meeting,
+            route,
+            await recognitionHintsForMeeting(sessionId, meeting),
+            (candidate) => streams.get(mapKey) === candidate,
+          );
       streams.set(streamMapKey(sessionId, transportId), stream);
       await persistRecognition(sessionId, meeting, streams);
       log.info(`meeting audio stream routed sessionId=${sessionId} participantId=${transportId} route=${route.kind} stream=${identity.streamId}`);
@@ -888,11 +670,14 @@ export function registerMeetingSTTAudioTransport(
         // barge-in: a human talking over the agent preempts TTS immediately,
         // instead of waiting for a full transcribed segment to be ingested.
         observeMeetingParticipantSpeechEnergy(sessionId, participantEnergy);
-        if (stream.stt) {
-          const writeOutcome = stream.stt.tryWriteAudio(bytes);
-          if (writeOutcome === "blocked") appendPendingAudio(stream, bytes);
-          if (writeOutcome === "closed") void scheduleSttReconnect(stream, "Recognition session closed while audio was active");
-        } else if (stream.recognition.status === "connecting") appendPendingAudio(stream, bytes);
+        const writeOutcome = stream.stt?.tryWriteAudio(bytes) || "closed";
+        if (writeOutcome === "closed") {
+          log.warn("meeting recognition rejected live audio", {
+            sessionId,
+            streamId: stream.identity.streamId,
+            status: stream.recognition.status,
+          });
+        }
       } catch (error) {
         log.warn(`invalid Recall audio packet: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -901,9 +686,6 @@ export function registerMeetingSTTAudioTransport(
     socket.on("close", () => {
       if (closed) return;
       closed = true;
-      for (const timer of sttReconnectTimers.values()) clearTimeout(timer);
-      sttReconnectTimers.clear();
-      sttReconnectAttempts.clear();
       for (const stream of streams.values()) {
         if (stream.recognition.status !== "excluded") {
           stream.recognition = { ...stream.recognition, status: "closed", detail: undefined };

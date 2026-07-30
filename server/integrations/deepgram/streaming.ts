@@ -76,9 +76,11 @@ export async function connectDeepgramStreaming(
   const socket = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, {
     headers: { Authorization: `Token ${apiKey}` },
   });
+  socket.on("error", () => undefined);
   let closing = false;
   let errorReported = false;
-  let lastTranscriptAt = 0;
+  let closeObserved = false;
+  let metadataObserved = false;
   const transcriptDelivery = createSerialAsyncDelivery(onTranscript, {
     label: "Deepgram transcript",
     onFailure: (error) => {
@@ -89,18 +91,23 @@ export async function connectDeepgramStreaming(
     },
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Deepgram connection timed out")), 10_000);
-    timer.unref?.();
-    socket.once("open", () => {
-      clearTimeout(timer);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Deepgram connection timed out")), 10_000);
+      timer.unref?.();
+      socket.once("open", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      socket.once("error", () => {
+        clearTimeout(timer);
+        reject(new Error("Deepgram connection failed"));
+      });
     });
-    socket.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-  });
+  } catch (error) {
+    socket.terminate();
+    throw error;
+  }
 
   socket.on("message", (data) => {
     try {
@@ -116,11 +123,14 @@ export async function connectDeepgramStreaming(
           }>;
         };
       };
+      if (message.type === "Metadata") {
+        metadataObserved = true;
+        return;
+      }
       if (message.type !== "Results") return;
       const alternative = message.channel?.alternatives?.[0];
       const text = alternative?.transcript?.trim() || "";
       if (!text) return;
-      lastTranscriptAt = Date.now();
       transcriptDelivery.enqueue({
         text,
         words: alternative?.words || [],
@@ -130,18 +140,21 @@ export async function connectDeepgramStreaming(
         receivedAtMs: Date.now(),
       });
     } catch (error) {
-      log.warn(`invalid Deepgram message: ${error instanceof Error ? error.message : String(error)}`);
+      log.warn("invalid Deepgram recognition message", {
+        errorType: error instanceof Error ? error.name : typeof error,
+      });
     }
   });
-  socket.on("error", (error) => {
+  socket.on("error", () => {
     if (closing || errorReported) return;
     errorReported = true;
-    onError(error);
+    onError(new Error("Deepgram recognition transport failed"));
   });
-  socket.on("close", (code, reason) => {
-    if (closing || errorReported || code === 1000) return;
+  socket.on("close", (code) => {
+    closeObserved = true;
+    if (closing || errorReported) return;
     errorReported = true;
-    onError(new Error(`Deepgram closed code=${code} reason=${reason.toString()}`));
+    onError(new Error(`Deepgram recognition closed unexpectedly (${code})`));
   });
 
   const keepalive = setInterval(() => {
@@ -152,20 +165,17 @@ export async function connectDeepgramStreaming(
   keepalive.unref();
 
   let finishPromise: Promise<{ outcome: "finished" | "timed_out" }> | null = null;
-  const settleTranscripts = async (): Promise<boolean> => {
-    const finishStartedAt = Date.now();
-    return Promise.race([
+  const settleTranscripts = async (): Promise<boolean> => Promise.race([
     new Promise<true>((resolve) => {
       const inspect = (): void => {
-        const providerQuiet = Date.now() - Math.max(finishStartedAt, lastTranscriptAt) >= 250;
-        if (providerQuiet && transcriptDelivery.pending() === 0) resolve(true);
+        const providerFinished = metadataObserved || closeObserved;
+        if (providerFinished && transcriptDelivery.pending() === 0) resolve(true);
         else setTimeout(inspect, 20).unref?.();
       };
       inspect();
     }),
     new Promise<false>((resolve) => setTimeout(() => resolve(false), 3_000).unref?.()),
-    ]);
-  };
+  ]);
 
   const session: DeepgramStreamingSession = {
     tryWriteAudio(bytes) {

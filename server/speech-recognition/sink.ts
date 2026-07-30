@@ -3,9 +3,15 @@ import type { SerializedRecognitionSink, STTUtterance } from "./contracts";
 const MAX_PENDING_UTTERANCES = 64;
 
 /** One bounded serialized callback queue shared by every recognition adapter. */
+export interface SerializedRecognitionSinkOptions {
+  onProviderFailure?(error: Error): void;
+  onConsumerFailure?(error: Error): void;
+}
+
 export function createSerializedRecognitionSink(
   consume: (utterance: STTUtterance) => void | Promise<void>,
   onTerminalError: (error: Error) => void,
+  options: SerializedRecognitionSinkOptions = {},
 ): SerializedRecognitionSink {
   const queue: STTUtterance[] = [];
   let draining = false;
@@ -19,11 +25,13 @@ export function createSerializedRecognitionSink(
     }
   };
 
-  const fail = (error: unknown): void => {
+  const fail = (error: unknown, source: "provider" | "consumer"): void => {
     if (terminalError) return;
     terminalError = error instanceof Error ? error : new Error(String(error));
     queue.length = 0;
     onTerminalError(terminalError);
+    if (source === "provider") options.onProviderFailure?.(terminalError);
+    else options.onConsumerFailure?.(terminalError);
     maybeSettle();
   };
 
@@ -35,7 +43,7 @@ export function createSerializedRecognitionSink(
         await consume(queue.shift()!);
       }
     } catch (error) {
-      fail(error);
+      fail(error, "consumer");
     } finally {
       draining = false;
       if (queue.length > 0 && !terminalError) void drain();
@@ -47,14 +55,14 @@ export function createSerializedRecognitionSink(
     onUtterance(utterance) {
       if (terminalError) return;
       if (queue.length >= MAX_PENDING_UTTERANCES) {
-        fail(new Error(`Recognition consumer backlog exceeded ${MAX_PENDING_UTTERANCES}`));
+        fail(new Error(`Recognition consumer backlog exceeded ${MAX_PENDING_UTTERANCES}`), "consumer");
         return;
       }
       queue.push(utterance);
       void drain();
     },
     onError(error) {
-      fail(error);
+      fail(error, "provider");
     },
     async settle() {
       if (!draining && queue.length === 0) return;
