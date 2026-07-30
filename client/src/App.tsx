@@ -52,7 +52,7 @@ const VisionPage = lazyWithRetry(() => import("@/pages/goals-future"));
 const HomePage = lazyWithRetry(() => import("@/pages/simple"));
 const DashboardPage = lazyWithRetry(() => import("@/pages/dashboard"));
 const SessionPage = lazyWithRetry(() => import("@/pages/session"));
-const GoalDetail = lazyWithRetry(() => import("@/pages/goal-detail"));
+const GoalDetailRedirect = lazyWithRetry(() => import("@/pages/goal-detail"));
 const ProjectsPage = lazyWithRetry(() => import("@/pages/work"));
 const IssueDetailPage = lazyWithRetry(() => import("@/pages/issue-detail"));
 const IssueCaptureDialog = lazyWithRetry(() => import("@/components/issue-capture").then(m => ({ default: m.IssueCaptureDialog })));
@@ -266,7 +266,7 @@ function Router() {
         <Route path="/system">{() => <RequirePermission permission="system:read"><SystemPage /></RequirePermission>}</Route>
         <Route path="/performance">{() => <Redirect to="/system?tab=resources" />}</Route>
         <Route path="/logs">{() => <LogsPage />}</Route>
-        <Route path="/goals/:id" component={GoalDetail} />
+        <Route path="/goals/:id" component={GoalDetailRedirect} />
         <Route path="/dashboard">{() => <RequirePermission permission="system:read"><DashboardPage /></RequirePermission>}</Route>
         <Route path="/home" component={HomePage} />
         <Route path="/simple">{() => <Redirect to={sessionRedirectFromQuery()} />}</Route>

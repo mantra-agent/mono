@@ -2,8 +2,9 @@
 import { createLogger } from "@/lib/logger";
 import { useState, useMemo, useRef, useCallback } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { useFocusContext } from "@/hooks/use-focus-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,6 +33,7 @@ import type { GoalHorizon, GoalStatus } from "@shared/schema";
 import { HORIZON_LABELS, goalHorizons } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { GoalInlineDetails } from "@/components/goal-inline-details";
 
 const log = createLogger("Goals");
 
@@ -69,7 +71,7 @@ interface GoalTreeSectionProps {
   section: GoalSection;
   allGoals: GoalRow[];
   selectedGoalId: string | null;
-  setSelectedGoalId: (id: string | null) => void;
+  onSelectGoal: (id: string) => void;
   creatingInHorizon: GoalHorizon | null;
   onCreateGoal: (name: string) => void;
   onCancelCreate: () => void;
@@ -81,7 +83,7 @@ interface GoalTreeRowProps {
   allGoals: GoalRow[];
   depth: number;
   selectedGoalId: string | null;
-  setSelectedGoalId: (id: string | null) => void;
+  onSelectGoal: (id: string) => void;
 }
 
 interface GoalRowMenuProps {
@@ -197,14 +199,22 @@ export default function Goals() {
 }
 
 function UnifiedGoalsView() {
+  const search = useSearch();
+  const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
+  const selectedGoalId = new URLSearchParams(search).get("goal");
   const [creatingInHorizon, setCreatingInHorizon] = useState<GoalHorizon | null>(null);
   const { data: goalsData, isLoading, isError } = useQuery<{ goals: GoalRow[] }>({
     queryKey: ["/api/life-goals"],
   });
 
   const allGoals = goalsData?.goals ?? [];
+  const selectedGoal = selectedGoalId ? allGoals.find((goal) => goal.id === selectedGoalId) : null;
+  useFocusContext(selectedGoal ? { entity: { type: "goal", id: selectedGoal.id, label: selectedGoal.shortName } } : null);
+
+  const handleSelectGoal = useCallback((goalId: string) => {
+    setLocation(selectedGoalId === goalId ? "/goals" : `/goals?goal=${encodeURIComponent(goalId)}`);
+  }, [selectedGoalId, setLocation]);
 
   const createGoalMutation = useMutation({
     mutationFn: async ({ horizon, shortName }: { horizon: GoalHorizon; shortName: string }) =>
@@ -226,7 +236,7 @@ function UnifiedGoalsView() {
             .concat(current.goals.some((g) => g.id === goal.id) ? [] : [goal])
             ?? [goal],
         }));
-        setSelectedGoalId(goal.id);
+        setLocation(`/goals?goal=${encodeURIComponent(goal.id)}`);
       }
       invalidateGoalQueries();
     },
@@ -346,7 +356,7 @@ function UnifiedGoalsView() {
           section={section}
           allGoals={allGoals}
           selectedGoalId={selectedGoalId}
-          setSelectedGoalId={setSelectedGoalId}
+          onSelectGoal={handleSelectGoal}
           creatingInHorizon={creatingInHorizon}
           onCreateGoal={handleCreateGoal}
           onCancelCreate={() => setCreatingInHorizon(null)}
@@ -361,7 +371,7 @@ function GoalTreeSection({
   section,
   allGoals,
   selectedGoalId,
-  setSelectedGoalId,
+  onSelectGoal,
   creatingInHorizon,
   onCreateGoal,
   onCancelCreate,
@@ -415,7 +425,7 @@ function GoalTreeSection({
                 allGoals={sectionGoals}
                 depth={0}
                 selectedGoalId={selectedGoalId}
-                setSelectedGoalId={setSelectedGoalId}
+                onSelectGoal={onSelectGoal}
               />
             ))
           )}
@@ -514,7 +524,6 @@ function InlineNewGoalInput({ onSubmit, onCancel }: InlineNewGoalInputProps) {
 }
 
 function GoalRowMenu({ goal, onStartRename }: GoalRowMenuProps) {
-  const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
@@ -552,7 +561,6 @@ function GoalRowMenu({ goal, onStartRename }: GoalRowMenuProps) {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-        <DropdownMenuItem onClick={() => setLocation(`/goals/${goal.id}`)}>Details</DropdownMenuItem>
         <DropdownMenuItem onClick={(e) => { e.preventDefault(); onStartRename(); }}>Rename</DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuSub>
@@ -610,8 +618,7 @@ function GoalRowMenu({ goal, onStartRename }: GoalRowMenuProps) {
   );
 }
 
-function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, setSelectedGoalId }: GoalTreeRowProps) {
-  const [, setLocation] = useLocation();
+function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: GoalTreeRowProps) {
   const [open, setOpen] = useState(true);
   const {
     isRenaming, renameValue, setRenameValue, setRenameCursor, renameInputRef,
@@ -625,11 +632,7 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, setSelectedGoalId 
 
   const handleRowClick = () => {
     if (isRenaming) return;
-    if (isSelected) {
-      setLocation(`/goals/${goal.id}`);
-    } else {
-      setSelectedGoalId(goal.id);
-    }
+    onSelectGoal(goal.id);
   };
 
   return (
@@ -644,8 +647,18 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, setSelectedGoalId 
         )}
         <div className="relative min-w-0 flex-1 overflow-hidden">
           <div
+            role="button"
+            tabIndex={0}
             onClick={handleRowClick}
-            className={`group relative flex w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 ${hasChildren ? "pr-16" : "pr-9"} text-left text-sm text-muted-foreground transition-colors ${isSelected ? "bg-accent" : "hover:bg-accent/70 hover:text-foreground"}`}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                handleRowClick();
+              }
+            }}
+            aria-expanded={isSelected}
+            className={`group relative flex w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 ${hasChildren ? "pr-16" : "pr-9"} text-left text-sm text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${isSelected ? "bg-accent text-foreground" : "hover:bg-accent/70 hover:text-foreground"}`}
             data-testid={`goals-tree-goal-${goal.id}`}
           >
             <span className="shrink-0">
@@ -689,23 +702,16 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, setSelectedGoalId 
               </div>
             ) : (
               <span className="flex-1 min-w-0 overflow-hidden">
-                <button
-                  type="button"
-                  className={`inline-flex max-w-full min-w-0 items-baseline text-left align-baseline ${isSelected ? "cursor-text" : "cursor-pointer"} ${achieved ? "text-neutral line-through decoration-neutral/60" : ""}`}
-                  onClick={(e) => {
-                    if (!isSelected) return;
-                    e.stopPropagation();
-                    startRename();
-                  }}
-                  aria-label={isSelected ? `Rename ${goal.shortName}` : goal.shortName}
-                  data-testid={`button-rename-goal-${goal.id}`}
+                <span
+                  className={`inline-flex max-w-full min-w-0 items-baseline text-left align-baseline ${achieved ? "text-neutral line-through decoration-neutral/60" : ""}`}
+                  data-testid={`goal-name-${goal.id}`}
                 >
                   <InlineReferenceText text={goal.shortName} className="truncate" />
-                </button>
+                </span>
               </span>
             )}
-            <GoalRowMenu goal={goal} onStartRename={startRename} />
           </div>
+          <GoalRowMenu goal={goal} onStartRename={startRename} />
           {hasChildren && (
             <button
               type="button"
@@ -722,6 +728,17 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, setSelectedGoalId 
           )}
         </div>
       </div>
+      {isSelected && (
+        <div className="flex min-w-0 max-w-full items-stretch" style={{ paddingLeft: depth * 16 + 20 }}>
+          <div className="relative mr-1 w-5 shrink-0 self-stretch" aria-hidden="true">
+            <div className="absolute bottom-1/2 left-1/2 top-0 -translate-x-px border-l border-border" />
+            <div className="absolute left-1/2 right-0 top-1/2 border-t border-border" />
+          </div>
+          <div className="min-w-0 flex-1 pb-1">
+            <GoalInlineDetails goalId={goal.id} />
+          </div>
+        </div>
+      )}
       {hasChildren && open && (
         <div>
           {children.map((child) => (
@@ -731,7 +748,7 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, setSelectedGoalId 
               allGoals={allGoals}
               depth={depth + 1}
               selectedGoalId={selectedGoalId}
-              setSelectedGoalId={setSelectedGoalId}
+              onSelectGoal={onSelectGoal}
             />
           ))}
         </div>
