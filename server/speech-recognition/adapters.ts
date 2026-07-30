@@ -109,11 +109,15 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
     const socket = new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params}`, {
       headers: { "xi-api-key": binding.credential },
     });
+    socket.on("error", () => undefined);
     const connectedAtMs = Date.now();
     let sessionId = "pending";
     let sequence = 0;
     let terminal = false;
     let finishPromise: Promise<{ outcome: "finished" | "timed_out" }> | null = null;
+    let lastProviderMessageAt = 0;
+    let finalTranscriptCount = 0;
+    let hasUncommittedPartial = false;
     let readyResolve: (() => void) | null = null;
     let readyReject: ((error: Error) => void) | null = null;
 
@@ -127,6 +131,7 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
           readyReject = null;
           return;
         }
+        lastProviderMessageAt = Date.now();
         const isFinal = message.message_type === "committed_transcript_with_timestamps";
         const isPartial = message.message_type === "partial_transcript";
         if (!isFinal && !isPartial) {
@@ -137,6 +142,12 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
         }
         const text = message.text?.trim() || "";
         if (!text) return;
+        if (isFinal) {
+          finalTranscriptCount += 1;
+          hasUncommittedPartial = false;
+        } else {
+          hasUncommittedPartial = true;
+        }
         const words = message.words || [];
         const first = words[0];
         const last = words.at(-1);
@@ -166,25 +177,34 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
       if (!terminal) sink.onError(error);
     });
     socket.on("close", (code) => {
-      if (!terminal && code !== 1000) sink.onError(new Error(`Scribe recognition closed unexpectedly (${code})`));
+      if (terminal) return;
+      const error = new Error(`Scribe recognition closed unexpectedly (${code})`);
+      readyReject?.(error);
+      sink.onError(error);
     });
 
-    await new Promise<void>((resolve, reject) => {
-      readyResolve = resolve;
-      readyReject = reject;
-      const timer = setTimeout(() => reject(new Error("Scribe recognition readiness timed out")), 10_000);
-      timer.unref?.();
-      const settleResolve = readyResolve;
-      const settleReject = readyReject;
-      readyResolve = () => {
-        clearTimeout(timer);
-        settleResolve?.();
-      };
-      readyReject = (error) => {
-        clearTimeout(timer);
-        settleReject?.(error);
-      };
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        readyResolve = resolve;
+        readyReject = reject;
+        const timer = setTimeout(() => reject(new Error("Scribe recognition readiness timed out")), 10_000);
+        timer.unref?.();
+        const settleResolve = readyResolve;
+        const settleReject = readyReject;
+        readyResolve = () => {
+          clearTimeout(timer);
+          settleResolve?.();
+        };
+        readyReject = (error) => {
+          clearTimeout(timer);
+          settleReject?.(error);
+        };
+      });
+    } catch (error) {
+      terminal = true;
+      socket.terminate();
+      throw error;
+    }
 
     return compatibilitySession({
       tryWriteAudio(bytes) {
@@ -202,15 +222,42 @@ export class ScribeRealtimeSTTProvider implements STTProvider {
         if (finishPromise) return finishPromise;
         terminal = true;
         finishPromise = (async () => {
-          if (socket.readyState === WebSocket.OPEN) socket.close(1000, "Audio stream ended");
-          const settled = await Promise.race([
+          const finalCountAtCommit = finalTranscriptCount;
+          const expectFinalTranscript = hasUncommittedPartial;
+          const commitSentAt = Date.now();
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+              message_type: "input_audio_chunk",
+              audio_base_64: "",
+              sample_rate: stream.sampleRateHz,
+              commit: true,
+            }));
+          }
+          const providerSettled = await Promise.race([
+            new Promise<true>((resolve) => {
+              const inspect = (): void => {
+                const finalArrived = finalTranscriptCount > finalCountAtCommit;
+                const noTailExpected = !expectFinalTranscript
+                  && Date.now() - Math.max(commitSentAt, lastProviderMessageAt) >= 300;
+                if (finalArrived || noTailExpected || socket.readyState === WebSocket.CLOSED) resolve(true);
+                else setTimeout(inspect, 20).unref?.();
+              };
+              inspect();
+            }),
+            new Promise<false>((resolve) => {
+              const timer = setTimeout(() => resolve(false), FINISH_TIMEOUT_MS);
+              timer.unref?.();
+            }),
+          ]);
+          const consumerSettled = await Promise.race([
             sink.settle().then(() => true),
             new Promise<false>((resolve) => {
               const timer = setTimeout(() => resolve(false), FINISH_TIMEOUT_MS);
               timer.unref?.();
             }),
           ]);
-          return { outcome: settled ? "finished" as const : "timed_out" as const };
+          if (socket.readyState === WebSocket.OPEN) socket.close(1000, "Audio stream ended");
+          return { outcome: providerSettled && consumerSettled ? "finished" as const : "timed_out" as const };
         })();
         return finishPromise;
       },

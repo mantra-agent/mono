@@ -155,26 +155,51 @@ export async function resolveSpeechRecognitionBindingCredential(input: {
   };
 }
 
-export async function resolveEnabledSpeechRecognitionBindings(input: {
+export interface SpeechRecognitionCandidateResolution {
+  bindings: ResolvedSpeechRecognitionBinding[];
+  failureCount: number;
+}
+
+/** Resolve candidates independently so one broken lower-priority binding cannot hide a healthy candidate. */
+export async function resolveSpeechRecognitionCandidateBindings(input: {
   environmentId?: number;
   useCase: SpeechRecognitionUseCase;
-}): Promise<ResolvedSpeechRecognitionBinding[]> {
+  adapterKinds?: SpeechRecognitionAdapterKind[];
+}): Promise<SpeechRecognitionCandidateResolution> {
   const useCase = speechRecognitionUseCaseSchema.parse(input.useCase);
   const environmentId = input.environmentId ?? (await getRuntimeIdentity()).platformEnvironmentId;
-  if (!environmentId) return [];
+  if (!environmentId) return { bindings: [], failureCount: 0 };
   const rows = await speechBindingRows(environmentId);
-  const resolved: ResolvedSpeechRecognitionBinding[] = [];
+  const allowedKinds = input.adapterKinds ? new Set(input.adapterKinds) : null;
+  const bindings: ResolvedSpeechRecognitionBinding[] = [];
+  let failureCount = 0;
   for (const row of rows) {
     let summary: SpeechRecognitionBindingSummary;
     try {
       summary = bindingSummary(row);
     } catch {
+      failureCount += 1;
       continue;
     }
-    if (!summary.enabled || !summary.useCases.includes(useCase)) continue;
-    resolved.push(await resolveSpeechRecognitionBindingCredential({ environmentId, bindingId: summary.id }));
+    if (
+      !summary.enabled
+      || !summary.useCases.includes(useCase)
+      || (allowedKinds && !allowedKinds.has(summary.adapterKind))
+    ) continue;
+    try {
+      bindings.push(await resolveSpeechRecognitionBindingCredential({ environmentId, bindingId: summary.id }));
+    } catch {
+      failureCount += 1;
+    }
   }
-  return resolved;
+  return { bindings, failureCount };
+}
+
+export async function resolveEnabledSpeechRecognitionBindings(input: {
+  environmentId?: number;
+  useCase: SpeechRecognitionUseCase;
+}): Promise<ResolvedSpeechRecognitionBinding[]> {
+  return (await resolveSpeechRecognitionCandidateBindings(input)).bindings;
 }
 
 function legacyConfig(adapterKind: SpeechRecognitionAdapterKind): SpeechRecognitionBindingConfig {
