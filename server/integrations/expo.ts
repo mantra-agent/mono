@@ -760,7 +760,7 @@ function ensureMobileDependencyLink(mobileDir: string): void {
   });
 }
 
-async function prepareMainBuildWorkspace(): Promise<{ mobileDir: string; sourceRef: string }> {
+async function prepareMainBuildWorkspace(expectedSourceRef?: string): Promise<{ mobileDir: string; sourceRef: string }> {
   const repoUrl = process.env.GITHUB_REPO_URL;
   if (!repoUrl) {
     throw new Error("GITHUB_REPO_URL is required to prepare a Mobile build workspace from main.");
@@ -775,11 +775,16 @@ async function prepareMainBuildWorkspace(): Promise<{ mobileDir: string; sourceR
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   });
 
+  const sourceRef = execSync("git rev-parse HEAD", { cwd: workspace, encoding: "utf-8" }).trim().toLowerCase();
+  if (expectedSourceRef && sourceRef !== expectedSourceRef.toLowerCase()) {
+    rmSync(workspace, { recursive: true, force: true });
+    throw new Error(`GitHub main moved before Mobile build launch: expected ${expectedSourceRef}, resolved ${sourceRef}.`);
+  }
+
   const mobileDir = path.join(workspace, "mobile");
   runMobileDependencyInstall(mobileDir);
   assertMobilePluginDependencies(mobileDir);
 
-  const sourceRef = execSync("git rev-parse HEAD", { cwd: workspace, encoding: "utf-8" }).trim();
   return { mobileDir, sourceRef };
 }
 
@@ -1387,15 +1392,20 @@ export async function easBuild(
   profile: string = "preview",
   platform: string = "ios",
   source: MobileBuildSource = "main",
-  options: { cancelExisting?: boolean } = {},
+  options: { cancelExisting?: boolean; expectedSourceRef?: string } = {},
 ): Promise<EasResult> {
   await loadLatestEasRun();
   if (latestEasRun?.status === "running") {
     throw new Error("A Mobile EAS build is already running.");
   }
 
+  const expectedSourceRef = options.expectedSourceRef?.trim().toLowerCase();
+  if (expectedSourceRef && !/^[a-f0-9]{40}$/.test(expectedSourceRef)) {
+    throw new Error("expectedSourceRef must be a full 40-character Git commit SHA.");
+  }
+
   const buildSource: MobileBuildSource = source === "local" ? "main" : source;
-  const sourceInfo = await prepareMainBuildWorkspace();
+  const sourceInfo = await prepareMainBuildWorkspace(expectedSourceRef);
   const mobileDir = sourceInfo.mobileDir;
   await applyMobilePlatformEnvironmentToEasProfile(mobileDir, profile);
   const project = requireProjectConfig(mobileDir);

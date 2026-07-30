@@ -34,7 +34,7 @@ const ENGINEERING_TOOLS = new Set(["shell", "git", "code", "railway", "expo", "s
 const ENGINEERING_WRITE_ACTIONS: Record<string, ReadonlySet<string>> = {
   git: new Set(["clone", "pull", "branch", "checkout", "add", "commit", "push", "create_pr", "merge_pr", "delete_branch"]),
   railway: new Set(["redeploy", "restart"]),
-  expo: new Set(["cancel"]),
+  expo: new Set(["start_build", "cancel"]),
   sentry: new Set(["resolve", "unresolve", "ignore"]),
   platforms: new Set([
     "create_connection", "create_platform", "update_platform", "create_product", "update_product",
