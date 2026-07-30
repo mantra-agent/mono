@@ -2439,6 +2439,41 @@ export async function runSchemaBootstrap(
     await pool.query(
       `ALTER TABLE skills ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP`,
     );
+    // Re-assert the remaining NOT NULL skills defaults. A baseline restore can
+    // strip these while keeping NOT NULL, which breaks any insert that relies on
+    // the column default (including omitted legacy columns not in the Drizzle
+    // schema). The seed path now supplies these explicitly; this keeps every
+    // other insert path safe.
+    await pool.query(`ALTER TABLE skills ALTER COLUMN authority SET DEFAULT 'full'`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN write_category SET DEFAULT 'read-only'`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN allowed_tools SET DEFAULT '{}'::text[]`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN inputs SET DEFAULT '{}'::text[]`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN estimated_tokens SET DEFAULT 0`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN estimated_duration SET DEFAULT '5min'`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN status SET DEFAULT 'draft'`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN version SET DEFAULT '1.0'`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN author SET DEFAULT 'user'`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN add_to_memory SET DEFAULT true`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN pinned_to_context SET DEFAULT false`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN customized SET DEFAULT false`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN scope SET DEFAULT 'global'`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN success_count SET DEFAULT 0`);
+    await pool.query(`ALTER TABLE skills ALTER COLUMN failure_count SET DEFAULT 0`);
+    // Legacy columns not present in the current Drizzle schema are omitted from
+    // runtime inserts, so PostgreSQL applies their column default. Re-assert it
+    // and backfill any NULLs so a lost default cannot violate NOT NULL.
+    await pool.query(`
+      DO $
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'skills' AND column_name = 'max_iterations'
+        ) THEN
+          ALTER TABLE skills ALTER COLUMN max_iterations SET DEFAULT 5;
+          UPDATE skills SET max_iterations = 5 WHERE max_iterations IS NULL;
+        END IF;
+      END $;
+    `);
 
     // --- signal_sources defaults ---
     await pool.query(
