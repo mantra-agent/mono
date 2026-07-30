@@ -1289,7 +1289,9 @@ function SystemStepRow({
             <span className="absolute inset-0 rounded-full animate-ping bg-active/20" />
           </div>
           <ThinkingWaveText label={label} />
-          <ThinkingTimer startTime={step.startedAt ?? step.timestamp} />
+          {layer === 4 && (
+            <ThinkingTimer startTime={step.startedAt ?? step.timestamp} />
+          )}
         </div>
       </div>
     );
