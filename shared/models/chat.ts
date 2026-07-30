@@ -877,6 +877,8 @@ export interface MeetingSessionMeta {
   sttFallback?: boolean;
   sttStatus?: "active" | "fallback" | "inactive";
   sttStatusDetail?: string;
+  /** Explicitly consented, bounded retained-audio state. Bytes live encrypted in private object storage. */
+  audioRetention?: import("./meeting-audio").MeetingAudioRetentionState;
   /** Session-level participation policy. listen_only keeps transcription and
    * recap generation active but never speaks or posts agent responses. */
   participationPolicy?: "auto" | "listen_only";

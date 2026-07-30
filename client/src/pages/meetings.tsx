@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearch } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Loader2, Plus } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { SimpleFeedItem } from "@shared/models/simple";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
@@ -125,6 +126,8 @@ function meetingIdFromItem(item: SimpleFeedItem): string | null {
 export default function MeetingsPage() {
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SimpleFeedItem | null>(null);
+  const [showStartDialog, setShowStartDialog] = useState(false);
+  const [retainAudio, setRetainAudio] = useState(false);
   usePageHeader({ title: "Meetings" });
   const routeSearch = useSearch();
   const targetMeetingId = useMemo(
@@ -195,7 +198,7 @@ export default function MeetingsPage() {
           />
           <button
             type="button"
-            onClick={() => void nativeTranscription.start()}
+            onClick={() => setShowStartDialog(true)}
             disabled={nativeTranscription.isStarting}
             className={HIERARCHY_PRIMARY_ACTION_CLASS}
             data-testid="button-new-transcription"
@@ -218,6 +221,51 @@ export default function MeetingsPage() {
           ))}
         </div>
       </div>
+
+      <AlertDialog
+        open={showStartDialog}
+        onOpenChange={(open) => {
+          if (!nativeTranscription.isStarting) setShowStartDialog(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Start transcription?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your microphone audio is transcribed live. Raw audio is discarded unless you choose to retain it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <label className="flex min-h-11 items-start gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
+            <Checkbox
+              checked={retainAudio}
+              onCheckedChange={(checked) => setRetainAudio(checked === true)}
+              aria-label="Retain raw meeting audio for seven days"
+              data-testid="checkbox-retain-meeting-audio"
+            />
+            <span className="min-w-0">
+              <span className="block font-medium text-foreground">Retain raw audio for 7 days</span>
+              <span className="block text-muted-foreground">Encrypted, exportable, and deletable. Used only for provider evaluation.</span>
+            </span>
+          </label>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={nativeTranscription.isStarting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={nativeTranscription.isStarting}
+              onClick={(event) => {
+                event.preventDefault();
+                void nativeTranscription.start({ retainAudio, retentionDays: 7 }).then((result) => {
+                  if (!result) return;
+                  setShowStartDialog(false);
+                  setRetainAudio(false);
+                });
+              }}
+              data-testid="button-confirm-start-transcription"
+            >
+              {nativeTranscription.isStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={Boolean(deleteTarget)}

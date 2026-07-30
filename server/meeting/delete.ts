@@ -3,6 +3,7 @@ import { chatStorage } from "../integrations/chat/storage";
 import { leaveRecallBot } from "../integrations/recall/client";
 import { createLogger } from "../log";
 import { principalOwnsMeeting } from "./owner-principal";
+import { deleteMeetingAudioForSession } from "./audio-retention";
 import { withMeetingTransportLock } from "./locks";
 
 const log = createLogger("MeetingDelete");
@@ -53,6 +54,7 @@ export async function deleteMeetingSession(
       }
     }
 
+    await deleteMeetingAudioForSession(sessionId);
     const deleted = await chatStorage.deleteSession(sessionId);
     return { outcome: "deleted", ...deleted };
   });

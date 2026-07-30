@@ -13,6 +13,7 @@ import {
   type SpeechRecognitionCoordinatorState,
 } from "../speech-recognition";
 import { principalOwnsMeeting } from "./owner-principal";
+import { openConsentedMeetingAudioRecorder, type MeetingAudioRecorder } from "./audio-retention";
 
 const log = createLogger("NativeMeetingAudio");
 const SOURCE_KEY = "native:microphone";
@@ -63,6 +64,7 @@ export function registerNativeMeetingAudioTransport(
     }
 
     let recognition: CoordinatedSpeechRecognitionStream | undefined;
+    let recorder: MeetingAudioRecorder | null = null;
     let closed = false;
     let audioStarted = false;
     let firstUtteranceReceived = false;
@@ -128,6 +130,7 @@ export function registerNativeMeetingAudioTransport(
         return;
       }
 
+      recorder = await openConsentedMeetingAudioRecorder(sessionId, principal);
       recognition = speechRecognitionStreamCoordinator.open(
         {
           useCase: "meeting_shared_room",
@@ -241,14 +244,15 @@ export function registerNativeMeetingAudioTransport(
         socket.close(1009, "Invalid audio frame");
         return;
       }
-      audioFrameCount += 1;
-      audioByteCount += bytes.length;
       const writeOutcome = recognition.tryWriteAudio(bytes);
       if (writeOutcome !== "accepted") {
         log.warn("native meeting recognition unavailable", { sessionId, writeOutcome });
         socket.close(1013, "Recognition unavailable");
         return;
       }
+      audioFrameCount += 1;
+      audioByteCount += bytes.length;
+      recorder?.append(bytes);
       if (!audioStarted) {
         audioStarted = true;
         log.info("native meeting first audio frame received", {
@@ -268,14 +272,18 @@ export function registerNativeMeetingAudioTransport(
         audioByteCount,
         firstUtteranceReceived,
       });
-      void recognition?.finish().then((result) => {
-        if (result.outcome === "timed_out") {
-          log.warn("native recognition finish timed out", {
-            sessionId,
-            attemptId: latestState.attemptId,
-          });
-        }
-      });
+      if (recognition) {
+        void recognition.finish().then((result) => {
+          if (result.outcome === "timed_out") {
+            log.warn("native recognition finish timed out", {
+              sessionId,
+              attemptId: latestState.attemptId,
+            });
+          }
+        }).finally(() => recorder?.finalize());
+      } else {
+        void recorder?.finalize();
+      }
     });
   });
 

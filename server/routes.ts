@@ -42,6 +42,7 @@ import { registerMeetingLifecycleRoutes } from "./routes/meeting-lifecycle";
 import { registerMeetingSpeakerRoutes } from "./routes/meeting-speakers";
 import { registerMeetingAudioSourceRoutes } from "./routes/meeting-audio-sources";
 import { registerMeetingsRoutes } from "./routes/meetings";
+import { registerMeetingAudioRetentionRoutes } from "./routes/meeting-audio-retention";
 import { requireAuth, requireAdmin } from "./auth";
 import { findOrphanedChildren, cleanupOrphanedChildren } from "./session-tree-cleanup";
 import { resolveUserPrincipalForSessionRequest } from "./client-presence";
@@ -226,6 +227,7 @@ export async function registerRoutes(
   registerMeetingSpeakerRoutes(app);
   registerMeetingAudioSourceRoutes(app);
   registerMeetingsRoutes(app);
+  registerMeetingAudioRetentionRoutes(app);
   (async () => {
     try {
       const { documentStorage } = await import("./memory/document-storage");

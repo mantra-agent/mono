@@ -21,6 +21,11 @@ interface NativeMeetingStartResult {
   sourceKey: string;
 }
 
+export interface NativeMeetingStartOptions {
+  retainAudio: boolean;
+  retentionDays?: number;
+}
+
 interface MeetingAudioFrame {
   type: "audio_frame";
   pcm: ArrayBuffer;
@@ -40,7 +45,7 @@ interface NativeMeetingTranscriptionContextValue {
   activeSessionId: string | null;
   isStarting: boolean;
   readAudioLevel: () => number;
-  start: () => Promise<NativeMeetingStartResult | null>;
+  start: (options?: NativeMeetingStartOptions) => Promise<NativeMeetingStartResult | null>;
   setSpeechPlaybackEnabled: (enabled: boolean, sessionId?: string) => void;
   stopLocalCapture: (sessionId?: string) => void;
 }
@@ -321,7 +326,7 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
 
   const readAudioLevel = useCallback((): number => audioLevelRef.current, []);
 
-  const start = useCallback(async (): Promise<NativeMeetingStartResult | null> => {
+  const start = useCallback(async (options: NativeMeetingStartOptions = { retainAudio: false }): Promise<NativeMeetingStartResult | null> => {
     if (startPromiseRef.current) return startPromiseRef.current;
     let operation!: Promise<NativeMeetingStartResult | null>;
     operation = (async () => {
@@ -361,7 +366,14 @@ export function NativeMeetingTranscriptionProvider({ children }: { children: Rea
           await audioContext.audioWorklet.addModule("/voice/meeting-pcm-processor.worklet.js");
 
           const idempotencyKey = crypto.randomUUID();
-          const response = await apiRequest("POST", "/api/meetings/native", { idempotencyKey });
+          const response = await apiRequest("POST", "/api/meetings/native", {
+            idempotencyKey,
+            ...(options.retainAudio ? {
+              retentionConsent: true,
+              consentVersion: 1,
+              retentionDays: options.retentionDays ?? 7,
+            } : {}),
+          });
           const created = await response.json() as { sessionId: string; sourceKey: string };
           sessionId = created.sessionId;
         const source = audioContext.createMediaStreamSource(stream);

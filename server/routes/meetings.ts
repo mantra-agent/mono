@@ -9,6 +9,8 @@ import { sendNextMeetingAudio } from "../meeting/output-media";
 import { meetingRecognitionCapabilities } from "../meeting/stt";
 import { getPrincipal } from "../principal";
 import { resolveCurrentProfileIdentity } from "../profile-identity";
+import { createConsentedMeetingAudioSample } from "../meeting/audio-retention";
+import { MEETING_AUDIO_CONSENT_VERSION, MEETING_AUDIO_MAX_RETENTION_DAYS } from "@shared/models/meeting-audio";
 import { peopleStorage } from "../people-storage";
 import {
   getMeetingCounts,
@@ -72,6 +74,18 @@ export function registerMeetingsRoutes(app: Express): void {
     const idempotencyKey = typeof req.body?.idempotencyKey === "string"
       ? req.body.idempotencyKey.trim()
       : "";
+    const retentionConsent = req.body?.retentionConsent === true;
+    const consentVersion = Number(req.body?.consentVersion);
+    const retentionDays = Number(req.body?.retentionDays);
+    if (retentionConsent && (
+      consentVersion !== MEETING_AUDIO_CONSENT_VERSION
+      || !Number.isInteger(retentionDays)
+      || retentionDays < 1
+      || retentionDays > MEETING_AUDIO_MAX_RETENTION_DAYS
+    )) {
+      res.status(400).json({ error: "Explicit versioned consent and bounded retention are required" });
+      return;
+    }
     if (!idempotencyKey || idempotencyKey.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
       res.status(400).json({ error: "idempotencyKey is required" });
       return;
@@ -148,10 +162,22 @@ export function registerMeetingsRoutes(app: Express): void {
           return { outcome: "created" as const, session };
         },
       );
+      if (result.outcome === "reused" && Boolean(result.session.meeting?.audioRetention) !== retentionConsent) {
+        res.status(409).json({ error: "This transcription request was already created with a different audio-retention choice" });
+        return;
+      }
+      const audioRetention = retentionConsent
+        ? await createConsentedMeetingAudioSample({
+            sessionId: result.session.id,
+            consentVersion,
+            retentionDays,
+          })
+        : undefined;
       log.info("native meeting session ready", {
         sessionId: result.session.id,
         outcome: result.outcome,
         ownerUserId: principal.userId,
+        audioRetentionConsented: Boolean(audioRetention),
       });
       res.status(result.outcome === "created" ? 201 : 200).json({
         ok: true,
@@ -159,6 +185,7 @@ export function registerMeetingsRoutes(app: Express): void {
         sessionId: result.session.id,
         sessionKey: result.session.sessionKey,
         sourceKey: "native:microphone",
+        ...(audioRetention ? { audioRetention } : {}),
       });
     } catch (error) {
       log.error("native meeting creation failed", {
