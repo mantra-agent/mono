@@ -23,6 +23,7 @@ const log = createLogger("SessionSub");
 
 export type SessionStatus = "idle" | "streaming" | "saved" | "error";
 export type VisibleAssistantActivity = "none" | "thinking" | "streaming" | "tool";
+export type DurableHandoffPhase = "live" | "durable";
 
 export interface SessionStreamState {
   streamingContent: StreamingContent | null;
@@ -36,6 +37,8 @@ export interface SessionStreamState {
   canStop: boolean;
   visibleAssistantActivity: VisibleAssistantActivity;
   eventSeq?: number;
+  durableRevision: number | null;
+  handoffPhase: DurableHandoffPhase;
 }
 
 export type SessionStreamMap = Record<string, SessionStreamState>;
@@ -53,6 +56,8 @@ interface SessionMessage {
   runActive?: boolean;
   canStop?: boolean;
   visibleAssistantActivity?: VisibleAssistantActivity;
+  durableRevision?: number | null;
+  handoffPhase?: DurableHandoffPhase;
 }
 
 export interface SessionSubscriptionOptions {
@@ -67,6 +72,8 @@ const idleStreamState: SessionStreamState = {
   runActive: false,
   canStop: false,
   visibleAssistantActivity: "none",
+  durableRevision: null,
+  handoffPhase: "live",
 };
 
 // ---------------------------------------------------------------------------
@@ -194,6 +201,8 @@ export function useSessionSubscriptions(
         next.canStop === current.canStop &&
         next.visibleAssistantActivity === current.visibleAssistantActivity &&
         next.eventSeq === current.eventSeq &&
+        next.durableRevision === current.durableRevision &&
+        next.handoffPhase === current.handoffPhase &&
         next.wsConnected === current.wsConnected
       ) {
         return prev;
@@ -222,6 +231,8 @@ export function useSessionSubscriptions(
         canStop: msg.canStop ?? serverStreaming,
         visibleAssistantActivity: msg.visibleAssistantActivity ?? (serverStreaming ? "thinking" : "none"),
         eventSeq: msg.eventSeq,
+        durableRevision: msg.durableRevision ?? null,
+        handoffPhase: msg.handoffPhase ?? "live",
       });
       return;
     }
@@ -240,6 +251,8 @@ export function useSessionSubscriptions(
       patch.canStop = msg.canStop ?? serverStreaming;
       patch.visibleAssistantActivity = msg.visibleAssistantActivity ?? (serverStreaming ? "thinking" : "none");
       patch.eventSeq = msg.eventSeq;
+      if (msg.durableRevision !== undefined) patch.durableRevision = msg.durableRevision;
+      if (msg.handoffPhase !== undefined) patch.handoffPhase = msg.handoffPhase;
       upsertStream(msg.sessionId, patch);
     }
   }, [handlerId, owner, tabId, upsertStream]);

@@ -43,10 +43,12 @@ export interface TranscriptProjectionInput {
   postSending: boolean;
   /** Previously frozen stream handoff, if any. */
   frozenStreamHandoff: FrozenStreamHandoff | null;
-  /** Previous stabilization snapshot for transcript merge. */
-  previousTranscript: TranscriptSnapshot | null;
-  /** Whether messages contain a compaction boundary marker. */
-  messagesContainCompactionBoundary: boolean;
+  /** Durable revision returned with the current canonical Session snapshot. */
+  persistedDurableRevision: number;
+  /** Terminal revision certified by the Session WebSocket handoff. */
+  terminalDurableRevision: number | null;
+  /** One server-owned handoff phase. */
+  handoffPhase: "live" | "durable";
 }
 
 export interface FrozenStreamHandoff {
@@ -56,11 +58,6 @@ export interface FrozenStreamHandoff {
   /** Authoritative live snapshot this frozen copy was captured from. */
   capturedFrom: StreamingContent;
   lowerBound: number | null;
-}
-
-export interface TranscriptSnapshot {
-  sessionId: string | null;
-  messages: Message[];
 }
 
 /**
@@ -77,8 +74,6 @@ export type AssistantActivity = "idle" | "pending" | "streaming" | "frozen";
 export interface TranscriptProjection {
   /** Messages to display, with stabilization applied. */
   displayMessages: Message[];
-  /** Updated transcript snapshot for next render cycle. */
-  transcriptSnapshot: TranscriptSnapshot;
   /** The streaming content to pass to the renderer. */
   displayStreaming: StreamingContent;
   /** Whether the session is considered actively running. */
@@ -195,8 +190,9 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     pendingTurn,
     postSending,
     frozenStreamHandoff,
-    previousTranscript,
-    messagesContainCompactionBoundary,
+    persistedDurableRevision,
+    terminalDurableRevision,
+    handoffPhase,
   } = input;
 
   // --- Session activity ---
@@ -212,35 +208,19 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     activeSession === null
   ) ? pendingTurn : null;
 
+  const durableHandoffSatisfied =
+    handoffPhase === "durable" &&
+    terminalDurableRevision !== null &&
+    persistedDurableRevision >= terminalDurableRevision;
   const terminalStreamAvailable =
     !isSessionActive &&
     (subStatus === "saved" || subStatus === "error") &&
     rawStreaming.source === null &&
-    rawStreaming.segments.length > 0;
-  const terminalLowerBound = visiblePendingTurn
-    ? new Date(visiblePendingTurn.submittedAt).getTime()
-    : frozenStreamHandoff?.lowerBound ?? null;
-  const terminalAssistantNowPersisted = terminalStreamAvailable && persistedMessages.some((message) => {
-    if (!isTerminalAssistantMessage(message)) return false;
-    if (
-      rawStreaming.runId &&
-      message.assistantRunId &&
-      message.assistantRunId !== rawStreaming.runId
-    ) return false;
-    if (
-      rawStreaming.turnId &&
-      message.turnId &&
-      message.turnId !== rawStreaming.turnId
-    ) return false;
-    if (terminalLowerBound !== null && new Date(message.createdAt).getTime() < terminalLowerBound) return false;
-    return (message.content || "").trim().length > 0 || (message.segmentChronology?.length ?? 0) > 0;
-  });
-  // The terminal server payload is the last authoritative live snapshot. Keep
-  // it for the overlap render while the frozen handoff clears, then let the
-  // durably terminal assistant message become the sole source of truth.
-  const hasAuthoritativeTerminalStream = terminalStreamAvailable && (
-    !terminalAssistantNowPersisted || frozenStreamHandoff !== null
-  );
+    rawStreaming.segments.length > 0 &&
+    !durableHandoffSatisfied;
+  // The terminal server payload remains the visible owner until the HTTP
+  // snapshot reaches the exact revision certified by the terminal event.
+  const hasAuthoritativeTerminalStream = terminalStreamAvailable;
   const streaming = isSessionActive || hasAuthoritativeTerminalStream
     ? rawStreaming
     : initialStreamingContent;
@@ -335,23 +315,10 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
       })()
     : null;
 
-  const frozenAssistantNowPersisted = frozenStreamHandoff
-    ? persistedMessages.some((message) => {
-        if (!isTerminalAssistantMessage(message)) return false;
-        if (
-          frozenStreamHandoff.streaming.runId &&
-          message.assistantRunId &&
-          message.assistantRunId !== frozenStreamHandoff.streaming.runId
-        ) return false;
-        if (frozenStreamHandoff.lowerBound !== null && new Date(message.createdAt).getTime() < frozenStreamHandoff.lowerBound) return false;
-        return (message.content || "").trim().length > 0 || (message.segmentChronology?.length ?? 0) > 0;
-      })
-    : false;
-
   const shouldClearFrozenHandoff = frozenStreamHandoff !== null && (
     frozenStreamHandoff.sessionId !== activeSession ||
     hasLiveStreamingState ||
-    frozenAssistantNowPersisted
+    durableHandoffSatisfied
   );
 
   // Persisted replacement and frozen stream must overlap for one committed render.
@@ -391,43 +358,11 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
   );
   const isStreaming = hasLiveStreamingState || hasFrozenHandoff || postSending || !!renderPendingTurn;
 
-  // --- Transcript stabilization ---
-  // The session query can have several invalidations in flight when a turn
-  // settles. A request that started before the terminal assistant write may
-  // arrive after the fresh response and replace the React Query cache with an
-  // older transcript. Keep terminal chronology monotonic until another run or
-  // an explicit compaction boundary changes ownership.
-  const terminalProjectionActive = hasFrozenHandoff || subStatus === "saved" || subStatus === "error";
-  const transcriptStabilizationActive =
-    !!visiblePendingTurn || hasLiveStreamingState || terminalProjectionActive || postSending;
-
-  const { displayMessages, transcriptSnapshot } = (() => {
-    if (previousTranscript?.sessionId !== activeSession || !transcriptStabilizationActive || messagesContainCompactionBoundary) {
-      const snapshot: TranscriptSnapshot = { sessionId: activeSession, messages: persistedMessages };
-      return { displayMessages: persistedMessages, transcriptSnapshot: snapshot };
-    }
-
-    const byId = new Map<string, Message>();
-    for (const message of previousTranscript.messages) {
-      // A superseded or empty assistant checkpoint may be removed during
-      // terminalization. Retain only messages that had already crossed the
-      // durable assistant boundary; the frozen server stream owns continuity
-      // for any still-streaming checkpoint.
-      if (
-        terminalProjectionActive &&
-        message.role === "assistant" &&
-        message.assistantState === "streaming"
-      ) {
-        continue;
-      }
-      byId.set(message.id, message);
-    }
-    for (const message of persistedMessages) byId.set(message.id, message);
-    const merged = sortMessagesByCreatedAt([...byId.values()]);
-
-    const snapshot: TranscriptSnapshot = { sessionId: activeSession, messages: merged };
-    return { displayMessages: merged, transcriptSnapshot: snapshot };
-  })();
+  // The HTTP snapshot is coherent and query-fenced by durableRevision. The
+  // settled server stream alone owns continuity until that revision arrives;
+  // persisted chronology never needs a historical client-side union.
+  const displayMessages = persistedMessages;
+  const transcriptStabilizationActive = hasFrozenHandoff && !durableHandoffSatisfied;
 
   // --- Should clear pending turn ---
   // The server can briefly finalize the interrupted run before starting its
@@ -463,7 +398,6 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
 
   return {
     displayMessages,
-    transcriptSnapshot,
     displayStreaming,
     isSessionActive,
     renderPendingTurn,

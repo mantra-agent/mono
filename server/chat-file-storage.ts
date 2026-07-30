@@ -389,9 +389,9 @@ export type MessageVisibility = "chat" | "diagnostic";
 export type TerminalAssistantMessageState = Exclude<AssistantMessageState, "streaming">;
 
 export type AssistantDraftTerminalizationOutcome =
-  | { outcome: "terminalized"; state: TerminalAssistantMessageState }
-  | { outcome: "removed_empty"; state: TerminalAssistantMessageState }
-  | { outcome: "already_terminal"; state?: TerminalAssistantMessageState }
+  | { outcome: "terminalized"; state: TerminalAssistantMessageState; durableRevision: number }
+  | { outcome: "removed_empty"; state: TerminalAssistantMessageState; durableRevision: number }
+  | { outcome: "already_terminal"; state?: TerminalAssistantMessageState; durableRevision: number }
   | { outcome: "run_mismatch"; actualRunId?: string }
   | { outcome: "not_found" };
 
@@ -442,6 +442,8 @@ export interface FileMessage {
 
 interface SessionData {
   id: string;
+  /** Monotonic canonical document revision. Legacy documents begin at zero. */
+  durableRevision?: number;
   title: string;
   manualTitle?: boolean;
   status: string;
@@ -771,8 +773,13 @@ function countMeetingTranscriptMessages(data: SessionData): number {
   ).length;
 }
 
+function normalizeDurableRevision(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
 function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
   return {
+    durableRevision: normalizeDurableRevision(data.durableRevision),
     title: data.title,
     manualTitle: data.manualTitle || undefined,
     status: data.status,
@@ -821,7 +828,8 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
   };
 }
 
-async function writeConvInAmbientTransaction(data: SessionData): Promise<void> {
+async function writeConvInAmbientTransaction(data: SessionData): Promise<number> {
+  data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
   const document = await documentStorage.upsertDocument(
     "chat",
     data.id,
@@ -831,14 +839,14 @@ async function writeConvInAmbientTransaction(data: SessionData): Promise<void> {
     buildConvDocumentMetadata(data),
   );
   await replaceSessionSearchProjection(document.documentStoreId, data);
+  return data.durableRevision;
 }
 
-async function writeConv(data: SessionData): Promise<void> {
+async function writeConv(data: SessionData): Promise<number> {
   if (!hasAmbientDatabaseTransaction()) {
-    await withConvLock(data.id, () => writeConvInAmbientTransaction(data));
-    return;
+    return withConvLock(data.id, () => writeConvInAmbientTransaction(data));
   }
-  await writeConvInAmbientTransaction(data);
+  const durableRevision = await writeConvInAmbientTransaction(data);
   if (
     data.parentSessionId ||
     data.spawnReason ||
@@ -861,6 +869,7 @@ async function writeConv(data: SessionData): Promise<void> {
       );
     }
   }
+  return durableRevision;
 }
 
 export interface SessionDeletionResult {
@@ -1043,6 +1052,7 @@ function queueSessionMemoryMirror(data: SessionData, context: string): void {
 function convToMeta(data: SessionData): FileSession {
   return {
     id: data.id,
+    durableRevision: normalizeDurableRevision(data.durableRevision),
     title: data.title,
     manualTitle: data.manualTitle || undefined,
     status: data.status,
@@ -1204,6 +1214,7 @@ function docMetadataToSession(doc: {
 
   return {
     id: doc.docId,
+    durableRevision: normalizeDurableRevision(meta.durableRevision),
     title: doc.title || metadataString(meta, "title") || "Untitled",
     manualTitle: metadataBool(meta, "manualTitle") || undefined,
     status: metadataString(meta, "status") || "saved",
@@ -1259,6 +1270,7 @@ export async function rebuildIndex(): Promise<void> {
 
 export interface IChatFileStorage {
   getSession(id: string): Promise<FileSession | undefined>;
+  getSessionSnapshot(id: string): Promise<{ session: FileSession; messages: FileMessage[] } | null>;
   getSessions(ids: string[]): Promise<FileSession[]>;
   getSavedSessions(): Promise<FileSession[]>;
   getAllSessions(): Promise<FileSession[]>;
@@ -1304,7 +1316,7 @@ export interface IChatFileStorage {
     summary?: string,
   ): Promise<FileSession>;
   deleteSession(id: string): Promise<SessionDeletionResult>;
-  saveSession(id: string, title: string, options?: { source?: "manual" | "auto" | "orient"; respectManualTitle?: boolean }): Promise<void>;
+  saveSession(id: string, title: string, options?: { source?: "manual" | "auto" | "orient"; respectManualTitle?: boolean }): Promise<number | undefined>;
   updateSessionTitle(id: string, title: string, options?: { source?: "manual" | "auto" | "orient"; respectManualTitle?: boolean }): Promise<void>;
   updateSessionSessionKey(id: string, sessionKey: string): Promise<void>;
   updateSessionTopics(id: string, topics: string[]): Promise<void>;
@@ -1466,9 +1478,11 @@ export interface IChatFileStorage {
       apiCallCount?: number;
       segmentChronology?: SegmentChronologyEntry[];
       assistantState?: AssistantMessageState;
+      /** Atomically settle the owning Session with the terminal assistant write. */
+      sessionStatus?: "saved" | "failed";
       assistantInterruptedAt?: string;
     },
-  ): Promise<FileMessage | null>;
+  ): Promise<{ message: FileMessage | null; durableRevision: number } | null>;
   terminalizeAssistantDraft(
     sessionId: string,
     messageId: string,
@@ -1619,6 +1633,12 @@ export const chatFileStorage: IChatFileStorage = {
       if (!data) return undefined as any;
       return convToMeta(data);
     });
+  },
+
+  async getSessionSnapshot(id: string) {
+    const data = await readConv(id);
+    if (!data) return null;
+    return { session: convToMeta(data), messages: data.messages };
   },
 
   async getSessions(ids: string[]) {
@@ -1923,7 +1943,7 @@ export const chatFileStorage: IChatFileStorage = {
       }
       if (data.status === "saved") data.runStatus = "resolved";
       data.updatedAt = new Date().toISOString();
-      await writeConv(data);
+      const durableRevision = await writeConv(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session: convToMeta(data) });
       publishSessionStatusChanged(data, previousStatus, data.status);
       queueVnextSessionSource(data, "saveSession");
@@ -1931,6 +1951,7 @@ export const chatFileStorage: IChatFileStorage = {
       import("./chat-markdown")
         .then((m) => m.generateChatMarkdown(id))
         .catch((err) => log.warn("markdown generation failed", err));
+      return durableRevision;
     });
   },
 
@@ -3335,6 +3356,8 @@ export const chatFileStorage: IChatFileStorage = {
       totalTokens?: number;
       segmentChronology?: SegmentChronologyEntry[];
       assistantState?: AssistantMessageState;
+      /** Atomically settle the owning Session with the terminal assistant write. */
+      sessionStatus?: "saved" | "failed";
       assistantInterruptedAt?: string;
     },
   ) {
@@ -3393,6 +3416,11 @@ export const chatFileStorage: IChatFileStorage = {
           msg.assistantRuntimeOwner = undefined;
         }
       }
+      if (updates.sessionStatus !== undefined) {
+        data.status = updates.sessionStatus;
+        data.activeRuntimeOwner = undefined;
+        data.runStatus = updates.sessionStatus === "saved" ? "resolved" : "failed";
+      }
       if (updates.assistantInterruptedAt !== undefined)
         msg.assistantInterruptedAt = updates.assistantInterruptedAt;
       if (
@@ -3402,24 +3430,28 @@ export const chatFileStorage: IChatFileStorage = {
       ) {
         data.messages = data.messages.filter((m) => m.id !== msg.id);
         data.updatedAt = new Date().toISOString();
-        await writeConv(data);
+        const durableRevision = await writeConv(data);
         invalidateSessionsCache();
         log.debug(
           `[ChatFileStorage] removed empty assistant draft on terminal state sessionId=${sessionId} messageId=${messageId} state=${updates.assistantState}`,
         );
-        return null;
+        return { message: null, durableRevision };
       }
       msg.updatedAt = new Date().toISOString();
       data.updatedAt = msg.updatedAt;
-      await writeConv(data);
+      const durableRevision = await writeConv(data);
       // Streaming checkpoints update message payload only. Invalidating the
       // global session metadata cache on every chunk makes each sidebar poll
       // rescan every chat document and can saturate the DB pool. Creation and
       // terminal lifecycle transitions still invalidate the cache.
       if (updates.assistantState !== undefined) {
-        invalidateSessionsCache();
+        invalidateSessionsCache({
+          action: "updated",
+          sessionId,
+          session: convToMeta(data),
+        });
       }
-      return msg;
+      return { message: msg, durableRevision };
     });
   },
 
@@ -3444,6 +3476,7 @@ export const chatFileStorage: IChatFileStorage = {
         return {
           outcome: "already_terminal",
           state: msg.assistantState,
+          durableRevision: normalizeDurableRevision(data.durableRevision),
         };
       }
 
@@ -3460,7 +3493,11 @@ export const chatFileStorage: IChatFileStorage = {
         log.warn(
           `[ChatFileStorage] terminalized empty assistant draft by removal sessionId=${sessionId} messageId=${messageId} runId=${runId} state=${state}`,
         );
-        return { outcome: "removed_empty", state };
+        return {
+          outcome: "removed_empty",
+          state,
+          durableRevision: normalizeDurableRevision(data.durableRevision),
+        };
       }
 
       msg.updatedAt = now;
@@ -3469,7 +3506,11 @@ export const chatFileStorage: IChatFileStorage = {
       log.warn(
         `[ChatFileStorage] terminalized unsettled assistant draft sessionId=${sessionId} messageId=${messageId} runId=${runId} state=${state}`,
       );
-      return { outcome: "terminalized", state };
+      return {
+        outcome: "terminalized",
+        state,
+        durableRevision: normalizeDurableRevision(data.durableRevision),
+      };
     });
   },
 
