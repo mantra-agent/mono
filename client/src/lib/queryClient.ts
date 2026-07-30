@@ -25,6 +25,33 @@ export async function apiRequest(
   return res;
 }
 
+interface DurableSessionSnapshot {
+  id: string;
+  durableRevision: number;
+  messages: unknown[];
+}
+
+function isDurableSessionSnapshot(value: unknown): value is DurableSessionSnapshot {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<DurableSessionSnapshot>;
+  return typeof candidate.id === "string" &&
+    typeof candidate.durableRevision === "number" &&
+    Number.isSafeInteger(candidate.durableRevision) &&
+    Array.isArray(candidate.messages);
+}
+
+function preserveNewestDurableSessionSnapshot(oldData: unknown, newData: unknown): unknown {
+  if (
+    isDurableSessionSnapshot(oldData) &&
+    isDurableSessionSnapshot(newData) &&
+    oldData.id === newData.id &&
+    newData.durableRevision < oldData.durableRevision
+  ) {
+    return oldData;
+  }
+  return newData;
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
@@ -51,6 +78,7 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: true,
       staleTime: 0,
       retry: false,
+      structuralSharing: preserveNewestDurableSessionSnapshot,
     },
     mutations: {
       retry: false,

@@ -193,6 +193,8 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
                   runActive: Boolean(activeCompaction),
                   canStop: false,
                   visibleAssistantActivity: activeCompaction ? "thinking" as const : "none" as const,
+                  durableRevision: null,
+                  handoffPhase: "live" as const,
                 };
             ws.send(JSON.stringify({ type: "session.snapshot", ...payload }));
           }).catch((error) => {

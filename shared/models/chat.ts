@@ -938,6 +938,8 @@ export interface SessionAgenda {
 
 export interface ChatSession {
   id: string;
+  /** Monotonic revision of the canonical durable chat document. */
+  durableRevision?: number;
   title: string;
   manualTitle?: boolean;
   status: string;

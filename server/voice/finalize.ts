@@ -49,10 +49,10 @@ export async function finalizeVoiceSession(
   }
   endVoiceSession(voiceSessionId, "user_finalize");
 
-  // Clear process-local activity before publishing the durable terminal row so
-  // a concurrent /api/sessions read cannot project this session as active.
-  sessionManager.finalizeSession(chatSessionId);
-  await chatFileStorage.saveSession(chatSessionId, title || "Voice Chat");
+  // Persist the terminal Session document before publishing the terminal stream
+  // so subscribers receive a durable revision they can reconcile exactly.
+  const durableRevision = await chatFileStorage.saveSession(chatSessionId, title || "Voice Chat");
+  sessionManager.finalizeSession(chatSessionId, undefined, durableRevision);
 
   const replayed = leaseOutcome === "already_complete";
   log.log(
