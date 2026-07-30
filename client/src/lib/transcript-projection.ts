@@ -392,7 +392,14 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
   const isStreaming = hasLiveStreamingState || hasFrozenHandoff || postSending || !!renderPendingTurn;
 
   // --- Transcript stabilization ---
-  const transcriptStabilizationActive = !!visiblePendingTurn || hasLiveStreamingState || postSending;
+  // The session query can have several invalidations in flight when a turn
+  // settles. A request that started before the terminal assistant write may
+  // arrive after the fresh response and replace the React Query cache with an
+  // older transcript. Keep terminal chronology monotonic until another run or
+  // an explicit compaction boundary changes ownership.
+  const terminalProjectionActive = hasFrozenHandoff || subStatus === "saved" || subStatus === "error";
+  const transcriptStabilizationActive =
+    !!visiblePendingTurn || hasLiveStreamingState || terminalProjectionActive || postSending;
 
   const { displayMessages, transcriptSnapshot } = (() => {
     if (previousTranscript?.sessionId !== activeSession || !transcriptStabilizationActive || messagesContainCompactionBoundary) {
@@ -401,7 +408,20 @@ export function buildTranscriptProjection(input: TranscriptProjectionInput): Tra
     }
 
     const byId = new Map<string, Message>();
-    for (const message of previousTranscript.messages) byId.set(message.id, message);
+    for (const message of previousTranscript.messages) {
+      // A superseded or empty assistant checkpoint may be removed during
+      // terminalization. Retain only messages that had already crossed the
+      // durable assistant boundary; the frozen server stream owns continuity
+      // for any still-streaming checkpoint.
+      if (
+        terminalProjectionActive &&
+        message.role === "assistant" &&
+        message.assistantState === "streaming"
+      ) {
+        continue;
+      }
+      byId.set(message.id, message);
+    }
     for (const message of persistedMessages) byId.set(message.id, message);
     const merged = sortMessagesByCreatedAt([...byId.values()]);
 
