@@ -71,6 +71,7 @@ import {
   Zap,
   X,
   Cpu,
+  Workflow,
   Download,
   Upload,
   MoreHorizontal,
@@ -103,6 +104,7 @@ const TYPE_META: Record<TimerType, { label: string; icon: typeof Bot }> = {
   system: { label: "System", icon: Settings },
   me: { label: "Me", icon: User },
   skill: { label: "Skill", icon: Cpu },
+  pipeline: { label: "Pipeline", icon: Workflow },
   reminder: { label: "Reminder", icon: Bell },
 };
 
@@ -810,6 +812,7 @@ function CreateEditDialog({
                 <SelectItem value="system">System — System-level function</SelectItem>
                 <SelectItem value="me">Me — Personal reminder</SelectItem>
                 <SelectItem value="skill">Skill — Run a skill directly</SelectItem>
+                <SelectItem value="pipeline">Pipeline — Run a deterministic data pipeline</SelectItem>
                 <SelectItem value="reminder">Reminder — One-time scheduled action</SelectItem>
               </SelectContent>
             </Select>

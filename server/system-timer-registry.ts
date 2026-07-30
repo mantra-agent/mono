@@ -422,16 +422,17 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
   },
   {
     legacyMatch: (t) =>
-      t.type === "skill" &&
-      (t.skillId === "scan" || t.skillId === "landscape-scan"),
+      (t.type === "skill" &&
+        (t.skillId === "scan" || t.skillId === "landscape-scan")) ||
+      (t.type === "pipeline" && t.prompt === "news:scan"),
 
     systemKey: "landscape-scan",
     name: "Landscape Scan",
     description:
-      "Automated market intelligence scan — collects signals, scores, curates, surfaces relevant items",
-    type: "skill",
-    skillId: "scan",
-    prompt: "",
+      "Automated market intelligence pipeline — collects signals, scores, curates, surfaces relevant items",
+    type: "pipeline",
+    skillId: undefined,
+    prompt: "news:scan",
     schedules: [
       { id: "sys-skill-scan-1", frequency: "every_x_hours", interval: 8 },
     ],
@@ -519,7 +520,9 @@ export class SystemTimerRegistry {
     if (timer.description !== materialized.description) updates.description = materialized.description;
     if (timer.type !== materialized.type) updates.type = materialized.type;
     if ((timer.prompt ?? "") !== (materialized.prompt ?? "")) updates.prompt = materialized.prompt ?? "";
-    if ((timer.skillId ?? undefined) !== (materialized.skillId ?? undefined)) updates.skillId = materialized.skillId;
+    if ((timer.skillId ?? undefined) !== (materialized.skillId ?? undefined)) {
+      updates.skillId = materialized.skillId ?? "";
+    }
     if (fingerprintSchedules(timer.schedules) !== fingerprintSchedules(materialized.schedules)) updates.schedules = materialized.schedules;
     if (!timer.enabled && materialized.enabled) updates.enabled = true;
     if (timer.timezone !== materialized.timezone) updates.timezone = materialized.timezone;

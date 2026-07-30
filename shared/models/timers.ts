@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const timerTypes = ["agent", "system", "me", "skill", "reminder"] as const;
+export const timerTypes = ["agent", "system", "me", "skill", "pipeline", "reminder"] as const;
 export type TimerType = typeof timerTypes[number];
 export const timerScopes = ["user", "system", "quarantine"] as const;
 export type TimerScope = typeof timerScopes[number];
