@@ -820,6 +820,7 @@ export const ADVISORY_LOCK_NS = {
   REGRESSION_RUN: 0x5247524e, // 'RGRN' — serializes candidate snapshots and one-Plan association per run
   REGRESSION_CONTRACT: 0x52474354, // 'RGCT' — serializes versioned contract mutation per issue
   REGRESSION_RESULT: 0x52475253, // 'RGRS' — serializes one append-only result per run + issue
+  MEETING_AUDIO_SAMPLE: 0x4d415544, // 'MAUD' — serializes retained-audio capture, replay, and deletion per sample
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";
