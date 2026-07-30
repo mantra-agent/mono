@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { JobRole } from "./job-roles";
 
-export const MODEL_VERSION = 4;
+export const MODEL_VERSION = 5;
 export const HORIZON_MIN = 1;
 export const HORIZON_MAX = 120;
 export const LOADED_COST_MULTIPLIER_MIN = 0.5;
@@ -23,6 +23,7 @@ export const PHASE_FINANCING: Record<PhaseKey, FinancingKey> = {
 export type FinancingInstrument = "post_money_safe" | "priced_round";
 export type CostClassification = "opex" | "product_cogs";
 export type HireCostAllocation = "opex" | "product_cogs" | "acquisition_split";
+export type HireActivation = "scheduled" | "evidence_triggered";
 export type GateStatus = "achieved" | "missed" | "not_yet_observable";
 
 export const PHASE_LABELS: Record<PhaseKey, string> = {
@@ -44,6 +45,7 @@ export interface StageKeyHire {
   headcount?: number;
   costAllocation?: HireCostAllocation;
   acquisitionAllocationPct?: number;
+  activation?: HireActivation;
 }
 
 export interface PhaseAssumption {
@@ -180,11 +182,9 @@ export function calendarMonthLabel(startCalendarMonth: string, monthIndex: numbe
 const PHASE_DEFAULTS: Record<PhaseKey, Omit<PhaseAssumption, "key">> = {
   phase_0: { startMonth: 0, endMonth: 0, fundedBy: "Bootstrap", productArrMin: 0, productArrMax: 0, annualNrrMinPct: 0, annualGlrMinPct: 0, accountExpansion90dMin: 0, cacPaybackMaxMonths: 0, productGrossMarginMinPct: 0, keyHires: [] },
   phase_1: { startMonth: 1, endMonth: 18, fundedBy: "Pre-Seed", productArrMin: 1_000_000, productArrMax: 2_000_000, annualNrrMinPct: 150, annualGlrMinPct: 90, accountExpansion90dMin: 0, cacPaybackMaxMonths: 0, productGrossMarginMinPct: 0, keyHires: [
-    { roleId: "18d90c4f05e92d7d", startMonth: 1, costAllocation: "opex" },
-    { roleId: "ac66ad0dcbcc671f", startMonth: 1, costAllocation: "opex" },
-    { roleId: "bb87b49068593dc8", startMonth: 7, costAllocation: "product_cogs" },
-    { roleId: "e1a648d46196d359", startMonth: 9, costAllocation: "acquisition_split", acquisitionAllocationPct: 70 },
-    { roleId: "e8fc275fa51a38d2", startMonth: 13, costAllocation: "opex" },
+    { roleId: "18d90c4f05e92d7d", startMonth: 1, costAllocation: "opex", activation: "scheduled" },
+    { roleId: "ac66ad0dcbcc671f", startMonth: 1, costAllocation: "opex", activation: "scheduled" },
+    { roleId: "e1a648d46196d359", startMonth: 9, costAllocation: "acquisition_split", acquisitionAllocationPct: 70, activation: "evidence_triggered" },
   ] },
   phase_2: { startMonth: 19, endMonth: 36, fundedBy: "Seed", productArrMin: 2_000_000, productArrMax: 10_000_000, annualNrrMinPct: 0, annualGlrMinPct: 0, accountExpansion90dMin: 1.5, cacPaybackMaxMonths: 12, productGrossMarginMinPct: 0, keyHires: [] },
   phase_3: { startMonth: 37, endMonth: 54, fundedBy: "Series A", productArrMin: 30_000_000, productArrMax: 50_000_000, annualNrrMinPct: 0, annualGlrMinPct: 0, accountExpansion90dMin: 0, cacPaybackMaxMonths: 0, productGrossMarginMinPct: 80, keyHires: [] },
@@ -267,6 +267,7 @@ const keyHireSchema = z.object({
   headcount: z.number().optional(),
   costAllocation: z.enum(["opex", "product_cogs", "acquisition_split"]).optional(),
   acquisitionAllocationPct: z.number().optional(),
+  activation: z.enum(["scheduled", "evidence_triggered"]).optional(),
 }).strict();
 
 const phaseSchema = z.object({
@@ -329,6 +330,29 @@ const HIRE_ALLOCATION_DEFAULTS: Record<string, Pick<StageKeyHire, "costAllocatio
   bb87b49068593dc8: { costAllocation: "product_cogs", acquisitionAllocationPct: 0 },
   e1a648d46196d359: { costAllocation: "acquisition_split", acquisitionAllocationPct: 70 },
 };
+const V4_GENERATED_PHASE_ONE_HIRES: StageKeyHire[] = [
+  { roleId: "18d90c4f05e92d7d", startMonth: 1, costAllocation: "opex" },
+  { roleId: "ac66ad0dcbcc671f", startMonth: 1, costAllocation: "opex" },
+  { roleId: "bb87b49068593dc8", startMonth: 7, costAllocation: "product_cogs" },
+  { roleId: "e1a648d46196d359", startMonth: 9, costAllocation: "acquisition_split", acquisitionAllocationPct: 70 },
+  { roleId: "e8fc275fa51a38d2", startMonth: 13, costAllocation: "opex" },
+];
+
+function matchesGeneratedHireBaseline(value: unknown, baseline: StageKeyHire[]): boolean {
+  if (!Array.isArray(value) || value.length !== baseline.length) return false;
+  const expectedByRole = new Map(baseline.map((hire) => [hire.roleId, hire]));
+  return value.every((candidate) => {
+    if (!candidate || typeof candidate !== "object") return false;
+    const hire = candidate as Record<string, unknown>;
+    const expected = expectedByRole.get(typeof hire.roleId === "string" ? hire.roleId : "");
+    return Boolean(expected)
+      && (hire.startMonth ?? expected!.startMonth) === expected!.startMonth
+      && (hire.headcount ?? 1) === 1
+      && (hire.costAllocation ?? "opex") === expected!.costAllocation
+      && (hire.acquisitionAllocationPct ?? (expected!.costAllocation === "acquisition_split" ? 70 : 0)) === (expected!.acquisitionAllocationPct ?? 0)
+      && (hire.activation === undefined || hire.activation === "scheduled");
+  });
+}
 
 function legacyCompatibility(raw: AssumptionsPatch, defaults: Assumptions) {
   const legacyStages = raw.stages ?? [];
@@ -375,8 +399,8 @@ function legacyCompatibility(raw: AssumptionsPatch, defaults: Assumptions) {
 /**
  * Migrate old stored shapes before strict validation. v3 mislabeled the real
  * Pre-Seed/Seed/Series A sequence as Seed/Series A/Series B. v4 translates
- * those identities while retaining every explicit amount, month, valuation,
- * phase threshold, and hire; the newly required Founding GTM role is additive.
+ * those identities. v5 replaces only the exact generated Phase 1 hire set;
+ * explicit amounts, months, valuations, thresholds, and customized hires stay intact.
  */
 function migrateLegacyModel(input: unknown): unknown {
   if (!input || typeof input !== "object") return input;
@@ -402,8 +426,11 @@ function migrateLegacyModel(input: unknown): unknown {
       const value = phase as Record<string, unknown>;
       const fundedBy = typeof value.fundedBy === "string" && version === 3 ? (V3_FUNDED_BY_REMAP[value.fundedBy] ?? value.fundedBy) : value.fundedBy;
       const hires = Array.isArray(value.keyHires) ? [...value.keyHires] : [];
-      if (value.key === "phase_1" && !hires.some((hire) => (hire as { roleId?: string })?.roleId === "e1a648d46196d359")) {
+      if (version === 3 && value.key === "phase_1" && !hires.some((hire) => (hire as { roleId?: string })?.roleId === "e1a648d46196d359")) {
         hires.push({ roleId: "e1a648d46196d359", startMonth: 9, costAllocation: "acquisition_split", acquisitionAllocationPct: 70 });
+      }
+      if (version >= 3 && version <= 4 && value.key === "phase_1" && matchesGeneratedHireBaseline(hires, V4_GENERATED_PHASE_ONE_HIRES)) {
+        return { ...value, fundedBy, keyHires: PHASE_DEFAULTS.phase_1.keyHires };
       }
       return { ...value, fundedBy, keyHires: hires };
     });
@@ -440,6 +467,7 @@ export function normalizeAssumptions(input: unknown): Assumptions {
           headcount: Math.max(1, Math.round(nonNegative(hire.headcount, 1))),
           costAllocation,
           acquisitionAllocationPct: bounded(hire.acquisitionAllocationPct, 0, 100, costAllocation === "acquisition_split" ? allocationDefault.acquisitionAllocationPct ?? 70 : 0),
+          activation: hire.activation ?? "scheduled",
         };
       })
       .filter((hire) => hire.roleId.length > 0);
@@ -549,6 +577,18 @@ export interface FinancingNeed {
   phaseKey: PhaseKey; gateMonth: number; raiseRequired: number; plannedRaise: number; fundingMonth: number; nextFundraiseStartMonth: number;
   cashAtGateWithoutRaise: number; confirmedConsultingNetCash: number; reserveAtGate: number;
 }
+
+export interface PhaseOneFinancingScenario {
+  amount: number;
+  baselineCashAtGate: number;
+  downsideCashAtGate: number;
+  baselineReserveGap: number;
+  downsideReserveGap: number;
+  baselineNextFundraiseStartMonth: number;
+  downsideNextFundraiseStartMonth: number;
+}
+
+export const PHASE_ONE_FIRST_CLOSE_AMOUNT = 750_000;
 
 export interface Projection {
   assumptions: Assumptions; months: MonthRow[]; gates: GateSummary[]; financing: FinancingSummary[]; financingNeed: FinancingNeed;
@@ -768,6 +808,36 @@ function calendarPeriodForMonth(row: MonthRow, mode: PeriodMode): CalendarPeriod
     return { key: `${year}-Q${quarter}`, label: `Q${quarter} '${String(year).slice(-2)}` };
   }
   return { key: String(year), label: String(year) };
+}
+
+function firstReserveBreachMonth(projection: Projection): number | null {
+  const gateMonth = projection.financingNeed.gateMonth;
+  return projection.months.find((row) => row.month <= gateMonth && row.endingCash < projection.assumptions.reserveAtNextGate)?.month ?? null;
+}
+
+function nextFundraiseStartMonth(projection: Projection): number {
+  const reserveBreachMonth = firstReserveBreachMonth(projection);
+  const triggerMonth = reserveBreachMonth ?? projection.financingNeed.gateMonth;
+  return Math.max(1, triggerMonth - projection.assumptions.fundraisingLeadMonths);
+}
+
+export function computePhaseOneFinancingScenario(input: Assumptions | unknown, roles: JobRole[], amount: number): PhaseOneFinancingScenario {
+  const assumptions = normalizeAssumptions(input);
+  const financingEvents = assumptions.financingEvents.map((event) => event.key === "pre_seed" ? { ...event, amount: nonNegative(amount, event.amount) } : event);
+  const baseline = computeProjection({ ...assumptions, financingEvents }, roles);
+  const downside = computeProjection({ ...assumptions, financingEvents, accountExpansion90d: assumptions.downsideAccountExpansion90d }, roles);
+  const gateIndex = Math.max(0, baseline.financingNeed.gateMonth - 1);
+  const baselineCashAtGate = baseline.months[gateIndex]?.endingCash ?? assumptions.openingCash;
+  const downsideCashAtGate = downside.months[gateIndex]?.endingCash ?? assumptions.openingCash;
+  return {
+    amount: nonNegative(amount, assumptions.financingEvents[0]?.amount ?? 0),
+    baselineCashAtGate,
+    downsideCashAtGate,
+    baselineReserveGap: Math.max(0, assumptions.reserveAtNextGate - baselineCashAtGate),
+    downsideReserveGap: Math.max(0, assumptions.reserveAtNextGate - downsideCashAtGate),
+    baselineNextFundraiseStartMonth: nextFundraiseStartMonth(baseline),
+    downsideNextFundraiseStartMonth: nextFundraiseStartMonth(downside),
+  };
 }
 
 export function aggregateMonths(months: MonthRow[], mode: PeriodMode): PeriodRow[] {

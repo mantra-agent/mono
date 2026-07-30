@@ -27,7 +27,9 @@ import {
   FINANCING_KEYS,
   FINANCING_LABELS,
   PHASE_LABELS,
+  PHASE_ONE_FIRST_CLOSE_AMOUNT,
   aggregateMonths,
+  computePhaseOneFinancingScenario,
   computeProjection,
   type Assumptions,
   type FinancialModel,
@@ -214,6 +216,8 @@ export default function BusinessModelPage() {
 
   const projection = useMemo(() => draft ? computeProjection(draft, roles) : null, [draft, roles]);
   const downsideProjection = useMemo(() => draft ? computeProjection({ ...draft, accountExpansion90d: draft.downsideAccountExpansion90d }, roles) : null, [draft, roles]);
+  const fullPlanScenario = useMemo(() => draft ? computePhaseOneFinancingScenario(draft, roles, draft.financingEvents.find((event) => event.key === "pre_seed")?.amount ?? 0) : null, [draft, roles]);
+  const firstCloseScenario = useMemo(() => draft ? computePhaseOneFinancingScenario(draft, roles, PHASE_ONE_FIRST_CLOSE_AMOUNT) : null, [draft, roles]);
   const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
   const phaseOne = draft?.phases.find((phase) => phase.key === "phase_1");
   const baselineGateRow = phaseOne ? projection?.months[Math.max(0, phaseOne.endMonth - 1)] : null;
@@ -234,7 +238,7 @@ export default function BusinessModelPage() {
     );
   }
 
-  if (isLoading || !draft || !projection || !downsideProjection) {
+  if (isLoading || !draft || !projection || !downsideProjection || !fullPlanScenario || !firstCloseScenario) {
     return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
   }
 
@@ -249,9 +253,21 @@ export default function BusinessModelPage() {
           <SavedIndicator state={saveState} />
         </div>
         <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
-          <SummaryMetric label="Planned raise" value={fmtCurrency(projection.financingNeed.plannedRaise)} detail={`Derived need ${fmtCurrency(projection.financingNeed.raiseRequired)}`} />
-          <SummaryMetric label={`Baseline at Month ${projection.financingNeed.gateMonth}`} value={baselineGateRow ? fmtCurrency(baselineGateRow.productArr) : "—"} detail={baselineGateRow ? `${Math.round(baselineGateRow.activeAccounts)} accounts · ${fmtCurrency(baselineGateRow.endingCash)} cash` : undefined} />
-          <SummaryMetric label={`Downside at Month ${projection.financingNeed.gateMonth}`} value={downsideGateRow ? fmtCurrency(downsideGateRow.productArr) : "—"} detail={downsideGateRow ? `${Math.round(downsideGateRow.activeAccounts)} accounts · ${fmtCurrency(downsideGateRow.endingCash)} cash` : undefined} />
+          <SummaryMetric
+            label="Full-plan target"
+            value={`Up to ${fmtCurrency(fullPlanScenario.amount)}`}
+            detail={`Month ${projection.financingNeed.gateMonth}: ${fmtCurrency(fullPlanScenario.baselineCashAtGate)} baseline · ${fmtCurrency(fullPlanScenario.downsideCashAtGate)} downside`}
+          />
+          <SummaryMetric
+            label="$750K first close"
+            value={fmtCurrency(firstCloseScenario.amount)}
+            detail={`Month ${projection.financingNeed.gateMonth}: ${fmtCurrency(firstCloseScenario.baselineCashAtGate)} baseline · ${fmtCurrency(firstCloseScenario.downsideCashAtGate)} downside`}
+          />
+          <SummaryMetric
+            label="$750K reserve gap"
+            value={`${fmtCurrency(firstCloseScenario.baselineReserveGap)} / ${fmtCurrency(firstCloseScenario.downsideReserveGap)}`}
+            detail={`Baseline / downside · next raise Month ${firstCloseScenario.baselineNextFundraiseStartMonth} / ${firstCloseScenario.downsideNextFundraiseStartMonth}`}
+          />
           <SummaryMetric label="Product GM at gate" value={baselineGateRow ? fmtPercent(baselineGateRow.productGrossMargin) : "—"} detail="Target ≥80%; model keeps the gap visible" />
         </div>
       </section>
@@ -335,6 +351,9 @@ export default function BusinessModelPage() {
             </ProfileTreeRow>
             <ProfileTreeRow label="Logo retention" icon={<Percent className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-logo-retention">
               <NumericInput compact ariaLabel="Annual gross logo retention" value={draft.annualGrossLogoRetentionPct} min={0} step={1} suffix="%" onChange={(annualGrossLogoRetentionPct) => updateGlobal({ annualGrossLogoRetentionPct })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Variable CS / account" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" expandedContent="Customer-success capacity scales with active accounts here. Add a fixed hire only after onboarding or retention evidence shows this variable model is no longer enough.">
+              <NumericInput compact ariaLabel="Variable customer success cost per active account" value={draft.supportPerActiveAccount} min={0} step={10} prefix="$" suffix="/ mo" onChange={(supportPerActiveAccount) => updateGlobal({ supportPerActiveAccount })} />
             </ProfileTreeRow>
             <ProfileTreeRow label="Gate reserve" icon={<Banknote className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-gate-reserve">
               <NumericInput compact ariaLabel="Reserve at next gate" value={draft.reserveAtNextGate} min={0} step={10_000} prefix="$" onChange={(reserveAtNextGate) => updateGlobal({ reserveAtNextGate })} />
@@ -516,7 +535,7 @@ function KeyHiresEditor({ phaseKey, hires, roles, roleMap, onChange }: KeyHiresE
 
   const addRole = (roleId: string) => {
     if (!roleId || taken.has(roleId)) return;
-    onChange(phaseKey, [...hires, { roleId, costAllocation: "opex", acquisitionAllocationPct: 0 }]);
+    onChange(phaseKey, [...hires, { roleId, costAllocation: "opex", acquisitionAllocationPct: 0, activation: "scheduled" }]);
   };
   const removeRole = (roleId: string) => onChange(phaseKey, hires.filter((hire) => hire.roleId !== roleId));
 
@@ -531,6 +550,7 @@ function KeyHiresEditor({ phaseKey, hires, roles, roleMap, onChange }: KeyHiresE
             <span key={hire.roleId} className="inline-flex items-center gap-1 rounded-md border border-border/40 bg-muted/40 px-1.5 py-0.5 text-xs text-foreground">
               <Briefcase className="h-3 w-3 text-muted-foreground" />
               <span className="max-w-[10rem] truncate">{role?.title ?? hire.roleId}</span>
+              <span className="text-muted-foreground">{hire.activation === "evidence_triggered" ? `if traction supports it · Month ${hire.startMonth ?? 1}` : `Month ${hire.startMonth ?? 1}`}</span>
               <button type="button" aria-label={`Remove ${role?.title ?? "hire"}`} className="text-muted-foreground hover:text-destructive" onClick={() => removeRole(hire.roleId)}>
                 <X className="h-3 w-3" />
               </button>
