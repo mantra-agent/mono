@@ -459,11 +459,11 @@ class CoordinatedStream implements CoordinatedSpeechRecognitionStream {
     }
     const session = this.currentSession;
     this.currentSession = null;
-    this.currentAttemptToken = null;
     const outcome = session
       ? await timeout(session.finish(), FINISH_TIMEOUT_MS)
       : { outcome: "finished" as const };
     if (!outcome || outcome.outcome === "timed_out") {
+      this.currentAttemptToken = null;
       session?.abort("Recognition provider finish timed out");
       this.terminal = true;
       this.setState({ status: "failed", detail: "Speech recognition final transcript drain timed out" });
@@ -474,6 +474,7 @@ class CoordinatedStream implements CoordinatedSpeechRecognitionStream {
       });
       return { outcome: "timed_out" };
     }
+    this.currentAttemptToken = null;
     this.terminal = true;
     this.setState({ status: "closed" });
     return { outcome: "finished" };
