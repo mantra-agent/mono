@@ -5,7 +5,13 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { BUILTIN_SKILL_DEFAULTS } from "./skill-defaults";
 import * as fs from "fs";
 import * as path from "path";
-import { CANONICAL_REGRESSION_SKILL_ID, CANONICAL_SCAN_SKILL_ID } from "./skill-identities";
+import {
+  CANONICAL_AFFIRM_SKILL_ID,
+  CANONICAL_DAILY_BRIEF_SKILL_ID,
+  CANONICAL_LEARNING_SKILL_ID,
+  CANONICAL_REGRESSION_SKILL_ID,
+  CANONICAL_SCAN_SKILL_ID,
+} from "./skill-identities";
 
 const log = createLogger("SkillSeed");
 
@@ -163,6 +169,13 @@ export async function migrateLegacySkillPersonaPreferences(): Promise<void> {
   }
 }
 
+const CANONICAL_BUILTIN_SKILL_IDS: Readonly<Record<string, string>> = {
+  affirm: CANONICAL_AFFIRM_SKILL_ID,
+  "brief-daily": CANONICAL_DAILY_BRIEF_SKILL_ID,
+  learning: CANONICAL_LEARNING_SKILL_ID,
+  regression: CANONICAL_REGRESSION_SKILL_ID,
+};
+
 function builtinSkillDefinitionPatch(def: (typeof BUILTIN_SKILL_DEFAULTS)[number]) {
   return {
     description: def.description,
@@ -301,7 +314,7 @@ export async function seedBuiltinSkills(): Promise<void> {
       // makes any `default`-keyword insert fail with 23502. Explicit values keep
       // built-in seeding independent of that drift, matching the createSkill path.
       await db.insert(skills).values({
-        ...(def.name === "regression" ? { id: CANONICAL_REGRESSION_SKILL_ID } : {}),
+        ...(CANONICAL_BUILTIN_SKILL_IDS[def.name] ? { id: CANONICAL_BUILTIN_SKILL_IDS[def.name] } : {}),
         name: def.name,
         description: def.description,
         category: def.category,

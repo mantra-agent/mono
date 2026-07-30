@@ -2,7 +2,13 @@ import type { Principal } from "./principal";
 import { getCurrentPrincipal } from "./principal-context";
 import { getSideEffectTier } from "./autonomy-tiers";
 import { principalHasPermission, type Permission } from "./permissions";
-import { CANONICAL_REGRESSION_SKILL_ID, CANONICAL_SCAN_SKILL_ID } from "./skill-identities";
+import {
+  CANONICAL_AFFIRM_SKILL_ID,
+  CANONICAL_DAILY_BRIEF_SKILL_ID,
+  CANONICAL_LEARNING_SKILL_ID,
+  CANONICAL_REGRESSION_SKILL_ID,
+  CANONICAL_SCAN_SKILL_ID,
+} from "./skill-identities";
 import { isWorkflowStageAction } from "./workflows/stage-capability";
 
 export type ToolInvocationOrigin =
@@ -62,6 +68,17 @@ const AUTONOMOUS_SKILL_EXTERNAL_EFFECT_ALLOWLIST: Readonly<Record<string, Readon
   // acquire this network/external-feed capability.
   [CANONICAL_SCAN_SKILL_ID]: new Set(["news:scan"]),
   [CANONICAL_REGRESSION_SKILL_ID]: new Set(["regression:execute_scenario", "plan:execute"]),
+};
+
+const AUTONOMOUS_SKILL_CHILD_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = {
+  // Daily Brief composes exactly these two product-owned child Skills. Keep
+  // skills.run tier 2 so every other autonomous Skill remains unable to spawn
+  // arbitrary descendants. Parent and child identities are canonical DB IDs;
+  // mutable Skill names never grant this authority.
+  [CANONICAL_DAILY_BRIEF_SKILL_ID]: new Set([
+    CANONICAL_AFFIRM_SKILL_ID,
+    CANONICAL_LEARNING_SKILL_ID,
+  ]),
 };
 
 const INTERNAL_EXTERNAL_EFFECT_ALLOWLIST = new Set([
@@ -130,6 +147,26 @@ function isModelOrigin(origin: ToolInvocationOrigin): boolean {
   return origin !== "http" && origin !== "internal";
 }
 
+function canonicalSkillChildId(args: Record<string, unknown>): string | undefined {
+  return typeof args.id === "string" && args.id.trim() ? args.id.trim() : undefined;
+}
+
+function permitsAutonomousSkillChild(
+  toolName: string,
+  action: string | undefined,
+  args: Record<string, unknown>,
+  context: AgentAuthorityContext,
+): boolean {
+  if (toolName !== "skills" || action !== "run" || typeof context.skillId !== "string") return false;
+  const allowedChildren = AUTONOMOUS_SKILL_CHILD_ALLOWLIST[context.skillId];
+  if (!allowedChildren) return false;
+  const childSkillId = canonicalSkillChildId(args);
+  // Schema filtering knows only the action. Expose skills.run to an approved
+  // parent; the Skills handler resolves a requested name to its canonical row
+  // and execution rechecks the injected exact ID.
+  return childSkillId ? allowedChildren.has(childSkillId) : true;
+}
+
 export function authorizeToolInvocation(
   toolName: string,
   args: Record<string, unknown>,
@@ -190,7 +227,9 @@ export function authorizeToolInvocation(
     const skillScopedEffect = origin === "autonomous"
       && typeof context.skillId === "string"
       && AUTONOMOUS_SKILL_EXTERNAL_EFFECT_ALLOWLIST[context.skillId]?.has(key);
-    if (!trustedEngineeringWrite && !trustedWorkflowStageAction && !skillScopedEffect && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(key) && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(wildcardKey)) {
+    const approvedSkillChild = origin === "autonomous"
+      && permitsAutonomousSkillChild(toolName, action, args, context);
+    if (!trustedEngineeringWrite && !trustedWorkflowStageAction && !skillScopedEffect && !approvedSkillChild && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(key) && !INTERNAL_EXTERNAL_EFFECT_ALLOWLIST.has(wildcardKey)) {
       return { allowed: false, reason: "autonomous_external_effect_blocked" };
     }
   }

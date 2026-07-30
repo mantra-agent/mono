@@ -577,6 +577,8 @@ Runnable workflow skills are stored in the DB, executed by the autonomous runner
 - `shared/models/skills.ts` — Schema: `skills`, `skill_runs`, `skill_scores`, `skill_references`
 
 ### Architecture
+- **Canonical Skill composition authority:** `skills.run` remains tier 2. An autonomous parent may launch child Skills only through the exact parent-ID → child-ID allowlist in `agent-authority.ts`; the handler resolves any requested name through principal-scoped Skill storage and reauthorizes the injected exact child row ID before launch, so mutable names never grant authority.
+- **Awaited child output:** `skills.run` returns the bounded `AutonomousRunResult.summary` after the status/session receipt so a composing parent can consume the child’s actual final output rather than infer it from session history.
 - **16 hardcoded `SKILL_RUN_CONFIGS`** — callType, activity, temperature, timeout per skill
 - **Dynamic fallback** for user-created skills: `callType: "full"`, 10-minute timeout, `sessionType: "agent"`
 - **Scoring pipeline:** Event-driven on `chat.session.status_changed` → transcript assembly (50K char budget) + artifact content enrichment → checklist evaluation → comparative (vs prior run) → persist to `skill_runs`
