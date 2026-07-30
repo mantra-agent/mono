@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Clock, Glasses, Globe2, Loader2, Mail, MoreHorizontal, Shield, Smartphone, Trash2, User, Users } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Clock, Copy, Glasses, Globe2, Loader2, Mail, MoreHorizontal, Shield, Smartphone, Trash2, User, UserPlus, Users } from "lucide-react";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
+import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
 import type { ClientPresenceEntry, ClientPresenceKind } from "@shared/client-presence";
 
 interface AdminUserRow {
@@ -49,12 +51,23 @@ interface UsersResponse {
   availablePermissions: string[];
 }
 
+interface InviteResult {
+  email: string;
+  token: string;
+  expiresAt: string;
+}
+
 interface UserGroupSectionProps {
   label: string;
   count: number;
   defaultOpen: boolean;
   storageKey: string;
   children: ReactNode;
+}
+
+interface InviteUserDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 const KIND_LABEL: Record<ClientPresenceKind, string> = { web: "Web", ios: "Mobile", glasses: "Glasses" };
@@ -118,6 +131,87 @@ function UserGroupSection({ label, count, defaultOpen, storageKey, children }: U
       </CollapsibleTrigger>
       <CollapsibleContent><div className="mt-0 space-y-0">{children}</div></CollapsibleContent>
     </Collapsible>
+  );
+}
+
+function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) {
+  const { toast } = useToast();
+  const [email, setEmail] = useState("");
+  const [syntheticConfirmed, setSyntheticConfirmed] = useState(false);
+  const [result, setResult] = useState<InviteResult | null>(null);
+  const [copied, setCopied] = useState(false);
+  const invite = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/auth/invite", { email: email.trim() })).json() as Promise<InviteResult>,
+    onSuccess: async (nextResult) => {
+      setResult(nextResult);
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/users"] });
+      toast({ title: "Invite created", description: "No email was sent." });
+    },
+    onError: (error: Error) => toast({ title: "Could not create invite", description: error.message, variant: "destructive" }),
+  });
+  const registrationUrl = result ? `${window.location.origin}/register/${result.token}` : "";
+  const reset = () => {
+    setEmail("");
+    setSyntheticConfirmed(false);
+    setResult(null);
+    setCopied(false);
+    invite.reset();
+  };
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && !invite.isPending) reset();
+    onOpenChange(nextOpen);
+  };
+  const copyRegistrationUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(registrationUrl);
+      setCopied(true);
+      toast({ title: "Registration link copied" });
+    } catch (error) {
+      toast({ title: "Could not copy link", description: error instanceof Error ? error.message : "Clipboard unavailable", variant: "destructive" });
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{result ? "Invite created" : "Invite synthetic user"}</DialogTitle>
+          <DialogDescription>
+            {result ? "Copy this bearer link into the synthetic rehearsal browser. No email was sent." : "This action creates a pending synthetic account and returns its registration link. It never sends email."}
+          </DialogDescription>
+        </DialogHeader>
+        {result ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="invite-registration-url" className="text-sm font-medium text-foreground">Registration link</label>
+              <div className="flex gap-2">
+                <Input id="invite-registration-url" value={registrationUrl} readOnly className="font-mono text-xs" data-testid="input-invite-registration-url" />
+                <Button type="button" variant="outline" size="icon" className="h-11 w-11 shrink-0" onClick={copyRegistrationUrl} aria-label="Copy registration link" data-testid="button-copy-invite-link">
+                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground">Expires {formatDateTime(result.expiresAt)}.</p>
+          </div>
+        ) : (
+          <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); invite.mutate(); }}>
+            <div className="space-y-2">
+              <label htmlFor="invite-email" className="text-sm font-medium text-foreground">Synthetic email</label>
+              <Input id="invite-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="beremie@example.com" autoComplete="off" required autoFocus data-testid="input-invite-email" />
+            </div>
+            <label className="flex min-h-11 items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm text-foreground">
+              <Checkbox checked={syntheticConfirmed} onCheckedChange={(value) => setSyntheticConfirmed(value === true)} />
+              I confirm this is a synthetic rehearsal identity.
+            </label>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={invite.isPending}>Cancel</Button>
+              <Button type="submit" disabled={!email.trim() || !syntheticConfirmed || invite.isPending} data-testid="button-create-invite">
+                {invite.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create invite"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -231,6 +325,7 @@ export default function UsersAdminPage() {
   const { data, isLoading } = useQuery<UsersResponse>({ queryKey: ["/api/auth/users"], enabled: canRead, refetchInterval: 15_000 });
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedWaitlistId, setSelectedWaitlistId] = useState<string | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const [deleteUser, setDeleteUser] = useState<AdminUserRow | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Set<string>>>({});
   usePageHeader({ title: "Users" });
@@ -262,12 +357,14 @@ export default function UsersAdminPage() {
     <div className="flex h-full bg-black" data-testid="users-page">
       <div className={cn("w-full shrink-0 flex-col bg-black @md:flex @md:w-72", selectedUser || selectedWaitlist ? "hidden" : "flex")}>
         <ScrollArea className="flex-1"><div className="space-y-1 p-2">
+          {canWrite ? <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} onClick={() => setInviteOpen(true)} data-testid="button-invite-user"><UserPlus className="h-3.5 w-3.5" />Invite user</button> : null}
           <UserGroupSection label="Waitlist" count={waitlist.length} defaultOpen={false} storageKey="users:list:waitlist:open">{waitlist.length > 0 ? waitlist.map((application) => <button type="button" key={application.id} onClick={() => { setSelectedWaitlistId(application.id); setSelectedUserId(null); }} className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm", selectedWaitlistId === application.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70")}><span className="w-7 shrink-0 text-right text-xs tabular-nums">#{application.position}</span><span className="min-w-0 flex-1 truncate">{application.email}</span></button>) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No one is waiting.</div>}</UserGroupSection>
           <UserGroupSection label="Active" count={activeUsers.length} defaultOpen storageKey="users:list:active:open">{activeUsers.length > 0 ? activeUsers.map(renderUserRow) : <div className="px-7 py-1.5 text-sm text-muted-foreground">No active users.</div>}</UserGroupSection>
           <UserGroupSection label="Inactive" count={inactiveUsers.length} defaultOpen={false} storageKey="users:list:inactive:open">{inactiveUsers.map(renderUserRow)}</UserGroupSection>
         </div></ScrollArea>
       </div>
       <div className={cn("min-w-0 flex-1 flex-col", selectedUser || selectedWaitlist ? "flex" : "hidden @md:flex")}>{selectedWaitlist ? <div className="flex-1 overflow-y-auto scrollbar-thin"><WaitlistDetail application={selectedWaitlist} canWrite={canWrite} onBack={() => setSelectedWaitlistId(null)} /></div> : selectedUser ? <div className="flex-1 overflow-y-auto scrollbar-thin"><UserDetail user={selectedUser} availablePermissions={availablePermissions} canWrite={canWrite} draft={draftFor(selectedUser)} onDraftChange={(next) => setDrafts((current) => ({ ...current, [selectedUser.id]: next }))} onBack={() => setSelectedUserId(null)} /></div> : <div className="flex h-full items-center justify-center"><p className="text-sm text-muted-foreground">Select a user or waitlist application.</p></div>}</div>
+      <InviteUserDialog open={inviteOpen} onOpenChange={setInviteOpen} />
       <DeleteUserDialog user={deleteUser} open={!!deleteUser} onOpenChange={(open) => { if (!open) setDeleteUser(null); }} onDeleted={() => setSelectedUserId(null)} />
     </div>
   );
