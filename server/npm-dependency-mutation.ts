@@ -22,6 +22,7 @@ const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 const EXACT_SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const SAFE_RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+$/;
 const FORBIDDEN_OBJECT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const SAFE_PROJECT_NPM_CONFIG_LINES = new Set(["legacy-peer-deps=true"]);
 
 export const NPM_DEPENDENCY_SECTIONS = [
   "dependencies",
@@ -96,13 +97,19 @@ async function assertRegularFileInsideRepository(filePath: string, repositoryRoo
   }
 }
 
-async function assertNoProjectNpmConfig(packageRoot: string, repositoryRoot: string): Promise<void> {
+async function assertSafeProjectNpmConfig(packageRoot: string, repositoryRoot: string): Promise<void> {
   let current = packageRoot;
   while (true) {
     const npmConfigPath = join(current, ".npmrc");
     if (await pathExists(npmConfigPath)) {
-      const stats = await lstat(npmConfigPath);
-      if (stats.isFile() || stats.isSymbolicLink()) throw new Error("project_npmrc_not_allowed");
+      await assertRegularFileInsideRepository(npmConfigPath, repositoryRoot, "project_npmrc");
+      const lines = (await readFile(npmConfigPath, "utf-8"))
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && !line.startsWith("#") && !line.startsWith(";"));
+      if (lines.some((line) => !SAFE_PROJECT_NPM_CONFIG_LINES.has(line))) {
+        throw new Error("project_npmrc_not_allowed");
+      }
     }
     if (current === repositoryRoot) return;
     const parent = dirname(current);
@@ -173,7 +180,7 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
   const packageNodeModules = join(packageRoot, "node_modules");
   await assertRegularFileInsideRepository(manifestPath, repositoryRoot, "manifest");
   await assertRegularFileInsideRepository(lockfilePath, repositoryRoot, "lockfile");
-  await assertNoProjectNpmConfig(packageRoot, repositoryRoot);
+  await assertSafeProjectNpmConfig(packageRoot, repositoryRoot);
   if (await pathExists(packageNodeModules)) throw new Error("package_node_modules_must_be_absent");
 
   const originalManifest = await readFile(manifestPath, "utf-8");
@@ -235,6 +242,7 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
         NPM_CONFIG_AUDIT: "false",
         NPM_CONFIG_FUND: "false",
         NPM_CONFIG_UPDATE_NOTIFIER: "false",
+        NPM_CONFIG_LEGACY_PEER_DEPS: "true",
       },
     });
 
