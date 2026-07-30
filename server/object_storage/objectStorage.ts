@@ -217,7 +217,11 @@ export class ObjectStorageService {
       );
     }
 
-    log.info(`uploadObjectEntity: persisted ${buffer.length} bytes to ${objectKey}`);
+    log.info("uploadObjectEntity: persisted object", {
+      byteCount: buffer.length,
+      category,
+      vaultScoped: isVaultKey(objectKey),
+    });
     return { objectPath: `/objects/${category}/${filename}`, objectKey, size: buffer.length };
   }
 

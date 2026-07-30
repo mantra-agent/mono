@@ -12,7 +12,7 @@ import {
   type MeetingAudioRetentionState,
   type MeetingAudioSample,
 } from "@shared/models/meeting-audio";
-import { db } from "../db";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db } from "../db";
 import { decryptBuffer, encryptBuffer, getEncryptionKey, getPreviousEncryptionKey, isEncryptedEnvelope } from "../encryption";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
@@ -59,6 +59,13 @@ function scopeSample(sampleId: string, principal: Principal & { userId: string; 
     eq(meetingAudioSamples.accountId, principal.accountId),
     inArray(meetingAudioSamples.vaultId, principal.visibleVaultIds.length > 0 ? principal.visibleVaultIds : ["__none__"]),
   );
+}
+
+async function acquireSampleLifecycleLock(
+  tx: Parameters<typeof acquireAdvisoryTransactionLock>[0],
+  sampleId: string,
+): Promise<void> {
+  await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.MEETING_AUDIO_SAMPLE, sampleId);
 }
 
 function retentionState(sample: MeetingAudioSample): MeetingAudioRetentionState {
@@ -357,39 +364,77 @@ export async function exportMeetingAudioSample(sampleId: string, res: Response):
 
 export async function deleteMeetingAudioSample(sampleId: string, reason: "owner" | "meeting" | "expired"): Promise<boolean> {
   const principal = requireUserPrincipal();
-  const [sample] = await db.select().from(meetingAudioSamples).where(scopeSample(sampleId, principal)).limit(1);
-  if (!sample) return false;
-  const running = await db.select({ id: meetingAudioEvaluations.id }).from(meetingAudioEvaluations).where(and(
-    eq(meetingAudioEvaluations.sampleId, sample.id),
-    eq(meetingAudioEvaluations.status, "running"),
-    eq(meetingAudioEvaluations.ownerUserId, principal.userId),
-    eq(meetingAudioEvaluations.accountId, principal.accountId),
-  )).limit(1);
-  if (running.length > 0) throw Object.assign(new Error("Audio cannot be deleted while an evaluation is running"), { status: 409 });
-  const evaluations = await db.select().from(meetingAudioEvaluations).where(and(
-    eq(meetingAudioEvaluations.sampleId, sample.id),
-    eq(meetingAudioEvaluations.ownerUserId, principal.userId),
-    eq(meetingAudioEvaluations.accountId, principal.accountId),
-    eq(meetingAudioEvaluations.vaultId, sample.vaultId),
-  ));
+  const deletedStatus = reason === "expired" ? "expired" : "deleted";
+  const claimed = await db.transaction(async (tx) => {
+    await acquireSampleLifecycleLock(tx, sampleId);
+    const [sample] = await tx.select().from(meetingAudioSamples).where(scopeSample(sampleId, principal)).limit(1);
+    if (!sample) return null;
+    const running = await tx.select({ id: meetingAudioEvaluations.id }).from(meetingAudioEvaluations).where(and(
+      eq(meetingAudioEvaluations.sampleId, sample.id),
+      eq(meetingAudioEvaluations.status, "running"),
+      eq(meetingAudioEvaluations.ownerUserId, principal.userId),
+      eq(meetingAudioEvaluations.accountId, principal.accountId),
+      eq(meetingAudioEvaluations.vaultId, sample.vaultId),
+    )).limit(1);
+    if (running.length > 0) throw Object.assign(new Error("Audio cannot be deleted while an evaluation is running"), { status: 409 });
+    const evaluations = await tx.select().from(meetingAudioEvaluations).where(and(
+      eq(meetingAudioEvaluations.sampleId, sample.id),
+      eq(meetingAudioEvaluations.ownerUserId, principal.userId),
+      eq(meetingAudioEvaluations.accountId, principal.accountId),
+      eq(meetingAudioEvaluations.vaultId, sample.vaultId),
+    ));
+    const deletedAt = new Date();
+    await tx.update(meetingAudioEvaluations).set({
+      status: "deleted",
+      deletedAt,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    }).where(and(
+      eq(meetingAudioEvaluations.sampleId, sample.id),
+      eq(meetingAudioEvaluations.ownerUserId, principal.userId),
+      eq(meetingAudioEvaluations.accountId, principal.accountId),
+      eq(meetingAudioEvaluations.vaultId, sample.vaultId),
+    ));
+    await tx.update(meetingAudioSamples).set({
+      status: deletedStatus,
+      deletedAt,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    }).where(scopeSample(sample.id, principal));
+    return { sample, evaluations };
+  });
+  if (!claimed) return false;
+  const { sample, evaluations } = claimed;
   for (const evaluation of evaluations) {
-    if (evaluation.resultObjectKey) {
-      try {
-        await storageBackend.deleteObject(evaluation.resultObjectKey);
-      } catch (error) {
-        log.error("Meeting audio evaluation object deletion failed", {
-          evaluationId: evaluation.id,
-          sampleId: sample.id,
-          errorType: error instanceof Error ? error.name : typeof error,
-        });
-        throw new Error("Retained audio evaluation could not be deleted");
-      }
+    if (!evaluation.resultObjectKey) continue;
+    try {
+      await storageBackend.deleteObject(evaluation.resultObjectKey);
       await deleteObjectAclPolicy(evaluation.resultObjectKey);
+      await db.update(meetingAudioEvaluations).set({
+        resultObjectKey: null,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      }).where(and(
+        eq(meetingAudioEvaluations.id, evaluation.id),
+        eq(meetingAudioEvaluations.status, "deleted"),
+        eq(meetingAudioEvaluations.ownerUserId, principal.userId),
+        eq(meetingAudioEvaluations.accountId, principal.accountId),
+        eq(meetingAudioEvaluations.vaultId, sample.vaultId),
+      ));
+    } catch (error) {
+      log.error("Meeting audio evaluation object deletion failed", {
+        evaluationId: evaluation.id,
+        sampleId: sample.id,
+        errorType: error instanceof Error ? error.name : typeof error,
+      });
+      throw new Error("Retained audio evaluation could not be deleted");
     }
   }
   if (sample.objectKey) {
     try {
       await storageBackend.deleteObject(sample.objectKey);
+      await deleteObjectAclPolicy(sample.objectKey);
+      await db.update(meetingAudioSamples).set({
+        objectKey: null,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      }).where(and(scopeSample(sample.id, principal), eq(meetingAudioSamples.status, deletedStatus)));
     } catch (error) {
       log.error("Meeting audio object deletion failed", {
         sampleId: sample.id,
@@ -397,18 +442,7 @@ export async function deleteMeetingAudioSample(sampleId: string, reason: "owner"
       });
       throw new Error("Retained audio could not be deleted");
     }
-    await deleteObjectAclPolicy(sample.objectKey);
   }
-  const deletedStatus = reason === "expired" ? "expired" : "deleted";
-  await db.transaction(async (tx) => {
-    await tx.update(meetingAudioEvaluations).set({ status: "deleted", resultObjectKey: null, deletedAt: new Date(), updatedAt: sql`CURRENT_TIMESTAMP` }).where(and(
-      eq(meetingAudioEvaluations.sampleId, sample.id),
-      eq(meetingAudioEvaluations.ownerUserId, principal.userId),
-      eq(meetingAudioEvaluations.accountId, principal.accountId),
-      eq(meetingAudioEvaluations.vaultId, sample.vaultId),
-    ));
-    await tx.update(meetingAudioSamples).set({ status: deletedStatus, objectKey: null, deletedAt: new Date(), updatedAt: sql`CURRENT_TIMESTAMP` }).where(scopeSample(sample.id, principal));
-  });
   const session = await chatStorage.getSession(sample.sessionId);
   if (session?.meeting && principalOwnsMeeting(principal, session)) {
     await chatStorage.updateMeetingMeta(sample.sessionId, {
@@ -566,30 +600,47 @@ export async function queueMeetingAudioEvaluation(input: {
   if (!environment || environment.environment.name.trim().toLowerCase() !== "stage") {
     throw new Error("Retained audio evaluation is restricted to an explicit Stage environment");
   }
-  const [sample] = await db.select().from(meetingAudioSamples).where(scopeSample(input.sampleId, principal)).limit(1);
-  if (!sample || sample.status !== "ready" || !sample.objectKey || sample.expiresAt <= new Date()) throw Object.assign(new Error("Retained audio is not available"), { status: 404 });
-  const [existing] = await db.select().from(meetingAudioEvaluations).where(and(
-    eq(meetingAudioEvaluations.ownerUserId, principal.userId),
-    eq(meetingAudioEvaluations.accountId, principal.accountId),
-    eq(meetingAudioEvaluations.idempotencyKey, input.idempotencyKey.trim()),
-  )).limit(1);
-  if (existing) return { evaluationId: existing.id, status: existing.status };
   await resolveSpeechRecognitionBindingCredential({ environmentId: input.environmentId, bindingId: input.bindingId });
-  const evaluationId = randomUUID();
-  await db.insert(meetingAudioEvaluations).values({
-    id: evaluationId,
-    sampleId: sample.id,
-    idempotencyKey: input.idempotencyKey.trim(),
-    status: "running",
-    environmentId: input.environmentId,
-    bindingId: input.bindingId,
-    originalRecognitionProvenance: sample.originalRecognitionProvenance,
-    scope: "user",
-    ownerUserId: principal.userId,
-    accountId: principal.accountId,
-    vaultId: sample.vaultId,
-    createdByUserId: principal.userId,
+  const prepared = await db.transaction(async (tx) => {
+    await acquireSampleLifecycleLock(tx, input.sampleId);
+    const [sample] = await tx.select().from(meetingAudioSamples).where(scopeSample(input.sampleId, principal)).limit(1);
+    if (!sample || sample.status !== "ready" || !sample.objectKey || sample.expiresAt <= new Date()) {
+      throw Object.assign(new Error("Retained audio is not available"), { status: 404 });
+    }
+    const [existing] = await tx.select().from(meetingAudioEvaluations).where(and(
+      eq(meetingAudioEvaluations.ownerUserId, principal.userId),
+      eq(meetingAudioEvaluations.accountId, principal.accountId),
+      eq(meetingAudioEvaluations.idempotencyKey, input.idempotencyKey.trim()),
+    )).limit(1);
+    if (existing) return { sample, evaluationId: existing.id, status: existing.status, created: false as const };
+    const evaluationId = randomUUID();
+    const [inserted] = await tx.insert(meetingAudioEvaluations).values({
+      id: evaluationId,
+      sampleId: sample.id,
+      idempotencyKey: input.idempotencyKey.trim(),
+      status: "running",
+      environmentId: input.environmentId,
+      bindingId: input.bindingId,
+      originalRecognitionProvenance: sample.originalRecognitionProvenance,
+      scope: "user",
+      ownerUserId: principal.userId,
+      accountId: principal.accountId,
+      vaultId: sample.vaultId,
+      createdByUserId: principal.userId,
+    }).onConflictDoNothing().returning({ id: meetingAudioEvaluations.id });
+    if (!inserted) {
+      const [concurrent] = await tx.select().from(meetingAudioEvaluations).where(and(
+        eq(meetingAudioEvaluations.ownerUserId, principal.userId),
+        eq(meetingAudioEvaluations.accountId, principal.accountId),
+        eq(meetingAudioEvaluations.idempotencyKey, input.idempotencyKey.trim()),
+      )).limit(1);
+      if (!concurrent) throw new Error("Evaluation idempotency conflict could not be resolved");
+      return { sample, evaluationId: concurrent.id, status: concurrent.status, created: false as const };
+    }
+    return { sample, evaluationId, status: "running", created: true as const };
   });
+  if (!prepared.created) return { evaluationId: prepared.evaluationId, status: prepared.status };
+  const { sample, evaluationId } = prepared;
   const evaluationPrincipal = { ...principal, activeVaultId: sample.vaultId, visibleVaultIds: [sample.vaultId] };
   setImmediate(() => {
     void runEvaluation(evaluationId, sample, input.environmentId, input.bindingId, evaluationPrincipal).catch(async (error) => {
