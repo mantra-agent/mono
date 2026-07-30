@@ -318,6 +318,13 @@ const LEGACY_FINANCING_LABELS: Record<string, string> = {
 const LEGACY_STAFF_COST_IDS = new Set(["founder", "founding-engineer", "second-engineer", "customer-success"]);
 const V3_FINANCING_REMAP: Record<string, FinancingKey> = { seed: "pre_seed", series_a: "seed", series_b: "series_a" };
 const V3_FUNDED_BY_REMAP: Record<string, string> = { Seed: "Pre-Seed", "Series A": "Seed", "Series B": "Series A" };
+const V3_GENERATED_BASELINE = {
+  seedAmount: 1_000_000,
+  seedValuation: 8_000_000,
+  reserveAtNextGate: 200_000,
+  plgSharePct: 65,
+  loadedCostMultiplier: 1.25,
+};
 const HIRE_ALLOCATION_DEFAULTS: Record<string, Pick<StageKeyHire, "costAllocation" | "acquisitionAllocationPct">> = {
   bb87b49068593dc8: { costAllocation: "product_cogs", acquisitionAllocationPct: 0 },
   e1a648d46196d359: { costAllocation: "acquisition_split", acquisitionAllocationPct: 70 },
@@ -381,8 +388,13 @@ function migrateLegacyModel(input: unknown): unknown {
   if (Array.isArray(raw.financingEvents)) {
     next.financingEvents = raw.financingEvents.map((event) => {
       const value = event as Record<string, unknown>;
-      const key = typeof value.key === "string" && version === 3 ? (V3_FINANCING_REMAP[value.key] ?? value.key) : value.key;
-      return { ...value, key };
+      const legacyKey = typeof value.key === "string" ? value.key : "";
+      const key = version === 3 ? (V3_FINANCING_REMAP[legacyKey] ?? legacyKey) : value.key;
+      const isGeneratedV3PreSeed = version === 3
+        && legacyKey === "seed"
+        && value.amount === V3_GENERATED_BASELINE.seedAmount
+        && value.valuation === V3_GENERATED_BASELINE.seedValuation;
+      return isGeneratedV3PreSeed ? { ...value, key, ...FINANCING_DEFAULTS.pre_seed } : { ...value, key };
     });
   }
   if (Array.isArray(raw.phases)) {
@@ -401,6 +413,9 @@ function migrateLegacyModel(input: unknown): unknown {
       .filter((cost) => !LEGACY_STAFF_COST_IDS.has((cost as { id?: string })?.id ?? ""))
       .map((cost) => (cost as { id?: string })?.id === "ga" ? { ...(cost as object), opexCategory: "g_and_a" } : cost);
   }
+  if (version === 3 && raw.reserveAtNextGate === V3_GENERATED_BASELINE.reserveAtNextGate) next.reserveAtNextGate = defaultAssumptions().reserveAtNextGate;
+  if (version === 3 && raw.plgSharePct === V3_GENERATED_BASELINE.plgSharePct) next.plgSharePct = defaultAssumptions().plgSharePct;
+  if (version === 3 && raw.loadedCostMultiplier === V3_GENERATED_BASELINE.loadedCostMultiplier) next.loadedCostMultiplier = defaultAssumptions().loadedCostMultiplier;
   next.modelVersion = MODEL_VERSION;
   return next;
 }
