@@ -52,16 +52,35 @@ export async function encrypt(plaintext: string, secret: string): Promise<Encryp
 }
 
 export async function decrypt(envelope: EncryptedEnvelope, secret: string): Promise<string> {
+  return (await decryptBuffer(envelope, secret)).toString("utf8");
+}
+
+/** Encrypt arbitrary bytes with the same versioned AES-GCM envelope as text secrets. */
+export async function encryptBuffer(plaintext: Buffer, secret: string): Promise<EncryptedEnvelope> {
+  const salt = randomBytes(SALT_LENGTH);
+  const key = await deriveKey(secret, salt);
+  const iv = randomBytes(IV_LENGTH);
+  const cipher = createCipheriv(ALGORITHM, key, iv, { authTagLength: TAG_LENGTH });
+  const encrypted = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  return {
+    v: ENVELOPE_VERSION,
+    salt: salt.toString("base64"),
+    iv: iv.toString("base64"),
+    ct: encrypted.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+  };
+}
+
+/** Decrypt arbitrary bytes without routing sensitive payloads through UTF-8 strings. */
+export async function decryptBuffer(envelope: EncryptedEnvelope, secret: string): Promise<Buffer> {
   const salt = Buffer.from(envelope.salt, "base64");
   const key = await deriveKey(secret, salt);
   const iv = Buffer.from(envelope.iv, "base64");
   const ct = Buffer.from(envelope.ct, "base64");
   const tag = Buffer.from(envelope.tag, "base64");
-
   const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_LENGTH });
   decipher.setAuthTag(tag);
-  const decrypted = Buffer.concat([decipher.update(ct), decipher.final()]);
-  return decrypted.toString("utf8");
+  return Buffer.concat([decipher.update(ct), decipher.final()]);
 }
 
 export function isEncryptedEnvelope(value: unknown): value is EncryptedEnvelope {

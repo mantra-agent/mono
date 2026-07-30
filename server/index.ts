@@ -387,6 +387,8 @@ app.use((req, res, next) => {
   await ensurePermissionSchema();
   const { ensureRegressionSchema } = await import("./regression/regression-schema");
   await ensureRegressionSchema();
+  const { ensureMeetingAudioRetentionSchema } = await import("./meeting/audio-retention-schema");
+  await ensureMeetingAudioRetentionSchema();
   const migrateMs = Date.now() - tMigrate0;
   bootPhases.push({ name: "Boot Migrations", durationMs: migrateMs });
   log(`[startup] boot migrations: ${migrateMs}ms`, "boot");
@@ -966,6 +968,8 @@ async function shutdownApplication(input: RuntimeTerminationInput): Promise<void
     })}`);
 
     timerScheduler.stop();
+    const { stopMeetingAudioExpiry } = await import("./meeting/audio-retention-expiry");
+    stopMeetingAudioExpiry();
     admissionController.shutdown();
     executorManager.stopSupervisor();
     await executorManager.stop().catch((error) => {
@@ -1039,6 +1043,15 @@ function startDeferredBackgroundServices(): void {
       log("[startup] code embedding listener registered", "boot");
     }).catch((err) => {
       log(`[startup] code embedding listener registration failed: ${err.message}`, "boot");
+    })
+  );
+
+  services.push(
+    import("./meeting/audio-retention-expiry").then(({ startMeetingAudioExpiry }) => {
+      startMeetingAudioExpiry();
+      log("[startup] meeting audio expiry started", "boot");
+    }).catch(err => {
+      log(`[startup] meeting audio expiry failed to start: ${err instanceof Error ? err.message : String(err)}`, "boot");
     })
   );
 

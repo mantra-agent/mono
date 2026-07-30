@@ -63,6 +63,10 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
   // cross-vault lookup from opaque session ID to durable owner. All work after
   // that lookup immediately re-enters the exact meeting owner's principal.
   "meeting-transport",
+
+  // Retained-audio expiry performs one bounded metadata-only discovery, then
+  // restores each persisted meeting owner/Vault before object or row mutation.
+  "meeting-audio-expiry",
 ]);
 
 // Throttle anonymous-system warnings to avoid log spam from hot paths

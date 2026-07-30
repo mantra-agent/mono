@@ -17,13 +17,25 @@ import {
   Hourglass,
   Loader2,
   LogOut,
+  Download,
   Mail,
   MoreHorizontal,
   Radio,
+  Trash2,
   RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -102,6 +114,7 @@ export function MeetingHeaderBar({
   sessionTitle?: string;
 }) {
   const elapsed = useElapsed(meeting.startedAt, meeting.endedAt);
+  const [confirmAudioDelete, setConfirmAudioDelete] = useState(false);
   const isLive = meeting.botStatus === "live";
   const isTransportActive = isLive || meeting.botStatus === "leaving";
   const departureMeaningful = ["dialing", "in_lobby", "live", "leaving"].includes(meeting.botStatus);
@@ -156,6 +169,27 @@ export function MeetingHeaderBar({
         description: error.message,
         variant: "destructive",
       });
+    },
+  });
+
+  const deleteRetainedAudio = useMutation({
+    mutationFn: async () => {
+      if (!meeting.audioRetention?.sampleId) throw new Error("Retained audio is unavailable");
+      const response = await apiRequest(
+        "DELETE",
+        `/api/meetings/audio-samples/${encodeURIComponent(meeting.audioRetention.sampleId)}`,
+      );
+      return response.json();
+    },
+    onSuccess: () => {
+      setConfirmAudioDelete(false);
+      if (!sessionId) return;
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      toast({ title: "Retained audio deleted" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not delete retained audio", description: error.message, variant: "destructive" });
     },
   });
 
@@ -270,7 +304,7 @@ export function MeetingHeaderBar({
     meeting.transport !== "native" &&
     !!meeting.meetingUrl &&
     ["live", "leaving", "denied", "failed", "ended"].includes(meeting.botStatus);
-  const busy = toggleListenMode.isPending || leaveMeeting.isPending || resetMeeting.isPending;
+  const busy = toggleListenMode.isPending || leaveMeeting.isPending || resetMeeting.isPending || deleteRetainedAudio.isPending;
 
   const recap = meeting.recap;
   const showDistributionSpinner = recap?.distributionStatus === "drafting";
@@ -311,7 +345,7 @@ export function MeetingHeaderBar({
             {elapsed}
           </span>
         )}
-        {sessionId && (isLive || departureMeaningful || canReset) && (
+        {sessionId && (isLive || departureMeaningful || canReset || meeting.audioRetention?.status === "ready") && (
           <div className="ml-auto flex items-center gap-1.5">
             {busy && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />}
             <DropdownMenu>
@@ -337,6 +371,25 @@ export function MeetingHeaderBar({
                     <Ear className="h-3.5 w-3.5 shrink-0" />
                     <span>{isListenOnly ? "Listen mode on" : "Listen mode"}</span>
                   </DropdownMenuItem>
+                )}
+                {meeting.audioRetention?.status === "ready" && meeting.audioRetention.sampleId && (
+                  <>
+                    <DropdownMenuItem asChild data-testid="menuitem-export-retained-audio">
+                      <a href={`/api/meetings/audio-samples/${encodeURIComponent(meeting.audioRetention.sampleId)}/export`} download>
+                        <Download className="h-3.5 w-3.5 shrink-0" />
+                        <span>Export retained audio</span>
+                      </a>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => setConfirmAudioDelete(true)}
+                      className="text-destructive focus:text-destructive"
+                      data-testid="menuitem-delete-retained-audio"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                      <span>Delete retained audio</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
                 )}
                 {canReset && (
                   <DropdownMenuItem
@@ -372,6 +425,22 @@ export function MeetingHeaderBar({
           meeting={meeting}
           sessionId={sessionId}
         />
+      )}
+
+      {meeting.audioRetention && !["deleted", "expired"].includes(meeting.audioRetention.status) && (
+        <div
+          className="flex items-center gap-2 border-t border-border/20 px-4 py-1.5 text-sm text-muted-foreground"
+          data-testid="meeting-audio-retention-state"
+        >
+          <Radio className={cn("h-3.5 w-3.5 shrink-0", meeting.audioRetention.status === "recording" && "animate-pulse text-active")} />
+          <span>
+            {meeting.audioRetention.status === "recording"
+              ? "Raw audio recording · retained for 7 days"
+              : meeting.audioRetention.status === "ready"
+                ? `Raw audio retained until ${new Date(meeting.audioRetention.expiresAt).toLocaleDateString()}`
+                : "Raw audio retention failed"}
+          </span>
+        </div>
       )}
 
       {meeting.recognition?.status === "degraded" && (
@@ -529,6 +598,30 @@ export function MeetingHeaderBar({
           </span>
         </div>
       )}
+      <AlertDialog open={confirmAudioDelete} onOpenChange={(open) => !deleteRetainedAudio.isPending && setConfirmAudioDelete(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete retained audio?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Permanently delete the raw audio and its provider evaluation artifacts. The meeting transcript stays unchanged.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteRetainedAudio.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteRetainedAudio.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                deleteRetainedAudio.mutate();
+              }}
+              data-testid="button-confirm-delete-retained-audio"
+            >
+              {deleteRetainedAudio.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
