@@ -385,6 +385,8 @@ app.use((req, res, next) => {
   await purgeRetiredBeliefs();
   const { ensurePermissionSchema } = await import("./permissions");
   await ensurePermissionSchema();
+  const { ensureRegressionSchema } = await import("./regression/regression-schema");
+  await ensureRegressionSchema();
   const migrateMs = Date.now() - tMigrate0;
   bootPhases.push({ name: "Boot Migrations", durationMs: migrateMs });
   log(`[startup] boot migrations: ${migrateMs}ms`, "boot");

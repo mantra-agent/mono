@@ -341,6 +341,10 @@ Meeting barge-in is driven by raw per-frame participant RMS energy (`observeMeet
 
 `browser_performance_telemetry` is the principal-scoped canonical store for browser experience samples and correlated SPA navigation traces. `browser-telemetry-storage.ts` owns validation, metadata minimization, retention, and the bounded summary shared by the Performance page and `system.frontend_performance`; do not create a parallel incident or navigation store.
 
+## Post-deploy regression boundary
+
+`regression_runs`, `issue_regression_contracts`, and `issue_regression_results` are the principal-owned PostgreSQL authority for post-deploy regression. `server/regression/regression-service.ts` is the sole ordinary mutation boundary: candidates are snapshotted once per run, one Plan may be associated, and one append-only result may exist per run + issue. Issue notes never store regression history, and results never change Issue status. `server/regression/browser-executor.ts` accepts only the semantic V1 DSL and executes through `withTargetBoundBrowserPage(...)`, which establishes any short-lived Platform-binding session server-side and confines HTTP/WebSocket traffic to the immutable acceptance-target origin from the run snapshot; callers never supply a host, selector, script, cookie, token, or secret.
+
 ## Session Streaming
 
 Server-authoritative streaming state for chat sessions. The server maintains a `StreamingContent` state object per active session. Clients subscribe via WebSocket and receive a snapshot + deltas. No client-side reducers or reconciliation — the server is the single source of truth.
