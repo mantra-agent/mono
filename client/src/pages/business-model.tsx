@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import {
   FINANCING_KEYS,
   FINANCING_LABELS,
+  PHASE_LABELS,
   aggregateMonths,
   computeProjection,
   type Assumptions,
@@ -49,9 +50,9 @@ const PERIOD_MODES: { key: PeriodMode; label: string }[] = [
 
 /** Each institutional round is funded by exactly one phase's operating plan. */
 const STAGE_PHASE: Record<FinancingKey, PhaseKey> = {
-  seed: "phase_1",
-  series_a: "phase_2",
-  series_b: "phase_3",
+  pre_seed: "phase_1",
+  seed: "phase_2",
+  series_a: "phase_3",
 };
 
 function trimNum(value: number): string {
@@ -75,9 +76,9 @@ function fmtMultiple(value: number): string {
 }
 
 const STAGE_COLOR: Record<FinancingKey, { band: string; text: string; dot: string }> = {
-  seed: { band: "bg-[hsl(var(--chart-1)/0.15)]", text: "text-[hsl(var(--chart-1))]", dot: "bg-[hsl(var(--chart-1))]" },
-  series_a: { band: "bg-[hsl(var(--chart-3)/0.15)]", text: "text-[hsl(var(--chart-3))]", dot: "bg-[hsl(var(--chart-3))]" },
-  series_b: { band: "bg-[hsl(var(--chart-4)/0.15)]", text: "text-[hsl(var(--chart-4))]", dot: "bg-[hsl(var(--chart-4))]" },
+  pre_seed: { band: "bg-muted/40", text: "text-foreground", dot: "bg-foreground" },
+  seed: { band: "bg-muted/30", text: "text-foreground", dot: "bg-muted-foreground" },
+  series_a: { band: "bg-muted/20", text: "text-foreground", dot: "bg-muted-foreground/70" },
 };
 
 interface NumericInputProps {
@@ -212,7 +213,11 @@ export default function BusinessModelPage() {
   })), [update]);
 
   const projection = useMemo(() => draft ? computeProjection(draft, roles) : null, [draft, roles]);
+  const downsideProjection = useMemo(() => draft ? computeProjection({ ...draft, accountExpansion90d: draft.downsideAccountExpansion90d }, roles) : null, [draft, roles]);
   const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
+  const phaseOne = draft?.phases.find((phase) => phase.key === "phase_1");
+  const baselineGateRow = phaseOne ? projection?.months[Math.max(0, phaseOne.endMonth - 1)] : null;
+  const downsideGateRow = phaseOne ? downsideProjection?.months[Math.max(0, phaseOne.endMonth - 1)] : null;
 
   if (error) {
     return (
@@ -229,16 +234,31 @@ export default function BusinessModelPage() {
     );
   }
 
-  if (isLoading || !draft || !projection) {
+  if (isLoading || !draft || !projection || !downsideProjection) {
     return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
   }
 
   return (
     <div className="w-full space-y-6 p-4" data-testid="business-model-page">
-      <section className="overflow-hidden rounded-md border border-border/20">
+      <section className="overflow-hidden rounded-md border border-border/20 bg-card">
         <div className="flex items-center justify-between border-b border-border/20 px-4 py-3">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Assumptions</h2>
+          <div>
+            <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Phase 1 financing</h2>
+            <p className="mt-1 text-sm text-foreground">{fmtCurrency(projection.financingNeed.plannedRaise)} Pre-Seed · {projection.financingNeed.gateMonth} months · downside-sized reserve</p>
+          </div>
           <SavedIndicator state={saveState} />
+        </div>
+        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryMetric label="Planned raise" value={fmtCurrency(projection.financingNeed.plannedRaise)} detail={`Derived need ${fmtCurrency(projection.financingNeed.raiseRequired)}`} />
+          <SummaryMetric label={`Baseline at Month ${projection.financingNeed.gateMonth}`} value={baselineGateRow ? fmtCurrency(baselineGateRow.productArr) : "—"} detail={baselineGateRow ? `${Math.round(baselineGateRow.activeAccounts)} accounts · ${fmtCurrency(baselineGateRow.endingCash)} cash` : undefined} />
+          <SummaryMetric label={`Downside at Month ${projection.financingNeed.gateMonth}`} value={downsideGateRow ? fmtCurrency(downsideGateRow.productArr) : "—"} detail={downsideGateRow ? `${Math.round(downsideGateRow.activeAccounts)} accounts · ${fmtCurrency(downsideGateRow.endingCash)} cash` : undefined} />
+          <SummaryMetric label="Product GM at gate" value={baselineGateRow ? fmtPercent(baselineGateRow.productGrossMargin) : "—"} detail="Target ≥80%; model keeps the gap visible" />
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-md border border-border/20 bg-card">
+        <div className="flex items-center justify-between border-b border-border/20 px-4 py-3">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Scenario assumptions</h2>
         </div>
 
         <div className="border-b border-border/20 p-4">
@@ -261,8 +281,20 @@ export default function BusinessModelPage() {
             <ProfileTreeRow label="Starting accounts" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-starting-accounts">
               <NumericInput compact ariaLabel="Starting accounts" value={draft.startingAccounts} min={0} step={1} onChange={(startingAccounts) => updateGlobal({ startingAccounts })} />
             </ProfileTreeRow>
-            <ProfileTreeRow label="Base subscription" icon={<DollarSign className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-base-subscription">
-              <NumericInput compact ariaLabel="Base monthly subscription per account" value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} />
+            <ProfileTreeRow label="Max subscription" icon={<DollarSign className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-base-subscription">
+              <NumericInput compact ariaLabel="Max monthly subscription per account" value={draft.maxSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxSubscriptionMonthly) => updateGlobal({ maxSubscriptionMonthly })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Max+ subscription" icon={<DollarSign className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
+              <NumericInput compact ariaLabel="Max Plus monthly subscription per account" value={draft.maxPlusSubscriptionMonthly} min={0} step={50} prefix="$" suffix="/ mo" onChange={(maxPlusSubscriptionMonthly) => updateGlobal({ maxPlusSubscriptionMonthly })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Participant seat" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
+              <NumericInput compact ariaLabel="Participant seat monthly price" value={draft.participantSeatMonthly} min={0} step={25} prefix="$" suffix="/ mo" onChange={(participantSeatMonthly) => updateGlobal({ participantSeatMonthly })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Individual entry mix" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" expandedContent="The remainder enters as team-sponsored accounts with the configured average seat count.">
+              <NumericInput compact ariaLabel="Individual account share at entry" value={draft.individualEntrySharePct} min={0} step={5} suffix="%" onChange={(individualEntrySharePct) => updateGlobal({ individualEntrySharePct })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Team entry seats" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
+              <NumericInput compact ariaLabel="Average seats per team sponsored account" value={draft.averageEntrySeatsPerTeamAccount} min={0} step={1} suffix="seats" onChange={(averageEntrySeatsPerTeamAccount) => updateGlobal({ averageEntrySeatsPerTeamAccount })} />
             </ProfileTreeRow>
             <ProfileTreeRow
               label="Loaded cost"
@@ -283,11 +315,23 @@ export default function BusinessModelPage() {
             <ProfileTreeRow label="Q1 new accounts" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-q1-accounts">
               <NumericInput compact ariaLabel="Q1 new accounts" value={draft.quarterOneNewAccounts} min={0} step={1} onChange={(quarterOneNewAccounts) => updateGlobal({ quarterOneNewAccounts })} />
             </ProfileTreeRow>
-            <ProfileTreeRow label="Account expansion" icon={<TrendingUp className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-account-expansion">
-              <NumericInput compact ariaLabel="New account expansion every 90 days" value={draft.accountExpansion90d} min={0} step={0.1} suffix="× / 90d" onChange={(accountExpansion90d) => updateGlobal({ accountExpansion90d })} />
+            <ProfileTreeRow label="Baseline account expansion" icon={<TrendingUp className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-account-expansion">
+              <NumericInput compact ariaLabel="Baseline new account expansion every 90 days" value={draft.accountExpansion90d} min={0} step={0.05} suffix="× / 90d" onChange={(accountExpansion90d) => updateGlobal({ accountExpansion90d })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="Downside account expansion" icon={<TrendingUp className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
+              <NumericInput compact ariaLabel="Downside new account expansion every 90 days" value={draft.downsideAccountExpansion90d} min={0} step={0.05} suffix="× / 90d" onChange={(downsideAccountExpansion90d) => updateGlobal({ downsideAccountExpansion90d })} />
             </ProfileTreeRow>
             <ProfileTreeRow label="Annual NRR" icon={<Repeat2 className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-nrr">
               <NumericInput compact ariaLabel="Annual net revenue retention" value={draft.annualNrrPct} min={0} step={5} suffix="%" onChange={(annualNrrPct) => updateGlobal({ annualNrrPct })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="NRR from seats" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
+              <NumericInput compact ariaLabel="NRR expansion share from participant seats" value={draft.nrrSeatSharePct} min={0} step={5} suffix="%" onChange={(nrrSeatSharePct) => updateGlobal({ nrrSeatSharePct })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="NRR from tier" icon={<TrendingUp className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline">
+              <NumericInput compact ariaLabel="NRR expansion share from tier upgrades" value={draft.nrrTierSharePct} min={0} step={5} suffix="%" onChange={(nrrTierSharePct) => updateGlobal({ nrrTierSharePct })} />
+            </ProfileTreeRow>
+            <ProfileTreeRow label="NRR from usage" icon={<Gauge className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" expandedContent="The engine normalizes the three mechanism shares. Usage becoming dominant is a warning, not a success state.">
+              <NumericInput compact ariaLabel="NRR expansion share from metered usage" value={draft.nrrOverageSharePct} min={0} step={5} suffix="%" onChange={(nrrOverageSharePct) => updateGlobal({ nrrOverageSharePct })} />
             </ProfileTreeRow>
             <ProfileTreeRow label="Logo retention" icon={<Percent className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId="row-assumption-logo-retention">
               <NumericInput compact ariaLabel="Annual gross logo retention" value={draft.annualGrossLogoRetentionPct} min={0} step={1} suffix="%" onChange={(annualGrossLogoRetentionPct) => updateGlobal({ annualGrossLogoRetentionPct })} />
@@ -317,7 +361,7 @@ export default function BusinessModelPage() {
                   <Field label={event.instrument === "post_money_safe" ? "Post-money cap" : "Pre-money valuation"}><NumericInput value={event.valuation} min={0} step={500_000} prefix="$" ariaLabel={`${FINANCING_LABELS[key]} valuation`} onChange={(valuation) => updateFinancing(key, { valuation })} /></Field>
                   <Field label="Option pool top-up"><NumericInput value={event.optionPoolTopUpPct} min={0} step={1} suffix="%" ariaLabel={`${FINANCING_LABELS[key]} option pool top-up`} onChange={(optionPoolTopUpPct) => updateFinancing(key, { optionPoolTopUpPct })} /></Field>
                   <Row label="New investor ownership" value={fmtPercent(summary.newInvestorOwnership)} />
-                  <Row label="Founding stake remaining" value={fmtPercent(summary.foundingOwnership)} />
+                  <Row label="Founder ownership remaining" value={fmtPercent(summary.founderOwnershipRemaining)} />
                   {phase && (
                     <KeyHiresEditor
                       phaseKey={phase.key}
@@ -352,10 +396,11 @@ export default function BusinessModelPage() {
                   <Row label="Investment" value={fmtCurrency(summary.investment)} />
                   <Row label={summary.instrument === "post_money_safe" ? "Post-money cap" : "Pre-money"} value={fmtCurrency(summary.valuation)} />
                   <Row label="Post-money" value={fmtCurrency(summary.postMoneyValuation)} />
-                  <Row label="Founding stake" value={`${fmtPercent(summary.foundingOwnership)} · ${fmtCurrency(summary.foundingPaperValue)}`} />
+                  <Row label="Cumulative investor stake" value={`${fmtPercent(summary.cumulativeInvestorOwnership)} · ${fmtCurrency(summary.investorPaperValue)}`} />
+                  <Row label="Founder ownership remaining" value={fmtPercent(summary.founderOwnershipRemaining)} />
                   <div className="mt-2 flex items-center justify-between border-t border-border/20 pt-2">
-                    <span className="text-xs text-muted-foreground">Return on founding</span>
-                    <span className={cn("text-base font-semibold", color.text)}>{fmtMultiple(summary.foundingReturnMultiple)}</span>
+                    <span className="text-xs text-muted-foreground">Investor paper multiple</span>
+                    <span className={cn("text-base font-semibold", color.text)}>{fmtMultiple(summary.investorReturnMultiple)}</span>
                   </div>
                 </div>
               </div>
@@ -393,7 +438,14 @@ export default function BusinessModelPage() {
             </thead>
             <tbody>
               <tr>
-                <td className="sticky left-0 z-10 border-r border-border/20 bg-background px-3 py-1.5 text-left font-medium text-muted-foreground">Stage</td>
+                <td className="sticky left-0 z-10 border-r border-border/20 bg-background px-3 py-1.5 text-left font-medium text-muted-foreground">Operating phase</td>
+                {periods.map((row, index) => {
+                  const isStart = index === 0 || periods[index - 1].phaseKey !== row.phaseKey;
+                  return <td key={row.key} className="bg-muted/20 px-2 py-1.5 text-right text-foreground">{isStart ? <span className="font-medium">{PHASE_LABELS[row.phaseKey]}</span> : ""}</td>;
+                })}
+              </tr>
+              <tr>
+                <td className="sticky left-0 z-10 border-r border-border/20 bg-background px-3 py-1.5 text-left font-medium text-muted-foreground">Funded by</td>
                 {periods.map((row, index) => {
                   const color = STAGE_COLOR[row.financingKey];
                   const isStart = index === 0 || periods[index - 1].financingKey !== row.financingKey;
@@ -427,6 +479,16 @@ export default function BusinessModelPage() {
   );
 }
 
+function SummaryMetric({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-md border border-border/30 bg-muted/20 p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-lg font-semibold tabular-nums text-foreground">{value}</p>
+      {detail && <p className="mt-1 text-xs text-muted-foreground">{detail}</p>}
+    </div>
+  );
+}
+
 function AssumptionGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
@@ -454,7 +516,7 @@ function KeyHiresEditor({ phaseKey, hires, roles, roleMap, onChange }: KeyHiresE
 
   const addRole = (roleId: string) => {
     if (!roleId || taken.has(roleId)) return;
-    onChange(phaseKey, [...hires, { roleId }]);
+    onChange(phaseKey, [...hires, { roleId, costAllocation: "opex", acquisitionAllocationPct: 0 }]);
   };
   const removeRole = (roleId: string) => onChange(phaseKey, hires.filter((hire) => hire.roleId !== roleId));
 
