@@ -928,6 +928,23 @@ The affected assets are A02 personal memory, A03 durable agent state, A07 audit 
 
 Controls: DATA-01, AGENT-02, AGENT-05, OBS-01, REC-02. Threats addressed: cross-tenant event insertion, replay amplification, arbitrary-weight memory poisoning, passive-use feedback loops, and sensitive-content leakage in logs. Rollback is the merged PR revert; the additive event tables may remain inert. Residual risk: P0 records typed strength events but does not yet activate a strength projection in retrieval. That controlled activation belongs to the next orthogonal-dimensions phase.
 
+## 11.19 Speech-recognition environment binding and attempt identity, July 29, 2026
+
+**Status:** Foundation control complete; environment-routed provider activation remains intentionally gated.  
+**Severity:** High before controls; Low residual while runtime continues using legacy Scribe/Deepgram candidates.  
+**Owner:** Speech Recognition / Platform Environment.  
+**SLA:** Before any Speechmatics activation or database binding is allowed to route meeting audio.
+
+**Assets/data:** A01 identity, A02/S1 raw meeting audio and S2 transcript, A03 meeting state, A05 provider credentials, A07 operational evidence, A08 realtime availability. **Flows:** F02, F03, F06, F12. **Boundaries:** B03, B04, B05, B06, B08, B14, B16.
+
+**Threat:** An arbitrary or cross-environment capability binding could select the wrong provider account, alter raw-audio egress, expose a credential through client/session/log state, merge acoustic speakers across reconnects, or turn shared-microphone chronology into Person identity.
+
+**Deterministic controls:** `server/speech-recognition/` owns a strict versioned, discriminated allowlist for Scribe, Deepgram, and Speechmatics configs. The typed system-permission-gated Platform Environment route is the only speech mutation boundary; the generic capability API excludes speech writes and reads. A binding-aware resolver joins the exact environment, binding, and active matching Provider Connection before decryption, rejects binding-owned secrets, and accepts only global/system platform-managed credentials. Runtime adapters receive credentials explicitly, current messages retain secret-free immutable attempt/binding/model/config provenance, and machine speaker keys are scoped to random provider-session attempt IDs. Native shared microphones remain audio sources only: creators stay roster participants but are not bound to the microphone or first cluster.
+
+**Rollout evidence/prerequisites:** Migration `0106_speech_recognition_foundation.sql` and boot convergence add only `sort_order` plus an index; old meeting documents remain readable because all provenance fields are optional. Stage and Live routing remain unchanged until the coordinator rollout begins reading enabled environment bindings. Before activation, create platform-managed Provider Connections, configure Stage bindings through the typed API, keep Speechmatics disabled, verify protocol/config without content-bearing logs, and preserve Live priority until same-audio quality evidence clears the promotion gate.
+
+**Residual risk:** The next implementation step must migrate both meeting transports to the shared coordinator before environment binding enable/priority can control routing. Speechmatics has config/control-plane representation but no implemented registry adapter yet, so selection fails closed. Functional and quality acceptance remain pending by design.
+
 ## 11.18 Plan and Workflow child retry fencing, July 25, 2026
 
 A03 durable orchestration state, A04 autonomous mutation authority, and A08 availability/cost cross F05 and B11 when a parent monitor times out, loses, or observes a prematurely failed child session. The confirmed defect allowed the parent to request abort, project the child as failed, and start a successor while `AgentExecutor` could still own the prior mutating run. This enabled duplicate People/profile mutations, contradictory audit entries, replay amplification, and false terminal state.

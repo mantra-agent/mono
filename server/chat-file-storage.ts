@@ -426,6 +426,8 @@ export interface FileMessage {
   persona?: PersonaSnapshot;
   /** Speaker attribution for meeting transcript messages. */
   speaker?: MessageSpeakerMeta;
+  /** Immutable provider/binding attempt provenance for meeting recognition. */
+  recognition?: import("@shared/models/chat").MessageRecognitionMeta;
   /** Structured response to an inline question tool call. */
   questionResponse?: QuestionResponseMeta;
   /** Terminal cancellation marker for an inline question tool call (explicit dismiss or superseded by a chat message). */
@@ -3099,6 +3101,7 @@ export const chatFileStorage: IChatFileStorage = {
       participationMode?: "contextual" | "always";
       executionAffinityBootId?: string;
     },
+    recognition?: import("@shared/models/chat").MessageRecognitionMeta,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -3137,6 +3140,7 @@ export const chatFileStorage: IChatFileStorage = {
         createdAt: now,
         updatedAt: now,
         speaker,
+        ...(recognition ? { recognition } : {}),
         ...(turnId ? { turnId } : {}),
       };
       data.messages.push(msg);

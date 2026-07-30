@@ -6,7 +6,7 @@ import { requireAuth } from "../auth";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { storeProviderCredential, getProviderCredential, deleteProviderCredential } from "../provider-credential-store";
-import { providerConnections, environmentSourceBindings, environmentHostingBindings, insertProviderConnectionSchema } from "@shared/models/platforms";
+import { providerConnections, environmentSourceBindings, environmentHostingBindings, environmentCapabilityBindings, insertProviderConnectionSchema } from "@shared/models/platforms";
 import { testRailwayToken, testGitHubToken, testCloudflareToken } from "../services/provider-connection-service";
 
 const log = createLogger("ProviderConnectionRoutes");
@@ -179,6 +179,7 @@ export function registerProviderConnectionRoutes(app: Express): void {
       // Check for referencing environment bindings
       let hasSourceBindings = false;
       let hasHostingBindings = false;
+      let hasCapabilityBindings = false;
       try {
         const sourceRefs = await db
           .select({ id: environmentSourceBindings.id })
@@ -193,11 +194,18 @@ export function registerProviderConnectionRoutes(app: Express): void {
           .where(eq(environmentHostingBindings.connectionId, id))
           .limit(1);
         hasHostingBindings = hostingRefs.length > 0;
+
+        const capabilityRefs = await db
+          .select({ id: environmentCapabilityBindings.id })
+          .from(environmentCapabilityBindings)
+          .where(eq(environmentCapabilityBindings.connectionId, id))
+          .limit(1);
+        hasCapabilityBindings = capabilityRefs.length > 0;
       } catch {
         // Tables may not exist yet — safe to proceed
       }
 
-      if (hasSourceBindings || hasHostingBindings) {
+      if (hasSourceBindings || hasHostingBindings || hasCapabilityBindings) {
         return res.status(409).json({
           error: "Cannot delete connection: it is referenced by environment bindings. Remove those bindings first.",
           operation: "delete_provider_connection",

@@ -43,6 +43,7 @@ export type MeetingIngestFn = (event: {
     model: string;
     source: "recall_participant_audio" | "recall_transcript_webhook" | "native_microphone";
     fallback: boolean;
+    recognition?: import("@shared/models/chat").MessageRecognitionMeta;
   };
 }) => Promise<
   | {

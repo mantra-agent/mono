@@ -34,7 +34,12 @@ export interface DeepgramStreamingConfig {
 }
 
 export interface DeepgramStreamingSession {
+  tryWriteAudio(bytes: Buffer): "accepted" | "blocked" | "closed";
+  finish(): Promise<{ outcome: "finished" | "timed_out" }>;
+  abort(reason: string): void;
+  /** @deprecated Compatibility alias for phone while its boundary remains separate. */
   sendAudio(bytes: Buffer): void;
+  /** @deprecated Compatibility alias for phone while its boundary remains separate. */
   close(): void;
 }
 
@@ -46,8 +51,9 @@ export async function connectDeepgramStreaming(
   config: DeepgramStreamingConfig,
   onTranscript: (event: DeepgramTranscriptEvent) => void | Promise<void>,
   onError: (error: Error) => void,
+  options?: { credential?: string },
 ): Promise<DeepgramStreamingSession> {
-  const apiKey = getSecretSync("DEEPGRAM_API_KEY")?.trim();
+  const apiKey = options?.credential?.trim() || getSecretSync("DEEPGRAM_API_KEY")?.trim();
   if (!apiKey) throw new Error("DEEPGRAM_API_KEY is not configured");
 
   const params = new URLSearchParams({
@@ -72,6 +78,7 @@ export async function connectDeepgramStreaming(
   });
   let closing = false;
   let errorReported = false;
+  let lastTranscriptAt = 0;
   const transcriptDelivery = createSerialAsyncDelivery(onTranscript, {
     label: "Deepgram transcript",
     onFailure: (error) => {
@@ -113,6 +120,7 @@ export async function connectDeepgramStreaming(
       const alternative = message.channel?.alternatives?.[0];
       const text = alternative?.transcript?.trim() || "";
       if (!text) return;
+      lastTranscriptAt = Date.now();
       transcriptDelivery.enqueue({
         text,
         words: alternative?.words || [],
@@ -143,20 +151,57 @@ export async function connectDeepgramStreaming(
   }, 8_000);
   keepalive.unref();
 
-  return {
-    sendAudio(bytes) {
-      if (socket.readyState === WebSocket.OPEN && bytes.length > 0) socket.send(bytes);
+  let finishPromise: Promise<{ outcome: "finished" | "timed_out" }> | null = null;
+  const settleTranscripts = async (): Promise<boolean> => {
+    const finishStartedAt = Date.now();
+    return Promise.race([
+    new Promise<true>((resolve) => {
+      const inspect = (): void => {
+        const providerQuiet = Date.now() - Math.max(finishStartedAt, lastTranscriptAt) >= 250;
+        if (providerQuiet && transcriptDelivery.pending() === 0) resolve(true);
+        else setTimeout(inspect, 20).unref?.();
+      };
+      inspect();
+    }),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 3_000).unref?.()),
+    ]);
+  };
+
+  const session: DeepgramStreamingSession = {
+    tryWriteAudio(bytes) {
+      if (closing || socket.readyState !== WebSocket.OPEN) return "closed";
+      if (socket.bufferedAmount >= 512 * 1024) return "blocked";
+      if (bytes.length > 0) socket.send(bytes);
+      return "accepted";
     },
-    close() {
+    finish() {
+      if (finishPromise) return finishPromise;
+      closing = true;
+      clearInterval(keepalive);
+      finishPromise = (async () => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "CloseStream" }));
+        } else if (socket.readyState === WebSocket.CONNECTING) {
+          socket.close(1000, "Audio stream ended");
+        }
+        const settled = await settleTranscripts();
+        if (socket.readyState === WebSocket.OPEN) socket.close(1000, "Audio stream ended");
+        return { outcome: settled ? "finished" as const : "timed_out" as const };
+      })();
+      return finishPromise;
+    },
+    abort() {
       if (closing) return;
       closing = true;
       clearInterval(keepalive);
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "CloseStream" }));
-        socket.close(1000, "Audio stream ended");
-      } else if (socket.readyState === WebSocket.CONNECTING) {
-        socket.close(1000, "Audio stream ended");
-      }
+      socket.terminate();
+    },
+    sendAudio(bytes) {
+      session.tryWriteAudio(bytes);
+    },
+    close() {
+      void session.finish();
     },
   };
+  return session;
 }

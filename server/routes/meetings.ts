@@ -117,7 +117,6 @@ export function registerMeetingsRoutes(app: Express): void {
                     label: identity.userName,
                     ...(ownerPersonId ? { personId: ownerPersonId } : {}),
                     identitySource: "transport",
-                    transportParticipantId: "native-microphone",
                   }]
                 : [],
               botStatus: "live",

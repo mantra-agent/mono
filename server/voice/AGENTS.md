@@ -21,7 +21,7 @@ voice/
 ├── tool-middleware.ts    — Voice-specific tool execution middleware
 ├── thinking-filter.ts    — Strips <thinking> blocks from streaming output
 ├── synthesis.ts          — Canonical portable speech synthesis for non-browser transports
-├── stt.ts                — Provider-neutral labeled PCM recognition boundary; Scribe for one-speaker streams, Deepgram diarization for explicitly selected shared-room streams; both consume bounded contextual keyterms resolved by `speech-recognition-hints.ts`
+├── stt.ts                — Compatibility re-export of the canonical bounded `server/speech-recognition/` module; meeting transports migrate through it without a parallel STT interface
 ├── turn-context.ts       — TurnContext factory for per-turn state
 ├── session-state.ts      — Shim for v2.5 callers (delegates to session.ts)
 ├── sse-stream.ts         — Response SSE instrumentation (v2.5)

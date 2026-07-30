@@ -2,6 +2,12 @@ import type { IncomingMessage } from "http";
 import type { Socket } from "net";
 import { WebSocketServer, WebSocket } from "ws";
 import crypto from "crypto";
+import {
+  createSerializedRecognitionSink,
+  mintRecognitionAttemptId,
+  resolveLegacySpeechRecognitionBinding,
+  type ResolvedSpeechRecognitionBinding,
+} from "../speech-recognition";
 import { createLogger } from "../log";
 import { chatStorage } from "../integrations/chat/storage";
 import {
@@ -131,6 +137,7 @@ interface ParticipantStream {
   pendingBytes: number;
   stt?: STTProviderSession;
   connectPromise: Promise<void>;
+  binding?: ResolvedSpeechRecognitionBinding;
 }
 
 export interface MeetingRecognitionCapabilities {
@@ -143,12 +150,12 @@ export function meetingRecognitionCapabilities(): MeetingRecognitionCapabilities
   const deepgram = new DeepgramDiarizingSTTProvider();
   return {
     participantStreams: {
-      available: scribe.isConfigured(),
+      available: Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
       provider: scribe.provider,
       model: scribe.model,
     },
     sharedRoom: {
-      available: deepgram.isConfigured(),
+      available: Boolean(process.env.DEEPGRAM_API_KEY?.trim()),
       provider: deepgram.provider,
       model: deepgram.model,
     },
@@ -251,7 +258,7 @@ async function ingestFinalUtterance(
   diarized: boolean,
 ): Promise<void> {
   const clusterKey = diarized
-    ? `stream:${utterance.streamId}:${utterance.provider}:${utterance.providerSpeakerId || "unknown"}`
+    ? `recognition:${utterance.attemptId}:speaker:${utterance.providerSpeakerId || "unknown"}`
     : `recall:${utterance.participant.transportId}`;
   const result = await ingestMeetingEvent({
     sessionId,
@@ -272,6 +279,17 @@ async function ingestFinalUtterance(
       model: utterance.model,
       source: "recall_participant_audio",
       fallback: false,
+      recognition: {
+        attemptId: utterance.attemptId,
+        bindingId: utterance.bindingId,
+        streamKey: utterance.streamId,
+        adapterKind: utterance.adapterKind,
+        provider: utterance.provider,
+        model: utterance.model,
+        configFingerprint: utterance.configFingerprint,
+        providerSpeakerId: utterance.providerSpeakerId,
+        source: "recall_participant_audio",
+      },
     },
   });
   if (!result.ok) throw new Error(result.error);
@@ -483,12 +501,15 @@ export function registerMeetingSTTAudioTransport(
     ): ParticipantStream => {
       const provider = route.provider;
       const diarized = route.kind === "diarized";
+      const attemptId = mintRecognitionAttemptId();
       const recognition: MeetingRecognitionStream = {
         streamKey: identity.streamId,
         transportParticipantId: identity.transportId,
         transportLabel: identity.label,
         sourcePolicy: diarized ? "shared_room" : "participant_streams",
         attribution: diarized ? "diarized" : "participant",
+        adapterKind: provider.adapterKind,
+        attemptId,
         provider: provider.provider,
         model: provider.model,
         status: "connecting",
@@ -499,36 +520,50 @@ export function registerMeetingSTTAudioTransport(
       stream.pendingAudio = [];
       stream.pendingBytes = 0;
       stream.connectPromise = (async () => {
-        if (!provider.isConfigured()) {
+        const binding = await resolveLegacySpeechRecognitionBinding(provider.adapterKind as "elevenlabs-scribe-realtime" | "deepgram-realtime");
+        if (!binding) {
           throw new Error(`${provider.provider} is not configured for ${diarized ? "shared-room" : "participant"} recognition`);
         }
-        return provider.connect(
-          {
-          streamId: `${identity.sessionId}:meeting:${identity.streamId}`,
-          participant: {
-            transportId: identity.transportId,
-            label: identity.label,
-            email: identity.email,
-            isHost: identity.isHost,
-          },
-          encoding: "pcm_s16le",
-          sampleRateHz: 16000,
-          channels: 1,
-          hints: await recognitionHintsForMeeting(identity.sessionId, meeting),
-          },
+        stream.binding = binding;
+        stream.recognition = {
+          ...stream.recognition,
+          bindingId: binding.bindingId,
+          configFingerprint: binding.configFingerprint,
+        };
+        const sink = createSerializedRecognitionSink(
           async (utterance) => {
-          if (utterance.isFinal && isCurrent(stream)) {
-            await ingestFinalUtterance(deps.ingestMeetingEvent, identity.sessionId, utterance, diarized);
-          }
+            if (utterance.isFinal && isCurrent(stream)) {
+              await ingestFinalUtterance(deps.ingestMeetingEvent, identity.sessionId, utterance, diarized);
+            }
           },
           (error) => void scheduleSttReconnect(stream, error.message),
+        );
+        return provider.connect(
+          binding,
+          {
+            streamId: `${identity.sessionId}:meeting:${identity.streamId}`,
+            participant: {
+              transportId: identity.transportId,
+              label: identity.label,
+              email: identity.email,
+              isHost: identity.isHost,
+            },
+            encoding: "pcm_s16le",
+            sampleRateHz: 16000,
+            channels: 1,
+            hints: await recognitionHintsForMeeting(identity.sessionId, meeting),
+          },
+          sink,
+          attemptId,
         );
       })().then(async (stt) => {
         stream.stt = stt;
         stream.recognition = { ...stream.recognition, status: "active" };
         sttReconnectAttempts.delete(streamMapKey(identity.sessionId, identity.transportId));
         syncMeetingVisualizerBotStatus(identity.sessionId, "live");
-        for (const packet of stream.pendingAudio) stt.sendAudio(packet);
+        for (const packet of stream.pendingAudio) {
+          if (stt.tryWriteAudio(packet) !== "accepted") break;
+        }
         stream.pendingAudio = [];
         stream.pendingBytes = 0;
         await persistRecognition(identity.sessionId, meeting, streams);
@@ -546,7 +581,7 @@ export function registerMeetingSTTAudioTransport(
       if (stream.recognition.sourcePolicy === mode && ["connecting", "active"].includes(stream.recognition.status)) {
         return;
       }
-      stream.stt?.close();
+      stream.stt?.abort("Meeting audio source reconfigured");
       stream.stt = undefined;
       stream.pendingAudio = [];
       stream.pendingBytes = 0;
@@ -712,7 +747,7 @@ export function registerMeetingSTTAudioTransport(
       // Tear down the dead provider session and enter a visible recovering
       // state. Incoming audio buffers via the connecting-status branch in the
       // socket message handler until the replacement connects.
-      stream.stt?.close();
+      stream.stt?.abort("Recognition reconnect scheduled");
       stream.stt = undefined;
       stream.recognition = {
         ...stream.recognition,
@@ -853,8 +888,11 @@ export function registerMeetingSTTAudioTransport(
         // barge-in: a human talking over the agent preempts TTS immediately,
         // instead of waiting for a full transcribed segment to be ingested.
         observeMeetingParticipantSpeechEnergy(sessionId, participantEnergy);
-        if (stream.stt) stream.stt.sendAudio(bytes);
-        else if (stream.recognition.status === "connecting") appendPendingAudio(stream, bytes);
+        if (stream.stt) {
+          const writeOutcome = stream.stt.tryWriteAudio(bytes);
+          if (writeOutcome === "blocked") appendPendingAudio(stream, bytes);
+          if (writeOutcome === "closed") void scheduleSttReconnect(stream, "Recognition session closed while audio was active");
+        } else if (stream.recognition.status === "connecting") appendPendingAudio(stream, bytes);
       } catch (error) {
         log.warn(`invalid Recall audio packet: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -870,7 +908,14 @@ export function registerMeetingSTTAudioTransport(
         if (stream.recognition.status !== "excluded") {
           stream.recognition = { ...stream.recognition, status: "closed", detail: undefined };
         }
-        stream.stt?.close();
+        void stream.stt?.finish().then((result) => {
+          if (result.outcome === "timed_out") {
+            log.warn("meeting recognition finish timed out", {
+              sessionId: stream.identity.sessionId,
+              attemptId: stream.recognition.attemptId,
+            });
+          }
+        });
       }
       liveConnections.delete(connection);
       for (const sessionId of meetings.keys()) {

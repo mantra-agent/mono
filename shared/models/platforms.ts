@@ -336,8 +336,90 @@ export type EnvironmentRuntimeVariable = typeof environmentRuntimeVariables.$inf
 // Capability bindings — provider-specific service bindings (e.g. R2, Pages)
 // ---------------------------------------------------------------------------
 
-export const capabilityTypeEnum = z.enum(["object_storage", "hosting"]);
+export const capabilityTypeEnum = z.enum(["object_storage", "hosting", "speech_recognition"]);
 export type CapabilityType = z.infer<typeof capabilityTypeEnum>;
+
+export const speechRecognitionAdapterKindSchema = z.enum([
+  "elevenlabs-scribe-realtime",
+  "deepgram-realtime",
+  "speechmatics-realtime",
+]);
+export type SpeechRecognitionAdapterKind = z.infer<typeof speechRecognitionAdapterKindSchema>;
+
+export const speechRecognitionUseCaseSchema = z.enum([
+  "meeting_participant_stream",
+  "meeting_shared_room",
+]);
+export type SpeechRecognitionUseCase = z.infer<typeof speechRecognitionUseCaseSchema>;
+
+const speechRecognitionUseCasesSchema = z
+  .array(speechRecognitionUseCaseSchema)
+  .min(1)
+  .max(2)
+  .refine((values) => new Set(values).size === values.length, "Speech recognition use cases must be unique");
+
+export const elevenLabsScribeRealtimeConfigSchema = z.object({
+  version: z.literal(1),
+  adapterKind: z.literal("elevenlabs-scribe-realtime"),
+  useCases: speechRecognitionUseCasesSchema,
+  model: z.literal("scribe_v2_realtime").default("scribe_v2_realtime"),
+  languageCode: z.literal("en").default("en"),
+  vadSilenceThresholdSecs: z.number().min(0.1).max(3).default(1),
+  vadThreshold: z.number().min(0).max(1).default(0.4),
+  minSpeechDurationMs: z.number().int().min(50).max(2_000).default(100),
+  minSilenceDurationMs: z.number().int().min(50).max(2_000).default(100),
+}).strict();
+
+export const deepgramRealtimeConfigSchema = z.object({
+  version: z.literal(1),
+  adapterKind: z.literal("deepgram-realtime"),
+  useCases: speechRecognitionUseCasesSchema,
+  model: z.literal("nova-3").default("nova-3"),
+  language: z.literal("en-US").default("en-US"),
+  diarizeModel: z.literal("latest").default("latest"),
+  endpointingMs: z.number().int().min(50).max(5_000).default(400),
+}).strict();
+
+export const speechmaticsRealtimeConfigSchema = z.object({
+  version: z.literal(1),
+  adapterKind: z.literal("speechmatics-realtime"),
+  useCases: speechRecognitionUseCasesSchema,
+  model: z.literal("enhanced").default("enhanced"),
+  language: z.literal("en").default("en"),
+  region: z.enum(["us", "eu", "global"]).default("us"),
+  speakerSensitivity: z.number().min(0).max(1).default(0.5),
+  preferCurrentSpeaker: z.boolean().default(true),
+  maxSpeakers: z.number().int().min(2).max(50).default(8),
+}).strict();
+
+export const speechRecognitionBindingConfigSchema = z.discriminatedUnion("adapterKind", [
+  elevenLabsScribeRealtimeConfigSchema,
+  deepgramRealtimeConfigSchema,
+  speechmaticsRealtimeConfigSchema,
+]);
+export type SpeechRecognitionBindingConfig = z.infer<typeof speechRecognitionBindingConfigSchema>;
+
+export const upsertSpeechRecognitionBindingSchema = z.object({
+  connectionId: z.number().int().positive(),
+  provider: z.enum(["elevenlabs", "deepgram", "speechmatics"]),
+  config: speechRecognitionBindingConfigSchema,
+  enabled: z.boolean().default(false),
+  sortOrder: z.number().int().min(0).max(1_000).default(0),
+}).strict().superRefine((value, context) => {
+  const expectedProvider: Record<SpeechRecognitionAdapterKind, typeof value.provider> = {
+    "elevenlabs-scribe-realtime": "elevenlabs",
+    "deepgram-realtime": "deepgram",
+    "speechmatics-realtime": "speechmatics",
+  };
+  if (expectedProvider[value.config.adapterKind] !== value.provider) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["provider"],
+      message: `Provider ${value.provider} does not match adapter ${value.config.adapterKind}`,
+    });
+  }
+});
+export type UpsertSpeechRecognitionBinding = z.infer<typeof upsertSpeechRecognitionBindingSchema>;
 
 export const environmentCapabilityBindings = pgTable(
   "environment_capability_bindings",
@@ -352,6 +434,7 @@ export const environmentCapabilityBindings = pgTable(
     secretEnvelope: jsonb("secret_envelope"),
     secretLast4: text("secret_last4").notNull().default(""),
     enabled: boolean("enabled").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   },

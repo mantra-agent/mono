@@ -765,12 +765,30 @@ export interface MeetingAudioSourcePolicy {
   mutationId: string;
 }
 
+export interface MessageRecognitionMeta {
+  attemptId: string;
+  bindingId?: number;
+  streamKey: string;
+  adapterKind: import("./platforms").SpeechRecognitionAdapterKind;
+  provider: string;
+  model: string;
+  configFingerprint: string;
+  providerSpeakerId?: string;
+  source: "recall_participant_audio" | "recall_transcript_webhook" | "native_microphone";
+}
+
 export interface MeetingRecognitionStream {
   streamKey: string;
   transportParticipantId: string;
   transportLabel?: string;
   sourcePolicy: MeetingAudioSourceMode;
   attribution: "participant" | "diarized" | "excluded";
+  /** Absent only for rolling legacy candidates or old persisted meetings. */
+  bindingId?: number;
+  /** Additive optionality keeps existing meeting documents readable. */
+  adapterKind?: import("./platforms").SpeechRecognitionAdapterKind;
+  attemptId?: string;
+  configFingerprint?: string;
   provider: string;
   model: string;
   status: "connecting" | "active" | "fallback" | "closed" | "failed" | "excluded";
