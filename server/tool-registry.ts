@@ -249,16 +249,17 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   expo: {
-    description: "Inspect Expo/EAS projects and builds using the stored EXPO_ACCESS_TOKEN integration secret. Actions: status, projects, builds, build, build_logs, cancel. Use build_logs to fetch Xcode/build log artifacts and extract actual failure lines instead of relying on Expo summary text.",
+    description: "Inspect Expo/EAS projects and builds or launch one exact-source iOS preview build using the stored EXPO_ACCESS_TOKEN integration secret. Actions: status, projects, builds, build, build_logs, start_build, cancel. start_build requires the full expected main commit SHA, never cancels another build, and fails closed if main moved. Use build_logs to fetch Xcode/build log artifacts and extract actual failure lines instead of relying on Expo summary text.",
     category: "system",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["status", "projects", "builds", "build", "build_logs", "cancel"], description: "Action to perform" },
+        action: { type: "string", enum: ["status", "projects", "builds", "build", "build_logs", "start_build", "cancel"], description: "Action to perform" },
         projectId: { type: "string", description: "Expo app/project UUID for builds list. Defaults to mobile Expo config projectId when available." },
         buildId: { type: "string", description: "EAS build ID for build/build_logs/cancel. Defaults to latest build when omitted for build_logs; for cancel, omit buildId to cancel in-progress builds matching project/platform/profile." },
-        platform: { type: "string", description: "Platform filter for cancel, e.g. ios or android." },
-        profile: { type: "string", description: "Build profile filter for cancel, e.g. preview or production." },
+        expectedSourceRef: { type: "string", description: "Full 40-character Git commit SHA required for start_build. Launch fails if current GitHub main differs." },
+        platform: { type: "string", description: "Platform filter for cancel, e.g. ios or android. start_build is fixed to ios." },
+        profile: { type: "string", description: "Build profile filter for cancel, e.g. preview or production. start_build is fixed to preview." },
         limit: { type: "number", description: "Max builds to return (default 10, max 50)" },
       },
       required: ["action"],

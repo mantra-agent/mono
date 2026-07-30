@@ -9365,9 +9365,9 @@ ${refs}` : ""),
   async expo(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
-    const allowed = new Set(["status", "projects", "builds", "build", "build_logs", "cancel"]);
+    const allowed = new Set(["status", "projects", "builds", "build", "build_logs", "start_build", "cancel"]);
     if (!allowed.has(action)) {
-      return { result: `Unknown expo action: ${action}. Allowed: status, projects, builds, build, build_logs, cancel`, error: true };
+      return { result: `Unknown expo action: ${action}. Allowed: status, projects, builds, build, build_logs, start_build, cancel`, error: true };
     }
 
     try {
@@ -9405,6 +9405,31 @@ ${refs}` : ""),
           if (!buildId) return { result: "Missing buildId", error: true };
           const build = await expo.getBuild(buildId);
           return { result: JSON.stringify({ build }) };
+        }
+        case "start_build": {
+          const expectedSourceRef = typeof args.expectedSourceRef === "string"
+            ? args.expectedSourceRef.trim().toLowerCase()
+            : "";
+          if (!/^[a-f0-9]{40}$/.test(expectedSourceRef)) {
+            return { result: "start_build requires expectedSourceRef as a full 40-character Git commit SHA.", error: true };
+          }
+          const run = await expo.easBuild("preview", "ios", "main", {
+            cancelExisting: false,
+            expectedSourceRef,
+          });
+          return {
+            result: JSON.stringify({
+              started: run.ok,
+              runId: run.runId,
+              sourceRef: run.sourceRef,
+              profile: "preview",
+              platform: "ios",
+              providerCommandAccepted: run.ok,
+              error: run.error,
+              guidance: run.guidance,
+            }),
+            error: !run.ok,
+          };
         }
         case "cancel": {
           const buildId = typeof args.buildId === "string" ? args.buildId.trim() : "";
