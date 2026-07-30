@@ -703,6 +703,25 @@ app.use((req, res, next) => {
       };
       setInterval(runPlanRecovery, PLAN_RECOVERY_INTERVAL_MS).unref();
 
+      // Post-deploy Regression dispatcher: claims delayed durable runs in small
+      // cross-replica batches, restores each owner, and launches the built-in skill.
+      const REGRESSION_DISPATCH_INTERVAL_MS = 60_000;
+      let regressionDispatchActive = false;
+      const runRegressionDispatch = () => {
+        if (regressionDispatchActive) return;
+        regressionDispatchActive = true;
+        import("./regression/regression-dispatcher").then(async ({ dispatchDueRegressionRuns }) => {
+          const claimed = await dispatchDueRegressionRuns();
+          if (claimed > 0) log(`[scheduled] regression dispatcher: claimed=${claimed}`, "boot");
+        }).catch((err) => {
+          log(`[scheduled] regression dispatcher failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
+        }).finally(() => {
+          regressionDispatchActive = false;
+        });
+      };
+      setTimeout(runRegressionDispatch, 15_000).unref();
+      setInterval(runRegressionDispatch, REGRESSION_DISPATCH_INTERVAL_MS).unref();
+
       // Periodic prune of completed/abandoned voice_session_active rows so the
       // table (and its partial index) stay compact. Retention is configurable
       // via VOICE_SESSION_RETENTION_DAYS (default 30 days). Runs once per day.

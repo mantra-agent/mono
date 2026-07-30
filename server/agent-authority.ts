@@ -2,7 +2,7 @@ import type { Principal } from "./principal";
 import { getCurrentPrincipal } from "./principal-context";
 import { getSideEffectTier } from "./autonomy-tiers";
 import { principalHasPermission, type Permission } from "./permissions";
-import { CANONICAL_SCAN_SKILL_ID } from "./skill-identities";
+import { CANONICAL_REGRESSION_SKILL_ID, CANONICAL_SCAN_SKILL_ID } from "./skill-identities";
 import { isWorkflowStageAction } from "./workflows/stage-capability";
 
 export type ToolInvocationOrigin =
@@ -61,6 +61,7 @@ const AUTONOMOUS_SKILL_EXTERNAL_EFFECT_ALLOWLIST: Readonly<Record<string, Readon
   // deterministic scanner scheduled timers call directly. No other skill may
   // acquire this network/external-feed capability.
   [CANONICAL_SCAN_SKILL_ID]: new Set(["news:scan"]),
+  [CANONICAL_REGRESSION_SKILL_ID]: new Set(["regression:execute_scenario", "plan:execute"]),
 };
 
 const INTERNAL_EXTERNAL_EFFECT_ALLOWLIST = new Set([

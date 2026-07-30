@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db } from "../db";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "../db";
 import { getCurrentPrincipal, getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { createLogger, getRecentLogs } from "../log";
@@ -49,6 +49,7 @@ import { buildWorkflowRunPageContent, buildWorkflowStages, parseWorkflowDefiniti
 import { monitorChildSession, truncateOutput, type MonitorResult } from "../child-session-monitor";
 import { chatFileStorage } from "../chat-file-storage";
 import { getArtifactsBySession } from "../session-artifacts";
+import { createRegressionRun } from "../regression/regression-service";
 
 const log = createLogger("WorkflowService");
 
@@ -1423,6 +1424,53 @@ function acceptanceGateFailureFromEvidence(attempt: WorkflowStageAttempt, result
     : { reason: "acceptance_gate_failure", failedGates, gates, nextSuggestedFix: "Return to Implement, fix the failed gate, publish again, and rerun acceptance." };
 }
 
+function acceptedDeploymentFromEvidence(
+  detail: WorkflowRunDetail,
+  evidence: unknown,
+): { environmentId: number; deploymentId: string; revision: string; lifecycleSnapshot: Record<string, unknown> } {
+  const packet = evidence && typeof evidence === "object" ? evidence as AcceptanceEvidencePacket : null;
+  const latest = packet?.deployment?.latest && typeof packet.deployment.latest === "object"
+    ? packet.deployment.latest as Record<string, unknown>
+    : null;
+  const environmentId = detail.run.linkedEnvironmentId;
+  const deploymentId = typeof latest?.id === "string" ? latest.id.trim() : "";
+  const revisionValue = latest?.commitSha ?? latest?.commitHash;
+  const revision = typeof revisionValue === "string" ? revisionValue.trim().toLowerCase() : "";
+  const lifecycleSnapshot = detail.lifecycleSnapshot && typeof detail.lifecycleSnapshot === "object"
+    ? detail.lifecycleSnapshot as Record<string, unknown>
+    : detail.run.lifecycleSnapshot && typeof detail.run.lifecycleSnapshot === "object"
+      ? detail.run.lifecycleSnapshot as Record<string, unknown>
+      : null;
+  const target = lifecycleSnapshot ? lifecycleAcceptanceTarget(lifecycleSnapshot) : {};
+  const targetUrl = typeof target.url === "string" ? target.url.trim() : "";
+  const authMode = lifecycleSnapshot ? configuredAuthMode(lifecycleSnapshot) : "";
+  if (!environmentId || !deploymentId || !revision || !lifecycleSnapshot || !targetUrl || !["none", "platform_binding"].includes(authMode)) {
+    throw new Error("Passed acceptance requires environment, deployment, revision, immutable acceptance target, and supported auth identity before regression enqueue");
+  }
+  return { environmentId, deploymentId, revision, lifecycleSnapshot };
+}
+
+async function enqueueAcceptedDeploymentRegression(
+  detail: WorkflowRunDetail,
+  attempt: WorkflowStageAttempt,
+  evidence: unknown,
+  acceptedAt: Date,
+): Promise<void> {
+  if (attempt.stageKey !== "acceptance") return;
+  const accepted = acceptedDeploymentFromEvidence(detail, evidence);
+  const triggerKey = ["accepted_deployment", accepted.environmentId, accepted.deploymentId, accepted.revision, detail.run.ownerUserId, detail.run.accountId].join(":");
+  await createRegressionRun({
+    triggerKey,
+    environmentId: accepted.environmentId,
+    acceptedDeploymentId: accepted.deploymentId,
+    acceptedRevision: accepted.revision,
+    lifecycleSnapshot: accepted.lifecycleSnapshot,
+    dueAt: new Date(acceptedAt.getTime() + 60 * 60 * 1000),
+    sourceWorkflowRunId: detail.run.id,
+    acceptanceAttemptId: attempt.id,
+  });
+}
+
 export async function completeStageAttempt(workflowRunId: string, attemptId: number, resultInput: { result: string; outputSummary?: string; evidence?: unknown; failureContext?: unknown; createdBySessionId?: string }): Promise<WorkflowRunDetail> {
   if (!workflowRunId.trim()) throw new Error("completeStageAttempt requires workflowRunId");
   if (!Number.isSafeInteger(attemptId) || attemptId <= 0) throw new Error(`Invalid stage attempt ID: ${String(attemptId)}`);
@@ -1455,28 +1503,37 @@ export async function completeStageAttempt(workflowRunId: string, attemptId: num
     }
     : null;
 
-  // Claim completion atomically. The child may call complete_stage_attempt while
-  // the parent monitor observes the same terminal session state. Only the
-  // winner may persist evidence or advance the workflow.
-  const [completedAttempt] = await db.update(workflowStageAttempts).set({
-    status,
-    result,
-    outputSummary: resultInput.outputSummary || null,
-    evidence: resultInput.evidence || attempt.evidence || {},
-    failureContext: failurePacket || resultInput.failureContext || null,
-    completedAt: new Date(),
-    durationSeconds,
-    updatedAt: new Date(),
-  }).where(writable(attemptScopeColumns, and(
-    eq(workflowStageAttempts.workflowRunId, workflowRunId),
-    eq(workflowStageAttempts.id, attemptId),
-    eq(workflowStageAttempts.status, "active"),
-    isNull(workflowStageAttempts.completedAt),
-  ))).returning();
-  if (!completedAttempt) {
+  // Claim completion and enqueue accepted-deployment regression in one transaction.
+  // If regression admission cannot persist, acceptance remains active rather than
+  // creating a passed transition without its durable post-deploy consequence.
+  const completion = await db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+    const acceptedAt = new Date();
+    const [completedAttempt] = await tx.update(workflowStageAttempts).set({
+      status,
+      result,
+      outputSummary: resultInput.outputSummary || null,
+      evidence: resultInput.evidence || attempt.evidence || {},
+      failureContext: failurePacket || resultInput.failureContext || null,
+      completedAt: acceptedAt,
+      durationSeconds,
+      updatedAt: acceptedAt,
+    }).where(writable(attemptScopeColumns, and(
+      eq(workflowStageAttempts.workflowRunId, workflowRunId),
+      eq(workflowStageAttempts.id, attemptId),
+      eq(workflowStageAttempts.status, "active"),
+      isNull(workflowStageAttempts.completedAt),
+    ))).returning();
+    if (!completedAttempt) return null;
+    if (result === "passed") {
+      await enqueueAcceptedDeploymentRegression(beforeDetail, completedAttempt, resultInput.evidence || attempt.evidence || {}, acceptedAt);
+    }
+    return completedAttempt;
+  }));
+  if (!completion) {
     log.log(`completeStageAttempt lost completion claim for attempt ${attemptId}; another path already completed it.`);
     return (await getWorkflowRun(attempt.workflowRunId))!;
   }
+  const completedAttempt = completion;
   if (failurePacket) await db.update(workflowRuns).set({ failurePacket, updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, attempt.workflowRunId)));
   if (resultInput.evidence) await attachWorkflowArtifact({ workflowRunId: attempt.workflowRunId, stageAttemptId: attempt.id, kind: attempt.stageKey === "calibration" ? "calibration" : attempt.stageKey === "acceptance" ? "acceptance" : result === "passed" ? "acceptance" : "other", title: `${attempt.stageTitle} attempt ${result}`, summary: resultInput.outputSummary || "", metadata: resultInput.evidence, createdBySessionId: resultInput.createdBySessionId, render: false });
   await projectSessionArtifactsToWorkflow(workflowRunId, completedAttempt, resultInput.createdBySessionId);

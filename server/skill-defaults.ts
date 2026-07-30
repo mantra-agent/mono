@@ -21,7 +21,7 @@ import {
     checklist?: Array<{ check: string; weight: number }>;
     whenToUse?: string;
     outputSpec?: string;
-    recommendedPersona?: "Strategist" | "Coach" | "Operator" | "Creative" | "Companion" | "Architect" | "Investigator";
+    recommendedPersona?: "Strategist" | "Coach" | "Operator" | "Creative" | "Companion" | "Architect" | "Investigator" | "Engineer";
 
     pinnedToContext?: boolean;
   }
@@ -967,6 +967,44 @@ If the page has already been created but you later decide it should be surfaced,
 - No empty headings.
 - No invented metrics. Use actual tool data or state uncertainty.
 - The brief should make the next planning/review cycle easier to run.`
+  },
+  {
+    name: "regression",
+    recommendedPersona: "Engineer",
+    description: "Executes one durable post-deploy Regression run by creating exactly one associated Plan and one fresh-context issue step per deterministic candidate.",
+    category: "engineering",
+    activity: ACTIVITY_WORK,
+    author: "system",
+    version: "1.0",
+    addToMemory: false,
+    pinnedToContext: false,
+    whenToUse: "Launched only by the durable post-acceptance regression dispatcher with a regression run ID in preContext.",
+    outputSpec: "A compact terminal summary containing the regression run ID, associated Plan reference, candidate/result counts, exclusions, and aggregate status.",
+    checklist: [
+      { check: "Loaded the durable run and deterministic candidate snapshot through regression tools", weight: 3 },
+      { check: "Created exactly one Plan and associated it to the regression run before execution", weight: 4 },
+      { check: "Created exactly one fresh-context Plan step per candidate issue with exact run ID, issue ID, and Plan step ID instructions", weight: 4 },
+      { check: "Missing or invalid regression documentation was recorded as a blocked result rather than skipped", weight: 4 },
+      { check: "Executed the Plan and reconciled the aggregate regression status from durable results", weight: 3 },
+      { check: "Did not mutate Issue status, notes, contracts, or accepted target identity", weight: 4 },
+    ],
+    process: `You execute one durable post-deploy Regression run. The dispatcher supplies only a regression run ID in preContext.
+
+1. Parse the exact run ID. Call \`regression(action: "get_run", runId)\` and \`regression(action: "list_candidates", runId)\`.
+2. If the run already has a Plan, reuse it. Otherwise create exactly one non-blocking Plan with \`plan(action: "create")\` and immediately associate it with \`regression(action: "associate_plan")\`. If association reports an existing Plan, discard no state and use the already-associated Plan.
+3. Create exactly one Plan step per candidate issue, in candidate order. Use persona Engineer. Plan creation deterministically names these steps \`step_1\`, \`step_2\`, and so on. Each step instruction must contain the exact run ID, issue ID, and its deterministic step ID and must tell the fresh child to:
+   - call \`regression(action: "get_issue", runId, issueId)\`;
+   - when contractState is missing or invalid, call \`regression(action: "append_result", status: "blocked", reasonCode: "missing_contract" or "invalid_contract", summary: a bounded documentation-gap explanation, planStepId: its exact step ID)\`;
+   - otherwise call \`regression(action: "execute_scenario", runId, issueId, planStepId: its exact step ID)\`;
+   - never edit Issue status, notes, contract, run target, or result history.
+4. Call \`plan(action: "execute", planId)\`. Each Plan step becomes its own fresh-context child session.
+5. After Plan completion, call \`regression(action: "get_results", runId)\` and \`regression(action: "get_run", runId)\`. Report the durable aggregate state and exclusions.
+
+Hard rules:
+- Do not invent, repair, or update a regression contract during execution. Documentation gaps are blocked results.
+- Do not supply a hostname, URL origin, credential, cookie, selector, JavaScript, shell command, or Issue status mutation.
+- One run has one Plan. One candidate has one step. One run+issue has one terminal result.
+- Treat exclusions as counted outcomes, never silent skips.`,
   },
   {
     name: "plan",

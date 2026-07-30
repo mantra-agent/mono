@@ -7,6 +7,7 @@ import {
   getRegressionResults,
   getRegressionRun,
   listRegressionCandidates,
+  reconcileRegressionRunStatus,
   upsertIssueRegressionContract,
 } from "../regression/regression-service";
 import { executeRegressionScenario } from "../regression/browser-executor";
@@ -21,7 +22,12 @@ export async function handleRegression(args: Record<string, unknown>): Promise<T
   try {
     const action = z.enum(["list_candidates", "get_run", "get_issue", "upsert_contract", "execute_scenario", "append_result", "get_results", "associate_plan"]).parse(args.action);
     switch (action) {
-      case "list_candidates": return json(await listRegressionCandidates(requiredRunId(args.runId)));
+      case "list_candidates": {
+        const runId = requiredRunId(args.runId);
+        const snapshot = await listRegressionCandidates(runId);
+        if (snapshot.candidates.length === 0) await reconcileRegressionRunStatus(runId);
+        return json(snapshot);
+      }
       case "get_run": {
         const runId = requiredRunId(args.runId);
         const run = await getRegressionRun(runId);

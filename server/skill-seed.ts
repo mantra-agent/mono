@@ -5,7 +5,7 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { BUILTIN_SKILL_DEFAULTS } from "./skill-defaults";
 import * as fs from "fs";
 import * as path from "path";
-import { CANONICAL_SCAN_SKILL_ID } from "./skill-identities";
+import { CANONICAL_REGRESSION_SKILL_ID, CANONICAL_SCAN_SKILL_ID } from "./skill-identities";
 
 const log = createLogger("SkillSeed");
 
@@ -296,6 +296,7 @@ export async function seedBuiltinSkills(): Promise<void> {
       }
 
       await db.insert(skills).values({
+        ...(def.name === "regression" ? { id: CANONICAL_REGRESSION_SKILL_ID } : {}),
         name: def.name,
         description: def.description,
         category: def.category,

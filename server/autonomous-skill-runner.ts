@@ -377,6 +377,16 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     timeoutMs: 10 * 60 * 1000,
     sessionType: "agent",
   },
+  "regression": {
+    skillId: "regression",
+    label: "Regression",
+    callType: "full",
+    activity: ACTIVITY_WORK,
+    temperature: 0.2,
+    timeoutMs: 30 * 60 * 1000,
+    sessionType: "autonomous",
+    admissionTier: "background",
+  },
   "enrich-email": {
     skillId: "enrich-email",
     label: "Enrich Email",
