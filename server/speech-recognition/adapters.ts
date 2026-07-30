@@ -362,3 +362,272 @@ export class DeepgramDiarizingSTTProvider implements STTProvider {
     return compatibilitySession(session);
   }
 }
+
+export const SPEECHMATICS_DIARIZATION_POLICY = {
+  provider: "speechmatics",
+  model: "enhanced",
+  sampleRateHz: 16000,
+  language: "en",
+} as const;
+
+const SPEECHMATICS_REGION_ENDPOINT: Record<"us" | "eu" | "global", string> = {
+  us: "wss://us.rt.speechmatics.com/v2/",
+  eu: "wss://eu.rt.speechmatics.com/v2/",
+  global: "wss://global.rt.speechmatics.com/v2/",
+};
+
+const SPEECHMATICS_UNKNOWN_SPEAKER = "UU";
+
+interface SpeechmaticsAlternative {
+  content?: string;
+  confidence?: number;
+  speaker?: string;
+}
+
+interface SpeechmaticsResult {
+  type?: string;
+  start_time?: number;
+  end_time?: number;
+  attaches_to?: string;
+  alternatives?: SpeechmaticsAlternative[];
+}
+
+interface SpeechmaticsMessage {
+  message?: string;
+  seq_no?: number;
+  last_seq_no?: number;
+  results?: SpeechmaticsResult[];
+  type?: string;
+  reason?: string;
+}
+
+interface SpeechmaticsSpeakerGroup {
+  speaker: string;
+  parts: string[];
+  confidences: number[];
+  startTime?: number;
+  endTime?: number;
+}
+
+function groupSpeechmaticsResults(results: SpeechmaticsResult[]): SpeechmaticsSpeakerGroup[] {
+  const groups: SpeechmaticsSpeakerGroup[] = [];
+  for (const result of results) {
+    const alternative = result.alternatives?.[0];
+    const content = alternative?.content?.trim();
+    if (!content) continue;
+    const speaker = alternative?.speaker || SPEECHMATICS_UNKNOWN_SPEAKER;
+    const current = groups.at(-1);
+    if (!current || current.speaker !== speaker) {
+      groups.push({
+        speaker,
+        parts: [content],
+        confidences: Number.isFinite(alternative?.confidence) ? [Number(alternative?.confidence)] : [],
+        startTime: result.start_time,
+        endTime: result.end_time,
+      });
+      continue;
+    }
+    current.parts.push(content);
+    if (Number.isFinite(alternative?.confidence)) current.confidences.push(Number(alternative?.confidence));
+    if (Number.isFinite(result.end_time)) current.endTime = result.end_time;
+  }
+  return groups;
+}
+
+function speechmaticsGroupText(group: SpeechmaticsSpeakerGroup): string {
+  return group.parts
+    .join(" ")
+    .replace(/\s+([,.;!?])/g, "$1")
+    .trim();
+}
+
+export class SpeechmaticsRealtimeSTTProvider implements STTProvider {
+  readonly adapterKind = "speechmatics-realtime" as const;
+  readonly provider = SPEECHMATICS_DIARIZATION_POLICY.provider;
+  readonly model = SPEECHMATICS_DIARIZATION_POLICY.model;
+
+  async connect(
+    binding: ResolvedSpeechRecognitionBinding,
+    stream: STTAudioStream,
+    sink: SerializedRecognitionSink,
+    attemptId: string,
+  ): Promise<STTProviderSession> {
+    if (binding.adapterKind !== this.adapterKind) throw new Error("Speechmatics adapter received the wrong binding kind");
+    validatePcm(stream, "Speechmatics");
+    const config = binding.config.adapterKind === this.adapterKind ? binding.config : null;
+    if (!config) throw new Error("Speechmatics binding config is invalid");
+
+    const endpoint = SPEECHMATICS_REGION_ENDPOINT[config.region];
+    if (!endpoint) throw new Error("Speechmatics region is not allowlisted");
+
+    const socket = new WebSocket(endpoint, {
+      headers: { Authorization: `Bearer ${binding.credential}` },
+    });
+    socket.on("error", () => undefined);
+
+    const connectedAtMs = Date.now();
+    let sequence = 0;
+    let audioSeq = 0;
+    let terminal = false;
+    let recognitionStarted = false;
+    let endOfTranscript = false;
+    let finishPromise: Promise<{ outcome: "finished" | "timed_out" }> | null = null;
+    let readyResolve: (() => void) | null = null;
+    let readyReject: ((error: Error) => void) | null = null;
+    let endOfTranscriptResolve: (() => void) | null = null;
+
+    socket.on("open", () => {
+      socket.send(JSON.stringify({
+        message: "StartRecognition",
+        audio_format: { type: "raw", encoding: "pcm_s16le", sample_rate: stream.sampleRateHz },
+        transcription_config: {
+          language: config.language,
+          model: config.model,
+          diarization: "speaker",
+          speaker_diarization_config: {
+            speaker_sensitivity: config.speakerSensitivity,
+            prefer_current_speaker: config.preferCurrentSpeaker,
+            max_speakers: config.maxSpeakers,
+          },
+        },
+      }));
+    });
+
+    socket.on("message", (data) => {
+      let message: SpeechmaticsMessage;
+      try {
+        message = JSON.parse(data.toString()) as SpeechmaticsMessage;
+      } catch {
+        sink.onError(new Error("Speechmatics returned an invalid recognition message"));
+        return;
+      }
+      switch (message.message) {
+        case "RecognitionStarted":
+          recognitionStarted = true;
+          readyResolve?.();
+          readyResolve = null;
+          readyReject = null;
+          return;
+        case "AudioAdded":
+          return;
+        case "AddTranscript": {
+          const groups = groupSpeechmaticsResults(message.results || []);
+          for (const group of groups) {
+            const text = speechmaticsGroupText(group);
+            if (!text) continue;
+            const confidence = group.confidences.length > 0
+              ? group.confidences.reduce((sum, value) => sum + value, 0) / group.confidences.length
+              : undefined;
+            sink.onUtterance({
+              utteranceId: `speechmatics:${attemptId}:${group.speaker}:${++sequence}`,
+              streamId: stream.streamId,
+              participant: stream.participant,
+              text,
+              isFinal: true,
+              startedAt: secondsToIso(connectedAtMs, group.startTime),
+              endedAt: secondsToIso(connectedAtMs, group.endTime),
+              confidence,
+              providerSpeakerId: group.speaker,
+              provider: this.provider,
+              model: this.model,
+              fallback: false,
+              attemptId,
+              bindingId: binding.bindingId,
+              adapterKind: this.adapterKind,
+              configFingerprint: binding.configFingerprint,
+            });
+          }
+          return;
+        }
+        case "EndOfTranscript":
+          endOfTranscript = true;
+          endOfTranscriptResolve?.();
+          endOfTranscriptResolve = null;
+          return;
+        case "Warning":
+          return;
+        case "Error":
+          if (!terminal) sink.onError(new Error("Speechmatics recognition protocol failed"));
+          return;
+        default:
+          return;
+      }
+    });
+    socket.on("error", () => {
+      const error = new Error("Speechmatics recognition transport failed");
+      readyReject?.(error);
+      if (!terminal) sink.onError(error);
+    });
+    socket.on("close", (code) => {
+      if (terminal || endOfTranscript) return;
+      const error = new Error(`Speechmatics recognition closed unexpectedly (${code})`);
+      readyReject?.(error);
+      sink.onError(error);
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Speechmatics recognition readiness timed out")), 10_000);
+        timer.unref?.();
+        readyResolve = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        readyReject = (error) => {
+          clearTimeout(timer);
+          reject(error);
+        };
+      });
+    } catch (error) {
+      terminal = true;
+      socket.terminate();
+      throw error;
+    }
+
+    return compatibilitySession({
+      tryWriteAudio(bytes) {
+        if (terminal || !recognitionStarted || socket.readyState !== WebSocket.OPEN) return "closed";
+        if (socket.bufferedAmount >= MAX_PROVIDER_BUFFERED_BYTES) return "blocked";
+        if (bytes.length === 0) return "accepted";
+        socket.send(bytes);
+        audioSeq += 1;
+        return "accepted";
+      },
+      finish() {
+        if (finishPromise) return finishPromise;
+        terminal = true;
+        finishPromise = (async () => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ message: "EndOfStream", last_seq_no: audioSeq }));
+          }
+          const providerSettled = await Promise.race([
+            new Promise<true>((resolve) => {
+              if (endOfTranscript) resolve(true);
+              else endOfTranscriptResolve = () => resolve(true);
+            }),
+            new Promise<false>((resolve) => {
+              const timer = setTimeout(() => resolve(false), FINISH_TIMEOUT_MS);
+              timer.unref?.();
+            }),
+          ]);
+          const consumerSettled = await Promise.race([
+            sink.settle().then(() => true),
+            new Promise<false>((resolve) => {
+              const timer = setTimeout(() => resolve(false), FINISH_TIMEOUT_MS);
+              timer.unref?.();
+            }),
+          ]);
+          if (socket.readyState === WebSocket.OPEN) socket.close(1000, "Audio stream ended");
+          return { outcome: providerSettled && consumerSettled ? "finished" as const : "timed_out" as const };
+        })();
+        return finishPromise;
+      },
+      abort(reason) {
+        if (terminal) return;
+        terminal = true;
+        log.debug("Speechmatics recognition aborted", { reason: reason.slice(0, 80), attemptId });
+        socket.terminate();
+      },
+    });
+  }
+}
