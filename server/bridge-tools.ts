@@ -12776,6 +12776,35 @@ function formatContextHealthSummary(summary: import("@shared/context-health").Co
 }
 
 const systemTools: Record<string, ToolHandler> = {
+  async npm_dependencies(args) {
+    if (args.action !== "set_package") {
+      return { result: "Unknown npm_dependencies action. Available: set_package", error: true };
+    }
+    try {
+      const { setNpmPackageSpec } = await import("./npm-dependency-mutation");
+      const result = await setNpmPackageSpec({
+        repositoryDirectory: String(args.repositoryDirectory || ""),
+        manifestPath: String(args.manifestPath || ""),
+        section: args.section,
+        packageName: String(args.packageName || ""),
+        version: String(args.version || ""),
+        sessionId: String(args._sessionId || ""),
+      });
+      return {
+        result: JSON.stringify({
+          ...result,
+          safeCommand: `npm_dependencies(action=set_package, repositoryDirectory=${result.repositoryDirectory}, manifestPath=${result.manifestPath}, section=${result.section}, packageName=${result.packageName}, version=${result.version})`,
+          npmContract: "npm install --package-lock-only --ignore-scripts --no-audit --no-fund --save-exact in the nested package directory with isolated HOME/cache and no node_modules present",
+        }),
+      };
+    } catch (error) {
+      return {
+        result: `npm dependency mutation failed: ${error instanceof Error ? error.message : String(error)}`,
+        error: true,
+      };
+    }
+  },
+
   async shell(args) {
     const command = args.command;
     if (!command) return { result: "Missing command", error: true };
@@ -16161,7 +16190,7 @@ type EngineeringContextRoot = {
   reason: string;
 };
 
-const ENGINEERING_TOOL_NAMES = new Set(["code", "shell", "git", "system", "railway", "sentry"]);
+const ENGINEERING_TOOL_NAMES = new Set(["code", "shell", "git", "npm_dependencies", "system", "railway", "sentry"]);
 const ENGINEERING_REF_CACHE = new Map<string, Set<string>>();
 const ENGINEERING_ROOT_REPO_HINTS = ["repos/", "AGENTS.md", "DESIGN.md", "npm run build", "git ", "server/", "client/", "mobile/", "shared/"];
 const CODING_SUBDIRS: CodingSubdir[] = ["client", "server", "mobile"];

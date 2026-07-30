@@ -21,6 +21,10 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   scratch: { default: 1, actions: { read: 0, list: 0, search: 0 } },
   files: { default: 1, actions: { read: 0, list: 0 } },
   shell: { default: 1 },
+  // Dependency mutation changes repository source and may resolve registry metadata.
+  // Keep it tier 2 so autonomous/timer/hook origins remain default-denied unless
+  // they carry server-validated trusted engineering delegation.
+  npm_dependencies: { default: 2 },
   web: { default: 0 },
   memory: { default: 1, actions: { read: 0, read_entry: 0, search: 0, get: 0, get_many: 0 } },
   code: { default: 0 },
