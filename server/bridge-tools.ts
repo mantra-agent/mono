@@ -7769,8 +7769,21 @@ ${lines.join("\n")}` };
           return { result: `${matches.length} skills matching "${query}":\n${lines.join("\n")}` };
         }
         case "run": {
-          const skillId = args.id || args.name;
-          if (!skillId) return { result: "Missing skill ID or name (use 'id' or 'name' parameter)", error: true };
+          const requestedSkill = args.id || args.name;
+          if (!requestedSkill) return { result: "Missing skill ID or name (use 'id' or 'name' parameter)", error: true };
+          let targetSkill = await storage.getSkill(requestedSkill);
+          if (!targetSkill) targetSkill = await storage.getSkillByName(requestedSkill);
+          if (!targetSkill) return { result: `Skill "${requestedSkill}" not found`, error: true };
+          const skillId = targetSkill.id;
+
+          const authorityContext = args._authorityContext as import("./agent-authority").AgentAuthorityContext | undefined;
+          if (authorityContext?.origin === "autonomous") {
+            const { authorizeToolInvocation } = await import("./agent-authority");
+            const targetAuthority = authorizeToolInvocation("skills", { action: "run", id: skillId }, authorityContext);
+            if (!targetAuthority.allowed) {
+              return { result: `Tool execution denied by deterministic authority policy: ${targetAuthority.reason}`, error: true };
+            }
+          }
 
           const callingConversationId = args._sessionId;
           if (normalizeSkillIdentifier(skillId) === "spec" && await isSpecSkillSession(callingConversationId)) {
@@ -7806,8 +7819,12 @@ ${lines.join("\n")}` };
             const result = await executeAutonomousSkillRun(skillId, runOptions);
             if (!result) return { result: `Skill "${skillId}" could not be started — not found in registry or database, or already running`, error: true };
 
+            const output = result.summary?.trim();
             return {
-              result: `Skill "${skillId}" ${result.status} in ${Math.round(result.durationMs / 1000)}s. Session: ${result.sessionId}${result.error ? ` Error: ${result.error}` : ""}`,
+              result: [
+                `Skill "${skillId}" ${result.status} in ${Math.round(result.durationMs / 1000)}s. Session: ${result.sessionId}${result.error ? ` Error: ${result.error}` : ""}`,
+                output ? `Output:\n${output}` : "",
+              ].filter(Boolean).join("\n"),
             };
           } else {
             let childSessionId: string | null = null;
