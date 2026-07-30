@@ -3,6 +3,7 @@ import type { Timer, TimerRun } from "@shared/models/timers";
 import { isAgentType } from "@shared/instance-config";
 import { AgentTimerHandler } from "./agent-timer-handler";
 import { MeTimerHandler } from "./me-timer-handler";
+import { PipelineTimerHandler } from "./pipeline-timer-handler";
 import { ReminderTimerHandler } from "./reminder-timer-handler";
 import { SkillTimerHandler } from "./skill-timer-handler";
 import { SystemTimerHandler } from "./system-timer-handler";
@@ -13,6 +14,7 @@ export class TimerHandlerRouter implements TimerHandler {
   private readonly systemTimerHandler = new SystemTimerHandler();
   private readonly meTimerHandler = new MeTimerHandler();
   private readonly skillTimerHandler = new SkillTimerHandler();
+  private readonly pipelineTimerHandler = new PipelineTimerHandler();
   private readonly reminderTimerHandler = new ReminderTimerHandler(
     this.agentTimerHandler,
   );
@@ -32,6 +34,10 @@ export class TimerHandlerRouter implements TimerHandler {
 
     if (timer.type === "skill") {
       return this.skillTimerHandler.execute(timer, run);
+    }
+
+    if (timer.type === "pipeline") {
+      return this.pipelineTimerHandler.execute(timer, run);
     }
 
     if (timer.type === "reminder") {
