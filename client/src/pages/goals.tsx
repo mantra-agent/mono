@@ -619,20 +619,18 @@ function GoalRowMenu({ goal, onStartRename }: GoalRowMenuProps) {
 }
 
 function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: GoalTreeRowProps) {
-  const [open, setOpen] = useState(true);
   const {
     isRenaming, renameValue, setRenameValue, setRenameCursor, renameInputRef,
     startRename, submitRename, cancelRename, mention,
   } = useGoalRename(goal);
   const children = useMemo(() => allGoals.filter((item) => item.parentId === goal.id), [allGoals, goal.id]);
-  const hasChildren = children.length > 0;
   const achieved = goal.status === "achieved";
   const blocked = goal.status === "blocked";
   const isSelected = selectedGoalId === goal.id;
 
-  const handleRowClick = () => {
-    if (isRenaming) return;
-    onSelectGoal(goal.id);
+  const handleStartRename = () => {
+    focusWithMobileKeyboard();
+    startRename();
   };
 
   return (
@@ -647,18 +645,7 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: Go
         )}
         <div className="relative min-w-0 flex-1 overflow-hidden">
           <div
-            role="button"
-            tabIndex={0}
-            onClick={handleRowClick}
-            onKeyDown={(event) => {
-              if (event.target !== event.currentTarget) return;
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                handleRowClick();
-              }
-            }}
-            aria-expanded={isSelected}
-            className={`group relative flex w-full cursor-pointer select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 ${hasChildren ? "pr-16" : "pr-9"} text-left text-sm text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${isSelected ? "bg-accent text-foreground" : "hover:bg-accent/70 hover:text-foreground"}`}
+            className={`group relative flex w-full select-none items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 pr-16 text-left text-sm text-muted-foreground transition-colors ${isSelected ? "bg-accent text-foreground" : "hover:bg-accent/70 hover:text-foreground"}`}
             data-testid={`goals-tree-goal-${goal.id}`}
           >
             <span className="shrink-0">
@@ -671,7 +658,7 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: Go
               )}
             </span>
             {isRenaming ? (
-              <div className="relative min-w-0 flex-1" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+              <div className="relative min-w-0 flex-1">
                 <input
                   ref={renameInputRef}
                   className="w-full bg-transparent border-b border-primary outline-none text-sm"
@@ -701,31 +688,34 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: Go
                 />
               </div>
             ) : (
-              <span className="flex-1 min-w-0 overflow-hidden">
+              <div className="relative min-w-0 flex-1 overflow-hidden">
                 <span
-                  className={`inline-flex max-w-full min-w-0 items-baseline text-left align-baseline ${achieved ? "text-neutral line-through decoration-neutral/60" : ""}`}
-                  data-testid={`goal-name-${goal.id}`}
+                  className={`pointer-events-none inline-flex max-w-full min-w-0 items-baseline text-left align-baseline ${achieved ? "text-neutral line-through decoration-neutral/60" : ""}`}
+                  aria-hidden="true"
                 >
                   <InlineReferenceText text={goal.shortName} className="truncate" />
                 </span>
-              </span>
+                <button
+                  type="button"
+                  onClick={handleStartRename}
+                  className="absolute inset-0 rounded text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  aria-label={`Rename ${goal.shortName}`}
+                  data-testid={`goal-name-${goal.id}`}
+                />
+              </div>
             )}
           </div>
-          <GoalRowMenu goal={goal} onStartRename={startRename} />
-          {hasChildren && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setOpen((v) => !v);
-              }}
-              className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-              aria-label={open ? "Collapse" : "Expand"}
-              data-testid={`goal-toggle-${goal.id}`}
-            >
-              <ChevronRight className={`h-3 w-3 transition-transform ${open ? "rotate-90" : ""}`} />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => onSelectGoal(goal.id)}
+            className="absolute right-8 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+            aria-expanded={isSelected}
+            aria-label={`${isSelected ? "Collapse" : "Expand"} details for ${goal.shortName}`}
+            data-testid={`goal-toggle-${goal.id}`}
+          >
+            <ChevronRight className={`h-3 w-3 transition-transform ${isSelected ? "rotate-90" : ""}`} />
+          </button>
+          <GoalRowMenu goal={goal} onStartRename={handleStartRename} />
         </div>
       </div>
       {isSelected && (
@@ -739,7 +729,7 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: Go
           </div>
         </div>
       )}
-      {hasChildren && open && (
+      {children.length > 0 && (
         <div>
           {children.map((child) => (
             <GoalTreeRow
