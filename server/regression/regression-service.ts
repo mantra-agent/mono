@@ -328,9 +328,10 @@ export async function reconcileRegressionRunStatus(runId: string): Promise<Regre
   const snapshot = await listRegressionCandidates(runId);
   const results = await getRegressionResults({ runId, limit: MAX_CANDIDATES });
   let status = run.status;
-  if (results.some((result) => result.status === "failed")) status = "failed";
-  else if (results.some((result) => result.status === "blocked")) status = "partial";
-  else if (snapshot.candidates.length > 0 && results.length >= snapshot.candidates.length && results.every((result) => result.status === "passed")) status = "completed";
+  if (snapshot.candidates.length === 0) status = "completed";
+  else if (results.some((result) => result.status === "failed")) status = "failed";
+  else if (results.length >= snapshot.candidates.length && results.some((result) => result.status === "blocked")) status = "partial";
+  else if (results.length >= snapshot.candidates.length && results.every((result) => result.status === "passed")) status = "completed";
   else if (results.length > 0) status = "executing";
   const terminal = ["completed", "partial", "failed", "skipped"].includes(status);
   const [updated] = await db.update(regressionRuns).set({ status, completedAt: terminal ? new Date() : null, updatedAt: new Date() }).where(writable(runScope, eq(regressionRuns.id, runId))).returning();
