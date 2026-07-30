@@ -1481,7 +1481,10 @@ export async function triggerMainMobileBuild(input: {
     platform: input.platform || "ios",
   });
 
-  const run = await easBuild(input.profile || "preview", input.platform || "ios", "main", { cancelExisting: true });
+  const run = await easBuild(input.profile || "preview", input.platform || "ios", "main", {
+    cancelExisting: false,
+    expectedSourceRef: requestedRef,
+  });
   return { triggered: true, reason: "mobile_build_started", run, cancelledBuilds: run.cancelledBuilds || [] };
 }
 
