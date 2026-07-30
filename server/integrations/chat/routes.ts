@@ -3441,6 +3441,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       model: string;
       source: "recall_participant_audio" | "recall_transcript_webhook" | "native_microphone";
       fallback: boolean;
+      recognition?: import("@shared/models/chat").MessageRecognitionMeta;
     };
   }): Promise<
     | {
@@ -3656,6 +3657,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         participationMode: event.participationMode,
         executionAffinityBootId: event.executionAffinityBootId,
       },
+      event.stt?.recognition,
     );
     if (transcriptAcceptance.outcome === "session_not_found") {
       return { ok: false, status: 404, error: "Meeting session disappeared during transcript persistence" };

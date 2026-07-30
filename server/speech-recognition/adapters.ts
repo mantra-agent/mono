@@ -1,0 +1,317 @@
+import WebSocket from "ws";
+import {
+  connectDeepgramStreaming,
+  type DeepgramWord,
+} from "../integrations/deepgram/streaming";
+import { createLogger } from "../log";
+import type {
+  ResolvedSpeechRecognitionBinding,
+  SerializedRecognitionSink,
+  STTAudioStream,
+  STTProvider,
+  STTProviderSession,
+} from "./contracts";
+
+const log = createLogger("SpeechRecognitionAdapters");
+const MAX_PROVIDER_BUFFERED_BYTES = 512 * 1024;
+const FINISH_TIMEOUT_MS = 3_000;
+
+export const HIGH_QUALITY_SCRIBE_POLICY = {
+  provider: "scribe_realtime",
+  model: "scribe_v2_realtime",
+  audioFormat: "pcm_16000",
+  sampleRateHz: 16000,
+  commitStrategy: "vad",
+  vadSilenceThresholdSecs: 1.0,
+  vadThreshold: 0.4,
+  minSpeechDurationMs: 100,
+  minSilenceDurationMs: 100,
+  languageCode: "en",
+} as const;
+
+export const DEEPGRAM_DIARIZATION_POLICY = {
+  provider: "deepgram",
+  model: "nova-3",
+  diarizeModel: "latest",
+  sampleRateHz: 16000,
+  endpointingMs: 400,
+  language: "en-US",
+} as const;
+
+interface ScribeMessage {
+  message_type?: string;
+  text?: string;
+  session_id?: string;
+  words?: Array<{
+    start?: number;
+    end?: number;
+    start_timestamp?: number;
+    end_timestamp?: number;
+  }>;
+  error?: string;
+  error_message?: string;
+}
+
+function secondsToIso(baseMs: number, seconds: number | undefined): string | undefined {
+  return Number.isFinite(seconds) ? new Date(baseMs + Number(seconds) * 1000).toISOString() : undefined;
+}
+
+function validatePcm(stream: STTAudioStream, provider: string): void {
+  if (stream.encoding !== "pcm_s16le" || stream.sampleRateHz !== 16000 || stream.channels !== 1) {
+    throw new Error(`${provider} meeting recognition requires mono PCM S16LE at 16 kHz`);
+  }
+}
+
+function compatibilitySession(session: {
+  tryWriteAudio(bytes: Buffer): "accepted" | "blocked" | "closed";
+  finish(): Promise<{ outcome: "finished" | "timed_out" }>;
+  abort(reason: string): void;
+}): STTProviderSession {
+  return {
+    ...session,
+    sendAudio(bytes) {
+      session.tryWriteAudio(bytes);
+    },
+    close() {
+      void session.finish();
+    },
+  };
+}
+
+export class ScribeRealtimeSTTProvider implements STTProvider {
+  readonly adapterKind = "elevenlabs-scribe-realtime" as const;
+  readonly provider = HIGH_QUALITY_SCRIBE_POLICY.provider;
+  readonly model = HIGH_QUALITY_SCRIBE_POLICY.model;
+
+  async connect(
+    binding: ResolvedSpeechRecognitionBinding,
+    stream: STTAudioStream,
+    sink: SerializedRecognitionSink,
+    attemptId: string,
+  ): Promise<STTProviderSession> {
+    if (binding.adapterKind !== this.adapterKind) throw new Error("Scribe adapter received the wrong binding kind");
+    validatePcm(stream, "Scribe");
+    const config = binding.config.adapterKind === this.adapterKind ? binding.config : null;
+    if (!config) throw new Error("Scribe binding config is invalid");
+
+    const params = new URLSearchParams({
+      model_id: config.model,
+      audio_format: HIGH_QUALITY_SCRIBE_POLICY.audioFormat,
+      commit_strategy: HIGH_QUALITY_SCRIBE_POLICY.commitStrategy,
+      vad_silence_threshold_secs: String(config.vadSilenceThresholdSecs),
+      vad_threshold: String(config.vadThreshold),
+      min_speech_duration_ms: String(config.minSpeechDurationMs),
+      min_silence_duration_ms: String(config.minSilenceDurationMs),
+      language_code: config.languageCode,
+      include_timestamps: "true",
+    });
+    for (const keyterm of stream.hints?.keyterms || []) params.append("keyterms", keyterm);
+    const socket = new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params}`, {
+      headers: { "xi-api-key": binding.credential },
+    });
+    const connectedAtMs = Date.now();
+    let sessionId = "pending";
+    let sequence = 0;
+    let terminal = false;
+    let finishPromise: Promise<{ outcome: "finished" | "timed_out" }> | null = null;
+    let readyResolve: (() => void) | null = null;
+    let readyReject: ((error: Error) => void) | null = null;
+
+    socket.on("message", (data) => {
+      try {
+        const message = JSON.parse(data.toString()) as ScribeMessage;
+        if (message.message_type === "session_started") {
+          sessionId = message.session_id || sessionId;
+          readyResolve?.();
+          readyResolve = null;
+          readyReject = null;
+          return;
+        }
+        const isFinal = message.message_type === "committed_transcript_with_timestamps";
+        const isPartial = message.message_type === "partial_transcript";
+        if (!isFinal && !isPartial) {
+          if (message.message_type?.includes("error")) {
+            sink.onError(new Error("Scribe recognition protocol failed"));
+          }
+          return;
+        }
+        const text = message.text?.trim() || "";
+        if (!text) return;
+        const words = message.words || [];
+        const first = words[0];
+        const last = words.at(-1);
+        sink.onUtterance({
+          utteranceId: `scribe:${attemptId}:${sessionId}:${++sequence}`,
+          streamId: stream.streamId,
+          participant: stream.participant,
+          text,
+          isFinal,
+          startedAt: secondsToIso(connectedAtMs, first?.start_timestamp ?? first?.start),
+          endedAt: secondsToIso(connectedAtMs, last?.end_timestamp ?? last?.end),
+          provider: this.provider,
+          model: this.model,
+          fallback: false,
+          attemptId,
+          bindingId: binding.bindingId,
+          adapterKind: this.adapterKind,
+          configFingerprint: binding.configFingerprint,
+        });
+      } catch {
+        sink.onError(new Error("Scribe returned an invalid recognition message"));
+      }
+    });
+    socket.on("error", () => {
+      const error = new Error("Scribe recognition transport failed");
+      readyReject?.(error);
+      if (!terminal) sink.onError(error);
+    });
+    socket.on("close", (code) => {
+      if (!terminal && code !== 1000) sink.onError(new Error(`Scribe recognition closed unexpectedly (${code})`));
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      readyResolve = resolve;
+      readyReject = reject;
+      const timer = setTimeout(() => reject(new Error("Scribe recognition readiness timed out")), 10_000);
+      timer.unref?.();
+      const settleResolve = readyResolve;
+      const settleReject = readyReject;
+      readyResolve = () => {
+        clearTimeout(timer);
+        settleResolve?.();
+      };
+      readyReject = (error) => {
+        clearTimeout(timer);
+        settleReject?.(error);
+      };
+    });
+
+    return compatibilitySession({
+      tryWriteAudio(bytes) {
+        if (terminal || socket.readyState !== WebSocket.OPEN) return "closed";
+        if (socket.bufferedAmount >= MAX_PROVIDER_BUFFERED_BYTES) return "blocked";
+        if (bytes.length === 0) return "accepted";
+        socket.send(JSON.stringify({
+          message_type: "input_audio_chunk",
+          audio_base_64: bytes.toString("base64"),
+          sample_rate: stream.sampleRateHz,
+        }));
+        return "accepted";
+      },
+      finish() {
+        if (finishPromise) return finishPromise;
+        terminal = true;
+        finishPromise = (async () => {
+          if (socket.readyState === WebSocket.OPEN) socket.close(1000, "Audio stream ended");
+          const settled = await Promise.race([
+            sink.settle().then(() => true),
+            new Promise<false>((resolve) => {
+              const timer = setTimeout(() => resolve(false), FINISH_TIMEOUT_MS);
+              timer.unref?.();
+            }),
+          ]);
+          return { outcome: settled ? "finished" as const : "timed_out" as const };
+        })();
+        return finishPromise;
+      },
+      abort(reason) {
+        if (terminal) return;
+        terminal = true;
+        log.debug("Scribe recognition aborted", { reason: reason.slice(0, 80), attemptId });
+        socket.terminate();
+      },
+    });
+  }
+}
+
+interface SpeakerWordGroup {
+  speakerId: string;
+  words: DeepgramWord[];
+}
+
+function groupWordsBySpeaker(words: DeepgramWord[]): SpeakerWordGroup[] {
+  const groups: SpeakerWordGroup[] = [];
+  for (const word of words) {
+    const speakerId = Number.isInteger(word.speaker) ? String(word.speaker) : "unknown";
+    const current = groups.at(-1);
+    if (!current || current.speakerId !== speakerId) groups.push({ speakerId, words: [word] });
+    else current.words.push(word);
+  }
+  return groups;
+}
+
+function wordGroupText(group: SpeakerWordGroup): string {
+  return group.words
+    .map((word) => word.punctuated_word || word.word || "")
+    .join(" ")
+    .replace(/\s+([,.;!?])/g, "$1")
+    .trim();
+}
+
+export class DeepgramDiarizingSTTProvider implements STTProvider {
+  readonly adapterKind = "deepgram-realtime" as const;
+  readonly provider = DEEPGRAM_DIARIZATION_POLICY.provider;
+  readonly model = DEEPGRAM_DIARIZATION_POLICY.model;
+
+  async connect(
+    binding: ResolvedSpeechRecognitionBinding,
+    stream: STTAudioStream,
+    sink: SerializedRecognitionSink,
+    attemptId: string,
+  ): Promise<STTProviderSession> {
+    if (binding.adapterKind !== this.adapterKind) throw new Error("Deepgram adapter received the wrong binding kind");
+    validatePcm(stream, "Deepgram");
+    const config = binding.config.adapterKind === this.adapterKind ? binding.config : null;
+    if (!config) throw new Error("Deepgram binding config is invalid");
+    let sequence = 0;
+    const connectedAtMs = Date.now();
+    const session = await connectDeepgramStreaming(
+      {
+        model: config.model,
+        language: config.language,
+        encoding: "linear16",
+        sampleRateHz: 16000,
+        endpointingMs: config.endpointingMs,
+        diarize: true,
+        keyterms: stream.hints?.keyterms,
+      },
+      (event) => {
+        if (!event.isFinal) return;
+        const groups = groupWordsBySpeaker(event.words);
+        if (groups.length === 0) groups.push({ speakerId: "unknown", words: [] });
+        for (const group of groups) {
+          const text = group.words.length > 0 ? wordGroupText(group) : event.text;
+          if (!text) continue;
+          const first = group.words[0];
+          const last = group.words.at(-1);
+          const confidences = group.words
+            .map((word) => word.confidence)
+            .filter((value): value is number => Number.isFinite(value));
+          sink.onUtterance({
+            utteranceId: `deepgram:${attemptId}:${group.speakerId}:${++sequence}`,
+            streamId: stream.streamId,
+            participant: stream.participant,
+            text,
+            isFinal: true,
+            startedAt: secondsToIso(connectedAtMs, first?.start),
+            endedAt: secondsToIso(connectedAtMs, last?.end),
+            confidence: confidences.length > 0
+              ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+              : undefined,
+            providerSpeakerId: group.speakerId,
+            provider: this.provider,
+            model: this.model,
+            fallback: false,
+            attemptId,
+            bindingId: binding.bindingId,
+            adapterKind: this.adapterKind,
+            configFingerprint: binding.configFingerprint,
+          });
+        }
+      },
+      sink.onError,
+      { credential: binding.credential },
+    );
+    return compatibilitySession(session);
+  }
+}

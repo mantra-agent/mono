@@ -200,7 +200,10 @@ export function registerPlatformRoutes(app: Express): void {
         capabilityRows = await db
           .select()
           .from(environmentCapabilityBindings)
-          .where(eq(environmentCapabilityBindings.environmentId, environmentId));
+          .where(and(
+            eq(environmentCapabilityBindings.environmentId, environmentId),
+            sql`${environmentCapabilityBindings.capabilityType} <> 'speech_recognition'`,
+          ));
       } catch (err) {
         log.debug("Binding table query failed; returning unbound environment", { error: err instanceof Error ? err.message : String(err) });
       }
@@ -805,7 +808,10 @@ export function registerPlatformRoutes(app: Express): void {
         rows = await db
           .select()
           .from(environmentCapabilityBindings)
-          .where(eq(environmentCapabilityBindings.environmentId, environmentId))
+          .where(and(
+            eq(environmentCapabilityBindings.environmentId, environmentId),
+            sql`${environmentCapabilityBindings.capabilityType} <> 'speech_recognition'`,
+          ))
           .orderBy(environmentCapabilityBindings.capabilityType);
       } catch {
         // Table may not exist yet during migration
@@ -827,6 +833,12 @@ export function registerPlatformRoutes(app: Express): void {
 
       const { secret, ...rest } = req.body as Record<string, unknown>;
       const parsed = upsertCapabilityBindingSchema.parse(rest);
+      if (parsed.capabilityType === "speech_recognition") {
+        return res.status(400).json({
+          error: "Speech recognition bindings must use the typed Platform Environment speech-recognition API",
+          operation: "upsert_capability_binding",
+        });
+      }
 
       // Verify connectionId if provided
       if (parsed.connectionId) {
@@ -896,6 +908,22 @@ export function registerPlatformRoutes(app: Express): void {
       const bindingId = platformIdParam(req.params.bindingId);
       const env = await ensureEnvironmentWritable(environmentId);
       if (!env) return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "delete_capability_binding" });
+
+      const [speechBinding] = await db
+        .select({ id: environmentCapabilityBindings.id })
+        .from(environmentCapabilityBindings)
+        .where(and(
+          eq(environmentCapabilityBindings.id, bindingId),
+          eq(environmentCapabilityBindings.environmentId, environmentId),
+          eq(environmentCapabilityBindings.capabilityType, "speech_recognition"),
+        ))
+        .limit(1);
+      if (speechBinding) {
+        return res.status(400).json({
+          error: "Speech recognition bindings must use the typed Platform Environment speech-recognition API",
+          operation: "delete_capability_binding",
+        });
+      }
 
       const [deleted] = await db
         .delete(environmentCapabilityBindings)

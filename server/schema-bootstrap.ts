@@ -1560,13 +1560,16 @@ export async function runSchemaBootstrap(
         secret_envelope JSONB,
         secret_last4 TEXT NOT NULL DEFAULT '',
         enabled BOOLEAN NOT NULL DEFAULT true,
+        sort_order INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query(`ALTER TABLE environment_capability_bindings ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_env_capability_bindings_environment ON environment_capability_bindings(environment_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_env_capability_bindings_connection ON environment_capability_bindings(connection_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_env_capability_bindings_type ON environment_capability_bindings(capability_type)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_env_capability_bindings_speech_priority ON environment_capability_bindings(environment_id, capability_type, enabled, sort_order, id)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_env_capability_bindings_env_type_provider ON environment_capability_bindings(environment_id, capability_type, provider)`);
 
     await pool.query(`

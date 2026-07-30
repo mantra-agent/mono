@@ -7,7 +7,13 @@ import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import type { Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
-import { DeepgramDiarizingSTTProvider } from "../voice/stt";
+import {
+  createSerializedRecognitionSink,
+  DeepgramDiarizingSTTProvider,
+  mintRecognitionAttemptId,
+  resolveLegacySpeechRecognitionBinding,
+  type ResolvedSpeechRecognitionBinding,
+} from "../speech-recognition";
 import { principalOwnsMeeting } from "./owner-principal";
 
 const log = createLogger("NativeMeetingAudio");
@@ -17,13 +23,22 @@ const MAX_AUDIO_FRAME_BYTES = 64 * 1024;
 
 type NativeMeetingRequest = IncomingMessage & { nativeMeetingPrincipal?: Principal };
 
-function recognitionStream(status: MeetingRecognitionStream["status"], detail?: string): MeetingRecognitionStream {
+function recognitionStream(
+  status: MeetingRecognitionStream["status"],
+  attemptId: string,
+  binding?: ResolvedSpeechRecognitionBinding,
+  detail?: string,
+): MeetingRecognitionStream {
   return {
     streamKey: SOURCE_KEY,
     transportParticipantId: TRANSPORT_PARTICIPANT_ID,
     transportLabel: "Shared microphone",
     sourcePolicy: "shared_room",
     attribution: "diarized",
+    bindingId: binding?.bindingId,
+    adapterKind: binding?.adapterKind || "deepgram-realtime",
+    attemptId,
+    configFingerprint: binding?.configFingerprint,
     provider: "deepgram",
     model: "nova-3",
     status,
@@ -45,6 +60,8 @@ export function registerNativeMeetingAudioTransport(
     }
 
     const provider = new DeepgramDiarizingSTTProvider();
+    const attemptId = mintRecognitionAttemptId();
+    let binding: ResolvedSpeechRecognitionBinding | undefined;
     let providerSession: Awaited<ReturnType<typeof provider.connect>> | undefined;
     let closed = false;
     let audioStarted = false;
@@ -58,7 +75,7 @@ export function registerNativeMeetingAudioTransport(
           mode: "shared_room",
           status: "degraded",
           detail: detail.slice(0, 500),
-          streams: [recognitionStream("failed", detail)],
+          streams: [recognitionStream("failed", attemptId, binding, detail)],
         },
         sttStatus: "fallback",
         sttStatusDetail: detail.slice(0, 500),
@@ -76,7 +93,8 @@ export function registerNativeMeetingAudioTransport(
         socket.close(1008, "Meeting unavailable");
         return;
       }
-      if (!provider.isConfigured()) {
+      binding = await resolveLegacySpeechRecognitionBinding("deepgram-realtime") || undefined;
+      if (!binding) {
         socket.close(1013, "Recognition unavailable");
         return;
       }
@@ -86,23 +104,13 @@ export function registerNativeMeetingAudioTransport(
           mode: "shared_room",
           status: "waiting",
           detail: "Connecting shared-room recognition",
-          streams: [recognitionStream("connecting")],
+          streams: [recognitionStream("connecting", attemptId, binding)],
         },
         sttStatus: "inactive",
         sttStatusDetail: "Connecting shared-room recognition",
       });
 
-      providerSession = await provider.connect(
-        {
-          streamId: `${sessionId}:meeting:${SOURCE_KEY}`,
-          participant: {
-            transportId: TRANSPORT_PARTICIPANT_ID,
-            label: "Shared microphone",
-          },
-          encoding: "pcm_s16le",
-          sampleRateHz: 16000,
-          channels: 1,
-        },
+      const sink = createSerializedRecognitionSink(
         async (utterance) => {
           if (!utterance.isFinal || closed) return;
           const isFirstUtterance = !firstUtteranceReceived;
@@ -113,14 +121,14 @@ export function registerNativeMeetingAudioTransport(
             current.meeting.botStatus !== "live"
           ) {
             closed = true;
-            providerSession?.close();
+            providerSession?.abort("Meeting ended");
             if (socket.readyState === WebSocket.OPEN) socket.close(1000, "Meeting ended");
             return;
           }
           const result = await deps.ingestMeetingEvent({
             sessionId,
             speaker: {
-              key: `stream:${SOURCE_KEY}:${utterance.provider}:${utterance.providerSpeakerId || "unknown"}`,
+              key: `recognition:${utterance.attemptId}:speaker:${utterance.providerSpeakerId || "unknown"}`,
               transportParticipantId: TRANSPORT_PARTICIPANT_ID,
               providerSpeakerId: utterance.providerSpeakerId,
               source: "machine_diarization",
@@ -133,6 +141,17 @@ export function registerNativeMeetingAudioTransport(
               model: utterance.model,
               source: "native_microphone",
               fallback: false,
+              recognition: {
+                attemptId: utterance.attemptId,
+                bindingId: utterance.bindingId,
+                streamKey: SOURCE_KEY,
+                adapterKind: utterance.adapterKind,
+                provider: utterance.provider,
+                model: utterance.model,
+                configFingerprint: utterance.configFingerprint,
+                providerSpeakerId: utterance.providerSpeakerId,
+                source: "native_microphone",
+              },
             },
           });
           if (!result.ok) throw new Error(result.error);
@@ -158,15 +177,31 @@ export function registerNativeMeetingAudioTransport(
         },
       );
 
+      providerSession = await provider.connect(
+        binding,
+        {
+          streamId: `${sessionId}:meeting:${SOURCE_KEY}`,
+          participant: {
+            transportId: TRANSPORT_PARTICIPANT_ID,
+            label: "Shared microphone",
+          },
+          encoding: "pcm_s16le",
+          sampleRateHz: 16000,
+          channels: 1,
+        },
+        sink,
+        attemptId,
+      );
+
       if (closed) {
-        providerSession.close();
+        providerSession.abort("Native microphone closed during startup");
         return;
       }
       await chatStorage.updateMeetingMeta(sessionId, {
         recognition: {
           mode: "shared_room",
           status: "active",
-          streams: [recognitionStream("active")],
+          streams: [recognitionStream("active", attemptId, binding)],
         },
         sttProvider: provider.provider,
         sttModel: provider.model,
@@ -207,7 +242,11 @@ export function registerNativeMeetingAudioTransport(
         });
         socket.send(JSON.stringify({ type: "audio_started", sessionId, sourceKey: SOURCE_KEY }));
       }
-      providerSession.sendAudio(bytes);
+      const writeOutcome = providerSession.tryWriteAudio(bytes);
+      if (writeOutcome !== "accepted") {
+        log.warn("native meeting recognition backpressure", { sessionId, writeOutcome });
+        socket.close(1013, "Recognition backpressure");
+      }
     });
 
     socket.on("close", () => {
@@ -219,7 +258,11 @@ export function registerNativeMeetingAudioTransport(
         audioByteCount,
         firstUtteranceReceived,
       });
-      providerSession?.close();
+      void providerSession?.finish().then((result) => {
+        if (result.outcome === "timed_out") {
+          log.warn("native recognition finish timed out", { sessionId, attemptId });
+        }
+      });
       void runWithPrincipal(principal, async () => {
         const session = await chatStorage.getSession(sessionId);
         if (!session?.meeting || session.meeting.botStatus !== "live") return;
@@ -228,7 +271,7 @@ export function registerNativeMeetingAudioTransport(
             mode: "shared_room",
             status: "inactive",
             detail: "Microphone disconnected",
-            streams: [recognitionStream("closed")],
+            streams: [recognitionStream("closed", attemptId, binding)],
           },
           sttStatus: "inactive",
           sttStatusDetail: "Microphone disconnected",
