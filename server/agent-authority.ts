@@ -30,10 +30,11 @@ export type ToolAuthorityDecision =
   | { allowed: true }
   | { allowed: false; reason: string };
 
-const ENGINEERING_TOOLS = new Set(["shell", "git", "code", "npm_dependencies", "railway", "expo", "sentry", "platforms"]);
+const ENGINEERING_TOOLS = new Set(["shell", "git", "code", "npm_dependencies", "railway", "expo", "sentry", "platforms", "regression"]);
 const ENGINEERING_WRITE_ACTIONS: Record<string, ReadonlySet<string>> = {
   git: new Set(["clone", "pull", "branch", "checkout", "add", "commit", "push", "create_pr", "merge_pr", "delete_branch"]),
   npm_dependencies: new Set(["set_package"]),
+  regression: new Set(["upsert_contract", "execute_scenario", "append_result", "associate_plan"]),
   railway: new Set(["redeploy", "restart"]),
   expo: new Set(["start_build", "cancel"]),
   sentry: new Set(["resolve", "unresolve", "ignore"]),

@@ -817,6 +817,9 @@ export const ADVISORY_LOCK_NS = {
   AGENDA_DEFINITION: 0x41474446, // 'AGDF' — serializes agenda definition mutations and reserved seeding per owner/account
   PERSON_EMAIL: 0x50454d4c, // 'PEML' — serializes account-local Person identity by normalized email
   RECIPIENT_RECAP: 0x52524350, // 'RRCP' — serializes one recipient-owned recap materialization
+  REGRESSION_RUN: 0x5247524e, // 'RGRN' — serializes candidate snapshots and one-Plan association per run
+  REGRESSION_CONTRACT: 0x52474354, // 'RGCT' — serializes versioned contract mutation per issue
+  REGRESSION_RESULT: 0x52475253, // 'RGRS' — serializes one append-only result per run + issue
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";

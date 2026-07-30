@@ -1300,6 +1300,41 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
 
+  regression: {
+    description: "Run canonical post-deploy regression against durable Issue contracts and the regression run's immutable Platform acceptance target. Actions: list_candidates, get_run, get_issue, upsert_contract, execute_scenario, append_result (blocked only), get_results, associate_plan. Callers never provide a host, credential, cookie, selector, script, or raw browser command; execution is server-owned and target-bound.",
+    category: "execution",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list_candidates", "get_run", "get_issue", "upsert_contract", "execute_scenario", "append_result", "get_results", "associate_plan"], description: "Action to perform" },
+        runId: { type: "string", description: "Durable regression run ID" },
+        issueId: { type: "number", description: "Canonical Issue ID" },
+        planId: { type: "string", description: "Canonical Plan ID or page ID for one-time run association" },
+        planStepId: { type: "string", description: "Plan step provenance for a result" },
+        contractVersion: { type: "number", description: "Contract version used for a blocked result" },
+        status: { type: "string", enum: ["blocked"], description: "append_result is intentionally limited to blocked; execute_scenario owns passed/failed" },
+        reasonCode: { type: "string", description: "Bounded machine-readable reason code for append_result" },
+        summary: { type: "string", description: "Bounded result summary" },
+        limit: { type: "number", description: "Maximum results to retrieve (default 20, max 100)" },
+        contract: {
+          type: "object",
+          description: "Versioned V1 Issue regression contract for upsert_contract",
+          properties: {
+            disposition: { type: "string", enum: ["enabled", "not_applicable"] },
+            exclusionReason: { type: ["string", "null"] },
+            environmentIds: { type: "array", items: { type: "number" } },
+            routePath: { type: ["string", "null"], description: "Same-origin relative path beginning with /" },
+            steps: { type: "array", items: { type: "object" }, description: "Ordered semantic scenario steps; validated by the canonical DSL" },
+            expectedOutcome: { type: ["string", "null"] },
+            setupNotes: { type: ["string", "null"] },
+          },
+          required: ["disposition"],
+        },
+      },
+      required: ["action"],
+    },
+  },
+
   workflows: {
     description: "Manage reusable workflow templates and workflow runs. When creating a run, preserve the user’s requested outcome and constraints; do not translate the request into a prescribed architecture or add adjacent work. Actions: list_templates, get_template, list_runs, get_run, create_run, start_run, pause_run, resume_run, cancel_run, start_stage_attempt, complete_stage_attempt, attach_artifact, capture_publish_stage_evidence, capture_acceptance_evidence, capture_calibration_evidence, approve_gate, reject_gate.",
     category: "execution",

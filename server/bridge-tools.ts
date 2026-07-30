@@ -4237,6 +4237,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     return handleWorkflows(args);
   },
 
+  async regression(args) {
+    const { handleRegression } = await import("./tools/regression");
+    return handleRegression(args);
+  },
+
   async message_sibling(args) {
     return handleCrossSessionMessage(args, "sibling");
   },

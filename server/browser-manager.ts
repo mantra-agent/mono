@@ -398,6 +398,148 @@ export async function screenshotPage(
   }
 }
 
+export interface TargetBoundBrowserEvidence {
+  targetOrigin: string;
+  finalUrl: string;
+  authVerified: boolean;
+  authStatus: number | null;
+  authUserId: string | null;
+  blockedRequests: Array<{ kind: "http" | "websocket"; origin: string }>;
+}
+
+export async function withTargetBoundBrowserPage<T>(
+  entryUrl: string,
+  options: {
+    viewport?: string | { width: number; height: number };
+    timeoutMs?: number;
+    authentication?: { mode: "none" } | { mode: "platform_binding"; userId: string; sessionSecret: string };
+  },
+  execute: (page: Page, evidence: TargetBoundBrowserEvidence) => Promise<T>,
+): Promise<{ value: T; evidence: TargetBoundBrowserEvidence }> {
+  const parsedEntry = new URL(entryUrl);
+  if (!["http:", "https:"].includes(parsedEntry.protocol) || parsedEntry.username || parsedEntry.password) {
+    throw new Error("Regression browser target must be one credential-free HTTP(S) origin");
+  }
+  const targetOrigin = parsedEntry.origin;
+  const auth = options.authentication || { mode: "none" as const };
+  await acquirePageSlot();
+
+  let page: Page | null = null;
+  let targetContext: BrowserContext | null = null;
+  let session: ScreenshotSession | null = null;
+  const evidence: TargetBoundBrowserEvidence = {
+    targetOrigin,
+    finalUrl: entryUrl,
+    authVerified: auth.mode === "none",
+    authStatus: null,
+    authUserId: null,
+    blockedRequests: [],
+  };
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => timeoutController.abort(), Math.max(1_000, Math.min(options.timeoutMs || 60_000, 120_000)));
+
+  try {
+    await ensureBrowser();
+    if (!browser) throw new Error("Browser not available");
+    if (auth.mode === "platform_binding") {
+      session = await createScreenshotSession(auth.userId, auth.sessionSecret);
+    }
+
+    const viewport = typeof options.viewport === "string"
+      ? VIEWPORT_PRESETS[options.viewport] || VIEWPORT_PRESETS.desktop
+      : options.viewport || VIEWPORT_PRESETS.desktop;
+    targetContext = await browser.newContext({ viewport, serviceWorkers: "block" });
+
+    await targetContext.route("**/*", async (route) => {
+      const requestUrl = route.request().url();
+      try {
+        const parsed = new URL(requestUrl);
+        if (["data:", "blob:", "about:"].includes(parsed.protocol) || parsed.origin === targetOrigin) {
+          await route.continue();
+          return;
+        }
+        if (evidence.blockedRequests.length < 25) evidence.blockedRequests.push({ kind: "http", origin: parsed.origin });
+      } catch {
+        if (evidence.blockedRequests.length < 25) evidence.blockedRequests.push({ kind: "http", origin: "invalid" });
+      }
+      await route.abort("blockedbyclient");
+    });
+    await targetContext.routeWebSocket("**/*", async (socket) => {
+      try {
+        const parsed = new URL(socket.url());
+        const httpProtocol = parsed.protocol === "wss:" ? "https:" : parsed.protocol === "ws:" ? "http:" : parsed.protocol;
+        const socketOrigin = `${httpProtocol}//${parsed.host}`;
+        if (socketOrigin === targetOrigin) {
+          socket.connectToServer();
+          return;
+        }
+        if (evidence.blockedRequests.length < 25) evidence.blockedRequests.push({ kind: "websocket", origin: socketOrigin });
+      } catch {
+        if (evidence.blockedRequests.length < 25) evidence.blockedRequests.push({ kind: "websocket", origin: "invalid" });
+      }
+      await socket.close({ code: 1008, reason: "Regression target origin only" });
+    });
+
+    if (session) {
+      await targetContext.addCookies([{
+        name: "connect.sid",
+        value: session.signedCookie,
+        url: targetOrigin,
+        httpOnly: true,
+        secure: parsedEntry.protocol === "https:",
+        sameSite: "Lax",
+      }]);
+    }
+
+    page = await targetContext.newPage();
+    page.setDefaultTimeout(7_000);
+    page.setDefaultNavigationTimeout(15_000);
+    page.on("dialog", (dialog) => void dialog.dismiss().catch(() => undefined));
+    page.on("download", (download) => void download.cancel().catch(() => undefined));
+    page.on("popup", (popup) => void popup.close().catch(() => undefined));
+    await page.goto(entryUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    evidence.finalUrl = page.url();
+    if (new URL(evidence.finalUrl).origin !== targetOrigin) {
+      throw new Error(`Regression browser escaped acceptance target to ${new URL(evidence.finalUrl).origin}`);
+    }
+
+    if (auth.mode === "platform_binding") {
+      const authResult = await page.evaluate(async () => {
+        try {
+          const response = await fetch("/api/auth/me", { credentials: "include" });
+          const body = await response.json().catch(() => null);
+          return { ok: response.ok, status: response.status, userId: body?.user?.id || body?.principal?.userId || null };
+        } catch {
+          return { ok: false, status: 0, userId: null };
+        }
+      });
+      evidence.authStatus = authResult.status || null;
+      evidence.authUserId = authResult.userId || null;
+      evidence.authVerified = Boolean(authResult.ok && authResult.userId === auth.userId);
+      if (!evidence.authVerified) {
+        throw new Error(`Platform-binding regression session was rejected by the snapshotted target with status ${authResult.status}`);
+      }
+    }
+
+    const abortExecution = new Promise<never>((_, reject) => {
+      timeoutController.signal.addEventListener("abort", () => reject(new Error("Regression browser scenario exceeded its total runtime budget")), { once: true });
+    });
+    const value = await Promise.race([execute(page, evidence), abortExecution]);
+    evidence.finalUrl = page.url();
+    if (new URL(evidence.finalUrl).origin !== targetOrigin) {
+      throw new Error(`Regression browser escaped acceptance target to ${new URL(evidence.finalUrl).origin}`);
+    }
+    return { value, evidence };
+  } finally {
+    clearTimeout(timeout);
+    if (page) { try { await page.close(); } catch {} }
+    if (targetContext) { try { await targetContext.close(); } catch {} }
+    if (session) await session.cleanup();
+    releasePageSlot();
+    resetIdleTimer();
+  }
+}
+
 export interface BrowserSessionEvidenceStep {
   key: string;
   label: string;
