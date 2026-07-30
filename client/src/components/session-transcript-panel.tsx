@@ -55,11 +55,9 @@ import { ChatEmptyState } from "@/components/chat-empty-state";
 import {
   buildTranscriptProjection,
   sortMessagesByCreatedAt,
-  hasCompactionBoundary,
   summarizeMessageIds,
   computeStreamingRevision,
   type FrozenStreamHandoff,
-  type TranscriptSnapshot,
 } from "@/lib/transcript-projection";
 
 const log = createLogger("SessionTranscriptPanel");
@@ -237,6 +235,24 @@ export function SessionTranscriptPanel({
   const persistedMessages = ownedSessionData?.messages || [];
 
   useEffect(() => {
+    if (
+      !activeSession ||
+      sessionSub.handoffPhase !== "durable" ||
+      sessionSub.durableRevision === null ||
+      (ownedSessionData?.durableRevision ?? 0) >= sessionSub.durableRevision
+    ) return;
+    log.debug("STREAM:DURABLE_REVISION_REFRESH", {
+      activeSession,
+      terminalDurableRevision: sessionSub.durableRevision,
+      persistedDurableRevision: ownedSessionData?.durableRevision ?? 0,
+    });
+    queryClient.refetchQueries({
+      queryKey: ["/api/sessions", activeSession],
+      type: "active",
+    });
+  }, [activeSession, ownedSessionData?.durableRevision, sessionSub.durableRevision, sessionSub.handoffPhase]);
+
+  useEffect(() => {
     if (!sessionData || sessionData.id === activeSession) return;
     log.warn("SESSION_DATA_OWNER_MISMATCH", {
       activeSession,
@@ -352,7 +368,6 @@ export function SessionTranscriptPanel({
 
   // --- Transcript projection via pure reducer ---
   const [frozenStreamHandoff, setFrozenStreamHandoff] = useState<FrozenStreamHandoff | null>(null);
-  const transcriptSnapshotRef = useRef<TranscriptSnapshot | null>(null);
 
   const rawStreaming = sessionSub.streamingContent ?? initialStreamingContent;
 
@@ -368,13 +383,11 @@ export function SessionTranscriptPanel({
       pendingTurn: contextPendingTurn,
       postSending: false,
       frozenStreamHandoff,
-      previousTranscript: transcriptSnapshotRef.current,
-      messagesContainCompactionBoundary: hasCompactionBoundary(messages),
+      persistedDurableRevision: ownedSessionData?.durableRevision ?? 0,
+      terminalDurableRevision: sessionSub.durableRevision,
+      handoffPhase: sessionSub.handoffPhase,
     });
-  }, [activeSession, messages, rawStreaming, ownedSessionData?.status, sessionSub.runActive, sessionSub.status, sessionSub.updatedAt, contextPendingTurn, frozenStreamHandoff]);
-
-  // Update the transcript snapshot ref for next render cycle
-  transcriptSnapshotRef.current = projection.transcriptSnapshot;
+  }, [activeSession, messages, rawStreaming, ownedSessionData?.status, ownedSessionData?.durableRevision, sessionSub.runActive, sessionSub.status, sessionSub.updatedAt, sessionSub.durableRevision, sessionSub.handoffPhase, contextPendingTurn, frozenStreamHandoff]);
 
   // --- Side effects driven by projection decisions ---
 

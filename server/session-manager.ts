@@ -30,6 +30,7 @@ const log = createLogger("session-manager");
 
 type SessionRuntimeStatus = "streaming" | "saved" | "error";
 type VisibleAssistantActivity = "none" | "thinking" | "streaming" | "tool";
+type DurableHandoffPhase = "live" | "durable";
 
 interface LiveSession {
   sessionId: string;
@@ -42,6 +43,8 @@ interface LiveSession {
   cleanupTimer: ReturnType<typeof setTimeout> | null;
   eventSeq: number;
   runGeneration: number;
+  durableRevision: number | null;
+  handoffPhase: DurableHandoffPhase;
 }
 
 export interface SessionSubscriberIdentity {
@@ -107,6 +110,8 @@ export interface SessionSnapshot {
   runActive: boolean;
   canStop: boolean;
   visibleAssistantActivity: VisibleAssistantActivity;
+  durableRevision: number | null;
+  handoffPhase: DurableHandoffPhase;
 }
 
 /** Delta broadcast to subscribers after each event. */
@@ -118,6 +123,8 @@ export interface SessionDelta {
   runActive: boolean;
   canStop: boolean;
   visibleAssistantActivity: VisibleAssistantActivity;
+  durableRevision: number | null;
+  handoffPhase: DurableHandoffPhase;
 }
 
 
@@ -212,6 +219,8 @@ class SessionManager {
       cleanupTimer: null,
       eventSeq: nextEventSeq(existing?.eventSeq ?? 0),
       runGeneration: (existing?.runGeneration ?? 0) + 1,
+      durableRevision: null,
+      handoffPhase: "live",
     };
     this.sessions.set(sessionId, session);
 
@@ -227,6 +236,8 @@ class SessionManager {
         status: session.status,
         eventSeq: session.eventSeq,
         subscriberCount: session.subscribers.size,
+        durableRevision: session.durableRevision,
+        handoffPhase: session.handoffPhase,
         ...runtimeProjection(session),
       });
       for (const ws of session.subscribers) {
@@ -425,6 +436,8 @@ class SessionManager {
         type: event.type,
         streamingContent: session.streamingContent,
         status: session.status,
+        durableRevision: session.durableRevision,
+        handoffPhase: session.handoffPhase,
         ...runtimeProjection(session),
       });
     }
@@ -443,6 +456,8 @@ class SessionManager {
       type: "event_batch",
       streamingContent: session.streamingContent,
       status: session.status,
+      durableRevision: session.durableRevision,
+      handoffPhase: session.handoffPhase,
       ...runtimeProjection(session),
     });
   }
@@ -534,7 +549,7 @@ class SessionManager {
 
   // ── Finalization ──────────────────────────────────────────────────
 
-  finalizeSession(sessionId: string, runGeneration?: number): void {
+  finalizeSession(sessionId: string, runGeneration?: number, durableRevision?: number): void {
     const session = this.sessions.get(sessionId);
     if (!session) {
       log.debug(`finalizeSession: no live session for sessionId=${sessionId}`);
@@ -549,6 +564,24 @@ class SessionManager {
     }
 
     if (session.status === "saved" && session.finalizedAt !== null) {
+      if (
+        durableRevision !== undefined &&
+        (session.durableRevision === null || durableRevision > session.durableRevision)
+      ) {
+        session.durableRevision = durableRevision;
+        session.handoffPhase = "durable";
+        this.broadcastDelta(session, {
+          sessionId,
+          type: "durable_revision",
+          streamingContent: session.streamingContent,
+          status: "saved",
+          runActive: false,
+          canStop: false,
+          visibleAssistantActivity: "none",
+          durableRevision,
+          handoffPhase: "durable",
+        });
+      }
       log.debug(`finalizeSession: already finalized sessionId=${sessionId}`);
       return;
     }
@@ -561,6 +594,8 @@ class SessionManager {
     session.streamingContent = settleStream(session.streamingContent);
     session.status = "saved";
     session.finalizedAt = Date.now();
+    session.durableRevision = durableRevision ?? null;
+    session.handoffPhase = durableRevision === undefined ? "live" : "durable";
 
     this.broadcastDelta(session, {
       sessionId,
@@ -570,6 +605,8 @@ class SessionManager {
       runActive: false,
       canStop: false,
       visibleAssistantActivity: "none",
+      durableRevision: session.durableRevision,
+      handoffPhase: session.handoffPhase,
     });
 
     log.log(`finalizeSession sessionId=${sessionId} subscribers=${session.subscribers.size}`);
@@ -625,6 +662,8 @@ class SessionManager {
       status: session.status,
       eventSeq: session.eventSeq,
       subscriberCount: session.subscribers.size,
+      durableRevision: session.durableRevision,
+      handoffPhase: session.handoffPhase,
       ...runtimeProjection(session),
     };
   }
@@ -645,6 +684,8 @@ class SessionManager {
       runActive: delta.runActive,
       canStop: delta.canStop,
       visibleAssistantActivity: delta.visibleAssistantActivity,
+      durableRevision: delta.durableRevision,
+      handoffPhase: delta.handoffPhase,
     });
     const dead: WebSocket[] = [];
     log.verbose(() => `SESSION:DELTA:BROADCAST session=${session.sessionId} seq=${eventSeq} type=${delta.type} source=${delta.streamingContent.source} segments=${delta.streamingContent.segments.length} subs=${session.subscribers.size}`);

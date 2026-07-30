@@ -680,14 +680,13 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   app.get("/api/sessions/:id", async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
-      const session = await chatStorage.getSession(id);
-      if (!session) {
+      const snapshot = await chatStorage.getSessionSnapshot(id);
+      if (!snapshot) {
         return res.status(404).json({ error: "Session not found" });
       }
+      const { session, messages } = snapshot;
       const TERMINAL_PLAN_STATUSES = ["completed", "completed_with_failures", "failed", "aborted"];
-      const [messages, activePlan] = await Promise.all([
-        chatStorage.getMessagesBySession(id),
-        db.select({
+      const activePlan = await db.select({
           id: planExecutions.id,
           pageId: planExecutions.pageId,
           status: planExecutions.status,
@@ -699,8 +698,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         )))
         .orderBy(planExecutions.createdAt)
         .limit(1)
-        .then(r => r[0] || null),
-      ]);
+        .then(r => r[0] || null);
       res.json({ ...session, messages, activePlan });
     } catch (error) {
       chatLog.error("Error fetching session:", error);
@@ -2010,6 +2008,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let assistantDraftCheckpointPending: NodeJS.Timeout | null = null;
     let assistantDraftCheckpointWrite: Promise<void> = Promise.resolve();
     let settlement: { status: "completed" | "failed"; assistantMessageId?: string; error?: string } | null = null;
+    let terminalDurableRevision: number | undefined;
 
     // This identity begins before executor initialization because pre-executor
     // checkpoints are already durable. The executor must publish this same ID;
@@ -2486,10 +2485,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const { resolveSessionPersonaSnapshot } = await import("../../session-persona");
         const persona = await resolveSessionPersonaSnapshot(sessionId);
         if (assistantDraft && persona) {
-          assistantDraft = await chatStorage.updateAssistantDraft(sessionId, assistantDraft.id, {
+          const updatedDraft = await chatStorage.updateAssistantDraft(sessionId, assistantDraft.id, {
             model: routingDecision.modelString,
             persona,
           });
+          assistantDraft = updatedDraft?.message ?? null;
         }
         chatRunLifecycle.assertCurrent(lease);
         return {
@@ -2733,7 +2733,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         `saving message sessionId=${sessionId} thinkingLen=${persistedThinking?.length || 0} toolCallsCount=${persistedToolCalls?.length || 0} contentLen=${responseContent.length} systemSteps=${mergedSystemSteps.length}`,
       );
 
-      const msg = assistantDraft
+      const terminalDraftWrite = assistantDraft
         ? await chatStorage.updateAssistantDraft(sessionId, assistantDraft.id, {
             content: responseContent,
             thinking: persistedThinking,
@@ -2748,7 +2748,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             segmentChronology: persistedChronology,
             assistantState:
               result.status === "succeeded" ? "complete" : "failed",
+            sessionStatus:
+              result.status === "succeeded" ? "saved" : "failed",
           })
+        : null;
+      const createdTerminalMessage = assistantDraft
+        ? null
         : await chatStorage.createMessage(
             sessionId,
             "assistant",
@@ -2764,6 +2769,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             undefined,
             turnTokenUsage,
           );
+      const msg = terminalDraftWrite?.message ?? createdTerminalMessage;
+      if (terminalDraftWrite) {
+        terminalDurableRevision = terminalDraftWrite.durableRevision;
+      }
 
       if (persistedThinking && persistedThinking.length >= 50) {
         try {
@@ -2778,25 +2787,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         } catch (thErr: unknown) {
           chatLog.error(
             `Failed to save thinking as observation: ${thErr instanceof Error ? thErr.message : String(thErr)}`,
-          );
-        }
-      }
-
-      const conv = await chatStorage.getSession(sessionId);
-      if (conv && conv.status !== "saved") {
-        await chatStorage.saveSession(sessionId, conv.title);
-
-        // Session status is the durable completion authority. Finalize the live
-        // stream at the same boundary so the transcript Thinking affordance and
-        // Stop button cannot remain active while the Session Menu already shows
-        // the turn as complete. The finally-block call remains as a safety net
-        // and SessionManager finalization is idempotent.
-        try {
-          const { sessionManager } = await import("../../session-manager");
-          sessionManager.finalizeSession(sessionId, runGeneration);
-        } catch (finErr) {
-          chatLog.debug(
-            `sessionManager.finalizeSession after save skipped: ${finErr instanceof Error ? finErr.message : String(finErr)}`,
           );
         }
       }
@@ -2926,6 +2916,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             systemSteps: crashSystemSteps,
             segmentChronology: crashChronology,
             assistantState: "failed",
+            sessionStatus: "failed",
             assistantInterruptedAt: new Date().toISOString(),
           });
         } else if (crashSystemSteps) {
@@ -3007,6 +2998,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             terminalState,
             terminalState === "complete" ? undefined : new Date().toISOString(),
           );
+          if (
+            terminalDurableRevision === undefined &&
+            "durableRevision" in terminalization
+          ) {
+            terminalDurableRevision = terminalization.durableRevision;
+          }
           if (terminalization.outcome === "run_mismatch") {
             chatLog.error(
               `assistant draft terminalization ownership mismatch sessionId=${sessionId} messageId=${assistantDraftMessageId} expectedRunId=${runId} actualRunId=${terminalization.actualRunId || "none"}`,
@@ -3037,7 +3034,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       if (settledCurrent) {
         try {
           const { sessionManager } = await import("../../session-manager");
-          sessionManager.finalizeSession(sessionId, runGeneration);
+          sessionManager.finalizeSession(sessionId, runGeneration, terminalDurableRevision);
         } catch (finErr) {
           chatLog.debug(
             `sessionManager.finalizeSession skipped: ${finErr instanceof Error ? finErr.message : String(finErr)}`,
