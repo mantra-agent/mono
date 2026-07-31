@@ -938,6 +938,8 @@ export interface SessionAgenda {
   items: SessionAgendaItem[];
 }
 
+export type SessionReviewKind = "question" | "email_draft" | "email_reply" | "meeting_recap";
+
 export interface ChatSession {
   id: string;
   /** Monotonic revision of the canonical durable chat document. */
@@ -986,7 +988,11 @@ export interface ChatSession {
   contextFlags?: Record<string, boolean>;
   hasPlan?: boolean;
   hasActivePlan?: boolean;
-  /** Derived: session contains a `question` tool call with no matching answer message. */
+  /** Derived: session contains one or more unresolved artifacts that require human review. */
+  awaitingReview?: boolean;
+  /** Derived unresolved review categories. Omitted when no review is pending. */
+  reviewKinds?: SessionReviewKind[];
+  /** Compatibility detail: session contains a `question` tool call with no matching answer message. */
   awaitingQuestionResponse?: boolean;
   hasActiveDescendant?: boolean;
   archivedAt?: string | null;

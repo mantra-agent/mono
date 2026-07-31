@@ -78,6 +78,7 @@ import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
 import { getCurrentPrincipalOrSystem } from "../../principal-context";
 import { resolveQuestionResponse } from "../../question-response";
+import { emailDraftStorage } from "../../email-draft-storage";
 
 const chatLog = createLogger("ChatStream");
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
@@ -439,6 +440,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         chatStorage.getAllSessions(),
         getSessionReminderMap(),
       ]);
+      const principal = req.principal;
+      if (!principal) return res.status(401).json({ error: "Not authenticated" });
+      const emailReviewKindsBySession = await emailDraftStorage.getPendingReviewKindsBySession(
+        principal,
+        all.map((session) => session.id),
+      );
       // /api/sessions is the canonical session index. It must return every
       // persisted chat session regardless of lifecycle status; clients can
       // choose how to render saved, streaming, idle, failed, or future states.
@@ -500,16 +507,24 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         }
       }
 
-      const sessions = filtered.map((s) => ({
-        ...s,
-        status: s.status === "streaming" && !isLiveSessionStatus(s) ? "saved" : s.status,
-        directChildCount: childCounts.get(s.id) || 0,
-        parentMissing: !!s.parentSessionId && !allIds.has(s.parentSessionId),
-        hasPlan: planSessionIds.has(s.id),
-        hasActivePlan: executingPlanSessionIds.has(s.id),
-        hasActiveDescendant: activeDescendantIds.has(s.id),
-        reminder: reminderMap.get(s.id) || { active: false },
-      }));
+      const sessions = filtered.map((s) => {
+        const reviewKinds = [
+          ...(s.awaitingQuestionResponse ? (["question"] as const) : []),
+          ...(emailReviewKindsBySession.get(s.id) ?? []),
+        ];
+        return {
+          ...s,
+          awaitingReview: reviewKinds.length > 0 || undefined,
+          reviewKinds: reviewKinds.length > 0 ? Array.from(new Set(reviewKinds)) : undefined,
+          status: s.status === "streaming" && !isLiveSessionStatus(s) ? "saved" : s.status,
+          directChildCount: childCounts.get(s.id) || 0,
+          parentMissing: !!s.parentSessionId && !allIds.has(s.parentSessionId),
+          hasPlan: planSessionIds.has(s.id),
+          hasActivePlan: executingPlanSessionIds.has(s.id),
+          hasActiveDescendant: activeDescendantIds.has(s.id),
+          reminder: reminderMap.get(s.id) || { active: false },
+        };
+      });
       res.json(sessions);
     } catch (error) {
       chatLog.error("Error fetching sessions:", error);

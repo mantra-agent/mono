@@ -35,8 +35,20 @@ import {
   replaceRecapEntryUrl,
 } from "./meeting/recap-email-content";
 import { resolveMeetingTransportSession } from "./meeting/owner-principal";
+import { eventBus } from "./event-bus";
+import type { SessionReviewKind } from "@shared/models/chat";
 
 const log = createLogger("EmailDraftStorage");
+const EMAIL_REVIEW_QUERY_BATCH_SIZE = 500;
+
+function publishSessionReviewChanged(sessionId: string | null): void {
+  if (!sessionId) return;
+  eventBus.publish({
+    category: "system",
+    event: "data:sessions_changed",
+    payload: { source: "email_draft", sessionId },
+  });
+}
 
 const scopeColumns = {
   scope: emailDrafts.scope,
@@ -218,6 +230,7 @@ export class EmailDraftStorage {
       })
       .returning();
     log.info(`created draft ${draft.id} for session=${input.sessionId}`);
+    publishSessionReviewChanged(draft.sessionId);
     return draft;
   }
 
@@ -231,6 +244,53 @@ export class EmailDraftStorage {
       .where(combineWithVisibleScope(principal, scopeColumns, eq(emailDrafts.id, id)))
       .limit(1);
     return row ?? null;
+  }
+
+  /**
+   * Derive unresolved email-review categories for a bounded set of visible
+   * Sessions. `email_drafts` remains authoritative; the Session index only
+   * projects the pending human review state.
+   */
+  async getPendingReviewKindsBySession(
+    principal: Principal,
+    sessionIds: string[],
+  ): Promise<Map<string, SessionReviewKind[]>> {
+    const uniqueIds = Array.from(new Set(sessionIds.filter(Boolean)));
+    const kindsBySession = new Map<string, Set<SessionReviewKind>>();
+    for (let index = 0; index < uniqueIds.length; index += EMAIL_REVIEW_QUERY_BATCH_SIZE) {
+      const batch = uniqueIds.slice(index, index + EMAIL_REVIEW_QUERY_BATCH_SIZE);
+      const rows = await db
+        .select({
+          sessionId: emailDrafts.sessionId,
+          purpose: emailDrafts.purpose,
+          inReplyTo: emailDrafts.inReplyTo,
+          threadId: emailDrafts.threadId,
+        })
+        .from(emailDrafts)
+        .where(combineWithVisibleScope(
+          principal,
+          scopeColumns,
+          and(
+            inArray(emailDrafts.sessionId, batch),
+            eq(emailDrafts.status, "draft"),
+          ),
+        ));
+      for (const row of rows) {
+        if (!row.sessionId) continue;
+        const kinds = kindsBySession.get(row.sessionId) ?? new Set<SessionReviewKind>();
+        kinds.add(
+          row.purpose === "meeting_recap"
+            ? "meeting_recap"
+            : row.inReplyTo || row.threadId
+              ? "email_reply"
+              : "email_draft",
+        );
+        kindsBySession.set(row.sessionId, kinds);
+      }
+    }
+    return new Map(
+      Array.from(kindsBySession, ([sessionId, kinds]) => [sessionId, Array.from(kinds)]),
+    );
   }
 
   async getRecipientMode(
@@ -758,6 +818,7 @@ export class EmailDraftStorage {
       await this.markRecapDistributionSent(principal, id);
       return claimed;
     }
+    publishSessionReviewChanged(claimed.sessionId);
 
     // Execute Gmail only after the exact envelope/body/capability aggregate is
     // durably frozen. An ambiguous provider failure intentionally leaves the
@@ -788,6 +849,7 @@ export class EmailDraftStorage {
       );
     }
     await this.markRecapDistributionSent(principal, id);
+    publishSessionReviewChanged(sent.sessionId);
     log.info(`sent draft ${id}, messageId=${result.messageId}`);
     return sent;
   }
@@ -816,6 +878,7 @@ export class EmailDraftStorage {
       )
       .returning();
     await this.revokeRecapDistribution(principal, id);
+    publishSessionReviewChanged(discarded?.sessionId ?? existing.sessionId);
     log.info(`discarded draft ${id}`);
     return discarded ?? null;
   }

@@ -1812,6 +1812,38 @@ export function referenceIdsFromSegments(
   return { fromContent, fromToolResults };
 }
 
+function isGmailDraftReviewAction(step: ExecutionStep): boolean {
+  if (step.type !== "tool_call" || step.toolName !== "gmail") return false;
+  const action = typeof step.arguments?.action === "string" ? step.arguments.action : null;
+  return action === "draft" || action === "reply" || action === "update_draft";
+}
+
+function GmailDraftFailureNotice({ step }: { step: ExecutionStep }) {
+  const detail = truncateResult(formatToolError(step.error, step.result), 320);
+  return (
+    <div
+      className="my-1 flex items-start gap-2 rounded-md border border-error/40 bg-error/5 px-3 py-2 text-sm text-error"
+      data-testid={`gmail-draft-error-${step.id}`}
+    >
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <div className="min-w-0">
+        <div className="font-medium">Email draft wasn’t created</div>
+        <div className="mt-0.5 break-words text-xs text-error/80">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+function gmailDraftFailureSteps(segments: MessageSegment[]): ExecutionStep[] {
+  return segments.flatMap((segment) =>
+    segment.type === "timeline"
+      ? segment.steps.filter(
+          (step) => isGmailDraftReviewAction(step) && step.status === "error",
+        )
+      : [],
+  );
+}
+
 export function emailDraftIdsFromSegments(segments: MessageSegment[]): {
   fromContent: string[];
   fromToolResults: string[];
@@ -1831,18 +1863,7 @@ export function emailDraftIdsFromSegments(segments: MessageSegment[]): {
       segments.flatMap((segment) => {
         if (segment.type !== "timeline") return [];
         return segment.steps.flatMap((tool) => {
-          const action =
-            typeof tool.arguments?.action === "string"
-              ? tool.arguments.action
-              : null;
-          if (
-            tool.type !== "tool_call" ||
-            tool.toolName !== "gmail" ||
-            (action !== "draft" &&
-              action !== "reply" &&
-              action !== "update_draft")
-          )
-            return [];
+          if (!isGmailDraftReviewAction(tool)) return [];
           if (typeof tool.result !== "string") return [];
           return parseReferenceText(tool.result)
             .filter(
@@ -2655,6 +2676,7 @@ export const ChatTurn = memo(function ChatTurn({
     (id) => !draftIdsFromContent.includes(id) && !suppressedDraftIds.has(id),
   );
   const hasUnpromotedDraftWidget = unpromotedDraftIds.length > 0;
+  const failedGmailDraftSteps = gmailDraftFailureSteps(segments);
   const questionPrompts = segments.flatMap((segment) =>
     segment.type === "timeline"
       ? segment.steps.flatMap((step) => {
@@ -2920,6 +2942,9 @@ export const ChatTurn = memo(function ChatTurn({
             )}
             {unpromotedDraftIds.map((id) => (
               <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
+            ))}
+            {layer === 1 && failedGmailDraftSteps.map((step) => (
+              <GmailDraftFailureNotice key={`gmail-draft-error-${step.id}`} step={step} />
             ))}
             {questionPrompts
               .filter((prompt) =>
