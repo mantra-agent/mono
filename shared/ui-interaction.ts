@@ -21,7 +21,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.businessModel.open": { href: "/business/model", permission: "system:read" },
   "navigation.roles.open": { href: "/business/roles", permission: "system:read" },
   "navigation.agendas.open": { href: "/agendas" },
-  "navigation.skills.open": { href: "/skills", permission: "system:read" },
+  "navigation.skills.open": { href: "/skills" },
   "navigation.plans.open": { href: "/brain?tab=plans" },
   "navigation.workflows.open": { href: "/workflows" },
   "navigation.hooks.open": { href: "/system?tab=hooks", permission: "system:read" },

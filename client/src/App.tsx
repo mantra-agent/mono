@@ -253,7 +253,7 @@ function Router() {
         <Route path="/"><Redirect to="/home" /></Route>
         <Route path="/brain" component={BrainPage} />
         <Route path="/agendas" component={AgendasPage} />
-        <Route path="/skills">{() => <RequirePermission permission="system:read"><SkillsPage /></RequirePermission>}</Route>
+        <Route path="/skills" component={SkillsPage} />
         <Route path="/system">{() => <RequirePermission permission="system:read"><SystemPage /></RequirePermission>}</Route>
         <Route path="/performance">{() => <Redirect to="/system?tab=resources" />}</Route>
         <Route path="/logs">{() => <LogsPage />}</Route>

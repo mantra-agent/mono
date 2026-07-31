@@ -4316,8 +4316,10 @@ export async function runSchemaBootstrap(
     await pool.query(`
       CREATE TABLE IF NOT EXISTS skill_failure_dismissals (
         id SERIAL PRIMARY KEY,
-        skill_name VARCHAR(64) NOT NULL UNIQUE,
-        dismissed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        skill_name VARCHAR(64) NOT NULL,
+        owner_user_id TEXT,
+        account_id TEXT,
+        dismissed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
   });
@@ -4892,6 +4894,18 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_skills_account ON skills(account_id)`,
     );
+    await pool.query(`ALTER TABLE skills DROP CONSTRAINT IF EXISTS skills_name_unique`);
+    await pool.query(`DROP INDEX IF EXISTS skills_name_unique`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_global_name_unique
+      ON skills(name)
+      WHERE scope = 'global'
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_owner_name_unique
+      ON skills(owner_user_id, account_id, name)
+      WHERE scope = 'user'
+    `);
 
     await ensureColumns("prompt_modules", [
       { name: "scope", type: "TEXT NOT NULL DEFAULT 'global'" },
@@ -4931,6 +4945,13 @@ export async function runSchemaBootstrap(
       { name: "owner_user_id", type: "TEXT" },
       { name: "account_id", type: "TEXT" },
     ]);
+    await pool.query(`ALTER TABLE skill_failure_dismissals DROP CONSTRAINT IF EXISTS skill_failure_dismissals_skill_name_key`);
+    await pool.query(`ALTER TABLE skill_failure_dismissals DROP CONSTRAINT IF EXISTS skill_failure_dismissals_skill_name_unique`);
+    await pool.query(`DROP INDEX IF EXISTS skill_failure_dismissals_skill_name_key`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS skill_failure_dismissals_owner_name_key
+      ON skill_failure_dismissals(owner_user_id, account_id, skill_name)
+    `);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_skill_failure_dismissals_owner ON skill_failure_dismissals(skill_name, owner_user_id)`,
     );

@@ -7722,7 +7722,8 @@ ${lines.join("\n")}` };
           if (args.scoreThreshold !== undefined) updates.scoreThreshold = args.scoreThreshold === null ? null : normalizeScoreThreshold(args.scoreThreshold);
           const updated = await storage.updateSkill(id, updates);
           if (!updated) return { result: `Failed to update skill "${id}"`, error: true };
-          return { result: `Updated skill "${updated.name}" (id: ${updated.id})` };
+          const forked = existing.scope === "global" && updated.id !== existing.id;
+          return { result: `${forked ? "Created private override for" : "Updated"} skill "${updated.name}" (id: ${updated.id})` };
         }
         case "set_persona": {
           const identifier = args.id || args.name;
@@ -7748,7 +7749,7 @@ ${lines.join("\n")}` };
           if (!id) return { result: "Missing skill id", error: true };
           const existing = await storage.getSkill(id);
           if (!existing) return { result: `Skill "${id}" not found`, error: true };
-          if (existing.author === "system") return { result: `Cannot delete built-in skill "${existing.name}"`, error: true };
+          if (existing.scope === "global") return { result: `Cannot delete global skill template "${existing.name}". Edit it to create a private override.`, error: true };
           await storage.deleteSkill(id);
           return { result: `Deleted skill "${existing.name}" (id: ${id})` };
         }
@@ -7775,15 +7776,6 @@ ${lines.join("\n")}` };
           if (!targetSkill) targetSkill = await storage.getSkillByName(requestedSkill);
           if (!targetSkill) return { result: `Skill "${requestedSkill}" not found`, error: true };
           const skillId = targetSkill.id;
-
-          const authorityContext = args._authorityContext as import("./agent-authority").AgentAuthorityContext | undefined;
-          if (authorityContext?.origin === "autonomous") {
-            const { authorizeToolInvocation } = await import("./agent-authority");
-            const targetAuthority = authorizeToolInvocation("skills", { action: "run", id: skillId }, authorityContext);
-            if (!targetAuthority.allowed) {
-              return { result: `Tool execution denied by deterministic authority policy: ${targetAuthority.reason}`, error: true };
-            }
-          }
 
           const callingConversationId = args._sessionId;
           if (normalizeSkillIdentifier(skillId) === "spec" && await isSpecSkillSession(callingConversationId)) {

@@ -2,7 +2,7 @@
 import { db, fnv1a32 } from "./db";
 import { createLogger } from "./log";
 import {
-  users, skills, skillReferences, skillRuns, skillFailureDismissals, promptModules, promptModuleVersions, systemSettings, insertSkillSchema,
+  users, skills, skillReferences, skillRuns, skillFailureDismissals, skillPersonaPreferences, promptModules, promptModuleVersions, systemSettings, insertSkillSchema,
   voiceSessionActive,
   emailTriageLog, emailMessages, emailSyncLog, emailSyncCursors, emailDrafts,
   emailEnrichments, emailDismissals, connectedAccounts,
@@ -25,7 +25,7 @@ import {
 import { eq, ne, desc, gte, count, sql, inArray, or, lte, and, type SQL } from "drizzle-orm";
 import { fileIssueStorage, fileApiCallStorage } from "./file-storage";
 import { peopleStorage } from "./people-storage";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { getCurrentPrincipal, getCurrentPrincipalOrSystem } from "./principal-context";
 import { principalHasPermission } from "./permissions";
 import type { Principal } from "./principal";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
@@ -122,6 +122,7 @@ export interface IStorage {
   createSkill(data: InsertSkill): Promise<SkillWithReferences>;
   updateSkill(id: string, data: Partial<InsertSkill>): Promise<SkillWithReferences | undefined>;
   deleteSkill(id: string): Promise<boolean>;
+  resetSkillOverride(id: string): Promise<boolean>;
   incrementSkillSuccess(id: string): Promise<void>;
   incrementSkillFailure(id: string): Promise<void>;
   // insertSkillScore, getLatestSkillScore, getSkillScores, getSkillLastRuns removed — skill_scores superseded by skill_runs
@@ -346,15 +347,30 @@ export class HybridStorage implements IStorage {
   }
 
   private skillVisible(predicate?: SQL): SQL {
-    return combineWithVisibleScope(getCurrentPrincipalOrSystem(), skillScopeColumns, predicate);
+    const principal = getCurrentPrincipalOrSystem();
+    const scoped = combineWithVisibleScope(principal, skillScopeColumns, predicate);
+    if (principal.actorType === "system") return scoped;
+    if (!principal.userId || !principal.accountId) return sql`FALSE`;
+    return and(scoped, or(
+      eq(skills.scope, "global"),
+      and(
+        eq(skills.scope, "user"),
+        eq(skills.ownerUserId, principal.userId),
+        eq(skills.accountId, principal.accountId),
+      ),
+    ))!;
   }
 
   private skillWritable(predicate?: SQL): SQL {
     const principal = getCurrentPrincipalOrSystem();
-    if (principalHasPermission(principal, "build:write") || principalHasPermission(principal, "system:write")) {
-      return predicate ?? sql`TRUE`;
-    }
-    return combineWithWritableScope(principal, skillScopeColumns, predicate);
+    if (principal.actorType === "system") return predicate ?? sql`TRUE`;
+    if (!principal.userId || !principal.accountId) return sql`FALSE`;
+    return and(
+      combineWithWritableScope(principal, skillScopeColumns, predicate),
+      eq(skills.scope, "user"),
+      eq(skills.ownerUserId, principal.userId),
+      eq(skills.accountId, principal.accountId),
+    )!;
   }
 
   private promptModuleVisible(predicate?: SQL): SQL {
@@ -370,11 +386,39 @@ export class HybridStorage implements IStorage {
   }
 
   private runVisible(predicate?: SQL): SQL {
-    return combineWithVisibleScope(getCurrentPrincipalOrSystem(), skillRunScopeColumns, predicate);
+    const principal = getCurrentPrincipalOrSystem();
+    const scoped = combineWithVisibleScope(principal, skillRunScopeColumns, predicate);
+    if (principal.actorType === "system") return scoped;
+    if (!principal.userId || !principal.accountId) return sql`FALSE`;
+    return and(
+      scoped,
+      eq(skillRuns.ownerUserId, principal.userId),
+      eq(skillRuns.accountId, principal.accountId),
+    )!;
+  }
+
+  private runWritable(predicate?: SQL): SQL {
+    const principal = getCurrentPrincipalOrSystem();
+    const scoped = combineWithWritableScope(principal, skillRunScopeColumns, predicate);
+    if (principal.actorType === "system") return scoped;
+    if (!principal.userId || !principal.accountId) return sql`FALSE`;
+    return and(
+      scoped,
+      eq(skillRuns.ownerUserId, principal.userId),
+      eq(skillRuns.accountId, principal.accountId),
+    )!;
   }
 
   private dismissalVisible(predicate?: SQL): SQL {
-    return combineWithVisibleScope(getCurrentPrincipalOrSystem(), skillDismissalScopeColumns, predicate);
+    const principal = getCurrentPrincipalOrSystem();
+    const scoped = combineWithVisibleScope(principal, skillDismissalScopeColumns, predicate);
+    if (principal.actorType === "system") return scoped;
+    if (!principal.userId || !principal.accountId) return sql`FALSE`;
+    return and(
+      scoped,
+      eq(skillFailureDismissals.ownerUserId, principal.userId),
+      eq(skillFailureDismissals.accountId, principal.accountId),
+    )!;
   }
 
   private async enrichSkillWithReferences(skill: Skill): Promise<SkillWithReferences> {
@@ -488,7 +532,17 @@ export class HybridStorage implements IStorage {
 
     const predicate = conditions.length > 0 ? and(...conditions) : undefined;
     const rows = await db.select().from(skills).where(this.skillVisible(predicate)).orderBy(desc(skills.updatedAt));
-    return Promise.all(rows.map(s => this.enrichSkillWithReferences(s)));
+    const principal = getCurrentPrincipalOrSystem();
+    const effectiveRows = principal.actorType === "user"
+      ? [...rows]
+          .sort((left, right) => {
+            const leftOwned = left.scope === "user" && left.ownerUserId === principal.userId && left.accountId === principal.accountId;
+            const rightOwned = right.scope === "user" && right.ownerUserId === principal.userId && right.accountId === principal.accountId;
+            return Number(rightOwned) - Number(leftOwned);
+          })
+          .filter((row, index, all) => all.findIndex((candidate) => candidate.name === row.name) === index)
+      : rows;
+    return Promise.all(effectiveRows.map(s => this.enrichSkillWithReferences(s)));
   }
 
   async getSkill(id: string): Promise<SkillWithReferences | undefined> {
@@ -498,18 +552,40 @@ export class HybridStorage implements IStorage {
   }
 
   async getSkillByName(name: string): Promise<SkillWithReferences | undefined> {
-    const [skill] = await db.select().from(skills).where(this.skillVisible(eq(skills.name, name)));
+    const principal = getCurrentPrincipalOrSystem();
+    const namespaceOrder = principal.actorType === "user" && principal.userId && principal.accountId
+      ? sql`CASE
+          WHEN ${skills.scope} = 'user'
+            AND ${skills.ownerUserId} = ${principal.userId}
+            AND ${skills.accountId} = ${principal.accountId}
+          THEN 0
+          WHEN ${skills.scope} = 'global' THEN 1
+          ELSE 2
+        END`
+      : sql`CASE WHEN ${skills.scope} = 'global' THEN 0 ELSE 1 END`;
+    const rows = await db
+      .select()
+      .from(skills)
+      .where(this.skillVisible(eq(skills.name, name)))
+      .orderBy(namespaceOrder, desc(skills.updatedAt))
+      .limit(1);
+    const skill = rows[0];
     if (!skill) return undefined;
     return this.enrichSkillWithReferences(skill);
   }
 
   async createSkill(data: InsertSkill): Promise<SkillWithReferences> {
+    const principal = getCurrentPrincipal();
+    if (!principal?.userId || !principal.accountId) {
+      throw new Error("Skill creation requires an explicit user principal");
+    }
     const normalized = insertSkillSchema.parse(data);
-    const { references: refs, ...skillData } = normalized;
+    const { references: refs, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, ...skillData } = normalized;
     const [created] = await db.insert(skills).values({
       ...skillData,
+      author: skillData.author === "system" ? "user" : skillData.author,
       allowedTools: [],
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), skillScopeColumns),
+      ...ownedInsertValues(principal, skillScopeColumns),
     }).returning();
     if (refs && refs.length > 0) {
       await db.insert(skillReferences).values(
@@ -520,18 +596,69 @@ export class HybridStorage implements IStorage {
   }
 
   async updateSkill(id: string, data: Partial<InsertSkill>): Promise<SkillWithReferences | undefined> {
-    const { references: refs, ...skillData } = data;
+    const principal = getCurrentPrincipal();
+    if (!principal?.userId || !principal.accountId) {
+      throw new Error("Skill updates require an explicit user principal");
+    }
+    const { references: refs, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, author: _author, ...skillData } = data;
     const updated = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`skill-override:${principal.accountId}:${principal.userId}`}))`);
+      const [visible] = await tx.select().from(skills).where(this.skillVisible(eq(skills.id, id)));
+      if (!visible) return undefined;
+
+      let target = visible;
+      if (visible.scope === "global") {
+        const [existingOverride] = await tx.select().from(skills).where(and(
+          eq(skills.scope, "user"),
+          eq(skills.ownerUserId, principal.userId),
+          eq(skills.accountId, principal.accountId),
+          eq(skills.name, visible.name),
+        ));
+        if (existingOverride) {
+          target = existingOverride;
+        } else {
+          const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, successCount: _successCount, failureCount: _failureCount, scope: _scope, ownerUserId: _ownerUserId, accountId: _accountId, vaultId: _vaultId, ...definition } = visible;
+          [target] = await tx.insert(skills).values({
+            ...definition,
+            id: sql`gen_random_uuid()`,
+            customized: true,
+            scope: "user",
+            ownerUserId: principal.userId,
+            accountId: principal.accountId,
+            vaultId: principal.activeVaultId,
+            successCount: 0,
+            failureCount: 0,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }).returning();
+          const inheritedRefs = await tx.select().from(skillReferences).where(eq(skillReferences.skillId, visible.id));
+          if (inheritedRefs.length > 0) {
+            await tx.insert(skillReferences).values(inheritedRefs.map((reference) => ({
+              skillId: target.id,
+              name: reference.name,
+              content: reference.content,
+            })));
+          }
+          await tx.update(skillPersonaPreferences)
+            .set({ skillId: target.id, updatedAt: new Date() })
+            .where(and(
+              eq(skillPersonaPreferences.skillId, visible.id),
+              eq(skillPersonaPreferences.ownerUserId, principal.userId),
+              eq(skillPersonaPreferences.accountId, principal.accountId),
+            ));
+        }
+      }
+
       const [result] = await tx.update(skills)
         .set({ ...skillData, updatedAt: new Date(), customized: true })
-        .where(this.skillWritable(eq(skills.id, id)))
+        .where(this.skillWritable(eq(skills.id, target.id)))
         .returning();
       if (!result) return undefined;
       if (refs !== undefined) {
-        await tx.delete(skillReferences).where(eq(skillReferences.skillId, id));
+        await tx.delete(skillReferences).where(eq(skillReferences.skillId, target.id));
         if (refs.length > 0) {
           await tx.insert(skillReferences).values(
-            refs.map(r => ({ skillId: id, name: r.name, content: r.content }))
+            refs.map(r => ({ skillId: target.id, name: r.name, content: r.content }))
           );
         }
       }
@@ -542,8 +669,59 @@ export class HybridStorage implements IStorage {
   }
 
   async deleteSkill(id: string): Promise<boolean> {
+    const principal = getCurrentPrincipal();
+    if (!principal?.userId || !principal.accountId) {
+      throw new Error("Skill deletion requires an explicit user principal");
+    }
+    const [visible] = await db.select().from(skills).where(this.skillVisible(eq(skills.id, id)));
+    if (!visible) return false;
+    if (visible.scope === "global") return false;
     const [deleted] = await db.delete(skills).where(this.skillWritable(eq(skills.id, id))).returning();
     return !!deleted;
+  }
+
+  async resetSkillOverride(id: string): Promise<boolean> {
+    const principal = getCurrentPrincipal();
+    if (!principal?.userId || !principal.accountId) {
+      throw new Error("Skill reset requires an explicit user principal");
+    }
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`skill-override:${principal.accountId}:${principal.userId}`}))`);
+      const [visible] = await tx.select().from(skills).where(this.skillVisible(eq(skills.id, id)));
+      if (!visible) return false;
+      const name = visible.name;
+      const [override] = await tx.select().from(skills).where(and(
+        eq(skills.scope, "user"),
+        eq(skills.ownerUserId, principal.userId),
+        eq(skills.accountId, principal.accountId),
+        eq(skills.name, name),
+      ));
+      if (!override) return visible.scope === "global";
+      const [template] = await tx.select({ id: skills.id }).from(skills).where(and(
+        eq(skills.scope, "global"),
+        eq(skills.name, name),
+      ));
+      if (!template) return false;
+      const [overridePreference] = await tx.select({ id: skillPersonaPreferences.id })
+        .from(skillPersonaPreferences)
+        .where(and(
+          eq(skillPersonaPreferences.skillId, override.id),
+          eq(skillPersonaPreferences.ownerUserId, principal.userId),
+          eq(skillPersonaPreferences.accountId, principal.accountId),
+        ));
+      if (overridePreference) {
+        await tx.delete(skillPersonaPreferences).where(and(
+          eq(skillPersonaPreferences.skillId, template.id),
+          eq(skillPersonaPreferences.ownerUserId, principal.userId),
+          eq(skillPersonaPreferences.accountId, principal.accountId),
+        ));
+        await tx.update(skillPersonaPreferences)
+          .set({ skillId: template.id, updatedAt: new Date() })
+          .where(eq(skillPersonaPreferences.id, overridePreference.id));
+      }
+      const [deleted] = await tx.delete(skills).where(this.skillWritable(eq(skills.id, override.id))).returning();
+      return !!deleted;
+    });
   }
 
   async incrementSkillSuccess(id: string): Promise<void> {
@@ -565,26 +743,31 @@ export class HybridStorage implements IStorage {
     const validSkillNames = new Set(allSkills.map(s => s.name));
 
     const principal = getCurrentPrincipalOrSystem();
-    const ownerClause = principal.actorType === "system" || principal.isAdmin
+    if (principal.actorType !== "system" && (!principal.userId || !principal.accountId)) return [];
+    const runOwnerClause = principal.actorType === "system"
       ? sql`TRUE`
-      : sql`(owner_user_id = ${principal.userId} OR account_id = ${principal.accountId})`;
+      : sql`r.owner_user_id = ${principal.userId} AND r.account_id = ${principal.accountId}`;
+    const dismissalOwnerClause = principal.actorType === "system"
+      ? sql`TRUE`
+      : sql`d.owner_user_id = ${principal.userId} AND d.account_id = ${principal.accountId}`;
     const failedFromRuns = await db.execute(sql`
       SELECT f.skill_name, f.scored_at
       FROM (
-        SELECT DISTINCT ON (skill_name) skill_name, COALESCE(completed_at, started_at) AS scored_at
-        FROM skill_runs
-        WHERE ${ownerClause} AND (status = 'failed' OR (pass_rate IS NOT NULL AND pass_rate <= 0.5))
-        ORDER BY skill_name, COALESCE(completed_at, started_at) DESC
+        SELECT DISTINCT ON (r.skill_name) r.skill_name, COALESCE(r.completed_at, r.started_at) AS scored_at
+        FROM skill_runs r
+        WHERE ${runOwnerClause} AND (r.status = 'failed' OR (r.pass_rate IS NOT NULL AND r.pass_rate <= 0.5))
+        ORDER BY r.skill_name, COALESCE(r.completed_at, r.started_at) DESC
       ) f
-      LEFT JOIN skill_failure_dismissals d ON f.skill_name = d.skill_name
+      LEFT JOIN skill_failure_dismissals d
+        ON f.skill_name = d.skill_name AND ${dismissalOwnerClause}
       WHERE d.dismissed_at IS NULL OR d.dismissed_at < f.scored_at
     `);
 
     const latestRunPerSkill = await db.execute(sql`
-      SELECT DISTINCT ON (skill_name) skill_name, status, pass_rate
-      FROM skill_runs
-      WHERE ${ownerClause}
-      ORDER BY skill_name, COALESCE(completed_at, started_at) DESC
+      SELECT DISTINCT ON (r.skill_name) r.skill_name, r.status, r.pass_rate
+      FROM skill_runs r
+      WHERE ${runOwnerClause}
+      ORDER BY r.skill_name, COALESCE(r.completed_at, r.started_at) DESC
     `);
     const latestRunMap = new Map<string, { status: string; pass_rate: number | null }>();
     for (const r of latestRunPerSkill.rows as Array<{ skill_name: string; status: string; pass_rate: number | null }>) {
@@ -613,20 +796,27 @@ export class HybridStorage implements IStorage {
   }
 
   async dismissSkillFailure(skillName: string): Promise<void> {
-    const ownerValues = ownedInsertValues(getCurrentPrincipalOrSystem(), skillDismissalScopeColumns);
+    const principal = getCurrentPrincipal();
+    if (!principal?.userId || !principal.accountId) {
+      throw new Error("Skill failure dismissal requires an explicit user principal");
+    }
+    const visibleSkill = await this.getSkillByName(skillName);
+    if (!visibleSkill) throw new Error(`Skill "${skillName}" not found`);
     await db
       .insert(skillFailureDismissals)
       .values({
-        skillName,
+        skillName: visibleSkill.name,
+        ownerUserId: principal.userId,
+        accountId: principal.accountId,
         dismissedAt: sql`CURRENT_TIMESTAMP`,
-        ...ownerValues,
       })
       .onConflictDoUpdate({
-        target: skillFailureDismissals.skillName,
-        set: {
-          dismissedAt: sql`CURRENT_TIMESTAMP`,
-          ...ownerValues,
-        },
+        target: [
+          skillFailureDismissals.ownerUserId,
+          skillFailureDismissals.accountId,
+          skillFailureDismissals.skillName,
+        ],
+        set: { dismissedAt: sql`CURRENT_TIMESTAMP` },
       });
   }
 
@@ -647,7 +837,7 @@ export class HybridStorage implements IStorage {
     if (failureReason !== undefined) updates.failureReason = failureReason;
     const [row] = await db.update(skillRuns)
       .set(updates)
-      .where(eq(skillRuns.sessionId, sessionId))
+      .where(this.runWritable(eq(skillRuns.sessionId, sessionId)))
       .returning();
     return row ?? null;
   }
@@ -659,7 +849,7 @@ export class HybridStorage implements IStorage {
   async reconcileSkillRunStatus(sessionId: string, fromStatus: SkillRunStatus, toStatus: SkillRunStatus, failureReason: string): Promise<SkillRun | null> {
     const [row] = await db.update(skillRuns)
       .set({ status: toStatus, failureReason })
-      .where(and(eq(skillRuns.sessionId, sessionId), eq(skillRuns.status, fromStatus)))
+      .where(this.runWritable(and(eq(skillRuns.sessionId, sessionId), eq(skillRuns.status, fromStatus))))
       .returning();
     return row ?? null;
   }
@@ -683,13 +873,13 @@ export class HybridStorage implements IStorage {
         comparativeWinner: data.comparativeWinner ?? null,
         comparativeReason: data.comparativeReason ?? null,
       })
-      .where(eq(skillRuns.sessionId, sessionId))
+      .where(this.runWritable(eq(skillRuns.sessionId, sessionId)))
       .returning();
     return row ?? null;
   }
 
   async getSkillRunBySessionId(sessionId: string): Promise<SkillRun | null> {
-    const [row] = await db.select().from(skillRuns).where(eq(skillRuns.sessionId, sessionId));
+    const [row] = await db.select().from(skillRuns).where(this.runVisible(eq(skillRuns.sessionId, sessionId)));
     return row ?? null;
   }
 

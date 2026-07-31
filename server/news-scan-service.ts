@@ -13,9 +13,7 @@ import { eq, or } from "drizzle-orm";
 import * as adapters from "./news-adapters";
 import * as ranking from "./news-ranking";
 import { executeAutonomousSkillRun } from "./autonomous-skill-runner";
-import { getCurrentPrincipal, runWithPrincipal } from "./principal-context";
-import { createUserSessionPrincipal } from "./principal";
-import { storage } from "./storage";
+import { getCurrentPrincipal } from "./principal-context";
 import { SourceDiagnosticsAccumulator, gateRawSignals } from "./news-quality";
 
 const log = createLogger("LandscapeScanService");
@@ -141,19 +139,9 @@ async function loadDomainSkillNames(): Promise<string[]> {
   }
 }
 
-async function resolveNewsScanPrincipal() {
-  const users = await storage.getUsers();
-  const user = users.find(candidate => candidate.role === "admin") ?? users[0];
-  if (!user) {
-    throw new Error("News scan requires an owning user principal");
-  }
-  return createUserSessionPrincipal(user);
-}
-
 export async function runLandscapeScan(): Promise<LandscapeScanResult> {
   if (!getCurrentPrincipal()) {
-    const principal = await resolveNewsScanPrincipal();
-    return runWithPrincipal(principal, runLandscapeScan);
+    throw new Error("News scan requires an explicit owning user principal");
   }
 
   // Atomic: check + expire-stale + insert in one transaction — no TOCTOU gap

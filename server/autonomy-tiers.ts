@@ -41,12 +41,13 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   finance: { default: 0 },
   health: { default: 1, actions: { summary: 0, metrics: 0, activity_status: 0, list_activities: 0, activity_logs: 0, get_gratitude: 0, list_gratitudes: 0 } },
   weather: { default: 0 },
-  // News signal curation writes user-owned signal rows and the owner's own Home surface (internal, tier 1).
-  // Read actions are tier 0. `scan` fetches from external feeds (X/RSS/web/github), so it stays tier 2 and
-  // remains hard-gated for autonomous/timer/hook origins; the news-curation skill does not need it.
-  news: { default: 1, actions: { summary: 0, list_signals: 0, get_signal: 0, list_sources: 0, list_scan_runs: 0, interest_graph: 0, scan: 2 } },
+  // News scanning is a bounded internal pipeline: provider reads are constrained by
+  // the News adapters and results land only in the owning user's signal store.
+  news: { default: 1, actions: { summary: 0, list_signals: 0, get_signal: 0, list_sources: 0, list_scan_runs: 0, interest_graph: 0 } },
   goals: { default: 1, actions: { list: 0, get: 0, search: 0 } },
-  plan: { default: 1, actions: { get: 0, list: 0, execute: 2, resume: 2 } },
+  // Plan execution is internal orchestration. Each child and eventual tool call
+  // remains independently authorized under the originating principal.
+  plan: { default: 1, actions: { get: 0, list: 0 } },
 
   rules: { default: 1, actions: { list: 0, get: 0 } },
   priorities: { default: 1 },
@@ -63,7 +64,10 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   }},
   stories: { default: 1, actions: { list: 0, get: 0 } },
   capabilities: { default: 1, actions: { list: 0, get_validations: 0 } },
-  skills: { default: 1, actions: { list: 0, get: 0, search: 0, scores: 0, run: 2 } },
+  // Skill creation, mutation, and composition are internal intelligence-state
+  // operations. A child run inherits the originating principal and every tool it
+  // invokes is authorized independently at that tool's real capability boundary.
+  skills: { default: 1, actions: { list: 0, get: 0, search: 0, scores: 0, run: 1 } },
   agendas: { default: 1, actions: { list: 0, get: 0, search: 0 } },
   timers: { default: 1, actions: { list: 0, get: 0, runs: 0 } },
   hooks: { default: 1, actions: { list: 0, get: 0 } },

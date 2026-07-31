@@ -63,7 +63,7 @@ export const checklistItemSchema = z.object({
 
 export const skills = pgTable("skills", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name", { length: 64 }).notNull().unique(),
+  name: varchar("name", { length: 64 }).notNull(),
   description: text("description").notNull(),
 
   category: text("category").notNull().default("other"),
@@ -115,6 +115,8 @@ export const skills = pgTable("skills", {
 }, (table) => [
   index("idx_skills_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_skills_account").on(table.accountId),
+  uniqueIndex("idx_skills_global_name_unique").on(table.name).where(sql`${table.scope} = 'global'`),
+  uniqueIndex("idx_skills_owner_name_unique").on(table.ownerUserId, table.accountId, table.name).where(sql`${table.scope} = 'user'`),
 ]);
 
 // skillScores table removed — superseded by skill_runs. DB table retained for historical data.
@@ -193,7 +195,7 @@ export const skillFailureDismissals = pgTable("skill_failure_dismissals", {
   accountId: text("account_id"),
   dismissedAt: timestamp("dismissed_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
-  uniqueIndex("skill_failure_dismissals_skill_name_key").on(table.skillName),
+  uniqueIndex("skill_failure_dismissals_owner_name_key").on(table.ownerUserId, table.accountId, table.skillName),
   index("idx_skill_failure_dismissals_owner").on(table.skillName, table.ownerUserId),
   index("idx_skill_failure_dismissals_account").on(table.skillName, table.accountId),
 ]);
