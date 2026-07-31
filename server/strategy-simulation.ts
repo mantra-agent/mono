@@ -5,7 +5,7 @@ import { getPromptModulePrompt } from "./prompt-modules";
 import { ACTIVITY_STRATEGY } from "./job-profiles";
 import type { StrategyMoveInstance } from "@shared/schema";
 import { createLogger } from "./log";
-import { getCurrentPrincipal, runWithPrincipal } from "./principal-context";
+import { getCurrentPrincipal } from "./principal-context";
 
 const log = createLogger("StrategySim");
 
@@ -581,16 +581,13 @@ export async function evaluateMoveWithAgent(
     }
   };
 
-  // Establish a principal for the agent run. The detached (non-awaited) path
-  // otherwise reaches the tracked inference boundary with no principal in
-  // AsyncLocalStorage, so currentOwnership() (fail-closed by design) throws and
-  // the inference-audit (CostTracker) write is dropped. Reuse the shared
-  // autonomous resolver; callers that already hold a principal pass through.
+  // Detached execution must retain the exact originating user principal.
+  // Missing context is an ownership failure, never a reason to choose another user.
   const dispatchWork = async (): Promise<string> => {
-    if (getCurrentPrincipal()) return work();
-    const { resolveAutonomousPrincipal } = await import("./autonomous-skill-runner");
-    const principal = await resolveAutonomousPrincipal();
-    return runWithPrincipal(principal, work);
+    if (!getCurrentPrincipal()) {
+      throw new Error(`Strategy evaluation requires an explicit owning principal: ${runId}`);
+    }
+    return work();
   };
 
   if (options?.awaitResult) {

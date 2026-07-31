@@ -43,9 +43,9 @@ const SKILL_RENAMES: Record<string, string> = {
 
 export async function migrateSkillRenames(): Promise<void> {
   for (const [oldName, newName] of Object.entries(SKILL_RENAMES)) {
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, oldName));
+    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, oldName)));
     if (existing) {
-      const [conflict] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, newName));
+      const [conflict] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, newName)));
       if (conflict) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted old skill "${oldName}" (conflict with already-existing "${newName}")`);
@@ -104,6 +104,7 @@ export async function seedSkillPersonaRecommendations(): Promise<void> {
       .set({ recommendedPersonaTemplateId: templateId, updatedAt: new Date() })
       .where(
         and(
+          eq(skills.scope, "global"),
           eq(skills.name, skillName),
           sql`${skills.recommendedPersonaTemplateId} IS NULL`,
         ),
@@ -224,7 +225,7 @@ export async function seedBuiltinSkills(): Promise<void> {
         const [blankAutonomy] = await db
           .select({ id: skills.id, description: skills.description })
           .from(skills)
-          .where(eq(skills.name, ""));
+          .where(and(eq(skills.scope, "global"), eq(skills.name, "")));
         if (blankAutonomy?.description?.includes("autonomous scan-and-execute loop")) {
           await db.update(skills).set({
             name: def.name,
@@ -255,7 +256,7 @@ export async function seedBuiltinSkills(): Promise<void> {
           version: skills.version,
         })
         .from(skills)
-        .where(eq(skills.name, def.name));
+        .where(and(eq(skills.scope, "global"), eq(skills.name, def.name)));
 
       if (existing) {
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -301,7 +302,7 @@ export async function seedBuiltinSkills(): Promise<void> {
               version: skills.version,
             })
             .from(skills)
-            .where(eq(skills.name, def.name));
+            .where(and(eq(skills.scope, "global"), eq(skills.name, def.name)));
           if (!existing) break;
         }
         preserved++;
@@ -383,7 +384,7 @@ export async function migrateLegacyPromptOverrides(): Promise<void> {
   let applied = 0;
   for (const [promptName, overrideText] of Object.entries(overrides)) {
     const skillName = PROMPT_NAME_TO_SKILL[promptName] || promptName.replace(/:/g, "-").toLowerCase();
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, skillName));
+    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, skillName)));
     if (existing && typeof overrideText === "string" && overrideText.trim()) {
       await db.update(skills).set({ process: overrideText, updatedAt: new Date() }).where(eq(skills.id, existing.id));
       applied++;
@@ -410,7 +411,7 @@ export async function migrateLegacyPromptOverrides(): Promise<void> {
 }
 
 export async function verifyRequiredSkills(): Promise<void> {
-  const rows = await db.select({ name: skills.name }).from(skills);
+  const rows = await db.select({ name: skills.name }).from(skills).where(eq(skills.scope, "global"));
   const existing = new Set(rows.map(r => r.name));
   const required = BUILTIN_SKILL_DEFAULTS.map(d => d.name);
   const missing = required.filter(n => !existing.has(n));
@@ -462,7 +463,7 @@ export async function migrateCanonicalScanToolGate(): Promise<void> {
 export async function migrateSkillProcessToToolBased(): Promise<void> {
   const skillsToMigrate: string[] = [];
   for (const name of skillsToMigrate) {
-    const [existing] = await db.select({ id: skills.id, process: skills.process }).from(skills).where(eq(skills.name, name));
+    const [existing] = await db.select({ id: skills.id, process: skills.process }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
     if (!existing) continue;
     if (existing.process.includes("Respond with a JSON object")) {
       const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === name);
@@ -477,7 +478,7 @@ export async function deprecateRetiredBuiltinSkills(): Promise<void> {
   // Preserve compatibility rows through the rollback window, but make them inert.
   const retired = ["consolidate", "integrate"];
   for (const name of retired) {
-    const [existing] = await db.select({ id: skills.id, author: skills.author, status: skills.status }).from(skills).where(eq(skills.name, name));
+    const [existing] = await db.select({ id: skills.id, author: skills.author, status: skills.status }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
     if (existing && existing.author === "system" && existing.status !== "deprecated") {
       await db.update(skills).set({ status: "deprecated", addToMemory: false, updatedAt: new Date() }).where(eq(skills.id, existing.id));
       log.info(`Deprecated retired builtin skill "${name}"`);
@@ -531,7 +532,7 @@ export async function migrateAutonomyCanonicalMeetingPrep(): Promise<void> {
         checklist: skills.checklist,
       })
       .from(skills)
-      .where(eq(skills.name, "autonomy"));
+      .where(and(eq(skills.scope, "global"), eq(skills.name, "autonomy")));
     if (!existing || existing.author !== "system" || existing.customized === true) return;
     const versionOrder = compareSkillVersions(existing.version, "1.6");
     if (versionOrder === null || versionOrder >= 0) return;
@@ -594,7 +595,7 @@ export async function migrateAutonomyProvenanceVerification(): Promise<void> {
         process: skills.process,
       })
       .from(skills)
-      .where(eq(skills.name, "autonomy"));
+      .where(and(eq(skills.scope, "global"), eq(skills.name, "autonomy")));
     if (!existing || existing.author !== "system" || existing.customized === true) return;
     const versionOrder = compareSkillVersions(existing.version, "1.7");
     if (versionOrder === null || versionOrder >= 0) return;
@@ -627,7 +628,7 @@ export async function migrateDailyBriefCanonicalMeetingPrep(): Promise<void> {
   const [existing] = await db
     .select({ id: skills.id, author: skills.author, customized: skills.customized, version: skills.version, process: skills.process })
     .from(skills)
-    .where(eq(skills.name, "brief-daily"));
+    .where(and(eq(skills.scope, "global"), eq(skills.name, "brief-daily")));
   if (!existing || existing.author !== "system" || existing.customized === true) return;
   const versionOrder = compareSkillVersions(existing.version, "7.7");
   if (versionOrder === null || versionOrder >= 0) return;
@@ -695,7 +696,7 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
         checklist: skills.checklist,
       })
       .from(skills)
-      .where(eq(skills.name, "sentry"));
+      .where(and(eq(skills.scope, "global"), eq(skills.name, "sentry")));
     if (!existing || existing.author !== "system" || existing.customized === true) return;
     const versionOrder = compareSkillVersions(existing.version, SENTRY_CHANGESET_GATE_VERSION);
     if (versionOrder === null || versionOrder >= 0) return;
@@ -781,7 +782,7 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   ];
 
   for (const { name, sentinel } of migrations) {
-    const [existing] = await db.select({ id: skills.id, process: skills.process }).from(skills).where(eq(skills.name, name));
+    const [existing] = await db.select({ id: skills.id, process: skills.process }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
     if (!existing) continue;
     if (!existing.process.includes(sentinel)) {
       const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === name);
@@ -797,7 +798,7 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   const planConversationRefreshed = await getSetting<boolean>("plan_conversation_first_metadata_refreshed_v1");
   if (!planConversationRefreshed) {
     const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === "plan");
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, "plan"));
+    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
     if (def && existing) {
       await db.update(skills).set({
         description: def.description,
@@ -821,7 +822,7 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   const planQuarterlyRefreshed = await getSetting<boolean>("plan_quarterly_metadata_refreshed_v1");
   if (!planQuarterlyRefreshed) {
     const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === "plan");
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, "plan"));
+    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
     if (def && existing) {
       await db.update(skills).set({
         description: def.description,
@@ -845,7 +846,7 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   const planDailyRefreshed = await getSetting<boolean>("plan_daily_metadata_refreshed_v1");
   if (!planDailyRefreshed) {
     const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === "plan");
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, "plan"));
+    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
     if (def && existing) {
       await db.update(skills).set({
         description: def.description,
@@ -869,7 +870,7 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
     for (const name of ["plan", "reflect"]) {
       const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === name);
       if (!def) continue;
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (!existing) continue;
       await db.update(skills).set({
         description: def.description,
@@ -889,25 +890,6 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   }
 }
 
-export async function resetSkillToDefault(skillName: string): Promise<boolean> {
-  const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === skillName);
-  if (!def) return false;
-
-  const [existing] = await db
-    .select({ id: skills.id, author: skills.author })
-    .from(skills)
-    .where(eq(skills.name, skillName));
-  if (!existing || existing.author !== "system") return false;
-
-  await db.update(skills).set({
-    ...builtinSkillDefinitionPatch(def),
-    customized: false,
-  }).where(eq(skills.id, existing.id));
-
-  log.debug(`Reset skill "${skillName}" to default`);
-  return true;
-}
-
 export async function deleteZombieSkills(): Promise<void> {
   const { getSetting, setSetting } = await import("./system-settings");
 
@@ -917,7 +899,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let count = 0;
 
     for (const name of zombieNames) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill "${name}" id=${existing.id}`);
@@ -942,7 +924,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV2 = 0;
 
     for (const name of zombieNamesV2) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill v2 "${name}" id=${existing.id}`);
@@ -962,7 +944,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV3 = 0;
 
     for (const name of zombieNamesV3) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill v3 "${name}" id=${existing.id}`);
@@ -982,7 +964,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV4 = 0;
 
     for (const name of zombieNamesV4) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill v4 "${name}" id=${existing.id}`);
@@ -1008,7 +990,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV5 = 0;
 
     for (const name of zombieNamesV5) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill v5 "${name}" id=${existing.id}`);
@@ -1032,7 +1014,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV6 = 0;
 
     for (const name of zombieNamesV6) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill v6 "${name}" id=${existing.id}`);
@@ -1055,7 +1037,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV7 = 0;
 
     for (const name of zombieNamesV7) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill v7 "${name}" id=${existing.id}`);
@@ -1096,7 +1078,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV8 = 0;
 
     for (const name of zombieNamesV8) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill v8 "${name}" id=${existing.id}`);
@@ -1120,7 +1102,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV9 = 0;
 
     for (const name of zombieNamesV9) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill v9 "${name}" id=${existing.id}`);
@@ -1142,7 +1124,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV10 = 0;
 
     for (const name of zombieNamesV10) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted zombie skill v10 "${name}" id=${existing.id}`);
@@ -1168,7 +1150,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV11 = 0;
 
     for (const name of zombieNamesV11) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted parameterized planning predecessor skill "${name}" id=${existing.id}`);
@@ -1186,7 +1168,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV12 = 0;
 
     for (const name of zombieNamesV12) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted annual reflection predecessor skill "${name}" id=${existing.id}`);
@@ -1211,7 +1193,7 @@ export async function deleteZombieSkills(): Promise<void> {
     let countV13 = 0;
 
     for (const name of retiredAutonomyPredecessors) {
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
       if (existing) {
         await db.delete(skills).where(eq(skills.id, existing.id));
         log.debug(`Deleted retired autonomy predecessor skill "${name}" id=${existing.id}`);
@@ -1222,11 +1204,11 @@ export async function deleteZombieSkills(): Promise<void> {
     const blankAutonomyRows = await db
       .select({ id: skills.id, description: skills.description })
       .from(skills)
-      .where(eq(skills.name, ""));
+      .where(and(eq(skills.scope, "global"), eq(skills.name, "")));
 
     for (const row of blankAutonomyRows) {
       if (row.description?.includes("autonomous scan-and-execute loop")) {
-        const [autonomy] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, "autonomy"));
+        const [autonomy] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "autonomy")));
         if (autonomy) {
           await db.delete(skills).where(eq(skills.id, row.id));
           log.debug(`Deleted duplicate blank-name autonomy skill id=${row.id}`);
@@ -1244,7 +1226,7 @@ export async function deleteZombieSkills(): Promise<void> {
 
 
   // Delete any skill with an empty name (sleep ghost)
-  const emptyNameRows = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, ""));
+  const emptyNameRows = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "")));
   for (const row of emptyNameRows) {
     await db.delete(skills).where(eq(skills.id, row.id));
     log.debug(`Deleted empty-name ghost skill id=${row.id}`);
@@ -1261,7 +1243,7 @@ export async function deleteZombieSkills(): Promise<void> {
   let retiredCount = 0;
 
   for (const name of retiredBuiltinNames) {
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(eq(skills.name, name));
+    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
     if (existing) {
       await db.delete(skills).where(eq(skills.id, existing.id));
       log.debug(`Deleted retired builtin skill "${name}" id=${existing.id}`);

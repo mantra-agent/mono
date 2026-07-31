@@ -557,7 +557,7 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 - Idle recovery via `system.state.idle` event → scan for retriable candidates
 
 ### When Working Here
-- `activeSkillRuns` Set prevents concurrent duplicate executions — check before adding new skill paths
+- `activeSkillRuns` prevents concurrent duplicate top-level executions per account + user + Skill; parented composition uses the durable session-tree replay tuple instead
 - Triage is fire-and-forget (not awaited) to avoid DB pool exhaustion — don't change this
 - Campaign continuation hooks fire on events, not timers — no polling
 - Side-effect tier enforcement only applies in `gift` mode — every tool call checked against `SIDE_EFFECT_TIERS`
@@ -577,7 +577,9 @@ Runnable workflow skills are stored in the DB, executed by the autonomous runner
 - `shared/models/skills.ts` — Schema: `skills`, `skill_runs`, `skill_scores`, `skill_references`
 
 ### Architecture
-- **Canonical Skill composition authority:** `skills.run` remains tier 2. An autonomous parent may launch child Skills only through the exact parent-ID → child-ID allowlist in `agent-authority.ts`; the handler resolves any requested name through principal-scoped Skill storage and reauthorizes the injected exact child row ID before launch, so mutable names never grant authority.
+- **Morphogenic Skill composition:** Skill creation, editing, and `skills.run` composition are internal intelligence operations. Any Skill may invoke any other Skill visible to the same principal; Skill identity never grants tool authority. Every eventual tool call is independently authorized at its real data, provider, human-gate, or execution boundary under the originating principal.
+- **Per-user Skill namespace:** Global Skills are read-only product templates. Each user/account may create a same-named private Skill that shadows the template for that user; editing a template copy-on-writes the private override, and reset removes it. Boot migrations mutate only global rows.
+- **Explicit owner and bounded execution:** Autonomous Skill entry points must inherit or restore one exact user principal and fail closed when owner context is missing. Top-level single-flight keys include account and user identity; child replay uses the session-tree tuple, while admission, runtime, token, and tool budgets bound composition without topology allowlists.
 - **Awaited child output:** `skills.run` returns the bounded `AutonomousRunResult.summary` after the status/session receipt so a composing parent can consume the child’s actual final output rather than infer it from session history.
 - **16 hardcoded `SKILL_RUN_CONFIGS`** — callType, activity, temperature, timeout per skill
 - **Dynamic fallback** for user-created skills: `callType: "full"`, 10-minute timeout, `sessionType: "agent"`

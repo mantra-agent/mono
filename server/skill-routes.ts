@@ -2,12 +2,20 @@ import type { Express } from "express";
 import { storage } from "./storage";
 import { insertSkillSchema } from "@shared/schema";
 import type { Skill, SkillReference } from "@shared/models/skills";
-import { resetSkillToDefault } from "./skill-seed";
 import { createLogger } from "./log";
 import { db } from "./db";
 import { libraryPages } from "@shared/models/info";
 import { inArray } from "drizzle-orm";
 import { listSkillPersonaConfiguration, setSkillPersonaPreference } from "./skill-persona-service";
+import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { combineWithVisibleScope } from "./scoped-storage";
+
+const libraryPageScopeColumns = {
+  scope: libraryPages.scope,
+  ownerUserId: libraryPages.ownerUserId,
+  accountId: libraryPages.accountId,
+  vaultId: libraryPages.vaultId,
+};
 
 const log = createLogger("SkillRoutes");
 
@@ -280,14 +288,16 @@ export function registerSkillRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/skills/:name/reset", async (req, res) => {
+  app.post("/api/skills/:id/reset", async (req, res) => {
     try {
-      const reset = await resetSkillToDefault(req.params.name);
-      if (!reset) return res.status(404).json({ error: "No built-in default found for this skill" });
-      const skill = await storage.getSkillByName(req.params.name);
+      const visible = await storage.getSkill(req.params.id);
+      if (!visible) return res.status(404).json({ error: "Skill not found" });
+      const reset = await storage.resetSkillOverride(visible.id);
+      if (!reset) return res.status(404).json({ error: "No global template exists for this skill" });
+      const skill = await storage.getSkillByName(visible.name);
       res.json(skill);
     } catch (err: any) {
-      log.error("POST /api/skills/:name/reset error:", err.message);
+      log.error("POST /api/skills/:id/reset error:", err.message);
       res.status(500).json({ error: "Failed to reset skill" });
     }
   });
@@ -304,7 +314,11 @@ export function registerSkillRoutes(app: Express): void {
         title: libraryPages.title,
         slug: libraryPages.slug,
         createdBySessionId: libraryPages.createdBySessionId,
-      }).from(libraryPages).where(inArray(libraryPages.createdBySessionId, bounded));
+      }).from(libraryPages).where(combineWithVisibleScope(
+        getCurrentPrincipalOrSystem(),
+        libraryPageScopeColumns,
+        inArray(libraryPages.createdBySessionId, bounded),
+      ));
       const result: Record<string, { id: string; title: string; slug: string }[]> = {};
       for (const page of pages) {
         const sid = page.createdBySessionId!;

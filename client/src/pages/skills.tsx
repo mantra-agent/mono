@@ -78,6 +78,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSkillFailures } from "@/components/skill-failure-indicator";
+import { useAuth } from "@/hooks/use-auth";
 import type {
   SkillWithReferences,
   SkillWriteCategory,
@@ -174,10 +175,14 @@ function SkillTreeRow({
             <DropdownMenuItem onClick={() => { setMenuOpen(false); onExport(); }} data-testid="menu-export-skill">
               <Download className="h-3.5 w-3.5 mr-2" /> Export
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => { setMenuOpen(false); onDelete(); }} className="text-destructive" data-testid="menu-delete-skill">
-              <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
-            </DropdownMenuItem>
+            {skill.scope !== "global" && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => { setMenuOpen(false); onDelete(); }} className="text-destructive" data-testid="menu-delete-skill">
+                  <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -195,8 +200,8 @@ function SkillInlineDetail({ skill }: { skill: SkillWithReferences }) {
         {skill.category && (
           <Badge variant="outline" className="text-xs px-1.5 py-0 h-4 capitalize">{skill.category}</Badge>
         )}
-        {skill.author === "system" && (
-          <span className="inline-flex items-center bg-cat-system/15 text-cat-system-foreground border border-cat-system/30 rounded-sm text-xs font-medium px-2 py-0.5 h-4">built-in</span>
+        {skill.scope === "global" && (
+          <span className="inline-flex items-center bg-cat-system/15 text-cat-system-foreground border border-cat-system/30 rounded-sm text-xs font-medium px-2 py-0.5 h-4">template</span>
         )}
         <span className="text-xs text-muted-foreground">v{skill.version} · {skill.estimatedTokens.toLocaleString()} tokens · {skill.writeCategory}</span>
       </div>
@@ -1350,6 +1355,7 @@ function SkillEditorDialog({
 export function SkillsContent({ embedded }: { embedded?: boolean }) {
   usePageHeader({ title: "Skills", skip: !!embedded });
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState<SkillWithReferences | null>(null);
   const [deletingSkill, setDeletingSkill] = useState<SkillWithReferences | null>(null);
@@ -1361,6 +1367,8 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
 
   const { data: promptModules = [] } = useQuery<PromptModule[]>({
     queryKey: ["/api/prompt-modules"],
+    enabled: hasPermission("build:read"),
+    retry: false,
   });
 
   const hiddenInternalPromptSkillNames = useMemo(() => new Set(

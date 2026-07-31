@@ -16,58 +16,16 @@ import type { AdmissionTier } from "./run-admission";
 import { getSideEffectTier, type SideEffectTier } from "./autonomy-tiers";
 import { isAgentType } from "@shared/instance-config";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
-import { getCurrentPrincipal, runWithPrincipal } from "./principal-context";
-import type { Principal } from "./principal";
+import { getCurrentPrincipal } from "./principal-context";
 import { extractSuccessfulToolInvocations, evaluateDeterministicItem } from "./skill-scoring";
 import type { ChecklistItem } from "@shared/schema";
 
 const logger = createLogger("AutonomousSkillRunner");
 const lifecycleLog = createLogger("AutonomousLifecycle");
 
-// ── Autonomous principal resolution ─────────────────────────────────
-// Every autonomous skill run must execute inside a user principal context.
-// Without this, all scoped writes (sessions, memory, check-ins, thoughts,
-// library pages, etc.) default to the system principal (ownerUserId=null,
-// scope='system') and become invisible to user-scoped reads.
-//
-// This is resolved once and cached for the process lifetime.
-let _cachedAutonomousPrincipal: Principal | null = null;
-
-export async function resolveAutonomousPrincipal(): Promise<Principal> {
-  if (_cachedAutonomousPrincipal) return _cachedAutonomousPrincipal;
-  try {
-    const { resolveUserIdentityFoundation } = await import("./principal");
-    const { getUserEffectivePermissions } = await import("./permissions");
-    const users = await storage.getUsers();
-    const user = users.find(u => u.role === "admin") || users[0];
-    if (!user) {
-      logger.warn("resolveAutonomousPrincipal: no users found, falling back to named system principal");
-      const { createNamedSystemPrincipal } = await import("./principal");
-      return createNamedSystemPrincipal("autonomous-skill-runner");
-    }
-    const foundation = await resolveUserIdentityFoundation(user.id);
-    const permissions = await getUserEffectivePermissions(user.id);
-    _cachedAutonomousPrincipal = {
-      actorType: "user",
-      userId: user.id,
-      accountId: foundation.accountId,
-      role: foundation.role,
-      scopes: ["system:read", "system:write"],
-      permissions,
-      isAdmin: user.role === "admin",
-      impersonation: null,
-      source: "autonomous",
-      visibleVaultIds: user.visibleVaultIds ?? [],
-      activeVaultId: user.activeVaultId ?? null,
-    };
-    logger.log(`resolveAutonomousPrincipal: resolved userId=${user.id} accountId=${foundation.accountId}`);
-    return _cachedAutonomousPrincipal;
-  } catch (err) {
-    logger.error("resolveAutonomousPrincipal failed, falling back to named system principal:", err instanceof Error ? err.message : String(err));
-    const { createNamedSystemPrincipal } = await import("./principal");
-    return createNamedSystemPrincipal("autonomous-skill-runner");
-  }
-}
+// Autonomous Skill entry points must inherit or restore one exact user owner
+// before calling this module. Missing principal context fails closed below;
+// Skill execution never guesses an account or falls back to system authority.
 const treeLog = createLogger("SessionTree");
 const councilLog = createLogger("Council");
 const xMsgLog = createLogger("CrossSessionMsg");
@@ -454,9 +412,16 @@ async function findFailedDeterministicChecks(sessionId: string, skillName: strin
   }
 }
 
+function getSkillRunKey(skillId: string, intentionId?: string): string {
+  const principal = getCurrentPrincipal();
+  if (!principal?.userId || !principal.accountId) {
+    throw new Error("Skill run coordination requires an explicit user principal");
+  }
+  return `${principal.accountId}:${principal.userId}:${intentionId || skillId}`;
+}
+
 export function isDuplicateSkillRun(skillId: string, intentionId?: string): boolean {
-  const key = intentionId || skillId;
-  return activeSkillRuns.has(key);
+  return activeSkillRuns.has(getSkillRunKey(skillId, intentionId));
 }
 
 /**
@@ -469,19 +434,14 @@ export function isDuplicateSkillRun(skillId: string, intentionId?: string): bool
  * preventing manual + timer-triggered runs from racing.
  */
 export function tryClaimSkillRun(skillId: string, intentionId?: string): boolean {
-  const key = intentionId || skillId;
+  const key = getSkillRunKey(skillId, intentionId);
   if (activeSkillRuns.has(key)) return false;
   activeSkillRuns.add(key);
   return true;
 }
 
 export function releaseSkillRun(skillId: string, intentionId?: string): void {
-  const key = intentionId || skillId;
-  activeSkillRuns.delete(key);
-}
-
-function getSkillRunKey(skillId: string, intentionId?: string): string {
-  return intentionId || skillId;
+  activeSkillRuns.delete(getSkillRunKey(skillId, intentionId));
 }
 
 export function getRegisteredSkillIds(): string[] {
@@ -574,8 +534,7 @@ export async function executeAutonomousSkillRun(
   // already have a principal (e.g. HTTP routes via auth middleware,
   // child sessions inheriting parent context) pass through unchanged.
   if (!getCurrentPrincipal()) {
-    const principal = await resolveAutonomousPrincipal();
-    return runWithPrincipal(principal, () => executeAutonomousSkillRun(skillId, options));
+    throw new Error("Autonomous Skill execution requires an explicit owning principal");
   }
 
   // ── Skillless execution path ────────────────────────────────────────
@@ -664,7 +623,7 @@ export async function executeAutonomousSkillRun(
   // run of the same skill is relying on for dedupe.
   let didRegisterActiveRun = false;
   if (!isSkillless && !options.parentSessionId) {
-    activeSkillRuns.add(skillId!);
+    activeSkillRuns.add(getSkillRunKey(skillId!));
     didRegisterActiveRun = true;
   }
   const startTime = Date.now();
@@ -790,7 +749,7 @@ export async function executeAutonomousSkillRun(
           },
     );
   } catch (err: unknown) {
-    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(skillId);
+    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(skillId));
     const errDetail = err instanceof Error ? (err.stack || err.message) : String(err);
     logger.error(`[SkillChat] phase=session-create FAILED for skill "${config.label}": ${errDetail}`);
     throw new Error(`phase=session-create FAILED for skill "${config.label}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
@@ -1075,7 +1034,7 @@ export async function executeAutonomousSkillRun(
 
     return { sessionId, status: "failed", error: errMsg, durationMs };
   } finally {
-    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(skillId);
+    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(skillId));
     // Finalize with SessionManager so WS subscribers see the session end
     try {
       const { sessionManager } = await import("./session-manager");
@@ -1385,8 +1344,7 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
   // executeAutonomousSkillRun does. Callers that already hold a principal
   // (interactive parents inheriting context) pass through unchanged.
   if (!getCurrentPrincipal()) {
-    const principal = await resolveAutonomousPrincipal();
-    return runWithPrincipal(principal, () => triggerResponseOnChildSession(sessionId));
+    throw new Error(`Child session response requires the originating user principal: ${sessionId}`);
   }
 
   // Gate: if the session already has an active agent run, do nothing —
