@@ -40,15 +40,29 @@ function isDurableSessionSnapshot(value: unknown): value is DurableSessionSnapsh
     Array.isArray(candidate.messages);
 }
 
-function preserveNewestDurableSessionSnapshot(oldData: unknown, newData: unknown): unknown {
+function preserveCoherentDurableSessionSnapshot(oldData: unknown, newData: unknown): unknown {
   if (
-    isDurableSessionSnapshot(oldData) &&
-    isDurableSessionSnapshot(newData) &&
-    oldData.id === newData.id &&
-    newData.durableRevision < oldData.durableRevision
+    !isDurableSessionSnapshot(oldData) ||
+    !isDurableSessionSnapshot(newData) ||
+    oldData.id !== newData.id
   ) {
+    return newData;
+  }
+
+  if (newData.durableRevision < oldData.durableRevision) {
     return oldData;
   }
+
+  if (
+    newData.durableRevision > oldData.durableRevision &&
+    newData.messages === oldData.messages
+  ) {
+    return {
+      ...newData,
+      durableRevision: oldData.durableRevision,
+    };
+  }
+
   return newData;
 }
 
@@ -78,7 +92,7 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: true,
       staleTime: 0,
       retry: false,
-      structuralSharing: preserveNewestDurableSessionSnapshot,
+      structuralSharing: preserveCoherentDurableSessionSnapshot,
     },
     mutations: {
       retry: false,
