@@ -31,6 +31,7 @@ import {
   User,
   Pin,
   MessageCircleQuestion,
+  MailOpen,
   MessageSquare,
   Mic,
   Radio,
@@ -111,7 +112,7 @@ export function groupSessions(sessions: ChatSession[], opts?: { liveVoiceConvers
       live.push(conv);
       continue;
     }
-    if (conv.awaitingQuestionResponse) {
+    if (conv.awaitingReview || conv.awaitingQuestionResponse) {
       review.push(conv);
       continue;
     }
@@ -277,11 +278,13 @@ export function ConversationItem({
   // Build status text class — error/active are semantic states; unread uses foreground.
   // Read/already-viewed sessions are muted, including pinned sessions.
   const isAwaitingQuestion = !!conv.awaitingQuestionResponse;
+  const isAwaitingEmailReview = !!conv.reviewKinds?.some((kind) => kind !== "question");
+  const isAwaitingReview = !!conv.awaitingReview || isAwaitingQuestion;
   const statusTextClass = conv.errorSeverity === "error" && !isLive
     ? "text-error"
     : isLive
       ? "text-active font-medium motion-safe:animate-pulse"
-      : isAwaitingQuestion
+      : isAwaitingReview
         ? "text-active font-medium"
         : conv.hasActiveDescendant || conv.hasActivePlan
           ? "text-active font-medium motion-safe:animate-pulse"
@@ -303,7 +306,7 @@ export function ConversationItem({
   const isWaiting = conv.status === "waiting";
   const isMeeting = conv.type === "meeting";
   const isVoice = conv.type === "voice" || (isTransportLive && !isMeeting);
-  const isSpinning = !isWaiting && !isMeeting && !isVoice && !isAwaitingQuestion && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
+  const isSpinning = !isWaiting && !isMeeting && !isVoice && !isAwaitingReview && (isLive || !!conv.hasActiveDescendant || !!conv.hasActivePlan);
   const showPinIcon = (isPinned && !isSpinning && !isWaiting) || iconHovered;
   const isIconInteractive = iconHovered || (isPinned && !isSpinning);
 
@@ -320,6 +323,9 @@ export function ConversationItem({
     }
     if (isAwaitingQuestion && !iconHovered && !isLive) {
       return <MessageCircleQuestion className="h-3.5 w-3.5 shrink-0 text-active" data-testid={`icon-conversation-question-${conv.id}`} />;
+    }
+    if (isAwaitingEmailReview && !iconHovered && !isLive) {
+      return <MailOpen className="h-3.5 w-3.5 shrink-0 text-active" data-testid={`icon-conversation-email-review-${conv.id}`} />;
     }
     if (isSpinning && !iconHovered) {
       return <ActiveStatusSpinner className="h-3.5 w-3.5" />;
