@@ -15,11 +15,16 @@ export const PERMISSIONS = [
   "system:write",
   "users:read",
   "users:write",
+  "mods:read",
+  "mods:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
 
-const USER_BASE_PERMISSIONS: Permission[] = [];
+// Account owners receive Mod catalog/management permissions by default (spec
+// §7.1). Every user owns their personal account, so these are base user grants;
+// delegated authority still narrows via user_permissions overrides.
+const USER_BASE_PERMISSIONS: Permission[] = ["mods:read", "mods:manage"];
 const ADMIN_BASE_PERMISSIONS: Permission[] = [...PERMISSIONS];
 
 function isPermission(value: string): value is Permission {

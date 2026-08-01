@@ -91,7 +91,7 @@ export function createSystemPrincipal(scopes: string[] = ["system:read", "system
     accountId: null,
     role: "system",
     scopes: [...new Set(scopes)],
-    permissions: ["build:read", "build:write", "system:read", "system:write", "users:read", "users:write"],
+    permissions: ["build:read", "build:write", "system:read", "system:write", "users:read", "users:write", "mods:read", "mods:manage"],
     isAdmin: true,
     impersonation: null,
     source: "system",
