@@ -59,15 +59,25 @@ export function appendThinking(state: StreamingContent, content: string, ts?: nu
 // ---------------------------------------------------------------------------
 
 export function finishThinking(state: StreamingContent): StreamingContent {
+  // Preserve object identity for unchanged segments so incremental broadcast
+  // diffing (reference equality) reports only the segments that actually
+  // changed. Behaviour is identical to a full remap.
+  let changed = false;
   const segments = state.segments.map(seg => {
     if (seg.type !== "timeline") return seg;
-    return {
-      ...seg,
-      steps: seg.steps.map(s =>
-        s.type === "thinking" && s.status === "active" ? { ...s, status: "done" as const } : s
-      ),
-    };
+    let segChanged = false;
+    const steps = seg.steps.map(s => {
+      if (s.type === "thinking" && s.status === "active") {
+        segChanged = true;
+        return { ...s, status: "done" as const };
+      }
+      return s;
+    });
+    if (!segChanged) return seg;
+    changed = true;
+    return { ...seg, steps };
   });
+  if (!changed) return state;
   return { ...state, segments };
 }
 
@@ -150,25 +160,27 @@ export function resolveToolResult(
   let foundMatch = false;
   const segments = state.segments.map(seg => {
     if (seg.type !== "timeline") return seg;
-    return {
-      ...seg,
-      steps: seg.steps.map(s => {
-        if (s.type !== "tool_call" || s.status !== "active") return s;
-        if (toolCallId && s.toolCallId !== toolCallId) return s;
-        foundMatch = true;
-        const endedAt = typeof ts === "number" ? ts : Date.now();
-        return {
-          ...s,
-          ...(args ? { arguments: args } : {}),
-          result,
-          error,
-          status: error ? "error" as const : "done" as const,
-          endedAt,
-          startedAt: s.timestamp,
-          elapsedMs: Math.max(0, endedAt - s.timestamp),
-        };
-      }),
-    };
+    // Preserve object identity for segments with no matching active tool call so
+    // incremental broadcast diffing reports only the segment that changed.
+    let segChanged = false;
+    const steps = seg.steps.map(s => {
+      if (s.type !== "tool_call" || s.status !== "active") return s;
+      if (toolCallId && s.toolCallId !== toolCallId) return s;
+      foundMatch = true;
+      segChanged = true;
+      const endedAt = typeof ts === "number" ? ts : Date.now();
+      return {
+        ...s,
+        ...(args ? { arguments: args } : {}),
+        result,
+        error,
+        status: error ? "error" as const : "done" as const,
+        endedAt,
+        startedAt: s.timestamp,
+        elapsedMs: Math.max(0, endedAt - s.timestamp),
+      };
+    });
+    return segChanged ? { ...seg, steps } : seg;
   });
 
   if (foundMatch && state.source !== null) {

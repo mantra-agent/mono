@@ -358,7 +358,7 @@ Meeting barge-in is driven by raw per-frame participant RMS energy (`observeMeet
 
 ## Session Streaming
 
-Server-authoritative streaming state for chat sessions. The server maintains a `StreamingContent` state object per active session. Clients subscribe via WebSocket and receive a snapshot + deltas. No client-side reducers or reconciliation — the server is the single source of truth.
+Server-authoritative streaming state for chat sessions. The server maintains a `StreamingContent` state object per active session. Clients subscribe via WebSocket and receive a snapshot + deltas. The server remains the single source of truth and owns all domain reducers; the client runs no domain reducer. Protocol-v2 clients apply an opaque server-computed structural segment patch (truncate + index overwrite + scalar merge) over the last snapshot/patch baseline — reconstruction, not domain reduction — gap-checked against a contiguous `patchSeq` with snapshot resync on mismatch.
 
 ### Key Files
 - `session-manager.ts` — `SessionManager` singleton. Maintains `Map<sessionId, LiveSession>` with streaming state, subscriber sets, and run status. Provides `applyEvent()` to mutate state and broadcast deltas, `subscribe()`/`unsubscribe()` for WS clients
@@ -370,7 +370,7 @@ Server-authoritative streaming state for chat sessions. The server maintains a `
 ### WebSocket Protocol
 - `session.subscribe { sessionId }` — Client subscribes to a session. Server replies with `session.snapshot`
 - `session.snapshot { sessionId, content: StreamingContent, status }` — Full state snapshot on subscribe or reconnect
-- `session.delta { sessionId, streamingContent, status }` — Incremental state update during streaming
+- `session.delta` — Incremental state update during streaming. Capability-negotiated: sockets that advertise `supportsDelta: true` on `session.subscribe` receive a protocol-v2 segment patch `{ segmentPatch: { length, set:[{index,segment}] }, scalars, patchSeq, basePatchSeq, status, ... }`; every other socket receives the legacy full payload `{ streamingContent, status, ... }`. `broadcastDelta` computes the patch by reference-diffing current `StreamingContent.segments` against the exact segments last broadcast (`LiveSession.lastBroadcast`), so it is usually one changed segment; correctness never depends on diff minimality. `patchSeq` is contiguous per session — a client seeing a non-contiguous `basePatchSeq` resubscribes for a fresh snapshot. Snapshots always carry full `streamingContent` plus the `patchSeq` baseline. `SESSION_DELTA_PATCH_DISABLED=true|1` forces full snapshots to every socket (rollback).
 - `session.unsubscribe { sessionId }` — Client unsubscribes
 - `/ws/events` upgrades require an authenticated user Principal. Generic events carry one audience discriminant (`user`, `system`, or `global`); both live and replay delivery use the same visibility predicate. `session.subscribe` must verify the requested session through principal-scoped storage before touching `SessionManager`.
 - Event reconnect uses `events.resume` with a process-local event ID cursor. Replay is principal-scoped, bounded to 200 buffered events, and filtered by canonical payload identity. A restart invalidates the cursor; clients then recover from canonical session state. Replayed records use the ordinary `type: "event"` envelope so live and replay consumers share one reducer.

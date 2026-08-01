@@ -71,6 +71,20 @@ export interface StreamingContent {
   totalTokens?: number | null;
 }
 
+/**
+ * Incremental segment patch for the protocol-v2 `session.delta`. The server
+ * sends only the segments that changed versus the exact state it last
+ * broadcast, plus the authoritative final length. The client reconstructs the
+ * full StreamingContent from its held baseline. Correctness never depends on
+ * minimality: an over-broad `set` still reconstructs identical state.
+ */
+export interface SegmentPatch {
+  /** Authoritative final segment count; the client truncates to this length. */
+  length: number;
+  /** Full replacement segments by index — only changed or newly added indices. */
+  set: { index: number; segment: MessageSegment }[];
+}
+
 export const initialStreamingContent: StreamingContent = {
   segments: [],
   source: null,

@@ -19,7 +19,7 @@ import {
   resolveSystemStep,
   settleStream,
 } from "./streaming-reducers";
-import type { ExecutionStep, StreamingContent, StreamingSource } from "@shared/streaming-types";
+import type { ExecutionStep, StreamingContent, StreamingSource, SegmentPatch, MessageSegment } from "@shared/streaming-types";
 import { initialStreamingContent } from "@shared/streaming-types";
 
 const log = createLogger("session-manager");
@@ -45,6 +45,10 @@ interface LiveSession {
   runGeneration: number;
   durableRevision: number | null;
   handoffPhase: DurableHandoffPhase;
+  /** Contiguous per-session sequence for incremental segment patches (protocol v2). */
+  patchSeq: number;
+  /** Exact StreamingContent last broadcast; baseline for the next segment patch. */
+  lastBroadcast: StreamingContent | null;
 }
 
 export interface SessionSubscriberIdentity {
@@ -112,6 +116,7 @@ export interface SessionSnapshot {
   visibleAssistantActivity: VisibleAssistantActivity;
   durableRevision: number | null;
   handoffPhase: DurableHandoffPhase;
+  patchSeq: number;
 }
 
 /** Delta broadcast to subscribers after each event. */
@@ -173,6 +178,32 @@ function nextEventSeq(prior: number): number {
   return Math.max(Date.now(), prior + 1);
 }
 
+/**
+ * Incremental segment-patch protocol (v2). Disabled via
+ * SESSION_DELTA_PATCH_DISABLED=true|1 for a fast rollback to full snapshots.
+ */
+const PATCH_PROTOCOL_ENABLED =
+  process.env.SESSION_DELTA_PATCH_DISABLED !== "true" &&
+  process.env.SESSION_DELTA_PATCH_DISABLED !== "1";
+
+/**
+ * Compute the minimal segment patch from the previously broadcast segments to
+ * the current ones. Segments keep object identity across reducer application
+ * for unchanged entries, so reference inequality identifies exactly what
+ * changed. Any index at or beyond the previous length is treated as new.
+ * Correctness does not depend on minimality — an over-broad set reconstructs
+ * the identical array.
+ */
+function computeSegmentPatch(prev: MessageSegment[], cur: MessageSegment[]): SegmentPatch {
+  const set: { index: number; segment: MessageSegment }[] = [];
+  for (let i = 0; i < cur.length; i++) {
+    if (i >= prev.length || prev[i] !== cur[i]) {
+      set.push({ index: i, segment: cur[i] });
+    }
+  }
+  return { length: cur.length, set };
+}
+
 // ---------------------------------------------------------------------------
 // SessionManager
 // ---------------------------------------------------------------------------
@@ -185,6 +216,12 @@ class SessionManager {
    * removing one owner must not detach the others.
    */
   private subscriptionOwners = new Map<string, Map<WebSocket, Map<string, SessionSubscriberIdentity>>>();
+  /**
+   * Per-socket wire protocol. A socket that advertised `supportsDelta` receives
+   * incremental segment patches; every other socket keeps receiving full
+   * snapshots. Enables mixed old/new clients during rolling deploys.
+   */
+  private socketProtocol = new WeakMap<WebSocket, "delta" | "snapshot">();
   private sweepTimer: ReturnType<typeof setInterval>;
 
   constructor() {
@@ -221,7 +258,10 @@ class SessionManager {
       runGeneration: (existing?.runGeneration ?? 0) + 1,
       durableRevision: null,
       handoffPhase: "live",
+      patchSeq: 0,
+      lastBroadcast: null,
     };
+    session.lastBroadcast = session.streamingContent;
     this.sessions.set(sessionId, session);
 
     // A new run generation is authoritative immediately. Push its initial
@@ -238,6 +278,7 @@ class SessionManager {
         subscriberCount: session.subscribers.size,
         durableRevision: session.durableRevision,
         handoffPhase: session.handoffPhase,
+        patchSeq: session.patchSeq,
         ...runtimeProjection(session),
       });
       for (const ws of session.subscribers) {
@@ -464,6 +505,10 @@ class SessionManager {
 
   // ── Subscription ──────────────────────────────────────────────────
 
+  setSocketProtocol(ws: WebSocket, protocol: "delta" | "snapshot"): void {
+    this.socketProtocol.set(ws, protocol);
+  }
+
   subscribe(sessionId: string, ws: WebSocket, identity: SessionSubscriberIdentity = {}): SessionSnapshot | null {
     const ownerId = identity.handlerId || "connection";
     let sockets = this.subscriptionOwners.get(sessionId);
@@ -495,6 +540,7 @@ class SessionManager {
       status: session.status,
       eventSeq: session.eventSeq,
       subscriberCount: session.subscribers.size,
+      patchSeq: session.patchSeq,
       ...runtimeProjection(session),
     };
   }
@@ -664,6 +710,7 @@ class SessionManager {
       subscriberCount: session.subscribers.size,
       durableRevision: session.durableRevision,
       handoffPhase: session.handoffPhase,
+      patchSeq: session.patchSeq,
       ...runtimeProjection(session),
     };
   }
@@ -673,11 +720,21 @@ class SessionManager {
   private broadcastDelta(session: LiveSession, delta: SessionDelta): void {
     session.eventSeq = nextEventSeq(session.eventSeq);
     const eventSeq = session.eventSeq;
-    const payload = JSON.stringify({
-      type: "session.delta",
+
+    // Incremental patch (protocol v2): describe only the segments that changed
+    // versus the exact state last broadcast to this session. The full-snapshot
+    // payload remains available for legacy sockets and is the reconnect
+    // baseline. patchSeq is contiguous so a client can detect a dropped patch
+    // and resubscribe for a fresh snapshot.
+    const basePatchSeq = session.patchSeq;
+    const nextPatchSeq = basePatchSeq + 1;
+    session.patchSeq = nextPatchSeq;
+    const baseline = session.lastBroadcast;
+    session.lastBroadcast = delta.streamingContent;
+
+    const common = {
       sessionId: delta.sessionId,
       eventType: delta.type,
-      streamingContent: delta.streamingContent,
       status: delta.status,
       eventSeq,
       subscriberCount: session.subscribers.size,
@@ -686,14 +743,46 @@ class SessionManager {
       visibleAssistantActivity: delta.visibleAssistantActivity,
       durableRevision: delta.durableRevision,
       handoffPhase: delta.handoffPhase,
-    });
+    };
+
+    let patchPayload: string | null = null;
+    let fullPayload: string | null = null;
+    const getPatchPayload = (): string => {
+      if (patchPayload === null) {
+        const { segments, ...scalars } = delta.streamingContent;
+        const segmentPatch: SegmentPatch = baseline
+          ? computeSegmentPatch(baseline.segments, segments)
+          : { length: segments.length, set: segments.map((segment, index) => ({ index, segment })) };
+        patchPayload = JSON.stringify({
+          type: "session.delta",
+          ...common,
+          patchSeq: nextPatchSeq,
+          basePatchSeq,
+          scalars,
+          segmentPatch,
+        });
+      }
+      return patchPayload;
+    };
+    const getFullPayload = (): string => {
+      if (fullPayload === null) {
+        fullPayload = JSON.stringify({
+          type: "session.delta",
+          ...common,
+          streamingContent: delta.streamingContent,
+        });
+      }
+      return fullPayload;
+    };
+
     const dead: WebSocket[] = [];
-    log.verbose(() => `SESSION:DELTA:BROADCAST session=${session.sessionId} seq=${eventSeq} type=${delta.type} source=${delta.streamingContent.source} segments=${delta.streamingContent.segments.length} subs=${session.subscribers.size}`);
+    log.verbose(() => `SESSION:DELTA:BROADCAST session=${session.sessionId} seq=${eventSeq} patchSeq=${nextPatchSeq} type=${delta.type} source=${delta.streamingContent.source} segments=${delta.streamingContent.segments.length} subs=${session.subscribers.size}`);
 
     for (const ws of session.subscribers) {
       try {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(payload);
+          const usePatch = PATCH_PROTOCOL_ENABLED && this.socketProtocol.get(ws) === "delta";
+          ws.send(usePatch ? getPatchPayload() : getFullPayload());
         } else {
           dead.push(ws);
         }

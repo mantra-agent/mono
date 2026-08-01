@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import type { StreamingContent } from "@shared/streaming-types";
+import type { StreamingContent, SegmentPatch, MessageSegment } from "@shared/streaming-types";
 import { initialStreamingContent } from "@shared/streaming-types";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import { createLogger } from "@/lib/logger";
@@ -39,6 +39,8 @@ export interface SessionStreamState {
   eventSeq?: number;
   durableRevision: number | null;
   handoffPhase: DurableHandoffPhase;
+  /** Client's current segment-patch baseline (protocol v2); null when unknown. */
+  patchSeq: number | null;
 }
 
 export type SessionStreamMap = Record<string, SessionStreamState>;
@@ -58,6 +60,10 @@ interface SessionMessage {
   visibleAssistantActivity?: VisibleAssistantActivity;
   durableRevision?: number | null;
   handoffPhase?: DurableHandoffPhase;
+  patchSeq?: number;
+  basePatchSeq?: number;
+  scalars?: Partial<StreamingContent>;
+  segmentPatch?: SegmentPatch;
 }
 
 export interface SessionSubscriptionOptions {
@@ -74,6 +80,7 @@ const idleStreamState: SessionStreamState = {
   visibleAssistantActivity: "none",
   durableRevision: null,
   handoffPhase: "live",
+  patchSeq: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -92,6 +99,19 @@ function isSessionMessage(msg: unknown): msg is SessionMessage {
 
 function normalizeSessionIds(sessionIds: readonly (string | null | undefined)[]): string[] {
   return Array.from(new Set(sessionIds.filter((id): id is string => Boolean(id)))).sort();
+}
+
+/**
+ * Apply a protocol-v2 segment patch to a baseline segment array. Truncate to the
+ * authoritative final length, then overwrite/extend the changed indices. The
+ * server guarantees every new index is present in `set`, so no holes remain.
+ */
+function applySegmentPatch(base: MessageSegment[], patch: SegmentPatch): MessageSegment[] {
+  const next = base.slice(0, patch.length);
+  for (const entry of patch.set) {
+    next[entry.index] = entry.segment;
+  }
+  return next;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +139,10 @@ export function useSessionSubscriptions(
   const subscribedIdsRef = useRef<Set<string>>(new Set());
   const requestedIdsRef = useRef<Set<string>>(new Set());
   const wsConnectedRef = useRef(false);
+  // Per-session contiguous patch baseline + last full content, read synchronously
+  // for gap detection and patch application (protocol v2).
+  const patchSeqRef = useRef<Record<string, number | null>>({});
+  const latestStreamRef = useRef<Record<string, StreamingContent | null>>({});
   const [streams, setStreams] = useState<SessionStreamMap>({});
   const [wsConnected, setWsConnected] = useState(false);
 
@@ -152,7 +176,7 @@ export function useSessionSubscriptions(
     requestedIdsRef.current.add(id);
     const currentActiveSession = activeSessionRef.current;
     log.debug("STREAM:SUBSCRIBE", { handlerId, owner, tabId, activeSession: currentActiveSession, sessionId: id });
-    ws.send({ type: "session.subscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession });
+    ws.send({ type: "session.subscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession, supportsDelta: true });
   }, [handlerId, owner, tabId]);
 
   const sendUnsubscribe = useCallback((id: string) => {
@@ -163,6 +187,16 @@ export function useSessionSubscriptions(
     log.debug("STREAM:UNSUBSCRIBE", { handlerId, owner, tabId, activeSession: currentActiveSession, sessionId: id });
     ws.send({ type: "session.unsubscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession });
   }, [handlerId, owner, tabId]);
+
+  // A dropped or out-of-baseline patch means the client's baseline is stale.
+  // Reset it and force a fresh subscribe so the server replies with a full
+  // snapshot that re-establishes the baseline. Existing state is retained until
+  // that snapshot arrives.
+  const forceResync = useCallback((id: string) => {
+    patchSeqRef.current[id] = null;
+    requestedIdsRef.current.delete(id);
+    sendSubscribe(id);
+  }, [sendSubscribe]);
 
   const upsertStream = useCallback((sessionId: string, patch: Partial<SessionStreamState>) => {
     setStreams((prev) => {
@@ -223,6 +257,8 @@ export function useSessionSubscriptions(
       // The server snapshot is authoritative, including its settled terminal
       // payload. The transcript handoff releases it only after durable finality.
       markChatStreamProgress(msg.sessionId, streamingContentHasText(content), status);
+      patchSeqRef.current[msg.sessionId] = msg.patchSeq ?? null;
+      latestStreamRef.current[msg.sessionId] = content;
       upsertStream(msg.sessionId, {
         streamingContent: content,
         status,
@@ -233,6 +269,7 @@ export function useSessionSubscriptions(
         eventSeq: msg.eventSeq,
         durableRevision: msg.durableRevision ?? null,
         handoffPhase: msg.handoffPhase ?? "live",
+        patchSeq: msg.patchSeq ?? null,
       });
       return;
     }
@@ -240,22 +277,44 @@ export function useSessionSubscriptions(
     if (msg.type === "session.delta") {
       const status = msg.status as SessionStatus | undefined;
       const serverStreaming = status === undefined || status === "streaming";
-      const content = msg.streamingContent ?? initialStreamingContent;
-      log.verbose(() => `DELTA:RECEIVE session=${msg.sessionId} status=${status ?? "streaming"} segments=${content?.segments.length ?? 0}`);
+
+      // Protocol v2: an incremental segment patch. Reconstruct the full
+      // StreamingContent from the baseline the client already holds. A missing
+      // baseline or non-contiguous patch sequence means a dropped patch — drop
+      // this one and resubscribe for a fresh snapshot rather than corrupt state.
+      let content: StreamingContent;
+      if (msg.segmentPatch) {
+        const currentSeq = patchSeqRef.current[msg.sessionId] ?? null;
+        const base = latestStreamRef.current[msg.sessionId];
+        if (!base || currentSeq === null || msg.basePatchSeq !== currentSeq) {
+          log.debug("STREAM:PATCH_GAP_RESYNC", { sessionId: msg.sessionId, basePatchSeq: msg.basePatchSeq, currentSeq });
+          forceResync(msg.sessionId);
+          return;
+        }
+        content = { ...base, ...(msg.scalars ?? {}), segments: applySegmentPatch(base.segments, msg.segmentPatch) };
+        patchSeqRef.current[msg.sessionId] = msg.patchSeq ?? null;
+      } else {
+        content = msg.streamingContent ?? initialStreamingContent;
+        if (msg.patchSeq !== undefined) patchSeqRef.current[msg.sessionId] = msg.patchSeq;
+      }
+      latestStreamRef.current[msg.sessionId] = content;
+
+      log.verbose(() => `DELTA:RECEIVE session=${msg.sessionId} status=${status ?? "streaming"} segments=${content.segments.length}`);
       markChatStreamProgress(msg.sessionId, streamingContentHasText(content), status);
       const patch: Partial<SessionStreamState> = {};
-      if (content) patch.streamingContent = content;
+      patch.streamingContent = content;
       if (status) patch.status = status;
       patch.updatedAt = Date.now();
       patch.runActive = msg.runActive ?? serverStreaming;
       patch.canStop = msg.canStop ?? serverStreaming;
       patch.visibleAssistantActivity = msg.visibleAssistantActivity ?? (serverStreaming ? "thinking" : "none");
       patch.eventSeq = msg.eventSeq;
+      if (msg.patchSeq !== undefined) patch.patchSeq = msg.patchSeq;
       if (msg.durableRevision !== undefined) patch.durableRevision = msg.durableRevision;
       if (msg.handoffPhase !== undefined) patch.handoffPhase = msg.handoffPhase;
       upsertStream(msg.sessionId, patch);
     }
-  }, [handlerId, owner, tabId, upsertStream]);
+  }, [handlerId, owner, tabId, upsertStream, forceResync]);
 
   const refreshSubscriptions = useCallback((reason: string) => {
     const ids = Array.from(subscribedIdsRef.current);
@@ -271,6 +330,7 @@ export function useSessionSubscriptions(
       sessionCount: ids.length,
     });
     requestedIdsRef.current.clear();
+    for (const id of ids) patchSeqRef.current[id] = null;
     ids.forEach(sendSubscribe);
   }, [handlerId, owner, sendSubscribe, tabId]);
 
@@ -349,6 +409,8 @@ export function useSessionSubscriptions(
       if (!nextIds.has(prevId)) {
         sendUnsubscribe(prevId);
         prevIds.delete(prevId);
+        delete patchSeqRef.current[prevId];
+        delete latestStreamRef.current[prevId];
       }
     }
 
