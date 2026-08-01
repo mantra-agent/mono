@@ -106,7 +106,7 @@ import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 /** Filter execution steps by visibility layer. */
 export function filterStepsByLayer(
   steps: ExecutionStep[],
-  layer: 1 | 2 | 3 | 4,
+  layer: VisibilityLayer,
   isActiveSession?: boolean,
 ): ExecutionStep[] {
   if (layer === 4) return steps;
@@ -156,7 +156,7 @@ export function filterStepsByLayer(
     return true;
   });
 }
-import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
+import { useVisibilityLayer, type VisibilityLayer } from "@/hooks/use-visibility-layer";
 import { useToast } from "@/hooks/use-toast";
 import { ReferenceText } from "@/components/references/reference-text";
 import type { ReferenceSurface } from "@/components/references/reference-renderer";
@@ -620,7 +620,7 @@ function ToolStepRow({
   step: ExecutionStep;
   iconOverrides?: Record<string, string>;
   summaryOnly?: boolean;
-  layer?: 1 | 2 | 3 | 4;
+  layer?: VisibilityLayer;
   children?: ExecutionStep[];
   depth?: number;
 }) {
@@ -1236,7 +1236,7 @@ function SystemStepRow({
   depth = 0,
 }: {
   step: ExecutionStep;
-  layer?: 1 | 2 | 3 | 4;
+  layer?: VisibilityLayer;
   children?: ExecutionStep[];
   parentStartedAt?: number;
   depth?: number;
@@ -1502,7 +1502,7 @@ function DiagnosticStepTree({
   step: ExecutionStep;
   allSteps: ExecutionStep[];
   visibleSteps: ExecutionStep[];
-  layer: 1 | 2 | 3 | 4;
+  layer: VisibilityLayer;
   iconOverrides?: Record<string, string>;
   summaryOnly?: boolean;
   depth?: number;
@@ -1559,7 +1559,7 @@ export function ExecutionTimeline({
   isStreaming: boolean;
   autoCollapse?: boolean;
   model?: string | null;
-  layer?: 1 | 2 | 3 | 4;
+  layer?: VisibilityLayer;
 }) {
   const { data: iconOverrides } = useQuery<Record<string, string>>({
     queryKey: ["/api/tool-icons"],
@@ -2644,7 +2644,7 @@ export const ChatTurn = memo(function ChatTurn({
     staleTime: 60_000,
   });
   const shouldStripTags =
-    !isUser && !isSystemPrompt && (layer === 1 || !tagPref?.showExpressionTags);
+    !isUser && !isSystemPrompt && (layer <= 1 || !tagPref?.showExpressionTags);
   const segments: MessageSegment[] =
     hasStreamingSegments && streaming
       ? streaming.segments
@@ -2775,6 +2775,19 @@ export const ChatTurn = memo(function ChatTurn({
       hasStreamingSegments,
     };
   });
+
+  if (layer === 0 && (isSystemPrompt || message.model === "compaction-marker")) return null;
+
+  const zeroHasVisibleSurface =
+    layer > 0 ||
+    isUser ||
+    isActiveStreaming ||
+    segments.some((segment) => segment.type === "content" && segment.content.trim().length > 0) ||
+    failedGmailDraftSteps.length > 0 ||
+    questionPrompts.length > 0 ||
+    Boolean(message.isError);
+
+  if (!zeroHasVisibleSurface) return null;
 
   if (message.model === "compaction-marker") {
     return (
@@ -2940,10 +2953,10 @@ export const ChatTurn = memo(function ChatTurn({
                 </div>
               )
             )}
-            {unpromotedDraftIds.map((id) => (
+            {layer > 0 && unpromotedDraftIds.map((id) => (
               <EmailDraftWidget key={`tool-draft-${id}`} draftId={id} />
             ))}
-            {layer === 1 && failedGmailDraftSteps.map((step) => (
+            {layer <= 1 && failedGmailDraftSteps.map((step) => (
               <GmailDraftFailureNotice key={`gmail-draft-error-${step.id}`} step={step} />
             ))}
             {questionPrompts
@@ -2960,7 +2973,7 @@ export const ChatTurn = memo(function ChatTurn({
                   onCancel={onQuestionCancel}
                 />
               ))}
-            {planWidgetIds.map((id) => (
+            {layer > 0 && planWidgetIds.map((id) => (
               <InlinePlanWidget
                 key={`tool-plan-${id}`}
                 planId={id}
@@ -2970,7 +2983,7 @@ export const ChatTurn = memo(function ChatTurn({
                 sessionStreams={sessionStreams}
               />
             ))}
-            {workflowWidgetIds.map((id) => (
+            {layer > 0 && workflowWidgetIds.map((id) => (
               <InlineWorkflowWidget
                 key={`tool-workflow-${id}`}
                 workflowId={id}

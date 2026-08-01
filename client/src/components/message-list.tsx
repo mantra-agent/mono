@@ -395,8 +395,10 @@ export function MessageList({
     // chat message carries real content and still renders normally.
     if (msg.questionCancellation && !(msg.content && msg.content.trim())) continue;
     if (msg.role === "assistant" && !msg.id.startsWith("draft-") && !hasRenderableAssistantPayload(msg)) continue;
+    if (layer === 0 && msg.role === "system_notice") continue;
     if (msg.role === "cross_session" && isOutgoingChildMessage(msg, activeSession)) continue;
     if (msg.role === "cross_session" && layer < 2) continue;
+    if (layer === 0 && msg.role === "child_session_block") continue;
     if (msg.role === "child_session_block" && hasChildSessionId(msg.childSession)) {
       if (isPlanOwnedChildBlock(msg.childSession) || isWorkflowOwnedChildBlock(msg.childSession)) continue;
       if (latestPersistedChildMessageId.get(msg.childSession.childSessionId) !== msg.id) continue;
@@ -417,7 +419,7 @@ export function MessageList({
   for (const vt of visibleVoiceTranscript) {
     items.push({ kind: "voice_transcript", entry: vt.entry, index: vt.index, ts: vt.ts });
   }
-  for (const lc of childBlocks) {
+  for (const lc of layer === 0 ? [] : childBlocks) {
     if (!hasChildSessionId(lc.meta)) {
       log.warn("Skipping malformed live child session block", { activeSession, block: lc.meta });
       continue;
@@ -437,7 +439,7 @@ export function MessageList({
   // Insert orphaned plan widgets at the timestamp of the earliest child block
   // for each plan. These plans have child_session_blocks but no matching
   // tool-call-based widget in any assistant message.
-  for (const planId of orphanedPlanIds) {
+  for (const planId of layer === 0 ? [] : orphanedPlanIds) {
     let earliestTs = Infinity;
     for (const msg of messages) {
       if (
