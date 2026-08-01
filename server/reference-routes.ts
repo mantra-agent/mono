@@ -1,239 +1,52 @@
 import type { Express } from "express";
 import { requireAuth } from "./auth";
-import { createLogger } from "./log";
-import { goalsService } from "./goals-service";
-import { peopleStorage } from "./people-storage";
-import { companyStorage } from "./company-storage";
-import { fileTaskStorage } from "./file-storage/tasks";
-import { fileProjectStorage } from "./file-storage/projects";
-import { db } from "./db";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
-import { combineWithVisibleScope } from "./scoped-storage";
-import { libraryPages } from "@shared/models/info";
-import { wellnessActivities } from "@shared/models/health";
-import { emailMessages, inferencePayloadCaptures, planExecutions, workflowRuns } from "@shared/schema";
-import { decisionsStorage } from "./decisions-storage";
-import { and, desc, eq, or } from "drizzle-orm";
-import { getEvent, listAllEvents } from "./google-calendar";
-import { chatFileStorage } from "./chat-file-storage";
-import { libraryPageIsLive } from "./library-trash";
+import { getCurrentPrincipal } from "./principal-context";
+import { ADDRESS_RESOLUTION_BATCH_LIMIT, resolveAddressBatch } from "./address-resolver";
 
-const log = createLogger("ReferenceRoutes");
+function parseLegacyRefs(value: unknown): string[] {
+  if (typeof value !== "string" || !value.trim()) return [];
+  return value.split(",").map(ref => ref.trim()).filter(Boolean);
+}
+
+function parseStructuredRefs(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const refs = value.filter((ref): ref is string => typeof ref === "string" && ref.trim().length > 0).map(ref => ref.trim());
+  return refs.length === value.length ? refs : null;
+}
 
 /**
- * Batch-resolve reference labels by type:id.
- * GET /api/references/resolve?refs=goal:abc,task:42,person:xyz
- * Returns: { "goal:abc": "Plan Week", "task:42": "Deploy page" }
+ * Canonical principal-aware batch address resolution.
+ *
+ * GET retains the legacy { "type:id": "label" } projection used by existing
+ * reference chips. POST exposes the protocol outcome/redirect metadata.
  */
 export function registerReferenceRoutes(app: Express) {
   app.get("/api/references/resolve", requireAuth, async (req, res) => {
-    const principal = getCurrentPrincipalOrSystem();
-    const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId };
-    const refsParam = req.query.refs as string | undefined;
-    if (!refsParam) return res.json({});
-
-    const refs = refsParam
-      .split(",")
-      .map((r) => {
-        const colonIdx = r.indexOf(":");
-        if (colonIdx <= 0) return null;
-        return { type: r.slice(0, colonIdx), id: r.slice(colonIdx + 1) };
-      })
-      .filter(Boolean) as { type: string; id: string }[];
-
+    const refs = parseLegacyRefs(req.query.refs);
     if (refs.length === 0) return res.json({});
-    if (refs.length > 50) return res.status(400).json({ error: "Too many refs (max 50)" });
+    if (refs.length > ADDRESS_RESOLUTION_BATCH_LIMIT) {
+      return res.status(400).json({ error: `Too many refs (max ${ADDRESS_RESOLUTION_BATCH_LIMIT})` });
+    }
+    const principal = getCurrentPrincipal();
+    if (!principal) return res.status(401).json({ error: "Authentication required" });
 
-    const results: Record<string, string> = {};
+    const results = await resolveAddressBatch(principal, refs);
+    const labels: Record<string, string> = {};
+    for (const [index, result] of results.entries()) {
+      if (!result.resolution) continue;
+      labels[refs[index].replace(/^@/, "")] = result.resolution.label;
+    }
+    return res.json(labels);
+  });
 
-    await Promise.all(
-      refs.map(async ({ type, id }) => {
-        const key = `${type}:${id}`;
-        try {
-          switch (type) {
-            case "goal": {
-              const goal = await goalsService.get(id);
-              if (goal) results[key] = goal.shortName;
-              break;
-            }
-            case "task": {
-              const numId = Number(id);
-              if (!Number.isNaN(numId)) {
-                const task = await fileTaskStorage.getTask(numId);
-                if (task) results[key] = task.title;
-              }
-              break;
-            }
-
-            case "meeting": {
-              const meetingSession = await chatFileStorage.getSession(id);
-              if (meetingSession?.type === "meeting") {
-                results[key] = meetingSession.meeting?.title || meetingSession.title || "Meeting";
-                break;
-              }
-              const parts = id.split("~").map(decodeURIComponent);
-              if (parts.length === 3) {
-                const [accountId, calendarId, eventId] = parts;
-                const event = await getEvent(accountId, calendarId, eventId);
-                if (event) results[key] = event.summary || "Calendar event";
-              } else {
-                const { events } = await listAllEvents({
-                  timeMin: new Date(Date.now() - 7 * 86400000).toISOString(),
-                  timeMax: new Date(Date.now() + 370 * 86400000).toISOString(),
-                  maxResults: 250,
-                });
-                const event = events.find(e => e.id === id);
-                if (event) results[key] = event.summary || "Calendar event";
-              }
-              break;
-            }
-            case "project": {
-              const numId = Number(id);
-              if (!Number.isNaN(numId)) {
-                const project = await fileProjectStorage.getProject(numId);
-                if (project) results[key] = project.title;
-              }
-              break;
-            }
-            case "session": {
-              const session = await chatFileStorage.getSession(id);
-              if (session) results[key] = session.title || "Untitled session";
-              break;
-            }
-            case "inference_context": {
-              const captureScope = { scope: inferencePayloadCaptures.scope, ownerUserId: inferencePayloadCaptures.ownerUserId, accountId: inferencePayloadCaptures.accountId };
-              const rows = await db
-                .select({ capturedAt: inferencePayloadCaptures.capturedAt, model: inferencePayloadCaptures.model })
-                .from(inferencePayloadCaptures)
-                .where(combineWithVisibleScope(principal, captureScope, and(
-                  eq(inferencePayloadCaptures.id, id),
-                  eq(inferencePayloadCaptures.ownerUserId, principal.userId || ""),
-                  eq(inferencePayloadCaptures.accountId, principal.accountId || ""),
-                )))
-                .limit(1);
-              if (rows[0]) results[key] = `Context · ${rows[0].model}`;
-              break;
-            }
-            case "plan": {
-              const planScope = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
-              const rows = await db
-                .select({ pageTitle: libraryPages.title })
-                .from(planExecutions)
-                .leftJoin(libraryPages, eq(planExecutions.pageId, libraryPages.id))
-                .where(combineWithVisibleScope(principal, planScope, or(eq(planExecutions.id, id), eq(planExecutions.pageId, id))))
-                .limit(1);
-              if (rows[0]?.pageTitle) results[key] = rows[0].pageTitle.replace(/^Plan:\s*/, "");
-              break;
-            }
-            case "workflow": {
-              const workflowScope = { ownerUserId: workflowRuns.ownerUserId, accountId: workflowRuns.accountId, scope: workflowRuns.scope };
-              const rows = await db
-                .select({ title: workflowRuns.title })
-                .from(workflowRuns)
-                .where(combineWithVisibleScope(principal, workflowScope, eq(workflowRuns.id, id)))
-                .limit(1);
-              if (rows[0]?.title) results[key] = rows[0].title;
-              break;
-            }
-            case "company": {
-              const company = await companyStorage.get(id);
-              if (company) results[key] = company.name;
-              break;
-            }
-            case "person": {
-              const person = await peopleStorage.getPerson(id);
-              if (person) results[key] = person.name;
-              break;
-            }
-            case "interaction": {
-              const [rawPersonId, rawInteractionId] = id.split("~");
-              if (rawPersonId && rawInteractionId) {
-                const personId = decodeURIComponent(rawPersonId);
-                const interactionId = decodeURIComponent(rawInteractionId);
-                const person = await peopleStorage.getPerson(personId);
-                const interaction = person?.interactions.find(item => item.id === interactionId);
-                if (person && interaction) results[key] = `${person.name}: ${interaction.summary}`;
-              }
-              break;
-            }
-            case "page": {
-              const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
-              const matchers = [eq(libraryPages.slug, id), eq(libraryPages.id, id)];
-              const rows = await db
-                .select({ title: libraryPages.title })
-                .from(libraryPages)
-                .where(combineWithVisibleScope(principal, pageScope, and(or(...matchers), libraryPageIsLive())))
-                .limit(1);
-              if (rows[0]?.title) results[key] = rows[0].title;
-              break;
-            }
-            case "wellness_activity":
-            case "health_activity": {
-              const numId = Number(id);
-              if (!Number.isNaN(numId)) {
-                const activityScope = { ownerUserId: wellnessActivities.ownerUserId, accountId: wellnessActivities.principalAccountId };
-                const rows = await db
-                  .select({ name: wellnessActivities.name })
-                  .from(wellnessActivities)
-                  .where(combineWithVisibleScope(principal, activityScope, eq(wellnessActivities.id, numId)))
-                  .limit(1);
-                if (rows[0]) results[key] = rows[0].name;
-              }
-              break;
-            }
-            case "decision": {
-              const decision = await decisionsStorage.getDecision(id);
-              if (decision) results[key] = decision.title;
-              break;
-            }
-            case "milestone": {
-              const numId = Number(id);
-              if (!Number.isNaN(numId)) {
-                const projects = await fileProjectStorage.getProjects();
-                for (const project of projects) {
-                  const milestone = project.milestones?.find((m) => m.id === numId);
-                  if (milestone) {
-                    results[key] = milestone.name;
-                    break;
-                  }
-                }
-              }
-              break;
-            }
-            case "email_thread": {
-              const colonIdx = id.indexOf(":");
-              if (colonIdx > 0) {
-                const accountId = id.slice(0, colonIdx);
-                const providerThreadId = id.slice(colonIdx + 1);
-                const rows = await db
-                  .select({ subject: emailMessages.subject, fromAddress: emailMessages.fromAddress })
-                  .from(emailMessages)
-                  .where(combineWithVisibleScope(principal, emailScope, and(eq(emailMessages.accountId, accountId), eq(emailMessages.providerThreadId, providerThreadId))))
-                  .orderBy(desc(emailMessages.date))
-                  .limit(1);
-                if (rows[0]) results[key] = rows[0].subject || rows[0].fromAddress || "Email thread";
-              }
-              break;
-            }
-            case "email_message": {
-              const numId = Number(id);
-              if (!Number.isNaN(numId)) {
-                const rows = await db
-                  .select({ subject: emailMessages.subject, fromAddress: emailMessages.fromAddress })
-                  .from(emailMessages)
-                  .where(combineWithVisibleScope(principal, emailScope, eq(emailMessages.id, numId)))
-                  .limit(1);
-                if (rows[0]) results[key] = rows[0].subject || rows[0].fromAddress || "Email message";
-              }
-              break;
-            }
-          }
-        } catch (err) {
-          log.warn(`resolve failed for ${key}: ${err}`);
-        }
-      }),
-    );
-
-    res.json(results);
+  app.post("/api/references/resolve", requireAuth, async (req, res) => {
+    const refs = parseStructuredRefs(req.body?.refs);
+    if (!refs) return res.status(400).json({ error: "refs must be an array of non-empty canonical addresses" });
+    if (refs.length > ADDRESS_RESOLUTION_BATCH_LIMIT) {
+      return res.status(400).json({ error: `Too many refs (max ${ADDRESS_RESOLUTION_BATCH_LIMIT})` });
+    }
+    const principal = getCurrentPrincipal();
+    if (!principal) return res.status(401).json({ error: "Authentication required" });
+    return res.json({ results: await resolveAddressBatch(principal, refs) });
   });
 }

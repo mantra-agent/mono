@@ -132,7 +132,7 @@ function buildWorkItemDiscussMessage(item: DiscussableWorkItem): string {
       ? [`Project: @project:${item.projectId}`]
       : [
           item.projectId ? `Project: @project:${item.projectId}` : null,
-          item.milestoneId ? `Milestone: @milestone:${item.milestoneId}` : null,
+          item.projectId && item.milestoneId ? `Milestone: @milestone:${item.projectId}~${item.milestoneId}` : null,
         ].filter((line): line is string => Boolean(line));
 
   return [
@@ -1623,13 +1623,12 @@ function WorkTreeConnector({ continues = false }: { continues?: boolean }) {
 
 
 function projectPageReference(page: ProjectPage): ReferenceRef {
-  const pageId = page.slug || page.id;
   return createReferenceRef({
     type: "page",
-    id: pageId,
+    id: page.id,
     metadata: {
       label: page.title,
-      href: `/info#library?page=${encodeURIComponent(pageId)}`,
+      href: `/info#library?page=${encodeURIComponent(page.id)}`,
     },
   });
 }
