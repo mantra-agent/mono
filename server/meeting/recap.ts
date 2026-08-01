@@ -13,7 +13,7 @@
  */
 import { and, eq, sql } from "drizzle-orm";
 import { createLogger } from "../log";
-import { db } from "../db";
+import { db, runWithDatabaseTransaction } from "../db";
 import { libraryPages } from "@shared/models/info";
 import { chatStorage } from "../integrations/chat/storage";
 import { chatCompletion } from "../model-client";
@@ -287,28 +287,34 @@ export async function sanitizeStoredMeetingRecapPage(
 async function refreshRecapPage(pageId: string, title: string, markdown: string) {
   const principal = getCurrentPrincipalOrSystem();
   const synced = syncContentFields({ markdown });
-  const [page] = await db
-    .update(libraryPages)
-    .set({
-      title,
-      content: synced.content,
-      plainTextContent: synced.plainTextContent,
-      ...buildLibrarySurfaceSet({
-        surface: true,
-        surfaceDurationHours: 48,
-        surfaceReason: `Meeting recap: ${title}`,
-      }),
-      updatedByUserId: principal.userId ?? undefined,
-      updatedAt: new Date(),
-    })
-    .where(
-      combineWithWritableScope(
-        principal,
-        libraryScopeColumns,
-        eq(libraryPages.id, pageId),
-      ),
-    )
-    .returning();
+  const page = await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+    const [updated] = await tx
+      .update(libraryPages)
+      .set({
+        title,
+        content: synced.content,
+        plainTextContent: synced.plainTextContent,
+        ...buildLibrarySurfaceSet({
+          surface: true,
+          surfaceDurationHours: 48,
+          surfaceReason: `Meeting recap: ${title}`,
+        }),
+        updatedByUserId: principal.userId ?? undefined,
+        updatedAt: new Date(),
+      })
+      .where(
+        combineWithWritableScope(
+          principal,
+          libraryScopeColumns,
+          eq(libraryPages.id, pageId),
+        ),
+      )
+      .returning();
+    if (!updated) return null;
+    const { indexLibraryPageReferences } = await import("../library-reference-index");
+    await indexLibraryPageReferences(principal, updated);
+    return updated;
+  }));
   if (!page) throw new Error(`Meeting recap page ${pageId} is no longer writable`);
 
   try {

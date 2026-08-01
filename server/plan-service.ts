@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { PlanStepPersona } from "./plan-persona";
 import { and, eq, isNull, lt, or, type SQL } from "drizzle-orm";
-import { db } from "./db";
+import { db, runWithDatabaseTransaction } from "./db";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
@@ -454,11 +454,17 @@ export async function renderPlanProjection(planId: string): Promise<void> {
     const { syncContentFields } = await import("@shared/markdown-tiptap");
     const synced = syncContentFields({ markdown: content });
     const libraryScope = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
-    await db.update(libraryPages).set({
-      content: synced.content,
-      plainTextContent: synced.plainTextContent,
-      updatedAt: new Date(),
-    }).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), libraryScope, eq(libraryPages.id, plan.pageId)));
+    const principal = getCurrentPrincipalOrSystem();
+    await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+      const [page] = await tx.update(libraryPages).set({
+        content: synced.content,
+        plainTextContent: synced.plainTextContent,
+        updatedAt: new Date(),
+      }).where(combineWithWritableScope(principal, libraryScope, eq(libraryPages.id, plan.pageId))).returning();
+      if (!page) return;
+      const { indexLibraryPageReferences } = await import("./library-reference-index");
+      await indexLibraryPageReferences(principal, page);
+    }));
   } catch (err) {
     log.warn(`Failed to render plan ${planId} projection: ${err instanceof Error ? err.message : String(err)}`);
   }

@@ -2172,7 +2172,13 @@ export async function renderWorkflowRunPage(runId: string): Promise<void> {
     const { syncContentFields } = await import("@shared/markdown-tiptap");
     const content = buildWorkflowRunPageContent(detail);
     const synced = syncContentFields({ markdown: content });
-    await db.update(libraryPages).set({ content: synced.content, plainTextContent: synced.plainTextContent, updatedAt: sql`CURRENT_TIMESTAMP` }).where(eq(libraryPages.id, detail.run.linkedLibraryPageId));
+    const principal = getCurrentPrincipalOrSystem();
+    await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+      const [page] = await tx.update(libraryPages).set({ content: synced.content, plainTextContent: synced.plainTextContent, updatedAt: sql`CURRENT_TIMESTAMP` }).where(writable({ scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId }, eq(libraryPages.id, detail.run.linkedLibraryPageId))).returning();
+      if (!page) return;
+      const { indexLibraryPageReferences } = await import("../library-reference-index");
+      await indexLibraryPageReferences(principal, page);
+    }));
   } catch (err) {
     log.warn(`Failed to render workflow ${runId}: ${err instanceof Error ? err.message : String(err)}`);
   }
