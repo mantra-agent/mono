@@ -1302,7 +1302,7 @@ function itemFromStandaloneMilestone(milestone: Milestone, project: Project, tod
   const section: SimpleSection = milestone.status === "completed" ? "done" : milestoneSection(milestone, today, weekEnd, monthEnd, quarterEnd, yearEnd, nextYearEnd);
   const milestoneSourceRef: SimpleSourceRef = {
     type: "milestone",
-    id: `${project.id}-${milestone.id}`,
+    id: `${project.id}~${milestone.id}`,
     label: milestone.name,
     href: `/projects?project=${project.id}&milestone=${milestone.id}`,
   };

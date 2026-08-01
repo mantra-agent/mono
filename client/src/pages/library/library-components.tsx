@@ -62,7 +62,7 @@ function extractPageReferences(plainText: string, pages: LibraryPage[]): Referen
 
   for (const title of extractWikiLinkTitles(plainText)) {
     const page = pages.find((candidate) => candidate.title.toLowerCase() === title.toLowerCase());
-    if (page) references.push(createReferenceRef({ type: "page", id: page.slug }));
+    if (page) references.push(createReferenceRef({ type: "page", id: page.id, metadata: { label: page.title } }));
   }
 
   const seen = new Set<string>();
@@ -138,12 +138,11 @@ function ChildPages({ pageId, pages }: { pageId: string; pages: LibraryPage[] })
         {children.map((page) => (
           <ReferenceRenderer
             key={page.id}
-            refValue={{
+            refValue={createReferenceRef({
               type: "page",
-              id: page.slug,
-              canonical: `@page:${page.slug}`,
-              metadata: { label: page.title || "Untitled", href: `/info#library?page=${encodeURIComponent(page.slug)}` },
-            }}
+              id: page.id,
+              metadata: { label: page.title || "Untitled", href: `/info#library?page=${encodeURIComponent(page.id)}` },
+            })}
             surface="chat-inline"
             className="max-w-full text-sm"
           />

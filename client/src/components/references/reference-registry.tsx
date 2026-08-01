@@ -1,5 +1,6 @@
 import {
   Briefcase,
+  Brain,
   Building2,
   CalendarDays,
   ListTodo,
@@ -19,6 +20,9 @@ import {
   FileJson2,
   PenLine,
   Radio,
+  Sparkles,
+  Server,
+  Layers3,
   Rss,
   Paperclip,
   Route,
@@ -156,6 +160,41 @@ const registry: Record<string, RegistryEntry> = {
     Icon: Workflow,
     fallbackLabel: ref => metadataString(ref, "label") || `Workflow ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/workflows/${encodeURIComponent(ref.id)}`,
+  },
+  strategy: {
+    Icon: Route,
+    fallbackLabel: ref => metadataString(ref, "label") || `Strategy ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/strategy/${encodeURIComponent(ref.id)}`,
+  },
+  opportunity: {
+    Icon: Sparkles,
+    fallbackLabel: ref => metadataString(ref, "label") || `Opportunity ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/exec?opportunity=${encodeURIComponent(ref.id)}`,
+  },
+  platform: {
+    Icon: Server,
+    fallbackLabel: ref => metadataString(ref, "label") || `Platform ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/platforms/${encodeURIComponent(ref.id)}`,
+  },
+  product: {
+    Icon: Layers3,
+    fallbackLabel: ref => metadataString(ref, "label") || `Product ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/platform-products/${encodeURIComponent(ref.id)}`,
+  },
+  environment: {
+    Icon: Globe,
+    fallbackLabel: ref => metadataString(ref, "label") || `Environment ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/platform-environments/${encodeURIComponent(ref.id)}`,
+  },
+  skill: {
+    Icon: Sparkles,
+    fallbackLabel: ref => metadataString(ref, "label") || `Skill ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/skills/${encodeURIComponent(ref.id)}`,
+  },
+  claim: {
+    Icon: Brain,
+    fallbackLabel: ref => metadataString(ref, "label") || `Claim ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/memory?claim=${encodeURIComponent(ref.id)}`,
   },
 
   file: {

@@ -13,8 +13,15 @@ export const REFERENCE_TYPES = [
   "inference_context",
   "plan",
   "workflow",
-
+  "intention",
   "decision",
+  "strategy",
+  "opportunity",
+  "platform",
+  "product",
+  "environment",
+  "skill",
+  "claim",
   "wellness_activity",
   "priority",
   "file",
@@ -31,6 +38,105 @@ export const REFERENCE_TYPES = [
 
 export type KnownReferenceType = typeof REFERENCE_TYPES[number];
 export type ReferenceType = KnownReferenceType | string;
+
+export type ReferenceIdentifierKind =
+  | "uuid"
+  | "integer"
+  | "opaque"
+  | "url"
+  | "path"
+  | "composite"
+  | "repository_pr";
+
+export interface ReferenceTypeDefinition {
+  type: KnownReferenceType;
+  aliases: readonly string[];
+  identifierKind: ReferenceIdentifierKind;
+  identifierPattern: RegExp;
+  route?: (id: string) => string | undefined;
+  capabilities: readonly string[];
+  graph: boolean;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const INTEGER_PATTERN = /^[1-9]\d*$/;
+const OPAQUE_PATTERN = /^[^\s\]<>]+$/;
+const URL_PATTERN = /^https?:\/\/[^\s\]<>]+$/i;
+const PATH_PATTERN = /^\/objects\/[^\s\]<>]+$/;
+const COMPOSITE_PATTERN = /^[^\s~\]<>]+~[^\s~\]<>]+$/;
+const EMAIL_THREAD_PATTERN = /^[^\s:\]<>]+:.+$/;
+const PR_PATTERN = /^(?:[^\s/]+\/)?[^\s/]+\/\d+$/;
+
+function definition(
+  type: KnownReferenceType,
+  identifierKind: ReferenceIdentifierKind,
+  identifierPattern: RegExp,
+  options: Partial<Omit<ReferenceTypeDefinition, "type" | "identifierKind" | "identifierPattern">> = {},
+): ReferenceTypeDefinition {
+  return {
+    type,
+    identifierKind,
+    identifierPattern,
+    aliases: options.aliases ?? [],
+    route: options.route,
+    capabilities: options.capabilities ?? ["open"],
+    graph: options.graph ?? true,
+  };
+}
+
+export const REFERENCE_REGISTRY: Readonly<Record<KnownReferenceType, ReferenceTypeDefinition>> = {
+  page: definition("page", "uuid", UUID_PATTERN, { aliases: ["spec"], route: id => `/info#library?page=${encodeURIComponent(id)}` }),
+  person: definition("person", "opaque", OPAQUE_PATTERN, { route: id => `/people/${encodeURIComponent(id)}` }),
+  company: definition("company", "opaque", OPAQUE_PATTERN, { route: id => `/companies/${encodeURIComponent(id)}` }),
+  interaction: definition("interaction", "composite", COMPOSITE_PATTERN, { route: id => {
+    const [personId, interactionId] = id.split("~").map(decodeURIComponent);
+    return `/people/${encodeURIComponent(personId)}?interaction=${encodeURIComponent(interactionId)}`;
+  } }),
+  goal: definition("goal", "opaque", OPAQUE_PATTERN, { route: id => `/goals?goal=${encodeURIComponent(id)}` }),
+  task: definition("task", "integer", INTEGER_PATTERN, { route: id => `/projects?task=${encodeURIComponent(id)}` }),
+  project: definition("project", "integer", INTEGER_PATTERN, { route: id => `/projects?project=${encodeURIComponent(id)}` }),
+  milestone: definition("milestone", "composite", COMPOSITE_PATTERN, { route: id => {
+    const [projectId] = id.split("~");
+    return `/projects?project=${encodeURIComponent(projectId)}`;
+  } }),
+  role: definition("role", "opaque", OPAQUE_PATTERN, { route: id => `/business/roles?role=${encodeURIComponent(id)}` }),
+  meeting: definition("meeting", "opaque", OPAQUE_PATTERN, { route: id => `/schedule/${encodeURIComponent(id)}` }),
+  session: definition("session", "opaque", OPAQUE_PATTERN, { route: id => `/session?c=${encodeURIComponent(id)}` }),
+  inference_context: definition("inference_context", "uuid", UUID_PATTERN, { route: id => `/brain?tab=context&capture=${encodeURIComponent(id)}`, graph: false }),
+  plan: definition("plan", "opaque", OPAQUE_PATTERN, { route: id => `/plans/${encodeURIComponent(id)}` }),
+  workflow: definition("workflow", "opaque", OPAQUE_PATTERN, { route: id => `/workflows/${encodeURIComponent(id)}` }),
+  intention: definition("intention", "opaque", OPAQUE_PATTERN, { graph: false }),
+  decision: definition("decision", "opaque", OPAQUE_PATTERN, { route: id => `/decisions?decision=${encodeURIComponent(id)}` }),
+  strategy: definition("strategy", "opaque", OPAQUE_PATTERN, { route: id => `/strategy/${encodeURIComponent(id)}` }),
+  opportunity: definition("opportunity", "integer", INTEGER_PATTERN, { route: id => `/exec?opportunity=${encodeURIComponent(id)}` }),
+  platform: definition("platform", "integer", INTEGER_PATTERN, { route: id => `/platforms/${encodeURIComponent(id)}` }),
+  product: definition("product", "integer", INTEGER_PATTERN, { route: id => `/platform-products/${encodeURIComponent(id)}` }),
+  environment: definition("environment", "integer", INTEGER_PATTERN, { route: id => `/platform-environments/${encodeURIComponent(id)}` }),
+  skill: definition("skill", "uuid", UUID_PATTERN, { route: id => `/skills/${encodeURIComponent(id)}` }),
+  claim: definition("claim", "integer", INTEGER_PATTERN, { route: id => `/memory?claim=${encodeURIComponent(id)}` }),
+  wellness_activity: definition("wellness_activity", "integer", INTEGER_PATTERN, { aliases: ["health_activity", "wellness"], route: id => `/wellness?tab=calendar&activity=${encodeURIComponent(id)}` }),
+  priority: definition("priority", "opaque", OPAQUE_PATTERN, { route: () => "/goals" }),
+  file: definition("file", "path", PATH_PATTERN, { graph: false }),
+  news: definition("news", "opaque", OPAQUE_PATTERN, { route: id => `/news?signal=${encodeURIComponent(id)}` }),
+  web_article: definition("web_article", "url", URL_PATTERN, { graph: false }),
+  x_item: definition("x_item", "url", URL_PATTERN, { graph: false }),
+  reddit_post: definition("reddit_post", "url", URL_PATTERN, { graph: false }),
+  rss_item: definition("rss_item", "url", URL_PATTERN, { graph: false }),
+  pr: definition("pr", "repository_pr", PR_PATTERN, { route: id => {
+    const parts = id.split("/");
+    return parts.length === 3 ? `https://github.com/${parts[0]}/${parts[1]}/pull/${parts[2]}` : undefined;
+  }, graph: false }),
+  email_thread: definition("email_thread", "composite", EMAIL_THREAD_PATTERN, { route: () => "/comms", graph: false }),
+  email_message: definition("email_message", "integer", INTEGER_PATTERN, { route: () => "/comms", graph: false }),
+  email_draft: definition("email_draft", "uuid", UUID_PATTERN, { aliases: ["draft"], route: id => `/email?draft=${encodeURIComponent(id)}`, graph: false }),
+};
+
+const REFERENCE_TYPE_ALIASES = new Map<string, KnownReferenceType>(
+  Object.values(REFERENCE_REGISTRY).flatMap(entry => [
+    [entry.type, entry.type] as const,
+    ...entry.aliases.map(alias => [alias, entry.type] as const),
+  ]),
+);
 
 export interface ReferenceRef {
   type: ReferenceType;
@@ -65,19 +171,26 @@ export interface ResolvedReference {
 }
 
 export function isKnownReferenceType(type: string): type is KnownReferenceType {
-  return (REFERENCE_TYPES as readonly string[]).includes(type);
+  return Object.prototype.hasOwnProperty.call(REFERENCE_REGISTRY, type);
 }
 
 export function normalizeReferenceType(type: string): ReferenceType {
   const normalized = type.trim().toLowerCase();
-  if (normalized === "spec") return "page";
-  if (normalized === "health_activity" || normalized === "wellness") return "wellness_activity";
-  if (normalized === "draft") return "email_draft";
-  return normalized;
+  return REFERENCE_TYPE_ALIASES.get(normalized) ?? normalized;
+}
+
+export function getReferenceTypeDefinition(type: string): ReferenceTypeDefinition | undefined {
+  const normalized = normalizeReferenceType(type);
+  return isKnownReferenceType(normalized) ? REFERENCE_REGISTRY[normalized] : undefined;
+}
+
+export function isValidReferenceIdentifier(type: string, id: string): boolean {
+  const entry = getReferenceTypeDefinition(type);
+  return !!entry && entry.identifierPattern.test(id.trim());
 }
 
 export function serializeReference(ref: Pick<ReferenceRef, "type" | "id">): string {
-  return `@${normalizeReferenceType(ref.type)}:${ref.id}`;
+  return `@${normalizeReferenceType(ref.type)}:${ref.id.trim()}`;
 }
 
 export function createReferenceRef(params: {
@@ -100,5 +213,5 @@ export function createReferenceRef(params: {
 }
 
 export function isParseableReferenceType(type: string): boolean {
-  return isKnownReferenceType(normalizeReferenceType(type));
+  return !!getReferenceTypeDefinition(type);
 }
