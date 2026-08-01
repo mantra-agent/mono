@@ -642,6 +642,8 @@ export function SessionTranscriptPanel({
                   <SessionActionsMenuItems
                     sessionId={activeSession}
                     sessionTitle={active.title}
+                    sessionVaultId={active.vaultId}
+                    sessionType={active.type}
                     parentSessionId={active.parentSessionId}
                     onRename={() => titleRenameRef.current?.startEditing()}
                     onSelectSession={setActiveSession}

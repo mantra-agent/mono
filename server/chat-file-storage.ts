@@ -12,6 +12,7 @@ import { accounts, users, documentStoreDocuments, planStepAttempts, planSteps, s
 import { replaceSessionSearchProjection } from "./memory/session-search-projection";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
+import { assertWritableVault } from "./library-domain";
 import {
   buildLegacySessionSearchQuery,
   buildLiteralSubstringPattern,
@@ -830,16 +831,39 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
   };
 }
 
+async function resolveSessionWriteVaultId(data: SessionData): Promise<string> {
+  const principal = getCurrentPrincipalOrSystem();
+  if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+    throw new Error(`Session writes require an explicit user and account owner: chat/${data.id}`);
+  }
+  const requestedVaultId = data.vaultId ?? principal.activeVaultId;
+  if (!requestedVaultId) {
+    throw Object.assign(new Error("Choose an active Vault before creating a session"), { status: 400 });
+  }
+  return assertWritableVault(principal, requestedVaultId);
+}
+
+function serializeSessionContent(data: SessionData): string {
+  const { vaultId: _canonicalDocumentVaultId, ...content } = data;
+  return JSON.stringify(content);
+}
+
 async function writeConvInAmbientTransaction(data: SessionData): Promise<number> {
+  const vaultId = await resolveSessionWriteVaultId(data);
+  data.vaultId = vaultId;
   data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
-  const document = await documentStorage.upsertDocument(
+  const principal = getCurrentPrincipalOrSystem();
+  const writePrincipal = principal.activeVaultId === vaultId
+    ? principal
+    : { ...principal, activeVaultId: vaultId };
+  const document = await runWithPrincipal(writePrincipal, () => documentStorage.upsertDocument(
     "chat",
     data.id,
     `chat/text/conv-${data.id}.json`,
     data.title,
-    JSON.stringify(data),
+    serializeSessionContent(data),
     buildConvDocumentMetadata(data),
-  );
+  ));
   await replaceSessionSearchProjection(document.documentStoreId, data);
   if (
     !["streaming", "pending"].includes(data.status)
@@ -1143,6 +1167,7 @@ async function applySessionTreeRowsToMetadataList(
     title: string | null;
     createdAt: string | null;
     metadata: ChatDocumentMetadata;
+    vaultId?: string | null;
   }>,
 ): Promise<FileSession[]> {
   if (docs.length === 0) return [];
@@ -1221,6 +1246,7 @@ function docMetadataToSession(doc: {
   title: string | null;
   createdAt: string | null;
   metadata: ChatDocumentMetadata;
+  vaultId?: string | null;
 }): FileSession {
   const meta = doc.metadata || {};
   const createdAt =
@@ -1235,6 +1261,7 @@ function docMetadataToSession(doc: {
     status: metadataString(meta, "status") || "saved",
     summary: metadataString(meta, "summary") || null,
     sessionKey: metadataString(meta, "sessionKey") || null,
+    vaultId: doc.vaultId || undefined,
     modelTier: normalizeSessionModelTierOverride(metadataString(meta, "modelTier")),
     personaId: metadataNumber(meta, "personaId") ?? null,
     personaPinnedByUser: metadataBool(meta, "personaPinnedByUser"),
@@ -1564,6 +1591,7 @@ export interface IChatFileStorage {
   ): Promise<void>;
   readSessionContextFlags(id: string): Promise<Record<string, boolean> | null>;
   updateSessionMemoryIndex(id: string, oneLiner: string | null, memorySummary?: string | null): Promise<void>;
+  moveSessionToVault(id: string, vaultId: string): Promise<FileSession>;
   setSessionMemoryEntryId(id: string, memoryEntryId: number): Promise<void>;
   syncSessionMemoryMirror(id: string): Promise<void>;
   compactSession(
@@ -1818,6 +1846,7 @@ export const chatFileStorage: IChatFileStorage = {
           title: documentStoreDocuments.title,
           createdAt: documentStoreDocuments.createdAt,
           metadata: documentStoreDocuments.metadata,
+          vaultId: documentStoreDocuments.vaultId,
         })
         .from(documentStoreDocuments)
         .where(combineWithWritableScope(
@@ -1843,6 +1872,7 @@ export const chatFileStorage: IChatFileStorage = {
             title: existing.title,
             createdAt: existing.createdAt?.toISOString() ?? null,
             metadata: existing.metadata as ChatDocumentMetadata,
+            vaultId: existing.vaultId,
           }),
         };
       }
@@ -2768,6 +2798,52 @@ export const chatFileStorage: IChatFileStorage = {
     });
   },
 
+  async moveSessionToVault(sessionId: string, vaultId: string) {
+    return withConvLock(sessionId, async () => {
+      const data = await readConv(sessionId);
+      if (!data) {
+        throw Object.assign(new Error("Session not found"), { status: 404 });
+      }
+      if (data.type === "meeting" || data.meeting) {
+        throw Object.assign(
+          new Error("Meeting sessions move with their calendar meeting aggregate"),
+          { status: 409 },
+        );
+      }
+      const principal = getCurrentPrincipalOrSystem();
+      if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+        throw Object.assign(new Error("A user principal is required to move a session"), { status: 401 });
+      }
+      const destinationVaultId = await assertWritableVault(principal, vaultId);
+      const currentVaultId = data.vaultId;
+      if (!currentVaultId) {
+        throw Object.assign(new Error("Session Vault ownership is incomplete"), { status: 409 });
+      }
+      if (currentVaultId === destinationVaultId) return convToMeta(data);
+
+      data.vaultId = destinationVaultId;
+      data.updatedAt = new Date().toISOString();
+      data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
+      const destinationPrincipal = { ...principal, activeVaultId: destinationVaultId };
+      const document = await runWithPrincipal(destinationPrincipal, () =>
+        documentStorage.moveDocumentToVault("chat", sessionId, destinationVaultId, {
+          title: data.title,
+          content: serializeSessionContent(data),
+          metadata: buildConvDocumentMetadata(data),
+        }),
+      );
+      await replaceSessionSearchProjection(document.documentStoreId, data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId, session });
+      log.info("Session Vault moved", {
+        sessionId,
+        sourceVaultId: currentVaultId,
+        destinationVaultId,
+      });
+      return session;
+    });
+  },
+
   async moveMeetingToVault(
     sessionId: string,
     vaultId: string,
@@ -2790,7 +2866,7 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = new Date().toISOString();
       const document = await documentStorage.moveDocumentToVault("chat", sessionId, vaultId, {
         title: data.title,
-        content: JSON.stringify(data),
+        content: serializeSessionContent(data),
         metadata: buildConvDocumentMetadata(data),
       });
       await replaceSessionSearchProjection(document.documentStoreId, data);

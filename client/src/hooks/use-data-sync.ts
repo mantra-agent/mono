@@ -5,6 +5,7 @@ import { queryClient } from "@/lib/queryClient";
 import { toast } from "@/hooks/use-toast";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import type { ChatSession } from "@shared/models/chat";
+import type { Vault } from "@/hooks/use-vaults";
 
 const log = createLogger("DataSync");
 
@@ -74,10 +75,23 @@ export function applySessionStatusToCache(sessionId: string, status: string): vo
  * Apply a session delta directly to the cache.  Returns true if the delta was
  * handled, false if the caller should fall back to full invalidation.
  */
+interface VaultVisibilitySnapshot {
+  vaults: Vault[];
+  visibleVaultIds: string[];
+  activeVaultId: string | null;
+}
+
+function sessionIsVisibleInCurrentVaults(session: ChatSession): boolean {
+  const vaultState = queryClient.getQueryData<VaultVisibilitySnapshot>(["/api/vaults"]);
+  if (!vaultState) return true;
+  return Boolean(session.vaultId && vaultState.visibleVaultIds.includes(session.vaultId));
+}
+
 function applySessionDelta(delta: { action: string; sessionId: string; session?: ChatSession }): boolean {
   const { action, sessionId, session } = delta;
 
   if (action === "created" && session) {
+    if (!sessionIsVisibleInCurrentVaults(session)) return true;
     queryClient.setQueryData<ChatSession[]>(["/api/sessions"], (old) => {
       if (!old) return [session];
       if (old.some(s => s.id === sessionId)) return old;  // already present (optimistic)
@@ -95,12 +109,17 @@ function applySessionDelta(delta: { action: string; sessionId: string; session?:
   }
 
   if (action === "updated" && session) {
+    const isVisible = sessionIsVisibleInCurrentVaults(session);
     queryClient.setQueryData<ChatSession>(["/api/sessions", sessionId], (old) =>
       old ? { ...old, ...session } : old,
     );
     queryClient.setQueryData<ChatSession[]>(["/api/sessions"], (old) => {
       if (!old) return old;
-      const updated = old.map(s => s.id === sessionId ? { ...s, ...session } : s);
+      if (!isVisible) return recomputeActiveDescendants(old.filter((item) => item.id !== sessionId));
+      const existingIndex = old.findIndex((item) => item.id === sessionId);
+      const updated = existingIndex >= 0
+        ? old.map((item) => item.id === sessionId ? { ...item, ...session } : item)
+        : [session, ...old];
       return recomputeActiveDescendants(updated);
     });
     return true;
