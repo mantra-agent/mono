@@ -5,10 +5,9 @@ import {
   memoryVnextClaimLinks,
   memoryVnextEntityLinks,
   memoryVnextSourceRefs,
-  type Goal,
 } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
-import { normalizeProtocolAddress } from "@shared/life-addressing";
+import { normalizeProtocolAddress, type GraphAdapterResult } from "@shared/life-addressing";
 import { db } from "../db";
 import { eventBus } from "../event-bus";
 import { createLogger } from "../log";
@@ -22,17 +21,15 @@ import {
 import { resolveAddressBatch, ADDRESS_RESOLUTION_BATCH_LIMIT, type AddressResolution } from "../address-resolver";
 import { peopleStorage } from "../people-storage";
 import { companyStorage } from "../company-storage";
-import { goalsService } from "../goals-service";
-import { fileProjectStorage } from "../file-storage/projects";
 import { chatFileStorage } from "../chat-file-storage";
 import { meetingGraphAdapter } from "../meetings/meeting-graph-adapter";
+import { workGraphAdapter } from "../work/work-graph-adapter";
 
 const log = createLogger("PersonalGraphProjection");
 
 const RECENCY_HALF_LIFE_DAYS = 7;
 const MS_PER_DAY = 86_400_000;
 const CLAIM_LINK_BATCH_SIZE = 500;
-const ENTITY_READ_BATCH_SIZE = 10;
 /** Whole-corpus page seed ceiling; bounds payload, never gated on corpus size beyond this. */
 const PERSONAL_GRAPH_PAGE_LIMIT = 5_000;
 /** Max distinct occurrence-target addresses resolved through adapters (chunked by 50). */
@@ -78,6 +75,7 @@ export interface PersonalGraphMetrics {
   claimCount: number;
   occurrenceEdgeCount: number;
   meetingEdgeCount: number;
+  workEdgeCount: number;
   resolvedTargetCount: number;
   adapterQueryCount: number;
   payloadBytes: number;
@@ -182,7 +180,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   // Base seed: every visible live Library page (slim metadata only) plus vNext claims,
   // current work, meetings, and the whole-corpus authored occurrence edges. One query
   // per adapter; none scales with corpus size beyond its bounded row limit.
-  const [visiblePages, claims, currentGoalIndex, currentProjects, meetingProjection, occurrenceEdges] =
+  const [visiblePages, claims, meetingProjection, workProjection, occurrenceEdges] =
     await Promise.all([
       libraryFirst
         ? db
@@ -209,20 +207,19 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
           sql`${memoryVnextClaims.lifecycleStage} <> ${MEMORY_VNEXT_LIFECYCLE_STAGE.RETIRED}`,
         ))
         .orderBy(desc(memoryVnextClaims.createdAt)),
-      goalsService.listAll(),
-      fileProjectStorage.getProjects(),
       meetingGraphAdapter.project(principal, { limit: 500 }),
+      workGraphAdapter.project(principal, { limit: 1_000 }),
       getLibraryCorpusOccurrenceEdges(principal, LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT),
     ]);
-  adapterQueryCount += 6;
+  adapterQueryCount += 5;
 
-  const currentGoalIds = currentGoalIndex.filter((goal) => goal.status !== "achieved").map((goal) => goal.id);
-  const currentGoals: Goal[] = [];
-  for (const batch of chunkValues(currentGoalIds, ENTITY_READ_BATCH_SIZE)) {
-    const goals = await Promise.all(batch.map((id) => goalsService.get(id)));
-    currentGoals.push(...goals.filter((goal): goal is Goal => goal !== null));
-  }
-  const currentProjectRows = currentProjects.filter((project) => project.status !== "completed");
+  // Domain adapter projections. Each adapter emits canonical candidates only; the
+  // assembler owns client-node conversion, address-based merging, and independent
+  // endpoint authorization. No adapter query scales with corpus size.
+  const adapterProjections: Array<{ id: string; result: GraphAdapterResult }> = [
+    { id: meetingGraphAdapter.id, result: meetingProjection },
+    { id: workGraphAdapter.id, result: workProjection },
+  ];
 
   const claimIds = claims.map((claim) => claim.id);
   const visibleClaimIds = new Set(claimIds);
@@ -277,18 +274,8 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
       entityTimestampByKey.set(key, { createdAt: company.createdAt, updatedAt: company.updatedAt });
     }
   }
-  for (const goal of currentGoals) {
-    const key = `goal:${goal.id}`;
-    entityTitleByKey.set(key, goal.shortName);
-    entitySummaryByKey.set(key, goal.description || `${goal.horizon} goal · ${goal.status}`);
-    entityTimestampByKey.set(key, { createdAt: goal.createdAt, updatedAt: goal.updatedAt });
-  }
-  for (const project of currentProjectRows) {
-    const key = `project:${project.id}`;
-    entityTitleByKey.set(key, project.title);
-    entitySummaryByKey.set(key, project.description || `${project.status} project`);
-    entityTimestampByKey.set(key, { createdAt: project.createdAt, updatedAt: project.updatedAt });
-  }
+  // Goal/Project/Milestone/Task titles and structural topology are owned by the
+  // Work adapter (registered as domain nodes below); claim mentions attach to them.
 
   // Session source nodes (pages are all seeded; sessions are loaded only when cited).
   const sourceSessionIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "session").map((ref) => ref.sourceId))];
@@ -364,6 +351,34 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
     });
   }
 
+  // Domain adapter nodes are canonical candidates. Registering them before the
+  // claim entity-link overlay lets claim mentions attach to the richer domain
+  // node instead of a minimal fallback. Merged by canonical address.
+  for (const { id: adapterId, result } of adapterProjections) {
+    for (const node of result.nodes) {
+      const normalized = normalizeProtocolAddress(node.id);
+      if (normalized.outcome !== "valid") continue;
+      const key = `${normalized.type}:${normalized.id}`;
+      if (nodeIdByAddress.has(key)) continue;
+      const nodeId = registerNode(key, {
+        id: nextSyntheticNodeId--,
+        content: node.summary || node.label,
+        title: node.label,
+        summary: node.summary,
+        layer: "long",
+        source: sourceForAddressType(node.type),
+        sourceId: normalized.id,
+        tags: [node.type],
+        graphed: true,
+        metadata: { graphStorage: "vnext", nodeKind: "domain", nodeType: node.type, reference: node.id, adapterId },
+        createdAt: null,
+        updatedAt: node.updatedAt ?? null,
+        recency: node.recency,
+      });
+      if (normalized.type === "meeting") nodeIdByAddress.set(`session:${normalized.id}`, nodeId);
+    }
+  }
+
   function ensureEntityNode(entityType: string, entityId: string, fallbackTimestamp?: Date | string | null): number {
     const key = `${entityType}:${entityId}`;
     const existing = nodeIdByAddress.get(key);
@@ -402,33 +417,6 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   for (const link of entityLinks) {
     if (!visibleClaimIds.has(link.claimId)) continue;
     ensureEntityNode(link.entityType, link.entityId, newestClaimTimestampByEntityKey.get(`${link.entityType}:${link.entityId}`) ?? link.createdAt);
-  }
-  for (const goal of currentGoals) ensureEntityNode("goal", goal.id, goal.updatedAt);
-  for (const project of currentProjectRows) ensureEntityNode("project", String(project.id), project.updatedAt);
-
-  // Domain adapter nodes are candidates with canonical addresses. The assembler
-  // owns conversion to the legacy client node shape and address-based merging.
-  for (const node of meetingProjection.nodes) {
-    const normalized = normalizeProtocolAddress(node.id);
-    if (normalized.outcome !== "valid") continue;
-    const key = `${normalized.type}:${normalized.id}`;
-    if (nodeIdByAddress.has(key)) continue;
-    const nodeId = registerNode(key, {
-      id: nextSyntheticNodeId--,
-      content: node.summary || node.label,
-      title: node.label,
-      summary: node.summary,
-      layer: "long",
-      source: sourceForAddressType(node.type),
-      sourceId: normalized.id,
-      tags: [node.type],
-      graphed: true,
-      metadata: { graphStorage: "vnext", nodeKind: "domain", nodeType: node.type, reference: node.id, adapterId: meetingGraphAdapter.id },
-      createdAt: null,
-      updatedAt: node.updatedAt ?? null,
-      recency: node.recency,
-    });
-    if (normalized.type === "meeting") nodeIdByAddress.set(`session:${normalized.id}`, nodeId);
   }
 
   function ensureSessionNode(sourceId: string, createdAt?: Date | string | null): number | null {
@@ -477,11 +465,13 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   }
   // Every domain-adapter target is independently resolved below. Invalid legacy
   // coordinates or copied provider IDs simply drop without creating an edge.
-  for (const edge of meetingProjection.edges) {
-    const normalized = normalizeProtocolAddress(edge.to);
-    if (normalized.outcome !== "valid") continue;
-    if (normalized.type === "page" || nodeIdByAddress.has(`${normalized.type}:${normalized.id}`)) continue;
-    unresolvedTargets.add(normalized.address);
+  for (const { result } of adapterProjections) {
+    for (const edge of result.edges) {
+      const normalized = normalizeProtocolAddress(edge.to);
+      if (normalized.outcome !== "valid") continue;
+      if (normalized.type === "page" || nodeIdByAddress.has(`${normalized.type}:${normalized.id}`)) continue;
+      unresolvedTargets.add(normalized.address);
+    }
   }
   const targetsToResolve = [...unresolvedTargets].slice(0, OCCURRENCE_TARGET_RESOLVE_LIMIT);
   const resolvedByAddress = new Map<string, AddressResolution>();
@@ -564,38 +554,35 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
       relationshipType: "entity_link",
     });
   }
-  // Structural domain edges: project→goal, meeting→attendee.
+  // Structural domain edges (project→goal, goal hierarchy, milestone→project,
+  // task→project/milestone, meeting→attendee, etc.) are owned by domain adapters.
+  // Each edge is admitted only when both canonical endpoints survived independent
+  // principal-aware resolution. An edge can never grant visibility.
   let structuralLinkCount = 0;
-  for (const project of currentProjectRows) {
-    if (!project.goalId) continue;
-    const fromId = nodeIdByAddress.get(`project:${project.id}`);
-    const toId = nodeIdByAddress.get(`goal:${project.goalId}`);
-    if (fromId === undefined || toId === undefined) continue;
-    links.push({ id: nextSyntheticLinkId--, fromId, toId, relationship: "pursues_goal", strength: 1, createdAt: serializeDate(project.updatedAt), relationshipType: "project_goal" });
-    structuralLinkCount++;
+  const adapterEdgeCounts = new Map<string, number>();
+  for (const { id: adapterId, result } of adapterProjections) {
+    for (const edge of result.edges) {
+      const from = normalizeProtocolAddress(edge.from);
+      const to = normalizeProtocolAddress(edge.to);
+      if (from.outcome !== "valid" || to.outcome !== "valid") continue;
+      const fromId = nodeIdByAddress.get(`${from.type}:${from.id}`);
+      const toId = nodeIdByAddress.get(`${to.type}:${to.id}`);
+      if (fromId === undefined || toId === undefined || fromId === toId) continue;
+      links.push({
+        id: nextSyntheticLinkId--,
+        fromId,
+        toId,
+        relationship: edge.predicate,
+        strength: edge.weight,
+        createdAt: edge.updatedAt ?? null,
+        relationshipType: `adapter:${adapterId}`,
+      });
+      structuralLinkCount++;
+      adapterEdgeCounts.set(adapterId, (adapterEdgeCounts.get(adapterId) ?? 0) + 1);
+    }
   }
-  // Domain adapter edges are admitted only when both canonical endpoints survived
-  // independent principal-aware resolution. An edge can never grant visibility.
-  let meetingEdgeCount = 0;
-  for (const edge of meetingProjection.edges) {
-    const from = normalizeProtocolAddress(edge.from);
-    const to = normalizeProtocolAddress(edge.to);
-    if (from.outcome !== "valid" || to.outcome !== "valid") continue;
-    const fromId = nodeIdByAddress.get(`${from.type}:${from.id}`);
-    const toId = nodeIdByAddress.get(`${to.type}:${to.id}`);
-    if (fromId === undefined || toId === undefined || fromId === toId) continue;
-    links.push({
-      id: nextSyntheticLinkId--,
-      fromId,
-      toId,
-      relationship: edge.predicate,
-      strength: edge.weight,
-      createdAt: edge.updatedAt ?? null,
-      relationshipType: `adapter:${meetingGraphAdapter.id}`,
-    });
-    structuralLinkCount++;
-    meetingEdgeCount++;
-  }
+  const meetingEdgeCount = adapterEdgeCounts.get(meetingGraphAdapter.id) ?? 0;
+  const workEdgeCount = adapterEdgeCounts.get(workGraphAdapter.id) ?? 0;
   // Authored page occurrence edges (page→page and page→resolved target). Never parses bodies.
   let occurrenceEdgeCount = 0;
   for (const edge of occurrenceEdges) {
@@ -626,6 +613,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
     claimCount: claims.length,
     occurrenceEdgeCount,
     meetingEdgeCount,
+    workEdgeCount,
     resolvedTargetCount: resolvedByAddress.size,
     adapterQueryCount,
     payloadBytes: 0,
@@ -643,7 +631,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   log.info(
     `[personal-graph] libraryFirst=${libraryFirst} pages=${projection.pageCount} claims=${projection.claimCount} ` +
       `nodes=${projection.nodeCount} edges=${projection.edgeCount} occurrenceEdges=${occurrenceEdgeCount} ` +
-      `meetingEdges=${projection.meetingEdgeCount} structural=${structuralLinkCount} resolvedTargets=${projection.resolvedTargetCount} ` +
+      `meetingEdges=${projection.meetingEdgeCount} workEdges=${projection.workEdgeCount} structural=${structuralLinkCount} resolvedTargets=${projection.resolvedTargetCount} ` +
       `adapterQueries=${projection.adapterQueryCount} payloadKB=${(projection.payloadBytes / 1024).toFixed(1)} assemblyMs=${projection.assemblyMs}`,
   );
   eventBus.publish({
@@ -658,6 +646,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
       payloadBytes: projection.payloadBytes,
       adapterQueryCount: projection.adapterQueryCount,
       meetingEdgeCount: projection.meetingEdgeCount,
+      workEdgeCount: projection.workEdgeCount,
       level: projection.assemblyMs > 750 ? "warn" : "info",
     },
   });
