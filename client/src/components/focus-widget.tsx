@@ -23,6 +23,7 @@ import { useSessionActivity } from "@/hooks/use-session-activity";
 import { type ChatSession as Session, type PageContext } from "@shared/models/chat";
 import { ConversationSidebar } from "@/components/conversation-sidebar";
 import { BottomBar } from "@/components/bottom-bar";
+import { EditableSessionTitle } from "@/components/editable-session-title";
 import { useSessionActivityState } from "@/components/thought-indicator";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
 import { useToast } from "@/hooks/use-toast";
@@ -697,14 +698,19 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
     <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
       <div className="flex items-center gap-2 h-[42px] px-1.5 border-b border-black md:hidden shrink-0 bg-background">
         {!isDesktop && <NavigationOrbButton />}
-        <div
-          className={cn(
-            "min-w-0 flex-1 truncate text-sm font-medium text-foreground",
-            activeMeetingTitle && "text-active motion-safe:animate-pulse",
-          )}
-          title={activeSessionTitle}
-        >
-          {activeSessionTitle}
+        <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+          <EditableSessionTitle
+            title={activeSessionTitle}
+            canEdit={!!activeSession}
+            onCommit={(title) =>
+              activeSession && sidebarRenameConversation.mutate({ id: activeSession, title })
+            }
+            isStreaming={activeMeetingTitle}
+            className={cn(
+              "min-w-0 flex-1 text-foreground",
+              activeMeetingTitle && "motion-safe:animate-pulse",
+            )}
+          />
         </div>
         {showMobileSessionTranscriptPanel && (
           <button
