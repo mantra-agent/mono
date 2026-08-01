@@ -19,6 +19,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.decisions.open": { href: "/decisions" },
   "navigation.strategy.open": { href: "/strategy" },
   "navigation.businessModel.open": { href: "/business/model", permission: "system:read" },
+  "navigation.advantage.open": { href: "/business/advantage" },
   "navigation.roles.open": { href: "/business/roles", permission: "system:read" },
   "navigation.agendas.open": { href: "/agendas" },
   "navigation.skills.open": { href: "/skills" },

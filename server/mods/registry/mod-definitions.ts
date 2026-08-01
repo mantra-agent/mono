@@ -92,7 +92,7 @@ const building: ModDefinition = {
 
 const business: ModDefinition = {
   key: "business",
-  version: "1.0.0",
+  version: "1.1.0",
   name: "Business",
   description: "Business operating surfaces: companies, strategy, decisions, business model, roles, and pipelines.",
   outcome: {
@@ -112,6 +112,7 @@ const business: ModDefinition = {
       clientRoute("business.route.companies", "/companies", "companies"),
       clientRoute("business.route.company-detail", "/companies/:id", "companies"),
       clientRoute("business.route.business-model", "/business/model", "business-model", { requiredPermissions: ["system:read"] }),
+      clientRoute("business.route.advantage", "/business/advantage", "business-advantage"),
       clientRoute("business.route.job-roles", "/business/roles", "job-roles", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.pipelines", "/pipelines", "pipelines"),
     ],
@@ -119,9 +120,10 @@ const business: ModDefinition = {
       nav("business.nav.companies", "Network", "Companies", "Briefcase", "business.route.companies", 3),
       nav("business.nav.decisions", "Planning", "Decisions", "Scale", "business.route.decisions", 2),
       nav("business.nav.strategy", "Planning", "Strategy", "Swords", "business.route.strategy", 3),
-      nav("business.nav.pipelines", "Business", "Pipelines", "Waypoints", "business.route.pipelines", 1),
-      nav("business.nav.business-model", "Business", "Model", "LineChart", "business.route.business-model", 2, { requiredPermissions: ["system:read"] }),
-      nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "business.route.job-roles", 3, { requiredPermissions: ["system:read"] }),
+      nav("business.nav.advantage", "Business", "Advantage", "Target", "business.route.advantage", 1),
+      nav("business.nav.pipelines", "Business", "Pipelines", "Waypoints", "business.route.pipelines", 2),
+      nav("business.nav.business-model", "Business", "Model", "LineChart", "business.route.business-model", 3, { requiredPermissions: ["system:read"] }),
+      nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "business.route.job-roles", 4, { requiredPermissions: ["system:read"] }),
     ],
     actions: actionsForOwner("business"),
   },

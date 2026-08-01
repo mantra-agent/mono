@@ -41,6 +41,7 @@ export const REGISTERED_SURFACE_KEYS = [
   "recipient-recap",
   "companies",
   "business-model",
+  "business-advantage",
   "job-roles",
   "comms",
   "orientation",
