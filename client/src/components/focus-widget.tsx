@@ -18,8 +18,9 @@ import { VaultSwitcher } from "@/components/vault-switcher";
 // Tooltip import removed — FAB tooltip no longer needed
 import { apiRequest } from "@/lib/queryClient";
 import { deleteSessionTree } from "@/lib/session-deletion";
-import { getSessionStreamState, useSessionSubscriptions } from "@/hooks/use-session-subscription";
-import { isDurablyActiveSession, type ChatSession as Session, type PageContext } from "@shared/models/chat";
+import { getSessionStreamState } from "@/hooks/use-session-subscription";
+import { useSessionActivity } from "@/hooks/use-session-activity";
+import { type ChatSession as Session, type PageContext } from "@shared/models/chat";
 import { ConversationSidebar } from "@/components/conversation-sidebar";
 import { BottomBar } from "@/components/bottom-bar";
 import { useSessionActivityState } from "@/components/thought-indicator";
@@ -199,6 +200,7 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   const { config: pageHeaderConfig } = usePageHeaderContext();
   const isDesktop = useIsDesktop();
   const queryClient = useQueryClient();
+  const sessionActivity = useSessionActivity();
   const voiceSession = useVoiceSessionOptional();
   // On the /session route, closing the widget should redirect to /simple
   // since /session has no content of its own (it exists for FTUE deep links).
@@ -502,18 +504,11 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
     refetchOnWindowFocus: true,
   });
 
-  const liveSessionIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (activeSession) ids.add(activeSession);
-    for (const session of sessions) {
-      if (!isDurablyActiveSession(session)) continue;
-      ids.add(session.id);
-      if (ids.size >= 8) break;
-    }
-    return Array.from(ids);
-  }, [activeSession, sessions]);
-  const sessionStreams = useSessionSubscriptions(liveSessionIds, { owner: "focus-widget", activeSession });
-  const sessionSub = getSessionStreamState(sessionStreams.streams, activeSession, sessionStreams.wsConnected);
+  const sessionSub = getSessionStreamState(
+    sessionActivity.streams,
+    activeSession,
+    sessionActivity.wsConnected,
+  );
 
 
 
@@ -742,7 +737,7 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
             sessions={sessions}
             voice={voice}
             sessionSub={sessionSub}
-            sessionStreams={sessionStreams.streams}
+            sessionStreams={sessionActivity.streams}
             mode="widget"
             enableAutoScroll={true}
             showBackButton={!isDesktop}
