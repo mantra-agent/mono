@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { getPostgresErrorDetails } from "../postgres-errors";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -2213,12 +2214,13 @@ export async function applyObservation(
       });
       relationshipsWritten++;
     } catch (relationshipError) {
+      const errorDetails = getPostgresErrorDetails(relationshipError);
       log.error(JSON.stringify({
         event: "memory.vnext.observation_relationship_failed",
         fromClaimId,
         toClaimId,
         relationship: relationship.relationship,
-        error: relationshipError instanceof Error ? relationshipError.message : String(relationshipError),
+        ...errorDetails,
       }));
       throw relationshipError;
     }
@@ -2288,13 +2290,14 @@ export async function applyObservation(
         sourceClaimIndex: claim.sourceClaimIndex,
       }));
     } catch (linkErr) {
+      const errorDetails = getPostgresErrorDetails(linkErr);
       log.error(JSON.stringify({
         event: "memory.vnext.claim_link_failed",
         parentClaimId,
         childClaimId,
         candidateIndex: i,
         sourceClaimIndex: claim.sourceClaimIndex,
-        error: linkErr instanceof Error ? linkErr.message : String(linkErr),
+        ...errorDetails,
       }));
       throw linkErr;
     }
