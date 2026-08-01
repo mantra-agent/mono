@@ -1083,6 +1083,17 @@ export async function resolveWorkflowStageCapability(sessionId: string): Promise
   };
 }
 
+function assertWorkflowEnvironmentRequirement(template: WorkflowTemplate, linkedEnvironmentId?: number | null): void {
+  const definition = parseWorkflowDefinition(template);
+  const requiresEnvironment = definition.stages.some((stage) => stage.key === "acceptance");
+  if (requiresEnvironment && !linkedEnvironmentId) {
+    throw new Error(
+      `Workflow template "${template.name}" includes an acceptance stage and requires linkedEnvironmentId. ` +
+      "Create environment-backed Build runs through platforms.start_build_workflow with the target Platform Environment; incomplete runs are not persisted.",
+    );
+  }
+}
+
 async function assertWorkflowCreationSessionsCanOrchestrate(sessionIds: Array<string | undefined>): Promise<void> {
   const normalizedSessionIds = [...new Set(sessionIds.map((id) => id?.trim()).filter((id): id is string => Boolean(id)))];
   if (normalizedSessionIds.length === 0) return;
@@ -1124,6 +1135,7 @@ export async function createWorkflowRun(input: {
   if (!template) throw new Error(`Workflow template not found: ${templateId}`);
   if (!input.title?.trim()) throw new Error("Workflow title is required");
   if (!input.objective?.trim()) throw new Error("Workflow objective is required");
+  assertWorkflowEnvironmentRequirement(template, input.linkedEnvironmentId);
   await assertWorkflowCreationSessionsCanOrchestrate([input.parentSessionId, input.createdBySessionId]);
 
   const id = generateWorkflowRunId();
@@ -1292,12 +1304,8 @@ export async function startWorkflowRun(runId: string): Promise<WorkflowRunDetail
   if (!["draft", "paused", "blocked"].includes(detail.run.status)) throw new Error(`Workflow run status is ${detail.run.status}; cannot start.`);
   await assertNoOpenGate(runId);
 
-  // Require linkedEnvironmentId when the template includes an acceptance stage
-  const definition = parseWorkflowDefinition(detail.template);
-  const hasAcceptanceStage = definition.stages.some((s) => s.key === "acceptance");
-  if (hasAcceptanceStage && !detail.run.linkedEnvironmentId) {
-    throw new Error(`Workflow template "${detail.template.name}" includes an acceptance stage but no linkedEnvironmentId is set. Link a platform environment before starting.`);
-  }
+  // Retain the invariant at start for legacy drafts created before creation-time validation.
+  assertWorkflowEnvironmentRequirement(detail.template, detail.run.linkedEnvironmentId);
   await ensureWorkflowParentSession(detail);
   await db.update(workflowRuns).set({ status: "active", updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
   const stageKey = detail.run.currentStageKey;
