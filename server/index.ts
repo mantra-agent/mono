@@ -361,13 +361,15 @@ app.use((req, res, next) => {
   bootTracker.startPhase("database");
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
+  const { ensureLifeAddressingSchema } = await import("./life-addressing-schema");
+  const { pool } = await import("./db");
+  await ensureLifeAddressingSchema(pool);
   await vaultsMigrationReady;
   const { ensureMeetingRootsForAllVaults } = await import("./meeting/vault-ownership");
   await ensureMeetingRootsForAllVaults();
   const { migrateOpportunitySchema } = await import("./opportunity-storage");
   await migrateOpportunitySchema();
   const { ensureWorkVaultParentSchema } = await import("./work-vault-schema");
-  const { pool } = await import("./db");
   await ensureWorkVaultParentSchema(pool);
   const { ensureMilestonesSchema } = await import("./milestone-schema");
   await ensureMilestonesSchema(pool);

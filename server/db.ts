@@ -821,6 +821,8 @@ export const ADVISORY_LOCK_NS = {
   REGRESSION_CONTRACT: 0x52474354, // 'RGCT' — serializes versioned contract mutation per issue
   REGRESSION_RESULT: 0x52475253, // 'RGRS' — serializes one append-only result per run + issue
   MEETING_AUDIO_SAMPLE: 0x4d415544, // 'MAUD' — serializes retained-audio capture, replay, and deletion per sample
+  REFERENCE_OCCURRENCES: 0x52464f43, // 'RFOC' — serializes one authored source projection replacement
+  ADDRESS_LINK: 0x41444c4b, // 'ADLK' — serializes one explicit-link idempotency or lifecycle mutation
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";
