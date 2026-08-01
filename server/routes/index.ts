@@ -55,6 +55,7 @@ import { registerNotificationRoutes } from "./notifications";
 import { registerWaitlistRoutes } from "./waitlist";
 import { registerCommunicationRoutes } from "./communications";
 import { registerProductCompositionRoutes } from "./product-composition";
+import { registerModsRoutes } from "./mods";
 import mediaRoutes from "../media/media-routes";
 import renderRoutes from "../media/render-routes";
 
@@ -123,6 +124,7 @@ export async function registerDomainRoutes(
   registerWaitlistRoutes(app);
   registerCommunicationRoutes(app);
   registerProductCompositionRoutes(app);
+  registerModsRoutes(app);
   registerMobileTelemetryRoutes(app);
   registerMobileDATDebugRoutes(app);
   registerVaultRoutes(app);

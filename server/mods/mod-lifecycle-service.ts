@@ -33,8 +33,14 @@ const log = createLogger("mod-lifecycle");
  * identically to a build without the Mod platform.
  */
 export function isModPlatformEnabled(): boolean {
-  return process.env.MOD_PLATFORM_ENABLED === "true";
+  // Default ON for the product management path. Rollback is an explicit
+  // env-level disable (`MOD_PLATFORM_ENABLED=false`) so ADMIN → Mods is never a
+  // dead surface behind an unset flag.
+  return process.env.MOD_PLATFORM_ENABLED !== "false";
 }
+
+/** Mods provisioned as active baseline defaults on every account. */
+export const BASELINE_MOD_KEYS = ["planning", "network"] as const satisfies readonly ModKey[];
 
 export class ModPlatformError extends Error {
   readonly status: number;
@@ -494,6 +500,97 @@ export class ModLifecycleService {
         return existing;
       }),
     );
+  }
+  /**
+   * Install a first-party Mod from the ADMIN → Mods surface. First-party Mods
+   * are product-entitled by default, so this grants the product entitlement
+   * under mods:manage and then drives the canonical install state machine.
+   */
+  async installProductMod(principal: Principal, modKey: string): Promise<ModInstallationRow> {
+    this.assertEnabled();
+    this.assertManageAuthority(principal);
+    const key = this.normalizeModKey(modKey);
+    await this.grantBaselineEntitlement(principal, key);
+    return this.install(principal, { modKey: key });
+  }
+
+  /** Grant a baseline product entitlement under mods:manage (not commercial system:write). */
+  private async grantBaselineEntitlement(principal: Principal, modKey: ModKey): Promise<void> {
+    const ctx = this.requireAccountContext(principal);
+    await db.transaction((tx) =>
+      runWithDatabaseTransaction(tx, async () => {
+        await acquireAdvisoryTransactionLock(
+          tx,
+          ADVISORY_LOCK_NS.MOD_LIFECYCLE,
+          this.lockKey(ctx.accountId, modKey),
+        );
+        await tx
+          .insert(modEntitlements)
+          .values({
+            modKey,
+            status: "granted",
+            sourceType: "baseline",
+            sourceId: "default",
+            ...ownedInsertValues(principal, entitlementScope),
+            createdByUserId: ctx.userId,
+            updatedByUserId: ctx.userId,
+          })
+          .onConflictDoUpdate({
+            target: [modEntitlements.accountId, modEntitlements.modKey],
+            set: { status: "granted", updatedByUserId: ctx.userId, updatedAt: new Date() },
+          });
+      }),
+    );
+  }
+
+  /**
+   * Read the account's installation + entitlement state for every Mod key.
+   * Read-only and principal-scoped. Callers join this with the code-owned
+   * registry to project the customer-facing catalog.
+   */
+  async listAccountState(
+    principal: Principal,
+  ): Promise<{ entitlements: ModEntitlementRow[]; installations: ModInstallationRow[] }> {
+    this.assertEnabled();
+    this.requireAccountContext(principal);
+    if (!principalHasPermission(principal, "mods:read")) {
+      throw new ModPlatformError("mods_read_required", "mods:read permission required", 403);
+    }
+    const [entitlements, installations] = await Promise.all([
+      db
+        .select()
+        .from(modEntitlements)
+        .where(combineWithVisibleScope(principal, entitlementScope))
+        .limit(100),
+      db
+        .select()
+        .from(modInstallations)
+        .where(combineWithVisibleScope(principal, installationScope))
+        .limit(100),
+    ]);
+    return { entitlements, installations };
+  }
+
+  /**
+   * Idempotently provision the baseline (Planning + Network) as active
+   * installations. A default is a bootstrap, not a lock: a Mod that already has
+   * ANY installation row (including an explicit `disabled`) is left untouched,
+   * so a later owner disable is durable and never silently re-enabled.
+   */
+  async ensureBaseline(principal: Principal): Promise<void> {
+    this.assertEnabled();
+    this.requireAccountContext(principal);
+    if (!principalHasPermission(principal, "mods:manage")) return; // read-only viewers skip bootstrap
+    for (const modKey of BASELINE_MOD_KEYS) {
+      const [existing] = await db
+        .select({ id: modInstallations.id })
+        .from(modInstallations)
+        .where(combineWithWritableScope(principal, installationScope, eq(modInstallations.modKey, modKey)))
+        .limit(1);
+      if (existing) continue;
+      await this.grantBaselineEntitlement(principal, modKey);
+      await this.install(principal, { modKey });
+    }
   }
 }
 

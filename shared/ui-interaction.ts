@@ -51,11 +51,12 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.users.open": { href: "/system?tab=users", permission: "system:read" },
   "navigation.vaults.open": { href: "/system?tab=vaults" },
   "navigation.integrations.open": { href: "/integrations" },
+  "navigation.mods.open": { href: "/mods", permission: "mods:read" },
   "navigation.account.open": { href: "/account" },
 } as const;
 
 export type UiInteractionTarget = keyof typeof UI_INTERACTION_TARGET_ROUTES;
-export type UiInteractionPermission = "system:read" | "build:read";
+export type UiInteractionPermission = "system:read" | "build:read" | "mods:read";
 
 export const UI_INTERACTION_TARGETS = Object.freeze(
   Object.keys(UI_INTERACTION_TARGET_ROUTES) as UiInteractionTarget[],
