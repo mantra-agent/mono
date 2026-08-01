@@ -101,6 +101,10 @@ function classifyCandidate(issue: Issue, contract: IssueRegressionContract | und
   };
 }
 
+export function deploymentRegressionTriggerKey(environmentId: number, deploymentId: string, revision: string): string {
+  return ["deployment", environmentId, deploymentId.trim(), revision.trim().toLowerCase()].join(":");
+}
+
 export async function createRegressionRun(input: {
   triggerKey: string;
   environmentId: number;
@@ -138,6 +142,12 @@ export async function createRegressionRun(input: {
   }
   const [existing] = await db.select().from(regressionRuns).where(visible(runScope, eq(regressionRuns.triggerKey, triggerKey))).limit(1);
   if (!existing) throw new Error("Regression run conflict did not resolve to a visible run");
+  if (existing.status === "queued" && existing.dueAt.getTime() > input.dueAt.getTime()) {
+    const [accelerated] = await db.update(regressionRuns).set({ dueAt: input.dueAt, updatedAt: new Date() })
+      .where(writable(runScope, and(eq(regressionRuns.id, existing.id), eq(regressionRuns.status, "queued"))))
+      .returning();
+    if (accelerated) return accelerated;
+  }
   return existing;
 }
 

@@ -110,6 +110,40 @@ export function registerSkillRoutes(app: Express): void {
     }
   });
 
+  app.post("/api/skills/:id/run", async (req, res) => {
+    try {
+      const skill = await storage.getSkill(req.params.id);
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+      if (skill.status !== "active") return res.status(409).json({ error: `Skill ${skill.name} is not active` });
+
+      let sessionId: string | null = null;
+      if (skill.name === "regression") {
+        const { startManualRegression } = await import("./regression/regression-admission");
+        const run = await startManualRegression({ wait: false });
+        sessionId = run.skillSessionId;
+      } else {
+        const { executeAutonomousSkillRun } = await import("./autonomous-skill-runner");
+        const sessionCreated = new Promise<string>((resolve) => {
+          void executeAutonomousSkillRun(skill.id, {
+            onSessionCreated: resolve,
+            spawnerTool: "skills.ui.run",
+          }).catch((error) => {
+            log.error(`POST /api/skills/${skill.id}/run execution failed:`, error instanceof Error ? error.message : String(error));
+          });
+        });
+        sessionId = await Promise.race([
+          sessionCreated,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+        ]);
+      }
+      log.log(`Started skill name=${skill.name} id=${skill.id} session=${sessionId || "pending"}`);
+      res.status(202).json({ started: true, skillId: skill.id, skillName: skill.name, sessionId });
+    } catch (err: any) {
+      log.error(`POST /api/skills/${req.params.id}/run error:`, err.message);
+      res.status(500).json({ error: err.message || "Failed to run skill" });
+    }
+  });
+
   app.post("/api/skills/:name/dismiss-failure", async (req, res) => {
     try {
       await storage.dismissSkillFailure(req.params.name);

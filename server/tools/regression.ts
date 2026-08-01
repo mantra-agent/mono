@@ -20,8 +20,15 @@ const requiredRunId = (value: unknown) => z.string().trim().min(1).max(100).pars
 
 export async function handleRegression(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   try {
-    const action = z.enum(["list_candidates", "get_run", "get_issue", "upsert_contract", "execute_scenario", "append_result", "get_results", "associate_plan"]).parse(args.action);
+    const action = z.enum(["start_run", "list_candidates", "get_run", "get_issue", "upsert_contract", "execute_scenario", "append_result", "get_results", "associate_plan"]).parse(args.action);
     switch (action) {
+      case "start_run": {
+        const { startManualRegression } = await import("../regression/regression-admission");
+        return json(await startManualRegression({
+          environmentId: args.environmentId == null ? undefined : z.coerce.number().int().positive().parse(args.environmentId),
+          wait: args.wait !== false,
+        }));
+      }
       case "list_candidates": {
         const runId = requiredRunId(args.runId);
         const snapshot = await listRegressionCandidates(runId);

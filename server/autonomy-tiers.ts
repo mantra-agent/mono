@@ -82,6 +82,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   settings: { default: 1, actions: { get: 0 } },
   system: { default: 0, actions: { create_issue: 1 } },
   regression: { default: 2, actions: {
+    start_run: 1,
     list_candidates: 0,
     get_run: 0,
     get_issue: 0,
@@ -89,7 +90,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
     upsert_contract: 1,
     append_result: 1,
     associate_plan: 1,
-    execute_scenario: 2,
+    execute_scenario: 1,
   }},
   workflows: { default: 2, actions: {
     list_templates: 0, get_template: 0, list_runs: 0, get_run: 0,

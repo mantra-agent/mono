@@ -74,6 +74,7 @@ import {
   Search,
   FileText,
   PauseCircle,
+  Play,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -108,6 +109,7 @@ function SkillTreeRow({
   expanded,
   hasFailed,
   onToggleExpand,
+  onRun,
   onEdit,
   onDelete,
   onExport,
@@ -117,6 +119,7 @@ function SkillTreeRow({
   expanded: boolean;
   hasFailed: boolean;
   onToggleExpand: () => void;
+  onRun: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onExport: () => void;
@@ -165,6 +168,10 @@ function SkillTreeRow({
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuItem onClick={() => { setMenuOpen(false); onRun(); }} data-testid="menu-run-skill">
+              <Play className="h-3.5 w-3.5 mr-2" /> Run
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => { setMenuOpen(false); onPin(); }} data-testid="menu-pin-skill">
               <Pin className={cn("h-3.5 w-3.5 mr-2", skill.pinnedToContext && "fill-current text-info")} />
               {skill.pinnedToContext ? "Unpin from Context" : "Pin to Context"}
@@ -314,6 +321,7 @@ function SkillListSidebar({
   onCreate,
   onImport,
   onExportAll,
+  onRun,
   onEdit,
   onDelete,
   onExport,
@@ -326,6 +334,7 @@ function SkillListSidebar({
   onCreate: () => void;
   onImport: () => void;
   onExportAll: () => void;
+  onRun: (skill: SkillWithReferences) => void;
   onEdit: (skill: SkillWithReferences) => void;
   onDelete: (skill: SkillWithReferences) => void;
   onExport: (skill: SkillWithReferences) => void;
@@ -394,6 +403,7 @@ function SkillListSidebar({
       expanded={expandedIds.has(skill.id)}
       hasFailed={failedNames.has(skill.name)}
       onToggleExpand={() => toggleExpanded(skill.id)}
+      onRun={() => onRun(skill)}
       onEdit={() => onEdit(skill)}
       onDelete={() => onDelete(skill)}
       onExport={() => onExport(skill)}
@@ -1403,6 +1413,24 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
     },
   });
 
+  const runMutation = useMutation({
+    mutationFn: async (skill: SkillWithReferences) => {
+      const response = await apiRequest("POST", `/api/skills/${skill.id}/run`);
+      return response.json() as Promise<{ sessionId?: string | null }>;
+    },
+    onSuccess: (result, skill) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/skills/last-runs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/skills", skill.name, "runs"] });
+      toast({
+        title: `Running ${skill.name}`,
+        description: result.sessionId ? `Session ${result.sessionId}` : "The run is starting.",
+      });
+    },
+    onError: (err: Error, skill) => {
+      toast({ title: `Failed to run ${skill.name}`, description: err.message, variant: "destructive" });
+    },
+  });
+
   const handleEdit = (skill: SkillWithReferences) => {
     setEditingSkill(skill);
     setEditorOpen(true);
@@ -1485,6 +1513,7 @@ export function SkillsContent({ embedded }: { embedded?: boolean }) {
         onCreate={handleCreate}
         onImport={handleImport}
         onExportAll={handleExportAll}
+        onRun={(skill) => runMutation.mutate(skill)}
         onEdit={handleEdit}
         onDelete={(skill) => setDeletingSkill(skill)}
         onExport={handleExportSkill}

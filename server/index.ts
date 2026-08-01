@@ -715,8 +715,30 @@ app.use((req, res, next) => {
       };
       setInterval(runPlanRecovery, PLAN_RECOVERY_INTERVAL_MS).unref();
 
-      // Post-deploy Regression dispatcher: claims delayed durable runs in small
-      // cross-replica batches, restores each owner, and launches the built-in skill.
+      // Regression admission reconciles the exact running Railway deployment
+      // into one deployment-deduplicated run. This covers the real Publish →
+      // Railway → boot path even when no build Workflow represented the publish.
+      let regressionAdmissionComplete = false;
+      const runRegressionAdmission = () => {
+        if (regressionAdmissionComplete) return;
+        import("./regression/regression-admission").then(async ({ reconcileRunningDeploymentRegression }) => {
+          const result = await reconcileRunningDeploymentRegression();
+          if (result.outcome === "admitted") {
+            regressionAdmissionComplete = true;
+            log(`[post-ready] regression admitted: run=${result.runId} deployment=${result.deploymentId} revision=${result.revision.slice(0, 8)}`, "boot");
+          } else if (result.outcome === "not_bound") {
+            regressionAdmissionComplete = true;
+            log(`[post-ready] regression admission skipped: ${result.reason}`, "boot");
+          }
+        }).catch((err) => {
+          log(`[post-ready] regression admission deferred: ${err instanceof Error ? err.message : String(err)}`, "boot");
+        });
+      };
+      setTimeout(runRegressionAdmission, 10_000).unref();
+      setInterval(runRegressionAdmission, 30_000).unref();
+
+      // Regression dispatcher claims durable runs in small cross-replica
+      // batches, restores each owner, and launches the built-in skill.
       const REGRESSION_DISPATCH_INTERVAL_MS = 60_000;
       let regressionDispatchActive = false;
       const runRegressionDispatch = () => {

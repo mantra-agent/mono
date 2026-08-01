@@ -525,6 +525,8 @@ export async function executeAutonomousSkillRun(
     planPageRef?: string;
     workflowRunId?: string;
     workflowStageAttemptId?: number;
+    /** Optional per-instance single-flight key for Skills that support concurrent durable runs. */
+    coordinationKey?: string;
   } = {}
 ): Promise<AutonomousRunResult | null> {
   // ── Ensure user principal context ───────────────────────────────────
@@ -604,6 +606,14 @@ export async function executeAutonomousSkillRun(
   }
   } // end skill-based config resolution
 
+  if (!isSkillless && config.skillId === "regression" && !/\breg_[a-z0-9_]+\b/i.test(options.preContext || "")) {
+    const { admitRegressionRun } = await import("./regression/regression-admission");
+    const run = await admitRegressionRun({ mode: "manual" });
+    options.preContext = `Regression run ID: ${run.id}`;
+    options.coordinationKey = `regression:${run.id}`;
+    options.titleOverride = options.titleOverride || `Regression ${run.acceptedRevision.slice(0, 8)}`;
+  }
+
   // Global per-skill dedupe is for top-level autoruns (e.g. cron-triggered
   // skills that should never overlap themselves). Parented child spawns
   // (e.g. Council fanning two `advocate` runs in parallel) are
@@ -611,8 +621,9 @@ export async function executeAutonomousSkillRun(
   // (parent, reason, skillRun) unique tuple in `session_tree`. Bypassing
   // this gate when a `parentSessionId` is present is required for
   // legitimate parallel fan-out.
-  if (!isSkillless && !options.parentSessionId && isDuplicateSkillRun(skillId!)) {
-    logger.log(`[skill:${skillId}] Already running — skipping`);
+  const coordinationKey = options.coordinationKey || skillId || "skillless";
+  if (!isSkillless && !options.parentSessionId && isDuplicateSkillRun(coordinationKey)) {
+    logger.log(`[skill:${skillId}] Coordination key ${coordinationKey} already running — skipping`);
     return null;
   }
 
@@ -623,7 +634,7 @@ export async function executeAutonomousSkillRun(
   // run of the same skill is relying on for dedupe.
   let didRegisterActiveRun = false;
   if (!isSkillless && !options.parentSessionId) {
-    activeSkillRuns.add(getSkillRunKey(skillId!));
+    activeSkillRuns.add(getSkillRunKey(coordinationKey));
     didRegisterActiveRun = true;
   }
   const startTime = Date.now();
@@ -675,7 +686,7 @@ export async function executeAutonomousSkillRun(
           `[SkillChat] [${config.label}] Pre-flight: admission_deferred ` +
           `(snapshot: ${JSON.stringify(snapshot)}) — deferring skill run`
         );
-        releaseSkillRun(skillId!);
+        releaseSkillRun(coordinationKey);
         return null;
       }
     } catch (admCheckErr: unknown) {
@@ -749,7 +760,7 @@ export async function executeAutonomousSkillRun(
           },
     );
   } catch (err: unknown) {
-    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(skillId));
+    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(coordinationKey));
     const errDetail = err instanceof Error ? (err.stack || err.message) : String(err);
     logger.error(`[SkillChat] phase=session-create FAILED for skill "${config.label}": ${errDetail}`);
     throw new Error(`phase=session-create FAILED for skill "${config.label}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
@@ -1034,7 +1045,7 @@ export async function executeAutonomousSkillRun(
 
     return { sessionId, status: "failed", error: errMsg, durationMs };
   } finally {
-    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(skillId));
+    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(coordinationKey));
     // Finalize with SessionManager so WS subscribers see the session end
     try {
       const { sessionManager } = await import("./session-manager");
