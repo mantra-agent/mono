@@ -41,6 +41,7 @@ import {
 } from "@shared/models/platforms";
 import { libraryPages } from "@shared/models/info";
 import { isParseableReferenceType, serializeReference } from "@shared/references";
+import { getProviderCredential } from "../provider-credential-store";
 import { resolvePlatformBindingSessionSecret } from "../platforms/platform-binding-browser-auth";
 import { extractDeploymentMeta, fetchDeploymentsForEnvironment, getLatestDeploymentByToken, type LatestDeployment } from "../integrations/railway/client";
 import { compareRefs } from "../integrations/github-pr";
