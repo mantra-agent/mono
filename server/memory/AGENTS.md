@@ -201,6 +201,10 @@ Entries are linked via `memory_links` with typed relationships and strength scor
 - Strength decays over time if not reinforced
 - Myelination strengthens frequently-co-recalled links
 
+## Personal Graph Projection (Library-first)
+
+`server/memory/personal-graph-projection.ts` is the bounded assembler behind `GET /api/memory/vnext/graph`. It is a disposable projection consumer, never an authority: it seeds every principal-visible live Library page (including isolated pages) from slim metadata, aggregates whole-corpus authored occurrence edges through `getLibraryCorpusOccurrenceEdges` (row-bounded, never corpus-sized, never parses page bodies), resolves referenced non-page targets through `resolveAddressBatch` so both endpoints are authorized independently, then overlays vNext claims and selected strong domain facts (people, goals, projects, meetings). Query count is fixed by the adapter set. `LIBRARY_FIRST_GRAPH_ENABLED=false` rolls back to the retained claim-first `handleGetVnextGraphLegacy` without a redeploy. Assembly latency, node/edge/payload counts, and adapter query count are logged and published on `memory:personal_graph_projected`; the client records snapshot latency, payload bytes, init-task, first-interactive, and worker layout-settled samples under the `graph` browser-telemetry kind. Client force layout runs in `client/src/lib/graph-layout-worker.ts` with a fail-open main-thread fallback; base edges render straight in one GPU pass while the focused neighborhood keeps curved links.
+
 ## Sleep Cycle (vNext)
 
 A nightly maintenance cycle (runs ~2 AM CT), orchestrated by `server/sleep-cycle.ts` — `runFullSleepCycle()`. It operates exclusively on vNext claims and never mutates legacy `memory_entries`.

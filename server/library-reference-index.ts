@@ -200,6 +200,49 @@ export async function getLibraryAuthoredOccurrences(
   return [...aggregated.values()];
 }
 
+export interface LibraryCorpusOccurrenceEdge {
+  sourcePageId: string;
+  targetAddress: string;
+  observedAt: Date;
+  occurrenceCount: number;
+}
+
+/**
+ * Whole-corpus authored page occurrences, bounded by row count rather than corpus
+ * size. Used by the Library-first personal graph projection so its query count stays
+ * fixed regardless of how many pages exist. Never parses page bodies — reads only the
+ * transactional occurrence projection. Both endpoints are still authorized
+ * independently by the caller before an edge is exposed.
+ */
+export async function getLibraryCorpusOccurrenceEdges(
+  principal: Principal,
+  limit = LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT,
+): Promise<LibraryCorpusOccurrenceEdge[]> {
+  requireUserPrincipal(principal);
+  const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT);
+  const rows = await db.select({
+    sourceAddress: referenceOccurrences.sourceAddress,
+    targetAddress: referenceOccurrences.targetAddress,
+    observedAt: referenceOccurrences.observedAt,
+  }).from(referenceOccurrences)
+    .where(combineWithVisibleScope(principal, occurrenceScope, like(referenceOccurrences.sourceAddress, "@page:%")))
+    .orderBy(asc(referenceOccurrences.observedAt), asc(referenceOccurrences.id))
+    .limit(boundedLimit);
+  const aggregated = new Map<string, LibraryCorpusOccurrenceEdge>();
+  for (const row of rows) {
+    const sourcePageId = row.sourceAddress.slice(6);
+    const key = `${row.sourceAddress}->${row.targetAddress}`;
+    const current = aggregated.get(key);
+    if (current) {
+      current.occurrenceCount++;
+      if (row.observedAt > current.observedAt) current.observedAt = row.observedAt;
+    } else {
+      aggregated.set(key, { sourcePageId, targetAddress: row.targetAddress, observedAt: row.observedAt, occurrenceCount: 1 });
+    }
+  }
+  return [...aggregated.values()];
+}
+
 async function occurrenceNeighborhood(principal: Principal, pageIds: string[]): Promise<LibraryReferenceNeighborhood[]> {
   const addresses = pageIds.map(pageAddress);
   if (addresses.length === 0) return [];

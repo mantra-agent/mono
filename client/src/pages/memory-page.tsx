@@ -7,6 +7,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import { getInstanceName } from "@/lib/instance-config";
+import { recordBrowserTelemetry } from "@/lib/browser-telemetry";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1434,9 +1435,14 @@ function GraphTab({
   const { data: graph, isLoading, isError } = useQuery<PalaceData>({
     queryKey: ["/api/memory/vnext/graph"],
     queryFn: async () => {
+      const startedAt = performance.now();
       const response = await fetch("/api/memory/vnext/graph", { credentials: "include" });
       if (!response.ok) throw new Error("Failed to load the vNext memory graph");
-      return response.json();
+      const text = await response.text();
+      const elapsedMs = Math.max(0, performance.now() - startedAt);
+      recordBrowserTelemetry({ kind: "graph", name: "snapshot", value: elapsedMs, unit: "ms" });
+      recordBrowserTelemetry({ kind: "graph", name: "payload", value: text.length, unit: "bytes" });
+      return JSON.parse(text) as PalaceData;
     },
   });
 
