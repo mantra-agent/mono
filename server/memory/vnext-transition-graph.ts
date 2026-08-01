@@ -123,10 +123,30 @@ export async function upsertClaimRelationship(input: ClaimRelationshipInput): Pr
   const evidenceIds = [...new Set(input.evidenceSourceRefIds.filter((id) => Number.isInteger(id) && id > 0))].slice(0, 20);
   if (evidenceIds.length === 0) throw new Error("Canonical claim relationships require valid source evidence IDs");
   const relationshipClass = RELATIONSHIP_CLASS[input.relationship];
-  const edgeKey = hashKey([principal.userId, input.replayKey]);
+  const replayKey = boundedText(input.replayKey, 300, "Relationship replayKey");
+  // The endpoint tuple is the canonical physical edge identity. The producer
+  // replay token may distinguish observations of that edge, but must never
+  // collide with a different endpoint tuple when mutable sources are replayed.
+  const edgeKey = hashKey([
+    "claim-relationship-v2",
+    principal.userId,
+    principal.accountId,
+    input.fromClaimId,
+    input.toClaimId,
+    input.relationship,
+    replayKey,
+  ]);
+  const edgeLockKey = hashKey([
+    "claim-relationship-lock-v1",
+    principal.userId,
+    principal.accountId,
+    input.fromClaimId,
+    input.toClaimId,
+    input.relationship,
+  ]);
 
   const link = await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`memory-vnext-edge:${principal.userId}:${edgeKey}`}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`memory-vnext-edge:${edgeLockKey}`}))`);
     const claims = await tx.select({ id: memoryVnextClaims.id }).from(memoryVnextClaims)
       .where(combineWithWritableScope(principal, claimScope, inArray(memoryVnextClaims.id, [input.fromClaimId, input.toClaimId])))
       .limit(2);

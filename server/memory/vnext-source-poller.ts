@@ -1,6 +1,7 @@
 import { createLogger } from "../log";
 import { createNamedSystemPrincipal, type Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
+import { getPostgresErrorDetails } from "../postgres-errors";
 import type { MemoryVnextSourceQueueRow, MemorySource } from "@shared/schema";
 import { parseReferenceText } from "@shared/reference-parser";
 import {
@@ -462,9 +463,13 @@ export async function processSettledSources(): Promise<{
       totalRetirementCandidates += result.retirementCandidates;
     } catch (err) {
       errors++;
-      log.error(
-        `processSettledSources: failed source=${row.sourceType}:${row.sourceId} queueId=${row.id}: ${err instanceof Error ? (err.stack || err.message) : String(err)}`,
-      );
+      const errorDetails = getPostgresErrorDetails(err);
+      log.error(JSON.stringify({
+        event: "memory.vnext.source_processing_failed",
+        sourceType: row.sourceType,
+        queueId: row.id,
+        ...errorDetails,
+      }));
       // Leave as "processing" — resetStuckProcessing will recover it next run
     }
   }
