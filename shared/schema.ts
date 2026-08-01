@@ -38,6 +38,7 @@ export * from "./models/job-roles";
 export * from "./models/agendas";
 export * from "./models/meeting-audio";
 export * from "./models/life-addressing";
+export * from "./models/mods";
 
 
 export const mobileStartupTelemetry = pgTable("mobile_startup_telemetry", {

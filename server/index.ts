@@ -364,6 +364,8 @@ app.use((req, res, next) => {
   const { ensureLifeAddressingSchema } = await import("./life-addressing-schema");
   const { pool } = await import("./db");
   await ensureLifeAddressingSchema(pool);
+  const { ensureModPlatformSchema } = await import("./mod-schema");
+  await ensureModPlatformSchema(pool);
   await vaultsMigrationReady;
   const { ensureMeetingRootsForAllVaults } = await import("./meeting/vault-ownership");
   await ensureMeetingRootsForAllVaults();
