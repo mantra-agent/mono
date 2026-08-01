@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, asc, count, eq, gt, inArray, like, or } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, like, or, sql } from "drizzle-orm";
 import { extractPositionedReferences } from "@shared/reference-parser";
 import { normalizeProtocolAddress, REFERENCE_OCCURRENCE_BATCH_LIMIT } from "@shared/life-addressing";
 import { libraryPageLinks, libraryPages, type LibraryPage } from "@shared/models/info";
@@ -10,6 +10,7 @@ import { libraryPageIsLive } from "./library-trash";
 import { syncEmbeddedLibraryPageLinks } from "./library-link-graph";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
+import { runWithPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 
 const log = createLogger("LibraryReferenceIndex");
@@ -37,6 +38,11 @@ const linkScope = {
 
 export const LIBRARY_REFERENCE_BACKFILL_LIMIT = 100;
 export const LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT = 5_000;
+const LIBRARY_REFERENCE_BACKGROUND_BATCH_LIMIT = 25;
+const LIBRARY_REFERENCE_BACKGROUND_COOLDOWN_MS = 60_000;
+const LIBRARY_REFERENCE_BACKGROUND_STATE_TTL_MS = 10 * 60_000;
+
+const backgroundReplayByPrincipal = new Map<string, { running: boolean; lastScheduledAt: number; cursor?: string }>();
 
 export function libraryPageLinksCompatibilityEnabled(): boolean {
   return process.env.LIBRARY_PAGE_LINKS_COMPATIBILITY_ENABLED !== "false";
@@ -205,6 +211,15 @@ export interface LibraryCorpusOccurrenceEdge {
   targetAddress: string;
   observedAt: Date;
   occurrenceCount: number;
+  source: "occurrence" | "compatibility";
+}
+
+export interface LibraryCorpusOccurrenceProjection {
+  edges: LibraryCorpusOccurrenceEdge[];
+  canonicalEdgeCount: number;
+  compatibilityEdgeCount: number;
+  compatibilitySourceCount: number;
+  unprojectedPageCount: number;
 }
 
 /**
@@ -217,30 +232,89 @@ export interface LibraryCorpusOccurrenceEdge {
 export async function getLibraryCorpusOccurrenceEdges(
   principal: Principal,
   limit = LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT,
-): Promise<LibraryCorpusOccurrenceEdge[]> {
+): Promise<LibraryCorpusOccurrenceProjection> {
   requireUserPrincipal(principal);
   const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT);
-  const rows = await db.select({
-    sourceAddress: referenceOccurrences.sourceAddress,
-    targetAddress: referenceOccurrences.targetAddress,
-    observedAt: referenceOccurrences.observedAt,
-  }).from(referenceOccurrences)
-    .where(combineWithVisibleScope(principal, occurrenceScope, like(referenceOccurrences.sourceAddress, "@page:%")))
-    .orderBy(asc(referenceOccurrences.observedAt), asc(referenceOccurrences.id))
-    .limit(boundedLimit);
+  const compatibilityEnabled = libraryPageLinksCompatibilityEnabled();
+  const [canonicalRows, compatibilityRows, unprojectedRows] = await Promise.all([
+    db.select({
+      sourceAddress: referenceOccurrences.sourceAddress,
+      targetAddress: referenceOccurrences.targetAddress,
+      observedAt: referenceOccurrences.observedAt,
+    }).from(referenceOccurrences)
+      .where(combineWithVisibleScope(principal, occurrenceScope, like(referenceOccurrences.sourceAddress, "@page:%")))
+      .orderBy(asc(referenceOccurrences.observedAt), asc(referenceOccurrences.id))
+      .limit(boundedLimit),
+    compatibilityEnabled
+      ? db.select({
+          sourcePageId: libraryPageLinks.sourcePageId,
+          targetPageId: libraryPageLinks.targetPageId,
+          createdAt: libraryPageLinks.createdAt,
+        }).from(libraryPageLinks)
+          .where(combineWithVisibleScope(
+            principal,
+            linkScope,
+            sql`NOT EXISTS (
+              SELECT 1
+              FROM ${referenceOccurrenceSources}
+              WHERE ${referenceOccurrenceSources.scope} = 'user'
+                AND ${referenceOccurrenceSources.ownerUserId} = ${principal.userId}
+                AND ${referenceOccurrenceSources.accountId} = ${principal.accountId}
+                AND ${referenceOccurrenceSources.sourceAddress} = concat('@page:', ${libraryPageLinks.sourcePageId})
+            )`,
+          ))
+          .orderBy(asc(libraryPageLinks.createdAt), asc(libraryPageLinks.id))
+          .limit(boundedLimit)
+      : Promise.resolve([] as Array<{ sourcePageId: string; targetPageId: string; createdAt: Date }>),
+    db.select({ value: count() }).from(libraryPages)
+      .where(combineWithVisibleScope(
+        principal,
+        pageScope,
+        and(libraryPageIsLive(), unprojectedPagePredicate(principal)),
+      )),
+  ]);
   const aggregated = new Map<string, LibraryCorpusOccurrenceEdge>();
-  for (const row of rows) {
+  for (const row of canonicalRows) {
     const sourcePageId = row.sourceAddress.slice(6);
+    if (!sourcePageId) continue;
     const key = `${row.sourceAddress}->${row.targetAddress}`;
     const current = aggregated.get(key);
     if (current) {
       current.occurrenceCount++;
       if (row.observedAt > current.observedAt) current.observedAt = row.observedAt;
     } else {
-      aggregated.set(key, { sourcePageId, targetAddress: row.targetAddress, observedAt: row.observedAt, occurrenceCount: 1 });
+      aggregated.set(key, {
+        sourcePageId,
+        targetAddress: row.targetAddress,
+        observedAt: row.observedAt,
+        occurrenceCount: 1,
+        source: "occurrence",
+      });
     }
   }
-  return [...aggregated.values()];
+  const canonicalEdgeCount = aggregated.size;
+  const compatibilitySources = new Set<string>();
+  for (const row of compatibilityRows) {
+    if (!row.sourcePageId || !row.targetPageId || row.sourcePageId === row.targetPageId) continue;
+    const targetAddress = pageAddress(row.targetPageId);
+    const key = `${pageAddress(row.sourcePageId)}->${targetAddress}`;
+    if (aggregated.has(key)) continue;
+    compatibilitySources.add(row.sourcePageId);
+    aggregated.set(key, {
+      sourcePageId: row.sourcePageId,
+      targetAddress,
+      observedAt: row.createdAt,
+      occurrenceCount: 1,
+      source: "compatibility",
+    });
+  }
+  return {
+    edges: [...aggregated.values()],
+    canonicalEdgeCount,
+    compatibilityEdgeCount: aggregated.size - canonicalEdgeCount,
+    compatibilitySourceCount: compatibilitySources.size,
+    unprojectedPageCount: Number(unprojectedRows[0]?.value ?? 0),
+  };
 }
 
 async function occurrenceNeighborhood(principal: Principal, pageIds: string[]): Promise<LibraryReferenceNeighborhood[]> {
@@ -329,6 +403,141 @@ export interface LibraryReferenceBackfillResult {
   unresolved: number;
   errors: number;
   parity: ReturnType<typeof parity>;
+}
+
+export interface LibraryReferenceReplayScheduleResult {
+  outcome: "scheduled" | "running" | "cooldown" | "complete";
+  unprojectedPageCount: number;
+}
+
+function unprojectedPagePredicate(principal: Principal) {
+  requireUserPrincipal(principal);
+  return sql`NOT EXISTS (
+    SELECT 1
+    FROM ${referenceOccurrenceSources}
+    WHERE ${referenceOccurrenceSources.scope} = 'user'
+      AND ${referenceOccurrenceSources.ownerUserId} = ${principal.userId}
+      AND ${referenceOccurrenceSources.accountId} = ${principal.accountId}
+      AND ${referenceOccurrenceSources.sourceAddress} = concat('@page:', ${libraryPages.id})
+  )`;
+}
+
+async function replayUnprojectedLibraryReferences(
+  principal: Principal,
+  cursor?: string,
+): Promise<LibraryReferenceBackfillResult> {
+  requireUserPrincipal(principal);
+  const missingPredicate = and(
+    libraryPageIsLive(),
+    unprojectedPagePredicate(principal),
+    cursor ? gt(libraryPages.id, cursor) : undefined,
+  );
+  let wrapped = false;
+  let pages = await db.select({
+    id: libraryPages.id,
+    plainTextContent: libraryPages.plainTextContent,
+    updatedAt: libraryPages.updatedAt,
+  }).from(libraryPages)
+    .where(combineWithVisibleScope(principal, pageScope, missingPredicate))
+    .orderBy(asc(libraryPages.id))
+    .limit(LIBRARY_REFERENCE_BACKGROUND_BATCH_LIMIT);
+  if (pages.length === 0 && cursor) {
+    wrapped = true;
+    pages = await db.select({
+      id: libraryPages.id,
+      plainTextContent: libraryPages.plainTextContent,
+      updatedAt: libraryPages.updatedAt,
+    }).from(libraryPages)
+      .where(combineWithVisibleScope(principal, pageScope, and(libraryPageIsLive(), unprojectedPagePredicate(principal))))
+      .orderBy(asc(libraryPages.id))
+      .limit(LIBRARY_REFERENCE_BACKGROUND_BATCH_LIMIT);
+  }
+  const counters = { replaced: 0, unchanged: 0, stale: 0, occurrences: 0, unresolved: 0, errors: 0 };
+  for (const page of pages) {
+    try {
+      const result = await db.transaction(async () => indexLibraryPageReferences(principal, page));
+      counters[result.outcome]++;
+      counters.occurrences += result.occurrenceCount;
+      counters.unresolved += result.unresolvedCount;
+    } catch (error: unknown) {
+      counters.errors++;
+      log.warn("Library reference background replay page failed", {
+        pageId: page.id,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  }
+  const [totals, projected] = await Promise.all([
+    db.select({ value: count() }).from(libraryPages)
+      .where(combineWithVisibleScope(principal, pageScope, libraryPageIsLive())),
+    db.select({ value: count() }).from(referenceOccurrenceSources)
+      .where(combineWithVisibleScope(principal, occurrenceSourceScope, like(referenceOccurrenceSources.sourceAddress, "@page:%"))),
+  ]);
+  return {
+    ...(cursor && !wrapped ? { cursor } : {}),
+    ...(pages.at(-1)?.id ? { nextCursor: pages.at(-1)!.id } : {}),
+    limit: LIBRARY_REFERENCE_BACKGROUND_BATCH_LIMIT,
+    totalPages: Number(totals[0]?.value ?? 0),
+    projectedPages: Number(projected[0]?.value ?? 0),
+    scanned: pages.length,
+    ...counters,
+    parity: parity([], []),
+  };
+}
+
+/** Schedule one principal-scoped, single-flight convergence batch after a graph read. */
+export async function scheduleLibraryReferenceReplay(
+  principal: Principal,
+  unprojectedPageCount: number,
+): Promise<LibraryReferenceReplayScheduleResult> {
+  requireUserPrincipal(principal);
+  if (unprojectedPageCount <= 0) return { outcome: "complete", unprojectedPageCount: 0 };
+  const key = `${principal.accountId}:${principal.userId}`;
+  const now = Date.now();
+  for (const [stateKey, state] of backgroundReplayByPrincipal) {
+    if (!state.running && now - state.lastScheduledAt >= LIBRARY_REFERENCE_BACKGROUND_STATE_TTL_MS) {
+      backgroundReplayByPrincipal.delete(stateKey);
+    }
+  }
+  const current = backgroundReplayByPrincipal.get(key);
+  if (current?.running) return { outcome: "running", unprojectedPageCount };
+  if (current && now - current.lastScheduledAt < LIBRARY_REFERENCE_BACKGROUND_COOLDOWN_MS) {
+    return { outcome: "cooldown", unprojectedPageCount };
+  }
+  backgroundReplayByPrincipal.set(key, { running: true, lastScheduledAt: now, cursor: current?.cursor });
+  setImmediate(() => {
+    void runWithPrincipal(principal, () => replayUnprojectedLibraryReferences(principal, current?.cursor))
+      .then(result => {
+        const latest = backgroundReplayByPrincipal.get(key);
+        if (latest) {
+          backgroundReplayByPrincipal.set(key, {
+            ...latest,
+            cursor: result.scanned > 0 ? result.nextCursor : undefined,
+          });
+        }
+        log.info("Library reference background replay batch", {
+          scanned: result.scanned,
+          replaced: result.replaced,
+          unchanged: result.unchanged,
+          stale: result.stale,
+          occurrences: result.occurrences,
+          unresolved: result.unresolved,
+          errors: result.errors,
+          projectedPages: result.projectedPages,
+          totalPages: result.totalPages,
+        });
+      })
+      .catch((error: unknown) => {
+        log.error("Library reference background replay failed", {
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
+      })
+      .finally(() => {
+        const latest = backgroundReplayByPrincipal.get(key);
+        if (latest) backgroundReplayByPrincipal.set(key, { ...latest, running: false });
+      });
+  });
+  return { outcome: "scheduled", unprojectedPageCount };
 }
 
 /** Replay one bounded, resumable page-ID batch. */

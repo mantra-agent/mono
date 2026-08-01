@@ -33,7 +33,7 @@ import { fileProjectStorage } from "../file-storage/projects";
 import { libraryPages } from "@shared/models/info";
 import { chatFileStorage } from "../chat-file-storage";
 import { listMeetingGraphRecords, type MeetingIndexRecord } from "../meetings/meeting-index";
-import { getLibraryAuthoredOccurrences, getLibraryReferenceNeighborhood } from "../library-reference-index";
+import { getLibraryAuthoredOccurrences, getLibraryReferenceNeighborhood, scheduleLibraryReferenceReplay } from "../library-reference-index";
 import { normalizeProtocolAddress } from "@shared/life-addressing";
 import { assemblePersonalGraph, libraryFirstGraphEnabled } from "./personal-graph-projection";
 
@@ -326,6 +326,18 @@ async function handleGetVnextGraph(req: Request, res: Response): Promise<void> {
       : [];
     const projection = await assemblePersonalGraph(principal, { selectedAddresses: selected });
     res.json(projection);
+    void scheduleLibraryReferenceReplay(principal, projection.projection.unprojectedLibraryPageCount)
+      .then(replay => {
+        log.debug("[personal-graph] Library reference replay scheduling", {
+          outcome: replay.outcome,
+          unprojectedPageCount: replay.unprojectedPageCount,
+        });
+      })
+      .catch((error: unknown) => {
+        log.warn("[personal-graph] Library reference replay scheduling degraded", {
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
+      });
   } catch (error: unknown) {
     log.error(`[personal-graph] graph failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);
     res.status(500).json({ error: errorMessage(error) });
