@@ -118,6 +118,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
         // Server-authoritative session subscription (by sessionId)
         if (msg.type === "session.subscribe" && typeof msg.sessionId === "string") {
           const subSessionId = msg.sessionId;
+          sessionManager.setSocketProtocol(ws, msg.supportsDelta === true ? "delta" : "snapshot");
           const identity = {
             connectionId,
             tabId: typeof msg.tabId === "string" ? msg.tabId : undefined,
@@ -195,6 +196,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
                   visibleAssistantActivity: activeCompaction ? "thinking" as const : "none" as const,
                   durableRevision: null,
                   handoffPhase: "live" as const,
+                  patchSeq: 0,
                 };
             ws.send(JSON.stringify({ type: "session.snapshot", ...payload }));
           }).catch((error) => {

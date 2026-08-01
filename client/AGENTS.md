@@ -70,11 +70,11 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 - Transcript fallback widgets derived from persisted lifecycle metadata must deduplicate against both persisted assistant segments and the currently displayed authoritative stream. A child lifecycle event may persist before its creating tool call, but the live-to-persisted handoff still has one visible widget owner.
 
 ### Protocol
-1. Chat route subscribes to the focused session plus bounded live streaming sessions via `session.subscribe { sessionId }` on the shared WS
-2. Server replies with `session.snapshot { sessionId, content: StreamingContent, status }`
-3. As each run progresses, server sends `session.delta { sessionId, streamingContent, status }`
-4. Client stores each snapshot/delta directly in a sessionId-keyed cache (no client-side reducers)
-5. On disconnect/reconnect, client resubscribes to every cached live session and gets fresh snapshots
+1. Chat route subscribes to the focused session plus bounded live streaming sessions via `session.subscribe { sessionId, supportsDelta: true }` on the shared WS. `supportsDelta` advertises protocol-v2 capability.
+2. Server replies with `session.snapshot { sessionId, content: StreamingContent, status, patchSeq }` — always the full state plus the patch baseline.
+3. As each run progresses, the server sends `session.delta`. To v2-capable clients it is an incremental patch `{ segmentPatch: { length, set }, scalars, patchSeq, basePatchSeq, status, ... }`; to legacy clients it remains the full `{ streamingContent, status, ... }`. The client is not a domain reducer — it applies an opaque structural patch (truncate to `length`, overwrite `set` indices, merge scalars) over the baseline it already holds.
+4. `patchSeq` is contiguous per session. If an incoming patch's `basePatchSeq` does not match the client's current baseline (dropped patch, or no baseline yet), the client discards it and resubscribes for a fresh snapshot rather than corrupt state. The eventSeq monotonic guard still rejects regressive payloads.
+5. On disconnect/reconnect/visibility resume, the client invalidates patch baselines and resubscribes to every cached live session, getting fresh snapshots.
 
 ## Browser navigation telemetry
 
