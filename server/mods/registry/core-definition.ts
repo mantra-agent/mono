@@ -1,0 +1,126 @@
+// ─── Core definition (spec §1.1, §3.3) ─────────────────────────────────────
+// The single non-installable Core. Owns the substrate that stays coherent
+// across every product shape plus the client routes, navigation, widgets,
+// actions, and connector cards that are NOT inside one of the seven Mod
+// product boundaries. Contribution IDs are prefixed `core.` — validation
+// forbids any Mod from claiming that namespace or overriding a Core route/action.
+
+import type { CoreDefinition } from "@shared/models/mod-registry";
+import { clientRoute, integration, nav, widget } from "./contribution-builders";
+import { actionsForOwner } from "./action-catalog";
+
+export const CORE_VERSION = "1.0.0";
+
+export const coreDefinition: CoreDefinition = {
+  key: "core",
+  version: CORE_VERSION,
+  name: "Mantra Core",
+  description:
+    "The always-present substrate: Agent, Memory, Library, Automation, identity, permissions, integration custody, references, search, notifications, audit, and the Mod runtime.",
+  capabilities: [
+    "agent",
+    "memory",
+    "library",
+    "automation",
+    "identity",
+    "integration-custody",
+    "references",
+    "search",
+    "notifications",
+    "audit",
+    "ui-composition",
+  ],
+  contributions: {
+    clientRoutes: [
+      clientRoute("core.route.home", "/home", "home"),
+      clientRoute("core.route.session", "/session", "session"),
+      clientRoute("core.route.brain", "/brain", "brain"),
+      clientRoute("core.route.agendas", "/agendas", "agendas"),
+      clientRoute("core.route.skills", "/skills", "skills"),
+      clientRoute("core.route.system", "/system", "system", { requiredPermissions: ["system:read"] }),
+      clientRoute("core.route.logs", "/logs", "logs"),
+      clientRoute("core.route.dashboard", "/dashboard", "dashboard", { requiredPermissions: ["system:read"] }),
+      clientRoute("core.route.memory", "/memory", "memory"),
+      clientRoute("core.route.create", "/create", "create"),
+      clientRoute("core.route.email", "/email", "comms"),
+      clientRoute("core.route.orientation", "/orientation", "orientation"),
+      clientRoute("core.route.news", "/news", "news"),
+      clientRoute("core.route.recipient-recap", "/meeting-recap/:token", "recipient-recap"),
+      clientRoute("core.route.timers", "/timers", "timers"),
+      clientRoute("core.route.brain-timers", "/brain/timers", "timers"),
+      clientRoute("core.route.integrations", "/integrations", "integrations"),
+      clientRoute("core.route.integrations-provider", "/integrations/:provider", "integrations"),
+      clientRoute("core.route.profile", "/profile", "profile"),
+      clientRoute("core.route.workflows", "/workflows", "workflows"),
+      clientRoute("core.route.workflows-detail", "/workflows/:id", "workflows"),
+      clientRoute("core.route.zero", "/zero", "zero"),
+      clientRoute("core.route.interface-preview", "/interface-preview", "interface-preview"),
+      clientRoute("core.route.dev-orb", "/dev/orb", "dev-orb", { requiredPermissions: ["system:read"] }),
+      clientRoute("core.route.library", "/library", "library"),
+      clientRoute("core.route.info", "/info", "library"),
+      clientRoute("core.route.audiences", "/audiences", "audiences", { requiredPermissions: ["system:read"] }),
+      clientRoute("core.route.campaigns", "/campaigns", "campaigns", { requiredPermissions: ["system:read"] }),
+      clientRoute("core.route.account", "/account", "user-details"),
+    ],
+    navigation: [
+      // Tools
+      nav("core.nav.home", "Tools", "Home", "Home", "core.route.home", 1),
+      nav("core.nav.dashboard", "Tools", "Dashboard", "Gauge", "core.route.dashboard", 2, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.news", "Tools", "News", "Newspaper", "core.route.news", 3),
+      nav("core.nav.email", "Tools", "Email", "Mail", "core.route.email", 4),
+      nav("core.nav.library", "Tools", "Library", "BookOpen", "core.route.library", 5),
+      // Automation
+      nav("core.nav.agendas", "Automation", "Agendas", "ClipboardList", "core.route.agendas", 1),
+      nav("core.nav.skills", "Automation", "Skills", "Lightbulb", "core.route.skills", 2),
+      nav("core.nav.plans", "Automation", "Plans", "FileText", "core.route.brain", 3),
+      nav("core.nav.workflows", "Automation", "Workflows", "Workflow", "core.route.workflows", 4),
+      nav("core.nav.hooks", "Automation", "Hooks", "GitBranch", "core.route.system", 5, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.timers", "Automation", "Timers", "Clock", "core.route.system", 6, { requiredPermissions: ["system:read"] }),
+      // Agent
+      nav("core.nav.orientation", "Agent", "Orientation", "Globe", "core.route.orientation", 1),
+      nav("core.nav.persona", "Agent", "Persona", "User", "core.route.brain", 2),
+      nav("core.nav.emotion", "Agent", "Emotion", "Heart", "core.route.brain", 3),
+      // Memory
+      nav("core.nav.memory-layers", "Memory", "Layers", "DatabaseZap", "core.route.memory", 1),
+      nav("core.nav.memory-graph", "Memory", "Graph", "Share2", "core.route.memory", 2),
+      nav("core.nav.memory-journal", "Memory", "Journal", "ScrollText", "core.route.memory", 3),
+      // System
+      nav("core.nav.performance", "System", "Performance", "Gauge", "core.route.system", 1, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.logs", "System", "Logs", "ScrollText", "core.route.system", 2, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.events", "System", "Events", "Zap", "core.route.system", 3, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.tools", "System", "Tools", "Wrench", "core.route.system", 4, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.context", "System", "Context", "BrainCircuit", "core.route.brain", 6),
+      nav("core.nav.router", "System", "Router", "Brain", "core.route.system", 7, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.models", "System", "Models", "SlidersHorizontal", "core.route.brain", 8),
+      nav("core.nav.cost", "System", "Cost", "DollarSign", "core.route.system", 9, { requiredPermissions: ["system:read"] }),
+      // Admin
+      nav("core.nav.audiences", "Admin", "Audiences", "Users", "core.route.audiences", 1, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.campaigns", "Admin", "Campaigns", "Megaphone", "core.route.campaigns", 2, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.users", "Admin", "Users", "Users", "core.route.system", 3, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.vaults", "Admin", "Vaults", "Vault", "core.route.system", 4),
+      nav("core.nav.integrations", "Admin", "Integrations", "Plug", "core.route.integrations", 5),
+      nav("core.nav.account", "Admin", "Account", "Settings", "core.route.account", 6),
+    ],
+    widgets: [
+      widget("core.widget.state", "home.primary", "state", "state", 1),
+      widget("core.widget.inbox", "home.inbox", "inbox_item", "email", 1),
+    ],
+    actions: actionsForOwner("core"),
+    integrations: [
+      integration("core.integration.google", "google", "available", ["gmail", "calendar", "drive"]),
+      integration("core.integration.elevenlabs", "elevenlabs", "available", ["voice"]),
+      integration("core.integration.cartesia", "cartesia", "available", ["voice"]),
+      integration("core.integration.twilio", "twilio", "available", ["phone"]),
+      integration("core.integration.deepgram", "deepgram", "available", ["speech-recognition"]),
+      integration("core.integration.anthropic", "anthropic", "available", ["model"]),
+      integration("core.integration.openai", "openai", "available", ["model", "embeddings"]),
+      integration("core.integration.claude-cli", "claude-cli", "available", ["model"]),
+      integration("core.integration.twitter", "twitter", "available", ["social"]),
+      integration("core.integration.brave", "brave", "available", ["web-search"]),
+      integration("core.integration.automation-auth", "automation-auth", "available", ["automation"]),
+      integration("core.integration.sendgrid", "sendgrid", "available", ["email-send"]),
+      integration("core.integration.meta", "meta", "available", ["wearables"]),
+      integration("core.integration.recall", "recall", "available", ["meeting-transcription"]),
+    ],
+  },
+};
