@@ -8,6 +8,7 @@ import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db } from "../db";
 import { projectVaultMemberships, projects, vaults, users } from "@shared/schema";
 import { getPrincipal } from "../principal";
 import { assertVisible, assertWritable } from "../scoped-storage";
+import { normalizeVaultColor, VAULT_COLOR_PATTERN } from "@shared/models/vaults";
 import {
   analyzeVaultR2Migration,
   getVaultR2MigrationStatus,
@@ -238,9 +239,14 @@ export function registerVaultRoutes(app: Express) {
 
   // --- Management endpoints (registered after /toggle and /active to avoid :id collision) ---
 
+  const vaultColorSchema = z
+    .string()
+    .regex(VAULT_COLOR_PATTERN, "Color must be a six-digit hex value")
+    .transform(normalizeVaultColor);
+
   const createVaultSchema = z.object({
     name: z.string().min(1).max(100),
-    color: z.string().max(20).optional(),
+    color: vaultColorSchema.optional(),
     icon: z.string().max(4).optional(),
     purpose: z.string().max(500).optional(),
   });
@@ -329,7 +335,7 @@ export function registerVaultRoutes(app: Express) {
 
   const updateVaultSchema = z.object({
     name: z.string().min(1).max(100).optional(),
-    color: z.string().max(20).optional(),
+    color: vaultColorSchema.optional(),
     icon: z.string().max(4).optional(),
     purpose: z.string().max(500).optional(),
   });
