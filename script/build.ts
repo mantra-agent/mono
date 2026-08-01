@@ -775,6 +775,29 @@ async function buildAll() {
     throw new Error("buildAll: dist/shell-index-worker.mjs missing after esbuild — shell off-thread indexing will fall back to main");
   }
 
+  // ── Mod registry validation (spec §6.1) ────────────────────────────────────
+  // First-party registry key collisions and dangling references are deployment
+  // defects and must fail the build, not just server startup. Bundle the pure
+  // validation entry with esbuild (which resolves @shared tsconfig paths) and
+  // execute it; a nonzero exit aborts the build. The entry performs no database
+  // or network work.
+  console.log("validating Mod registry...");
+  const modRegistryValidateOut = "dist/mod-registry-validate.mjs";
+  await esbuild({
+    entryPoints: ["server/mods/registry/validate-entry.ts"],
+    platform: "node",
+    bundle: true,
+    format: "esm",
+    outfile: modRegistryValidateOut,
+    banner: esmBanner,
+    external: externals,
+    logLevel: "warning",
+    plugins: [safeEsmHelperPlugin()],
+  });
+  execFileSync("node", [modRegistryValidateOut], { stdio: "inherit" });
+  await rmIfExists(modRegistryValidateOut);
+  console.log("Mod registry valid");
+
   if (!DEV_MODE) {
     await bundleGitnexusRuntime();
     await bundleClaudeCliRuntime();

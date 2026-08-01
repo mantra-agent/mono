@@ -366,6 +366,12 @@ app.use((req, res, next) => {
   await ensureLifeAddressingSchema(pool);
   const { ensureModPlatformSchema } = await import("./mod-schema");
   await ensureModPlatformSchema(pool);
+  // Validate the code-owned first-party Mod registry before accepting requests.
+  // First-party key collisions and dangling references are deployment defects
+  // (spec §6.1) and must fail loudly. Pure and additive — nothing renders from
+  // the registry yet (Phase 1 shadow).
+  const { assertModRegistryValid } = await import("./mods/registry");
+  assertModRegistryValid();
   await vaultsMigrationReady;
   const { ensureMeetingRootsForAllVaults } = await import("./meeting/vault-ownership");
   await ensureMeetingRootsForAllVaults();

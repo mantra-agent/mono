@@ -1,0 +1,93 @@
+// ─── Semantic action catalog (spec §4.2) ───────────────────────────────────
+// Reproduces today's UI_INTERACTION_TARGET_ROUTES (shared/ui-interaction.ts) as
+// owner-namespaced navigate ActionContributions. One route owns the path; nav
+// and actions reference the stable route ID (spec §2.8). The live
+// UI_INTERACTION_TARGET_ROUTES map is unchanged in this phase — these actions
+// are the shadow representation and render nothing yet.
+//
+// navigation.sidebar.toggle is intentionally excluded: it is a pure UI control
+// with an empty href, not a semantic navigation destination.
+
+import type { ActionContribution, PermissionKey } from "@shared/models/mod-registry";
+
+type Owner = "core" | "planning" | "building" | "business" | "coaching" | "wellness" | "network" | "finance";
+
+interface ActionRow {
+  slug: string;
+  owner: Owner;
+  routeId: string;
+  permission?: PermissionKey;
+}
+
+// Route destinations mirror shared/ui-interaction.ts href paths (query strings
+// collapse to the owning route ID; the tab is a route-internal concern).
+const ACTION_ROWS: ActionRow[] = [
+  { slug: "home", owner: "core", routeId: "core.route.home" },
+  { slug: "dashboard", owner: "core", routeId: "core.route.dashboard", permission: "system:read" },
+  { slug: "news", owner: "core", routeId: "core.route.news" },
+  { slug: "email", owner: "core", routeId: "core.route.email" },
+  { slug: "library", owner: "core", routeId: "core.route.library" },
+  { slug: "agendas", owner: "core", routeId: "core.route.agendas" },
+  { slug: "skills", owner: "core", routeId: "core.route.skills" },
+  { slug: "plans", owner: "core", routeId: "core.route.brain" },
+  { slug: "workflows", owner: "core", routeId: "core.route.workflows" },
+  { slug: "hooks", owner: "core", routeId: "core.route.system", permission: "system:read" },
+  { slug: "timers", owner: "core", routeId: "core.route.system", permission: "system:read" },
+  { slug: "orientation", owner: "core", routeId: "core.route.orientation" },
+  { slug: "persona", owner: "core", routeId: "core.route.brain" },
+  { slug: "emotion", owner: "core", routeId: "core.route.brain" },
+  { slug: "memory-layers", owner: "core", routeId: "core.route.memory" },
+  { slug: "memory-graph", owner: "core", routeId: "core.route.memory" },
+  { slug: "memory-journal", owner: "core", routeId: "core.route.memory" },
+  { slug: "performance", owner: "core", routeId: "core.route.system", permission: "system:read" },
+  { slug: "logs", owner: "core", routeId: "core.route.system", permission: "system:read" },
+  { slug: "events", owner: "core", routeId: "core.route.system", permission: "system:read" },
+  { slug: "tools", owner: "core", routeId: "core.route.system", permission: "system:read" },
+  { slug: "context", owner: "core", routeId: "core.route.brain" },
+  { slug: "router", owner: "core", routeId: "core.route.system", permission: "system:read" },
+  { slug: "models", owner: "core", routeId: "core.route.brain" },
+  { slug: "cost", owner: "core", routeId: "core.route.system", permission: "system:read" },
+  { slug: "audiences", owner: "core", routeId: "core.route.audiences", permission: "system:read" },
+  { slug: "campaigns", owner: "core", routeId: "core.route.campaigns", permission: "system:read" },
+  { slug: "users", owner: "core", routeId: "core.route.system", permission: "system:read" },
+  { slug: "vaults", owner: "core", routeId: "core.route.system" },
+  { slug: "integrations", owner: "core", routeId: "core.route.integrations" },
+  { slug: "account", owner: "core", routeId: "core.route.account" },
+  { slug: "schedule", owner: "planning", routeId: "planning.route.schedule" },
+  { slug: "projects", owner: "planning", routeId: "planning.route.projects" },
+  { slug: "goals", owner: "planning", routeId: "planning.route.goals" },
+  { slug: "wellness", owner: "wellness", routeId: "wellness.route.wellness" },
+  { slug: "people", owner: "network", routeId: "network.route.people" },
+  { slug: "meetings", owner: "network", routeId: "network.route.meetings" },
+  { slug: "companies", owner: "business", routeId: "business.route.companies" },
+  { slug: "pipelines", owner: "business", routeId: "business.route.pipelines" },
+  { slug: "decisions", owner: "business", routeId: "business.route.decisions" },
+  { slug: "strategy", owner: "business", routeId: "business.route.strategy" },
+  { slug: "business-model", owner: "business", routeId: "business.route.business-model", permission: "system:read" },
+  { slug: "roles", owner: "business", routeId: "business.route.job-roles", permission: "system:read" },
+  { slug: "platforms", owner: "building", routeId: "building.route.platforms", permission: "build:read" },
+  { slug: "design", owner: "building", routeId: "building.route.design", permission: "build:read" },
+  { slug: "toast", owner: "building", routeId: "building.route.debug-toast", permission: "build:read" },
+  { slug: "database", owner: "building", routeId: "building.route.database", permission: "build:read" },
+  { slug: "issues", owner: "building", routeId: "building.route.build", permission: "build:read" },
+  { slug: "prompts", owner: "building", routeId: "building.route.build", permission: "build:read" },
+];
+
+function slugToLabel(slug: string): string {
+  return slug
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+/** Return the navigate ActionContributions owned by one definition. */
+export function actionsForOwner(owner: Owner): ActionContribution[] {
+  return ACTION_ROWS.filter((row) => row.owner === owner).map((row) => ({
+    kind: "action" as const,
+    id: `${row.owner}.action.${row.slug}`,
+    label: `Open ${slugToLabel(row.slug)}`,
+    target: { kind: "navigate" as const, routeId: row.routeId },
+    audience: "primary" as const,
+    ...(row.permission ? { requiredPermissions: [row.permission] } : {}),
+  }));
+}

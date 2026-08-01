@@ -5,31 +5,21 @@ import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { userPermissions, users } from "@shared/schema";
+import { PERMISSIONS, isPermission, type Permission } from "@shared/permissions-vocabulary";
 
 const log = createLogger("permissions");
 
-export const PERMISSIONS = [
-  "build:read",
-  "build:write",
-  "system:read",
-  "system:write",
-  "users:read",
-  "users:write",
-  "mods:read",
-  "mods:manage",
-] as const;
-
-export type Permission = (typeof PERMISSIONS)[number];
+// The canonical vocabulary lives in shared/permissions-vocabulary.ts so client
+// code and build-time tooling can import it without the database boundary.
+// Re-exported here for compatibility with existing server callers.
+export { PERMISSIONS, isPermission };
+export type { Permission };
 
 // Account owners receive Mod catalog/management permissions by default (spec
 // §7.1). Every user owns their personal account, so these are base user grants;
 // delegated authority still narrows via user_permissions overrides.
 const USER_BASE_PERMISSIONS: Permission[] = ["mods:read", "mods:manage"];
 const ADMIN_BASE_PERMISSIONS: Permission[] = [...PERMISSIONS];
-
-function isPermission(value: string): value is Permission {
-  return (PERMISSIONS as readonly string[]).includes(value);
-}
 
 export function basePermissionsForRole(role: string | null | undefined): Permission[] {
   return role === "admin" ? ADMIN_BASE_PERMISSIONS : USER_BASE_PERMISSIONS;
