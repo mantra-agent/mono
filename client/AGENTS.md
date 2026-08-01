@@ -75,6 +75,7 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 3. As each run progresses, the server sends `session.delta`. To v2-capable clients it is an incremental patch `{ segmentPatch: { length, set }, scalars, patchSeq, basePatchSeq, status, ... }`; to legacy clients it remains the full `{ streamingContent, status, ... }`. The client is not a domain reducer — it applies an opaque structural patch (truncate to `length`, overwrite `set` indices, merge scalars) over the baseline it already holds.
 4. `patchSeq` is contiguous per session. If an incoming patch's `basePatchSeq` does not match the client's current baseline (dropped patch, or no baseline yet), the client discards it and resubscribes for a fresh snapshot rather than corrupt state. The eventSeq monotonic guard still rejects regressive payloads.
 5. On disconnect/reconnect/visibility resume, the client invalidates patch baselines and resubscribes to every cached live session, getting fresh snapshots.
+6. The client cache publishes through a stable keyed external store. Transcript surfaces subscribe only to the focused session and its visible descendant previews; unrelated background deltas stay cached and must not invalidate the focused transcript subtree. Global orb activity is a separate discriminant-only context.
 
 ## Browser navigation telemetry
 

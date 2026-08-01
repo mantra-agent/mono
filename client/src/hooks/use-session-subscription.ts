@@ -6,7 +6,7 @@
  * warm while the user focuses another session.
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, useSyncExternalStore } from "react";
 import type { StreamingContent, SegmentPatch, MessageSegment } from "@shared/streaming-types";
 import { initialStreamingContent } from "@shared/streaming-types";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
@@ -71,6 +71,39 @@ export interface SessionSubscriptionOptions {
   activeSession?: string | null;
 }
 
+export interface SessionStreamStore {
+  getState: (sessionId: string) => SessionStreamState | undefined;
+  getSnapshot: () => SessionStreamMap;
+  setState: (sessionId: string, state: SessionStreamState) => void;
+  deleteState: (sessionId: string) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+function createSessionStreamStore(): SessionStreamStore {
+  let snapshot: SessionStreamMap = {};
+  const listeners = new Set<() => void>();
+  const publish = () => listeners.forEach((listener) => listener());
+  return {
+    getState: (sessionId) => snapshot[sessionId],
+    getSnapshot: () => snapshot,
+    setState: (sessionId, state) => {
+      if (snapshot[sessionId] === state) return;
+      snapshot = { ...snapshot, [sessionId]: state };
+      publish();
+    },
+    deleteState: (sessionId) => {
+      if (!(sessionId in snapshot)) return;
+      const { [sessionId]: _removed, ...next } = snapshot;
+      snapshot = next;
+      publish();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
 const idleStreamState: SessionStreamState = {
   streamingContent: null,
   status: "idle",
@@ -82,6 +115,10 @@ const idleStreamState: SessionStreamState = {
   handoffPhase: "live",
   patchSeq: null,
 };
+
+function getIdleStreamState(wsConnected: boolean): SessionStreamState {
+  return { ...idleStreamState, wsConnected };
+}
 
 // ---------------------------------------------------------------------------
 // WS message parsing
@@ -124,7 +161,7 @@ export function useSessionSubscriptions(
   sessionIds: readonly (string | null | undefined)[],
   options: SessionSubscriptionOptions = {},
 ): {
-  streams: SessionStreamMap;
+  store: SessionStreamStore;
   wsConnected: boolean;
 } {
   const handlerId = useMemo(() => `sessionSub-${++instanceCounter}`, []);
@@ -143,31 +180,27 @@ export function useSessionSubscriptions(
   // for gap detection and patch application (protocol v2).
   const patchSeqRef = useRef<Record<string, number | null>>({});
   const latestStreamRef = useRef<Record<string, StreamingContent | null>>({});
-  const [streams, setStreams] = useState<SessionStreamMap>({});
+  const store = useMemo(createSessionStreamStore, []);
   const [wsConnected, setWsConnected] = useState(false);
 
   const normalizedKey = useMemo(() => normalizeSessionIds(sessionIds).join("\u0000"), [sessionIds]);
 
-  useEffect(() => {
-    const states = Object.values(streams);
+  useEffect(() => store.subscribe(() => {
+    const states = Object.values(store.getSnapshot());
     const active = states.filter((state) => state.runActive || state.status === "streaming").length;
     const maxSegments = states.reduce((max, state) => Math.max(max, state.streamingContent?.segments.length ?? 0), 0);
     noteNavigationStreamPressure(sessionIds.length, active, maxSegments);
-  }, [sessionIds.length, streams]);
+  }), [sessionIds.length, store]);
 
   const setStreamConnected = useCallback((connected: boolean) => {
+    if (wsConnectedRef.current === connected) return;
     wsConnectedRef.current = connected;
     setWsConnected(connected);
-    setStreams((prev) => {
-      let changed = false;
-      const next: SessionStreamMap = {};
-      for (const [sessionId, state] of Object.entries(prev)) {
-        if (state.wsConnected !== connected) changed = true;
-        next[sessionId] = { ...state, wsConnected: connected };
-      }
-      return changed ? next : prev;
-    });
-  }, []);
+    for (const [sessionId, state] of Object.entries(store.getSnapshot())) {
+      if (state.wsConnected === connected) continue;
+      store.setState(sessionId, { ...state, wsConnected: connected });
+    }
+  }, [store]);
 
   const sendSubscribe = useCallback((id: string) => {
     const ws = sharedWSRef.current;
@@ -199,51 +232,50 @@ export function useSessionSubscriptions(
   }, [sendSubscribe]);
 
   const upsertStream = useCallback((sessionId: string, patch: Partial<SessionStreamState>) => {
-    setStreams((prev) => {
-      const connected = wsConnectedRef.current;
-      const current = prev[sessionId] ?? { ...idleStreamState, wsConnected: connected };
-      const incomingSeq = patch.eventSeq;
-      const currentSeq = current.eventSeq;
+    const connected = wsConnectedRef.current;
+    const current = store.getState(sessionId) ?? getIdleStreamState(connected);
+    const incomingSeq = patch.eventSeq;
+    const currentSeq = current.eventSeq;
 
-      // Snapshots and deltas share one monotonically increasing server sequence.
-      // A delayed streaming payload must never resurrect a run after its terminal
-      // delta has already cleared the canonical projection.
-      if (
-        typeof incomingSeq === "number" &&
-        typeof currentSeq === "number" &&
-        incomingSeq < currentSeq
-      ) {
-        log.debug("STREAM:STALE_EVENT_REJECTED", {
-          sessionId,
-          incomingSeq,
-          currentSeq,
-          incomingStatus: patch.status,
-          currentStatus: current.status,
-        });
-        return prev;
-      }
+    // Snapshots and deltas share one monotonically increasing server sequence.
+    // A delayed streaming payload must never resurrect a run after its terminal
+    // delta has already cleared the canonical projection.
+    if (
+      typeof incomingSeq === "number" &&
+      typeof currentSeq === "number" &&
+      incomingSeq < currentSeq
+    ) {
+      log.debug("STREAM:STALE_EVENT_REJECTED", {
+        sessionId,
+        incomingSeq,
+        currentSeq,
+        incomingStatus: patch.status,
+        currentStatus: current.status,
+      });
+      return;
+    }
 
-      const next = {
-        ...current,
-        ...patch,
-        wsConnected: connected,
-      };
-      if (
-        next.status === current.status &&
-        next.streamingContent === current.streamingContent &&
-        next.runActive === current.runActive &&
-        next.canStop === current.canStop &&
-        next.visibleAssistantActivity === current.visibleAssistantActivity &&
-        next.eventSeq === current.eventSeq &&
-        next.durableRevision === current.durableRevision &&
-        next.handoffPhase === current.handoffPhase &&
-        next.wsConnected === current.wsConnected
-      ) {
-        return prev;
-      }
-      return { ...prev, [sessionId]: next };
-    });
-  }, []);
+    const next = {
+      ...current,
+      ...patch,
+      wsConnected: connected,
+    };
+    if (
+      next.status === current.status &&
+      next.streamingContent === current.streamingContent &&
+      next.runActive === current.runActive &&
+      next.canStop === current.canStop &&
+      next.visibleAssistantActivity === current.visibleAssistantActivity &&
+      next.eventSeq === current.eventSeq &&
+      next.durableRevision === current.durableRevision &&
+      next.handoffPhase === current.handoffPhase &&
+      next.patchSeq === current.patchSeq &&
+      next.wsConnected === current.wsConnected
+    ) {
+      return;
+    }
+    store.setState(sessionId, next);
+  }, [store]);
 
   const handleMessage = useCallback((msg: unknown) => {
     if (!isSessionMessage(msg)) return;
@@ -417,48 +449,64 @@ export function useSessionSubscriptions(
     for (const nextId of nextIds) {
       if (!prevIds.has(nextId)) {
         prevIds.add(nextId);
-        setStreams((prev) => ({
-          ...prev,
-          [nextId]: prev[nextId] ?? {
-            ...idleStreamState,
-            wsConnected,
-          },
-        }));
+        if (!store.getState(nextId)) {
+          store.setState(nextId, getIdleStreamState(wsConnected));
+        }
         if (sharedWSRef.current?.getReadyState() === WebSocket.OPEN) {
           sendSubscribe(nextId);
         }
       }
     }
 
-    setStreams((prev) => {
-      let changed = false;
-      const next: SessionStreamMap = {};
-      for (const [sessionId, state] of Object.entries(prev)) {
-        if (nextIds.has(sessionId)) {
-          next[sessionId] = state;
-        } else {
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
+    for (const cachedId of Object.keys(store.getSnapshot())) {
+      if (!nextIds.has(cachedId)) store.deleteState(cachedId);
+    }
     sharedWSRef.current?.setStreamActive(wsOwnerId, nextIds.size > 0);
-  }, [handlerId, normalizedKey, owner, sendSubscribe, sendUnsubscribe, tabId, wsConnected, wsOwnerId]);
+  }, [handlerId, normalizedKey, owner, sendSubscribe, sendUnsubscribe, store, tabId, wsConnected, wsOwnerId]);
 
-  return { streams, wsConnected };
+  return { store, wsConnected };
 }
 
-export function getSessionStreamState(
-  streams: SessionStreamMap,
+export function useSessionStreamState(
+  store: SessionStreamStore,
   sessionId: string | null | undefined,
   wsConnected: boolean,
 ): SessionStreamState {
-  if (!sessionId) return { ...idleStreamState, wsConnected };
-  return streams[sessionId] ?? { ...idleStreamState, wsConnected };
+  const fallback = useMemo(() => getIdleStreamState(wsConnected), [wsConnected]);
+  const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store]);
+  const getSnapshot = useCallback(
+    () => sessionId ? store.getState(sessionId) ?? fallback : fallback,
+    [fallback, sessionId, store],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+export function useSessionStreamMap(
+  store: SessionStreamStore,
+  sessionIds: readonly (string | null | undefined)[],
+): SessionStreamMap {
+  const normalizedKey = useMemo(() => normalizeSessionIds(sessionIds).join("\u0000"), [sessionIds]);
+  const selectedIds = useMemo(() => normalizedKey ? normalizedKey.split("\u0000") : [], [normalizedKey]);
+  const lastSelectionRef = useRef<{ states: Array<SessionStreamState | null>; snapshot: SessionStreamMap } | null>(null);
+  const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store]);
+  const getSnapshot = useCallback(() => {
+    const states = selectedIds.map((id) => store.getState(id) ?? null);
+    const prior = lastSelectionRef.current;
+    if (prior && prior.states.length === states.length && prior.states.every((state, index) => state === states[index])) {
+      return prior.snapshot;
+    }
+    const snapshot = Object.fromEntries(selectedIds.flatMap((id) => {
+      const state = store.getState(id);
+      return state ? [[id, state]] : [];
+    }));
+    lastSelectionRef.current = { states, snapshot };
+    return snapshot;
+  }, [selectedIds, store]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 export function useSessionSubscription(sessionId: string | null): SessionStreamState {
   const sessionIds = useMemo(() => (sessionId ? [sessionId] : []), [sessionId]);
-  const { streams, wsConnected } = useSessionSubscriptions(sessionIds, { owner: "single-session-hook", activeSession: sessionId });
-  return getSessionStreamState(streams, sessionId, wsConnected);
+  const { store, wsConnected } = useSessionSubscriptions(sessionIds, { owner: "single-session-hook", activeSession: sessionId });
+  return useSessionStreamState(store, sessionId, wsConnected);
 }
