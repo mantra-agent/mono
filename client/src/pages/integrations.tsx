@@ -93,6 +93,12 @@ import {
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
+import {
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_SESSION_ROW_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
 import type {
   SemanticTier,
   OpenAIReasoningEffort,
@@ -141,7 +147,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "anthropic", name: "Anthropic", icon: Bot, statusFields: ["anthropic"], route: "anthropic" },
   { id: "openai", name: "OpenAI", icon: Bot, statusFields: ["openai", "openaiSubscription"], route: "openai" },
   { id: "claude-cli", name: "Claude Code CLI", icon: Settings, statusFields: ["claudeCli"], route: "claude-cli" },
-  { id: "twitter", name: "X (Twitter)", icon: () => <SiX className="h-5 w-5" />, statusFields: ["twitter"], route: "twitter" },
+  { id: "twitter", name: "X (Twitter)", icon: ({ className }) => <SiX className={className} />, statusFields: ["twitter"], route: "twitter" },
   { id: "plaid", name: "Plaid", icon: Landmark, statusFields: ["plaid"], route: "plaid" },
   { id: "quickbooks", name: "QuickBooks", icon: Landmark, statusFields: ["quickbooks"], healthField: "quickbooksHealthy", route: "quickbooks" },
   { id: "brave", name: "Brave Search", icon: Globe, statusFields: ["brave"], route: "brave" },
@@ -3798,44 +3804,104 @@ function ExpoDetail() {
 }
 
 // ---------------------------------------------------------------------------
-// Integration Grid
+// Integration Tree
 // ---------------------------------------------------------------------------
 
-function IntegrationGrid({
-  status,
-}: {
+type IntegrationStatus = ReturnType<typeof resolveStatus>;
+
+const INTEGRATION_STATUS_PRESENTATION: Record<
+  IntegrationStatus,
+  { label: string; icon: React.ComponentType<{ className?: string }>; className: string }
+> = {
+  ready: { label: "Ready", icon: CheckCircle2, className: "text-success" },
+  error: { label: "Error", icon: XCircle, className: "text-destructive" },
+  connect: { label: "Connect", icon: Circle, className: "text-muted-foreground" },
+};
+
+interface IntegrationTreeProps {
   status: Record<string, any> | undefined;
-}) {
+}
+
+function IntegrationTree({ status }: IntegrationTreeProps) {
   const [, setLocation] = useLocation();
+  const [search, setSearch] = useState("");
+  const [sectionOpen, setSectionOpen] = useState(true);
+  const normalizedSearch = search.trim().toLowerCase();
+  const hasQuery = normalizedSearch.length > 0;
+  const isOpen = hasQuery || sectionOpen;
+  const filteredIntegrations = useMemo(
+    () => INTEGRATIONS.filter((integration) => integration.name.toLowerCase().includes(normalizedSearch)),
+    [normalizedSearch],
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 @sm:grid-cols-2 @lg:grid-cols-4 gap-4">
-        {INTEGRATIONS.map((integration) => {
-          const s = resolveStatus(integration, status);
-          const Icon = integration.icon;
-          return (
-            <Card
-              key={integration.id}
-              className="cursor-pointer hover:bg-accent/50 transition-colors"
-              onClick={() => setLocation(`/integrations/${integration.route}`)}
-              data-testid={`tile-${integration.id}`}
-            >
-              <CardContent className="flex flex-col items-center gap-3 pt-6 pb-4">
-                <Icon className="h-8 w-8 text-muted-foreground" />
-                <span className="text-sm font-medium">{integration.name}</span>
-                <Badge
-                  variant={s === "ready" ? "default" : s === "error" ? "destructive" : "secondary"}
-                  data-testid={`badge-tile-${integration.id}`}
-                >
-                  {s === "ready" ? "Ready" : s === "error" ? "Error" : "Connect"}
-                </Badge>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+    <div className="w-full md:w-1/3">
+      <div className={HIERARCHY_TREE_STACK_CLASS}>
+        <div className="[&_input]:h-11 [&_input]:pr-12 md:[&_input]:h-7 md:[&_input]:pr-7 [&_button]:h-11 [&_button]:w-11 md:[&_button]:h-4 md:[&_button]:w-4 [&_button]:focus-visible:outline-none [&_button]:focus-visible:ring-1 [&_button]:focus-visible:ring-ring">
+          <HierarchySearchInput
+            value={search}
+            onChange={setSearch}
+            inputTestId="input-integrations-search"
+            clearTestId="button-integrations-search-clear"
+            ariaLabel="Search integrations"
+          />
+        </div>
 
+        <Collapsible
+          open={isOpen}
+          onOpenChange={(open) => {
+            if (!hasQuery) setSectionOpen(open);
+          }}
+        >
+          <CollapsibleTrigger
+            className={cn(
+              HIERARCHY_SECTION_HEADER_CLASS,
+              "min-h-11 hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:min-h-0",
+            )}
+            data-testid="button-integrations-section"
+          >
+            <ChevronRight
+              className={cn("h-3.5 w-3.5 transition-transform", isOpen && "rotate-90")}
+              aria-hidden="true"
+            />
+            <span>Integrations</span>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-0.5">
+            {filteredIntegrations.length === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                No matching integrations.
+              </div>
+            ) : (
+              filteredIntegrations.map((integration) => {
+                const integrationStatus = resolveStatus(integration, status);
+                const statusPresentation = INTEGRATION_STATUS_PRESENTATION[integrationStatus];
+                const Icon = integration.icon;
+                const StatusIcon = statusPresentation.icon;
+
+                return (
+                  <button
+                    key={integration.id}
+                    type="button"
+                    className={cn(
+                      HIERARCHY_SESSION_ROW_CLASS,
+                      "min-h-11 hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:min-h-0",
+                    )}
+                    onClick={() => setLocation(`/integrations/${integration.route}`)}
+                    data-testid={`row-integration-${integration.id}`}
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">{integration.name}</span>
+                    <span className={cn("ml-auto flex shrink-0 items-center gap-1 text-xs", statusPresentation.className)}>
+                      <StatusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                      {statusPresentation.label}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </CollapsibleContent>
+        </Collapsible>
+      </div>
     </div>
   );
 }
@@ -6178,13 +6244,11 @@ export default function IntegrationsPage() {
 
   usePageHeader({ title: integration?.name || "Integrations", titleHref: "/integrations" });
 
-  return (
+  return match && params?.provider ? (
     <div className="flex flex-col gap-6 p-6">
-      {match && params?.provider ? (
-        <IntegrationDetail provider={params.provider} />
-      ) : (
-        <IntegrationGrid status={status} />
-      )}
+      <IntegrationDetail provider={params.provider} />
     </div>
+  ) : (
+    <IntegrationTree status={status} />
   );
 }
