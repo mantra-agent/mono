@@ -210,7 +210,7 @@ Background chat-document repair must never write as a system principal or infer 
 
 ### Skills and Prompt Modules
 
-Built-in system skills are versioned code-owned definitions unless `customized=true`. On boot, synchronize the full definition only when the persisted numeric version is lower than the code version, using a conditional update over `author=system`, `customized=false`, and the expected version. Never downgrade a higher persisted version. Every built-in definition change must increment its version.
+Built-in system skills are versioned code-owned definitions unless `customized=true`. On boot, synchronize the full definition only when the persisted numeric version is lower than the code version, using a conditional update over `author=system`, `customized=false`, and the expected version. Never downgrade a higher persisted version. Every built-in definition change must increment its version. Current edits fork a private copy, so a legacy `customized=true` global row may advance only through an explicit version-to-version merge that preserves unknown content, changes the minimum named clauses required by the new invariant, and uses compare-and-swap fencing; it must never receive a full default replacement.
 
 - Skills are runnable workflows stored in `skills` with run records in `skill_runs`. They are user/agent-facing capabilities and may be launched by the skill runner.
 - Prompt Modules are internal prompt templates stored in `prompt_modules` with snapshots in `prompt_module_versions`. They are loaded by code with `getPromptModulePrompt()` / `getPromptModule()` and are not runnable Skills.

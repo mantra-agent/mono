@@ -1,8 +1,9 @@
 import { createLogger } from "./log";
 import { db } from "./db";
+import { getPostgresErrorDetails } from "./postgres-errors";
 import { skills, libraryPages, personas, skillPersonaPreferences } from "@shared/schema";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
-import { BUILTIN_SKILL_DEFAULTS } from "./skill-defaults";
+import { BUILTIN_SKILL_DEFAULTS, type SkillDefault } from "./skill-defaults";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -212,6 +213,143 @@ function compareSkillVersions(left: string, right: string): number | null {
   return 0;
 }
 
+const PLAN_PERIOD_CONTRACT_VERSION = "1.2";
+const PLAN_PERIOD_CONTRACT_MARKER = "## Scheduled Period Contract (v1.2)";
+const PLAN_PERIOD_CONTRACT = `${PLAN_PERIOD_CONTRACT_MARKER}
+
+This contract overrides any conflicting generic period wording below while preserving all customized planning instructions.
+
+For a scheduled run, preContext supplies the authoritative \`planningMode: review_current_plan_next\`, timezone, reviewPeriod, targetPeriod, and parentPeriod. Review-period goals are read-only transition context: classify them as complete, carry forward, change, or drop, but never mutate them. Only goals, artifacts, and check-in metadata scoped to targetPeriod may be created or changed. Use the explicit period keys instead of relative wall-clock interpretations.`;
+
+const PLAN_V11_DESCRIPTION = "Conversation-first parameterized planning skill for daily, weekly, monthly, quarterly, and annual cadences. It starts a short alignment conversation, helps Ray choose up to 3 canonical goals, then creates the plan artifact only after Ray confirms.";
+const PLAN_V11_WHEN_TO_USE = "Use for scheduled or manual planning at any cadence when Ray needs to align on canonical goals for a target period. The first response should be conversational and ask for confirmation, not produce the plan artifact.";
+const PLAN_V11_OUTPUT_SPEC = "Initial turn: a compact planning frame and 1-3 questions/proposed goals for Ray. After Ray confirms: up to 3 canonical goals created/updated/selected, parent links where clear, and a concise Library plan artifact linked through check-in metadata where supported.";
+
+const PLAN_V11_CHECKLIST_REPLACEMENTS = new Map<string, string[]>([
+  [
+    "First response is conversation-first: no Library page, priorities metadata, or goal mutations before Ray confirms the target goals",
+    ["First response is conversation-first: no Library page, check-in metadata, or goal mutations before Ray confirms the target-period goals"],
+  ],
+  [
+    "PreContext cadence and target period are used to identify target horizon, parent horizon, and artifact metadata",
+    ["PreContext planningMode, timezone, reviewPeriod, targetPeriod, and parentPeriod are used exactly; scheduled planning reviews the current period and plans the next period"],
+  ],
+  [
+    "Only future planning context is used by default: parent goals, existing target goals, current projects/decisions, and relevant calendar constraints",
+    [
+      "Review-period goals are used only to classify complete, carry forward, change, or drop; they are never mutated by the planning run",
+      "Opening context stays bounded to parent goals, existing target-period goals, narrow review-period goal status, and relevant future calendar/project constraints",
+    ],
+  ],
+  [
+    "After confirmation, no more than 3 active target-horizon goals are selected/created and parent links are created where clear",
+    ["After confirmation, no more than 3 active goals scoped to targetPeriod are selected/created and parent links are created where clear"],
+  ],
+  [
+    "After confirmation, the plan artifact is saved and linked via supported check-in metadata such as goals.set_daily_plan, goals.set_weekly_plan, goals.set_monthly_plan, or goals.set_quarterly_plan",
+    ["After confirmation, only the targetPeriod plan artifact is saved and linked via supported check-in metadata such as goals.set_daily_plan, goals.set_weekly_plan, goals.set_monthly_plan, or goals.set_quarterly_plan"],
+  ],
+]);
+
+function mergePlanV12Checklist(
+  checklist: unknown,
+  canonicalChecklist: SkillDefault["checklist"],
+): Array<Record<string, unknown> & { check: string; weight: number }> {
+  const existing = Array.isArray(checklist) ? checklist : [];
+  const merged: Array<Record<string, unknown> & { check: string; weight: number }> = [];
+  for (const item of existing) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Record<string, unknown> & { check?: unknown; weight?: unknown };
+    if (typeof candidate.check !== "string" || typeof candidate.weight !== "number") continue;
+    const replacements = PLAN_V11_CHECKLIST_REPLACEMENTS.get(candidate.check);
+    if (!replacements) {
+      merged.push({ ...candidate, check: candidate.check, weight: candidate.weight });
+      continue;
+    }
+    for (const check of replacements) {
+      const canonical = canonicalChecklist?.find((entry) => entry.check === check);
+      merged.push({
+        ...candidate,
+        check,
+        weight: canonical?.weight ?? candidate.weight,
+      });
+    }
+  }
+  for (const required of canonicalChecklist ?? []) {
+    if (!merged.some((item) => item.check === required.check)) merged.push({ ...required });
+  }
+  return merged;
+}
+
+/**
+ * Before copy-on-write Skill overrides, edits marked the global built-in row as
+ * customized. Preserve that legacy content while merging the safety-critical
+ * scheduled-period delta. Current private overrides remain untouched.
+ */
+export async function migrateCustomizedPlanPeriodContract(): Promise<void> {
+  const canonical = BUILTIN_SKILL_DEFAULTS.find((definition) => definition.name === "plan");
+  if (!canonical || canonical.version !== PLAN_PERIOD_CONTRACT_VERSION) {
+    log.error("Cannot reconcile customized Plan skill: canonical v1.2 definition is missing");
+    return;
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [existing] = await db
+      .select({
+        id: skills.id,
+        author: skills.author,
+        customized: skills.customized,
+        version: skills.version,
+        description: skills.description,
+        process: skills.process,
+        whenToUse: skills.whenToUse,
+        outputSpec: skills.outputSpec,
+        checklist: skills.checklist,
+        updatedAt: skills.updatedAt,
+      })
+      .from(skills)
+      .where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
+    if (!existing || existing.author !== "system" || existing.customized !== true) return;
+    if (existing.version !== "1.1") {
+      const order = compareSkillVersions(existing.version, PLAN_PERIOD_CONTRACT_VERSION);
+      if (order !== null && order >= 0) return;
+      log.warn("Skipped customized Plan period reconciliation", {
+        persistedVersion: existing.version,
+        targetVersion: PLAN_PERIOD_CONTRACT_VERSION,
+        reason: order === null ? "invalid_version" : "unsupported_base_version",
+      });
+      return;
+    }
+
+    const process = existing.process.includes(PLAN_PERIOD_CONTRACT_MARKER)
+      ? existing.process
+      : `${PLAN_PERIOD_CONTRACT}\n\n${existing.process}`;
+    const [updated] = await db
+      .update(skills)
+      .set({
+        description: existing.description === PLAN_V11_DESCRIPTION ? canonical.description : existing.description,
+        process,
+        whenToUse: existing.whenToUse === PLAN_V11_WHEN_TO_USE ? (canonical.whenToUse ?? existing.whenToUse) : existing.whenToUse,
+        outputSpec: existing.outputSpec === PLAN_V11_OUTPUT_SPEC ? (canonical.outputSpec ?? existing.outputSpec) : existing.outputSpec,
+        checklist: mergePlanV12Checklist(existing.checklist, canonical.checklist),
+        version: PLAN_PERIOD_CONTRACT_VERSION,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(skills.id, existing.id),
+        eq(skills.author, "system"),
+        eq(skills.customized, true),
+        eq(skills.version, existing.version),
+        eq(skills.updatedAt, existing.updatedAt),
+      ))
+      .returning({ id: skills.id });
+    if (updated) {
+      log.info("Reconciled customized builtin Plan 1.1 → 1.2 without replacing customized content");
+      return;
+    }
+  }
+}
+
 export async function seedBuiltinSkills(): Promise<void> {
   let inserted = 0;
   let preserved = 0;
@@ -343,12 +481,18 @@ export async function seedBuiltinSkills(): Promise<void> {
         failureCount: 0,
       });
       inserted++;
-    } catch (err: any) {
-      if (err.code === "23505") {
+    } catch (error: unknown) {
+      const details = getPostgresErrorDetails(error);
+      if (details.code === "23505") {
         preserved++;
       } else {
         errored++;
-        log.error(`Failed to bootstrap skill ${def.name}: ${err.message} (code: ${err.code})`);
+        log.error("Failed to bootstrap builtin skill", {
+          skillName: def.name,
+          sqlState: details.code,
+          errorType: details.errorType,
+          causeDepth: details.causeDepth,
+        });
       }
     }
   }
@@ -782,8 +926,8 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   ];
 
   for (const { name, sentinel } of migrations) {
-    const [existing] = await db.select({ id: skills.id, process: skills.process }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
-    if (!existing) continue;
+    const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized, process: skills.process }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
+    if (!existing || existing.author !== "system" || existing.customized === true) continue;
     if (!existing.process.includes(sentinel)) {
       const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === name);
       if (!def) continue;
@@ -798,8 +942,8 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   const planConversationRefreshed = await getSetting<boolean>("plan_conversation_first_metadata_refreshed_v1");
   if (!planConversationRefreshed) {
     const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === "plan");
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
-    if (def && existing) {
+    const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
+    if (def && existing?.author === "system" && existing.customized !== true) {
       await db.update(skills).set({
         description: def.description,
         category: def.category,
@@ -822,8 +966,8 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   const planQuarterlyRefreshed = await getSetting<boolean>("plan_quarterly_metadata_refreshed_v1");
   if (!planQuarterlyRefreshed) {
     const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === "plan");
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
-    if (def && existing) {
+    const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
+    if (def && existing?.author === "system" && existing.customized !== true) {
       await db.update(skills).set({
         description: def.description,
         category: def.category,
@@ -846,8 +990,8 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
   const planDailyRefreshed = await getSetting<boolean>("plan_daily_metadata_refreshed_v1");
   if (!planDailyRefreshed) {
     const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === "plan");
-    const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
-    if (def && existing) {
+    const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, "plan")));
+    if (def && existing?.author === "system" && existing.customized !== true) {
       await db.update(skills).set({
         description: def.description,
         category: def.category,
@@ -870,8 +1014,8 @@ export async function migrateSkillProcessUpdates(): Promise<void> {
     for (const name of ["plan", "reflect"]) {
       const def = BUILTIN_SKILL_DEFAULTS.find(d => d.name === name);
       if (!def) continue;
-      const [existing] = await db.select({ id: skills.id }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
-      if (!existing) continue;
+      const [existing] = await db.select({ id: skills.id, author: skills.author, customized: skills.customized }).from(skills).where(and(eq(skills.scope, "global"), eq(skills.name, name)));
+      if (!existing || existing.author !== "system" || existing.customized === true) continue;
       await db.update(skills).set({
         description: def.description,
         category: def.category,

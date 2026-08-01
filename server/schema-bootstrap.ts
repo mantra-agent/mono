@@ -2463,7 +2463,7 @@ export async function runSchemaBootstrap(
     // runtime inserts, so PostgreSQL applies their column default. Re-assert it
     // and backfill any NULLs so a lost default cannot violate NOT NULL.
     await pool.query(`
-      DO $
+      DO $skill_defaults$
       BEGIN
         IF EXISTS (
           SELECT 1 FROM information_schema.columns
@@ -2472,7 +2472,7 @@ export async function runSchemaBootstrap(
           ALTER TABLE skills ALTER COLUMN max_iterations SET DEFAULT 5;
           UPDATE skills SET max_iterations = 5 WHERE max_iterations IS NULL;
         END IF;
-      END $;
+      END $skill_defaults$;
     `);
 
     // --- signal_sources defaults ---
@@ -3335,6 +3335,7 @@ export async function runSchemaBootstrap(
   try {
     const {
       seedBuiltinSkills,
+      migrateCustomizedPlanPeriodContract,
       verifyRequiredSkills,
       migrateSkillRenames,
       migrateLegacyPromptOverrides,
@@ -3352,6 +3353,7 @@ export async function runSchemaBootstrap(
     await ensurePromptModuleTables(pool);
     await migrateSkillRenames();
     await seedBuiltinSkills();
+    await migrateCustomizedPlanPeriodContract();
     await migrateLegacySkillPersonaPreferences();
     await migrateLegacyPromptOverrides();
     await migrateSkillProcessToToolBased();
