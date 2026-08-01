@@ -30,6 +30,13 @@ export const VAULT_COLOR_PALETTE = [
   { value: "#9A78EB", label: "Violet" },
 ] as const;
 
+/** Persisted Vault colors use one browser-compatible six-digit hex contract. */
+export const VAULT_COLOR_PATTERN = /^#[0-9A-F]{6}$/i;
+
+export function normalizeVaultColor(color: string): string {
+  return color.toUpperCase();
+}
+
 /** Generic user-created vaults start on the brand blue. */
 export const DEFAULT_VAULT_COLOR = VAULT_COLOR_PALETTE[1].value;
 

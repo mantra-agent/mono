@@ -36,7 +36,11 @@ import { useVaults, type Vault } from "@/hooks/use-vaults";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
 import { VaultMigrationControls } from "@/components/vault-migration-controls";
-import { DEFAULT_VAULT_COLOR, VAULT_COLOR_PALETTE } from "@shared/models/vaults";
+import {
+  DEFAULT_VAULT_COLOR,
+  normalizeVaultColor,
+  VAULT_COLOR_PALETTE,
+} from "@shared/models/vaults";
 
 const log = createLogger("VaultsAdmin");
 
@@ -46,7 +50,14 @@ interface OpportunitySummary {
   vaultId: string | null;
 }
 
-function ColorDot({ color, label, selected, onClick }: { color: string; label: string; selected: boolean; onClick: () => void }) {
+interface ColorDotProps {
+  color: string;
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}
+
+function ColorDot({ color, label, selected, onClick }: ColorDotProps) {
   const isWhite = color.toUpperCase() === "#FFFFFF";
   return (
     <button
@@ -63,6 +74,53 @@ function ColorDot({ color, label, selected, onClick }: { color: string; label: s
       aria-label={label}
       title={label}
     />
+  );
+}
+
+interface VaultColorPickerProps {
+  value: string;
+  onChange: (color: string) => void;
+}
+
+function VaultColorPicker({ value, onChange }: VaultColorPickerProps) {
+  const normalizedValue = normalizeVaultColor(value);
+  const isCustomColor = !VAULT_COLOR_PALETTE.some(
+    color => color.value === normalizedValue,
+  );
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+      {VAULT_COLOR_PALETTE.map(color => (
+        <ColorDot
+          key={color.value}
+          color={color.value}
+          label={color.label}
+          selected={normalizedValue === color.value}
+          onClick={() => onChange(color.value)}
+        />
+      ))}
+      <label
+        className={`relative flex min-h-8 cursor-pointer items-center gap-2 rounded-md border px-2 text-sm transition-colors ${
+          isCustomColor
+            ? "border-foreground text-foreground"
+            : "border-border text-muted-foreground hover:border-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <span
+          className="h-4 w-4 rounded-full border border-muted-foreground/40"
+          style={{ backgroundColor: normalizedValue }}
+          aria-hidden="true"
+        />
+        Custom
+        <input
+          type="color"
+          value={normalizedValue}
+          onChange={event => onChange(normalizeVaultColor(event.target.value))}
+          className="absolute inset-0 cursor-pointer opacity-0"
+          aria-label="Choose a custom Vault color"
+        />
+      </label>
+    </div>
   );
 }
 
@@ -112,11 +170,7 @@ function CreateVaultDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           </div>
           <div>
             <label className="text-sm font-medium text-foreground">Color</label>
-            <div className="mt-1.5 flex gap-2">
-              {VAULT_COLOR_PALETTE.map((c) => (
-                <ColorDot key={c.value} color={c.value} label={c.label} selected={color === c.value} onClick={() => setColor(c.value)} />
-              ))}
-            </div>
+            <VaultColorPicker value={color} onChange={setColor} />
           </div>
         </div>
         <DialogFooter>
@@ -172,11 +226,7 @@ function RenameDialog({ vault, open, onOpenChange }: { vault: Vault; open: boole
           </div>
           <div>
             <label className="text-sm font-medium text-foreground">Color</label>
-            <div className="mt-1.5 flex gap-2">
-              {VAULT_COLOR_PALETTE.map((c) => (
-                <ColorDot key={c.value} color={c.value} label={c.label} selected={newColor === c.value} onClick={() => setNewColor(c.value)} />
-              ))}
-            </div>
+            <VaultColorPicker value={newColor} onChange={setNewColor} />
           </div>
         </div>
         <DialogFooter>
