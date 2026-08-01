@@ -1094,6 +1094,12 @@ export class PeopleStorage {
       await this.syncPersonEmails(tx, person);
     });
     this.invalidateListCache();
+    // Additive, replay-safe dual write of the weak `introducedBy` text onto the
+    // canonical `introduced_by` typed address link. Runs outside the Person
+    // transaction (it resolves + creates through the canonical link boundary)
+    // and is internally best-effort so it can never fail the Person save.
+    const { syncPersonIntroducedByLink } = await import("./relationships/introduced-by-links");
+    await syncPersonIntroducedByLink(principal, person);
   }
 
   async getCabinetConfig(): Promise<CabinetConfig> {
