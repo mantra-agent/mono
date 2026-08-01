@@ -21,6 +21,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import {
   useVisibilityLayer,
   LAYER_LABELS,
+  VISIBILITY_LAYERS,
   type VisibilityLayer,
 } from "@/hooks/use-visibility-layer";
 import {
@@ -343,7 +344,7 @@ function BottomBarMenu({
                 value={String(layer)}
                 onValueChange={(value) => setLayer(Number(value) as VisibilityLayer)}
               >
-                {([1, 2, 3, 4] as VisibilityLayer[]).map((v) => (
+                {VISIBILITY_LAYERS.map((v) => (
                   <DropdownMenuRadioItem key={v} value={String(v)}>
                     {LAYER_LABELS[v]}
                   </DropdownMenuRadioItem>

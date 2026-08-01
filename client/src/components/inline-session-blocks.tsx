@@ -38,7 +38,7 @@ import {
 } from "@/components/chat-shared";
 import { SegmentStream } from "@/components/segment-stream";
 import { useSessionSubscription, type SessionStreamState } from "@/hooks/use-session-subscription";
-import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
+import { useVisibilityLayer, type VisibilityLayer } from "@/hooks/use-visibility-layer";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { MessageSegment } from "@shared/streaming-types";
@@ -51,7 +51,7 @@ interface ChildSessionPayload {
   messages?: ChatMessage[];
 }
 
-function latestContentFromSegments(segments: MessageSegment[], layer: 1 | 2 | 3 | 4, isActiveSession: boolean): string | null {
+function latestContentFromSegments(segments: MessageSegment[], layer: VisibilityLayer, isActiveSession: boolean): string | null {
   for (const segment of [...segments].reverse()) {
     if (segment.type === "content") {
       const lines = stripMessageTimestamp(segment.content)

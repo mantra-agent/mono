@@ -8,6 +8,7 @@ import { MobileVoiceViewport } from "@/components/mobile-voice-viewport";
 import { SessionAgendaTree } from "@/components/session-agenda-tree";
 import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
 import { isNativeVoiceBridge } from "@/lib/native-voice-bridge";
+import { useVisibilityLayer } from "@/hooks/use-visibility-layer";
 import type { MeetingSessionMeta, QuestionResponseMeta, SessionAgenda } from "@shared/models/chat";
 import type { ChatMessage as Message } from "@/components/chat-shared";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
@@ -86,6 +87,7 @@ export function SessionTranscriptSurface({
   onQuestionSubmit,
   onQuestionCancel,
 }: SessionTranscriptSurfaceProps) {
+  const { layer } = useVisibilityLayer();
   const nativeTranscription = useNativeMeetingTranscription();
   const nativeCaptureActive = meeting?.transport === "native"
     && meeting.botStatus === "live"
@@ -185,20 +187,19 @@ export function SessionTranscriptSurface({
           </div>
         );
 
-        if (nativeCaptureActive) {
+        if (nativeCaptureActive && layer === 0) {
           return (
             <DesktopAudioSurface
               visualState="listening"
               readAudioLevel={nativeTranscription.readAudioLevel}
-              transcript={transcript}
               testId="desktop-native-transcription-surface"
             />
           );
         }
-        if (!voiceActive || !voiceSession) return transcript;
+        if (!voiceActive || !voiceSession || layer > 0) return transcript;
         return isNativeVoiceBridge()
           ? <MobileVoiceViewport voiceSession={voiceSession} />
-          : <DesktopVoiceSurface voiceSession={voiceSession} transcript={transcript} />;
+          : <DesktopVoiceSurface voiceSession={voiceSession} />;
       })()}
     </div>
   );
