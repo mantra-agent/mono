@@ -1013,6 +1013,8 @@ export interface ChatSession {
   triggerType?: TriggerType;
   triggerId?: string;
   triggerName?: string;
+  /** Canonical trigger identity. Legacy trigger triples remain for rollback and presentation. */
+  triggerAddress?: string;
   rootSessionId?: string;
   depth?: number;
 }

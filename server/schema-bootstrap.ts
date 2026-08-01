@@ -5490,10 +5490,14 @@ export async function runSchemaBootstrap(
         session_id TEXT NOT NULL,
         artifact_type TEXT NOT NULL,
         artifact_id TEXT NOT NULL,
+        artifact_address TEXT,
+        address_link_id UUID,
         metadata JSONB NOT NULL DEFAULT '{}',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(`ALTER TABLE session_artifacts ADD COLUMN IF NOT EXISTS artifact_address TEXT`);
+    await pool.query(`ALTER TABLE session_artifacts ADD COLUMN IF NOT EXISTS address_link_id UUID`);
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_session_artifacts_unique
         ON session_artifacts (session_id, artifact_type, artifact_id)
@@ -5506,6 +5510,7 @@ export async function runSchemaBootstrap(
       CREATE INDEX IF NOT EXISTS idx_session_artifacts_artifact
         ON session_artifacts (artifact_type, artifact_id)
     `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_artifacts_address ON session_artifacts(owner_user_id, account_id, artifact_address) WHERE artifact_address IS NOT NULL`);
     log("auto-heal: created session_artifacts table", "migration");
   });
 
@@ -5852,6 +5857,8 @@ export async function runSchemaBootstrap(
         title TEXT NOT NULL,
         ref_type TEXT NOT NULL DEFAULT 'text',
         ref_id TEXT,
+        artifact_address TEXT,
+        address_link_id UUID,
         url TEXT,
         summary TEXT NOT NULL DEFAULT '',
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -5862,9 +5869,12 @@ export async function runSchemaBootstrap(
         account_id TEXT
       )
     `);
+    await pool.query(`ALTER TABLE workflow_artifacts ADD COLUMN IF NOT EXISTS artifact_address TEXT`);
+    await pool.query(`ALTER TABLE workflow_artifacts ADD COLUMN IF NOT EXISTS address_link_id UUID`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_artifacts_run ON workflow_artifacts(workflow_run_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_artifacts_stage ON workflow_artifacts(stage_attempt_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_artifacts_kind ON workflow_artifacts(kind)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_artifacts_address ON workflow_artifacts(owner_user_id, account_id, artifact_address) WHERE artifact_address IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_artifacts_owner ON workflow_artifacts(owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_artifacts_account ON workflow_artifacts(account_id)`);
 
