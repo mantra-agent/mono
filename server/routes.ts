@@ -34,6 +34,7 @@ import { registerDomainRoutes } from "./routes/index";
 import { diagnoseGmailBatchRead } from "./bridge-tools";
 import { registerExportRoutes } from "./export-routes";
 import { registerReferenceRoutes } from "./reference-routes";
+import { registerLifeAddressingCutoverRoutes } from "./life-addressing-cutover-routes";
 import { registerBackupRoutes } from "./routes/backup";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerMeetingDistributionRoutes } from "./routes/meeting-distributions";
@@ -203,6 +204,7 @@ export async function registerRoutes(
   registerJobRoleRoutes(app);
   registerGoalRoutes(app);
   registerReferenceRoutes(app);
+  registerLifeAddressingCutoverRoutes(app);
   registerTagRoutes(app);
   registerCalendarRoutes(app);
   registerTimerRoutes(app);
