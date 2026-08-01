@@ -408,6 +408,8 @@ function BottomBarMenu({
               <SessionActionsMenuItems
                 sessionId={focusedSessionId}
                 sessionTitle={focusedSession?.title}
+                sessionVaultId={focusedSession?.vaultId}
+                sessionType={focusedSession?.type}
                 parentSessionId={focusedSession?.parentSessionId}
                 hideRename
                 onSelectSession={onSelectSession}

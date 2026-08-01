@@ -5,6 +5,8 @@ import {
   BookOpen,
   CornerUpLeft,
   CornerUpRight,
+  Check,
+  FolderInput,
   GitBranch,
   Home,
   Info,
@@ -26,9 +28,11 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { SessionReminderPopover } from "@/components/session-reminder";
 import type { LinkedEntity } from "@/hooks/use-linked-entities";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { emitSessionListChanged } from "@/hooks/use-data-sync";
 import { useToast } from "@/hooks/use-toast";
+import { useVaults } from "@/hooks/use-vaults";
+import type { ChatSession } from "@shared/models/chat";
 
 const ENTITY_CHIP_STYLES: Record<
   LinkedEntity["kind"],
@@ -64,6 +68,8 @@ const ENTITY_CHIP_STYLES: Record<
 export interface SessionActionsMenuItemsProps {
   sessionId: string;
   sessionTitle?: string | null;
+  sessionVaultId?: string | null;
+  sessionType?: ChatSession["type"];
   /** Current parent session ID. When set, the "Move" submenu is shown. */
   parentSessionId?: string | null;
   onRename?: () => void;
@@ -209,10 +215,83 @@ function SessionMoveSubmenu({
   );
 }
 
+interface SessionVaultSubmenuProps {
+  sessionId: string;
+  sessionVaultId?: string | null;
+  stopPropagation: boolean;
+  testIdPrefix: string;
+}
+
+function SessionVaultSubmenu({
+  sessionId,
+  sessionVaultId,
+  stopPropagation,
+  testIdPrefix,
+}: SessionVaultSubmenuProps) {
+  const { vaults, visibleVaultIds } = useVaults();
+  const { toast } = useToast();
+  const writableVaults = useMemo(
+    () => vaults.filter((vault) => !vault.isArchived && visibleVaultIds.includes(vault.id)),
+    [vaults, visibleVaultIds],
+  );
+
+  const move = async (vaultId: string) => {
+    if (vaultId === sessionVaultId) return;
+    try {
+      const response = await apiRequest("POST", `/api/sessions/${sessionId}/vault`, { vaultId });
+      const updated = await response.json() as ChatSession;
+      queryClient.setQueryData<ChatSession>(["/api/sessions", sessionId], (current) =>
+        current ? { ...current, ...updated } : updated,
+      );
+      queryClient.setQueryData<ChatSession[]>(["/api/sessions"], (current) =>
+        current?.map((session) => session.id === sessionId ? { ...session, ...updated } : session),
+      );
+    } catch (err) {
+      toast({
+        title: "Failed to move session",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    }
+  };
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger data-testid={`${testIdPrefix}-vault`}>
+        <FolderInput className="h-3.5 w-3.5 mr-2" />
+        Vault
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-56">
+        {writableVaults.map((vault) => (
+          <DropdownMenuItem
+            key={vault.id}
+            onClick={(event) => {
+              maybeStopPropagation(event, stopPropagation);
+              void move(vault.id);
+            }}
+            disabled={vault.id === sessionVaultId}
+            data-testid={`${testIdPrefix}-vault-${vault.id}`}
+          >
+            <span
+              className="mr-2 h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: vault.color || undefined }}
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1 truncate">{vault.name}</span>
+            {vault.id === sessionVaultId && <Check className="ml-2 h-3.5 w-3.5 shrink-0" />}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
 export function SessionActionsMenuItems({
   sessionId,
   onRename,
   sessionTitle,
+  sessionVaultId,
+  sessionType,
   parentSessionId,
   onSelectSession,
   onArchive,
@@ -288,6 +367,14 @@ export function SessionActionsMenuItems({
         <SessionMoveSubmenu
           sessionId={sessionId}
           parentSessionId={parentSessionId}
+          stopPropagation={stopPropagation}
+          testIdPrefix={testIdPrefix}
+        />
+      )}
+      {sessionType !== "meeting" && (
+        <SessionVaultSubmenu
+          sessionId={sessionId}
+          sessionVaultId={sessionVaultId}
           stopPropagation={stopPropagation}
           testIdPrefix={testIdPrefix}
         />

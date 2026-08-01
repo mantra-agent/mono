@@ -628,6 +628,25 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     },
   );
 
+  app.post("/api/sessions/:id/vault", async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const vaultId = typeof req.body?.vaultId === "string" ? req.body.vaultId.trim() : "";
+      if (!vaultId) {
+        return res.status(400).json({ error: "vaultId is required" });
+      }
+      const session = await chatStorage.moveSessionToVault(id, vaultId);
+      res.json(session);
+    } catch (error) {
+      if (error && typeof error === "object" && "status" in error) {
+        const statusError = error as { status: number; message: string };
+        return res.status(statusError.status).json({ error: statusError.message });
+      }
+      chatLog.error("Error moving session to Vault:", error);
+      res.status(500).json({ error: "Failed to move session to Vault" });
+    }
+  });
+
   app.post("/api/sessions/:id/move", async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;

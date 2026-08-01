@@ -3,6 +3,8 @@ import { createLogger } from "@/lib/logger";
 import { useState, useEffect, useRef, useMemo, useSyncExternalStore, useCallback, type MouseEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { useVaults, type Vault } from "@/hooks/use-vaults";
+import { vaultTitleColor, MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -218,6 +220,8 @@ export function ConversationItem({
   onArchive,
   onOpenInParent,
   onTogglePin,
+  vaultById,
+  activeVaultId,
 }: {
   conv: ChatSession;
   isActive: boolean;
@@ -231,6 +235,8 @@ export function ConversationItem({
   onArchive: (id: string) => void;
   onOpenInParent?: () => void;
   onTogglePin?: (id: string, pinned: boolean) => void;
+  vaultById: Map<string, Vault>;
+  activeVaultId: string | null;
 }) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(conv.title);
@@ -280,6 +286,12 @@ export function ConversationItem({
   const isAwaitingQuestion = !!conv.awaitingQuestionResponse;
   const isAwaitingEmailReview = !!conv.reviewKinds?.some((kind) => kind !== "question");
   const isAwaitingReview = !!conv.awaitingReview || isAwaitingQuestion;
+  const sessionTitleColor = vaultTitleColor(
+    conv.vaultId ? [conv.vaultId] : undefined,
+    vaultById,
+    activeVaultId,
+    isLive || isDurablyActiveSession(conv) ? 1 : MUTED_TITLE_ALPHA,
+  );
   const statusTextClass = conv.errorSeverity === "error" && !isLive
     ? "text-error"
     : isLive
@@ -424,7 +436,10 @@ export function ConversationItem({
             aria-label={isActive ? `Rename ${conv.title}` : conv.title}
             data-testid={`button-rename-title-${conv.id}`}
           >
-            <span className="truncate">
+            <span
+              className="truncate"
+              style={sessionTitleColor ? { color: sessionTitleColor } : undefined}
+            >
               {conv.title && conv.title.length > 30 ? conv.title.slice(0, 30) + "…" : conv.title}
             </span>
             {childCount > 0 && (
@@ -455,6 +470,8 @@ export function ConversationItem({
           <SessionActionsMenuItems
             sessionId={conv.id}
             sessionTitle={conv.title}
+            sessionVaultId={conv.vaultId}
+            sessionType={conv.type}
             parentSessionId={conv.parentSessionId}
             onRename={startRename}
             onSelectSession={onSelect}
@@ -529,6 +546,8 @@ export function SessionTreeNode({
   onRename,
   onArchive,
   onTogglePin,
+  vaultById,
+  activeVaultId,
 }: {
   conv: ChatSession;
   sessions: ChatSession[];
@@ -540,6 +559,8 @@ export function SessionTreeNode({
   onRename: (id: string, title: string) => void;
   onArchive: (id: string) => void;
   onTogglePin?: (id: string, pinned: boolean) => void;
+  vaultById: Map<string, Vault>;
+  activeVaultId: string | null;
 }) {
   const childCount = conv.directChildCount ?? 0;
   const hasChildren = childCount > 0;
@@ -579,6 +600,8 @@ export function SessionTreeNode({
             onRename={onRename}
             onArchive={onArchive}
             onTogglePin={onTogglePin}
+            vaultById={vaultById}
+            activeVaultId={activeVaultId}
             onOpenInParent={
               conv.parentSessionId
                 ? () => navigateToParentContext(conv.parentSessionId!, conv.id, onSelect)
@@ -623,6 +646,8 @@ export function SessionTreeNode({
                   onRename={onRename}
                   onArchive={onArchive}
                   onTogglePin={onTogglePin}
+                  vaultById={vaultById}
+                  activeVaultId={activeVaultId}
                 />
               ))
           )}
@@ -642,6 +667,8 @@ export function SessionGroupSection({
   onRename,
   onArchive,
   onTogglePin,
+  vaultById,
+  activeVaultId,
 }: {
   group: SessionGroup;
   sessions: ChatSession[];
@@ -652,6 +679,8 @@ export function SessionGroupSection({
   onRename: (id: string, title: string) => void;
   onArchive: (id: string) => void;
   onTogglePin?: (id: string, pinned: boolean) => void;
+  vaultById: Map<string, Vault>;
+  activeVaultId: string | null;
 }) {
   const hasLiveConv = group.sessions.some(isDurablyActiveSession);
   const hasActiveSess = !!activeSession && group.sessions.some(c => c.id === activeSession);
@@ -685,6 +714,8 @@ export function SessionGroupSection({
               onRename={onRename}
               onArchive={onArchive}
               onTogglePin={onTogglePin}
+              vaultById={vaultById}
+              activeVaultId={activeVaultId}
             />
           ))}
         </div>
@@ -702,6 +733,8 @@ function AutoSessionsGroup({
   onRename,
   onArchive,
   onTogglePin,
+  vaultById,
+  activeVaultId,
 }: {
   sessions: ChatSession[];
   activeSession: string | null;
@@ -710,6 +743,8 @@ function AutoSessionsGroup({
   onRename: (id: string, title: string) => void;
   onArchive: (id: string) => void;
   onTogglePin?: (id: string, pinned: boolean) => void;
+  vaultById: Map<string, Vault>;
+  activeVaultId: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -758,6 +793,8 @@ function AutoSessionsGroup({
               onRename={onRename}
               onArchive={onArchive}
               onTogglePin={onTogglePin}
+              vaultById={vaultById}
+              activeVaultId={activeVaultId}
             />
           ))}
           {!showAll && hasOlder && (
@@ -811,6 +848,9 @@ export function ConversationSidebar({
   scrollResetKey?: number;
 }) {
   const { toast } = useToast();
+  const { vaults, visibleVaultIds, activeVaultId } = useVaults();
+  const vaultById = useMemo(() => new Map(vaults.map((vault) => [vault.id, vault])), [vaults]);
+  const visibleVaultIdSet = useMemo(() => new Set(visibleVaultIds), [visibleVaultIds]);
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
   const voiceSession = useVoiceSessionOptional();
   const liveVoiceConversationId = voiceSession?.status === "active"
@@ -840,20 +880,25 @@ export function ConversationSidebar({
     togglePin.mutate({ id, isPinned: pinned });
   }, [togglePin]);
 
+  const vaultVisibleSessions = useMemo(
+    () => sessions.filter((session) => Boolean(session.vaultId && visibleVaultIdSet.has(session.vaultId))),
+    [sessions, visibleVaultIdSet],
+  );
+
   const sessionsWithChildCounts = useMemo(() => {
-    const visibleIds = new Set(sessions.map(s => s.id));
+    const visibleIds = new Set(vaultVisibleSessions.map(s => s.id));
     const counts = new Map<string, number>();
-    for (const s of sessions) {
+    for (const s of vaultVisibleSessions) {
       if (s.parentSessionId && visibleIds.has(s.parentSessionId)) {
         counts.set(s.parentSessionId, (counts.get(s.parentSessionId) || 0) + 1);
       }
     }
-    return sessions.map(s => {
+    return vaultVisibleSessions.map(s => {
       const parentMissing = s.parentMissing ?? (!!s.parentSessionId && !visibleIds.has(s.parentSessionId));
       const directChildCount = s.directChildCount ?? (counts.get(s.id) || 0);
       return { ...s, parentMissing, directChildCount };
     });
-  }, [sessions]);
+  }, [vaultVisibleSessions]);
 
   // Filter: exclude autonomous sessions from main groups (they go to System section)
   // Also exclude child sessions (shown via tree expansion)
@@ -923,7 +968,7 @@ export function ConversationSidebar({
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             </div>
-          ) : sessions.length === 0 ? (
+          ) : vaultVisibleSessions.length === 0 ? (
             <div className="text-center py-8 px-4">
               <MessageSquare className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
               <p className="text-xs text-muted-foreground">No sessions yet</p>
@@ -951,11 +996,13 @@ export function ConversationSidebar({
                 onRename={(id, title) => onRename(id, title)}
                 onArchive={(id) => onArchive(id)}
                 onTogglePin={handleTogglePin}
+                vaultById={vaultById}
+                activeVaultId={activeVaultId}
               />
             ))
           )}
           {/* System sessions group at the bottom */}
-          {!convsLoading && sessions.length > 0 && (
+          {!convsLoading && vaultVisibleSessions.length > 0 && (
             <AutoSessionsGroup
               sessions={sessionsWithChildCounts}
               activeSession={activeSession}
@@ -964,6 +1011,8 @@ export function ConversationSidebar({
               onRename={onRename}
               onArchive={onArchive}
               onTogglePin={handleTogglePin}
+              vaultById={vaultById}
+              activeVaultId={activeVaultId}
             />
           )}
         </div>

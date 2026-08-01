@@ -13,7 +13,8 @@ const log = createLogger("EnsureVaults");
  * 3. Add `vault_id` to all Phase-1 owned tables
  * 4. Create a first-name default Personal Vault for every account that lacks one
  * 5. Backfill vault_id on all owned rows to the account's Personal vault
- * 6. Set users.active_vault_id and visible_vault_ids defaults
+ * 6. Require canonical Vault ownership on user chat documents
+ * 7. Set users.active_vault_id and visible_vault_ids defaults
  *
  * All operations are additive and idempotent (safe to re-run).
  */
@@ -88,6 +89,7 @@ export async function ensureVaults(): Promise<void> {
       "sessions",
       "messages",
       "workspace_documents",
+      "document_store_documents",
       "library_pages",
       "emotional_states",
       "personas",
@@ -157,6 +159,7 @@ export async function ensureVaults(): Promise<void> {
     const indexedTables = [
       { table: "sessions", idx: "idx_sessions_vault" },
       { table: "workspace_documents", idx: "idx_ws_doc_vault" },
+      { table: "document_store_documents", idx: "idx_document_store_vault" },
       { table: "library_pages", idx: "idx_library_pages_vault" },
       // Phase 2 indexes
       { table: "calendar_event_metadata", idx: "idx_cal_meta_vault" },
@@ -303,6 +306,7 @@ export async function ensureVaults(): Promise<void> {
       { table: "sessions", accountCol: "account_id" },
       { table: "messages", accountCol: "account_id" },
       { table: "workspace_documents", accountCol: "account_id" },
+      { table: "document_store_documents", accountCol: "account_id" },
       { table: "library_pages", accountCol: "account_id" },
       { table: "emotional_states", accountCol: "account_id" },
       { table: "personas", accountCol: "account_id" },
@@ -366,6 +370,39 @@ export async function ensureVaults(): Promise<void> {
         log.log(`Backfilled ${rowCount} rows in ${table}`);
       }
     }
+
+    // User-owned chat documents must always have one canonical Vault after the
+    // default-Vault backfill. A partial check keeps system/global documents and
+    // non-chat document families backward compatible while making future NULL
+    // user Session ownership structurally invalid.
+    await pool.query(`
+      DO $session_vault_required$
+      BEGIN
+        IF to_regclass('public.document_store_documents') IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'document_store_user_chat_vault_required'
+          ) THEN
+          ALTER TABLE document_store_documents
+          ADD CONSTRAINT document_store_user_chat_vault_required
+          CHECK (document_type <> 'chat' OR scope <> 'user' OR vault_id IS NOT NULL)
+          NOT VALID;
+        END IF;
+      END $session_vault_required$;
+    `);
+    await pool.query(`
+      DO $validate_session_vault_required$
+      BEGIN
+        IF to_regclass('public.document_store_documents') IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'document_store_user_chat_vault_required'
+          ) THEN
+          ALTER TABLE document_store_documents
+          VALIDATE CONSTRAINT document_store_user_chat_vault_required;
+        END IF;
+      END $validate_session_vault_required$;
+    `);
 
     // Derived Google data inherits the Vault from its connected source account.
     // Unresolvable rows remain NULL and therefore fail closed.

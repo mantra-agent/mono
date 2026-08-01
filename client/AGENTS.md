@@ -187,6 +187,8 @@ Badges consolidate in the nav: highest-priority status wins per section.
 
 ## Session UI Ownership
 
+Session Menu is a projection of server-owned single-Vault Session placement. It filters ordinary and autonomous rows through the top-bar `visibleVaultIds`, colors titles through the same `vault-title-color.ts` resolver used by People and Work, and moves ordinary Sessions only through the shared ellipsis action. Meeting Sessions do not expose that move because their calendar/Library/session aggregate has a separate canonical transfer boundary. Event-carried Session updates must respect the current visible-Vault set so a move to a hidden Vault removes the row instead of reviving it from stale cache state.
+
 Focus Session is the canonical session entry surface. An optional conversation agenda renders display-only at the top of `SessionTranscriptSurface` through `SessionAgendaTree`, using the shared `HierarchyTreeRow`/Plan tree geometry; durable state and all edits remain server/session-tool owned, and absence renders no extra surface. Agenda rows use Session Menu spacing and section typography, expose description/resolution through row disclosure, highlight the first open item as current, and collapse the section by default when every item is complete. Keep ownership split by role:
 
 - `client/src/components/focus-widget.tsx` — Orchestrates the active session, transcript panel, session menu, and desktop contained BottomBar.
