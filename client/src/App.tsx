@@ -24,6 +24,7 @@ import { useEventStreamTransport } from "@/hooks/use-event-stream";
 import { ClientPresenceProvider } from "@/hooks/use-client-presence";
 import { ExecutorStatusProvider } from "@/hooks/use-executor-status";
 import { FocusSessionProvider, useFocusSession } from "@/hooks/use-focus-session";
+import { SessionActivityProvider } from "@/hooks/use-session-activity";
 import { NativeMeetingTranscriptionProvider } from "@/hooks/use-native-meeting-transcription";
 import { FocusContextProvider } from "@/hooks/use-focus-context";
 import { TaskModalProvider } from "@/contexts/task-modal-context";
@@ -492,17 +493,19 @@ function AppShell() {
         <VoiceSessionProvider>
           <ExecutorStatusProvider>
             <FocusSessionProvider>
-              <NativeMeetingTranscriptionProvider>
-                <FocusContextProvider>
-                <TaskModalProvider>
-                <SidebarProvider style={style as React.CSSProperties} forceMobile={mobileSurfaceActive} defaultOpen={false}>
-                  <UiInteractionProvider>
-                    <AppLayout mobileSurfaceActive={mobileSurfaceActive} previewRouteOwnsCanvas={previewRouteOwnsCanvas} />
-                  </UiInteractionProvider>
-                </SidebarProvider>
-                </TaskModalProvider>
-                </FocusContextProvider>
-              </NativeMeetingTranscriptionProvider>
+              <SessionActivityProvider>
+                <NativeMeetingTranscriptionProvider>
+                  <FocusContextProvider>
+                    <TaskModalProvider>
+                      <SidebarProvider style={style as React.CSSProperties} forceMobile={mobileSurfaceActive} defaultOpen={false}>
+                        <UiInteractionProvider>
+                          <AppLayout mobileSurfaceActive={mobileSurfaceActive} previewRouteOwnsCanvas={previewRouteOwnsCanvas} />
+                        </UiInteractionProvider>
+                      </SidebarProvider>
+                    </TaskModalProvider>
+                  </FocusContextProvider>
+                </NativeMeetingTranscriptionProvider>
+              </SessionActivityProvider>
             </FocusSessionProvider>
           </ExecutorStatusProvider>
         </VoiceSessionProvider>

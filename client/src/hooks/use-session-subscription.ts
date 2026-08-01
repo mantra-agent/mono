@@ -22,7 +22,7 @@ const log = createLogger("SessionSub");
 // ---------------------------------------------------------------------------
 
 export type SessionStatus = "idle" | "streaming" | "saved" | "error";
-export type VisibleAssistantActivity = "none" | "thinking" | "streaming" | "tool";
+export type VisibleAssistantActivity = "none" | "streaming" | "thinking" | "tool";
 export type DurableHandoffPhase = "live" | "durable";
 
 export interface SessionStreamState {

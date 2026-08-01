@@ -58,6 +58,8 @@ interface FocusSessionContextValue {
   /** Whether the floating widget should be open (vs. collapsed bubble). */
   widgetOpen: boolean;
   setWidgetOpen: (open: boolean) => void;
+  /** Canonical globally focused Session identity. */
+  activeSessionId: string | null;
   /** Monotonic signal for forcing the Session Menu back to its top entrypoint. */
   sessionMenuResetKey: number;
   requestSessionMenuReset: () => void;
@@ -137,6 +139,7 @@ export function FocusSessionProvider({ children }: { children: ReactNode }) {
     route,
     widgetOpen,
     setWidgetOpen,
+    activeSessionId,
     sessionMenuResetKey,
     requestSessionMenuReset,
     bottomBarFocusRequestKey,
@@ -148,7 +151,7 @@ export function FocusSessionProvider({ children }: { children: ReactNode }) {
     clearSessionForRoute,
     pendingTurn,
     setPendingTurn,
-  }), [route, widgetOpen, sessionMenuResetKey, requestSessionMenuReset, bottomBarFocusRequestKey, requestBottomBarFocus, mobileSessionTitle, getSessionForRoute, setSessionForRoute, clearSessionForRoute, pendingTurn]);
+  }), [route, widgetOpen, activeSessionId, sessionMenuResetKey, requestSessionMenuReset, bottomBarFocusRequestKey, requestBottomBarFocus, mobileSessionTitle, getSessionForRoute, setSessionForRoute, clearSessionForRoute, pendingTurn]);
 
   return (
     <FocusSessionContext.Provider value={value}>

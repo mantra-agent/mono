@@ -3,6 +3,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefCallback } from "react";
 import { useFocusSession } from "@/hooks/use-focus-session";
+import { useSessionActivity } from "@/hooks/use-session-activity";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
 import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
@@ -237,6 +238,13 @@ const statusRingColors: Record<string, string> = {
   not_installed: "ring-neutral/20",
 };
 
+const TEXT_ACTIVITY_VISUAL_STATE = {
+  none: "idle",
+  streaming: "speaking",
+  thinking: "thinking",
+  tool: "tool_call",
+} as const satisfies Record<ReturnType<typeof useSessionActivity>["visibleAssistantActivity"], AgentVisualState>;
+
 interface NavigationOrbProps {
   status: string;
   visualState: AgentVisualState;
@@ -284,6 +292,7 @@ export function NavigationOrbButton() {
   const { data: gatewayStatus } = useExecutorStatus();
   const { toggleSidebar, openMobile } = useSidebar();
   const { setWidgetOpen } = useFocusSession();
+  const sessionActivity = useSessionActivity();
   const voiceSession = useVoiceSessionOptional();
   const nativeTranscription = useNativeMeetingTranscription();
   const isMobile = useIsMobile();
@@ -294,7 +303,7 @@ export function NavigationOrbButton() {
     ? voiceSession.visualState
     : nativeVisualActive
       ? "listening"
-      : "idle";
+      : TEXT_ACTIVITY_VISUAL_STATE[sessionActivity.visibleAssistantActivity];
   const readAudioLevel = voiceVisualActive
     ? voiceSession.readAudioLevel
     : nativeVisualActive
