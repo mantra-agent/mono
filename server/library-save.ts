@@ -1,6 +1,6 @@
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import { libraryPageIsLive } from "./library-trash";
-import { acquireLibraryParentLocks, db } from "./db";
+import { acquireLibraryParentLocks, db, runWithDatabaseTransaction } from "./db";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
 import type { LibrarySemanticPlacementResult } from "./library-placement";
@@ -9,7 +9,7 @@ import type { Principal } from "./principal";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
-import { syncEmbeddedLibraryPageLinks } from "./library-link-graph";
+import { indexLibraryPageReferences } from "./library-reference-index";
 import { syncContentFields } from "@shared/markdown-tiptap";
 import {
   assertWritableVault,
@@ -298,7 +298,7 @@ export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput)
   const slugBase = slugifyLibraryTitle(input.title, "page");
   const slug = input.slugSuffix ? `${slugBase}-${input.slugSuffix}` : slugBase;
 
-  const page = await db.transaction(async (tx) => {
+  const page = await db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
     await acquireLibraryParentLocks(tx, [filingResolution.parentId]);
     const [row] = await tx.insert(libraryPages).values({
       ...(input.id ? { id: input.id } : {}),
@@ -316,15 +316,10 @@ export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput)
       vaultId: filingResolution.vaultId,
       updatedAt: sql`CURRENT_TIMESTAMP`,
     }).returning();
+    if (!row) throw new Error("Library page creation failed");
+    await indexLibraryPageReferences(principal, row);
     return row;
-  });
-
-  try {
-    await syncEmbeddedLibraryPageLinks(page.id, principal);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    log.warn(`[links] error source=library sourceId=${page.id} reason=embedded_link_sync_failed error=${message}`);
-  }
+  }));
 
   try {
     await markSourceChanged("library_page", page.id, principal);

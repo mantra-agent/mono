@@ -11335,7 +11335,7 @@ ${refs}` : ""),
       // create/update/edit/delete coordinate through the Library service or
       // direct transactions that acquire the same parent advisory locks used
       // by reorder, so tool writes do not race user reparenting.
-      const { acquireLibraryParentLocks, isSerializationConflict } = await import("./db");
+      const { acquireLibraryParentLocks, isSerializationConflict, runWithDatabaseTransaction } = await import("./db");
 
       if (action === "create_library_page" || action === "create" || action === "create_spec") {
         const title = args.title || "Untitled";
@@ -11434,7 +11434,7 @@ ${refs}` : ""),
         Object.assign(setData, buildLibrarySurfaceSet(args));
 
         try {
-          const updated = await db.transaction(async (tx) => {
+          const updated = await db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
             // Lock the old parent always, plus the new parent when it's
             // changing. Sorted dedup happens inside the helper.
             const lockTargets = shouldMove && newParentId !== oldParentId
@@ -11444,18 +11444,16 @@ ${refs}` : ""),
             const hasMetadataUpdates = Object.keys(setData).some((key) => key !== "updatedAt");
             if (!hasMetadataUpdates && movedPage) return movedPage;
             const [row] = await tx.update(libraryPages).set(setData).where(writableLib(eq(libraryPages.id, resolvedId))).returning();
+            if (row && args.plainTextContent !== undefined) {
+              const { indexLibraryPageReferences } = await import("./library-reference-index");
+              await indexLibraryPageReferences(principal, row);
+            }
             return row;
-          });
+          }));
           if (!updated) return { result: `Library page "${id}" not found.`, error: true };
 
           const substantiveChange = args.plainTextContent !== undefined || args.title !== undefined;
           if (substantiveChange) {
-            try {
-              const { syncEmbeddedLibraryPageLinks } = await import("./library-link-graph");
-              await syncEmbeddedLibraryPageLinks(updated.id, principal);
-            } catch (linkErr: unknown) {
-              toolExec.warn(`update_library_page: link sync failed for page ${updated.id}: ${linkErr instanceof Error ? linkErr.message : String(linkErr)}`);
-            }
             try {
               const { upsertLibraryPageMemory } = await import("./routes/library");
               await upsertLibraryPageMemory(updated);
@@ -11512,16 +11510,20 @@ ${refs}` : ""),
         const synced = syncContentFields({ markdown: updatedContent });
 
         try {
-          const updated = await db.transaction(async (tx) => {
+          const updated = await db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
             await acquireLibraryParentLocks(tx, [page.parentId]);
             const [row] = await tx.update(libraryPages).set({
               content: synced.content,
               plainTextContent: synced.plainTextContent,
               ...buildLibrarySurfaceSet(args),
               updatedAt: new Date(),
-            }).where(eq(libraryPages.id, page.id)).returning();
+            }).where(writableLib(eq(libraryPages.id, page.id))).returning();
+            if (row) {
+              const { indexLibraryPageReferences } = await import("./library-reference-index");
+              await indexLibraryPageReferences(principal, row);
+            }
             return row;
-          });
+          }));
 
           if (!updated) return { result: `Failed to update library page "${id}".`, error: true };
 
@@ -11529,13 +11531,6 @@ ${refs}` : ""),
 
           const lengthDelta = updatedContent.length - currentContent.length;
           toolExec.log(`edit_library_page: page=${updated.id} replacements=${replacements} lengthDelta=${lengthDelta > 0 ? "+" : ""}${lengthDelta}`);
-
-          try {
-            const { syncEmbeddedLibraryPageLinks } = await import("./library-link-graph");
-            await syncEmbeddedLibraryPageLinks(updated.id, principal);
-          } catch (linkErr: unknown) {
-            toolExec.warn(`edit_library_page: link sync failed for page ${updated.id}: ${linkErr instanceof Error ? linkErr.message : String(linkErr)}`);
-          }
 
           try {
             const { upsertLibraryPageMemory } = await import("./routes/library");

@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import type { FieldDef } from "pg";
-import { db, pool, isSerializationConflict } from "../db";
+import { db, pool, isSerializationConflict, runWithDatabaseTransaction } from "../db";
 import { z } from "zod";
 import {
   eq,
@@ -47,7 +47,8 @@ import { markSourceChanged, registerSourceIfAbsent } from "../memory/vnext-sourc
 import { normalizeLibraryStructuralRole } from "../library-domain";
 import { libraryPageIsPinned } from "../library-pin";
 import { libraryPageIsLive, libraryPageIsTrashed } from "../library-trash";
-import { getLibraryPageNeighbors, syncEmbeddedLibraryPageLinks } from "../library-link-graph";
+import { getLibraryPageNeighbors } from "../library-link-graph";
+import { backfillLibraryReferences, getLibraryReferenceNeighborhood, indexLibraryPageReferences } from "../library-reference-index";
 import { projectActiveLibraryReminders } from "../library-reminders";
 import { buildLibrarySurfaceSet } from "../library-save";
 
@@ -862,14 +863,20 @@ export async function registerLibraryRoutes(app: Express) {
       );
       let updated = movedPage;
       if (hasMetadataUpdates || (!movedPage && updates.isPinned === undefined)) {
-        [updated] = await db
-          .update(libraryPages)
-          .set({
-            ...setData,
-            updatedByUserId: principalOrThrow(req).userId ?? undefined,
-          })
-          .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
-          .returning();
+        updated = await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+          const [row] = await tx
+            .update(libraryPages)
+            .set({
+              ...setData,
+              updatedByUserId: principalOrThrow(req).userId ?? undefined,
+            })
+            .where(writableLibrary(req, eq(libraryPages.id, req.params.id)))
+            .returning();
+          if (row && (updates.content !== undefined || updates.plainTextContent !== undefined)) {
+            await indexLibraryPageReferences(principalOrThrow(req), row);
+          }
+          return row ?? null;
+        }));
       } else if (!updated && updates.isPinned !== undefined) {
         [updated] = await db
           .select()
@@ -893,12 +900,6 @@ export async function registerLibraryRoutes(app: Express) {
             })
             .onConflictDoNothing();
         }
-      }
-
-      if (updates.content !== undefined || updates.plainTextContent !== undefined) {
-        syncEmbeddedLibraryPageLinks(updated.id, principalOrThrow(req)).catch((e) =>
-          log.warn(`Library link sync failed for page ${updated.id}: ${e.message}`),
-        );
       }
 
       upsertLibraryPageMemory(updated).catch((e) =>
@@ -1215,6 +1216,27 @@ export async function registerLibraryRoutes(app: Express) {
 
   app.get("/api/library/backfill/status", (_req, res) => {
     res.json({ ...backfillState });
+  });
+
+  app.post("/api/library/references/backfill", async (req, res) => {
+    try {
+      const input = z.object({ cursor: z.string().min(1).optional(), limit: z.number().int().positive().max(100).optional() }).parse(req.body ?? {});
+      res.json(await backfillLibraryReferences(principalOrThrow(req), input));
+    } catch (err: any) {
+      if (err.name === "ZodError") return res.status(400).json({ error: "Invalid input", details: err.errors });
+      res.status(err?.status ?? 500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/library/references/parity", async (req, res) => {
+    try {
+      const pageIds = typeof req.query.pageIds === "string" ? req.query.pageIds.split(",").map(value => value.trim()).filter(Boolean).slice(0, 50) : [];
+      if (pageIds.length === 0) return res.status(400).json({ error: "Provide one or more comma-separated pageIds" });
+      const result = await getLibraryReferenceNeighborhood(principalOrThrow(req), pageIds);
+      res.json({ pageIds, parity: result.parity, usedCompatibilityFallback: result.usedCompatibilityFallback });
+    } catch (err: any) {
+      res.status(err?.status ?? 500).json({ error: err.message });
+    }
   });
 
   app.post("/api/library/backfill", async (_req, res) => {

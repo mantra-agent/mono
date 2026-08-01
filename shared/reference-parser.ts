@@ -5,6 +5,12 @@ const TYPE_BODY = /[A-Za-z0-9_]/;
 const ID_STOP = /\s|[\]<>]/;
 const LEGACY_BRACKET_TYPES = new Set(["page", "person", "goal", "spec"]);
 
+export interface PositionedReference {
+  ref: ReferenceRef;
+  start: number;
+  end: number;
+}
+
 function pushText(parts: ReferencePart[], text: string) {
   if (!text) return;
   const last = parts[parts.length - 1];
@@ -20,7 +26,7 @@ function findClosingBackticks(text: string, start: number, ticks: number): numbe
   return text.indexOf("`".repeat(ticks), start + ticks);
 }
 
-function parseCanonical(text: string, start: number): { ref: ReferenceRef; end: number } | null {
+function parseCanonical(text: string, start: number, includeUnknownTypes = false): { ref: ReferenceRef; end: number } | null {
   if (text[start] !== "@") return null;
   let cursor = start + 1;
   if (!CANONICAL_START.test(text[cursor] || "")) return null;
@@ -28,7 +34,7 @@ function parseCanonical(text: string, start: number): { ref: ReferenceRef; end: 
   while (TYPE_BODY.test(text[cursor] || "")) cursor++;
   if (text[cursor] !== ":") return null;
   const type = text.slice(typeStart, cursor).toLowerCase();
-  if (!isParseableReferenceType(type)) return null;
+  if (!includeUnknownTypes && !isParseableReferenceType(type)) return null;
   cursor++;
   const idStart = cursor;
   while (cursor < text.length && !ID_STOP.test(text[cursor])) cursor++;
@@ -69,14 +75,21 @@ function parseLegacyIntention(text: string, start: number): { ref: ReferenceRef;
   };
 }
 
-function parseAt(text: string, start: number): { ref: ReferenceRef; end: number } | null {
-  return parseCanonical(text, start) ?? parseLegacyBracket(text, start) ?? parseLegacyIntention(text, start);
+function parseAt(text: string, start: number, includeUnknownTypes = false): { ref: ReferenceRef; end: number } | null {
+  return parseCanonical(text, start, includeUnknownTypes) ?? parseLegacyBracket(text, start) ?? parseLegacyIntention(text, start);
 }
 
-export function parseReferenceText(text: string): ReferencePart[] {
-  const parts: ReferencePart[] = [];
+/**
+ * Returns every authored reference with markdown character offsets. Repeated
+ * references remain repeated. Code spans and fenced code are deliberately
+ * excluded, matching the ordinary rich-reference renderer.
+ */
+export function extractPositionedReferences(
+  text: string,
+  options: { includeUnknownTypes?: boolean } = {},
+): PositionedReference[] {
+  const references: PositionedReference[] = [];
   let cursor = 0;
-  let textStart = 0;
   let inFence = false;
 
   while (cursor < text.length) {
@@ -85,7 +98,6 @@ export function parseReferenceText(text: string): ReferencePart[] {
       inFence = !inFence;
       continue;
     }
-
     if (text[cursor] === "`") {
       const ticks = /^`+/.exec(text.slice(cursor))?.[0].length ?? 1;
       const close = findClosingBackticks(text, cursor, ticks);
@@ -94,22 +106,29 @@ export function parseReferenceText(text: string): ReferencePart[] {
         continue;
       }
     }
-
     if (!inFence && (text[cursor] === "@" || text[cursor] === "[" || text.startsWith("Intention ID:", cursor) || text.startsWith("_Intention ID:", cursor))) {
-      const parsed = parseAt(text, cursor);
+      const parsed = parseAt(text, cursor, options.includeUnknownTypes === true);
       if (parsed) {
-        pushText(parts, text.slice(textStart, cursor));
-        pushReference(parts, parsed.ref);
+        references.push({ ref: parsed.ref, start: cursor, end: parsed.end });
         cursor = parsed.end;
-        textStart = cursor;
         continue;
       }
     }
-
     cursor++;
   }
+  return references;
+}
 
-  pushText(parts, text.slice(textStart));
+export function parseReferenceText(text: string): ReferencePart[] {
+  const references = extractPositionedReferences(text);
+  const parts: ReferencePart[] = [];
+  let cursor = 0;
+  for (const reference of references) {
+    pushText(parts, text.slice(cursor, reference.start));
+    pushReference(parts, reference.ref);
+    cursor = reference.end;
+  }
+  pushText(parts, text.slice(cursor));
   return parts.length ? parts : [{ kind: "text", text }];
 }
 

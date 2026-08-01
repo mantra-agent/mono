@@ -30,11 +30,11 @@ import { peopleStorage } from "../people-storage";
 import { companyStorage } from "../company-storage";
 import { goalsService } from "../goals-service";
 import { fileProjectStorage } from "../file-storage/projects";
-import { libraryPages, libraryPageLinks } from "@shared/models/info";
+import { libraryPages } from "@shared/models/info";
 import { chatFileStorage } from "../chat-file-storage";
 import { listMeetingGraphRecords, type MeetingIndexRecord } from "../meetings/meeting-index";
-import { parseReferenceText } from "@shared/reference-parser";
-import type { ReferenceRef } from "@shared/references";
+import { getLibraryAuthoredOccurrences, getLibraryReferenceNeighborhood } from "../library-reference-index";
+import { normalizeProtocolAddress } from "@shared/life-addressing";
 
 const log = createLogger("MemoryRoutes");
 
@@ -475,10 +475,10 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
     const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
     const [sourcePageRows, sessionBatches] = await Promise.all([
       (async () => {
-        const pages: Array<{ id: string; slug: string; title: string; plainTextContent: string; summary: string | null; createdAt: Date; updatedAt: Date }> = [];
+        const pages: Array<{ id: string; slug: string; title: string; summary: string | null; oneLiner: string | null; createdAt: Date; updatedAt: Date }> = [];
         for (const batch of chunkValues(sourcePageIds)) {
           pages.push(...await db
-            .select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, summary: libraryPages.summary, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
+            .select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, summary: libraryPages.summary, oneLiner: libraryPages.oneLiner, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
             .from(libraryPages)
             .where(combineWithVisibleScope(principal, pageScope, or(inArray(libraryPages.id, batch), inArray(libraryPages.slug, batch)))));
         }
@@ -499,24 +499,15 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       sourcePageById.set(page.slug, page);
     }
 
-    const libraryLinkScopeColumns = {
-      scope: libraryPageLinks.scope,
-      ownerUserId: libraryPageLinks.ownerUserId,
-      accountId: libraryPageLinks.accountId,
-    };
     const librarySeedPageIds = sourcePageRows.map((page) => page.id);
-    const libraryLinksById = new Map<number, { id: number; sourcePageId: string; targetPageId: string; createdAt: Date }>();
-    for (const batch of chunkValues(librarySeedPageIds)) {
-      const rows = await db
-        .select({ id: libraryPageLinks.id, sourcePageId: libraryPageLinks.sourcePageId, targetPageId: libraryPageLinks.targetPageId, createdAt: libraryPageLinks.createdAt })
-        .from(libraryPageLinks)
-        .where(combineWithVisibleScope(principal, libraryLinkScopeColumns, or(inArray(libraryPageLinks.sourcePageId, batch), inArray(libraryPageLinks.targetPageId, batch))));
-      for (const row of rows) libraryLinksById.set(row.id, row);
-    }
-    const libraryLinks = [...libraryLinksById.values()];
+    const [libraryNeighborhood, libraryAuthoredOccurrences] = await Promise.all([
+      getLibraryReferenceNeighborhood(principal, librarySeedPageIds),
+      getLibraryAuthoredOccurrences(principal, librarySeedPageIds),
+    ]);
+    const libraryLinks = libraryNeighborhood.links;
     const linkedPageIds = [...new Set(libraryLinks.flatMap((link) => [link.sourcePageId, link.targetPageId]).filter((id) => !sourcePageById.has(id)))];
     for (const batch of chunkValues(linkedPageIds)) {
-      const linkedPages = await db.select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, plainTextContent: libraryPages.plainTextContent, summary: libraryPages.summary, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
+      const linkedPages = await db.select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, summary: libraryPages.summary, oneLiner: libraryPages.oneLiner, createdAt: libraryPages.createdAt, updatedAt: libraryPages.updatedAt })
         .from(libraryPages)
         .where(combineWithVisibleScope(principal, pageScope, inArray(libraryPages.id, batch)));
       for (const page of linkedPages) {
@@ -673,7 +664,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       sourceNodeIds.set(key, sourceNodeId);
       sourceNodeIds.set(`${normalizedType}:${sourceId}`, sourceNodeId);
       const title = page?.title || session?.title || sourceId;
-      const content = page?.plainTextContent || session?.summary || "";
+      const content = page?.summary || page?.oneLiner || session?.summary || "";
       const sessionLastMessageAt = (session?.messages ?? []).reduce<Date | null>((latest, message) => {
         const candidate = maxTimestamp(message.updatedAt, message.createdAt);
         return !candidate || (latest && latest >= candidate) ? latest : candidate;
@@ -694,7 +685,7 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
           graphStorage: "vnext",
           nodeKind: "source",
           nodeType: normalizedType,
-          reference: `@${normalizedType}:${page?.slug || session?.id || sourceId}`,
+          reference: `@${normalizedType}:${page?.id || session?.id || sourceId}`,
         },
         createdAt: serializeDate(sourceCreatedAt),
         updatedAt: serializeDate(sourceUpdatedAt),
@@ -743,12 +734,13 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       });
     }
 
+    let nextLibraryLinkId = -2_000_000;
     for (const link of libraryLinks) {
       const fromId = sourceNodeIds.get(`page:${link.sourcePageId}`);
       const toId = sourceNodeIds.get(`page:${link.targetPageId}`);
       if (!fromId || !toId) continue;
       links.push({
-        id: -(2_000_000 + link.id),
+        id: nextLibraryLinkId--,
         fromId,
         toId,
         relationship: "references",
@@ -816,54 +808,39 @@ async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> 
       }
     }
 
-    // Page → referenced-entity edges. A Library page's inline @type:id reference
-    // chips (the same references the Library page renderer shows) are projected as
-    // graph edges so a page visibly connects to the people, goals, projects,
-    // meetings, and sessions it names. We parse the page's plainTextContent with the
-    // shared reference parser and emit an edge only when the referenced target is
-    // already a projected node; dangling references (e.g. tasks, which have no graph
-    // node) are skipped, matching the deterministic structural-edge policy above.
-    // Page→page links are already produced from library_page_links, so the `page`
-    // type is intentionally not re-emitted here.
-    function resolveReferenceNodeId(ref: ReferenceRef): number | null {
-      switch (ref.type) {
-        case "person": return entityNodeIds.get(`person:${ref.id}`) ?? null;
-        case "goal": return entityNodeIds.get(`goal:${ref.id}`) ?? null;
-        case "project": return entityNodeIds.get(`project:${ref.id}`) ?? null;
-        case "meeting": return meetingNodeIds.get(`meeting:${ref.id}`) ?? sourceNodeIds.get(`session:${ref.id}`) ?? null;
-        case "session": return sourceNodeIds.get(`session:${ref.id}`) ?? null;
+    // Page → referenced-entity edges come exclusively from the transactional
+    // occurrence projection. Foreground graph reads never parse Library bodies.
+    function resolveReferenceNodeId(address: string): { type: string; nodeId: number } | null {
+      const normalized = normalizeProtocolAddress(address);
+      if (normalized.outcome !== "valid") return null;
+      switch (normalized.type) {
+        case "person": return { type: normalized.type, nodeId: entityNodeIds.get(`person:${normalized.id}`) ?? 0 };
+        case "goal": return { type: normalized.type, nodeId: entityNodeIds.get(`goal:${normalized.id}`) ?? 0 };
+        case "project": return { type: normalized.type, nodeId: entityNodeIds.get(`project:${normalized.id}`) ?? 0 };
+        case "meeting": return { type: normalized.type, nodeId: meetingNodeIds.get(`meeting:${normalized.id}`) ?? sourceNodeIds.get(`session:${normalized.id}`) ?? 0 };
+        case "session": return { type: normalized.type, nodeId: sourceNodeIds.get(`session:${normalized.id}`) ?? 0 };
         default: return null;
       }
     }
 
-    const referencePageNodes = new Map<string, { plainTextContent: string; updatedAt: Date; nodeId: number }>();
-    for (const page of sourcePageById.values()) {
-      if (referencePageNodes.has(page.id)) continue;
-      const nodeId = sourceNodeIds.get(`page:${page.id}`);
-      if (nodeId === undefined) continue;
-      referencePageNodes.set(page.id, { plainTextContent: page.plainTextContent, updatedAt: page.updatedAt, nodeId });
-    }
-
     let nextReferenceLinkId = -4_000_000;
     let referenceLinkCount = 0;
-    for (const page of referencePageNodes.values()) {
-      const seenTargets = new Set<number>();
-      for (const part of parseReferenceText(page.plainTextContent || "")) {
-        if (part.kind !== "reference") continue;
-        const toId = resolveReferenceNodeId(part.ref);
-        if (toId === null || toId === page.nodeId || seenTargets.has(toId)) continue;
-        seenTargets.add(toId);
-        links.push({
-          id: nextReferenceLinkId--,
-          fromId: page.nodeId,
-          toId,
-          relationship: `references_${part.ref.type}`,
-          strength: 0.55,
-          createdAt: serializeDate(page.updatedAt),
-          relationshipType: "page_reference",
-        });
-        referenceLinkCount++;
-      }
+    for (const occurrence of libraryAuthoredOccurrences) {
+      if (occurrence.targetAddress.startsWith("@page:")) continue;
+      const sourcePageId = occurrence.sourceAddress.slice(6);
+      const fromId = sourceNodeIds.get(`page:${sourcePageId}`);
+      const target = resolveReferenceNodeId(occurrence.targetAddress);
+      if (!fromId || !target?.nodeId || fromId === target.nodeId) continue;
+      links.push({
+        id: nextReferenceLinkId--,
+        fromId,
+        toId: target.nodeId,
+        relationship: `references_${target.type}`,
+        strength: 0.55,
+        createdAt: serializeDate(occurrence.observedAt),
+        relationshipType: "page_reference",
+      });
+      referenceLinkCount++;
     }
 
     log.debug(`[vnext] graph claims=${claims.length} goals=${currentGoals.length} projects=${currentProjectRows.length} meetings=${meetingRecords.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} structuralLinks=${structuralLinkCount} pageReferenceLinks=${referenceLinkCount} nodes=${entries.length} links=${links.length}`);

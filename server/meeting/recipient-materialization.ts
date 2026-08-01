@@ -150,6 +150,8 @@ export async function materializeAuthenticatedRecipientRecap(
       surfaceSection: "inbox",
     }).returning();
     if (!page) throw new Error("Recipient recap page creation produced no row");
+    const { indexLibraryPageReferences } = await import("../library-reference-index");
+    await indexLibraryPageReferences(principal, page);
     await db.insert(sessionArtifacts).values({
       sessionId: meetingResult.session.id,
       ownerUserId: principal.userId,
