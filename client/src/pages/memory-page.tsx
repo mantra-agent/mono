@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import {
@@ -125,6 +126,7 @@ import {
 } from "@/components/memory/memory-source-icon";
 
 const MEMORY_GRAPH_ACTIVITY_STORAGE_KEY = "memory-graph-activity-enabled";
+const DEFAULT_HIDDEN_GRAPH_NODE_TYPES = new Set(["plans", "interactions"]);
 
 const SOURCE_REF_TYPE_MAP: Record<string, string> = {
   chat_journal: "session",
@@ -201,6 +203,13 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useEventStream } from "@/hooks/use-event-stream";
 import { useTimezone } from "@/hooks/use-timezone";
 import { cn } from "@/lib/utils";
+import {
+  MEMORY_GRAPH_SETTING_DEFINITIONS,
+  MEMORY_GRAPH_SETTINGS_DEFAULTS,
+  formatMemoryGraphSettingValue,
+  normalizeMemoryGraphSettings,
+  type MemoryGraphSettings,
+} from "@shared/memory-graph-settings";
 
 const log = createLogger("MemoryPage");
 
@@ -1408,7 +1417,16 @@ function GraphTab({
   const isMobile = useIsMobile();
   const graphRef = useRef<MemoryGraph3DHandle>(null);
   const [selectedNode, setSelectedNode] = useState<MemoryEntry | null>(null);
-  const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(() => new Set());
+  const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(
+    () => new Set(DEFAULT_HIDDEN_GRAPH_NODE_TYPES),
+  );
+  const [graphSettings, setGraphSettings] = useState<MemoryGraphSettings>(
+    () => ({ ...MEMORY_GRAPH_SETTINGS_DEFAULTS }),
+  );
+  const [appliedGraphSettings, setAppliedGraphSettings] = useState<MemoryGraphSettings>(
+    () => ({ ...MEMORY_GRAPH_SETTINGS_DEFAULTS }),
+  );
+  const settingsSaveQueueRef = useRef(Promise.resolve());
   const [hoveredNodeId, setHoveredNodeId] = useState<number | null>(null);
   const [graphSearchQuery, setGraphSearchQuery] = useState("");
   const [activityPreference, setActivityPreference] = useState(() => {
@@ -1425,6 +1443,23 @@ function GraphTab({
     window.matchMedia("(prefers-reduced-motion: reduce)").matches
   ));
   const activityEnabled = activityPreference && !prefersReducedMotion;
+
+  const { data: graphSettingsResponse } = useQuery<{ settings: MemoryGraphSettings }>({
+    queryKey: ["/api/memory/vnext/graph/settings"],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const response = await fetch("/api/memory/vnext/graph/settings", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to load Memory Graph settings");
+      const payload = await response.json() as { settings?: unknown };
+      return { settings: normalizeMemoryGraphSettings(payload.settings) };
+    },
+  });
+
+  useEffect(() => {
+    if (!graphSettingsResponse) return;
+    setGraphSettings(graphSettingsResponse.settings);
+    setAppliedGraphSettings(graphSettingsResponse.settings);
+  }, [graphSettingsResponse]);
 
   useFocusContext(
     selectedNode
@@ -1499,6 +1534,30 @@ function GraphTab({
       else next.add(typeId);
       return next;
     });
+  }, []);
+
+  const updateGraphSetting = useCallback((
+    key: keyof MemoryGraphSettings,
+    value: number,
+  ) => {
+    setGraphSettings((current) => normalizeMemoryGraphSettings({ ...current, [key]: value }));
+  }, []);
+
+  const saveGraphSettings = useCallback((settings: MemoryGraphSettings) => {
+    const snapshot = normalizeMemoryGraphSettings(settings);
+    settingsSaveQueueRef.current = settingsSaveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const response = await apiRequest("POST", "/api/memory/vnext/graph/settings", { settings: snapshot });
+        const payload = await response.json() as { settings?: unknown };
+        const saved = normalizeMemoryGraphSettings(payload.settings);
+        queryClient.setQueryData(["/api/memory/vnext/graph/settings"], { settings: saved });
+      })
+      .catch((error: unknown) => {
+        log.warn("Memory Graph settings could not be saved", {
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
+      });
   }, []);
 
   const dismissGraphDetail = useCallback(() => {
@@ -1653,30 +1712,86 @@ function GraphTab({
   return (
     <div className={cn("flex flex-col", MEMORY_SHELL_CLASS)} data-testid="memory-graph-tab">
       <div className="min-w-0 border-b border-border p-2">
-        <div className="relative">
-          <HierarchySearchInput
-            value={graphSearchQuery}
-            onChange={setGraphSearchQuery}
-            inputTestId="input-search-graph"
-            clearTestId="button-clear-graph-search"
-            ariaLabel="Search memory graph"
-          />
-          {graphSearchMatches.length > 0 && (
-            <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto scrollbar-thin rounded-md border border-card-border bg-popover p-1 shadow-md" data-testid="graph-search-results">
-              {graphSearchMatches.map((node) => (
-                <button
-                  key={node.id}
-                  type="button"
-                  className={cn(WORKING_TREE_ROW_CLASS, WORKING_TREE_IDLE_CLASS)}
-                  onClick={() => handleGraphSearchSelect(node.id)}
-                  data-testid={`graph-search-result-${node.id}`}
-                >
-                  <MemorySourceIcon source={node.source} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate text-left">{node.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="flex items-start gap-1">
+          <div className="relative min-w-0 flex-1">
+            <HierarchySearchInput
+              value={graphSearchQuery}
+              onChange={setGraphSearchQuery}
+              inputTestId="input-search-graph"
+              clearTestId="button-clear-graph-search"
+              ariaLabel="Search memory graph"
+            />
+            {graphSearchMatches.length > 0 && (
+              <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto scrollbar-thin rounded-md border border-card-border bg-popover p-1 shadow-md" data-testid="graph-search-results">
+                {graphSearchMatches.map((node) => (
+                  <button
+                    key={node.id}
+                    type="button"
+                    className={cn(WORKING_TREE_ROW_CLASS, WORKING_TREE_IDLE_CLASS)}
+                    onClick={() => handleGraphSearchSelect(node.id)}
+                    data-testid={`graph-search-result-${node.id}`}
+                  >
+                    <MemorySourceIcon source={node.source} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate text-left">{node.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 shrink-0 p-0"
+                aria-label="Tune Memory Graph appearance"
+                title="Graph mixer"
+                data-testid="button-memory-graph-mixer"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="w-[min(22rem,calc(100vw-1rem))] border-card-border bg-popover p-3"
+              data-testid="memory-graph-mixer"
+            >
+              <div className="space-y-4" role="group" aria-label="Memory Graph appearance">
+                {MEMORY_GRAPH_SETTING_DEFINITIONS.map((definition) => (
+                  <div key={definition.key} className="space-y-2">
+                    <div className="flex items-center gap-3 text-sm">
+                      <Label htmlFor={`memory-graph-setting-${definition.key}`} className="min-w-0 flex-1">
+                        {definition.label}
+                      </Label>
+                      <output
+                        htmlFor={`memory-graph-setting-${definition.key}`}
+                        className="w-14 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground"
+                        data-testid={`memory-graph-setting-value-${definition.key}`}
+                      >
+                        {formatMemoryGraphSettingValue(definition.key, graphSettings[definition.key])}
+                      </output>
+                    </div>
+                    <Slider
+                      id={`memory-graph-setting-${definition.key}`}
+                      min={definition.min}
+                      max={definition.max}
+                      step={definition.step}
+                      value={[graphSettings[definition.key]]}
+                      onValueChange={([value]) => updateGraphSetting(definition.key, value)}
+                      onValueCommit={([value]) => {
+                        const settings = normalizeMemoryGraphSettings({ ...graphSettings, [definition.key]: value });
+                        setGraphSettings(settings);
+                        setAppliedGraphSettings(settings);
+                        saveGraphSettings(settings);
+                      }}
+                      aria-label={definition.label}
+                      data-testid={`memory-graph-setting-${definition.key}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
       <div className="relative flex flex-1 overflow-hidden min-h-0">
@@ -1688,6 +1803,7 @@ function GraphTab({
             selectedNodeId={selectedNode?.id ?? null}
             highlightedNodeIds={graphSearchMatchIds}
             activityEnabled={activityEnabled}
+            settings={appliedGraphSettings}
             nodeDetail={nodeDetail}
             onNodeSelect={handleNodeSelect}
             onNodeHover={handleNodeHover}
