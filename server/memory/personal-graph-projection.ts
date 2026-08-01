@@ -77,6 +77,10 @@ export interface PersonalGraphMetrics {
   pageCount: number;
   claimCount: number;
   occurrenceEdgeCount: number;
+  canonicalOccurrenceEdgeCount: number;
+  compatibilityOccurrenceEdgeCount: number;
+  compatibilityOccurrenceSourceCount: number;
+  unprojectedLibraryPageCount: number;
   meetingEdgeCount: number;
   workEdgeCount: number;
   relationshipEdgeCount: number;
@@ -224,6 +228,8 @@ export async function assemblePersonalGraph(
       getLibraryCorpusOccurrenceEdges(principal, LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT),
     ]);
   adapterQueryCount += 8;
+  const occurrenceProjection = occurrenceEdges;
+  const authoredOccurrenceEdges = occurrenceProjection.edges;
 
   // Domain adapter projections. Each adapter emits canonical candidates only; the
   // assembler owns client-node conversion, address-based merging, and independent
@@ -470,7 +476,7 @@ export async function assemblePersonalGraph(
   // Resolve distinct non-page occurrence targets through independently authorized
   // adapters so a page can link to a person/goal/etc. even if nothing else cites it.
   const unresolvedTargets = new Set<string>();
-  for (const edge of occurrenceEdges) {
+  for (const edge of authoredOccurrenceEdges) {
     const normalized = normalizeProtocolAddress(edge.targetAddress);
     if (normalized.outcome !== "valid") continue;
     const key = `${normalized.type}:${normalized.id}`;
@@ -614,7 +620,10 @@ export async function assemblePersonalGraph(
   const executionProvenanceEdgeCount = adapterEdgeCounts.get(executionProvenanceGraphAdapter.id) ?? 0;
   // Authored page occurrence edges (page→page and page→resolved target). Never parses bodies.
   let occurrenceEdgeCount = 0;
-  for (const edge of occurrenceEdges) {
+  let canonicalOccurrenceEdgeCount = 0;
+  let compatibilityOccurrenceEdgeCount = 0;
+  const compatibilityOccurrenceSources = new Set<string>();
+  for (const edge of authoredOccurrenceEdges) {
     const fromId = nodeIdByAddress.get(`page:${edge.sourcePageId}`);
     if (fromId === undefined) continue;
     const normalized = normalizeProtocolAddress(edge.targetAddress);
@@ -631,6 +640,12 @@ export async function assemblePersonalGraph(
       relationshipType: normalized.type === "page" ? "library_page_link" : "page_reference",
     });
     occurrenceEdgeCount++;
+    if (edge.source === "compatibility") {
+      compatibilityOccurrenceEdgeCount++;
+      compatibilityOccurrenceSources.add(edge.sourcePageId);
+    } else {
+      canonicalOccurrenceEdgeCount++;
+    }
   }
 
   const projection: PersonalGraphMetrics = {
@@ -641,6 +656,10 @@ export async function assemblePersonalGraph(
     pageCount: visiblePages.length,
     claimCount: claims.length,
     occurrenceEdgeCount,
+    canonicalOccurrenceEdgeCount,
+    compatibilityOccurrenceEdgeCount,
+    compatibilityOccurrenceSourceCount: compatibilityOccurrenceSources.size,
+    unprojectedLibraryPageCount: occurrenceProjection.unprojectedPageCount,
     meetingEdgeCount,
     workEdgeCount,
     relationshipEdgeCount,
@@ -662,7 +681,7 @@ export async function assemblePersonalGraph(
 
   log.info(
     `[personal-graph] libraryFirst=${libraryFirst} pages=${projection.pageCount} claims=${projection.claimCount} ` +
-      `nodes=${projection.nodeCount} edges=${projection.edgeCount} occurrenceEdges=${occurrenceEdgeCount} ` +
+      `nodes=${projection.nodeCount} edges=${projection.edgeCount} occurrenceEdges=${occurrenceEdgeCount} canonicalOccurrenceEdges=${projection.canonicalOccurrenceEdgeCount} compatibilityOccurrenceEdges=${projection.compatibilityOccurrenceEdgeCount} compatibilitySources=${projection.compatibilityOccurrenceSourceCount} unprojectedPages=${projection.unprojectedLibraryPageCount} ` +
       `meetingEdges=${projection.meetingEdgeCount} workEdges=${projection.workEdgeCount} relationshipEdges=${projection.relationshipEdgeCount} decisionStrategyEdges=${projection.decisionStrategyEdgeCount} executionProvenanceEdges=${projection.executionProvenanceEdgeCount} structural=${structuralLinkCount} resolvedTargets=${projection.resolvedTargetCount} ` +
       `adapterQueries=${projection.adapterQueryCount} payloadKB=${(projection.payloadBytes / 1024).toFixed(1)} assemblyMs=${projection.assemblyMs}`,
   );
@@ -677,6 +696,11 @@ export async function assemblePersonalGraph(
       pageCount: projection.pageCount,
       payloadBytes: projection.payloadBytes,
       adapterQueryCount: projection.adapterQueryCount,
+      occurrenceEdgeCount: projection.occurrenceEdgeCount,
+      canonicalOccurrenceEdgeCount: projection.canonicalOccurrenceEdgeCount,
+      compatibilityOccurrenceEdgeCount: projection.compatibilityOccurrenceEdgeCount,
+      compatibilityOccurrenceSourceCount: projection.compatibilityOccurrenceSourceCount,
+      unprojectedLibraryPageCount: projection.unprojectedLibraryPageCount,
       meetingEdgeCount: projection.meetingEdgeCount,
       workEdgeCount: projection.workEdgeCount,
       relationshipEdgeCount: projection.relationshipEdgeCount,
