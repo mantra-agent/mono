@@ -45,6 +45,7 @@ import {
   User,
   Users,
   Vault,
+  Waypoints,
   Workflow,
   Wrench,
   Zap,
@@ -130,7 +131,6 @@ const navSections: NavSection[] = [
       navItem("People", "navigation.people.open", Users),
       navItem("Meetings", "navigation.meetings.open", MessagesSquare),
       navItem("Companies", "navigation.companies.open", Briefcase),
-      navItem("Pipelines", "navigation.pipelines.open", Target),
     ],
   },
   {
@@ -146,6 +146,7 @@ const navSections: NavSection[] = [
     label: "Business",
     defaultOpen: false,
     items: [
+      navItem("Pipelines", "navigation.pipelines.open", Waypoints),
       navItem("Model", "navigation.businessModel.open", LineChart),
       navItem("Roles", "navigation.roles.open", Briefcase),
     ],
