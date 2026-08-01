@@ -12,6 +12,11 @@ const MEETING_GRAPH_LIMIT = 500;
 const RECENCY_HALF_LIFE_DAYS = 7;
 const MS_PER_DAY = 86_400_000;
 
+/** Meeting topology can be rolled back independently while the shared graph remains canonical. */
+export function meetingGraphAdapterEnabled(): boolean {
+  return process.env.MEETING_GRAPH_ADAPTER_ENABLED !== "false";
+}
+
 function boundedLimit(requested: number): number {
   if (!Number.isInteger(requested) || requested < 1) return MEETING_GRAPH_LIMIT;
   return Math.min(requested, MEETING_GRAPH_LIMIT);
@@ -112,6 +117,7 @@ export const meetingGraphAdapter: PersonalGraphAdapter<Principal> = {
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw Object.assign(new Error("Meeting graph projection requires an authenticated user principal"), { status: 401 });
     }
+    if (!meetingGraphAdapterEnabled()) return { nodes: [], edges: [] };
     const records = await runWithPrincipal(principal, () => listMeetingGraphRecords());
     const meetings = records.slice(0, boundedLimit(input.limit));
     return {

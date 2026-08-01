@@ -55,6 +55,10 @@ import { decisionsStorage } from "./decisions-storage";
 import { getEvent, listAllEvents } from "./google-calendar";
 import { objectStorageService } from "./object_storage/objectStorage";
 import { ObjectPermission } from "./object_storage/objectAcl";
+import { createLogger } from "./log";
+import { eventBus } from "./event-bus";
+
+const log = createLogger("AddressResolver");
 
 export const ADDRESS_RESOLUTION_BATCH_LIMIT = 50;
 
@@ -221,7 +225,7 @@ const adapters: AddressResolverAdapter[] = [
     return new Map(parsed.flatMap(({ ref }) => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
   simpleAdapter("role", async (principal, refs) => {
-    if (!principalHasPermission(principal, "system:read")) return new Map();
+    if (!principalHasPermission(principal, "system:read")) return resultMap(refs, "unauthorized");
     const rows = await db.select({ id: jobRoles.id, title: jobRoles.title, description: jobRoles.description, updatedAt: jobRoles.updatedAt }).from(jobRoles)
       .where(combineWithVisibleScope(principal, roleScope, inArray(jobRoles.id, refs.map(ref => ref.id))));
     const byId = new Map(rows.map(row => [row.id, row]));
@@ -359,14 +363,14 @@ const adapters: AddressResolverAdapter[] = [
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
   simpleAdapter("platform", async (principal, refs) => {
-    if (!principalHasPermission(principal, "build:read")) return new Map();
+    if (!principalHasPermission(principal, "build:read")) return resultMap(refs, "unauthorized");
     const rows = await db.select({ id: platforms.id, name: platforms.name, description: platforms.description, updatedAt: platforms.updatedAt }).from(platforms)
       .where(and(inArray(platforms.id, numbers(refs)), visiblePlatform()));
     const byId = new Map(rows.map(row => [String(row.id), row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
   simpleAdapter("product", async (principal, refs) => {
-    if (!principalHasPermission(principal, "build:read")) return new Map();
+    if (!principalHasPermission(principal, "build:read")) return resultMap(refs, "unauthorized");
     const rows = await db.select({ id: platformProducts.id, name: platformProducts.name, description: platformProducts.description, updatedAt: platformProducts.updatedAt }).from(platformProducts)
       .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
       .where(and(inArray(platformProducts.id, numbers(refs)), visiblePlatform()));
@@ -374,7 +378,7 @@ const adapters: AddressResolverAdapter[] = [
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
   simpleAdapter("environment", async (principal, refs) => {
-    if (!principalHasPermission(principal, "build:read")) return new Map();
+    if (!principalHasPermission(principal, "build:read")) return resultMap(refs, "unauthorized");
     const rows = await db.select({ id: platformProductEnvironments.id, name: platformProductEnvironments.name, productName: platformProducts.name, platformName: platforms.name, updatedAt: platformProductEnvironments.updatedAt }).from(platformProductEnvironments)
       .innerJoin(platformProducts, eq(platformProductEnvironments.productId, platformProducts.id))
       .innerJoin(platforms, eq(platformProducts.platformId, platforms.id))
@@ -471,6 +475,7 @@ export async function resolveAddressBatch(
   principal: Principal,
   inputs: readonly (string | Pick<ReferenceRef, "type" | "id">)[],
 ): Promise<AddressResolutionResult[]> {
+  const startedAt = Date.now();
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
     throw Object.assign(new Error("Address resolution requires an authenticated user principal"), { status: 401 });
   }
@@ -523,8 +528,20 @@ export async function resolveAddressBatch(
     }
   }));
 
-  return parsed.map((ref, index) => {
+  const results = parsed.map((ref, index) => {
     const fallback = typeof inputs[index] === "string" ? String(inputs[index]) : serializeReference(inputs[index]);
     return ref ? resolvedByAddress.get(requestedAddress(ref)) ?? { requestedAddress: requestedAddress(ref), outcome: "missing" } : immediate.get(fallback)!;
   });
+  const outcomeCounts = results.reduce<Record<AddressResolutionOutcome, number>>((counts, result) => {
+    counts[result.outcome] += 1;
+    return counts;
+  }, { resolved: 0, redirected: 0, missing: 0, unauthorized: 0, unknown_type: 0, invalid: 0, error: 0 });
+  const latencyMs = Date.now() - startedAt;
+  log.debug("Address resolution batch", { requestedCount: inputs.length, uniqueCount: unique.size, adapterCount: byType.size, latencyMs, outcomeCounts });
+  eventBus.publish({
+    category: "life_addressing",
+    event: "address_resolution_batch",
+    payload: { requestedCount: inputs.length, uniqueCount: unique.size, adapterCount: byType.size, latencyMs, outcomeCounts },
+  });
+  return results;
 }
