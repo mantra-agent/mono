@@ -60,6 +60,8 @@ const SERVICE_RULES: ApiPolicyRule[] = [
 
 const PERSONAL_RULES: ApiPolicyRule[] = [
   { classification: "personal", exact: ["/api/client-logs", "/api/browser-telemetry", "/api/browser-telemetry/summary"], reason: "authenticated bounded client diagnostics" },
+  { classification: "personal", prefixes: ["/api/mods"], reason: "authenticated Mod catalog and lifecycle; route-owned named permissions remain authoritative" },
+  { classification: "personal", methods: ["GET"], exact: ["/api/product-composition"], reason: "authenticated derived Mod composition projection with route-owned read permission" },
   {
     classification: "personal",
     prefixes: [

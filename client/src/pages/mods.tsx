@@ -124,7 +124,7 @@ export default function ModsPage() {
   const [confirmDisable, setConfirmDisable] = useState<ModCatalogEntry | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery<ModsResponse>({ queryKey: ["/api/mods"] });
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<ModsResponse>({ queryKey: ["/api/mods"] });
 
   const mutate = useMutation({
     mutationFn: async ({ key, action }: { key: string; action: "install" | "reinstall" | "disable" }) => {
@@ -184,6 +184,20 @@ export default function ModsPage() {
       {isLoading ? (
         <div className="flex justify-center py-10">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : isError ? (
+        <div className="flex items-center gap-2 px-2 py-1.5 text-sm text-error">
+          <span className="min-w-0 flex-1">Mods couldn’t load.</span>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-auto px-2 py-1 text-cta hover:text-active"
+            disabled={isFetching}
+            onClick={() => void refetch()}
+          >
+            {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Retry"}
+          </Button>
         </div>
       ) : (
         <div className="space-y-4">
