@@ -48,6 +48,7 @@ const log = createLogger("App");
 const SystemPage = lazyWithRetry(() => import("@/pages/system"));
 const BrainPage = lazyWithRetry(() => import("@/pages/brain"));
 const IntegrationsPage = lazyWithRetry(() => import("@/pages/integrations"));
+const ModsPage = lazyWithRetry(() => import("@/pages/mods"));
 const Goals = lazyWithRetry(() => import("@/pages/goals"));
 const VisionPage = lazyWithRetry(() => import("@/pages/goals-future"));
 const HomePage = lazyWithRetry(() => import("@/pages/simple"));
@@ -310,6 +311,7 @@ function Router() {
         <Route path="/responsibilities">{() => <Redirect to="/brain/timers" />}</Route>
         <Route path="/integrations/:provider" component={IntegrationsPage} />
         <Route path="/integrations" component={IntegrationsPage} />
+        <Route path="/mods">{() => <RequirePermission permission="mods:read"><ModsPage /></RequirePermission>}</Route>
         <Route path="/settings">{() => <Redirect to="/integrations" />}</Route>
         <Route path="/issues/:id" component={IssueDetailPage} />
         <Route path="/chat">{() => <Redirect to={preserveCurrentQuery("/session")} />}</Route>

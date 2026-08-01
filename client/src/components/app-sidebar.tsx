@@ -212,6 +212,7 @@ const navSections: NavSection[] = [
     label: "Admin",
     defaultOpen: false,
     items: [
+      navItem("Mods", "navigation.mods.open", Boxes),
       navItem("Audiences", "navigation.audiences.open", Users),
       navItem("Campaigns", "navigation.campaigns.open", Megaphone),
       navItem("Users", "navigation.users.open", Users),
