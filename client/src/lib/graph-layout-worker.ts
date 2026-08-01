@@ -39,10 +39,16 @@ interface SimLink extends LayoutLinkInput {
   index?: number;
 }
 
+interface LayoutSettings {
+  linkAttractionFactor: number;
+  nodeRepulsionFactor: number;
+}
+
 interface InitMessage {
   type: "init";
   nodes: LayoutNode[];
   links: LayoutLinkInput[];
+  settings: LayoutSettings;
 }
 
 const ctx = self as unknown as {
@@ -105,6 +111,8 @@ function start(message: InitMessage) {
     .filter((link) => nodeById.has(link.fromId) && nodeById.has(link.toId))
     .map((link) => ({ ...link, source: link.fromId, target: link.toId }));
 
+  const linkAttraction = message.settings.linkAttractionFactor;
+  const nodeRepulsion = message.settings.nodeRepulsionFactor;
   const linkForce = forceLink<LayoutNode, SimLink>(links)
     .id((node) => node.id)
     .distance((link) => {
@@ -113,12 +121,12 @@ function start(message: InitMessage) {
       const strength = Math.max(0.1, link.strength || 0.5);
       return from.radius + to.radius + 38 + (1 - strength) * 62;
     })
-    .strength((link) => 0.08 + Math.max(0.1, link.strength || 0.5) * 0.12)
+    .strength((link) => (0.08 + Math.max(0.1, link.strength || 0.5) * 0.12) * linkAttraction)
     .iterations(1);
 
   simulation = forceSimulation(nodes, 3)
     .force("charge", forceManyBody<LayoutNode>()
-      .strength((node) => -(135 + Math.sqrt(node.degree) * 9))
+      .strength((node) => -(135 + Math.sqrt(node.degree) * 9) * nodeRepulsion)
       .theta(0.76)
       .distanceMin(2)
       .distanceMax(520))

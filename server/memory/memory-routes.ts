@@ -21,7 +21,9 @@ import { searchVnextMemory } from "./vnext-search";
 import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { getPrincipal } from "../principal";
 import { combineWithVisibleScope } from "../scoped-storage";
+import { getSetting, setSetting } from "../system-settings";
 import { memoryVnextClaimStorage } from "./vnext-claim-storage";
 import type { VnextClaimDimensions } from "./vnext-claim-dimensions";
 import { runVnextLifecycle } from "./vnext-lifecycle";
@@ -36,8 +38,17 @@ import { listMeetingGraphRecords, type MeetingIndexRecord } from "../meetings/me
 import { getLibraryAuthoredOccurrences, getLibraryReferenceNeighborhood, scheduleLibraryReferenceReplay } from "../library-reference-index";
 import { normalizeProtocolAddress } from "@shared/life-addressing";
 import { assemblePersonalGraph, libraryFirstGraphEnabled } from "./personal-graph-projection";
+import {
+  isCompleteMemoryGraphSettings,
+  normalizeMemoryGraphSettings,
+} from "@shared/memory-graph-settings";
 
 const log = createLogger("MemoryRoutes");
+const MEMORY_GRAPH_SETTINGS_KEY = "memory_graph_settings";
+
+function memoryGraphSettingsKey(userId: string): string {
+  return `user:${userId}:${MEMORY_GRAPH_SETTINGS_KEY}`;
+}
 
 
 function serializeDate(value: Date | string | null | undefined): string | null {
@@ -311,6 +322,39 @@ function maxTimestamp(
     return Number.isFinite(candidate) ? Math.max(latest, candidate) : latest;
   }, 0);
   return latestMs > 0 ? new Date(latestMs) : null;
+}
+
+async function handleGetMemoryGraphSettings(req: Request, res: Response): Promise<void> {
+  try {
+    const principal = getPrincipal(req);
+    if (!principal.userId) {
+      res.status(401).json({ error: "User session required" });
+      return;
+    }
+    const persisted = await getSetting(memoryGraphSettingsKey(principal.userId));
+    res.json({ settings: normalizeMemoryGraphSettings(persisted) });
+  } catch {
+    res.status(500).json({ error: "Failed to read Memory Graph settings" });
+  }
+}
+
+async function handleSetMemoryGraphSettings(req: Request, res: Response): Promise<void> {
+  try {
+    const principal = getPrincipal(req);
+    if (!principal.userId) {
+      res.status(401).json({ error: "User session required" });
+      return;
+    }
+    if (!isCompleteMemoryGraphSettings(req.body?.settings)) {
+      res.status(400).json({ error: "Invalid Memory Graph settings" });
+      return;
+    }
+    const settings = normalizeMemoryGraphSettings(req.body.settings);
+    await setSetting(memoryGraphSettingsKey(principal.userId), settings);
+    res.json({ settings });
+  } catch {
+    res.status(500).json({ error: "Failed to update Memory Graph settings" });
+  }
 }
 
 async function handleGetVnextGraph(req: Request, res: Response): Promise<void> {
@@ -1205,6 +1249,8 @@ export function registerMemoryRoutes(app: Express) {
   app.use("/api/memory", requireAuth);
 
   app.get("/api/memory/vnext/graph", handleGetVnextGraph);
+  app.get("/api/memory/vnext/graph/settings", handleGetMemoryGraphSettings);
+  app.post("/api/memory/vnext/graph/settings", handleSetMemoryGraphSettings);
   app.post("/api/memory/vnext/lifecycle/run", handleTriggerVnextLifecycle);
   app.post("/api/memory/vnext/claims/nuke", handleNukeVnextClaims);
   app.get("/api/memory/vnext/sources", handleGetVnextSources);
