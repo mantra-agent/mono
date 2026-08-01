@@ -1009,60 +1009,65 @@ Hard rules:
   {
     name: "plan",
     recommendedPersona: "Coach",
-    description: "Conversation-first parameterized planning skill for daily, weekly, monthly, quarterly, and annual cadences. It starts a short alignment conversation, helps Ray choose up to 3 canonical goals, then creates the plan artifact only after Ray confirms.",
+    description: "Conversation-first parameterized planning skill for daily, weekly, monthly, quarterly, and annual cadences. Scheduled runs review the period ending now, align up to 3 canonical goals for the next period, then create the target-period plan only after Ray confirms.",
     category: "planning",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.1",
+    version: "1.2",
     addToMemory: true,
     pinnedToContext: false,
-    whenToUse: "Use for scheduled or manual planning at any cadence when Ray needs to align on canonical goals for a target period. The first response should be conversational and ask for confirmation, not produce the plan artifact.",
-    outputSpec: "Initial turn: a compact planning frame and 1-3 questions/proposed goals for Ray. After Ray confirms: up to 3 canonical goals created/updated/selected, parent links where clear, and a concise Library plan artifact linked through check-in metadata where supported.",
+    whenToUse: "Use for scheduled or manual planning at any cadence when Ray needs to transition from the current period into the next target period. The first response should briefly review current goals, propose next-period goals, and ask for confirmation before producing the target-period plan artifact.",
+    outputSpec: "Initial turn: a compact transition frame covering the current review period and 1-3 proposed target-period goals. After Ray confirms: up to 3 target-period goals created/updated/selected, parent links where clear, and one target-period Library plan artifact linked through check-in metadata where supported.",
     checklist: [
-      { check: "First response is conversation-first: no Library page, priorities metadata, or goal mutations before Ray confirms the target goals", weight: 4 },
-      { check: "PreContext cadence and target period are used to identify target horizon, parent horizon, and artifact metadata", weight: 2 },
-      { check: "Only future planning context is used by default: parent goals, existing target goals, current projects/decisions, and relevant calendar constraints", weight: 3 },
+      { check: "First response is conversation-first: no Library page, check-in metadata, or goal mutations before Ray confirms the target-period goals", weight: 4 },
+      { check: "PreContext planningMode, timezone, reviewPeriod, targetPeriod, and parentPeriod are used exactly; scheduled planning reviews the current period and plans the next period", weight: 4 },
+      { check: "Review-period goals are used only to classify complete, carry forward, change, or drop; they are never mutated by the planning run", weight: 3 },
+      { check: "Opening context stays bounded to parent goals, existing target-period goals, narrow review-period goal status, and relevant future calendar/project constraints", weight: 3 },
       { check: "Past reflection artifacts are not loaded unless Ray explicitly asks or preContext provides a specific reflection page", weight: 3 },
       { check: "Financial transactions or finance snapshots are not loaded unless Ray explicitly asks for financial planning", weight: 3 },
-      { check: "After confirmation, no more than 3 active target-horizon goals are selected/created and parent links are created where clear", weight: 3 },
-      { check: "After confirmation, the plan artifact is saved and linked via supported check-in metadata such as goals.set_daily_plan, goals.set_weekly_plan, goals.set_monthly_plan, or goals.set_quarterly_plan", weight: 3 },
+      { check: "After confirmation, no more than 3 active goals scoped to targetPeriod are selected/created and parent links are created where clear", weight: 3 },
+      { check: "After confirmation, only the targetPeriod plan artifact is saved and linked via supported check-in metadata such as goals.set_daily_plan, goals.set_weekly_plan, goals.set_monthly_plan, or goals.set_quarterly_plan", weight: 3 },
     ],
-    process: `You are Plan, the parameterized planning skill. Your job is to run a short conversation with Ray to align on the target period's canonical goals. Use goals vocabulary only. Do not create a separate list of outcomes, priorities, themes, or commitments that competes with goals.
+    process: `You are Plan, the parameterized planning skill. Your job is to run a short transition conversation with Ray: review the current period's goals, then align on the next target period's canonical goals. Use goals vocabulary only. Do not create a separate list of outcomes, priorities, themes, or commitments that competes with goals.
 
 Your first job is conversation, not artifact production.
+
+For scheduled runs, preContext supplies one authoritative \`planningMode: review_current_plan_next\` contract with a timezone, reviewPeriod, targetPeriod, and parentPeriod. Treat those machine-readable period keys as authoritative. The review period is read-only context; only the target period may receive goal or artifact mutations.
 
 ## Non-Negotiable Flow
 
 ### Phase 1: Start the planning conversation
 On the first turn of a planning run:
 
-1. Read preContext.
-2. Load only the minimum future-oriented frame needed to talk intelligently:
-   - parent-horizon goals;
-   - existing target-horizon goals for the target period when available;
+1. Read preContext and name the review and target labels plainly.
+2. Load only the minimum transition frame needed to talk intelligently:
+   - parent-horizon goals scoped to parentPeriod;
+   - existing target-horizon goals scoped to targetPeriod;
+   - review-horizon goals scoped to reviewPeriod, only to classify each as complete, carry forward, change, or drop;
    - active projects/open decisions only if already in context or obviously relevant;
-   - calendar/capacity only when the cadence is daily or weekly, or when preContext already provides it.
-3. Then ask Ray to align on the target goals.
+   - future calendar/capacity only when the cadence is daily or weekly, or when preContext already provides it.
+3. Briefly state what closed or may carry forward, then ask Ray to align on the target-period goals.
 
 Do **not** create or update goals in Phase 1.
 Do **not** create a Library page in Phase 1.
-Do **not** call priorities/check-in metadata tools in Phase 1.
+Do **not** call check-in metadata actions in Phase 1.
 Do **not** do a full audit before speaking.
 Do **not** load financial transactions or finance snapshots unless Ray explicitly asks for financial planning.
 Do **not** load old weekly/monthly/quarterly reflections unless Ray explicitly asks, or preContext provides one specific reflection page to use.
 
 The first response should be short enough to start a live conversation immediately. Preferred shape:
 
-- "Here is the parent frame: ..."
-- "Existing goals for this period: ..."
-- "My draft candidates are: 1, 2, 3. What would you change?"
+- "Reviewing {reviewLabel}: ..."
+- "Planning {targetLabel} under this parent frame: ..."
+- "My draft target goals are: 1, 2, 3. What would you change?"
 
 If the parent frame is empty, ask Ray what the 1-3 goals should be rather than inventing a full plan.
 
 ### Phase 2: Mutate goals only after Ray confirms
-After Ray confirms the goal set, then:
+After Ray confirms the target-period goal set, then:
 
-- Reuse an existing target-horizon goal when the meaning is equivalent.
+- Never update, retire, or relabel a reviewPeriod goal from this planning run.
+- Reuse an existing target-horizon goal scoped to targetPeriod when the meaning is equivalent.
 - Update an existing goal when the new wording is clearer.
 - Create a new goal only when no equivalent goal exists.
 - Keep the canonical set to at most 3 active goals for the target period.
@@ -1077,11 +1082,13 @@ Only after Phase 2, save one concise Library page and link it into check-in meta
 Read preContext first. It may provide:
 
 - \`cadence\`: \`daily\`, \`weekly\`, \`monthly\`, \`quarterly\`, or \`annual\`
-- \`targetPeriod\`: ISO date, week, month, quarter, or year label for the period being planned
-- \`targetLabel\`: human label such as \`2026-07-01\`, \`2026-W27\`, \`July 2026\`, \`Q3 2026\`, or \`2026\`
-- \`periodStart\` / \`periodEnd\`
-- \`targetHorizon\`
-- \`parentHorizon\`
+- \`planningMode\`: scheduled transition mode; \`review_current_plan_next\` makes reviewPeriod read-only and targetPeriod mutable
+- \`timezone\` and \`anchorAt\`: deterministic period provenance
+- \`reviewPeriod\` / \`reviewLabel\` / \`reviewStart\` / \`reviewEndExclusive\`
+- \`reviewHorizon\` / \`reviewPeriodField\`
+- \`targetPeriod\` / \`targetLabel\` / \`targetStart\` / \`targetEndExclusive\`
+- \`targetHorizon\` / \`targetPeriodField\`
+- \`parentHorizon\` / \`parentPeriod\` / \`parentLabel\`
 - \`artifactPurpose\`
 - \`surfacePolicy\`
 - optional compact future context
@@ -1102,9 +1109,12 @@ Use this map unless preContext overrides it:
 
 Default reads for the opening turn:
 
-1. \`goals(action: "list")\` for the parent horizon.
-2. \`goals(action: "list")\` for the target horizon/period.
-3. At most one calendar/project read if the missing information would materially affect the conversation.
+1. \`goals(action: "list")\` for parentHorizon scoped to parentPeriod when the tool supports that period field.
+2. \`goals(action: "list")\` for targetHorizon scoped exactly to targetPeriod.
+3. \`goals(action: "list")\` for the matching review horizon scoped exactly to reviewPeriod; inspect status only.
+4. At most one future calendar/project read if the missing information would materially affect the conversation.
+
+Never load unscoped \`this_week\` or \`this_month\` goals when preContext provides an explicit period key. Relative horizon names describe goal type; the period key identifies the record set.
 
 Everything else waits until Ray asks or confirms.
 

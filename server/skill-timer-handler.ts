@@ -3,6 +3,10 @@ import type { Timer, TimerRun } from "@shared/models/timers";
 import { SYSTEM_TIMER_SKILL_ALIASES } from "./system-timer-registry";
 import { createLogger } from "./log";
 import type { TimerHandler, TimerHandlerResult } from "./timer-handlers";
+import {
+  buildScheduledPlanPeriodContract,
+  renderScheduledPlanPeriodContract,
+} from "./planning-period-contract";
 
 const log = createLogger("SkillTimerHandler");
 
@@ -80,10 +84,7 @@ export class SkillTimerHandler implements TimerHandler {
       preContext = data.preContext;
     } else if (skillId === "reflect") {
       const cadence = this.getSkillCadence(timer, skillId);
-      const contract = this.buildParameterizedContract(
-        "reflect",
-        cadence ?? "weekly",
-      );
+      const contract = this.buildParameterizedContract(cadence ?? "weekly");
       if (cadence === "daily") {
         const { buildDailyReflectPreContext } = await import("./thoughts");
         const data = await buildDailyReflectPreContext();
@@ -123,16 +124,22 @@ export class SkillTimerHandler implements TimerHandler {
         preContext = contract;
       }
     } else if (skillId === "plan") {
-      const cadence = this.getSkillCadence(timer, skillId);
-      const contract = this.buildParameterizedContract(
-        "plan",
-        cadence ?? "weekly",
-      );
+      const cadence = this.getSkillCadence(timer, skillId) ?? "weekly";
+      const anchorSource = run.intendedFireAt
+        ? "timerRun.intendedFireAt"
+        : "timerRun.startedAt";
+      const contract = buildScheduledPlanPeriodContract({
+        cadence,
+        anchorAt: run.intendedFireAt ?? run.startedAt,
+        anchorSource,
+        timezone: timer.timezone,
+      });
       preContext = [
-        contract,
+        renderScheduledPlanPeriodContract(contract),
         "conversationMode: true",
-        "firstTurnInstruction: Start a short planning conversation. Do not create goals, create a Library artifact, or call priorities metadata until Ray confirms the goal set.",
-        "contextPolicy: Use only parent goals, existing target-period goals, and future calendar/project constraints if needed. Do not load past reflections or finance transactions unless Ray explicitly asks.",
+        "firstTurnInstruction: Start a short planning conversation. Review the current period only to classify existing goals as complete, carry forward, change, or drop; then align goals for the next target period. Do not mutate goals, create a Library artifact, or call check-in metadata until Ray confirms the target-period goal set.",
+        "contextPolicy: Load parent goals for parentPeriod, existing target-horizon goals scoped to targetPeriod, and review-period goals only for the narrow transition review. Do not load reflections or finance unless Ray explicitly asks.",
+        "mutationPolicy: After confirmation, mutate only targetPeriod goals and create/link only the targetPeriod plan artifact. Never rewrite reviewPeriod goals as part of planning.",
       ].join("\n");
     }
 
@@ -219,24 +226,9 @@ export class SkillTimerHandler implements TimerHandler {
   }
 
   private buildParameterizedContract(
-    kind: "plan" | "reflect",
     cadence: "daily" | "weekly" | "monthly" | "quarterly" | "annual",
   ): string {
     const now = new Date();
-    const targetHorizonByCadence: Record<typeof cadence, string> = {
-      daily: "today",
-      weekly: "this_week",
-      monthly: "this_month",
-      quarterly: "this_quarter",
-      annual: "this_year",
-    };
-    const parentHorizonByCadence: Record<typeof cadence, string> = {
-      daily: "this_week",
-      weekly: "this_month",
-      monthly: "this_quarter",
-      quarterly: "this_year",
-      annual: "three_year",
-    };
     const label =
       cadence === "monthly"
         ? new Intl.DateTimeFormat("en-US", {
@@ -254,20 +246,12 @@ export class SkillTimerHandler implements TimerHandler {
               }).format(now);
 
     return [
-      `# Parameterized ${kind === "plan" ? "Plan" : "Reflect"} Request`,
+      "# Parameterized Reflect Request",
       `cadence: ${cadence}`,
-      kind === "plan" ? `targetLabel: ${label}` : `periodLabel: ${label}`,
-      kind === "plan"
-        ? `targetHorizon: ${targetHorizonByCadence[cadence]}`
-        : undefined,
-      kind === "plan"
-        ? `parentHorizon: ${parentHorizonByCadence[cadence]}`
-        : undefined,
-      `artifactPurpose: Scheduled ${cadence} ${kind}`,
-      `surfacePolicy: always`,
-    ]
-      .filter(Boolean)
-      .join("\n");
+      `periodLabel: ${label}`,
+      `artifactPurpose: Scheduled ${cadence} reflect`,
+      "surfacePolicy: always",
+    ].join("\n");
   }
 
 }
