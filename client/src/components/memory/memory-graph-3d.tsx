@@ -153,9 +153,9 @@ const ACTIVITY_AFTERGLOW_HALF_LIFE_MS = 2_600;
 const ACTIVITY_AFTERGLOW_EPSILON = 0.004;
 const ACTIVITY_LINK_AFTERGLOW_DEPOSIT = 0.18;
 const ACTIVITY_LINK_AFTERGLOW_CEILING = 1;
-const ACTIVITY_LINK_AFTERGLOW_BRIGHTNESS = 0.22;
-const ACTIVITY_NODE_AFTERGLOW_DEPOSIT = 0.12;
-const ACTIVITY_NODE_AFTERGLOW_CEILING = 0.55;
+const ACTIVITY_LINK_LUMINANCE_RESPONSE = 1.35;
+const ACTIVITY_NODE_AFTERGLOW_DEPOSIT = 0.2;
+const ACTIVITY_NODE_AFTERGLOW_CEILING = 0.75;
 // Global emission runs ~10x faster than before; a tight max clamp removes the
 // dead-air gaps that made the field look intermittently idle.
 const ACTIVITY_MEAN_EMIT_GAP_MS = 17;
@@ -185,6 +185,23 @@ function recencyToVisibility(recency: number, brightnessCeiling: number): number
   const heat = THREE.MathUtils.clamp(recency, 0, 1);
   const ceiling = THREE.MathUtils.clamp(brightnessCeiling, RECENCY_OPACITY_FLOOR, 1);
   return RECENCY_OPACITY_FLOOR + (ceiling - RECENCY_OPACITY_FLOOR) * Math.pow(heat, 1.4);
+}
+
+function recencyToWhiteMix(recency: number, brightnessCeiling: number): number {
+  const heat = THREE.MathUtils.smoothstep(THREE.MathUtils.clamp(recency, 0, 1), 0.08, 1);
+  const ceiling = THREE.MathUtils.clamp(brightnessCeiling, RECENCY_OPACITY_FLOOR, 1);
+  return Math.pow(heat, 1.15) * ceiling;
+}
+
+function composeActivityColor(
+  target: THREE.Color,
+  restingColor: THREE.Color,
+  luminanceColor: THREE.Color,
+  energy: number,
+  brightness = 1,
+) {
+  target.copy(restingColor).lerp(luminanceColor, THREE.MathUtils.clamp(energy, 0, 1));
+  target.multiplyScalar(brightness);
 }
 
 const GRAPH_LABEL_MAX_WORDS = 3;
@@ -236,7 +253,7 @@ const nodeFragmentShader = `
     float rim = pow(edge, 1.6);
     float emphasis = 1.0 + vEmphasis * 0.5;
     vec3 baseColor = vTint * rim * emphasis;
-    vec3 impactColor = mix(baseColor, vec3(1.0), vImpact);
+    vec3 impactColor = mix(baseColor, vec3(1.0), vImpact) * (1.0 + vImpact * 0.35);
     float impactAlpha = mix(vVisibility, 1.0, vImpact);
     gl_FragColor = vec4(impactColor, impactAlpha);
   }
@@ -546,17 +563,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     controls.screenSpacePanning = true;
 
     const signalColor = colorFromToken("--cta");
-    const activeColor = colorFromToken("--active");
     const selectedColor = colorFromToken("--foreground");
     const deletionColor = colorFromToken("--destructive");
-    // Recency heat ramp, tokens only: recency 1.0 glows the brighter interactive blue
-    // (--active); at ~0.5 it cools to the darker CTA blue (--cta); below that the node
-    // stays CTA-hued but fades via visibility toward the canvas, floored so it lingers.
-    const nodeBaseColors = sceneNodes.map((node) => {
-      const heat = THREE.MathUtils.clamp(node.recency, 0, 1);
-      const warmth = THREE.MathUtils.smoothstep(heat, 0.45, 1);
-      return signalColor.clone().lerp(activeColor, warmth);
-    });
+    // Recency is luminance: cold nodes remain deep CTA blue, while recent nodes
+    // approach the foreground white. Visibility remains a separate depth/presence
+    // channel so old nodes stay ghosted without recency collapsing into opacity.
+    const nodeBaseColors = sceneNodes.map((node) => signalColor.clone().lerp(
+      selectedColor,
+      recencyToWhiteMix(node.recency, settings.recencyBrightness),
+    ));
     const nodeGeometry = new THREE.IcosahedronGeometry(1, 2);
     const visibility = new Float32Array(sceneNodes.length);
     const emphasis = new Float32Array(sceneNodes.length);
@@ -597,19 +612,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const nodeLinkVisibility = new Float32Array(sceneNodes.length);
     const linkGeometry = new LineSegmentsGeometry();
     const focusedLinkGeometry = new LineSegmentsGeometry();
-    const baseLinkColor = signalColor.clone().multiplyScalar(0.5);
+    const restingLinkColors = renderedLinks.map((link) => ({
+      from: nodeBaseColors[link.fromIndex].clone(),
+      to: nodeBaseColors[link.toIndex].clone(),
+    }));
     renderedLinks.forEach((link, linkIndex) => {
       const brightness = (0.15 + Math.pow(Math.max(0, link.strength), 1.6) * 0.85) * 0.18;
       linkBrightness[linkIndex] = brightness;
-      for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
-        const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
-        linkColors[offset] = baseLinkColor.r * brightness;
-        linkColors[offset + 1] = baseLinkColor.g * brightness;
-        linkColors[offset + 2] = baseLinkColor.b * brightness;
-        linkColors[offset + 3] = baseLinkColor.r * brightness;
-        linkColors[offset + 4] = baseLinkColor.g * brightness;
-        linkColors[offset + 5] = baseLinkColor.b * brightness;
-      }
     });
     linkGeometry.setPositions(linkPositions);
     linkGeometry.setColors(linkColors);
@@ -646,7 +655,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       : ACTIVITY_MAX_DESKTOP_PACKETS;
     const activityGeometry = new THREE.SphereGeometry(ACTIVITY_BEAD_RADIUS, 8, 8);
     const activityMaterial = new THREE.MeshBasicMaterial({
-      color: activeColor,
+      color: selectedColor,
       transparent: true,
       opacity: 0.92,
       blending: THREE.AdditiveBlending,
@@ -687,6 +696,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const lastPulseAtByNodeIndex = new Map<number, number>();
     let afterglowUpdatedAt = 0;
     const activityPoint = new THREE.Vector3();
+    const restingLinkColor = new THREE.Color();
+    const activityColor = new THREE.Color();
     const renderedLinkPaths: QuadraticLinkPath[] = renderedLinks.map(() => ({
       fromX: 0,
       fromY: 0,
@@ -812,12 +823,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const brightness = 0.55 + Math.pow(normalizedStrength, 1.25) * 0.45;
         for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
           const focusedOffset = (focusedLinkIndex * CURVE_SEGMENTS + segment) * 6;
-          focusedLinkColors[focusedOffset] = activeColor.r * brightness;
-          focusedLinkColors[focusedOffset + 1] = activeColor.g * brightness;
-          focusedLinkColors[focusedOffset + 2] = activeColor.b * brightness;
-          focusedLinkColors[focusedOffset + 3] = activeColor.r * brightness;
-          focusedLinkColors[focusedOffset + 4] = activeColor.g * brightness;
-          focusedLinkColors[focusedOffset + 5] = activeColor.b * brightness;
+          focusedLinkColors[focusedOffset] = selectedColor.r * brightness;
+          focusedLinkColors[focusedOffset + 1] = selectedColor.g * brightness;
+          focusedLinkColors[focusedOffset + 2] = selectedColor.b * brightness;
+          focusedLinkColors[focusedOffset + 3] = selectedColor.r * brightness;
+          focusedLinkColors[focusedOffset + 4] = selectedColor.g * brightness;
+          focusedLinkColors[focusedOffset + 5] = selectedColor.b * brightness;
         }
       });
       focusedLinkGeometry.instanceCount = focusedSimulationLinks.length * CURVE_SEGMENTS;
@@ -834,16 +845,18 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function syncLinkColors() {
       renderedLinks.forEach((_link, linkIndex) => {
+        const energy = linkAfterglow[linkIndex];
         const brightness = visibleLinkBrightness[linkIndex]
-          + linkAfterglow[linkIndex] * ACTIVITY_LINK_AFTERGLOW_BRIGHTNESS;
+          * (1 + energy * ACTIVITY_LINK_LUMINANCE_RESPONSE);
+        const restingColors = restingLinkColors[linkIndex];
         for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
           const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
-          linkColors[offset] = baseLinkColor.r * brightness;
-          linkColors[offset + 1] = baseLinkColor.g * brightness;
-          linkColors[offset + 2] = baseLinkColor.b * brightness;
-          linkColors[offset + 3] = baseLinkColor.r * brightness;
-          linkColors[offset + 4] = baseLinkColor.g * brightness;
-          linkColors[offset + 5] = baseLinkColor.b * brightness;
+          restingLinkColor.copy(restingColors.from).lerp(restingColors.to, segment / CURVE_SEGMENTS);
+          composeActivityColor(activityColor, restingLinkColor, selectedColor, energy, brightness);
+          activityColor.toArray(linkColors, offset);
+          restingLinkColor.copy(restingColors.from).lerp(restingColors.to, (segment + 1) / CURVE_SEGMENTS);
+          composeActivityColor(activityColor, restingLinkColor, selectedColor, energy, brightness);
+          activityColor.toArray(linkColors, offset + 3);
         }
       });
       const instanceColorStart = linkGeometry.getAttribute("instanceColorStart");
@@ -874,7 +887,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       });
 
       renderedLinks.forEach((link, linkIndex) => {
-        const endpointVisibility = Math.min(nodeLinkVisibility[link.fromIndex], nodeLinkVisibility[link.toIndex]);
+        const endpointVisibility = (nodeLinkVisibility[link.fromIndex] + nodeLinkVisibility[link.toIndex]) * 0.5;
         const focusDim = focusIndex != null && !focusedRenderedLinkIndices.has(linkIndex) ? 0.42 : 1;
         visibleLinkBrightness[linkIndex] = linkBrightness[linkIndex] * endpointVisibility * focusDim;
       });
@@ -896,7 +909,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           : node.pendingDeletion
             ? deletionColor
             : isFocus || neighbor || searchMatch
-              ? activeColor
+              ? selectedColor
               : nodeBaseColors[index];
         tint.toArray(tints, index * 3);
         visibility[index] = isSelected
@@ -1066,6 +1079,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       linkAfterglow[path.linkIndex] = Math.min(
         ACTIVITY_LINK_AFTERGLOW_CEILING,
         linkAfterglow[path.linkIndex] + ACTIVITY_LINK_AFTERGLOW_DEPOSIT,
+      );
+      nodeAfterglow[path.sourceIndex] = Math.min(
+        ACTIVITY_NODE_AFTERGLOW_CEILING,
+        nodeAfterglow[path.sourceIndex] + ACTIVITY_NODE_AFTERGLOW_DEPOSIT,
       );
       if (afterglowUpdatedAt === 0) afterglowUpdatedAt = now;
       lastPulseAtByNodeIndex.set(path.destinationIndex, now);
