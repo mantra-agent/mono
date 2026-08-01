@@ -71,6 +71,7 @@ const PeoplePage = lazyWithRetry(() => import("@/pages/people"));
 const MeetingsPage = lazyWithRetry(() => import("@/pages/meetings"));
 const CompaniesPage = lazyWithRetry(() => import("@/pages/companies"));
 const BusinessModelPage = lazyWithRetry(() => import("@/pages/business-model"));
+const BusinessAdvantagePage = lazyWithRetry(() => import("@/pages/business-advantage"));
 const JobRolesPage = lazyWithRetry(() => import("@/pages/job-roles"));
 const CommsPage = lazyWithRetry(() => import("@/pages/comms"));
 const CalendarPage = lazyWithRetry(() => import("@/pages/calendar"));
@@ -297,6 +298,7 @@ function Router() {
         <Route path="/companies/:id" component={CompaniesPage} />
         <Route path="/companies" component={CompaniesPage} />
         <Route path="/business/model">{() => <RequirePermission permission="system:read"><BusinessModelPage /></RequirePermission>}</Route>
+        <Route path="/business/advantage" component={BusinessAdvantagePage} />
         <Route path="/business/roles">{() => <RequirePermission permission="system:read"><JobRolesPage /></RequirePermission>}</Route>
         <Route path="/email" component={CommsPage} />
         <Route path="/comms">{() => <Redirect to="/email" />}</Route>

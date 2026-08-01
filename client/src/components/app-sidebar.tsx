@@ -50,6 +50,7 @@ import {
   Workflow,
   Wrench,
   Zap,
+  type LucideIcon,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
@@ -62,6 +63,7 @@ import { useWellnessAlerts } from "@/hooks/use-wellness-alerts";
 import { useCommsActivity } from "@/hooks/use-comms-activity";
 import { useOrientationActivity } from "@/hooks/use-orientation-activity";
 import { useEnvActivity } from "@/hooks/use-env-activity";
+import { useProductComposition } from "@/hooks/use-product-composition";
 import { ActiveStatusSpinner, getStatusClasses, type NavDotLevel } from "./nav-dot";
 import { AgentOrb } from "@/components/agent-orb";
 import { VoiceEntranceOrb } from "@/components/voice-entrance-orb";
@@ -74,10 +76,12 @@ import {
 } from "@/components/ui/collapsible";
 import { useUiInteraction, useUiInteractionTarget } from "@/hooks/use-ui-interaction";
 import {
+  UI_INTERACTION_TARGET_ROUTES,
   getUiInteractionTargetHref,
   getUiInteractionTargetPermission,
   type UiInteractionTarget,
 } from "@shared/ui-interaction";
+import type { ResolvedProductComposition } from "@shared/models/product-composition";
 
 interface NavItem {
   title: string;
@@ -108,6 +112,94 @@ interface NavSection {
   label: string;
   defaultOpen: boolean;
   items: NavItem[];
+}
+
+const MOD_NAV_ICONS = {
+  Activity,
+  BookOpen,
+  Boxes,
+  Brain,
+  Briefcase,
+  BrainCircuit,
+  Calendar,
+  ClipboardList,
+  Clock,
+  DatabaseZap,
+  DollarSign,
+  FileText,
+  Gauge,
+  GitBranch,
+  Globe,
+  Hammer,
+  Heart,
+  Home,
+  Lightbulb,
+  LineChart,
+  Mail,
+  Megaphone,
+  MessagesSquare,
+  Newspaper,
+  Palette,
+  Plug,
+  Scale,
+  ScrollText,
+  Share2,
+  SlidersHorizontal,
+  Swords,
+  Target,
+  User,
+  Users,
+  Vault,
+  Waypoints,
+  Workflow,
+  Wrench,
+  Zap,
+} satisfies Record<string, LucideIcon>;
+
+function targetForRoute(path: string): UiInteractionTarget | null {
+  const entry = Object.entries(UI_INTERACTION_TARGET_ROUTES).find(([, value]) => value.href.split("?")[0] === path);
+  return entry ? entry[0] as UiInteractionTarget : null;
+}
+
+function mergeResolvedNavigation(
+  staticSections: NavSection[],
+  composition: ResolvedProductComposition | undefined,
+): NavSection[] {
+  if (!composition) return staticSections;
+
+  const routeById = new Map(composition.routes.map((route) => [route.id, route]));
+  const sections = staticSections.map((section) => ({ ...section, items: [...section.items] }));
+
+  for (const contribution of composition.navigation) {
+    const route = routeById.get(contribution.routeId);
+    const icon = MOD_NAV_ICONS[contribution.iconKey as keyof typeof MOD_NAV_ICONS];
+    const target = route ? targetForRoute(route.path) : null;
+    if (!route || !icon || !target) continue;
+
+    let section = sections.find((candidate) => candidate.label === contribution.section);
+    if (!section) {
+      section = { label: contribution.section, defaultOpen: false, items: [] };
+      sections.push(section);
+    }
+    if (section.items.some((item) => item.url === route.path)) continue;
+
+    const lowerRoutePaths = new Set(
+      composition.navigation
+        .filter((item) => item.section === contribution.section && item.order < contribution.order)
+        .map((item) => routeById.get(item.routeId)?.path)
+        .filter((path): path is string => !!path),
+    );
+    const insertionIndex = section.items.filter((item) => lowerRoutePaths.has(item.url)).length;
+    section.items.splice(insertionIndex, 0, {
+      title: contribution.label,
+      target,
+      url: route.path,
+      icon,
+      permission: getUiInteractionTargetPermission(target),
+    });
+  }
+
+  return sections;
 }
 
 const navSections: NavSection[] = [
@@ -414,6 +506,11 @@ function SemanticNavButton({ item, onNavigate, className, children }: SemanticNa
 export function NavPage() {
   const [location] = useLocation();
   const { hasPermission } = useAuth();
+  const { data: productComposition } = useProductComposition();
+  const resolvedNavSections = useMemo(
+    () => mergeResolvedNavigation(navSections, productComposition),
+    [productComposition],
+  );
   const { guidedTarget, invoke } = useUiInteraction();
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -469,7 +566,7 @@ export function NavPage() {
       .split(/\s+/)
       .filter(Boolean);
 
-    return navSections
+    return resolvedNavSections
       .map((section) => {
         const items = section.items.filter((item) => {
           // Permission check
@@ -482,25 +579,25 @@ export function NavPage() {
         return { ...section, items };
       })
       .filter((section) => section.items.length > 0);
-  }, [hasPermission, searchQuery]);
+  }, [hasPermission, resolvedNavSections, searchQuery]);
 
   // Guided targets own their discoverability while the command is active.
   const guidedSectionLabel = useMemo(() => {
     if (!guidedTarget) return null;
-    return navSections.find((section) =>
+    return resolvedNavSections.find((section) =>
       section.items.some((item) => item.target === guidedTarget),
     )?.label ?? null;
-  }, [guidedTarget]);
+  }, [guidedTarget, resolvedNavSections]);
   const isSearching = searchQuery.trim().length > 0;
   const visibleSections = useMemo(() => {
     if (!guidedTarget || !guidedSectionLabel) return filteredSections;
-    const section = navSections.find((candidate) => candidate.label === guidedSectionLabel);
+    const section = resolvedNavSections.find((candidate) => candidate.label === guidedSectionLabel);
     if (!section) return filteredSections;
     const items = section.items.filter((item) =>
       item.target === guidedTarget && (!item.permission || hasPermission(item.permission)),
     );
     return items.length > 0 ? [{ ...section, items }] : filteredSections;
-  }, [filteredSections, guidedSectionLabel, guidedTarget, hasPermission]);
+  }, [filteredSections, guidedSectionLabel, guidedTarget, hasPermission, resolvedNavSections]);
 
   return (
     <div
