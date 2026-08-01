@@ -16,6 +16,7 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { MemorySourceIcon } from "@/components/memory/memory-source-icon";
 import { recordBrowserTelemetry } from "@/lib/browser-telemetry";
+import type { MemoryGraphSettings } from "@shared/memory-graph-settings";
 
 export interface MemoryGraph3DNode {
   id: number;
@@ -53,6 +54,7 @@ interface MemoryGraph3DProps {
   selectedNodeId: number | null;
   highlightedNodeIds: ReadonlySet<number>;
   activityEnabled: boolean;
+  settings: MemoryGraphSettings;
   nodeDetail?: MemoryGraph3DNodeDetail | null;
   onNodeSelect: (nodeId: number) => void;
   onNodeHover: (nodeId: number | null) => void;
@@ -178,11 +180,11 @@ const ACTIVITY_BEAD_RADIUS = 1.1;
 // brighter), while the oldest keep a clearly visible floor instead of dropping to
 // near-invisible. Recency differences stay legible without the field going dark.
 const RECENCY_OPACITY_FLOOR = 0.22;
-const RECENCY_OPACITY_CEILING = 0.85;
 
-function recencyToVisibility(recency: number): number {
+function recencyToVisibility(recency: number, brightnessCeiling: number): number {
   const heat = THREE.MathUtils.clamp(recency, 0, 1);
-  return RECENCY_OPACITY_FLOOR + (RECENCY_OPACITY_CEILING - RECENCY_OPACITY_FLOOR) * Math.pow(heat, 1.4);
+  const ceiling = THREE.MathUtils.clamp(brightnessCeiling, RECENCY_OPACITY_FLOOR, 1);
+  return RECENCY_OPACITY_FLOOR + (ceiling - RECENCY_OPACITY_FLOOR) * Math.pow(heat, 1.4);
 }
 
 const GRAPH_LABEL_MAX_WORDS = 3;
@@ -291,7 +293,11 @@ function buildGraphAdjacency(sceneNodes: SceneNode[], simulationLinks: SceneLink
   return { neighborsByNodeId, simulationLinksByNodeId, renderedLinkIndicesByNodeId };
 }
 
-function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[]) {
+function buildSceneGraph(
+  nodes: MemoryGraph3DNode[],
+  links: MemoryGraph3DLink[],
+  settings: MemoryGraphSettings,
+) {
   const degrees = nodes.map((node) => node.degree);
   const minDegree = Math.min(...degrees);
   const maxDegree = Math.max(...degrees);
@@ -307,9 +313,8 @@ function buildSceneGraph(nodes: MemoryGraph3DNode[], links: MemoryGraph3DLink[])
       vx: 0,
       vy: 0,
       vz: 0,
-      // Smallest nodes doubled (2 -> 4) without moving the largest: floor + range
-      // still sum to 40, so low-degree claims read at distance instead of vanishing.
-      radius: 4 + Math.pow(degreeRatio, 0.6) * 36,
+      radius: settings.smallestNode
+        + Math.pow(degreeRatio, 0.6) * (settings.largestNode - settings.smallestNode),
     };
   });
   const nodeIndex = new Map(sceneNodes.map((node, index) => [node.id, index]));
@@ -410,9 +415,14 @@ function weightedActivityPath(paths: ActivityPath[]): ActivityPath | null {
 // spacing keeps the stream organic rather than metronomic. Density stays uniform in
 // time; per-node concentration is handled entirely by weighted selection, not by
 // throttling the stream (throttling on the last node's recency created idle gaps).
-function activityEmitGapMs() {
-  const poissonGap = -Math.log(1 - Math.random()) * ACTIVITY_MEAN_EMIT_GAP_MS;
-  return THREE.MathUtils.clamp(poissonGap, ACTIVITY_MIN_EMIT_GAP_MS, ACTIVITY_MAX_EMIT_GAP_MS);
+function activityEmitGapMs(pulseRate: number) {
+  const rate = Math.max(0.1, pulseRate);
+  const poissonGap = -Math.log(1 - Math.random()) * ACTIVITY_MEAN_EMIT_GAP_MS / rate;
+  return THREE.MathUtils.clamp(
+    poissonGap,
+    ACTIVITY_MIN_EMIT_GAP_MS / rate,
+    ACTIVITY_MAX_EMIT_GAP_MS / rate,
+  );
 }
 
 export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>(function MemoryGraph3D(
@@ -422,6 +432,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     selectedNodeId,
     highlightedNodeIds,
     activityEnabled,
+    settings,
     nodeDetail,
     onNodeSelect,
     onNodeHover,
@@ -503,7 +514,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     if (!host || nodes.length === 0) return;
 
     const effectStartedAt = performance.now();
-    const { sceneNodes, simulationLinks, renderedLinks, nodeIndex, adjacency } = buildSceneGraph(nodes, links);
+    const { sceneNodes, simulationLinks, renderedLinks, nodeIndex, adjacency } = buildSceneGraph(nodes, links, settings);
     const sceneNodeById = new Map(sceneNodes.map((node) => [node.id, node]));
     const isLargeGraph = sceneNodes.length >= LARGE_GRAPH_THRESHOLD;
     const scene = new THREE.Scene();
@@ -552,7 +563,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const impact = new Float32Array(sceneNodes.length);
     const tints = new Float32Array(sceneNodes.length * 3);
     sceneNodes.forEach((node, index) => {
-      visibility[index] = recencyToVisibility(node.recency);
+      visibility[index] = recencyToVisibility(node.recency, settings.recencyBrightness);
       (node.pendingDeletion ? deletionColor : nodeBaseColors[index]).toArray(tints, index * 3);
     });
     nodeGeometry.setAttribute("aVisibility", new THREE.InstancedBufferAttribute(visibility, 1));
@@ -796,7 +807,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function syncFocusedLinkGeometry() {
       focusedSimulationLinks.forEach((link, focusedLinkIndex) => {
-        writeLinkCurve(focusedLinkPositions, link, focusedLinkIndex);
+        writeLinkCurve(focusedLinkPositions, link, focusedLinkIndex, false, settings.linkBendFactor);
         const normalizedStrength = THREE.MathUtils.clamp(link.strength, 0, 1);
         const brightness = 0.55 + Math.pow(normalizedStrength, 1.25) * 0.45;
         for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
@@ -858,7 +869,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           && focusIndex !== index
           && !focusNeighborIndices.has(index);
         nodeLinkVisibility[index] = distanceVisibility
-          * recencyToVisibility(node.recency)
+          * recencyToVisibility(node.recency, settings.recencyBrightness)
           * (unrelated ? 0.62 : 1);
       });
 
@@ -890,7 +901,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         tint.toArray(tints, index * 3);
         visibility[index] = isSelected
           ? 1
-          : recencyToVisibility(node.recency) * (unrelated ? 0.62 : 1);
+          : recencyToVisibility(node.recency, settings.recencyBrightness) * (unrelated ? 0.62 : 1);
       });
       syncNodeMatrices();
       (nodeGeometry.getAttribute("aVisibility") as THREE.InstancedBufferAttribute).needsUpdate = true;
@@ -1043,7 +1054,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           ACTIVITY_MAX_NODE_COOLDOWN_MS,
           ACTIVITY_MIN_NODE_COOLDOWN_MS,
           heat,
-        );
+        ) / Math.max(0.1, settings.pulseRate);
         return now - (lastPulseAtByNodeIndex.get(path.destinationIndex) ?? Number.NEGATIVE_INFINITY) >= cooldown;
       });
     }
@@ -1079,7 +1090,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           return;
         }
         if (activityFrame === 0) activityFrame = requestAnimationFrame(animateActivity);
-        scheduleNextActivity(activityEmitGapMs());
+        scheduleNextActivity(activityEmitGapMs(settings.pulseRate));
       }, delayMs);
     }
 
@@ -1354,11 +1365,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           const strength = Math.max(0.1, link.strength || 0.5);
           return from.radius + to.radius + 38 + (1 - strength) * 62;
         })
-        .strength((link) => 0.08 + Math.max(0.1, link.strength || 0.5) * 0.12)
+        .strength((link) => (
+          0.08 + Math.max(0.1, link.strength || 0.5) * 0.12
+        ) * settings.linkAttractionFactor)
         .iterations(1);
       simulation = forceSimulation(sceneNodes, 3)
         .force("charge", forceManyBody<SceneNode>()
-          .strength((node) => -(135 + Math.sqrt(node.degree) * 9))
+          .strength((node) => -(135 + Math.sqrt(node.degree) * 9) * settings.nodeRepulsionFactor)
           .theta(0.76)
           .distanceMin(2)
           .distanceMax(520))
@@ -1413,6 +1426,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         type: "init",
         nodes: sceneNodes.map((node) => ({ id: node.id, degree: node.degree, radius: node.radius, x: node.x, y: node.y, z: node.z })),
         links: simulationLinks.map((link) => ({ id: link.id, fromId: link.fromId, toId: link.toId, strength: link.strength })),
+        settings: {
+          linkAttractionFactor: settings.linkAttractionFactor,
+          nodeRepulsionFactor: settings.nodeRepulsionFactor,
+        },
       });
     } else {
       startMainThreadSimulation();
@@ -1501,7 +1518,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [links, nodes]);
+  }, [links, nodes, settings]);
 
   return (
     <div ref={hostRef} className="relative h-full w-full overflow-hidden bg-background">

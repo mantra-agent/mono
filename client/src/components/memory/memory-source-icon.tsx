@@ -25,7 +25,18 @@ export interface MemoryGraphNodeTypeConfig {
   iconSource: string;
 }
 
-const MEMORY_GRAPH_NODE_TYPE_ORDER = ["people", "companies", "claims", "pages", "sessions", "meetings", "goals", "projects"];
+const MEMORY_GRAPH_NODE_TYPE_ORDER = [
+  "people",
+  "companies",
+  "claims",
+  "pages",
+  "sessions",
+  "meetings",
+  "interactions",
+  "goals",
+  "projects",
+  "plans",
+];
 
 const MEMORY_GRAPH_NODE_TYPE_BY_SOURCE: Record<string, MemoryGraphNodeTypeConfig> = {
   person: { id: "people", label: "People", iconSource: "person" },
@@ -39,8 +50,10 @@ const MEMORY_GRAPH_NODE_TYPE_BY_SOURCE: Record<string, MemoryGraphNodeTypeConfig
   library_page: { id: "pages", label: "Pages", iconSource: "page" },
   session: { id: "sessions", label: "Sessions", iconSource: "session" },
   meeting: { id: "meetings", label: "Meetings", iconSource: "meeting" },
+  interaction: { id: "interactions", label: "Interactions", iconSource: "interaction" },
   goal: { id: "goals", label: "Goals", iconSource: "goal" },
   project: { id: "projects", label: "Projects", iconSource: "project" },
+  plan: { id: "plans", label: "Plans", iconSource: "plan" },
 };
 
 function humanizeNodeType(source: string): string {
