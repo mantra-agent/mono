@@ -29,11 +29,19 @@ export interface MeetingIndexFilter {
   offset?: number;
 }
 
+/**
+ * Domain-owned participation role for Life Addressing graph edges. Derived from
+ * the canonical MeetingParticipant evidence, never a second stored source:
+ * calendar organizer > machine/manual speaker attribution > attendee.
+ */
+export type MeetingParticipantRole = "organizer" | "attendee" | "speaker";
+
 export interface MeetingIndexParticipant {
   key: string | null;
   name: string;
   email: string | null;
   personId: string | null;
+  role: MeetingParticipantRole;
   profileSummary: string | null;
   lastInteractionContext: string | null;
 }
@@ -62,6 +70,12 @@ export interface MeetingIndexRecord {
   calendarEvent: { accountId: string; calendarId: string; eventId: string } | null;
   participants: MeetingIndexParticipant[];
   artifacts: MeetingIndexArtifact[];
+  /**
+   * Recap distribution draft references. These are the copied `recap.draftIds`
+   * array projected as canonical `@email_draft` addresses by the Life Addressing
+   * graph; the meeting session remains the domain truth for the array itself.
+   */
+  recapDraftIds: string[];
 }
 
 export interface MeetingIndexCounts {
@@ -293,6 +307,18 @@ function participantIdentity(participant: MeetingParticipant): string {
     || participant.label.trim().toLowerCase();
 }
 
+/**
+ * Derive the Life Addressing participation role from canonical participant
+ * evidence. Calendar organizer wins; machine-diarized or owner-assigned speakers
+ * are speakers; everyone else is an attendee. This never introduces a new stored
+ * source — the meeting session remains the truth for calendarRole and source.
+ */
+function participantRole(participant: MeetingParticipant): MeetingParticipantRole {
+  if (participant.calendarRole === "organizer") return "organizer";
+  if (participant.source === "machine_diarization" || participant.source === "manual") return "speaker";
+  return "attendee";
+}
+
 function projectParticipants(
   session: FileSession,
   peopleById: Map<string, Person>,
@@ -313,6 +339,7 @@ function projectParticipants(
       name: person?.name ?? emailPerson?.name ?? participant.label,
       email,
       personId: person?.id ?? emailPerson?.id ?? null,
+      role: participantRole(participant),
       profileSummary: person ? meetingPersonSummary(person) : emailPerson?.summary ?? null,
       lastInteractionContext: person ? meetingInteractionContext(person.interactions ?? []) : emailPerson?.lastInteractionContext ?? null,
     });
@@ -453,6 +480,7 @@ async function projectRecords(snapshots: MeetingSessionSnapshot[]): Promise<Meet
       calendarEvent: calendarEventIdentity(session),
       participants: projectParticipants(session, peopleById, peopleByEmail),
       artifacts,
+      recapDraftIds: session.meeting?.recap?.draftIds ?? [],
     };
   });
 }

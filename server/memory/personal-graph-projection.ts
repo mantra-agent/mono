@@ -25,7 +25,7 @@ import { companyStorage } from "../company-storage";
 import { goalsService } from "../goals-service";
 import { fileProjectStorage } from "../file-storage/projects";
 import { chatFileStorage } from "../chat-file-storage";
-import { listMeetingGraphRecords, type MeetingIndexRecord } from "../meetings/meeting-index";
+import { meetingGraphAdapter } from "../meetings/meeting-graph-adapter";
 
 const log = createLogger("PersonalGraphProjection");
 
@@ -77,6 +77,7 @@ export interface PersonalGraphMetrics {
   pageCount: number;
   claimCount: number;
   occurrenceEdgeCount: number;
+  meetingEdgeCount: number;
   resolvedTargetCount: number;
   adapterQueryCount: number;
   payloadBytes: number;
@@ -181,7 +182,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   // Base seed: every visible live Library page (slim metadata only) plus vNext claims,
   // current work, meetings, and the whole-corpus authored occurrence edges. One query
   // per adapter; none scales with corpus size beyond its bounded row limit.
-  const [visiblePages, claims, currentGoalIndex, currentProjects, meetingRecords, occurrenceEdges] =
+  const [visiblePages, claims, currentGoalIndex, currentProjects, meetingProjection, occurrenceEdges] =
     await Promise.all([
       libraryFirst
         ? db
@@ -210,7 +211,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
         .orderBy(desc(memoryVnextClaims.createdAt)),
       goalsService.listAll(),
       fileProjectStorage.getProjects(),
-      listMeetingGraphRecords(),
+      meetingGraphAdapter.project(principal, { limit: 500 }),
       getLibraryCorpusOccurrenceEdges(principal, LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT),
     ]);
   adapterQueryCount += 6;
@@ -287,14 +288,6 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
     entityTitleByKey.set(key, project.title);
     entitySummaryByKey.set(key, project.description || `${project.status} project`);
     entityTimestampByKey.set(key, { createdAt: project.createdAt, updatedAt: project.updatedAt });
-  }
-  for (const meeting of meetingRecords) {
-    for (const participant of meeting.participants) {
-      if (!participant.personId) continue;
-      const key = `person:${participant.personId}`;
-      if (participant.name && !entityTitleByKey.has(key)) entityTitleByKey.set(key, participant.name);
-      if (participant.profileSummary && !entitySummaryByKey.has(key)) entitySummaryByKey.set(key, participant.profileSummary);
-    }
   }
 
   // Session source nodes (pages are all seeded; sessions are loaded only when cited).
@@ -413,37 +406,29 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   for (const goal of currentGoals) ensureEntityNode("goal", goal.id, goal.updatedAt);
   for (const project of currentProjectRows) ensureEntityNode("project", String(project.id), project.updatedAt);
 
-  // Meeting nodes and attendees; a session:<id> alias routes provenance to the meeting.
-  function ensureMeetingNode(meeting: MeetingIndexRecord): number {
-    const key = `meeting:${meeting.id}`;
-    const existing = nodeIdByAddress.get(key);
-    if (existing !== undefined) return existing;
-    const attendeeNames = meeting.participants.map((p) => p.name).filter(Boolean);
-    const attendeeSummary = attendeeNames.length > 0 ? `Meeting · ${attendeeNames.join(", ")}` : "Meeting";
+  // Domain adapter nodes are candidates with canonical addresses. The assembler
+  // owns conversion to the legacy client node shape and address-based merging.
+  for (const node of meetingProjection.nodes) {
+    const normalized = normalizeProtocolAddress(node.id);
+    if (normalized.outcome !== "valid") continue;
+    const key = `${normalized.type}:${normalized.id}`;
+    if (nodeIdByAddress.has(key)) continue;
     const nodeId = registerNode(key, {
       id: nextSyntheticNodeId--,
-      content: meeting.summary || attendeeSummary,
-      title: meeting.title,
-      summary: meeting.summary || attendeeSummary,
+      content: node.summary || node.label,
+      title: node.label,
+      summary: node.summary,
       layer: "long",
-      source: "meeting",
-      sourceId: meeting.id,
-      tags: ["meeting"],
+      source: sourceForAddressType(node.type),
+      sourceId: normalized.id,
+      tags: [node.type],
       graphed: true,
-      metadata: { graphStorage: "vnext", nodeKind: "meeting", reference: `@meeting:${meeting.id}`, botStatus: meeting.botStatus, transcriptCount: meeting.transcriptCount },
-      createdAt: serializeDate(meeting.startedAt),
-      updatedAt: serializeDate(meeting.endedAt || meeting.startedAt),
-      recency: computeNodeRecency(meeting.startedAt, meeting.endedAt),
+      metadata: { graphStorage: "vnext", nodeKind: "domain", nodeType: node.type, reference: node.id, adapterId: meetingGraphAdapter.id },
+      createdAt: null,
+      updatedAt: node.updatedAt ?? null,
+      recency: node.recency,
     });
-    nodeIdByAddress.set(`session:${meeting.id}`, nodeId);
-    return nodeId;
-  }
-  for (const meeting of meetingRecords) {
-    ensureMeetingNode(meeting);
-    for (const participant of meeting.participants) {
-      if (!participant.personId) continue;
-      ensureEntityNode("person", participant.personId, meeting.endedAt || meeting.startedAt);
-    }
+    if (normalized.type === "meeting") nodeIdByAddress.set(`session:${normalized.id}`, nodeId);
   }
 
   function ensureSessionNode(sourceId: string, createdAt?: Date | string | null): number | null {
@@ -489,6 +474,14 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
     if (normalized.type === "page") continue; // pages already seeded
     if (nodeIdByAddress.has(key)) continue;
     unresolvedTargets.add(edge.targetAddress);
+  }
+  // Every domain-adapter target is independently resolved below. Invalid legacy
+  // coordinates or copied provider IDs simply drop without creating an edge.
+  for (const edge of meetingProjection.edges) {
+    const normalized = normalizeProtocolAddress(edge.to);
+    if (normalized.outcome !== "valid") continue;
+    if (normalized.type === "page" || nodeIdByAddress.has(`${normalized.type}:${normalized.id}`)) continue;
+    unresolvedTargets.add(normalized.address);
   }
   const targetsToResolve = [...unresolvedTargets].slice(0, OCCURRENCE_TARGET_RESOLVE_LIMIT);
   const resolvedByAddress = new Map<string, AddressResolution>();
@@ -581,18 +574,27 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
     links.push({ id: nextSyntheticLinkId--, fromId, toId, relationship: "pursues_goal", strength: 1, createdAt: serializeDate(project.updatedAt), relationshipType: "project_goal" });
     structuralLinkCount++;
   }
-  for (const meeting of meetingRecords) {
-    const fromId = nodeIdByAddress.get(`meeting:${meeting.id}`);
-    if (fromId === undefined) continue;
-    const seenAttendee = new Set<string>();
-    for (const participant of meeting.participants) {
-      if (!participant.personId || seenAttendee.has(participant.personId)) continue;
-      seenAttendee.add(participant.personId);
-      const toId = nodeIdByAddress.get(`person:${participant.personId}`);
-      if (toId === undefined) continue;
-      links.push({ id: nextSyntheticLinkId--, fromId, toId, relationship: "has_attendee", strength: 1, createdAt: serializeDate(meeting.endedAt || meeting.startedAt), relationshipType: "meeting_attendee" });
-      structuralLinkCount++;
-    }
+  // Domain adapter edges are admitted only when both canonical endpoints survived
+  // independent principal-aware resolution. An edge can never grant visibility.
+  let meetingEdgeCount = 0;
+  for (const edge of meetingProjection.edges) {
+    const from = normalizeProtocolAddress(edge.from);
+    const to = normalizeProtocolAddress(edge.to);
+    if (from.outcome !== "valid" || to.outcome !== "valid") continue;
+    const fromId = nodeIdByAddress.get(`${from.type}:${from.id}`);
+    const toId = nodeIdByAddress.get(`${to.type}:${to.id}`);
+    if (fromId === undefined || toId === undefined || fromId === toId) continue;
+    links.push({
+      id: nextSyntheticLinkId--,
+      fromId,
+      toId,
+      relationship: edge.predicate,
+      strength: edge.weight,
+      createdAt: edge.updatedAt ?? null,
+      relationshipType: `adapter:${meetingGraphAdapter.id}`,
+    });
+    structuralLinkCount++;
+    meetingEdgeCount++;
   }
   // Authored page occurrence edges (page→page and page→resolved target). Never parses bodies.
   let occurrenceEdgeCount = 0;
@@ -623,6 +625,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
     pageCount: visiblePages.length,
     claimCount: claims.length,
     occurrenceEdgeCount,
+    meetingEdgeCount,
     resolvedTargetCount: resolvedByAddress.size,
     adapterQueryCount,
     payloadBytes: 0,
@@ -640,7 +643,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   log.info(
     `[personal-graph] libraryFirst=${libraryFirst} pages=${projection.pageCount} claims=${projection.claimCount} ` +
       `nodes=${projection.nodeCount} edges=${projection.edgeCount} occurrenceEdges=${occurrenceEdgeCount} ` +
-      `structural=${structuralLinkCount} resolvedTargets=${projection.resolvedTargetCount} ` +
+      `meetingEdges=${projection.meetingEdgeCount} structural=${structuralLinkCount} resolvedTargets=${projection.resolvedTargetCount} ` +
       `adapterQueries=${projection.adapterQueryCount} payloadKB=${(projection.payloadBytes / 1024).toFixed(1)} assemblyMs=${projection.assemblyMs}`,
   );
   eventBus.publish({
@@ -654,6 +657,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
       pageCount: projection.pageCount,
       payloadBytes: projection.payloadBytes,
       adapterQueryCount: projection.adapterQueryCount,
+      meetingEdgeCount: projection.meetingEdgeCount,
       level: projection.assemblyMs > 750 ? "warn" : "info",
     },
   });
