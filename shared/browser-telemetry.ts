@@ -8,6 +8,7 @@ export const BROWSER_TELEMETRY_EVENT_KINDS = [
   "long_task",
   "event_loop_responsiveness",
   "frame_contention",
+  "graph",
 ] as const;
 
 export type BrowserTelemetryEventKind = typeof BROWSER_TELEMETRY_EVENT_KINDS[number];
@@ -70,6 +71,15 @@ export const BROWSER_TELEMETRY_BUDGETS = {
   longTaskP95Ms: 250,
   eventLoopResponsivenessP95Ms: 250,
   frameContentionP95Ms: 120,
+  graph: {
+    snapshotWarmP95Ms: 300,
+    snapshotColdP95Ms: 750,
+    payloadKb: 250,
+    firstInteractiveDesktopMs: 1000,
+    firstInteractiveMobileMs: 1500,
+    initTaskMaxMs: 100,
+    frameP95Ms: 33,
+  },
 } as const;
 
 export interface BrowserTelemetryMetricSummary {

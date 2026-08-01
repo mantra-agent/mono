@@ -15,6 +15,7 @@ import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { MemorySourceIcon } from "@/components/memory/memory-source-icon";
+import { recordBrowserTelemetry } from "@/lib/browser-telemetry";
 
 export interface MemoryGraph3DNode {
   id: number;
@@ -501,6 +502,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const host = hostRef.current;
     if (!host || nodes.length === 0) return;
 
+    const effectStartedAt = performance.now();
     const { sceneNodes, simulationLinks, renderedLinks, nodeIndex, adjacency } = buildSceneGraph(nodes, links);
     const sceneNodeById = new Map(sceneNodes.map((node) => [node.id, node]));
     const isLargeGraph = sceneNodes.length >= LARGE_GRAPH_THRESHOLD;
@@ -730,7 +732,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       nodeMesh.instanceMatrix.needsUpdate = true;
     }
 
-    function writeLinkCurve(positions: Float32Array, link: SceneLink, linkIndex: number, captureActivityPath = false) {
+    function writeLinkCurve(positions: Float32Array, link: SceneLink, linkIndex: number, captureActivityPath = false, arcScale = 1) {
       const from = sceneNodes[link.fromIndex];
       const to = sceneNodes[link.toIndex];
       let dx = to.x - from.x;
@@ -761,7 +763,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const perpendicularLength = Math.max(0.001, Math.sqrt(
         perpendicularX * perpendicularX + perpendicularY * perpendicularY + perpendicularZ * perpendicularZ,
       ));
-      const arc = Math.min(14, 2 + distance * 0.05) * (0.75 + seededUnit(link.id, 21) * 0.5);
+      const arc = Math.min(14, 2 + distance * 0.05) * (0.75 + seededUnit(link.id, 21) * 0.5) * arcScale;
       const controlX = (fromX + toX) * 0.5 + perpendicularX / perpendicularLength * arc;
       const controlY = (fromY + toY) * 0.5 + perpendicularY / perpendicularLength * arc;
       const controlZ = (fromZ + toZ) * 0.5 + perpendicularZ / perpendicularLength * arc;
@@ -785,7 +787,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function syncLinkPositions() {
-      renderedLinks.forEach((link, linkIndex) => writeLinkCurve(linkPositions, link, linkIndex, true));
+      // Base edges render as straight lines in the single GPU pass; only the focused
+      // neighborhood keeps curved, brighter links (syncFocusedLinkGeometry uses arcScale=1).
+      renderedLinks.forEach((link, linkIndex) => writeLinkCurve(linkPositions, link, linkIndex, true, 0));
       const instanceStartAttr = linkGeometry.getAttribute("instanceStart");
       if (instanceStartAttr && "data" in instanceStartAttr) (instanceStartAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
     }
@@ -1319,40 +1323,100 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       syncActivityRunState();
     }
 
-    const linkForce = forceLink<SceneNode, SceneLink>(simulationLinks)
-      .id((node) => node.id)
-      .distance((link) => {
-        const from = sceneNodes[link.fromIndex];
-        const to = sceneNodes[link.toIndex];
-        const strength = Math.max(0.1, link.strength || 0.5);
-        return from.radius + to.radius + 38 + (1 - strength) * 62;
-      })
-      .strength((link) => 0.08 + Math.max(0.1, link.strength || 0.5) * 0.12)
-      .iterations(1);
-    const simulation: Simulation<SceneNode> = forceSimulation(sceneNodes, 3)
-      .force("charge", forceManyBody<SceneNode>()
-        .strength((node) => -(135 + Math.sqrt(node.degree) * 9))
-        .theta(0.76)
-        .distanceMin(2)
-        .distanceMax(520))
-      .force("links", linkForce)
-      .force("collision", forceCollide<SceneNode>((node) => node.radius + 8).strength(0.88).iterations(1))
-      .force("x", forceX<SceneNode>(0).strength(0.0015))
-      .force("y", forceY<SceneNode>(0).strength(0.0015))
-      .force("z", forceZ<SceneNode>(0).strength(0.0015))
-      .alphaMin(0.002)
-      .alphaDecay(1 - Math.pow(0.002, 1 / 520))
-      .velocityDecay(0.3);
+    let simulation: Simulation<SceneNode> | null = null;
+    let layoutWorker: Worker | null = null;
 
-    simulation.on("tick", () => {
+    // Apply a batch of worker-computed positions, then run the same per-tick sync the
+    // in-process simulation used. Bounded: one O(nodes) pass plus a coalesced render.
+    function applyLayoutPositions(positions: Float32Array) {
+      const count = Math.min(sceneNodes.length, Math.floor(positions.length / 3));
+      for (let index = 0; index < count; index += 1) {
+        const node = sceneNodes[index];
+        node.x = positions[index * 3];
+        node.y = positions[index * 3 + 1];
+        node.z = positions[index * 3 + 2];
+      }
       simulationTick += 1;
       syncNodeMatrices();
       syncLinkPositions();
       syncLinkVisibility();
       if (simulationTick % LABEL_POSITION_TICKS === 0) syncLabels();
       renderer.render(scene, camera);
-    });
-    simulation.on("end", requestRender);
+    }
+
+    // Fail-open fallback: run the force layout on the main thread exactly as before.
+    function startMainThreadSimulation() {
+      const linkForce = forceLink<SceneNode, SceneLink>(simulationLinks)
+        .id((node) => node.id)
+        .distance((link) => {
+          const from = sceneNodes[link.fromIndex];
+          const to = sceneNodes[link.toIndex];
+          const strength = Math.max(0.1, link.strength || 0.5);
+          return from.radius + to.radius + 38 + (1 - strength) * 62;
+        })
+        .strength((link) => 0.08 + Math.max(0.1, link.strength || 0.5) * 0.12)
+        .iterations(1);
+      simulation = forceSimulation(sceneNodes, 3)
+        .force("charge", forceManyBody<SceneNode>()
+          .strength((node) => -(135 + Math.sqrt(node.degree) * 9))
+          .theta(0.76)
+          .distanceMin(2)
+          .distanceMax(520))
+        .force("links", linkForce)
+        .force("collision", forceCollide<SceneNode>((node) => node.radius + 8).strength(0.88).iterations(1))
+        .force("x", forceX<SceneNode>(0).strength(0.0015))
+        .force("y", forceY<SceneNode>(0).strength(0.0015))
+        .force("z", forceZ<SceneNode>(0).strength(0.0015))
+        .alphaMin(0.002)
+        .alphaDecay(1 - Math.pow(0.002, 1 / 520))
+        .velocityDecay(0.3);
+      simulation.on("tick", () => {
+        simulationTick += 1;
+        syncNodeMatrices();
+        syncLinkPositions();
+        syncLinkVisibility();
+        if (simulationTick % LABEL_POSITION_TICKS === 0) syncLabels();
+        renderer.render(scene, camera);
+      });
+      simulation.on("end", requestRender);
+    }
+
+    // Compute layout off the main thread so the interactive init task stays bounded.
+    try {
+      layoutWorker = new Worker(new URL("../../lib/graph-layout-worker.ts", import.meta.url), { type: "module" });
+    } catch {
+      layoutWorker = null;
+    }
+    if (layoutWorker) {
+      layoutWorker.onmessage = (event: MessageEvent) => {
+        const data = event.data as { type?: string; positions?: Float32Array };
+        if (data?.type === "positions" && data.positions) {
+          applyLayoutPositions(data.positions);
+        } else if (data?.type === "end") {
+          if (data.positions) applyLayoutPositions(data.positions);
+          recordBrowserTelemetry({
+            kind: "graph",
+            name: "layout_settled",
+            value: Math.max(0, performance.now() - effectStartedAt),
+            unit: "ms",
+            metadata: { nodes: sceneNodes.length, links: renderedLinks.length, worker: true },
+          });
+          requestRender();
+        }
+      };
+      layoutWorker.onerror = () => {
+        layoutWorker?.terminate();
+        layoutWorker = null;
+        if (!simulation) startMainThreadSimulation();
+      };
+      layoutWorker.postMessage({
+        type: "init",
+        nodes: sceneNodes.map((node) => ({ id: node.id, degree: node.degree, radius: node.radius, x: node.x, y: node.y, z: node.z })),
+        links: simulationLinks.map((link) => ({ id: link.id, fromId: link.fromId, toId: link.toId, strength: link.strength })),
+      });
+    } else {
+      startMainThreadSimulation();
+    }
 
     function handleControlsChange() {
       syncCameraClippingPlanes(camera, controls.target);
@@ -1372,6 +1436,22 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     syncLinkPositions();
     fitCamera(camera, controls, sceneNodes);
     syncFocusNeighborhood();
+    // Durable performance instrumentation for the named budgets. The heavy force layout
+    // now runs in the worker, so this synchronous init task should stay under budget.
+    recordBrowserTelemetry({
+      kind: "graph",
+      name: "init_task",
+      value: Math.max(0, performance.now() - effectStartedAt),
+      unit: "ms",
+      metadata: { nodes: sceneNodes.length, links: renderedLinks.length },
+    });
+    recordBrowserTelemetry({
+      kind: "graph",
+      name: "first_interactive",
+      value: Math.max(0, performance.now() - effectStartedAt),
+      unit: "ms",
+      bucket: host.clientWidth < ACTIVITY_MOBILE_BREAKPOINT_PX ? "mobile" : "desktop",
+    });
     runtimeRef.current = {
       camera,
       controls,
@@ -1388,9 +1468,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     if (activityIsEnabled) scheduleNextActivity(600);
 
     return () => {
-      simulation.stop();
-      simulation.on("tick", null);
-      simulation.on("end", null);
+      if (layoutWorker) {
+        layoutWorker.terminate();
+        layoutWorker = null;
+      }
+      if (simulation) {
+        simulation.stop();
+        simulation.on("tick", null);
+        simulation.on("end", null);
+      }
       if (renderFrame !== 0) cancelAnimationFrame(renderFrame);
       if (pointerFrame !== 0) cancelAnimationFrame(pointerFrame);
       if (activityFrame !== 0) cancelAnimationFrame(activityFrame);

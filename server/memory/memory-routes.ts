@@ -35,6 +35,7 @@ import { chatFileStorage } from "../chat-file-storage";
 import { listMeetingGraphRecords, type MeetingIndexRecord } from "../meetings/meeting-index";
 import { getLibraryAuthoredOccurrences, getLibraryReferenceNeighborhood } from "../library-reference-index";
 import { normalizeProtocolAddress } from "@shared/life-addressing";
+import { assemblePersonalGraph, libraryFirstGraphEnabled } from "./personal-graph-projection";
 
 const log = createLogger("MemoryRoutes");
 
@@ -312,7 +313,24 @@ function maxTimestamp(
   return latestMs > 0 ? new Date(latestMs) : null;
 }
 
-async function handleGetVnextGraph(_req: Request, res: Response): Promise<void> {
+async function handleGetVnextGraph(req: Request, res: Response): Promise<void> {
+  // Library-first bounded projection is the canonical read path. LIBRARY_FIRST_GRAPH_ENABLED=false
+  // rolls back to the retained claim-first assembler below without a redeploy.
+  if (!libraryFirstGraphEnabled()) {
+    return handleGetVnextGraphLegacy(req, res);
+  }
+  try {
+    const principal = getCurrentPrincipalOrSystem();
+    const projection = await assemblePersonalGraph(principal);
+    res.json(projection);
+  } catch (error: unknown) {
+    log.error(`[personal-graph] graph failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);
+    res.status(500).json({ error: errorMessage(error) });
+  }
+}
+
+// Retained claim-first assembly, wired as the LIBRARY_FIRST_GRAPH_ENABLED=false rollback path.
+async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<void> {
   try {
     const principal = getCurrentPrincipalOrSystem();
     const claimScopeColumns = {
