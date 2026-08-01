@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import { db, pool } from "./db";
+import { db, pool, runWithDatabaseTransaction } from "./db";
 import { eq, and, desc, asc } from "drizzle-orm";
 import {
   decisions,
@@ -9,14 +9,14 @@ import {
   type InsertDecision,
   type DecisionUpdate,
   type InsertDecisionUpdate,
-  type DecisionLink,
-  type InsertDecisionLink,
   type DecisionLinkTargetType,
   type DecisionStatus,
   type DecisionTrafficLight,
 } from "@shared/schema";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { createAddressLink, listAddressLinks, retireAddressLink } from "./life-addressing-storage";
+import { normalizeProtocolAddress, type AddressLink } from "@shared/life-addressing";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
 const log = createLogger("DecisionsStorage");
@@ -56,6 +56,59 @@ export type DecisionUpdatePatch = Partial<Omit<InsertDecision, "trafficLight" | 
   status?: DecisionStatus;
 };
 
+export const DECISION_LINK_PREDICATES = ["relates_to", "governs", "evidence_for", "triggered_by", "produced"] as const;
+export type DecisionLinkPredicate = typeof DECISION_LINK_PREDICATES[number];
+
+export interface DecisionAddressLink {
+  id: string;
+  decisionId: string;
+  targetType: string;
+  targetId: string;
+  targetAddress: string;
+  predicate: DecisionLinkPredicate;
+  createdAt: Date;
+  source: "address_link" | "compatibility";
+}
+
+export interface AddDecisionLinkInput {
+  decisionId: string;
+  targetAddress?: string;
+  targetType?: string;
+  targetId?: string;
+  predicate?: DecisionLinkPredicate;
+}
+
+function decisionLinkCompatibilityEnabled(): boolean {
+  return process.env.DECISION_LINKS_COMPATIBILITY_ENABLED !== "false";
+}
+
+function decisionTargetAddress(input: AddDecisionLinkInput): string {
+  const candidate = input.targetAddress ?? (input.targetType && input.targetId ? `@${input.targetType}:${input.targetId}` : "");
+  const normalized = normalizeProtocolAddress(candidate);
+  if (normalized.outcome !== "valid") throw Object.assign(new Error("Decision link target must be a canonical address"), { status: 400 });
+  return normalized.address;
+}
+
+function decisionAddressLink(decisionId: string, link: AddressLink): DecisionAddressLink | null {
+  const target = normalizeProtocolAddress(link.targetAddress);
+  if (target.outcome !== "valid" || !(DECISION_LINK_PREDICATES as readonly string[]).includes(link.predicate)) return null;
+  return {
+    id: link.id,
+    decisionId,
+    targetType: target.type,
+    targetId: target.id,
+    targetAddress: target.address,
+    predicate: link.predicate as DecisionLinkPredicate,
+    createdAt: new Date(link.createdAt),
+    source: "address_link",
+  };
+}
+
+async function indexDecision(principal: ReturnType<typeof getCurrentPrincipalOrSystem>, decision: Decision): Promise<void> {
+  const { indexDecisionReferences } = await import("./decision-reference-index");
+  await indexDecisionReferences(principal, decision);
+}
+
 export class DecisionsStorage {
   private async requireWritableDecision(decisionId: string): Promise<Decision> {
     const [decision] = await db.select().from(decisions)
@@ -84,18 +137,26 @@ export class DecisionsStorage {
 
   async createDecision(data: InsertDecision): Promise<Decision> {
     return autoHeal(async () => {
-      const [row] = await db.insert(decisions).values({ ...data, ...ownedInsertValues(getCurrentPrincipalOrSystem(), decisionScopeColumns) }).returning();
-      log.debug(`createDecision id=${row.id} title="${row.title}"`);
-      return row;
+      const principal = getCurrentPrincipalOrSystem();
+      return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+        const [row] = await tx.insert(decisions).values({ ...data, ...ownedInsertValues(principal, decisionScopeColumns) }).returning();
+        await indexDecision(principal, row);
+        log.debug(`createDecision id=${row.id} title="${row.title}"`);
+        return row;
+      }));
     });
   }
 
   async updateDecision(id: string, updates: DecisionUpdatePatch): Promise<Decision | undefined> {
     return autoHeal(async () => {
-      const patch: Record<string, unknown> = { ...updates, updatedAt: new Date() };
-      const [row] = await db.update(decisions).set(patch).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), decisionScopeColumns, eq(decisions.id, id))).returning();
-      log.debug(`updateDecision id=${id} found=${!!row} fields=${Object.keys(updates).join(",")}`);
-      return row;
+      const principal = getCurrentPrincipalOrSystem();
+      return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+        const patch: Record<string, unknown> = { ...updates, updatedAt: new Date() };
+        const [row] = await tx.update(decisions).set(patch).where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, id))).returning();
+        if (row) await indexDecision(principal, row);
+        log.debug(`updateDecision id=${id} found=${!!row} fields=${Object.keys(updates).join(",")}`);
+        return row;
+      }));
     });
   }
 
@@ -142,70 +203,203 @@ export class DecisionsStorage {
 
   async addUpdate(data: InsertDecisionUpdate): Promise<DecisionUpdate> {
     return autoHeal(async () => {
-      await this.requireWritableDecision(data.decisionId);
-      const [row] = await db.insert(decisionUpdates).values(data).returning();
-      await db.update(decisions).set({ updatedAt: new Date() }).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), decisionScopeColumns, eq(decisions.id, data.decisionId)));
-      return row;
+      const principal = getCurrentPrincipalOrSystem();
+      return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+        await this.requireWritableDecision(data.decisionId);
+        const [row] = await tx.insert(decisionUpdates).values(data).returning();
+        const [decision] = await tx.update(decisions).set({ updatedAt: new Date() })
+          .where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, data.decisionId))).returning();
+        if (decision) await indexDecision(principal, decision);
+        return row;
+      }));
     });
   }
 
   async editUpdate(id: string, content: string): Promise<DecisionUpdate | undefined> {
     return autoHeal(async () => {
-      const [existing] = await db.select().from(decisionUpdates).where(eq(decisionUpdates.id, id)).limit(1);
-      if (!existing) return undefined;
-      await this.requireWritableDecision(existing.decisionId);
-      const [row] = await db.update(decisionUpdates).set({ content }).where(eq(decisionUpdates.id, id)).returning();
-      await db.update(decisions).set({ updatedAt: new Date() }).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), decisionScopeColumns, eq(decisions.id, existing.decisionId)));
-      return row;
+      const principal = getCurrentPrincipalOrSystem();
+      return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+        const [existing] = await tx.select().from(decisionUpdates).where(eq(decisionUpdates.id, id)).limit(1);
+        if (!existing) return undefined;
+        await this.requireWritableDecision(existing.decisionId);
+        const [row] = await tx.update(decisionUpdates).set({ content }).where(eq(decisionUpdates.id, id)).returning();
+        const [decision] = await tx.update(decisions).set({ updatedAt: new Date() })
+          .where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, existing.decisionId))).returning();
+        if (decision) await indexDecision(principal, decision);
+        return row;
+      }));
     });
   }
 
   async deleteUpdate(id: string): Promise<boolean> {
     return autoHeal(async () => {
-      const [existing] = await db.select().from(decisionUpdates).where(eq(decisionUpdates.id, id)).limit(1);
-      if (!existing) return false;
-      await this.requireWritableDecision(existing.decisionId);
-      const result = await db.delete(decisionUpdates).where(eq(decisionUpdates.id, id)).returning();
-      return result.length > 0;
+      const principal = getCurrentPrincipalOrSystem();
+      return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+        const [existing] = await tx.select().from(decisionUpdates).where(eq(decisionUpdates.id, id)).limit(1);
+        if (!existing) return false;
+        await this.requireWritableDecision(existing.decisionId);
+        const result = await tx.delete(decisionUpdates).where(eq(decisionUpdates.id, id)).returning();
+        const [decision] = await tx.update(decisions).set({ updatedAt: new Date() })
+          .where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, existing.decisionId))).returning();
+        if (decision) await indexDecision(principal, decision);
+        return result.length > 0;
+      }));
     });
   }
 
-  async listLinks(decisionId: string): Promise<DecisionLink[]> {
+  async listLinks(decisionId: string): Promise<DecisionAddressLink[]> {
     return autoHeal(async () => {
       const decision = await this.getDecision(decisionId);
       if (!decision) return [];
-      return db.select().from(decisionLinks).where(eq(decisionLinks.decisionId, decisionId)).orderBy(asc(decisionLinks.createdAt));
+      const canonicalPage = await listAddressLinks(getCurrentPrincipalOrSystem(), {
+        sourceAddress: `@decision:${decisionId}`,
+        lifecycle: "active",
+        limit: 500,
+      });
+      const canonical = canonicalPage.items.flatMap(link => {
+        const projected = decisionAddressLink(decisionId, link);
+        return projected ? [projected] : [];
+      });
+      if (!decisionLinkCompatibilityEnabled()) return canonical;
+
+      const seen = new Set(canonical.map(link => `${link.targetAddress}:${link.predicate}`));
+      const legacy = await db.select().from(decisionLinks)
+        .where(eq(decisionLinks.decisionId, decisionId)).orderBy(asc(decisionLinks.createdAt));
+      let migrated = 0;
+      let unresolved = 0;
+      for (const link of legacy) {
+        const target = normalizeProtocolAddress(`@${link.targetType}:${link.targetId}`);
+        if (target.outcome !== "valid" || seen.has(`${target.address}:relates_to`)) continue;
+        try {
+          const created = await createAddressLink(getCurrentPrincipalOrSystem(), {
+            sourceAddress: `@decision:${decisionId}`,
+            targetAddress: target.address,
+            predicate: "relates_to",
+            createdBy: "decision_legacy_migration",
+            idempotencyKey: `decision:${decisionId}:relates_to:${target.address}`,
+          });
+          const projected = decisionAddressLink(decisionId, created);
+          if (projected) {
+            canonical.push(projected);
+            seen.add(`${projected.targetAddress}:${projected.predicate}`);
+            await pool.query("UPDATE decision_links SET address_link_id = $1 WHERE id = $2 AND address_link_id IS NULL", [created.id, link.id]);
+            migrated += 1;
+            continue;
+          }
+        } catch {
+          unresolved += 1;
+        }
+        canonical.push({
+          id: link.id,
+          decisionId,
+          targetType: target.type,
+          targetId: target.id,
+          targetAddress: target.address,
+          predicate: "relates_to",
+          createdAt: link.createdAt,
+          source: "compatibility",
+        });
+      }
+      if (migrated > 0) {
+        log.info(JSON.stringify({ event: "decision_links.shadow_migration", migrated, unresolved, legacyCount: legacy.length }));
+      } else if (unresolved > 0) {
+        log.warn(JSON.stringify({ event: "decision_links.shadow_migration_degraded", migrated, unresolved, legacyCount: legacy.length }));
+      }
+      return canonical;
     });
   }
 
-  async listLinksForTarget(targetType: DecisionLinkTargetType, targetId: string): Promise<DecisionLink[]> {
+  async listLinksForTarget(targetType: DecisionLinkTargetType, targetId: string): Promise<DecisionAddressLink[]> {
     return autoHeal(async () => {
-      const links = await db.select().from(decisionLinks).where(and(eq(decisionLinks.targetType, targetType), eq(decisionLinks.targetId, targetId)));
-      const visible: DecisionLink[] = [];
-      for (const link of links) if (await this.getDecision(link.decisionId)) visible.push(link);
-      return visible;
+      const targetAddress = decisionTargetAddress({ decisionId: "lookup", targetType, targetId });
+      const canonicalPage = await listAddressLinks(getCurrentPrincipalOrSystem(), {
+        targetAddress,
+        lifecycle: "active",
+        limit: 500,
+      });
+      const canonical: DecisionAddressLink[] = [];
+      for (const link of canonicalPage.items) {
+        const source = normalizeProtocolAddress(link.sourceAddress);
+        if (source.outcome !== "valid" || source.type !== "decision") continue;
+        const projected = decisionAddressLink(source.id, link);
+        if (projected) canonical.push(projected);
+      }
+      if (!decisionLinkCompatibilityEnabled()) return canonical;
+      const seen = new Set(canonical.map(link => link.decisionId));
+      const legacy = await db.select().from(decisionLinks)
+        .where(and(eq(decisionLinks.targetType, targetType), eq(decisionLinks.targetId, targetId)));
+      for (const link of legacy) {
+        if (seen.has(link.decisionId) || !(await this.getDecision(link.decisionId))) continue;
+        canonical.push({
+          id: link.id,
+          decisionId: link.decisionId,
+          targetType,
+          targetId,
+          targetAddress,
+          predicate: "relates_to",
+          createdAt: link.createdAt,
+          source: "compatibility",
+        });
+      }
+      return canonical;
     });
   }
 
-  async addLink(data: InsertDecisionLink): Promise<DecisionLink> {
+  async addLink(data: AddDecisionLinkInput): Promise<DecisionAddressLink> {
     return autoHeal(async () => {
+      const principal = getCurrentPrincipalOrSystem();
       await this.requireWritableDecision(data.decisionId);
-      const [row] = await db.insert(decisionLinks).values(data).onConflictDoNothing().returning();
-      if (row) return row;
-      const [existing] = await db.select().from(decisionLinks).where(and(
-        eq(decisionLinks.decisionId, data.decisionId),
-        eq(decisionLinks.targetType, data.targetType),
-        eq(decisionLinks.targetId, data.targetId),
-      ));
-      return existing;
+      const targetAddress = decisionTargetAddress(data);
+      const predicate = data.predicate ?? "relates_to";
+      if (!(DECISION_LINK_PREDICATES as readonly string[]).includes(predicate)) {
+        throw Object.assign(new Error(`Decision link predicate must be one of: ${DECISION_LINK_PREDICATES.join(", ")}`), { status: 400 });
+      }
+      const created = await createAddressLink(principal, {
+        sourceAddress: `@decision:${data.decisionId}`,
+        targetAddress,
+        predicate,
+        createdBy: "decision",
+        idempotencyKey: `decision:${data.decisionId}:${predicate}:${targetAddress}`,
+      });
+      const projected = decisionAddressLink(data.decisionId, created);
+      if (!projected) throw new Error("Decision address link projection failed");
+
+      if (decisionLinkCompatibilityEnabled()) {
+        const target = normalizeProtocolAddress(targetAddress);
+        if (target.outcome === "valid" && (decisionLinkTargetTypes as readonly string[]).includes(target.type)) {
+          await db.insert(decisionLinks).values({
+            decisionId: data.decisionId,
+            targetType: target.type as DecisionLinkTargetType,
+            targetId: target.id,
+          }).onConflictDoNothing();
+        }
+      }
+      return projected;
     });
   }
 
   async deleteLink(id: string): Promise<boolean> {
     return autoHeal(async () => {
-      const [existing] = await db.select().from(decisionLinks).where(eq(decisionLinks.id, id)).limit(1);
-      if (!existing) return false;
-      await this.requireWritableDecision(existing.decisionId);
+      const principal = getCurrentPrincipalOrSystem();
+      try {
+        const retired = await retireAddressLink(principal, id);
+        const source = normalizeProtocolAddress(retired.sourceAddress);
+        const target = normalizeProtocolAddress(retired.targetAddress);
+        if (decisionLinkCompatibilityEnabled() && source.outcome === "valid" && source.type === "decision" && target.outcome === "valid") {
+          await db.delete(decisionLinks).where(and(
+            eq(decisionLinks.decisionId, source.id),
+            eq(decisionLinks.targetType, target.type),
+            eq(decisionLinks.targetId, target.id),
+          ));
+        }
+        return true;
+      } catch (error) {
+        if ((error as { status?: number }).status !== 404 || !decisionLinkCompatibilityEnabled()) throw error;
+      }
+
+      const [legacy] = await db.select().from(decisionLinks).where(eq(decisionLinks.id, id)).limit(1);
+      if (!legacy) return false;
+      await this.requireWritableDecision(legacy.decisionId);
       const result = await db.delete(decisionLinks).where(eq(decisionLinks.id, id)).returning();
       return result.length > 0;
     });

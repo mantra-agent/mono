@@ -6087,7 +6087,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const {
       decisionStatuses,
       decisionTrafficLights,
-      decisionLinkTargetTypes,
     } = await import("@shared/schema");
     type DecisionRow = Awaited<ReturnType<typeof decisionsStorage.getDecision>>;
     type DecisionFull = NonNullable<DecisionRow>;
@@ -6134,8 +6133,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       trafficLight?: string;
       content?: string;
       updateId?: string;
+      targetAddress?: string;
       targetType?: string;
       targetId?: string | number;
+      predicate?: "relates_to" | "governs" | "evidence_for" | "triggered_by" | "produced";
       linkId?: string;
     };
     const a = args as DecisionsArgs;
@@ -6249,19 +6250,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
         case "add_link": {
           const id = requireString(a.id, "id");
-          const targetType = requireString(a.targetType, "targetType");
-          if (!(decisionLinkTargetTypes as readonly string[]).includes(targetType)) {
-            return { result: `Invalid targetType: ${targetType}. Use strategy or project.`, error: true };
-          }
-          const targetId = a.targetId === undefined ? "" : String(a.targetId);
-          if (!targetId) return { result: "Missing required: targetId", error: true };
+          const targetAddress = a.targetAddress
+            ?? (a.targetType && a.targetId !== undefined ? `@${a.targetType}:${String(a.targetId)}` : undefined);
+          if (!targetAddress) return { result: "Missing required: targetAddress", error: true };
           const row = await decisionsStorage.addLink({
             decisionId: id,
-            targetType: targetType as "strategy" | "project",
-            targetId,
+            targetAddress,
+            predicate: a.predicate,
           });
           publish("add_link");
-          return { result: `Linked decision ${id} → ${targetType}:${targetId} (link ${row.id}).` };
+          return { result: `Linked @decision:${id} → ${row.targetAddress} via ${row.predicate} (link ${row.id}).` };
         }
         case "remove_link": {
           const linkId = requireString(a.linkId, "linkId");
