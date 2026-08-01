@@ -546,6 +546,7 @@ export class DocumentStorage {
   async getDocumentsMetadataOnly(
     docType: DocType,
     sinceTimestamp?: string,
+    limit?: number,
   ): Promise<Array<{
     id: number;
     docId: string;
@@ -561,12 +562,14 @@ export class DocumentStorage {
       combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`),
     ];
     if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
+    const boundedLimit = limit === undefined ? null : Math.min(Math.max(Math.floor(limit), 1), 5_000);
     const rows = await db.execute(sql`
       SELECT source_memory_entry_id, id, document_id, title, created_at, metadata,
              owner_user_id, account_id, vault_id
       FROM document_store_documents
       WHERE ${sql.join(conditions, sql` AND `)}
       ORDER BY updated_at DESC
+      ${boundedLimit === null ? sql`` : sql`LIMIT ${boundedLimit}`}
     `);
     return ((rows.rows ?? rows) as Array<{
       source_memory_entry_id: number | null;

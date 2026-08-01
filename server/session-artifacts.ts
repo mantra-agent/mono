@@ -13,10 +13,12 @@
 
 import { db } from "./db";
 import { sessionArtifacts } from "@shared/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, or } from "drizzle-orm";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, ownedInsertValues } from "./scoped-storage";
+import { canonicalExecutionArtifactAddress } from "./execution-provenance-address";
+import { linkSessionArtifactProduced } from "./execution-provenance-links";
 
 const log = createLogger("SessionArtifacts");
 const sessionArtifactScopeColumns = { ownerUserId: sessionArtifacts.ownerUserId, accountId: sessionArtifacts.accountId };
@@ -33,13 +35,22 @@ export async function recordSessionArtifact(
 ): Promise<void> {
   if (!sessionId) return; // No session context (e.g., REST API call)
   try {
-    await db.insert(sessionArtifacts).values({
+    const principal = getCurrentPrincipalOrSystem();
+    const artifactAddress = principal.actorType === "user"
+      ? await canonicalExecutionArtifactAddress(principal, artifactType, artifactId, metadata)
+      : null;
+    const [row] = await db.insert(sessionArtifacts).values({
       sessionId,
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), sessionArtifactScopeColumns),
+      ...ownedInsertValues(principal, sessionArtifactScopeColumns),
       artifactType,
       artifactId,
+      artifactAddress,
       metadata: metadata ?? {},
-    }).onConflictDoNothing();
+    }).onConflictDoUpdate({
+      target: [sessionArtifacts.sessionId, sessionArtifacts.artifactType, sessionArtifacts.artifactId],
+      set: { ...(artifactAddress ? { artifactAddress } : {}), metadata: metadata ?? {} },
+    }).returning();
+    if (row && artifactAddress && principal.actorType === "user") await linkSessionArtifactProduced(principal, row);
   } catch (err) {
     log.warn(
       `recordSessionArtifact failed: session=${sessionId} type=${artifactType} id=${artifactId}: ${err instanceof Error ? err.message : String(err)}`,
@@ -63,14 +74,20 @@ export async function getArtifactsBySession(sessionId: string) {
  * Get all sessions that link to a given artifact.
  */
 export async function getSessionsByArtifact(artifactType: string, artifactId: string) {
+  const principal = getCurrentPrincipalOrSystem();
+  const artifactAddress = principal.actorType === "user"
+    ? await canonicalExecutionArtifactAddress(principal, artifactType, artifactId)
+    : null;
   return db
     .select()
     .from(sessionArtifacts)
     .where(
-      combineWithVisibleScope(getCurrentPrincipalOrSystem(), sessionArtifactScopeColumns, and(
-        eq(sessionArtifacts.artifactType, artifactType),
-        eq(sessionArtifacts.artifactId, artifactId),
-      )),
+      combineWithVisibleScope(principal, sessionArtifactScopeColumns, artifactAddress
+        ? or(
+            eq(sessionArtifacts.artifactAddress, artifactAddress),
+            and(eq(sessionArtifacts.artifactType, artifactType), eq(sessionArtifacts.artifactId, artifactId)),
+          )
+        : and(eq(sessionArtifacts.artifactType, artifactType), eq(sessionArtifacts.artifactId, artifactId))),
     )
     .orderBy(desc(sessionArtifacts.createdAt));
 }

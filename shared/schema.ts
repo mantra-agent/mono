@@ -1531,12 +1531,17 @@ export const sessionArtifacts = pgTable("session_artifacts", {
   accountId: text("account_id"),
   artifactType: text("artifact_type").notNull(),
   artifactId: text("artifact_id").notNull(),
+  /** Canonical target identity; legacy type/id remain execution/scoring compatibility. */
+  artifactAddress: text("artifact_address"),
+  /** Generic explicit produced assertion created from this compatibility row. */
+  addressLinkId: uuid("address_link_id"),
   metadata: jsonb("metadata").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("idx_session_artifacts_unique").on(table.sessionId, table.artifactType, table.artifactId),
   index("idx_session_artifacts_session").on(table.sessionId),
   index("idx_session_artifacts_artifact").on(table.artifactType, table.artifactId),
+  index("idx_session_artifacts_address").on(table.ownerUserId, table.accountId, table.artifactAddress),
   index("idx_session_artifacts_owner").on(table.ownerUserId),
   index("idx_session_artifacts_account").on(table.accountId),
 ]);
@@ -1858,6 +1863,10 @@ export const workflowArtifacts = pgTable("workflow_artifacts", {
   title: text("title").notNull(),
   refType: text("ref_type").notNull().default("text"),
   refId: text("ref_id"),
+  /** Canonical target identity; legacy ref_type/ref_id remain workflow compatibility. */
+  artifactAddress: text("artifact_address"),
+  /** Generic explicit produced assertion created from this compatibility row. */
+  addressLinkId: uuid("address_link_id"),
   url: text("url"),
   summary: text("summary").notNull().default(""),
   metadata: jsonb("metadata").notNull().default({}),
@@ -1870,6 +1879,7 @@ export const workflowArtifacts = pgTable("workflow_artifacts", {
   index("idx_workflow_artifacts_run").on(table.workflowRunId),
   index("idx_workflow_artifacts_stage").on(table.stageAttemptId),
   index("idx_workflow_artifacts_kind").on(table.kind),
+  index("idx_workflow_artifacts_address").on(table.ownerUserId, table.accountId, table.artifactAddress),
   index("idx_workflow_artifacts_owner").on(table.ownerUserId),
   index("idx_workflow_artifacts_account").on(table.accountId),
 ]);

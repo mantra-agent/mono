@@ -496,6 +496,7 @@ interface SessionData {
   triggerType?: import("@shared/models/chat").TriggerType;
   triggerId?: string;
   triggerName?: string;
+  triggerAddress?: string;
   rootSessionId?: string;
   depth?: number;
 }
@@ -817,6 +818,7 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
     triggerType: data.triggerType,
     triggerId: data.triggerId,
     triggerName: data.triggerName,
+    triggerAddress: data.triggerAddress,
     rootSessionId: data.rootSessionId,
     depth: data.depth,
     archivedAt: data.archivedAt || null,
@@ -839,6 +841,18 @@ async function writeConvInAmbientTransaction(data: SessionData): Promise<number>
     buildConvDocumentMetadata(data),
   );
   await replaceSessionSearchProjection(document.documentStoreId, data);
+  if (
+    !["streaming", "pending"].includes(data.status)
+    && data.type !== "meeting"
+    && data.sessionType !== "meeting"
+    && !data.messages.some(message => message.assistantState === "streaming")
+  ) {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType === "user") {
+      const { indexSettledSessionReferences } = await import("./session-reference-index");
+      await indexSettledSessionReferences(principal, data);
+    }
+  }
   return data.durableRevision;
 }
 
@@ -1091,6 +1105,7 @@ function convToMeta(data: SessionData): FileSession {
     triggerType: data.triggerType,
     triggerId: data.triggerId,
     triggerName: data.triggerName,
+    triggerAddress: data.triggerAddress,
     rootSessionId: data.rootSessionId,
     depth: data.depth,
     archivedAt: data.archivedAt || null,
@@ -1252,6 +1267,7 @@ function docMetadataToSession(doc: {
     triggerType: meta.triggerType as import("@shared/models/chat").TriggerType | undefined,
     triggerId: metadataString(meta, "triggerId"),
     triggerName: metadataString(meta, "triggerName"),
+    triggerAddress: metadataString(meta, "triggerAddress"),
     rootSessionId: metadataString(meta, "rootSessionId"),
     depth: metadataNumber(meta, "depth"),
     archivedAt: (meta.archivedAt as string | null | undefined) || null,
@@ -1273,7 +1289,7 @@ export interface IChatFileStorage {
   getSessionSnapshot(id: string): Promise<{ session: FileSession; messages: FileMessage[] } | null>;
   getSessions(ids: string[]): Promise<FileSession[]>;
   getSavedSessions(): Promise<FileSession[]>;
-  getAllSessions(): Promise<FileSession[]>;
+  getAllSessions(limit?: number): Promise<FileSession[]>;
   createSession(
     title: string,
     sessionKey?: string,
@@ -1707,9 +1723,10 @@ export const chatFileStorage: IChatFileStorage = {
     });
   },
 
-  async getAllSessions() {
-    return _sessionsCache.getOrFetch(`all:${principalCacheKey()}`, async () => {
-      const docs = await documentStorage.getDocumentsMetadataOnly("chat");
+  async getAllSessions(limit?: number) {
+    const boundedLimit = limit === undefined ? undefined : Math.min(Math.max(Math.floor(limit), 1), 5_000);
+    return _sessionsCache.getOrFetch(`all:${principalCacheKey()}:${boundedLimit ?? "all"}`, async () => {
+      const docs = await documentStorage.getDocumentsMetadataOnly("chat", undefined, boundedLimit);
       const sessions = await applySessionTreeRowsToMetadataList(docs);
       return sessions
         .sort(
@@ -1758,6 +1775,7 @@ export const chatFileStorage: IChatFileStorage = {
       triggerType: provenance.triggerType,
       triggerId: provenance.triggerId,
       triggerName: provenance.triggerName,
+      triggerAddress: (await import("./execution-provenance-address")).canonicalSessionTriggerAddress(provenance.triggerType, provenance.triggerId),
       rootSessionId: id,
       depth: 0,
     };
@@ -3835,6 +3853,7 @@ export const chatFileStorage: IChatFileStorage = {
       triggerType: provenance.triggerType,
       triggerId: provenance.triggerId,
       triggerName: provenance.triggerName,
+      triggerAddress: (await import("./execution-provenance-address")).canonicalSessionTriggerAddress(provenance.triggerType, provenance.triggerId),
       rootSessionId: rootSessionId || id,
       depth,
     };

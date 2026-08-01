@@ -19,6 +19,7 @@ import {
   jobRoles,
   milestones,
   planExecutions,
+  planStepAttempts,
   platformProductEnvironments,
   platformProducts,
   platforms,
@@ -30,9 +31,12 @@ import {
   strategyEndConditions,
   strategyStates,
   tasks,
+  timers,
   workflowRuns,
+  workflowGates,
 } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
+import { systemHooks } from "@shared/models/events";
 import { memoryVnextClaims } from "@shared/models/memory";
 import { opportunities } from "@shared/models/opportunities";
 import { signalItems } from "@shared/models/signal";
@@ -97,7 +101,11 @@ const claimScope = { scope: memoryVnextClaims.scope, ownerUserId: memoryVnextCla
 const wellnessScope = { ownerUserId: wellnessActivities.ownerUserId, accountId: wellnessActivities.principalAccountId };
 const inferenceScope = { scope: inferencePayloadCaptures.scope, ownerUserId: inferencePayloadCaptures.ownerUserId, accountId: inferencePayloadCaptures.accountId };
 const planScope = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
+const planAttemptScope = { ownerUserId: planStepAttempts.ownerUserId, accountId: planStepAttempts.accountId };
 const workflowScope = { scope: workflowRuns.scope, ownerUserId: workflowRuns.ownerUserId, accountId: workflowRuns.accountId };
+const workflowGateScope = { scope: workflowGates.scope, ownerUserId: workflowGates.ownerUserId, accountId: workflowGates.accountId };
+const timerScope = { scope: timers.scope, ownerUserId: timers.ownerUserId, accountId: timers.accountId };
+const hookScope = { scope: systemHooks.scope, ownerUserId: systemHooks.ownerUserId, accountId: systemHooks.accountId };
 const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId };
 const emailDraftScope = { scope: emailDrafts.scope, ownerUserId: emailDrafts.ownerUserId, accountId: emailDrafts.accountId };
 const signalScope = { scope: signalItems.scope, ownerUserId: signalItems.ownerUserId, accountId: signalItems.accountId, vaultId: signalItems.vaultId };
@@ -263,13 +271,47 @@ const adapters: AddressResolverAdapter[] = [
     const byId = new Map(rows.flatMap(row => [[row.id, row], ...(row.pageId ? [[row.pageId, row] as const] : [])]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) && byId.get(ref.id)!.pageTitle ? [[requestedAddress(ref), resolved(ref, { canonicalId: byId.get(ref.id)!.id, label: byId.get(ref.id)!.pageTitle!.replace(/^Plan:\s*/, ""), updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
+  simpleAdapter("plan_attempt", async (principal, refs) => {
+    const rows = await db.select({ id: planStepAttempts.id, planId: planStepAttempts.planId, stepId: planStepAttempts.stepId, attemptNumber: planStepAttempts.attemptNumber, status: planStepAttempts.status, updatedAt: planStepAttempts.updatedAt })
+      .from(planStepAttempts)
+      .innerJoin(planExecutions, eq(planStepAttempts.planId, planExecutions.id))
+      .where(and(
+        combineWithVisibleScope(principal, planAttemptScope, inArray(planStepAttempts.id, numbers(refs))),
+        combineWithVisibleScope(principal, planScope),
+      ));
+    const byId = new Map(rows.map(row => [String(row.id), row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: `Plan attempt ${byId.get(ref.id)!.attemptNumber}`, summary: `${byId.get(ref.id)!.stepId} · ${byId.get(ref.id)!.status}`, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
   simpleAdapter("workflow", async (principal, refs) => {
     const rows = await db.select({ id: workflowRuns.id, title: workflowRuns.title, updatedAt: workflowRuns.updatedAt }).from(workflowRuns)
       .where(combineWithVisibleScope(principal, workflowScope, inArray(workflowRuns.id, refs.map(ref => ref.id))));
     const byId = new Map(rows.map(row => [row.id, row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
+  simpleAdapter("workflow_gate", async (principal, refs) => {
+    const rows = await db.select({ id: workflowGates.id, workflowRunId: workflowGates.workflowRunId, gateType: workflowGates.gateType, status: workflowGates.status, openedAt: workflowGates.openedAt })
+      .from(workflowGates)
+      .innerJoin(workflowRuns, eq(workflowGates.workflowRunId, workflowRuns.id))
+      .where(and(
+        combineWithVisibleScope(principal, workflowGateScope, inArray(workflowGates.id, numbers(refs))),
+        combineWithVisibleScope(principal, workflowScope),
+      ));
+    const byId = new Map(rows.map(row => [String(row.id), row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: `${byId.get(ref.id)!.gateType} gate`, summary: byId.get(ref.id)!.status, updatedAt: byId.get(ref.id)!.openedAt })]] : []));
+  }),
   simpleAdapter("intention", async (_principal, refs) => resultMap(refs, "missing")),
+  simpleAdapter("timer", async (principal, refs) => {
+    const rows = await db.select({ id: timers.id, name: timers.name, description: timers.description, updatedAt: timers.updatedAt }).from(timers)
+      .where(combineWithVisibleScope(principal, timerScope, inArray(timers.id, refs.map(ref => ref.id))));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
+  simpleAdapter("hook", async (principal, refs) => {
+    const rows = await db.select({ id: systemHooks.id, name: systemHooks.name, description: systemHooks.description, updatedAt: systemHooks.updatedAt }).from(systemHooks)
+      .where(combineWithVisibleScope(principal, hookScope, inArray(systemHooks.id, numbers(refs))));
+    const byId = new Map(rows.map(row => [String(row.id), row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
   simpleAdapter("decision", async (_principal, refs) => {
     const decisions = await decisionsStorage.listDecisions({});
     const wanted = new Set(refs.map(ref => ref.id));

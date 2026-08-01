@@ -50,6 +50,8 @@ import { buildWorkflowRunPageContent, buildWorkflowStages, parseWorkflowDefiniti
 import { monitorChildSession, truncateOutput, type MonitorResult } from "../child-session-monitor";
 import { chatFileStorage } from "../chat-file-storage";
 import { getArtifactsBySession } from "../session-artifacts";
+import { canonicalExecutionArtifactAddress } from "../execution-provenance-address";
+import { linkWorkflowArtifactProduced } from "../execution-provenance-links";
 import { createRegressionRun } from "../regression/regression-service";
 
 const log = createLogger("WorkflowService");
@@ -329,7 +331,12 @@ async function projectSessionArtifactsToWorkflow(
     const metadata = sessionArtifact.metadata && typeof sessionArtifact.metadata === "object"
       ? sessionArtifact.metadata as Record<string, unknown>
       : {};
-    await db.transaction(async (tx) => {
+    const principal = getCurrentPrincipal();
+    if (!principal) throw new Error("Workflow artifact projection requires a user principal");
+    const artifactMetadata = { ...metadata, sourceSessionArtifactId: sessionArtifact.id };
+    const artifactAddress = sessionArtifact.artifactAddress
+      || await canonicalExecutionArtifactAddress(principal, refType, refId, artifactMetadata);
+    const created = await db.transaction(async (tx) => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.WORKFLOW_ARTIFACTS, `${workflowRunId}:${attempt.id}`);
       const [existing] = await tx.select({ id: workflowArtifacts.id }).from(workflowArtifacts).where(visible(artifactScopeColumns, and(
         eq(workflowArtifacts.workflowRunId, workflowRunId),
@@ -337,8 +344,8 @@ async function projectSessionArtifactsToWorkflow(
         eq(workflowArtifacts.refType, refType),
         eq(workflowArtifacts.refId, refId),
       ))).limit(1);
-      if (existing) return;
-      await tx.insert(workflowArtifacts).values({
+      if (existing) return null;
+      const [inserted] = await tx.insert(workflowArtifacts).values({
         workflowRunId,
         stageAttemptId: attempt.id,
         kind,
@@ -347,13 +354,16 @@ async function projectSessionArtifactsToWorkflow(
           : `${kind}: ${refId}`,
         refType,
         refId,
+        artifactAddress,
         url: null,
         summary: typeof metadata.summary === "string" ? metadata.summary : "",
-        metadata: { ...metadata, sourceSessionArtifactId: sessionArtifact.id },
+        metadata: artifactMetadata,
         createdBySessionId: childSessionId,
         ...owner(artifactScopeColumns),
-      });
+      }).returning();
+      return inserted || null;
     });
+    if (created && artifactAddress) await linkWorkflowArtifactProduced(principal, created);
   }
 }
 
@@ -1668,19 +1678,27 @@ function defaultArtifactTitle(input: AttachWorkflowArtifactInput): string {
 
 export async function attachWorkflowArtifact(input: AttachWorkflowArtifactInput): Promise<WorkflowArtifact> {
   const workflowRunId = await resolveArtifactWorkflowRunId(input);
+  const principal = getCurrentPrincipal();
+  if (!principal) throw new Error("Workflow artifact attachment requires a user principal");
+  const refType = input.refType || "text";
+  const refId = input.refId || null;
+  const metadata = input.metadata || {};
+  const artifactAddress = await canonicalExecutionArtifactAddress(principal, refType, refId, metadata);
   const [artifact] = await db.insert(workflowArtifacts).values({
     workflowRunId,
     stageAttemptId: input.stageAttemptId ?? null,
     kind: input.kind,
     title: defaultArtifactTitle(input),
-    refType: input.refType || "text",
-    refId: input.refId || null,
+    refType,
+    refId,
+    artifactAddress,
     url: input.url || null,
     summary: input.summary || "",
-    metadata: input.metadata || {},
+    metadata,
     createdBySessionId: input.createdBySessionId || null,
     ...owner(artifactScopeColumns),
   }).returning();
+  if (artifactAddress) await linkWorkflowArtifactProduced(principal, artifact);
   if (input.render !== false) await renderWorkflowRunPage(workflowRunId);
   return artifact;
 }
