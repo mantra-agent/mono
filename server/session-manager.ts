@@ -135,6 +135,9 @@ function getSteps(streamingContent: StreamingContent): ExecutionStep[] {
 function deriveVisibleAssistantActivity(session: LiveSession): VisibleAssistantActivity {
   if (session.status !== "streaming") return "none";
   const steps = getSteps(session.streamingContent);
+  if (steps.some((step) => step.type === "tool_call" && step.status === "active")) {
+    return "tool";
+  }
   if (steps.some((step) =>
     step.status === "active" && (
       (step.type === "thinking" && (step.thinking || "").trim().length > 0) ||
@@ -145,9 +148,6 @@ function deriveVisibleAssistantActivity(session: LiveSession): VisibleAssistantA
   }
   if (session.streamingContent.segments.some((segment) => segment.type === "content" && segment.content.length > 0)) {
     return "streaming";
-  }
-  if (steps.some((step) => step.type === "tool_call" && step.status === "active")) {
-    return "tool";
   }
   return "none";
 }
