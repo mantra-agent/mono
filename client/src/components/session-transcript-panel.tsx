@@ -30,6 +30,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { SessionActionsMenuItems } from "@/components/session-actions-menu";
+import { EditableSessionTitle, type EditableSessionTitleHandle } from "@/components/editable-session-title";
 import { SessionDetailsModal } from "@/components/session-details-modal";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -165,10 +166,7 @@ export function SessionTranscriptPanel({
   const focusCtx = useFocusSessionOptional();
   const contextPendingTurn = focusCtx?.pendingTurn ?? null;
 
-  const [isTitleRenaming, setIsTitleRenaming] = useState(false);
-  const [titleRenameValue, setTitleRenameValue] = useState("");
-  const titleInputRef = useRef<HTMLInputElement>(null);
-  const titleRenameCommittedRef = useRef(false);
+  const titleRenameRef = useRef<EditableSessionTitleHandle>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
@@ -575,52 +573,19 @@ export function SessionTranscriptPanel({
           const activeSessionData = sessions.find(c => c.id === activeSession);
           const titleText = activeSessionData?.title || "Chat";
           const titleIsStreaming = activeSessionData?.status === "streaming" || sessionSub.status === "streaming";
-          const commitTitleRename = () => {
-            if (titleRenameCommittedRef.current) return;
-            titleRenameCommittedRef.current = true;
-            const trimmed = titleRenameValue.trim();
-            if (trimmed && trimmed !== titleText && activeSession) {
-              renameConversation.mutate({ id: activeSession, title: trimmed });
-            }
-            setIsTitleRenaming(false);
-          };
-          const startTitleRename = () => {
-            titleRenameCommittedRef.current = false;
-            setTitleRenameValue(titleText);
-            setIsTitleRenaming(true);
-            setTimeout(() => titleInputRef.current?.focus({ preventScroll: true }), 0);
-          };
           return (
             <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-              {titleIsStreaming && !isTitleRenaming && <ActiveStatusSpinner className="h-3.5 w-3.5" />}
-              {isTitleRenaming ? (
-                <input
-                  ref={titleInputRef}
-                  className="text-sm font-medium bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus-visible:ring-1 focus-visible:ring-ring min-w-0 flex-shrink"
-                  value={titleRenameValue}
-                  onChange={(e) => setTitleRenameValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      commitTitleRename();
-                    } else if (e.key === "Escape") {
-                      titleRenameCommittedRef.current = true;
-                      setIsTitleRenaming(false);
-                    }
-                  }}
-                  onBlur={commitTitleRename}
-                  data-testid="input-title-rename"
-                />
-              ) : (
-                <span
-                  className={cn("text-sm font-medium truncate cursor-pointer hover:underline", titleIsStreaming && "text-active animate-pulse")}
-                  onClick={startTitleRename}
-                  data-testid="text-chat-title"
-                >
-                  {titleText}
-                </span>
-              )}
-
+              {titleIsStreaming && <ActiveStatusSpinner className="h-3.5 w-3.5" />}
+              <EditableSessionTitle
+                ref={titleRenameRef}
+                title={titleText}
+                canEdit={!!activeSession}
+                onCommit={(title) =>
+                  activeSession && renameConversation.mutate({ id: activeSession, title })
+                }
+                isStreaming={titleIsStreaming}
+                className={cn("min-w-0 flex-shrink", titleIsStreaming && "animate-pulse")}
+              />
             </div>
           );
         })()}
@@ -678,13 +643,7 @@ export function SessionTranscriptPanel({
                     sessionId={activeSession}
                     sessionTitle={active.title}
                     parentSessionId={active.parentSessionId}
-                    onRename={() => {
-                      const title = active.title || "Chat";
-                      titleRenameCommittedRef.current = false;
-                      setTitleRenameValue(title);
-                      setIsTitleRenaming(true);
-                      setTimeout(() => titleInputRef.current?.focus({ preventScroll: true }), 0);
-                    }}
+                    onRename={() => titleRenameRef.current?.startEditing()}
                     onSelectSession={setActiveSession}
                     onArchive={(id) => onArchiveSession?.(id)}
                     onDelete={() => setShowDeleteConfirm(true)}
