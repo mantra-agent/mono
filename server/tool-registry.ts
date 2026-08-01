@@ -968,7 +968,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   decisions: {
-    description: "Personal decision log — track strategic decisions with three sections (data, scenarios, plan), open/closed lifecycle, traffic-light status (closed only), append-only updates on closed decisions, and links to strategies/projects. Always call list first.",
+    description: "Personal decision log — track strategic decisions with three sections (data, scenarios, plan), open/closed lifecycle, traffic-light status (closed only), append-only updates on closed decisions, and explicit links to any permitted canonical address. Always call list first.",
     category: "strategy",
     parameters: {
       type: "object",
@@ -989,8 +989,10 @@ export const TOOLS: Record<string, ToolMeta> = {
         scenariosContent: { type: "string", description: "Markdown content for the Scenarios section" },
         planContent: { type: "string", description: "Markdown content for the Plan section" },
         content: { type: "string", description: "Update entry text (for add_update / edit_update)" },
-        targetType: { type: "string", enum: ["strategy", "project"], description: "Link target type" },
-        targetId: { type: "string", description: "Link target ID (strategy goal id or project id)" },
+        targetAddress: { type: "string", description: "Canonical link target, e.g. @strategy:id, @project:id, @page:uuid, or any other permitted address" },
+        targetType: { type: "string", description: "Compatibility input: canonical target type" },
+        targetId: { type: "string", description: "Compatibility input: target ID" },
+        predicate: { type: "string", enum: ["relates_to", "governs", "evidence_for", "triggered_by", "produced"], description: "Explicit Decision relationship predicate (defaults to relates_to)" },
       },
       required: ["action"],
     },

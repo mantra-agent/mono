@@ -734,10 +734,11 @@ Skills inventory, experience log with scope metadata, opportunities pipeline wit
 - Key file: `routes/wellness.ts` (1,266 lines)
 
 ### Decisions
-- **3 tables:** `decisions`, `decision_updates`, `decision_links`
-- **Lifecycle:** open → closed (with traffic light: green/yellow/red). Updates are append-only
-- **Auto-heal:** Storage runs `CREATE TABLE IF NOT EXISTS` on first error
-- Key file: `decisions-storage.ts` (252 lines)
+- `decisions` and `decision_updates` own Decision content and lifecycle; section/update references are transactionally projected into Life Addressing occurrences at the aggregate mutation boundary.
+- Deliberate relationships use constrained predicates over generic `address_links`; legacy `decision_links(target_type, target_id)` is dual-written/read only behind `DECISION_LINKS_COMPATIBILITY_ENABLED` and replay-safely points to its migrated `address_link_id`.
+- The Decision/Strategy graph adapter keeps default Strategy roots flat, emits actors and artifacts, and exposes bounded move/assumption/end-condition/state topology only for explicitly selected Strategy addresses.
+- **Lifecycle:** open → closed (with traffic light: green/yellow/red). Updates are append-only.
+- Key files: `decisions-storage.ts`, `decision-reference-index.ts`, `strategy/decision-strategy-graph-adapter.ts`
 
 ### Capabilities & Stories
 - Removed legacy story/capability table registry entries; capability state is derived from current tools, skills, code graph, and reports rather than the removed capability cache table.

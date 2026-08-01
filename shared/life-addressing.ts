@@ -74,7 +74,7 @@ export interface GraphAdapterResult {
 export interface PersonalGraphAdapter<Context = unknown> {
   readonly id: string;
   readonly sourceClass: GraphSourceClass;
-  project(context: Context, input: { cursor?: string; limit: number }): Promise<GraphAdapterResult>;
+  project(context: Context, input: { cursor?: string; limit: number; selectedAddresses?: readonly string[] }): Promise<GraphAdapterResult>;
 }
 
 export interface AddressReplayPage<T> {

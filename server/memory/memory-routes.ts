@@ -321,7 +321,10 @@ async function handleGetVnextGraph(req: Request, res: Response): Promise<void> {
   }
   try {
     const principal = getCurrentPrincipalOrSystem();
-    const projection = await assemblePersonalGraph(principal);
+    const selected = typeof req.query.selected === "string"
+      ? req.query.selected.split(",").map(value => value.trim()).filter(Boolean).slice(0, 5)
+      : [];
+    const projection = await assemblePersonalGraph(principal, { selectedAddresses: selected });
     res.json(projection);
   } catch (error: unknown) {
     log.error(`[personal-graph] graph failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);

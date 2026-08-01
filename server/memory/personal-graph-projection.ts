@@ -25,6 +25,7 @@ import { chatFileStorage } from "../chat-file-storage";
 import { meetingGraphAdapter } from "../meetings/meeting-graph-adapter";
 import { workGraphAdapter } from "../work/work-graph-adapter";
 import { relationshipGraphAdapter } from "../relationships/relationship-graph-adapter";
+import { decisionStrategyGraphAdapter } from "../strategy/decision-strategy-graph-adapter";
 
 const log = createLogger("PersonalGraphProjection");
 
@@ -78,6 +79,7 @@ export interface PersonalGraphMetrics {
   meetingEdgeCount: number;
   workEdgeCount: number;
   relationshipEdgeCount: number;
+  decisionStrategyEdgeCount: number;
   resolvedTargetCount: number;
   adapterQueryCount: number;
   payloadBytes: number;
@@ -147,7 +149,10 @@ function sourceForAddressType(type: string): string {
  * overlays vNext semantic claims and selected strong domain facts. Foreground reads
  * never parse page bodies. Query count is bounded by the adapter set, not corpus size.
  */
-export async function assemblePersonalGraph(principal: Principal): Promise<PersonalGraphProjection> {
+export async function assemblePersonalGraph(
+  principal: Principal,
+  input: { selectedAddresses?: readonly string[] } = {},
+): Promise<PersonalGraphProjection> {
   const startedAt = Date.now();
   const libraryFirst = libraryFirstGraphEnabled();
   let adapterQueryCount = 0;
@@ -182,7 +187,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   // Base seed: every visible live Library page (slim metadata only) plus vNext claims,
   // current work, meetings, and the whole-corpus authored occurrence edges. One query
   // per adapter; none scales with corpus size beyond its bounded row limit.
-  const [visiblePages, claims, meetingProjection, workProjection, relationshipProjection, occurrenceEdges] =
+  const [visiblePages, claims, meetingProjection, workProjection, relationshipProjection, decisionStrategyProjection, occurrenceEdges] =
     await Promise.all([
       libraryFirst
         ? db
@@ -212,9 +217,10 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
       meetingGraphAdapter.project(principal, { limit: 500 }),
       workGraphAdapter.project(principal, { limit: 1_000 }),
       relationshipGraphAdapter.project(principal, { limit: 1_000 }),
+      decisionStrategyGraphAdapter.project(principal, { limit: 500, selectedAddresses: input.selectedAddresses }),
       getLibraryCorpusOccurrenceEdges(principal, LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT),
     ]);
-  adapterQueryCount += 6;
+  adapterQueryCount += 7;
 
   // Domain adapter projections. Each adapter emits canonical candidates only; the
   // assembler owns client-node conversion, address-based merging, and independent
@@ -223,6 +229,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
     { id: meetingGraphAdapter.id, result: meetingProjection },
     { id: workGraphAdapter.id, result: workProjection },
     { id: relationshipGraphAdapter.id, result: relationshipProjection },
+    { id: decisionStrategyGraphAdapter.id, result: decisionStrategyProjection },
   ];
 
   const claimIds = claims.map((claim) => claim.id);
@@ -599,6 +606,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   const meetingEdgeCount = adapterEdgeCounts.get(meetingGraphAdapter.id) ?? 0;
   const workEdgeCount = adapterEdgeCounts.get(workGraphAdapter.id) ?? 0;
   const relationshipEdgeCount = adapterEdgeCounts.get(relationshipGraphAdapter.id) ?? 0;
+  const decisionStrategyEdgeCount = adapterEdgeCounts.get(decisionStrategyGraphAdapter.id) ?? 0;
   // Authored page occurrence edges (page→page and page→resolved target). Never parses bodies.
   let occurrenceEdgeCount = 0;
   for (const edge of occurrenceEdges) {
@@ -631,6 +639,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
     meetingEdgeCount,
     workEdgeCount,
     relationshipEdgeCount,
+    decisionStrategyEdgeCount,
     resolvedTargetCount: resolvedByAddress.size,
     adapterQueryCount,
     payloadBytes: 0,
@@ -648,7 +657,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
   log.info(
     `[personal-graph] libraryFirst=${libraryFirst} pages=${projection.pageCount} claims=${projection.claimCount} ` +
       `nodes=${projection.nodeCount} edges=${projection.edgeCount} occurrenceEdges=${occurrenceEdgeCount} ` +
-      `meetingEdges=${projection.meetingEdgeCount} workEdges=${projection.workEdgeCount} relationshipEdges=${projection.relationshipEdgeCount} structural=${structuralLinkCount} resolvedTargets=${projection.resolvedTargetCount} ` +
+      `meetingEdges=${projection.meetingEdgeCount} workEdges=${projection.workEdgeCount} relationshipEdges=${projection.relationshipEdgeCount} decisionStrategyEdges=${projection.decisionStrategyEdgeCount} structural=${structuralLinkCount} resolvedTargets=${projection.resolvedTargetCount} ` +
       `adapterQueries=${projection.adapterQueryCount} payloadKB=${(projection.payloadBytes / 1024).toFixed(1)} assemblyMs=${projection.assemblyMs}`,
   );
   eventBus.publish({
@@ -665,6 +674,7 @@ export async function assemblePersonalGraph(principal: Principal): Promise<Perso
       meetingEdgeCount: projection.meetingEdgeCount,
       workEdgeCount: projection.workEdgeCount,
       relationshipEdgeCount: projection.relationshipEdgeCount,
+      decisionStrategyEdgeCount: projection.decisionStrategyEdgeCount,
       level: projection.assemblyMs > 750 ? "warn" : "info",
     },
   });

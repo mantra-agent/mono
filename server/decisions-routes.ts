@@ -4,7 +4,6 @@ import { decisionsStorage, migrateDecisionsSchema } from "./decisions-storage";
 import {
   insertDecisionSchema,
   insertDecisionUpdateSchema,
-  insertDecisionLinkSchema,
   decisionStatuses,
   decisionTrafficLights,
   decisionLinkTargetTypes,
@@ -27,6 +26,14 @@ const updateDecisionSchema = insertDecisionSchema.partial().extend({
 });
 
 const updateContentSchema = z.object({ content: z.string().min(1) });
+const decisionLinkSchema = z.object({
+  targetAddress: z.string().min(3).optional(),
+  targetType: z.string().min(1).optional(),
+  targetId: z.union([z.string(), z.number()]).transform(String).optional(),
+  predicate: z.enum(["relates_to", "governs", "evidence_for", "triggered_by", "produced"]).optional(),
+}).refine(value => Boolean(value.targetAddress || (value.targetType && value.targetId)), {
+  message: "targetAddress or targetType + targetId is required",
+});
 
 function isZodError(err: unknown): err is z.ZodError {
   return err instanceof z.ZodError;
@@ -193,8 +200,8 @@ export function registerDecisionsRoutes(app: Express): void {
 
   app.post("/api/decisions/:id/links", async (req, res) => {
     try {
-      const parsed = insertDecisionLinkSchema.parse({ ...req.body, decisionId: req.params.id });
-      const row = await decisionsStorage.addLink(parsed);
+      const parsed = decisionLinkSchema.parse(req.body);
+      const row = await decisionsStorage.addLink({ decisionId: req.params.id, ...parsed });
       publishChanged("link_added");
       res.status(201).json(row);
     } catch (err) {

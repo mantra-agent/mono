@@ -25,6 +25,10 @@ import {
   projects,
   skills,
   strategies,
+  strategyMoveInstances,
+  strategyAssumptions,
+  strategyEndConditions,
+  strategyStates,
   tasks,
   workflowRuns,
 } from "@shared/schema";
@@ -277,6 +281,34 @@ const adapters: AddressResolverAdapter[] = [
       .where(combineWithVisibleScope(principal, strategyScope, inArray(strategies.id, refs.map(ref => ref.id))));
     const byId = new Map(rows.map(row => [row.id, row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
+  simpleAdapter("strategy_move", async (principal, refs) => {
+    const rows = await db.select({ id: strategyMoveInstances.id, title: strategyMoveInstances.title, description: strategyMoveInstances.description, createdAt: strategyMoveInstances.createdAt })
+      .from(strategyMoveInstances).innerJoin(strategies, eq(strategyMoveInstances.goalId, strategies.id))
+      .where(and(inArray(strategyMoveInstances.id, refs.map(ref => ref.id)), combineWithVisibleScope(principal, strategyScope)));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title || `Move ${ref.id}`, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.createdAt })]] : []));
+  }),
+  simpleAdapter("strategy_assumption", async (principal, refs) => {
+    const rows = await db.select({ id: strategyAssumptions.id, title: strategyAssumptions.title, description: strategyAssumptions.description, createdAt: strategyAssumptions.createdAt })
+      .from(strategyAssumptions).innerJoin(strategies, eq(strategyAssumptions.goalId, strategies.id))
+      .where(and(inArray(strategyAssumptions.id, refs.map(ref => ref.id)), combineWithVisibleScope(principal, strategyScope)));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.createdAt })]] : []));
+  }),
+  simpleAdapter("strategy_end_condition", async (principal, refs) => {
+    const rows = await db.select({ id: strategyEndConditions.id, description: strategyEndConditions.description })
+      .from(strategyEndConditions).innerJoin(strategies, eq(strategyEndConditions.goalId, strategies.id))
+      .where(and(inArray(strategyEndConditions.id, refs.map(ref => ref.id)), combineWithVisibleScope(principal, strategyScope)));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: safeSummary(byId.get(ref.id)!.description) || `End condition ${ref.id}`, summary: byId.get(ref.id)!.description })]] : []));
+  }),
+  simpleAdapter("strategy_state", async (principal, refs) => {
+    const rows = await db.select({ id: strategyStates.id, name: strategyStates.name, description: strategyStates.description, createdAt: strategyStates.createdAt })
+      .from(strategyStates).innerJoin(strategies, eq(strategyStates.goalId, strategies.id))
+      .where(and(inArray(strategyStates.id, refs.map(ref => ref.id)), combineWithVisibleScope(principal, strategyScope)));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.createdAt })]] : []));
   }),
   simpleAdapter("opportunity", async (principal, refs) => {
     const rows = await db.select({ id: opportunities.id, title: opportunities.title, description: opportunities.description, updatedAt: opportunities.updatedAt }).from(opportunities)
