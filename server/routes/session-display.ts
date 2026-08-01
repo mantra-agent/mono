@@ -3,23 +3,29 @@ import { getSetting, setSetting } from "../system-settings";
 import { getArtifactsBySession, getSessionsByArtifact } from "../session-artifacts";
 import { chatFileStorage } from "../chat-file-storage";
 import { requireAuth } from "../auth";
+import { getPrincipal } from "../principal";
 
 const VISIBILITY_LAYER_KEY = "session_visibility_layer";
 
-export async function getVisibilityLayer(): Promise<number> {
-  const val = await getSetting<number>(VISIBILITY_LAYER_KEY);
-  if (typeof val === "number" && val >= 1 && val <= 4) return val;
-  return 2;
+function visibilityLayerKey(userId: string): string {
+  return `user:${userId}:${VISIBILITY_LAYER_KEY}`;
+}
+
+export async function getVisibilityLayer(userId: string): Promise<number> {
+  const val = await getSetting<number>(visibilityLayerKey(userId));
+  if (typeof val === "number" && val >= 0 && val <= 4 && Number.isInteger(val)) return val;
+  return 0;
 }
 
 export function registerSessionDisplayRoutes(app: Express) {
-  app.get("/api/session/visibility-layer", async (_req, res) => {
+  app.get("/api/session/visibility-layer", requireAuth, async (req, res) => {
     try {
-      const layer = await getVisibilityLayer();
+      const principal = getPrincipal(req);
+      if (!principal?.userId) return res.status(401).json({ error: "User session required" });
+      const layer = await getVisibilityLayer(principal.userId);
       res.json({ layer });
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      res.status(500).json({ error: msg });
+    } catch {
+      res.status(500).json({ error: "Failed to read visibility preference" });
     }
   });
 
@@ -60,17 +66,18 @@ export function registerSessionDisplayRoutes(app: Express) {
     }
   });
 
-  app.post("/api/session/visibility-layer", async (req, res) => {
+  app.post("/api/session/visibility-layer", requireAuth, async (req, res) => {
     try {
+      const principal = getPrincipal(req);
+      if (!principal?.userId) return res.status(401).json({ error: "User session required" });
       const { layer } = req.body;
-      if (typeof layer !== "number" || layer < 1 || layer > 4 || !Number.isInteger(layer)) {
-        return res.status(400).json({ error: "layer must be an integer between 1 and 4" });
+      if (typeof layer !== "number" || layer < 0 || layer > 4 || !Number.isInteger(layer)) {
+        return res.status(400).json({ error: "layer must be an integer between 0 and 4" });
       }
-      await setSetting(VISIBILITY_LAYER_KEY, layer);
+      await setSetting(visibilityLayerKey(principal.userId), layer);
       res.json({ layer });
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      res.status(500).json({ error: msg });
+    } catch {
+      res.status(500).json({ error: "Failed to update visibility preference" });
     }
   });
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import type { MessageSegment } from "@shared/streaming-types";
 import { ActiveThinkingStatus, ExecutionTimeline, MarkdownContent, filterStepsByLayer, findThinkingStartTime } from "@/components/chat-shared";
 import { createLogger } from "@/lib/logger";
+import type { VisibilityLayer } from "@/hooks/use-visibility-layer";
 
 const log = createLogger("SegmentStream");
 
@@ -40,7 +41,19 @@ function stepOwnsActiveStatus(step: Extract<MessageSegment, { type: "timeline" }
   return step.type === "system" && step.systemStepName === "session_compaction";
 }
 
-function normalizeRenderSegments(segments: MessageSegment[], layer: 1 | 2 | 3 | 4): RenderSegment[] {
+function normalizeRenderSegments(segments: MessageSegment[], layer: VisibilityLayer, isStreaming: boolean): RenderSegment[] {
+  if (layer === 0) {
+    if (isStreaming) return [];
+    const finalContentIndex = segments.findLastIndex(
+      (segment) => segment.type === "content" && segment.content.trim().length > 0,
+    );
+    if (finalContentIndex < 0) return [];
+    const finalContent = segments[finalContentIndex];
+    return finalContent.type === "content"
+      ? [{ type: "content", content: finalContent.content, sourceIndexes: [finalContentIndex] }]
+      : [];
+  }
+
   const rendered: RenderSegment[] = [];
   let pendingContent = "";
   let pendingContentIndexes: number[] = [];
@@ -79,7 +92,7 @@ function normalizeRenderSegments(segments: MessageSegment[], layer: 1 | 2 | 3 | 
 export interface SegmentStreamProps {
   segments: MessageSegment[];
   isStreaming: boolean;
-  layer: 1 | 2 | 3 | 4;
+  layer: VisibilityLayer;
   stripTags?: boolean;
   suppressTrailingThinking?: boolean;
   contentClassName?: string;
@@ -93,7 +106,10 @@ export interface SegmentStreamProps {
  * Extracted from ChatTurn's assistant branch for reuse.
  */
 export function SegmentStream({ segments, isStreaming, layer, stripTags = false, suppressTrailingThinking = false, contentClassName, contentCompact = false, planSessionId }: SegmentStreamProps) {
-  const renderSegments = useMemo(() => normalizeRenderSegments(segments, layer), [segments, layer]);
+  const renderSegments = useMemo(
+    () => normalizeRenderSegments(segments, layer, isStreaming),
+    [segments, isStreaming, layer],
+  );
   const graphSteps = useMemo(() => {
     const byId = new Map<string, Extract<MessageSegment, { type: "timeline" }>["steps"][number]>();
     for (const segment of segments) {

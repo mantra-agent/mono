@@ -5,19 +5,16 @@ import { publishCanonicalOrbReady } from "@/lib/claim-visual-handoff";
 
 interface DesktopVoiceSurfaceProps {
   voiceSession: VoiceSessionContextValue;
-  transcript: React.ReactNode;
 }
 
 /**
- * Default desktop visibility layer for voice. The transcript remains the same
- * canonical session projection, revealed only when explicitly requested.
+ * Desktop orb projection for Zero visibility during an active voice session.
  */
-export function DesktopVoiceSurface({ voiceSession, transcript }: DesktopVoiceSurfaceProps) {
+export function DesktopVoiceSurface({ voiceSession }: DesktopVoiceSurfaceProps) {
   return (
     <DesktopAudioSurface
       visualState={voiceSession.visualState}
       readAudioLevel={voiceSession.readAudioLevel}
-      transcript={transcript}
       testId="desktop-voice-surface"
       renderOrb={(audioLevel) => (
         <VoiceEntranceOrb
