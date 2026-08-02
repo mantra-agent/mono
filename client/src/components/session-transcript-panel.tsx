@@ -222,7 +222,10 @@ export function SessionTranscriptPanel({
     voiceActive,
   } = voice;
 
-  const { data: sessionData, isLoading: msgsLoading } = useQuery<{ messages: Message[] } & Session>({
+  const { data: sessionData, isLoading: msgsLoading } = useQuery<{
+    messages: Message[];
+    reviewPlan?: { id: string; pageId: string; status: string } | null;
+  } & Session>({
     queryKey: ["/api/sessions", activeSession],
     enabled: !!activeSession,
     refetchOnWindowFocus: true,
@@ -707,6 +710,7 @@ export function SessionTranscriptPanel({
         key={activeSession}
         activeSession={activeSession}
         sessionKey={ownedSessionData?.sessionKey}
+        reviewPlanId={ownedSessionData?.reviewPlan?.id}
         messages={displayMessages}
         streaming={displayStreaming}
         isSessionStreaming={isStreaming}

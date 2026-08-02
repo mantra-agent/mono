@@ -752,20 +752,32 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       }
       const { session, messages } = snapshot;
       const TERMINAL_PLAN_STATUSES = ["completed", "completed_with_failures", "failed", "aborted"];
-      const activePlan = await db.select({
-          id: planExecutions.id,
-          pageId: planExecutions.pageId,
-          status: planExecutions.status,
-        })
-        .from(planExecutions)
-        .where(visiblePlan(and(
-          eq(planExecutions.originSessionId, id),
-          notInArray(planExecutions.status, TERMINAL_PLAN_STATUSES),
-        )))
-        .orderBy(planExecutions.createdAt)
-        .limit(1)
-        .then(r => r[0] || null);
-      res.json({ ...session, messages, activePlan });
+      const planProjection = {
+        id: planExecutions.id,
+        pageId: planExecutions.pageId,
+        status: planExecutions.status,
+      };
+      const [activePlan, reviewPlan] = await Promise.all([
+        db.select(planProjection)
+          .from(planExecutions)
+          .where(visiblePlan(and(
+            eq(planExecutions.originSessionId, id),
+            notInArray(planExecutions.status, TERMINAL_PLAN_STATUSES),
+          )))
+          .orderBy(planExecutions.createdAt)
+          .limit(1)
+          .then(rows => rows[0] ?? null),
+        db.select(planProjection)
+          .from(planExecutions)
+          .where(visiblePlan(and(
+            eq(planExecutions.originSessionId, id),
+            eq(planExecutions.status, "needs_review"),
+          )))
+          .orderBy(planExecutions.createdAt)
+          .limit(1)
+          .then(rows => rows[0] ?? null),
+      ]);
+      res.json({ ...session, messages, activePlan, reviewPlan });
     } catch (error) {
       chatLog.error("Error fetching session:", error);
       res.status(500).json({ error: "Failed to fetch session" });
