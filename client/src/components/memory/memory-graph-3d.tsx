@@ -154,8 +154,11 @@ const ACTIVITY_AFTERGLOW_EPSILON = 0.004;
 const ACTIVITY_LINK_AFTERGLOW_DEPOSIT = 0.18;
 const ACTIVITY_LINK_AFTERGLOW_CEILING = 1;
 const ACTIVITY_LINK_LUMINANCE_RESPONSE = 1.35;
-const RESTING_LINK_MIN_LUMINANCE = 0.68;
-const RESTING_LINK_MAX_LUMINANCE = 1;
+const ACTIVITY_LINK_MAX_LUMINANCE = 0.88;
+const RESTING_LINK_MIN_LUMINANCE = 0.48;
+const RESTING_LINK_MAX_LUMINANCE = 0.72;
+const FOCUSED_LINK_MIN_LUMINANCE = 0.58;
+const FOCUSED_LINK_MAX_LUMINANCE = 0.82;
 const ACTIVITY_NODE_AFTERGLOW_DEPOSIT = 0.2;
 const ACTIVITY_NODE_AFTERGLOW_CEILING = 0.75;
 // Global emission runs ~10x faster than before; a tight max clamp removes the
@@ -612,7 +615,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const focusedLinkPositions = new Float32Array(focusedLinkCapacity * CURVE_SEGMENTS * 6);
     const focusedLinkColors = new Float32Array(focusedLinkCapacity * CURVE_SEGMENTS * 6);
     const linkBrightness = new Float32Array(renderedLinks.length);
-    const visibleLinkBrightness = new Float32Array(renderedLinks.length);
+    const visibleLinkBrightnessFrom = new Float32Array(renderedLinks.length);
+    const visibleLinkBrightnessTo = new Float32Array(renderedLinks.length);
     const nodeLinkVisibility = new Float32Array(sceneNodes.length);
     const linkGeometry = new LineSegmentsGeometry();
     const focusedLinkGeometry = new LineSegmentsGeometry();
@@ -828,15 +832,29 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       focusedSimulationLinks.forEach((link, focusedLinkIndex) => {
         writeLinkCurve(focusedLinkPositions, link, focusedLinkIndex, false, settings.linkBendFactor);
         const normalizedStrength = THREE.MathUtils.clamp(link.strength, 0, 1);
-        const brightness = 0.55 + Math.pow(normalizedStrength, 1.25) * 0.45;
+        const focusedBrightness = THREE.MathUtils.lerp(
+          FOCUSED_LINK_MIN_LUMINANCE,
+          FOCUSED_LINK_MAX_LUMINANCE,
+          Math.pow(normalizedStrength, 1.25),
+        );
+        const fromVisibility = nodeLinkVisibility[link.fromIndex];
+        const toVisibility = nodeLinkVisibility[link.toIndex];
+        const fromColor = nodeBaseColors[link.fromIndex];
+        const toColor = nodeBaseColors[link.toIndex];
         for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
           const focusedOffset = (focusedLinkIndex * CURVE_SEGMENTS + segment) * 6;
-          focusedLinkColors[focusedOffset] = selectedColor.r * brightness;
-          focusedLinkColors[focusedOffset + 1] = selectedColor.g * brightness;
-          focusedLinkColors[focusedOffset + 2] = selectedColor.b * brightness;
-          focusedLinkColors[focusedOffset + 3] = selectedColor.r * brightness;
-          focusedLinkColors[focusedOffset + 4] = selectedColor.g * brightness;
-          focusedLinkColors[focusedOffset + 5] = selectedColor.b * brightness;
+          const fromProgress = segment / CURVE_SEGMENTS;
+          const toProgress = (segment + 1) / CURVE_SEGMENTS;
+          restingLinkColor.copy(fromColor).lerp(toColor, fromProgress);
+          restingLinkColor.multiplyScalar(
+            focusedBrightness * THREE.MathUtils.lerp(fromVisibility, toVisibility, fromProgress),
+          );
+          restingLinkColor.toArray(focusedLinkColors, focusedOffset);
+          restingLinkColor.copy(fromColor).lerp(toColor, toProgress);
+          restingLinkColor.multiplyScalar(
+            focusedBrightness * THREE.MathUtils.lerp(fromVisibility, toVisibility, toProgress),
+          );
+          restingLinkColor.toArray(focusedLinkColors, focusedOffset + 3);
         }
       });
       focusedLinkGeometry.instanceCount = focusedSimulationLinks.length * CURVE_SEGMENTS;
@@ -854,16 +872,33 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     function syncLinkColors() {
       renderedLinks.forEach((_link, linkIndex) => {
         const energy = linkAfterglow[linkIndex];
-        const brightness = visibleLinkBrightness[linkIndex]
-          * (1 + energy * ACTIVITY_LINK_LUMINANCE_RESPONSE);
+        const activityMultiplier = 1 + energy * ACTIVITY_LINK_LUMINANCE_RESPONSE;
         const restingColors = restingLinkColors[linkIndex];
         for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
           const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
-          restingLinkColor.copy(restingColors.from).lerp(restingColors.to, segment / CURVE_SEGMENTS);
-          composeActivityColor(activityColor, restingLinkColor, selectedColor, energy, brightness);
+          const fromProgress = segment / CURVE_SEGMENTS;
+          const toProgress = (segment + 1) / CURVE_SEGMENTS;
+          const fromBrightness = Math.min(
+            ACTIVITY_LINK_MAX_LUMINANCE,
+            THREE.MathUtils.lerp(
+              visibleLinkBrightnessFrom[linkIndex],
+              visibleLinkBrightnessTo[linkIndex],
+              fromProgress,
+            ) * activityMultiplier,
+          );
+          const toBrightness = Math.min(
+            ACTIVITY_LINK_MAX_LUMINANCE,
+            THREE.MathUtils.lerp(
+              visibleLinkBrightnessFrom[linkIndex],
+              visibleLinkBrightnessTo[linkIndex],
+              toProgress,
+            ) * activityMultiplier,
+          );
+          restingLinkColor.copy(restingColors.from).lerp(restingColors.to, fromProgress);
+          composeActivityColor(activityColor, restingLinkColor, selectedColor, energy, fromBrightness);
           activityColor.toArray(linkColors, offset);
-          restingLinkColor.copy(restingColors.from).lerp(restingColors.to, (segment + 1) / CURVE_SEGMENTS);
-          composeActivityColor(activityColor, restingLinkColor, selectedColor, energy, brightness);
+          restingLinkColor.copy(restingColors.from).lerp(restingColors.to, toProgress);
+          composeActivityColor(activityColor, restingLinkColor, selectedColor, energy, toBrightness);
           activityColor.toArray(linkColors, offset + 3);
         }
       });
@@ -895,9 +930,14 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       });
 
       renderedLinks.forEach((link, linkIndex) => {
-        const endpointVisibility = (nodeLinkVisibility[link.fromIndex] + nodeLinkVisibility[link.toIndex]) * 0.5;
-        const focusDim = focusIndex != null && !focusedRenderedLinkIndices.has(linkIndex) ? 0.42 : 1;
-        visibleLinkBrightness[linkIndex] = linkBrightness[linkIndex] * endpointVisibility * focusDim;
+        const focused = focusIndex != null && focusedRenderedLinkIndices.has(linkIndex);
+        const focusDim = focusIndex != null && !focused ? 0.42 : 1;
+        // The focused overlay owns incident edges. Suppress their straight base pass
+        // so two translucent lines never add into a bright seam at either node.
+        const basePassVisibility = focused ? 0 : 1;
+        const edgeBrightness = linkBrightness[linkIndex] * focusDim * basePassVisibility;
+        visibleLinkBrightnessFrom[linkIndex] = edgeBrightness * nodeLinkVisibility[link.fromIndex];
+        visibleLinkBrightnessTo[linkIndex] = edgeBrightness * nodeLinkVisibility[link.toIndex];
       });
       syncLinkColors();
       syncFocusedLinkGeometry();
