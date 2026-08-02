@@ -3,7 +3,7 @@
 ## Target and terminal state
 
 - Target: Mantra / Web / stage, Platform Environment 11, `mantra-agent/mono` branch `main`, Railway stage host `https://mono-stage.up.railway.app/`.
-- Work branch: `feat/build-deployment-home`.
+- Acceptance repair branch: `fix/mod-composition-stage-acceptance`.
 - Verification: `npm run build`; merge one coherent PR to `main`; never touch `live`.
 
 ## User-backward contract
@@ -16,7 +16,9 @@ When Build is active, each canonical Railway `SUCCESS` deployment observed throu
 2. Add one canonical Build-access resolver shared by observation, projection, and Home. It derives authority from the rollout switch, registered compatible Build Mod, active entitlement, and active installation. Persistence takes the existing account+Build lifecycle lock and rechecks access after provider I/O, so disable and observation serialize without holding a transaction across Railway.
 3. Add one bounded Build-owned post-ready observer. A named system principal discovers only bounded active Build owners; it restores each exact user principal, revalidates Build and Platform visibility, calls the existing Railway deployment-list boundary outside transactions, and records only allowlisted canonical `SUCCESS` fields. Database uniqueness owns cross-replica convergence; a process-local overlap guard only reduces waste.
 4. Declare the collector as a Build `home.inbox` widget contribution and register its collector key. Home assembly checks canonical Build access, then reads the durable undismissed projection only; it never calls Railway. The existing Home completion control dismisses the projection through the lifecycle-locked mutation boundary.
-5. Inspect the merged Build slice against the approved acceptance criteria. Keep any remaining Live/Stage-only runtime evidence explicit rather than claiming it from the production build.
+5. Carry a canonical `UiInteractionTarget` on every navigation contribution and resolved navigation item; validate target/route agreement at boot, and dedupe/render the sidebar by target. Mod lifecycle success invalidates Mods, composition, and Home locally and emits an account-scoped composition-change event for other clients.
+6. Preserve ordinary Home `inbox` feed items alongside people/news/email/library items and render them through `SimpleWidgetRenderer`. New Build projections emit an account-scoped `data:home_changed` event after durable creation.
+7. Inspect the merged Build slice against the approved acceptance criteria. Keep any remaining Live/Stage-only runtime evidence explicit rather than claiming it from the production build.
 
 ## Engineering-principle audit and cures before editing
 

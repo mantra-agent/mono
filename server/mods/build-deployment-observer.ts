@@ -8,6 +8,7 @@ import {
 } from "@shared/models/platforms";
 import { modInstallations, users } from "@shared/schema";
 import { db } from "../db";
+import { eventBus } from "../event-bus";
 import { createLogger } from "../log";
 import {
   createNamedSystemPrincipal,
@@ -150,7 +151,14 @@ async function observeOwner(user: DiscoveredBuildOwner["user"]) {
       }
     }
 
-    if (projectionsCreated > 0) invalidateSimpleFeedCache(principal.accountId ?? undefined);
+    if (projectionsCreated > 0) {
+      invalidateSimpleFeedCache(principal.accountId ?? undefined);
+      eventBus.publish({
+        category: "system",
+        event: "data:home_changed",
+        payload: { source: "build_deployment_observer", projectionsCreated },
+      }, principal);
+    }
     return { observationsCreated, projectionsCreated, errors };
   });
 }

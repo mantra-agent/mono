@@ -40,6 +40,7 @@ export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
   const newsInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.payload?.kind === "news_signal") ?? [], [feed.sections]);
   const newsSnoozedItems = useMemo(() => feed.sections.find(s => s.section === "snoozed")?.items.filter(item => item.payload?.kind === "news_signal") ?? [], [feed.sections]);
   const emailInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.payload?.kind === "email_review") ?? [], [feed.sections]);
+  const otherInboxItems = useMemo(() => feed.sections.find(s => s.section === "inbox")?.items.filter(item => item.widgetType !== "person" && item.payload?.kind !== "news_signal" && item.payload?.kind !== "email_review") ?? [], [feed.sections]);
   const peopleSnoozedItems = useMemo(() => feed.sections.find(s => s.section === "snoozed")?.items.filter(item => item.widgetType === "person") ?? [], [feed.sections]);
   const feedSections = useMemo(() => feed.sections
     .filter(s => s.section !== "done" && s.section !== "inbox" && s.section !== "snoozed")
@@ -59,7 +60,7 @@ export function SimpleFeedView({ feed }: { feed: SimpleFeed }) {
           {degradedMessage}
         </div>
       )}
-      <LibrarySurfaceInbox peopleItems={peopleInboxItems} newsItems={newsInboxItems} emailItems={emailInboxItems} />
+      <LibrarySurfaceInbox peopleItems={peopleInboxItems} newsItems={newsInboxItems} emailItems={emailInboxItems} feedItems={otherInboxItems} />
       {feedSections.map(section => (
         <SimpleSectionGroup
           key={section.section}
@@ -247,9 +248,9 @@ function inboxSortTime(item: SimpleFeedItem | LibraryPage): number {
   return Number.isFinite(time) ? time : 0;
 }
 
-type MixedInboxItem = { kind: "person"; item: SimpleFeedItem } | { kind: "news"; item: SimpleFeedItem } | { kind: "email"; item: SimpleFeedItem } | { kind: "page"; page: LibraryPage };
+type MixedInboxItem = { kind: "person"; item: SimpleFeedItem } | { kind: "news"; item: SimpleFeedItem } | { kind: "email"; item: SimpleFeedItem } | { kind: "feed"; item: SimpleFeedItem } | { kind: "page"; page: LibraryPage };
 
-function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems }: { peopleItems: SimpleFeedItem[]; newsItems: SimpleFeedItem[]; emailItems: SimpleFeedItem[] }) {
+function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems, feedItems }: { peopleItems: SimpleFeedItem[]; newsItems: SimpleFeedItem[]; emailItems: SimpleFeedItem[]; feedItems: SimpleFeedItem[] }) {
   const queryClient = useQueryClient();
   const [nowMs, setNowMs] = useState(() => Date.now());
   const { data: pages = [] } = useQuery<LibraryPage[]>({
@@ -260,8 +261,9 @@ function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems }: { peopleIte
     ...peopleItems.map(item => ({ kind: "person" as const, item })),
     ...newsItems.map(item => ({ kind: "news" as const, item })),
     ...emailItems.map(item => ({ kind: "email" as const, item })),
+    ...feedItems.map(item => ({ kind: "feed" as const, item })),
     ...surfacedPages.map(page => ({ kind: "page" as const, page })),
-  ].sort((a, b) => inboxSortTime(b.kind === "page" ? b.page : b.item) - inboxSortTime(a.kind === "page" ? a.page : a.item)), [peopleItems, newsItems, emailItems, surfacedPages]);
+  ].sort((a, b) => inboxSortTime(b.kind === "page" ? b.page : b.item) - inboxSortTime(a.kind === "page" ? a.page : a.item)), [peopleItems, newsItems, emailItems, feedItems, surfacedPages]);
 
   useEffect(() => {
     const activeUntilTimes = pages
@@ -302,7 +304,7 @@ function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems }: { peopleIte
 
   const [open, setOpen] = useState(true);
 
-  if (surfacedPages.length === 0 && peopleItems.length === 0 && newsItems.length === 0 && emailItems.length === 0) return null;
+  if (surfacedPages.length === 0 && peopleItems.length === 0 && newsItems.length === 0 && emailItems.length === 0 && feedItems.length === 0) return null;
 
   return (
     <section className="scroll-mt-6">
@@ -319,6 +321,8 @@ function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems }: { peopleIte
               <SurfacedNewsRow key={entry.item.id} item={entry.item} dateLabel={surfacedDateLabel(entry.item)} />
             ) : entry.kind === "email" ? (
               <SurfacedEmailRow key={entry.item.id} item={entry.item} dateLabel={surfacedDateLabel(entry.item)} />
+            ) : entry.kind === "feed" ? (
+              <SimpleWidgetRenderer key={entry.item.id} item={entry.item} />
             ) : (
               <SurfacedLibraryRow
                 key={entry.page.id}

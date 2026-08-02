@@ -12,6 +12,7 @@
 // server/mods/registry/contribution-builders.ts.
 
 import type { ModKey } from "./mods";
+import type { UiInteractionTarget } from "../ui-interaction";
 
 export type { ModKey };
 
@@ -90,6 +91,7 @@ export interface NavigationContribution extends ContributionBase {
   section: string;
   label: string;
   iconKey: string;
+  target: UiInteractionTarget;
   routeId: string;
   order: number;
 }

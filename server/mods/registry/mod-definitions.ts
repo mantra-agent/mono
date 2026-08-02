@@ -34,9 +34,9 @@ const planning: ModDefinition = {
       clientRoute("planning.route.projects", "/projects", "work"),
     ],
     navigation: [
-      nav("planning.nav.schedule", "Tools", "Schedule", "Calendar", "planning.route.schedule", 6),
-      nav("planning.nav.projects", "Tools", "Projects", "Briefcase", "planning.route.projects", 7),
-      nav("planning.nav.goals", "Planning", "Goals", "Target", "planning.route.goals", 1),
+      nav("planning.nav.schedule", "Tools", "Schedule", "Calendar", "navigation.schedule.open", "planning.route.schedule", 6),
+      nav("planning.nav.projects", "Tools", "Projects", "Briefcase", "navigation.projects.open", "planning.route.projects", 7),
+      nav("planning.nav.goals", "Planning", "Goals", "Target", "navigation.goals.open", "planning.route.goals", 1),
     ],
     widgets: [
       widget("planning.widget.priority-task", "home.primary", "priority_task", "tasks", 2),
@@ -70,10 +70,10 @@ const build: ModDefinition = {
       clientRoute("build.route.issue-detail", "/issues/:id", "issue-detail", { requiredPermissions: ["build:read"] }),
     ],
     navigation: [
-      nav("build.nav.platforms", "Build", "Platforms", "Boxes", "build.route.platforms", 1, { requiredPermissions: ["build:read"] }),
-      nav("build.nav.design", "Build", "Design", "Palette", "build.route.design", 2, { requiredPermissions: ["build:read"] }),
-      nav("build.nav.database", "Build", "Database", "DatabaseZap", "build.route.database", 3, { requiredPermissions: ["build:read"] }),
-      nav("build.nav.issues", "Build", "Issues", "Hammer", "build.route.build", 4, { requiredPermissions: ["build:read"] }),
+      nav("build.nav.platforms", "Build", "Platforms", "Boxes", "navigation.platforms.open", "build.route.platforms", 1, { requiredPermissions: ["build:read"] }),
+      nav("build.nav.design", "Build", "Design", "Palette", "navigation.design.open", "build.route.design", 2, { requiredPermissions: ["build:read"] }),
+      nav("build.nav.database", "Build", "Database", "DatabaseZap", "navigation.database.open", "build.route.database", 3, { requiredPermissions: ["build:read"] }),
+      nav("build.nav.issues", "Build", "Issues", "Hammer", "navigation.issues.open", "build.route.build", 4, { requiredPermissions: ["build:read"] }),
     ],
     integrations: [
       integration("build.integration.github", "github", "available", ["source"]),
@@ -122,13 +122,13 @@ const business: ModDefinition = {
       clientRoute("business.route.pipelines", "/pipelines", "pipelines"),
     ],
     navigation: [
-      nav("business.nav.companies", "Network", "Companies", "Briefcase", "business.route.companies", 3),
-      nav("business.nav.decisions", "Planning", "Decisions", "Scale", "business.route.decisions", 2),
-      nav("business.nav.strategy", "Planning", "Strategy", "Swords", "business.route.strategy", 3),
-      nav("business.nav.advantage", "Business", "Advantage", "Target", "business.route.advantage", 1),
-      nav("business.nav.pipelines", "Business", "Pipelines", "Waypoints", "business.route.pipelines", 2),
-      nav("business.nav.business-model", "Business", "Model", "LineChart", "business.route.business-model", 3, { requiredPermissions: ["system:read"] }),
-      nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "business.route.job-roles", 4, { requiredPermissions: ["system:read"] }),
+      nav("business.nav.companies", "Network", "Companies", "Briefcase", "navigation.companies.open", "business.route.companies", 3),
+      nav("business.nav.decisions", "Planning", "Decisions", "Scale", "navigation.decisions.open", "business.route.decisions", 2),
+      nav("business.nav.strategy", "Planning", "Strategy", "Swords", "navigation.strategy.open", "business.route.strategy", 3),
+      nav("business.nav.advantage", "Business", "Advantage", "Target", "navigation.advantage.open", "business.route.advantage", 1),
+      nav("business.nav.pipelines", "Business", "Pipelines", "Waypoints", "navigation.pipelines.open", "business.route.pipelines", 2),
+      nav("business.nav.business-model", "Business", "Model", "LineChart", "navigation.businessModel.open", "business.route.business-model", 3, { requiredPermissions: ["system:read"] }),
+      nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "navigation.roles.open", "business.route.job-roles", 4, { requiredPermissions: ["system:read"] }),
     ],
     actions: actionsForOwner("business"),
   },
@@ -168,7 +168,7 @@ const wellness: ModDefinition = {
   requiresCore: ["automation", "integration-custody", "ui-composition"],
   contributions: {
     clientRoutes: [clientRoute("wellness.route.wellness", "/wellness", "wellness")],
-    navigation: [nav("wellness.nav.wellness", "Tools", "Wellness", "Activity", "wellness.route.wellness", 8)],
+    navigation: [nav("wellness.nav.wellness", "Tools", "Wellness", "Activity", "navigation.wellness.open", "wellness.route.wellness", 8)],
     widgets: [widget("wellness.widget.wellness", "home.primary", "wellness", "wellness", 4)],
     integrations: [integration("wellness.integration.oura", "oura", "available", ["health-metrics"])],
     actions: actionsForOwner("wellness"),
@@ -195,8 +195,8 @@ const network: ModDefinition = {
       clientRoute("network.route.meetings", "/meetings", "meetings"),
     ],
     navigation: [
-      nav("network.nav.people", "Network", "People", "Users", "network.route.people", 1),
-      nav("network.nav.meetings", "Network", "Meetings", "MessagesSquare", "network.route.meetings", 2),
+      nav("network.nav.people", "Network", "People", "Users", "navigation.people.open", "network.route.people", 1),
+      nav("network.nav.meetings", "Network", "Meetings", "MessagesSquare", "navigation.meetings.open", "network.route.meetings", 2),
     ],
     widgets: [
       widget("network.widget.meeting", "home.primary", "meeting", "meetings", 5),
