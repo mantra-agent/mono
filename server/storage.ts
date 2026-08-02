@@ -137,6 +137,7 @@ export interface IStorage {
     parentSessionId?: string;
     parentSkillRunId?: number;
     parentToolCallId?: string;
+    runtimeRunId?: string;
   }): Promise<SkillRun>;
   updateSkillRunStatus(sessionId: string, status: SkillRunStatus, durationMs?: number, failureReason?: string): Promise<SkillRun | null>;
   reconcileSkillRunStatus(sessionId: string, fromStatus: SkillRunStatus, toStatus: SkillRunStatus, failureReason: string): Promise<SkillRun | null>;
@@ -150,6 +151,7 @@ export interface IStorage {
     comparativeReason?: string | null;
   }): Promise<SkillRun | null>;
   getSkillRunBySessionId(sessionId: string): Promise<SkillRun | null>;
+  getSkillRunByRuntimeRunId(runtimeRunId: string): Promise<SkillRun | null>;
   getChildSkillRunsByParent(parentSkillRunId: number): Promise<SkillRun[]>;
   getSkillRuns(skillName: string, limit?: number): Promise<SkillRun[]>;
   getSkillRunLastRuns(): Promise<Record<string, string>>;
@@ -841,6 +843,7 @@ export class HybridStorage implements IStorage {
     parentSessionId?: string;
     parentSkillRunId?: number;
     parentToolCallId?: string;
+    runtimeRunId?: string;
   }): Promise<SkillRun> {
     const [inserted] = await db.insert(skillRuns).values({
       skillName: data.skillName,
@@ -849,6 +852,7 @@ export class HybridStorage implements IStorage {
       parentSessionId: data.parentSessionId ?? null,
       parentSkillRunId: data.parentSkillRunId ?? null,
       parentToolCallId: data.parentToolCallId ?? null,
+      runtimeRunId: data.runtimeRunId ?? null,
       ...ownedInsertValues(getCurrentPrincipalOrSystem(), skillRunScopeColumns),
     }).onConflictDoNothing({ target: skillRuns.sessionId }).returning();
     if (inserted) return inserted;
@@ -860,6 +864,7 @@ export class HybridStorage implements IStorage {
       && existing.parentSessionId === (data.parentSessionId ?? null)
       && existing.parentSkillRunId === (data.parentSkillRunId ?? null)
       && existing.parentToolCallId === (data.parentToolCallId ?? null)
+      && existing.runtimeRunId === (data.runtimeRunId ?? null)
     ) {
       return existing;
     }
@@ -915,6 +920,11 @@ export class HybridStorage implements IStorage {
 
   async getSkillRunBySessionId(sessionId: string): Promise<SkillRun | null> {
     const [row] = await db.select().from(skillRuns).where(this.runVisible(eq(skillRuns.sessionId, sessionId)));
+    return row ?? null;
+  }
+
+  async getSkillRunByRuntimeRunId(runtimeRunId: string): Promise<SkillRun | null> {
+    const [row] = await db.select().from(skillRuns).where(this.runVisible(eq(skillRuns.runtimeRunId, runtimeRunId)));
     return row ?? null;
   }
 

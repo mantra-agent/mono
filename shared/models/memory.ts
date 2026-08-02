@@ -12,6 +12,7 @@ import {
   uniqueIndex,
   vector,
   check,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -1541,6 +1542,13 @@ export const memoryVnextSourceQueue = pgTable(
       precision: 6,
     }),
     contentHash: text("content_hash"),
+    runtimeRunId: uuid("runtime_run_id"),
+    runtimeSourceVersion: timestamp("runtime_source_version", {
+      withTimezone: true,
+      precision: 6,
+    }),
+    runtimeAttemptId: uuid("runtime_attempt_id"),
+    runtimeLeaseEpoch: integer("runtime_lease_epoch"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
     createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
@@ -1559,6 +1567,17 @@ export const memoryVnextSourceQueue = pgTable(
       table.lastModifiedAt,
     ),
     index("idx_vnext_source_queue_owner").on(table.ownerUserId),
+    uniqueIndex("idx_vnext_source_queue_runtime_run_unique").on(table.runtimeRunId).where(sql`${table.runtimeRunId} IS NOT NULL`),
+    check("memory_vnext_source_queue_runtime_fence_shape", sql`
+      (${table.runtimeRunId} IS NULL AND ${table.runtimeSourceVersion} IS NULL AND ${table.runtimeAttemptId} IS NULL AND ${table.runtimeLeaseEpoch} IS NULL)
+      OR (
+        ${table.runtimeRunId} IS NOT NULL AND ${table.runtimeSourceVersion} IS NOT NULL
+        AND (
+          (${table.runtimeAttemptId} IS NULL AND ${table.runtimeLeaseEpoch} IS NULL)
+          OR (${table.runtimeAttemptId} IS NOT NULL AND ${table.runtimeLeaseEpoch} IS NOT NULL)
+        )
+      )
+    `),
   ],
 );
 
