@@ -22,7 +22,6 @@ import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
-import { CANONICAL_REGRESSION_SKILL_ID } from "./skill-identities";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
 import { searchVnextMemory, type VnextSearchOptions } from "./memory/vnext-search";
@@ -4248,11 +4247,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     return handleWorkflows(args);
   },
 
-  async regression(args) {
-    const { handleRegression } = await import("./tools/regression");
-    return handleRegression(args);
-  },
-
   async message_sibling(args) {
     return handleCrossSessionMessage(args, "sibling");
   },
@@ -7785,18 +7779,6 @@ ${lines.join("\n")}` };
           if (!targetSkill) targetSkill = await storage.getSkillByName(requestedSkill);
           if (!targetSkill) return { result: `Skill "${requestedSkill}" not found`, error: true };
           const skillId = targetSkill.id;
-
-          if (skillId === CANONICAL_REGRESSION_SKILL_ID) {
-            const { startManualRegression } = await import("./regression/regression-admission");
-            const run = await startManualRegression({ wait: args.wait !== false });
-            return {
-              result: [
-                `Regression run ${run.id} ${args.wait === false ? "started" : run.status}.`,
-                `Environment: ${run.environmentId} · deployment: ${run.acceptedDeploymentId} · revision: ${run.acceptedRevision}`,
-                run.skillSessionId ? `Session: ${run.skillSessionId}` : "Session: starting",
-              ].join("\n"),
-            };
-          }
 
           const callingConversationId = args._sessionId;
           if (normalizeSkillIdentifier(skillId) === "spec" && await isSpecSkillSession(callingConversationId)) {
@@ -14459,7 +14441,32 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       if (bridge) return bridge(args);
       return { result: "create_issue handler not found", error: true };
     }
-    if (action === "get_issue") {
+    if (action === "list_issues") {
+      const allowedStatuses = new Set(["open", "in_progress", "in_review", "resolved"]);
+      const status = typeof args.status === "string" && args.status.trim() ? args.status.trim() : undefined;
+      const excludeStatus = typeof args.excludeStatus === "string" && args.excludeStatus.trim() ? args.excludeStatus.trim() : undefined;
+      if (status && !allowedStatuses.has(status)) return { result: `Invalid Issue status '${status}'`, error: true };
+      if (excludeStatus && !allowedStatuses.has(excludeStatus)) return { result: `Invalid excluded Issue status '${excludeStatus}'`, error: true };
+      const limit = Math.max(1, Math.min(Number(args.limit) || 100, 500));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+      try {
+        const { storage } = await import("./storage");
+        const issues = await storage.getIssues({ status, excludeStatus, lightweight: true });
+        const page = issues.slice(offset, offset + limit);
+        const nextOffset = offset + page.length;
+        return { result: JSON.stringify({
+          issues: page,
+          offset,
+          nextOffset: nextOffset < issues.length ? nextOffset : null,
+          hasMore: nextOffset < issues.length,
+          total: issues.length,
+        }) };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { result: `Failed to list Issues: ${msg}`, error: true };
+      }
+    }
+    if (action === "get_issue" || action === "update_issue") {
       const rawId = args.id;
       if (rawId === undefined || rawId === null || rawId === "") {
         return { result: "Missing issue id", error: true };
@@ -14472,10 +14479,18 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         const { storage } = await import("./storage");
         const issue = await storage.getIssue(idNum);
         if (!issue) return { result: `Issue ${idNum} not found`, error: true };
-        return { result: JSON.stringify(issue) };
+        if (action === "get_issue") return { result: JSON.stringify(issue) };
+
+        const status = typeof args.status === "string" ? args.status.trim() : "";
+        const note = typeof args.note === "string" ? args.note.trim() : "";
+        if (status !== "resolved") return { result: "Automated Issue updates may only transition a reviewed Issue to resolved", error: true };
+        if (!note || note.length > 2_000) return { result: "update_issue requires a concise evidence note of 1-2000 characters", error: true };
+        const updated = await storage.resolveIssueWithEvidence(idNum, note);
+        if (!updated) return { result: `Issue ${idNum} not found`, error: true };
+        return { result: JSON.stringify(updated) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to get issue ${idNum}: ${msg}`, error: true };
+        return { result: `Failed to ${action === "get_issue" ? "get" : "update"} issue ${idNum}: ${msg}`, error: true };
       }
     }
     if (action === "log_files") {
@@ -14632,7 +14647,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to get tool stats: ${msg}`, error: true };
       }
     }
-    return { result: `Unknown system action: ${action}. Available: state, create_issue, get_issue, logs, log_files, budget, frontend_performance, context_health, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
+    return { result: `Unknown system action: ${action}. Available: state, list_issues, get_issue, update_issue, create_issue, logs, log_files, budget, frontend_performance, context_health, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
   },
   async timers(args) {
     const action = args.action as string;

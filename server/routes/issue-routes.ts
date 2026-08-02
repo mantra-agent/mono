@@ -154,12 +154,7 @@ export function registerIssueRoutes(app: Express) {
       if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });
       const issue = await storage.getIssue(id);
       if (!issue) return res.status(404).json({ error: "Issue not found" });
-      const { getIssueRegressionContract, getRegressionResults } = await import("../regression/regression-service");
-      const [regressionContract, regressionHistory] = await Promise.all([
-        getIssueRegressionContract(id),
-        getRegressionResults({ issueId: id, limit: 20 }),
-      ]);
-      res.json({ ...issue, regressionContract, latestRegressionResult: regressionHistory[0] || null, regressionHistory });
+      res.json(issue);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -180,26 +175,8 @@ export function registerIssueRoutes(app: Express) {
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });
 
-      const existing = await storage.getIssue(id);
-      if (!existing) return res.status(404).json({ error: "Issue not found" });
-
       const updates = updateIssueSchema.parse(req.body);
 
-      if (updates.status && updates.status !== existing.status) {
-        const existingNotes: any[] = Array.isArray(existing.notes) ? existing.notes as any[] : [];
-        const statusNote = {
-          id: `status-${Date.now()}`,
-          author: "agent",
-          content: "",
-          timestamp: new Date().toISOString(),
-          statusChange: { from: existing.status, to: updates.status },
-        };
-        updates.notes = [...existingNotes, statusNote];
-      }
-
-      if (updates.feedback && !updates.status) {
-        updates.status = "open";
-      }
       const updated = await storage.updateIssue(id, updates);
       if (!updated) {
         return res.status(404).json({ error: "Issue not found" });
@@ -210,20 +187,6 @@ export function registerIssueRoutes(app: Express) {
         return res.status(400).json({ error: "Invalid input", details: error.errors });
       }
       res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.put("/api/issues/:id/regression-contract", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      if (isNaN(id)) return res.status(400).json({ error: "Invalid issue ID" });
-      const { issueRegressionContractInputSchema } = await import("@shared/models/regression");
-      const { upsertIssueRegressionContract } = await import("../regression/regression-service");
-      const contract = issueRegressionContractInputSchema.parse(req.body);
-      res.json(await upsertIssueRegressionContract(id, contract));
-    } catch (error: any) {
-      if (error.name === "ZodError") return res.status(400).json({ error: "Invalid regression contract", details: error.errors });
-      res.status(error.status || 500).json({ error: error.message });
     }
   });
 

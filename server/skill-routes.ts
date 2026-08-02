@@ -9,7 +9,6 @@ import { inArray } from "drizzle-orm";
 import { listSkillPersonaConfiguration, setSkillPersonaPreference } from "./skill-persona-service";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
-import { CANONICAL_REGRESSION_SKILL_ID } from "./skill-identities";
 
 const libraryPageScopeColumns = {
   scope: libraryPages.scope,
@@ -116,13 +115,6 @@ export function registerSkillRoutes(app: Express): void {
       const skill = await storage.getSkill(req.params.id);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
       if (skill.status !== "active") return res.status(409).json({ error: `Skill ${skill.name} is not active` });
-
-      if (skill.id === CANONICAL_REGRESSION_SKILL_ID) {
-        const { startManualRegression } = await import("./regression/regression-admission");
-        const run = await startManualRegression({ wait: false });
-        log.log(`Started Regression skill id=${skill.id} run=${run.id} session=${run.skillSessionId || "pending"}`);
-        return res.status(202).json({ started: true, skillId: skill.id, skillName: skill.name, sessionId: run.skillSessionId });
-      }
 
       const { executeAutonomousSkillRun } = await import("./autonomous-skill-runner");
       const launched = await executeAutonomousSkillRun(skill.id, {

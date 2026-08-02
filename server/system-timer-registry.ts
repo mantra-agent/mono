@@ -214,6 +214,25 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     timezone: "__USER_TZ__",
   },
   {
+    legacyMatch: (t) => t.type === "skill" && t.skillId === "regression",
+
+    systemKey: "post-build-regression",
+    name: "Post-build Regression",
+    description: "Reviews existing open Issues after each new deployed build",
+    type: "skill",
+    skillId: "regression",
+    prompt: "",
+    schedules: [
+      {
+        id: "sys-skill-regression-next-build",
+        frequency: "once",
+        fireOnNextBuild: true,
+      },
+    ],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
+  {
     legacyMatch: (t) => t.type === "skill" && t.skillId === "brief-daily",
 
     systemKey: "daily-brief",
