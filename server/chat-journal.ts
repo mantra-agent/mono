@@ -6,7 +6,7 @@ import { mkdirSync, existsSync } from "fs";
 import { appendFile, readFile } from "fs/promises";
 import { join } from "path";
 import { abortTrace } from "./abort-trace";
-import type { ModelProviderFailureInfo } from "@shared/models/chat";
+import type { ModelProviderFailureInfo, TerminalDegradationReason } from "@shared/models/chat";
 import type { DiagnosticChildMode, DiagnosticTimingKind, DiagnosticVisibility } from "@shared/streaming-types";
 
 const log = createLogger("Journal");
@@ -72,6 +72,8 @@ export interface JournalEntry {
   seq?: number;
   terminationReason?: string;
   abortReason?: string;
+  degradationReason?: TerminalDegradationReason;
+  lastStopReason?: string;
   iterationsUsed?: number;
   cost?: number | null;
   apiCallCount?: number | null;

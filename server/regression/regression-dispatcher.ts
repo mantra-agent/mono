@@ -96,7 +96,7 @@ async function launchClaimedRun(run: DispatchableRun): Promise<void> {
         },
       });
       if (!result) throw new Error("Regression skill launch was deduplicated without a durable session result");
-      if (result.status === "failed" || result.status === "yielded") {
+      if (result.status !== "succeeded") {
         throw new Error(result.error || `Regression skill ended ${result.status}`);
       }
       const current = await getRegressionRun(run.id);

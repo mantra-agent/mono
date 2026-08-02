@@ -933,13 +933,17 @@ export async function executeAutonomousSkillRun(
     }
 
     if (await conversationExists(sessionId)) {
-      const finalSessionStatus = result.status === "succeeded" ? "saved" : "failed";
-      if (finalSessionStatus === "failed") {
+      const finalSessionStatus = result.status === "succeeded" || result.status === "degraded" ? "saved" : "failed";
+      if (result.status === "failed") {
         await chatFileStorage.setErrorSeverity(sessionId, "error").catch((e: unknown) => {
           logger.error(`[SkillChat] [${sessionId}] Failed to set errorSeverity: ${e instanceof Error ? e.message : String(e)}`);
         });
+      } else if (result.status === "degraded") {
+        await chatFileStorage.setErrorSeverity(sessionId, "warn").catch((e: unknown) => {
+          logger.error(`[SkillChat] [${sessionId}] Failed to set degraded errorSeverity: ${e instanceof Error ? e.message : String(e)}`);
+        });
       }
-      const endReason = result.status === "succeeded" ? "complete" : result.error || "error";
+      const endReason = result.status === "succeeded" ? "complete" : result.error || result.status;
       await chatFileStorage.setEndReason(sessionId, endReason).catch(() => undefined);
       if (options.parentSessionId) {
         treeLog.log(`end skill=${skillId} run=${sessionId} parent=${options.parentSessionId} status=${result.status} sessionStatus=${finalSessionStatus} endReason=${endReason} durationMs=${result.durationMs}`);
@@ -976,7 +980,10 @@ export async function executeAutonomousSkillRun(
     // successfully invoked a tool its checklist requires must not terminate as
     // a clean success. Computed here — the single terminal-status mutation
     // point — so every launch path (timer, tool, hook) inherits the verdict.
-    let runStatus: "succeeded" | "degraded" | "failed" = result.status === "succeeded" ? "succeeded" : "failed";
+    let runStatus: "succeeded" | "degraded" | "failed" =
+      result.status === "succeeded" ? "succeeded"
+      : result.status === "degraded" ? "degraded"
+      : "failed";
     let failedStructuralChecks: string[] = [];
     if (runStatus === "succeeded" && config.skillId) {
       failedStructuralChecks = await findFailedStructuralChecks(sessionId, config.skillId);
@@ -989,7 +996,9 @@ export async function executeAutonomousSkillRun(
     const terminalFailureReason = runStatus === "failed"
       ? result.error
       : runStatus === "degraded"
-        ? `structural_requirements_failed: ${failedStructuralChecks.join(", ")}`
+        ? result.status === "degraded"
+          ? result.error || "executor_degraded"
+          : `structural_requirements_failed: ${failedStructuralChecks.join(", ")}`
         : undefined;
     const settledRun = await storage.updateSkillRunStatus(sessionId, runStatus, result.durationMs, terminalFailureReason).catch((e: unknown) => {
       logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status: ${e instanceof Error ? e.message : String(e)}`);
@@ -1007,17 +1016,24 @@ export async function executeAutonomousSkillRun(
           logger.error(`[SkillChat] [${sessionId}] Failed to reconcile degraded errorSeverity: ${e instanceof Error ? e.message : String(e)}`);
         });
       }
-      logger.warn(`[SkillChat] [${sessionId}] Run degraded — structural checklist requirements failed: ${failedStructuralChecks.join(", ")}`);
+      const degradedReason = result.status === "degraded"
+        ? result.error || "executor_degraded"
+        : "structural_requirements_failed";
+      logger.warn(`[SkillChat] [${sessionId}] Run degraded — reason=${degradedReason} failedStructuralChecks=${failedStructuralChecks.join(",") || "none"}`);
       eventBus.publish({
         category: "skill",
         event: "skill.run.degraded",
-        payload: { sessionId, skillId, skillName: config.label, reason: "structural_requirements_failed", failedStructuralChecks },
+        payload: { sessionId, skillId, skillName: config.label, reason: degradedReason, failedStructuralChecks },
       });
     }
 
     eventBus.publish({
       category: "chat",
-      event: result.status === "succeeded" ? "chat.autonomous.completed" : "chat.autonomous.failed",
+      event: runStatus === "succeeded"
+        ? "chat.autonomous.completed"
+        : runStatus === "degraded"
+          ? "chat.autonomous.degraded"
+          : "chat.autonomous.failed",
       payload: { sessionId, skillId, skillName: config.label, durationMs: result.durationMs, error: result.error, sessionType: sessType, ...(options.parentSessionId ? { parentSessionId: options.parentSessionId } : {}) },
     });
     lifecycleLog.debug(
@@ -1325,6 +1341,25 @@ async function runSkillPipeline(
       return { sessionId, status: "failed", error: errorMsg, durationMs };
     }
 
+    if (result.status === "degraded") {
+      const reason = result.degradationReason || "executor_degraded";
+      await persistExecutorResult(
+        sessionId,
+        result,
+        "The model reached its output limit before producing final text. Completed tool work remains saved.",
+      ).catch((e: unknown) => {
+        logger.error(`[SkillChat] [${sessionId}] Failed to persist degraded result: ${e instanceof Error ? e.message : String(e)}`);
+      });
+      logger.warn(`[SkillChat] [${sessionId}] Skill degraded: ${reason} (${durationMs}ms, ${toolCallCount} tool calls)`);
+      return {
+        sessionId,
+        status: "degraded",
+        summary: "Executor completed without final text; completed work remains saved.",
+        error: reason,
+        durationMs,
+      };
+    }
+
     await persistExecutorResult(sessionId, result, "Skill run completed.").catch((e: unknown) => {
       logger.error(`[SkillChat] [${sessionId}] Failed to persist success result: ${e instanceof Error ? e.message : String(e)}`);
     });
@@ -1511,9 +1546,11 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
       tier: "request",
     });
 
-    if (result.status === "failed") {
+    if (result.status === "failed" || result.status === "degraded") {
       finalStatus = "failed";
-      finalSummary = result.error || describeExecutorFailure(result);
+      finalSummary = result.status === "degraded"
+        ? result.degradationReason || "executor_degraded"
+        : result.error || describeExecutorFailure(result);
     }
 
     await persistExecutorResult(sessionId, result, "Child session completed.", result.status === "failed").catch((e: unknown) => {

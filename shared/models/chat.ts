@@ -120,6 +120,8 @@ export interface SystemNotice {
   actionHint: string;
   terminationReason?: string;
   abortReason?: string;
+  degradationReason?: TerminalDegradationReason;
+  lastStopReason?: string;
   iterationsUsed?: number;
   durationMs?: number;
   toolCallCount?: number;
@@ -238,6 +240,8 @@ export type TerminationReason =
   | "error"
   | "circuit_breaker"
   | "yield_to_interactive";
+
+export type TerminalDegradationReason = "empty_response_output_limit";
 
 export interface ProviderTransportErrorInfo {
   name?: string;
@@ -375,6 +379,8 @@ export interface ExecutorStreamEvent {
   occurredAt?: number;
   narrative?: string;
   terminationReason?: TerminationReason;
+  degradationReason?: TerminalDegradationReason;
+  lastStopReason?: string;
   iterationsUsed?: number;
   breakdown?: ExecutorTtftBreakdown;
 }

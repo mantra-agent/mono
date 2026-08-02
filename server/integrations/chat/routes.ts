@@ -304,7 +304,12 @@ function buildSystemNotice(result: ExecutorRunResult): SystemNotice {
   let description = "Something went wrong during processing.";
   let actionHint = "Try sending your message again.";
 
-  if (result.abortReason) {
+  if (result.status === "degraded" && result.degradationReason === "empty_response_output_limit") {
+    severity = "warning";
+    errorType = "response_incomplete";
+    description = "The response reached the model's output limit before any final text was produced. Earlier completed tool work remains saved.";
+    actionHint = "Send another message and I'll continue from the last completed step.";
+  } else if (result.abortReason) {
     switch (result.abortReason) {
       case "stream_idle_timeout":
         errorType = "response_interrupted";
@@ -403,6 +408,8 @@ function buildSystemNotice(result: ExecutorRunResult): SystemNotice {
     actionHint,
     terminationReason: result.terminationReason,
     abortReason: result.abortReason,
+    degradationReason: result.degradationReason,
+    lastStopReason: result.lastStopReason,
     iterationsUsed,
     durationMs,
     toolCallCount,
@@ -2677,32 +2684,32 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           result.status === "failed"
             ? describeAbortReasonForUser(result)
             : null;
-        if (abortDescription) {
+        if (result.status === "degraded" && result.degradationReason === "empty_response_output_limit") {
+          parts.push("The response reached the model's output limit before any final text was produced. Earlier completed tool work remains saved.");
+        } else if (abortDescription) {
           parts.push(abortDescription);
         } else if (result.status === "failed") {
           parts.push(
             `Termination reason: ${(result.terminationReason || "unknown").replace(/_/g, " ")}.`,
           );
         } else {
-          parts.push(
-            "This can happen when the session context grew too large.",
-          );
+          parts.push("The model completed without returning visible text.");
         }
         if (errorDetail) {
           parts.push(`Cause: ${errorDetail}`);
         }
         parts.push(
-          result.abortReason
+          result.status === "degraded" || result.abortReason
             ? "Send another message and I'll continue from the last completed step."
-            : "Try rephrasing your question or starting a new session.",
+            : "Try rephrasing your question.",
         );
         responseContent = parts.join(" ");
       }
 
-      // Build and persist a system_notice for non-complete terminations
-      // Skip for superseded runs — the new run starts automatically, no notice needed
+      // Failed and degraded outcomes use the same canonical notice surface.
+      // Superseded runs end quietly because their replacement begins automatically.
       let systemNotice: SystemNotice | undefined;
-      if (result.status === "failed" && result.abortReason !== "superseded") {
+      if ((result.status === "failed" || result.status === "degraded") && result.abortReason !== "superseded") {
         systemNotice = buildSystemNotice(result);
       }
 
@@ -2806,9 +2813,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             totalTokens: turnTokenUsage.totalTokens,
             segmentChronology: persistedChronology,
             assistantState:
-              result.status === "succeeded" ? "complete" : "failed",
+              result.status === "succeeded" || result.status === "degraded" ? "complete" : "failed",
             sessionStatus:
-              result.status === "succeeded" ? "saved" : "failed",
+              result.status === "succeeded" || result.status === "degraded" ? "saved" : "failed",
           })
         : null;
       const createdTerminalMessage = assistantDraft
@@ -2922,10 +2929,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         outputTokens: turnTokenUsage.outputTokens,
         totalTokens: turnTokenUsage.totalTokens,
       });
+      const resultSettled = result.status === "succeeded" || result.status === "degraded";
       settlement = {
-        status: result.status === "succeeded" ? "completed" : "failed",
+        status: resultSettled ? "completed" : "failed",
         assistantMessageId: msg!.id,
-        ...(result.status === "succeeded" ? {} : { error: result.error || result.terminationReason || "executor_failed" }),
+        ...(resultSettled ? {} : { error: result.error || result.terminationReason || "executor_failed" }),
       };
       } // end if (!isSuperseded)
     } catch (error: unknown) {
