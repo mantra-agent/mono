@@ -891,8 +891,7 @@ async function openaiResponsesCompletion(model: string, options: ChatCompletionO
  * Anthropic provider already retries `overloaded_error` with the same shape.
  */
 const CODEX_RETRY_DELAYS_MS = [1000, 2000, 4000];
-const CODEX_COMPLETION_MAX_ATTEMPTS = CODEX_RETRY_DELAYS_MS.length + 1;
-const CODEX_STREAM_MAX_ATTEMPTS = 2;
+const CODEX_MAX_ATTEMPTS = CODEX_RETRY_DELAYS_MS.length + 1;
 const CODEX_TIME_TO_FIRST_EVENT_MS = 20_000;
 
 class CodexAbortedError extends Error {
@@ -1623,10 +1622,10 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
   const parentSignal = options.signal as AbortSignal | undefined;
   let lastAttemptError: ModelProviderAttemptError | undefined;
 
-  for (let attempt = 0; attempt < CODEX_COMPLETION_MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < CODEX_MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       log.debug(
-        `codex completion retry attempt=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} model=${codexModel} ` +
+        `codex completion retry attempt=${attempt + 1}/${CODEX_MAX_ATTEMPTS} model=${codexModel} ` +
         `reason=${lastAttemptError?.phase ?? "protocol"}:${lastAttemptError?.message ?? "response.failed"} ` +
         `delay=${CODEX_RETRY_DELAYS_MS[attempt - 1]}ms`,
       );
@@ -1636,7 +1635,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
     const scope = createCodexAttemptScope(parentSignal);
     try {
       await captureProviderDispatch("openai-subscription", codexModel, "fetch codex responses", body, options, attempt + 1);
-      const response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "completion", attempt, CODEX_COMPLETION_MAX_ATTEMPTS);
+      const response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "completion", attempt, CODEX_MAX_ATTEMPTS);
       if (!response.ok || !response.body) {
         const text = await response.text().catch(() => "unknown error");
         throw codexHttpAttemptError(response, text, scope);
@@ -1721,7 +1720,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
             firstEventSeen = true;
             scope.markFirstEvent();
             log.debug(
-              `codex completion first event attempt=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} ` +
+              `codex completion first event attempt=${attempt + 1}/${CODEX_MAX_ATTEMPTS} ` +
               `model=${codexModel} firstEventMs=${Date.now() - scope.startedAt} ` +
               `clientRequestId=${scope.clientRequestId} providerRequestId=${response.headers.get("x-request-id") || "none"}`,
             );
@@ -1783,7 +1782,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
       }
       if (attempt > 0) {
         log.warn(
-          `codex completion recovered after retry attempts=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} ` +
+          `codex completion recovered after retry attempts=${attempt + 1}/${CODEX_MAX_ATTEMPTS} ` +
           `model=${codexModel} previousFailure=${lastAttemptError?.kind ?? "unknown"}:${lastAttemptError?.message ?? "unknown"}`,
         );
       }
@@ -1807,7 +1806,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
       if (parentSignal?.aborted || (isAbortError(err, scope.signal) && !scope.timedOut())) throw new CodexAbortedError();
       if (!(err instanceof ModelProviderAttemptError)) throw err;
       lastAttemptError = err;
-      if (err.retryable && attempt < CODEX_COMPLETION_MAX_ATTEMPTS - 1) {
+      if (err.retryable && attempt < CODEX_MAX_ATTEMPTS - 1) {
         await settleRetryingProviderAttempt(options.providerAttemptTracker ?? createProviderAttemptTracker(), {
           error: serializeModelError(err),
           usage: err.diagnostics?.usage,
@@ -1816,11 +1815,11 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
         });
       }
       log.debug(
-        `codex completion attempt failed attempt=${attempt + 1}/${CODEX_COMPLETION_MAX_ATTEMPTS} model=${codexModel} ` +
+        `codex completion attempt failed attempt=${attempt + 1}/${CODEX_MAX_ATTEMPTS} model=${codexModel} ` +
         `phase=${err.phase} status=${err.status || 0} elapsedMs=${Date.now() - scope.startedAt} ` +
         `clientRequestId=${err.clientRequestId} providerRequestId=${err.providerRequestId ?? "none"} error=${err.message}`,
       );
-      if (!err.retryable || attempt === CODEX_COMPLETION_MAX_ATTEMPTS - 1) {
+      if (!err.retryable || attempt === CODEX_MAX_ATTEMPTS - 1) {
         throw modelProviderErrorFromAttempt(err, attempt + 1, { model: codexModel, metadata: options.metadata });
       }
     } finally {
@@ -1829,7 +1828,7 @@ async function openaiSubscriptionCompletion(model: string, options: ChatCompleti
   }
 
   if (lastAttemptError) {
-    throw modelProviderErrorFromAttempt(lastAttemptError, CODEX_COMPLETION_MAX_ATTEMPTS, { model: codexModel, metadata: options.metadata });
+    throw modelProviderErrorFromAttempt(lastAttemptError, CODEX_MAX_ATTEMPTS, { model: codexModel, metadata: options.metadata });
   }
   throw new Error("Codex completion exhausted retries without an attempt error");
 }
@@ -2327,7 +2326,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
     yield { type: "request_sent", metadata: { authMs, buildMs: Date.now() - authStart - authMs } };
     let headersEmitted = false;
 
-    streamRetryLoop: for (let attempt = 0; attempt < CODEX_STREAM_MAX_ATTEMPTS; attempt++) {
+    streamRetryLoop: for (let attempt = 0; attempt < CODEX_MAX_ATTEMPTS; attempt++) {
       if (attempt > 0) {
         if (yieldedThinkingEvent) {
           // The failed attempt streamed reasoning downstream. Void it before
@@ -2337,7 +2336,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           yield { type: "attempt_reset" };
         }
         log.debug(
-          `codex stream retry attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
+          `codex stream retry attempt=${attempt + 1}/${CODEX_MAX_ATTEMPTS} model=${codexModel} ` +
           `reason=${lastEarlyReason || "early-failure"} delay=${CODEX_RETRY_DELAYS_MS[attempt - 1]}ms`,
         );
         try {
@@ -2353,7 +2352,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       let response: Response;
       try {
         await captureProviderDispatch("openai-subscription", codexModel, "fetch codex responses stream", body, options, attempt + 1);
-        response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "stream", attempt, CODEX_STREAM_MAX_ATTEMPTS);
+        response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "stream", attempt, CODEX_MAX_ATTEMPTS);
         if (!response.ok || !response.body) {
           const text = await response.text().catch(() => "unknown error");
           throw codexHttpAttemptError(response, text, scope);
@@ -2365,12 +2364,12 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
         if (!(err instanceof ModelProviderAttemptError)) throw err;
         lastEarlyReason = `${err.kind}:${err.message}`;
         log.debug(
-          `codex stream attempt failed attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
+          `codex stream attempt failed attempt=${attempt + 1}/${CODEX_MAX_ATTEMPTS} model=${codexModel} ` +
           `kind=${err.kind} retryable=${err.retryable} phase=${err.phase} status=${err.status || 0} ` +
           `elapsedMs=${Date.now() - scope.startedAt} clientRequestId=${err.clientRequestId} ` +
           `providerRequestId=${err.providerRequestId ?? "none"} error=${err.message}`,
         );
-        if (err.retryable && attempt < CODEX_STREAM_MAX_ATTEMPTS - 1) continue streamRetryLoop;
+        if (err.retryable && attempt < CODEX_MAX_ATTEMPTS - 1) continue streamRetryLoop;
         const providerError = modelProviderErrorFromAttempt(err, attempt + 1, { model: codexModel, metadata: options.metadata });
         yield { type: "error", error: providerError.message, providerFailure: providerError.providerFailure };
         return;
@@ -2470,7 +2469,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
           if (!firstProviderEventSeen) {
             firstProviderEventSeen = true;
             log.debug(
-              `codex stream first event attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
+              `codex stream first event attempt=${attempt + 1}/${CODEX_MAX_ATTEMPTS} model=${codexModel} ` +
               `firstEventMs=${Date.now() - scope.startedAt} clientRequestId=${scope.clientRequestId} ` +
               `providerRequestId=${response.headers.get("x-request-id") || "none"}`,
             );
@@ -2580,13 +2579,13 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
         lastEarlyReason = `${attemptFailure.kind}:${attemptFailure.message}`;
         await reader.cancel(lastEarlyReason).catch(() => undefined);
         log.debug(
-          `codex stream attempt failed attempt=${attempt + 1}/${CODEX_STREAM_MAX_ATTEMPTS} model=${codexModel} ` +
+          `codex stream attempt failed attempt=${attempt + 1}/${CODEX_MAX_ATTEMPTS} model=${codexModel} ` +
           `kind=${attemptFailure.kind} retryable=${attemptFailure.retryable} phase=${attemptFailure.phase} ` +
           `status=${attemptFailure.status || 0} elapsedMs=${Date.now() - scope.startedAt} ` +
           `clientRequestId=${attemptFailure.clientRequestId} providerRequestId=${attemptFailure.providerRequestId ?? "none"} ` +
           `error=${attemptFailure.message}`,
         );
-        if (attemptFailure.retryable && attempt < CODEX_STREAM_MAX_ATTEMPTS - 1) continue streamRetryLoop;
+        if (attemptFailure.retryable && attempt < CODEX_MAX_ATTEMPTS - 1) continue streamRetryLoop;
         const providerError = modelProviderErrorFromAttempt(attemptFailure, attempt + 1, { model: codexModel, metadata: options.metadata });
         yield { type: "error", error: providerError.message, providerFailure: providerError.providerFailure };
         return;
@@ -2603,7 +2602,7 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
 
     if (recoveredRetryAttempts > 0) {
       log.warn(
-        `codex stream recovered after retry attempts=${recoveredRetryAttempts + 1}/${CODEX_STREAM_MAX_ATTEMPTS} ` +
+        `codex stream recovered after retry attempts=${recoveredRetryAttempts + 1}/${CODEX_MAX_ATTEMPTS} ` +
         `model=${codexModel} previousFailure=${lastEarlyReason || "unknown"}`,
       );
     }
@@ -3292,9 +3291,9 @@ export async function generateImageViaSubscription(
   };
   if (signal) fetchOptions.signal = signal;
 
-  for (let attempt = 0; attempt < CODEX_COMPLETION_MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < CODEX_MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
-      log.warn(`codex image-gen retry attempt=${attempt}/${CODEX_COMPLETION_MAX_ATTEMPTS - 1} model=${codexModel}`);
+      log.warn(`codex image-gen retry attempt=${attempt}/${CODEX_MAX_ATTEMPTS - 1} model=${codexModel}`);
       try {
         await codexBackoffSleep(attempt, signal);
       } catch {
@@ -3306,7 +3305,7 @@ export async function generateImageViaSubscription(
     try {
     let response: Response;
     try {
-      response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "image-gen", attempt, CODEX_COMPLETION_MAX_ATTEMPTS);
+      response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "image-gen", attempt, CODEX_MAX_ATTEMPTS);
     } catch (err: any) {
       scope.cleanup();
       if (err.name === "AbortError" || signal?.aborted) throw err;
@@ -3368,7 +3367,7 @@ export async function generateImageViaSubscription(
 
     if (earlyFailure) {
       scope.cleanup();
-      if (earlyFailure.retryable && attempt < CODEX_COMPLETION_MAX_ATTEMPTS - 1) continue;
+      if (earlyFailure.retryable && attempt < CODEX_MAX_ATTEMPTS - 1) continue;
       throw modelProviderErrorFromAttempt(earlyFailure, attempt + 1, { model: codexModel });
     }
 
@@ -3432,9 +3431,9 @@ export async function editImageViaSubscription(
   };
   if (signal) fetchOptions.signal = signal;
 
-  for (let attempt = 0; attempt < CODEX_COMPLETION_MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < CODEX_MAX_ATTEMPTS; attempt++) {
     if (attempt > 0) {
-      log.warn(`codex image-edit retry attempt=${attempt}/${CODEX_COMPLETION_MAX_ATTEMPTS - 1} model=${codexModel}`);
+      log.warn(`codex image-edit retry attempt=${attempt}/${CODEX_MAX_ATTEMPTS - 1} model=${codexModel}`);
       try {
         await codexBackoffSleep(attempt, signal);
       } catch {
@@ -3446,7 +3445,7 @@ export async function editImageViaSubscription(
     try {
     let response: Response;
     try {
-      response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "image-edit", attempt, CODEX_COMPLETION_MAX_ATTEMPTS);
+      response = await fetchCodexAttempt(fetchOptions, scope, codexModel, "image-edit", attempt, CODEX_MAX_ATTEMPTS);
     } catch (err: any) {
       scope.cleanup();
       if (err.name === "AbortError" || signal?.aborted) throw err;
@@ -3506,7 +3505,7 @@ export async function editImageViaSubscription(
 
     if (earlyFailure) {
       scope.cleanup();
-      if (earlyFailure.retryable && attempt < CODEX_COMPLETION_MAX_ATTEMPTS - 1) continue;
+      if (earlyFailure.retryable && attempt < CODEX_MAX_ATTEMPTS - 1) continue;
       throw modelProviderErrorFromAttempt(earlyFailure, attempt + 1, { model: codexModel });
     }
 
