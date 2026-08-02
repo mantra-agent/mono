@@ -45,6 +45,17 @@ export interface PlanStepAttempt {
   error?: string | null;
 }
 
+export interface PlanStepReview {
+  id: number;
+  attemptId?: number | null;
+  status: "open" | "resolved";
+  prompt: string;
+  decision?: "approve" | "request_changes" | "retry" | "stop" | null;
+  decisionReason?: string | null;
+  openedAt: string;
+  resolvedAt?: string | null;
+}
+
 export interface PlanStep {
   id: string;
   title: string;
@@ -55,6 +66,7 @@ export interface PlanStep {
   sessionId?: string;
   sessions?: PlanStepSessionLink[];
   attempts?: PlanStepAttempt[];
+  review?: PlanStepReview;
 }
 
 export interface PlanData {

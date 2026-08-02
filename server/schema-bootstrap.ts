@@ -5762,6 +5762,114 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_owner ON plan_step_attempts(owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_attempts_account ON plan_step_attempts(account_id)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_step_attempts_attempt_unique ON plan_step_attempts(plan_id, step_id, attempt_number)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS plan_step_reviews (
+        id SERIAL PRIMARY KEY,
+        plan_id TEXT NOT NULL REFERENCES plan_executions(id) ON DELETE CASCADE,
+        step_id TEXT NOT NULL,
+        attempt_id INTEGER REFERENCES plan_step_attempts(id) ON DELETE SET NULL,
+        owner_user_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        prompt TEXT NOT NULL,
+        decision TEXT,
+        decision_reason TEXT,
+        opened_by_session_id TEXT,
+        resolved_by_user_id TEXT,
+        resolved_by_session_id TEXT,
+        resolution_source TEXT,
+        opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pool.query(`
+      ALTER TABLE plan_step_reviews
+      ADD COLUMN IF NOT EXISTS attempt_id INTEGER,
+      ADD COLUMN IF NOT EXISTS owner_user_id TEXT,
+      ADD COLUMN IF NOT EXISTS account_id TEXT,
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open',
+      ADD COLUMN IF NOT EXISTS prompt TEXT,
+      ADD COLUMN IF NOT EXISTS decision TEXT,
+      ADD COLUMN IF NOT EXISTS decision_reason TEXT,
+      ADD COLUMN IF NOT EXISTS opened_by_session_id TEXT,
+      ADD COLUMN IF NOT EXISTS resolved_by_user_id TEXT,
+      ADD COLUMN IF NOT EXISTS resolved_by_session_id TEXT,
+      ADD COLUMN IF NOT EXISTS resolution_source TEXT,
+      ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    `);
+    await pool.query(`
+      UPDATE plan_step_reviews review
+      SET owner_user_id = plan.owner_user_id,
+          account_id = plan.account_id,
+          updated_at = NOW()
+      FROM plan_executions plan
+      WHERE review.plan_id = plan.id
+        AND (review.owner_user_id IS NULL OR review.account_id IS NULL)
+        AND plan.owner_user_id IS NOT NULL
+        AND plan.account_id IS NOT NULL
+    `);
+    await pool.query(`ALTER TABLE plan_step_reviews ALTER COLUMN owner_user_id SET NOT NULL`);
+    await pool.query(`ALTER TABLE plan_step_reviews ALTER COLUMN account_id SET NOT NULL`);
+    await pool.query(`ALTER TABLE plan_step_reviews ALTER COLUMN prompt SET NOT NULL`);
+    await pool.query(`DO $plan_review_attempt_fk$ BEGIN
+      ALTER TABLE plan_step_reviews ADD CONSTRAINT plan_step_reviews_attempt_id_fkey
+        FOREIGN KEY (attempt_id) REFERENCES plan_step_attempts(id) ON DELETE SET NULL;
+    EXCEPTION WHEN duplicate_object THEN NULL; END $plan_review_attempt_fk$;`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_reviews_plan ON plan_step_reviews(plan_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_reviews_step ON plan_step_reviews(plan_id, step_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_reviews_attempt ON plan_step_reviews(attempt_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_reviews_owner ON plan_step_reviews(owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_step_reviews_account ON plan_step_reviews(account_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_step_reviews_open_unique ON plan_step_reviews(plan_id, step_id) WHERE status = 'open'`);
+    await pool.query(`DO $plan_review_status$ BEGIN
+      ALTER TABLE plan_step_reviews ADD CONSTRAINT chk_plan_step_reviews_status CHECK (status IN ('open', 'resolved'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $plan_review_status$;`);
+    await pool.query(`DO $plan_review_decision$ BEGIN
+      ALTER TABLE plan_step_reviews ADD CONSTRAINT chk_plan_step_reviews_decision CHECK (decision IS NULL OR decision IN ('approve', 'request_changes', 'retry', 'stop'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $plan_review_decision$;`);
+    await pool.query(`DO $plan_review_resolution$ BEGIN
+      ALTER TABLE plan_step_reviews ADD CONSTRAINT chk_plan_step_reviews_resolution CHECK (
+        (status = 'open' AND decision IS NULL AND resolved_at IS NULL AND resolved_by_user_id IS NULL)
+        OR
+        (status = 'resolved' AND decision IS NOT NULL AND resolved_at IS NOT NULL AND resolved_by_user_id IS NOT NULL)
+      );
+    EXCEPTION WHEN duplicate_object THEN NULL; END $plan_review_resolution$;`);
+    await pool.query(`
+      INSERT INTO plan_step_reviews (
+        plan_id, step_id, attempt_id, owner_user_id, account_id, prompt,
+        opened_by_session_id, opened_at, created_at, updated_at
+      )
+      SELECT
+        ps.plan_id,
+        ps.id,
+        latest_attempt.id,
+        plan.owner_user_id,
+        plan.account_id,
+        COALESCE(NULLIF(BTRIM(ps.outcome), ''), NULLIF(BTRIM(ps.error), ''), 'Review the completed step before the Plan continues.'),
+        latest_attempt.child_session_id,
+        COALESCE(latest_attempt.completed_at, ps.completed_at, ps.updated_at, NOW()),
+        COALESCE(latest_attempt.completed_at, ps.completed_at, ps.updated_at, NOW()),
+        NOW()
+      FROM plan_steps ps
+      INNER JOIN plan_executions plan ON plan.id = ps.plan_id
+      LEFT JOIN LATERAL (
+        SELECT psa.id, psa.child_session_id, psa.completed_at
+        FROM plan_step_attempts psa
+        WHERE psa.plan_id = ps.plan_id AND psa.step_id = ps.id
+        ORDER BY psa.attempt_number DESC
+        LIMIT 1
+      ) latest_attempt ON TRUE
+      WHERE ps.status = 'needs_review'
+        AND plan.owner_user_id IS NOT NULL
+        AND plan.account_id IS NOT NULL
+      ON CONFLICT (plan_id, step_id) WHERE status = 'open' DO NOTHING
+    `);
   });
 
 

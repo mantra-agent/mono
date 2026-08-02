@@ -189,6 +189,29 @@ async function getPlanSessionIdsForSessions(sessionIds: string[]): Promise<Set<s
  * must render as active even in the gap between plan steps, when no child
  * session is streaming yet.
  */
+async function getReviewPlanSessionIdsForSessions(sessionIds: string[]): Promise<Set<string>> {
+  const uniqueSessionIds = Array.from(new Set(sessionIds.filter(Boolean)));
+  const reviewSessionIds = new Set<string>();
+  if (uniqueSessionIds.length === 0) return reviewSessionIds;
+
+  for (let i = 0; i < uniqueSessionIds.length; i += PLAN_SESSION_QUERY_CHUNK_SIZE) {
+    const chunk = uniqueSessionIds.slice(i, i + PLAN_SESSION_QUERY_CHUNK_SIZE);
+    const rows = await db
+      .select({ sessionId: planExecutions.originSessionId })
+      .from(planExecutions)
+      .where(visiblePlan(and(
+        inArray(planExecutions.originSessionId, chunk),
+        eq(planExecutions.status, "needs_review"),
+        isNull(planExecutions.archivedAt),
+      )));
+    for (const row of rows) {
+      if (row.sessionId) reviewSessionIds.add(row.sessionId);
+    }
+  }
+
+  return reviewSessionIds;
+}
+
 async function getExecutingPlanSessionIdsForSessions(sessionIds: string[]): Promise<Set<string>> {
   const uniqueSessionIds = Array.from(new Set(sessionIds.filter(Boolean)));
   const executingSessionIds = new Set<string>();
@@ -481,9 +504,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // implementation scanned every plan-tagged Library page on each sidebar
       // poll, which saturated the DB pool after the session-management deploy.
       const filteredIds = filtered.map((s) => s.id);
-      const [planSessionIds, executingPlanSessionIds] = await Promise.all([
+      const [planSessionIds, executingPlanSessionIds, reviewPlanSessionIds] = await Promise.all([
         getPlanSessionIdsForSessions(filteredIds),
         getExecutingPlanSessionIdsForSessions(filteredIds),
+        getReviewPlanSessionIdsForSessions(filteredIds),
       ]);
 
       // Compute which sessions have active (streaming) descendants
@@ -510,6 +534,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       const sessions = filtered.map((s) => {
         const reviewKinds = [
           ...(s.awaitingQuestionResponse ? (["question"] as const) : []),
+          ...(reviewPlanSessionIds.has(s.id) ? (["plan_review"] as const) : []),
           ...(emailReviewKindsBySession.get(s.id) ?? []),
         ];
         return {

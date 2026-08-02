@@ -4,12 +4,15 @@
  * Containers decide where the widget appears. The widget renders as a permanently
  * open hierarchy tree; child sessions own their own inline expansion.
  */
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   Archive,
+  ChevronDown,
+  ChevronRight,
   Circle,
   CircleCheck,
+  Loader2,
   OctagonAlert,
   MailOpen,
   MoreHorizontal,
@@ -18,6 +21,7 @@ import {
   Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import {
   DropdownMenu,
@@ -45,6 +49,7 @@ import {
   type PlanStep,
   type PlanStepAttempt,
 } from "./plan-shared";
+import type { PlanReviewDecision } from "@shared/plan-review";
 import { ChildSessionBlock } from "@/components/inline-session-blocks";
 import type { ChildSessionBlockMeta } from "@shared/models/chat";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
@@ -105,113 +110,238 @@ function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBl
       sessionTitleById={sessionTitleById}
       childStream={sessionStreams?.[childSessionId]}
       hierarchyStepCompleted={stepCompleted}
+      hierarchyLabel={`Attempt ${attempt.attemptNumber}`}
     />
   );
 }
 
-function PlanStepCheckbox({ step, stepIndex, continues, planId, parentSessionId, ownedChildBlocks, sessionTitleById, sessionStreams }: { step: PlanStep; stepIndex: number; continues: boolean; planId: string; parentSessionId: string; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
+const REVIEW_OPTIONS: Array<{ decision: PlanReviewDecision; label: string }> = [
+  { decision: "approve", label: "Approve" },
+  { decision: "request_changes", label: "Request changes" },
+  { decision: "retry", label: "Retry" },
+  { decision: "stop", label: "Stop plan" },
+];
+
+function PlanReviewCard({
+  planId,
+  step,
+  submitting,
+  onSubmit,
+}: {
+  planId: string;
+  step: PlanStep;
+  submitting: boolean;
+  onSubmit: (stepId: string, reviewId: number, decision: PlanReviewDecision, reason: string) => void;
+}) {
+  const [decision, setDecision] = useState<PlanReviewDecision>("approve");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const review = step.review;
+
+  useEffect(() => {
+    setDecision("approve");
+    setReason("");
+    setError(null);
+  }, [review?.id]);
+
+  if (!review || review.status !== "open") return null;
+
+  const submit = () => {
+    const normalizedReason = reason.trim();
+    if (decision === "request_changes" && !normalizedReason) {
+      setError("Describe the change needed.");
+      return;
+    }
+    setError(null);
+    onSubmit(step.id, review.id, decision, normalizedReason);
+  };
+
+  return (
+    <div className="mt-1 overflow-hidden rounded-md border border-border/60 bg-muted/20" data-testid={`plan-review-${planId}-${step.id}`}>
+      <div className="flex items-start gap-2 border-b border-border/40 px-3 py-2">
+        <MailOpen className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
+        <p className="min-w-0 text-sm font-medium text-foreground">{review.prompt}</p>
+      </div>
+      <div className="space-y-0.5 px-2 py-2">
+        {REVIEW_OPTIONS.map((option) => (
+          <button
+            key={option.decision}
+            type="button"
+            role="radio"
+            aria-checked={decision === option.decision}
+            disabled={submitting}
+            onClick={() => {
+              setDecision(option.decision);
+              setError(null);
+            }}
+            className={cn(
+              "flex w-full items-start gap-2.5 rounded-sm px-2 py-1.5 text-left transition-colors",
+              decision === option.decision ? "bg-accent/60" : "hover:bg-accent/40",
+              submitting && "cursor-not-allowed opacity-60",
+            )}
+          >
+            <SimpleCheckCircle checked={decision === option.decision} interactive={false} className="mt-0.5 shrink-0" />
+            <span className="text-sm text-foreground">{option.label}</span>
+          </button>
+        ))}
+        {(decision === "request_changes" || decision === "retry") && (
+          <textarea
+            autoFocus
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            disabled={submitting}
+            rows={2}
+            placeholder={decision === "request_changes" ? "What should change?" : "Optional retry guidance"}
+            className="ml-[26px] mt-1 w-[calc(100%-26px)] resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
+          />
+        )}
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t border-border/40 px-3 py-2">
+        {error ? <p className="text-xs text-error">{error}</p> : <span />}
+        <Button
+          type="button"
+          size="sm"
+          className="bg-cta text-cta-foreground hover:bg-cta/90"
+          disabled={submitting}
+          onClick={submit}
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Submit"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PlanStepCheckbox({
+  step,
+  stepIndex,
+  continues,
+  planId,
+  parentSessionId,
+  ownedChildBlocks,
+  sessionTitleById,
+  sessionStreams,
+  reviewSubmitting,
+  onReviewSubmit,
+}: {
+  step: PlanStep;
+  stepIndex: number;
+  continues: boolean;
+  planId: string;
+  parentSessionId: string;
+  ownedChildBlocks?: Map<string, ChildSessionBlockMeta>;
+  sessionTitleById?: Record<string, string>;
+  sessionStreams?: SessionStreamMap;
+  reviewSubmitting: boolean;
+  onReviewSubmit: (stepId: string, reviewId: number, decision: PlanReviewDecision, reason: string) => void;
+}) {
+  const [attemptsOpen, setAttemptsOpen] = useState(step.status === "needs_review");
+
+  useEffect(() => {
+    if (step.status === "needs_review") setAttemptsOpen(true);
+  }, [step.status, step.review?.id]);
+
   const checked = isProgressedStep(step);
   const isBlocked = step.status === "blocked";
   const needsReview = step.status === "needs_review";
   const stepErrorText = formatDiagnosticValue(step.error);
-  const attemptsBySession = new Map(
-    (step.attempts ?? [])
-      .filter((attempt) => attempt.childSessionId)
-      .map((attempt) => [attempt.childSessionId!, attempt]),
-  );
-  for (const block of ownedChildBlocks?.values() ?? []) {
-    if (
-      block.planId !== planId ||
-      block.planStepId !== step.id ||
-      attemptsBySession.has(block.childSessionId)
-    ) continue;
-    attemptsBySession.set(block.childSessionId, {
-      id: block.planAttemptId ?? undefined,
-      attemptNumber: block.planAttemptNumber ?? attemptsBySession.size + 1,
-      childSessionId: block.childSessionId,
-      status: block.error ? "failed" : block.summary ? "completed" : "running",
-      startedAt: block.startedAt,
-      updatedAt: block.updatedAt,
-      completedAt: block.summary || block.error ? block.updatedAt : null,
-      durationSeconds: block.elapsedMs != null ? Math.round(block.elapsedMs / 1000) : null,
-      outcome: block.summary,
-      error: block.error,
-    });
-  }
-  const attempts = [...attemptsBySession.values()].sort(
-    (a, b) => a.attemptNumber - b.attemptNumber,
-  );
-
+  const attemptsBySession = useMemo(() => {
+    const bySession = new Map(
+      (step.attempts ?? [])
+        .filter((attempt) => attempt.childSessionId)
+        .map((attempt) => [attempt.childSessionId!, attempt]),
+    );
+    for (const block of ownedChildBlocks?.values() ?? []) {
+      if (block.planId !== planId || block.planStepId !== step.id || bySession.has(block.childSessionId)) continue;
+      bySession.set(block.childSessionId, {
+        id: block.planAttemptId ?? undefined,
+        attemptNumber: block.planAttemptNumber ?? bySession.size + 1,
+        childSessionId: block.childSessionId,
+        status: block.error ? "failed" : block.summary ? "completed" : "running",
+        startedAt: block.startedAt,
+        updatedAt: block.updatedAt,
+        completedAt: block.summary || block.error ? block.updatedAt : null,
+        durationSeconds: block.elapsedMs != null ? Math.round(block.elapsedMs / 1000) : null,
+        outcome: block.summary,
+        error: block.error,
+      });
+    }
+    return bySession;
+  }, [ownedChildBlocks, planId, step.attempts, step.id]);
+  const attempts = [...attemptsBySession.values()].sort((a, b) => a.attemptNumber - b.attemptNumber);
   const stepLabel = `Step ${stepIndex + 1}: ${step.title}`;
 
-  // When a step has a child session, replace the step row entirely with the
-  // child session widget. The child renders its own hierarchy status icon.
-  if (attempts.length > 0) {
-    return (
-      <>
-        {attempts.map((attempt, attemptIndex) => (
-          <HierarchyTreeRow
-            key={attempt.id ?? `${step.id}-${attempt.attemptNumber}`}
-            continues={continues || attemptIndex < attempts.length - 1}
-          >
-            <PlanAttemptChild
-              planId={planId}
-              parentSessionId={parentSessionId}
-              step={step}
-              attempt={attempt}
-              ownedChildBlocks={ownedChildBlocks}
-              sessionTitleById={sessionTitleById}
-              sessionStreams={sessionStreams}
-            />
-          </HierarchyTreeRow>
-        ))}
-      </>
-    );
-  }
-
-  // Pending step row with "Step N: title" prefix.
   return (
-    <HierarchyTreeRow continues={continues}>
-      <div
-        className={cn(
-          "group relative flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
-          needsReview && "text-foreground",
-          (step.status === "failed" || isBlocked) && "text-destructive hover:text-destructive",
-        )}
-      >
-        <span
+    <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center">
+      <div className="min-w-0">
+        <div
           className={cn(
-            "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center transition-colors",
-            checked && "text-success",
-            isBlocked && !checked && "rounded border border-destructive bg-destructive/10 text-destructive",
-            needsReview && !checked && "rounded border border-foreground/70 bg-foreground/10 text-foreground shadow-[0_0_0_1px_hsl(var(--foreground)/0.12)]",
-            !checked && !isBlocked && !needsReview && "text-muted-foreground/50",
+            "group relative flex min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
+            needsReview && "text-foreground",
+            (step.status === "failed" || isBlocked) && "text-destructive hover:text-destructive",
           )}
-          aria-hidden="true"
         >
-          {checked && !needsReview && <CircleCheck className="h-3.5 w-3.5" />}
-          {isBlocked && !checked && <OctagonAlert className="h-3 w-3" />}
-          {needsReview && checked && <MailOpen className="h-3 w-3" />}
-          {!checked && !isBlocked && !needsReview && <Circle className="h-3.5 w-3.5" />}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "min-w-0 flex-1 truncate",
-                checked && "text-muted-foreground",
-                needsReview && "font-medium text-foreground",
-              )}
-            >
-              {stepLabel}
-            </span>
-            {isBlocked && <span className="shrink-0 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">Blocked</span>}
-            {needsReview && <span className="shrink-0 rounded border border-foreground/25 bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">Needs Review</span>}
+          <span
+            className={cn(
+              "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center transition-colors",
+              checked && !needsReview && "text-success",
+              isBlocked && "text-destructive",
+              needsReview && "text-foreground",
+              !checked && !isBlocked && !needsReview && "text-muted-foreground/50",
+            )}
+            aria-hidden="true"
+          >
+            {checked && !needsReview && <CircleCheck className="h-3.5 w-3.5" />}
+            {isBlocked && <OctagonAlert className="h-3 w-3" />}
+            {needsReview && <MailOpen className="h-3.5 w-3.5" />}
+            {!checked && !isBlocked && !needsReview && <Circle className="h-3.5 w-3.5" />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className={cn("min-w-0 flex-1 truncate", checked && !needsReview && "text-muted-foreground", needsReview && "font-medium text-foreground")}>{stepLabel}</span>
+              {isBlocked && <span className="shrink-0 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">Blocked</span>}
+              {needsReview && <span className="shrink-0 rounded border border-foreground/25 bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">Needs Review</span>}
+            </div>
+            {stepErrorText && <p className="mt-0.5 line-clamp-2 text-xs text-destructive">{stepErrorText}</p>}
           </div>
-          {stepErrorText && (
-            <p className="mt-0.5 line-clamp-2 text-xs text-destructive">{stepErrorText}</p>
+          {attempts.length > 0 && (
+            <button
+              type="button"
+              className="flex h-5 shrink-0 items-center gap-1 rounded px-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => setAttemptsOpen((open) => !open)}
+              aria-expanded={attemptsOpen}
+            >
+              {attempts.length} {attempts.length === 1 ? "attempt" : "attempts"}
+              {attemptsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            </button>
           )}
         </div>
+
+        {attemptsOpen && attempts.length > 0 && (
+          <div className="ml-4 border-l border-border/60 pl-2">
+            {attempts.map((attempt) => (
+              <PlanAttemptChild
+                key={attempt.id ?? `${step.id}-${attempt.attemptNumber}`}
+                planId={planId}
+                parentSessionId={parentSessionId}
+                step={step}
+                attempt={attempt}
+                ownedChildBlocks={ownedChildBlocks}
+                sessionTitleById={sessionTitleById}
+                sessionStreams={sessionStreams}
+              />
+            ))}
+          </div>
+        )}
+
+        {needsReview && (
+          <PlanReviewCard
+            planId={planId}
+            step={step}
+            submitting={reviewSubmitting}
+            onSubmit={onReviewSubmit}
+          />
+        )}
       </div>
     </HierarchyTreeRow>
   );
@@ -231,11 +361,10 @@ export function PlanWidget({
 
   const isExecuting = plan.status === "executing";
   const isPaused = plan.status === "paused";
-  const needsReview = plan.status === "needs_review";
   const isCreated = plan.status === "created";
   const isArchived = Boolean(plan.archivedAt);
   const canPause = !isArchived && isExecuting;
-  const canResume = !isArchived && (isPaused || needsReview || isCreated || plan.status === "failed");
+  const canResume = !isArchived && (isPaused || isCreated || plan.status === "failed");
   const canArchive = showArchiveAction && !isArchived && !isExecuting;
   const canDeleteFromSession = Boolean(sessionId);
   const invalidatePlanQueries = () => {
@@ -283,6 +412,30 @@ export function PlanWidget({
     onError: (err: Error, _vars, ctx) => {
       if (ctx?.prev) queryClient.setQueryData(["/api/plans", plan.pageId], ctx.prev);
       toast({ title: isCreated ? "Execute failed" : "Resume failed", description: err.message, variant: "destructive" });
+    },
+    onSettled: invalidatePlanQueries,
+  });
+
+  const reviewMutation = useMutation({
+    mutationFn: async ({ stepId, reviewId, decision, reason }: { stepId: string; reviewId: number; decision: PlanReviewDecision; reason: string }) => {
+      const res = await apiRequest(
+        "POST",
+        `/api/plans/${encodeURIComponent(plan.pageId)}/steps/${encodeURIComponent(stepId)}/review`,
+        { reviewId, decision, ...(reason ? { reason } : {}) },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Review failed");
+      }
+      return res.json();
+    },
+    onSuccess: (result) => {
+      toast({
+        title: result.decision === "approve" ? "Approved" : result.decision === "stop" ? "Plan stopped" : "Review recorded",
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Review failed", description: err.message, variant: "destructive" });
     },
     onSettled: invalidatePlanQueries,
   });
@@ -368,7 +521,7 @@ export function PlanWidget({
                 {canResume && (
                   <DropdownMenuItem onClick={() => resumeMutation.mutate()} disabled={resumeMutation.isPending}>
                     <Play className="mr-2 h-4 w-4" />
-                    {isCreated ? "Execute" : plan.status === "failed" ? "Retry" : needsReview ? "Review" : "Resume"}
+                    {isCreated ? "Execute" : plan.status === "failed" ? "Retry" : "Resume"}
                   </DropdownMenuItem>
                 )}
                 {canArchive && (
@@ -411,6 +564,8 @@ export function PlanWidget({
               ownedChildBlocks={ownedChildBlocks}
               sessionTitleById={sessionTitleById}
               sessionStreams={sessionStreams}
+              reviewSubmitting={reviewMutation.isPending}
+              onReviewSubmit={(stepId, reviewId, decision, reason) => reviewMutation.mutate({ stepId, reviewId, decision, reason })}
             />
           ))}
         </div>
