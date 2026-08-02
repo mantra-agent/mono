@@ -251,14 +251,15 @@ const nodeFragmentShader = `
   void main() {
     float facing = abs(dot(normalize(vNormal), normalize(vViewDirection)));
     float edge = 1.0 - facing;
-    float rim = pow(edge, 1.6);
+    float pulse = clamp(vImpact, 0.0, 1.0);
+    float rampExponent = mix(1.6, 0.0, pulse);
+    float luminanceRamp = pow(max(edge, 0.0001), rampExponent);
     float emphasis = 1.0 + vEmphasis * 0.5;
-    vec3 baseColor = vTint * rim * emphasis;
-    float impactRim = smoothstep(0.35, 0.95, edge);
-    vec3 impactTint = mix(vTint, vec3(1.0), 0.58);
-    vec3 impactColor = baseColor + impactTint * impactRim * vImpact * (0.82 + vImpact * 0.38);
-    float impactAlpha = mix(vVisibility, 1.0, vImpact * impactRim);
-    gl_FragColor = vec4(impactColor * uNodeBrightness, impactAlpha);
+    float pulseBrightness = 1.0 + pulse * 0.85;
+    vec3 pulseTint = mix(vTint, vec3(1.0), pulse);
+    vec3 nodeColor = pulseTint * luminanceRamp * emphasis * pulseBrightness;
+    float nodeAlpha = mix(vVisibility, 1.0, pulse);
+    gl_FragColor = vec4(nodeColor * uNodeBrightness, nodeAlpha);
   }
 `;
 
@@ -821,7 +822,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           FOCUSED_LINK_MIN_LUMINANCE,
           FOCUSED_LINK_MAX_LUMINANCE,
           Math.pow(normalizedStrength, 1.25),
-        );
+        ) * settings.linkBrightnessFactor;
         const fromVisibility = nodeLinkVisibility[link.fromIndex];
         const toVisibility = nodeLinkVisibility[link.toIndex];
         const fromColor = nodeBaseColors[link.fromIndex];
@@ -864,20 +865,20 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           const fromProgress = segment / CURVE_SEGMENTS;
           const toProgress = (segment + 1) / CURVE_SEGMENTS;
           const fromBrightness = Math.min(
-            ACTIVITY_LINK_MAX_LUMINANCE,
+            ACTIVITY_LINK_MAX_LUMINANCE * settings.linkBrightnessFactor,
             THREE.MathUtils.lerp(
               visibleLinkBrightnessFrom[linkIndex],
               visibleLinkBrightnessTo[linkIndex],
               fromProgress,
-            ) * activityMultiplier,
+            ) * activityMultiplier * settings.linkBrightnessFactor,
           );
           const toBrightness = Math.min(
-            ACTIVITY_LINK_MAX_LUMINANCE,
+            ACTIVITY_LINK_MAX_LUMINANCE * settings.linkBrightnessFactor,
             THREE.MathUtils.lerp(
               visibleLinkBrightnessFrom[linkIndex],
               visibleLinkBrightnessTo[linkIndex],
               toProgress,
-            ) * activityMultiplier,
+            ) * activityMultiplier * settings.linkBrightnessFactor,
           );
           restingLinkColor.copy(restingColors.from).lerp(restingColors.to, fromProgress);
           composeActivityColor(activityColor, restingLinkColor, selectedColor, energy, fromBrightness);
