@@ -1,4 +1,5 @@
 import type { SimpleAction, SimpleFeedItem, SimpleSection, SimpleSourceRef } from "@shared/models/simple";
+import { createReferenceRef } from "@shared/references";
 import { fileTaskStorage } from "../file-storage/tasks";
 import { fileProjectStorage } from "../file-storage/projects";
 import { createLogger } from "../log";
@@ -1406,11 +1407,17 @@ function itemFromBuildDeployment(
   deployment: Awaited<ReturnType<typeof listBuildDeploymentHomeItems>>[number],
   index: number,
 ): SimpleFeedItem {
-  const environmentHref = `/platforms/environments/${deployment.platformEnvironmentId}`;
-  const sourceRef: SimpleSourceRef = {
-    type: "artifact",
+  const environmentHref = `/platform-environments/${deployment.platformEnvironmentId}`;
+  const label = `${deployment.platformName} / ${deployment.productName} / ${deployment.environmentName}`;
+  const reference = createReferenceRef({
+    type: "build",
     id: deployment.observationId,
-    label: `${deployment.platformName} / ${deployment.productName} / ${deployment.environmentName}`,
+    metadata: { label, href: environmentHref },
+  });
+  const sourceRef: SimpleSourceRef = {
+    type: "build",
+    id: deployment.observationId,
+    label,
     href: environmentHref,
     observedAt: deployment.observedAt.toISOString(),
   };
@@ -1430,6 +1437,7 @@ function itemFromBuildDeployment(
     anchorTime: deployment.deployedAt.toISOString(),
     actionTime: deployment.deployedAt.toISOString(),
     completable: true,
+    references: [reference],
     payload: {
       kind: "build_deployment",
       projectionId: deployment.projectionId,

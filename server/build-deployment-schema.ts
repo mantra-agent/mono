@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-const MIGRATION_LOCK_KEY = "build-deployment-home-schema-v1";
+const MIGRATION_LOCK_KEY = "build-deployment-home-schema-v2";
 
 /** Additive, replay-safe schema convergence for Build deployment observations. */
 export async function ensureBuildDeploymentSchema(pool: Pool): Promise<void> {
@@ -53,6 +53,7 @@ export async function ensureBuildDeploymentSchema(pool: Pool): Promise<void> {
       CREATE TABLE IF NOT EXISTS build_deployment_home_projections (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         observation_id UUID NOT NULL REFERENCES platform_deployment_observations(id) ON DELETE RESTRICT,
+        platform_environment_id INTEGER REFERENCES platform_product_environments(id) ON DELETE RESTRICT,
         reason_key TEXT NOT NULL,
         dismissed_at TIMESTAMPTZ,
         dismissed_by_user_id TEXT,
@@ -68,6 +69,48 @@ export async function ensureBuildDeploymentSchema(pool: Pool): Promise<void> {
           OR (dismissed_at IS NOT NULL AND dismissed_by_user_id IS NOT NULL)
         )
       )
+    `);
+    await client.query(`
+      ALTER TABLE build_deployment_home_projections
+      ADD COLUMN IF NOT EXISTS platform_environment_id INTEGER REFERENCES platform_product_environments(id) ON DELETE RESTRICT
+    `);
+    await client.query(`
+      UPDATE build_deployment_home_projections AS projection
+      SET platform_environment_id = observation.platform_environment_id
+      FROM platform_deployment_observations AS observation
+      WHERE projection.observation_id = observation.id
+        AND projection.platform_environment_id IS NULL
+    `);
+    await client.query(`
+      DELETE FROM build_deployment_home_projections AS projection
+      USING build_deployment_home_projections AS newer,
+            platform_deployment_observations AS projection_observation,
+            platform_deployment_observations AS newer_observation
+      WHERE projection.account_id = newer.account_id
+        AND projection.platform_environment_id = newer.platform_environment_id
+        AND projection.id <> newer.id
+        AND projection.observation_id = projection_observation.id
+        AND newer.observation_id = newer_observation.id
+        AND (
+          projection_observation.deployed_at < newer_observation.deployed_at
+          OR (
+            projection_observation.deployed_at = newer_observation.deployed_at
+            AND projection.created_at < newer.created_at
+          )
+          OR (
+            projection_observation.deployed_at = newer_observation.deployed_at
+            AND projection.created_at = newer.created_at
+            AND projection.id::text < newer.id::text
+          )
+        )
+    `);
+    await client.query(`
+      ALTER TABLE build_deployment_home_projections
+      ALTER COLUMN platform_environment_id SET NOT NULL
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uk_build_deployment_home_projection_environment
+      ON build_deployment_home_projections(account_id, platform_environment_id)
     `);
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS uk_build_deployment_home_projection_observation

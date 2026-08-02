@@ -1,6 +1,8 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
-import { useEffect } from "react";
+import { createElement, useEffect } from "react";
+import { createReferenceRef, isKnownReferenceType } from "@shared/references";
+import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { queryClient } from "@/lib/queryClient";
 import { toast } from "@/hooks/use-toast";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
@@ -182,6 +184,41 @@ function maybeToastLibrarySurface(payload: Record<string, unknown> | undefined):
   toast({ title: pageId ? `Page surfaced: @page:${pageId}` : `Page surfaced: ${title}` });
 }
 
+interface BuildCompletionPayload {
+  observationId: string;
+  label: string;
+  reference: {
+    type: string;
+    id: string;
+    metadata?: Record<string, unknown>;
+  };
+}
+
+function maybeToastBuildCompletion(payload: Record<string, unknown> | undefined): void {
+  if (payload?.source !== "build_deployment_observer" || !Array.isArray(payload.buildCompletions)) return;
+
+  for (const value of payload.buildCompletions) {
+    if (!value || typeof value !== "object") continue;
+    const completion = value as Partial<BuildCompletionPayload>;
+    const rawReference = completion.reference;
+    if (!rawReference || !isKnownReferenceType(rawReference.type) || typeof rawReference.id !== "string") continue;
+    const observationId = typeof completion.observationId === "string" ? completion.observationId : rawReference.id;
+    if (!observationId || recentNotifications.has(`build:${observationId}`)) continue;
+    recentNotifications.add(`build:${observationId}`);
+    window.setTimeout(() => recentNotifications.delete(`build:${observationId}`), NOTIFICATION_DEDUP_WINDOW_MS);
+
+    const reference = createReferenceRef({
+      type: rawReference.type,
+      id: rawReference.id,
+      metadata: rawReference.metadata,
+    });
+    toast({
+      title: "Build completed",
+      description: createElement(ReferenceRenderer, { reference, compact: true }),
+    });
+  }
+}
+
 export function onAutonomousStarted(cb: AutonomousStartedCallback | null) {
   autonomousStartedCallback = cb;
 }
@@ -300,6 +337,10 @@ export function useDataSync() {
         if (sessionId) {
           queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
         }
+      }
+
+      if (eventName === "data:home_changed") {
+        maybeToastBuildCompletion(event.payload as Record<string, unknown> | undefined);
       }
 
       if (eventName === "data:library_changed") {

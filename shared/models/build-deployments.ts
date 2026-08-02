@@ -79,6 +79,9 @@ export const buildDeploymentHomeProjections = pgTable(
     observationId: uuid("observation_id")
       .notNull()
       .references(() => platformDeploymentObservations.id, { onDelete: "restrict" }),
+    platformEnvironmentId: integer("platform_environment_id")
+      .notNull()
+      .references(() => platformProductEnvironments.id, { onDelete: "restrict" }),
     reasonKey: text("reason_key").notNull(),
     dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
     dismissedByUserId: text("dismissed_by_user_id"),
@@ -91,6 +94,10 @@ export const buildDeploymentHomeProjections = pgTable(
   },
   (table) => [
     uniqueIndex("uk_build_deployment_home_projection_observation").on(table.observationId),
+    uniqueIndex("uk_build_deployment_home_projection_environment").on(
+      table.accountId,
+      table.platformEnvironmentId,
+    ),
     uniqueIndex("uk_build_deployment_home_projection_reason").on(table.accountId, table.reasonKey),
     index("idx_build_deployment_home_projection_owner").on(
       table.ownerUserId,

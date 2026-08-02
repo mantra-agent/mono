@@ -11,6 +11,7 @@ import {
   FolderKanban,
   GitPullRequest,
   Globe,
+  Hammer,
   Heart,
   Link2,
   Mail,
@@ -191,6 +192,11 @@ const registry: Record<string, RegistryEntry> = {
     Icon: Globe,
     fallbackLabel: ref => metadataString(ref, "label") || `Environment ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/platform-environments/${encodeURIComponent(ref.id)}`,
+  },
+  build: {
+    Icon: Hammer,
+    fallbackLabel: ref => metadataString(ref, "label") || `Build ${ref.id}`,
+    href: ref => metadataString(ref, "href") || "/build",
   },
   skill: {
     Icon: Sparkles,

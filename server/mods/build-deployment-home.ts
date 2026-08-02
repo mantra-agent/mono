@@ -3,6 +3,7 @@ import {
   buildDeploymentHomeProjections,
   platformDeploymentObservations,
 } from "@shared/schema";
+import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import type { Principal } from "../principal";
 import {
   ADVISORY_LOCK_NS,
@@ -45,6 +46,14 @@ export interface BuildDeploymentEnvironmentIdentity {
   environmentName: string;
 }
 
+export interface BuildDeploymentCompletion {
+  observationId: string;
+  platformEnvironmentId: number;
+  reference: ReferenceRef;
+  label: string;
+  deployedAt: Date;
+}
+
 export interface BuildDeploymentHomeItemRecord {
   projectionId: string;
   observationId: string;
@@ -73,8 +82,23 @@ function boundedText(value: string, max: number): string | null {
   return normalized;
 }
 
-function deploymentReasonKey(environmentId: number, providerDeploymentId: string): string {
-  return `build:railway-deployment:${environmentId}:${providerDeploymentId}`;
+function deploymentReasonKey(environmentId: number): string {
+  return `build:railway-environment:${environmentId}`;
+}
+
+function buildLabel(environment: BuildDeploymentEnvironmentIdentity): string {
+  return `${environment.platformName} / ${environment.productName} / ${environment.environmentName}`;
+}
+
+function buildReference(observationId: string, environment: BuildDeploymentEnvironmentIdentity): ReferenceRef {
+  return createReferenceRef({
+    type: "build",
+    id: observationId,
+    metadata: {
+      label: buildLabel(environment),
+      href: `/platform-environments/${encodeURIComponent(environment.platformEnvironmentId)}`,
+    },
+  });
 }
 
 /**
@@ -86,7 +110,7 @@ export async function recordSuccessfulRailwayDeployments(
   principal: Principal,
   environment: BuildDeploymentEnvironmentIdentity,
   deployments: SuccessfulRailwayDeploymentObservation[],
-): Promise<{ observationsCreated: number; projectionsCreated: number }> {
+): Promise<{ observationsCreated: number; projectionsCreated: number; completions: BuildDeploymentCompletion[] }> {
   const owner = requireOwner(principal);
   const platformName = boundedText(environment.platformName, 200);
   const productName = boundedText(environment.productName, 200);
@@ -104,7 +128,9 @@ export async function recordSuccessfulRailwayDeployments(
     if (!providerDeploymentId || Number.isNaN(deployment.deployedAt.getTime())) return [];
     return [{ providerDeploymentId, commitSha, deployedAt: deployment.deployedAt }];
   });
-  if (canonicalDeployments.length === 0) return { observationsCreated: 0, projectionsCreated: 0 };
+  if (canonicalDeployments.length === 0) {
+    return { observationsCreated: 0, projectionsCreated: 0, completions: [] };
+  }
 
   return db.transaction((tx) => runWithDatabaseTransaction(tx, async () => {
     await acquireAdvisoryTransactionLock(
@@ -118,6 +144,7 @@ export async function recordSuccessfulRailwayDeployments(
 
     let observationsCreated = 0;
     let projectionsCreated = 0;
+    const completions: BuildDeploymentCompletion[] = [];
     for (const deployment of canonicalDeployments) {
       const [insertedObservation] = await tx
         .insert(platformDeploymentObservations)
@@ -153,20 +180,86 @@ export async function recordSuccessfulRailwayDeployments(
       if (!observationId) throw new Error("Successful Railway deployment observation did not converge");
       if (insertedObservation) observationsCreated += 1;
 
-      const [insertedProjection] = await tx
-        .insert(buildDeploymentHomeProjections)
-        .values({
-          observationId,
-          reasonKey: deploymentReasonKey(environment.platformEnvironmentId, deployment.providerDeploymentId),
-          ...ownedInsertValues(principal, projectionScope),
-          createdByUserId: owner.userId,
-        })
-        .onConflictDoNothing()
-        .returning({ id: buildDeploymentHomeProjections.id });
-      if (insertedProjection) projectionsCreated += 1;
     }
 
-    return { observationsCreated, projectionsCreated };
+    const [latestObservation] = await tx
+      .select({
+        id: platformDeploymentObservations.id,
+        deployedAt: platformDeploymentObservations.deployedAt,
+      })
+      .from(platformDeploymentObservations)
+      .where(combineWithVisibleScope(
+        principal,
+        observationScope,
+        and(
+          eq(platformDeploymentObservations.platformEnvironmentId, environment.platformEnvironmentId),
+          eq(platformDeploymentObservations.provider, "railway"),
+          eq(platformDeploymentObservations.deploymentState, "SUCCESS"),
+        ),
+      ))
+      .orderBy(desc(platformDeploymentObservations.deployedAt), desc(platformDeploymentObservations.observedAt))
+      .limit(1);
+    if (!latestObservation) {
+      return { observationsCreated, projectionsCreated, completions };
+    }
+
+    const [currentProjection] = await tx
+      .select({
+        id: buildDeploymentHomeProjections.id,
+        observationId: buildDeploymentHomeProjections.observationId,
+      })
+      .from(buildDeploymentHomeProjections)
+      .where(combineWithWritableScope(
+        principal,
+        projectionScope,
+        eq(buildDeploymentHomeProjections.platformEnvironmentId, environment.platformEnvironmentId),
+      ))
+      .limit(1);
+    if (currentProjection?.observationId === latestObservation.id) {
+      return { observationsCreated, projectionsCreated, completions };
+    }
+
+    const now = new Date();
+    if (currentProjection) {
+      await tx
+        .update(buildDeploymentHomeProjections)
+        .set({
+          observationId: latestObservation.id,
+          reasonKey: deploymentReasonKey(environment.platformEnvironmentId),
+          dismissedAt: null,
+          updatedAt: now,
+        })
+        .where(combineWithWritableScope(
+          principal,
+          projectionScope,
+          eq(buildDeploymentHomeProjections.id, currentProjection.id),
+        ));
+    } else {
+      await tx
+        .insert(buildDeploymentHomeProjections)
+        .values({
+          observationId: latestObservation.id,
+          platformEnvironmentId: environment.platformEnvironmentId,
+          reasonKey: deploymentReasonKey(environment.platformEnvironmentId),
+          ...ownedInsertValues(principal, projectionScope),
+          createdByUserId: owner.userId,
+        });
+    }
+    projectionsCreated = 1;
+    completions.push({
+      observationId: latestObservation.id,
+      platformEnvironmentId: environment.platformEnvironmentId,
+      reference: buildReference(latestObservation.id, {
+        ...environment,
+        platformName,
+        productName,
+        environmentName,
+      }),
+      label: buildLabel({ ...environment, platformName, productName, environmentName }),
+      deployedAt: latestObservation.deployedAt,
+    });
+
+    return { observationsCreated, projectionsCreated, completions };
   }));
 }
 
