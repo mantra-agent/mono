@@ -10,7 +10,7 @@
 
 import type { ActionContribution, PermissionKey } from "@shared/models/mod-registry";
 
-type Owner = "core" | "planning" | "build" | "business" | "coaching" | "wellness" | "network" | "finance";
+type Owner = "core" | "planning" | "build" | "business" | "wellness" | "network" | "finance";
 
 interface ActionRow {
   slug: string;

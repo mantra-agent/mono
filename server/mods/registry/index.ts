@@ -1,5 +1,5 @@
 // ─── First-party Mod registry (spec §3.3, Layer 2) ─────────────────────────
-// Code-owned assembly of the one non-installable Core plus the seven Mods.
+// Code-owned assembly of the one non-installable Core plus the six Mods.
 // This is the single source of truth for what a release CAN provide. Account
 // entitlements/installations (Layer 3) and the request-time resolver (Layer 4,
 // next step) consume it; nothing renders from it yet (Phase 1 shadow).
