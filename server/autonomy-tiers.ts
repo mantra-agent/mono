@@ -80,7 +80,8 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
     defer_agenda_item: 1,
   } },
   settings: { default: 1, actions: { get: 0 } },
-  system: { default: 0, actions: { create_issue: 1 } },
+  system: { default: 0 },
+  issues: { default: 1, actions: { get: 0 } },
   regression: { default: 2, actions: {
     start_run: 1,
     list_candidates: 0,

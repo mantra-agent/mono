@@ -112,7 +112,6 @@ import { formatBytes } from "@/lib/format-utils";
 import { formatDiagnosticValue } from "@/lib/diagnostic-error";
 import { createLogger } from "@/lib/logger";
 import { DatabaseDataBrowser } from "@/pages/dev/database-data-browser";
-import InternalPromptsTab from "@/pages/internal-prompts";
 import VersionTimeline from "./version-timeline";
 import { IssuesTab } from "@/components/issues-tab";
 import {
@@ -5067,7 +5066,6 @@ export function DesignTab() {
 const VALID_TABS = [
   "history",
   "issues",
-  "prompts",
 ] as const;
 type DevTab = (typeof VALID_TABS)[number];
 
@@ -5228,12 +5226,6 @@ export default function DevPage() {
   const tabs = useMemo(
     () => [
       {
-        value: "prompts",
-        label: "Prompts",
-        icon: <FileText className="h-4 w-4" />,
-        testId: "tab-prompts",
-      },
-      {
         value: "history",
         label: "History",
         icon: <History className="h-4 w-4" />,
@@ -5315,14 +5307,6 @@ export default function DevPage() {
   return (
     <div className="flex flex-col h-full min-h-0" data-testid="dev-page">
       <div className="flex-1 min-h-0 flex flex-col">
-        {activeTab === "prompts" && (
-          <div
-            className="flex-1 min-h-0 flex flex-col overflow-hidden"
-            data-testid="tab-content-prompts"
-          >
-            <InternalPromptsTab />
-          </div>
-        )}
         {activeTab === "history" && (
           <div
             className="flex-1 min-h-0 flex flex-col gap-6 p-4 overflow-auto"

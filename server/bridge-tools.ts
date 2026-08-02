@@ -5086,25 +5086,47 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
-  async create_issue(args) {
+  async issues(args) {
     const { storage } = await import("./storage");
+    const action = (args.action as string | undefined) || "create";
 
-    const title = args.title;
-    if (!title) return { result: "Missing issue title", error: true };
-
-    try {
-      const issue = await storage.createIssue({
-        title,
-        description: args.description || "",
-        status: "open",
-        page: null,
-        screenshot: null,
-        logs: null,
-      });
-      return { result: `Issue created: "${issue.title}" (ID: ${issue.id})` };
-    } catch (err: any) {
-      return { result: `Failed to create issue: ${err.message}`, error: true };
+    if (action === "get") {
+      const rawId = args.id;
+      if (rawId === undefined || rawId === null || rawId === "") {
+        return { result: "Missing issue id", error: true };
+      }
+      const idNum = typeof rawId === "number" ? rawId : Number(String(rawId).trim());
+      if (!Number.isFinite(idNum) || !Number.isInteger(idNum) || idNum <= 0) {
+        return { result: `Invalid issue id '${rawId}'; expected a positive integer`, error: true };
+      }
+      try {
+        const issue = await storage.getIssue(idNum);
+        if (!issue) return { result: `Issue ${idNum} not found`, error: true };
+        return { result: JSON.stringify(issue) };
+      } catch (err: any) {
+        return { result: `Failed to get issue ${idNum}: ${err.message}`, error: true };
+      }
     }
+
+    if (action === "create") {
+      const title = args.title;
+      if (!title) return { result: "Missing issue title", error: true };
+      try {
+        const issue = await storage.createIssue({
+          title,
+          description: args.description || "",
+          status: "open",
+          page: null,
+          screenshot: null,
+          logs: null,
+        });
+        return { result: `Issue created: "${issue.title}" (ID: ${issue.id})` };
+      } catch (err: any) {
+        return { result: `Failed to create issue: ${err.message}`, error: true };
+      }
+    }
+
+    return { result: `Unknown issues action: ${action}. Available: create, get`, error: true };
   },
 
   async goals(args) {
@@ -14454,30 +14476,6 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       if (bridge) return bridge(args);
       return { result: "get_system_state handler not found", error: true };
     }
-    if (action === "create_issue") {
-      const bridge = bridgeHandlers.create_issue;
-      if (bridge) return bridge(args);
-      return { result: "create_issue handler not found", error: true };
-    }
-    if (action === "get_issue") {
-      const rawId = args.id;
-      if (rawId === undefined || rawId === null || rawId === "") {
-        return { result: "Missing issue id", error: true };
-      }
-      const idNum = typeof rawId === "number" ? rawId : Number(String(rawId).trim());
-      if (!Number.isFinite(idNum) || !Number.isInteger(idNum) || idNum <= 0) {
-        return { result: `Invalid issue id '${rawId}'; expected a positive integer`, error: true };
-      }
-      try {
-        const { storage } = await import("./storage");
-        const issue = await storage.getIssue(idNum);
-        if (!issue) return { result: `Issue ${idNum} not found`, error: true };
-        return { result: JSON.stringify(issue) };
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { result: `Failed to get issue ${idNum}: ${msg}`, error: true };
-      }
-    }
     if (action === "log_files") {
       try {
         const { listLogFiles } = await import("./log");
@@ -14632,7 +14630,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to get tool stats: ${msg}`, error: true };
       }
     }
-    return { result: `Unknown system action: ${action}. Available: state, create_issue, get_issue, logs, log_files, budget, frontend_performance, context_health, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
+    return { result: `Unknown system action: ${action}. Available: state, logs, log_files, budget, frontend_performance, context_health, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
   },
   async timers(args) {
     const action = args.action as string;

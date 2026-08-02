@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useLocation } from "wouter";
-import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Gauge, Users, Vault } from "lucide-react";
+import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Gauge, Users, Vault, FileText } from "lucide-react";
 import { ProcessesCard } from "@/components/processes-card";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
@@ -9,6 +9,7 @@ import { lazyWithRetry } from "@/lib/lazy-with-retry";
 
 const PerformanceContent = lazyWithRetry(() => import("@/pages/performance"));
 const ToolsContent = lazyWithRetry(() => import("@/pages/tools"));
+const PromptsContent = lazyWithRetry(() => import("@/pages/internal-prompts"));
 const LogsContent = lazyWithRetry(() => import("@/pages/logs"));
 const ResourcesContent = lazyWithRetry(() => import("@/pages/resources"));
 const UsersContent = lazyWithRetry(() => import("@/pages/users-admin"));
@@ -32,6 +33,7 @@ const systemTabs = [
   { value: "logs", label: "Logs", icon: <ScrollText className="h-3.5 w-3.5" />, testId: "tab-system-logs" },
   { value: "timers", label: "Timers", icon: <ClipboardCheck className="h-3.5 w-3.5" />, testId: "tab-system-timers" },
   { value: "tools", label: "Tools", icon: <Wrench className="h-3.5 w-3.5" />, testId: "tab-system-tools" },
+  { value: "prompts", label: "Prompts", icon: <FileText className="h-3.5 w-3.5" />, testId: "tab-system-prompts" },
   { value: "inference", label: "Inference", icon: <Brain className="h-3.5 w-3.5" />, testId: "tab-system-inference" },
   { value: "cost", label: "Cost", icon: <DollarSign className="h-3.5 w-3.5" />, testId: "tab-system-cost" },
   { value: "events", label: "Events", icon: <Zap className="h-3.5 w-3.5" />, testId: "tab-system-events" },
@@ -47,6 +49,7 @@ export default function SystemPage() {
   const { hasUnseenErrors: hasUnseenLogErrors, markSeen: markLogErrorsSeen } = useLogErrors();
   const { hasPermission } = useAuth();
   const canReadUsers = hasPermission("users:read");
+  const canReadPrompts = hasPermission("build:read");
 
   const readUrlParams = useCallback(() => {
     const params = new URLSearchParams(window.location.search);
@@ -64,24 +67,27 @@ export default function SystemPage() {
 
   const tabs = useMemo(() =>
     systemTabs
-      .filter((t) => t.value !== "users" || canReadUsers)
+      .filter((t) => (t.value !== "users" || canReadUsers) && (t.value !== "prompts" || canReadPrompts))
       .map(t => {
       if (t.value === "logs" && hasUnseenLogErrors) {
         return { ...t, indicatorLevel: "error" as const, tooltip: "Unseen log errors" };
       }
       return t;
     }),
-    [canReadUsers, hasUnseenLogErrors]
+    [canReadUsers, canReadPrompts, hasUnseenLogErrors]
   );
 
   useEffect(() => {
     if (activeTab === "users" && !canReadUsers) {
       setActiveTab("resources");
     }
-  }, [activeTab, canReadUsers]);
+    if (activeTab === "prompts" && !canReadPrompts) {
+      setActiveTab("resources");
+    }
+  }, [activeTab, canReadUsers, canReadPrompts]);
 
   usePageHeader({
-    title: activeTab === "hooks" ? "Hooks" : activeTab === "vaults" ? "Vaults" : "System",
+    title: activeTab === "hooks" ? "Hooks" : activeTab === "vaults" ? "Vaults" : activeTab === "prompts" ? "Prompts" : "System",
     tabs,
     activeTab,
     onTabChange: setActiveTab,
@@ -98,6 +104,11 @@ export default function SystemPage() {
           </div>
         )}
         {activeTab === "tools" && <ToolsContent embedded={true} />}
+        {activeTab === "prompts" && (
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <PromptsContent />
+          </div>
+        )}
         {activeTab === "inference" && <InferenceContent embedded={true} />}
         {activeTab === "cost" && <PerformanceContent embedded={true} />}
         {activeTab === "events" && <EventsContent embedded={true} />}

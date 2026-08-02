@@ -21,7 +21,7 @@ import {
 
 export const MOD_KEYS = [
   "planning",
-  "building",
+  "build",
   "business",
   "coaching",
   "wellness",
