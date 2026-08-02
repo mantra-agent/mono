@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
+import { ActiveStatusSpinner } from "@/components/nav-dot";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import {
   DropdownMenu,
@@ -269,6 +270,14 @@ function PlanStepCheckbox({
     return bySession;
   }, [ownedChildBlocks, planId, step.attempts, step.id]);
   const attempts = [...attemptsBySession.values()].sort((a, b) => a.attemptNumber - b.attemptNumber);
+  const hasRunningAttempt = attempts.some((attempt) => {
+    if (attempt.status === "running" || attempt.status === "pending") return true;
+    if (!attempt.childSessionId || attempt.completedAt) return false;
+    const childStream = sessionStreams?.[attempt.childSessionId];
+    return childStream?.status === "streaming" || childStream?.runActive === true;
+  });
+  const isActive = step.status === "running" || hasRunningAttempt;
+  const displayChecked = checked && !isActive;
   const stepLabel = `Step ${stepIndex + 1}: ${step.title}`;
 
   return (
@@ -278,27 +287,30 @@ function PlanStepCheckbox({
           className={cn(
             "group relative flex min-w-0 items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground",
             needsReview && "text-foreground",
+            isActive && "text-active hover:text-active",
             (step.status === "failed" || isBlocked) && "text-destructive hover:text-destructive",
           )}
         >
           <span
             className={cn(
               "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center transition-colors",
-              checked && !needsReview && "text-success",
+              displayChecked && !needsReview && "text-success",
               isBlocked && "text-destructive",
               needsReview && "text-foreground",
-              !checked && !isBlocked && !needsReview && "text-muted-foreground/50",
+              isActive && "text-active",
+              !checked && !isBlocked && !needsReview && !isActive && "text-muted-foreground/50",
             )}
             aria-hidden="true"
           >
-            {checked && !needsReview && <CircleCheck className="h-3.5 w-3.5" />}
+            {displayChecked && !needsReview && <CircleCheck className="h-3.5 w-3.5" />}
             {isBlocked && <OctagonAlert className="h-3 w-3" />}
             {needsReview && <MailOpen className="h-3.5 w-3.5" />}
-            {!checked && !isBlocked && !needsReview && <Circle className="h-3.5 w-3.5" />}
+            {isActive && !isBlocked && !needsReview && <ActiveStatusSpinner className="h-3.5 w-3.5" />}
+            {!isActive && !checked && !isBlocked && !needsReview && <Circle className="h-3.5 w-3.5" />}
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className={cn("min-w-0 flex-1 truncate", checked && !needsReview && "text-muted-foreground", needsReview && "font-medium text-foreground")}>{stepLabel}</span>
+              <span className={cn("min-w-0 flex-1 truncate", displayChecked && !needsReview && "text-muted-foreground", needsReview && "font-medium text-foreground", isActive && "font-medium text-active")}>{stepLabel}</span>
               {isBlocked && <span className="shrink-0 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-destructive">Blocked</span>}
               {needsReview && <span className="shrink-0 rounded border border-foreground/25 bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-foreground">Needs Review</span>}
             </div>
