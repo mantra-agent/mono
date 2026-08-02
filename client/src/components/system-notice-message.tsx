@@ -10,6 +10,7 @@ interface SystemNoticeMessageProps {
 const ERROR_TYPE_LABELS: Record<string, string> = {
   processing_stopped: "Processing stopped",
   response_interrupted: "Response interrupted",
+  response_incomplete: "Response incomplete",
   user_stopped: "Stopped",
   something_went_wrong: "Something went wrong",
   temporarily_busy: "Temporarily busy",

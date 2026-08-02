@@ -21,7 +21,7 @@ import { STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_EXTENDED_MS, POST_ABORT_DRA
 import pLimit from "p-limit";
 import { withQueryAttributionAsync } from "./db";
 import { abortTrace } from "./abort-trace";
-import type { ExecutorStreamEvent, ModelProviderFailureInfo, PersonaSnapshot } from "@shared/models/chat";
+import type { ExecutorStreamEvent, ModelProviderFailureInfo, PersonaSnapshot, TerminalDegradationReason } from "@shared/models/chat";
 import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-storage";
 import { ModelProviderError, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
 import { estimateToolOutputSize } from "./tool-output-artifacts";
@@ -159,7 +159,9 @@ export type { TerminationReason } from "@shared/models/chat";
 import type { TerminationReason } from "@shared/models/chat";
 
 export interface ExecutorRunResult {
-  status: "succeeded" | "failed" | "yielded";
+  status: "succeeded" | "degraded" | "failed" | "yielded";
+  degradationReason?: TerminalDegradationReason;
+  lastStopReason?: string;
   content: string;
   thinking: string;
   toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; error?: boolean; durationMs: number; parentId?: string }>;
@@ -807,6 +809,7 @@ interface RunIterationContext {
   personaSwitchRequested?: { toolCallId: string };
   toolSchemaRefreshRequested?: { toolCallId: string; toolName: string };
   awaitUserRequested?: { toolCallId: string };
+  intentionallyAwaitingUser: boolean;
   workingSetRefreshRequested?: { toolCallId: string };
   currentCycleToolResultTokens: number;
   iterationToolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; order: number }>;
@@ -1844,20 +1847,45 @@ export class AgentExecutor extends EventEmitter {
     const turnCost = (ctx.totalUsage.inputTokens * costRates.input) + (ctx.totalUsage.outputTokens * costRates.output);
     const turnApiCallCount = ctx.iteration || 1;
 
-    log.log(`run complete runId=${ctx.runId} iterations=${ctx.iteration} terminationReason=${terminationReason} thinkingLen=${allThinkingContent.length} toolCallsCount=${ctx.resolvedToolCalls.length} contentLen=${finalContent.length} model=${ctx.resolvedModel}`);
+    const lastStopReason = ctx.diagnosticLastModelStopReason;
+    const degradationReason: TerminalDegradationReason | undefined =
+      !ctx.aborted &&
+      terminationReason === "complete" &&
+      finalContent.trim().length === 0 &&
+      !ctx.intentionallyAwaitingUser &&
+      lastStopReason === "max_tokens"
+        ? "empty_response_output_limit"
+        : undefined;
+    const status: ExecutorRunResult["status"] =
+      degradationReason ? "degraded"
+      : terminationReason === "yield_to_interactive" ? "yielded"
+      : terminationReason === "complete" ? "succeeded"
+      : "failed";
 
-    ctx.publish("done", { terminationReason, abortReason: ctx.abortReason, iterationsUsed: ctx.iteration, messageId: ctx.runId ? `done:${ctx.runId}` : undefined });
+    log.log(`run complete runId=${ctx.runId} status=${status} iterations=${ctx.iteration} terminationReason=${terminationReason} degradationReason=${degradationReason ?? "none"} thinkingLen=${allThinkingContent.length} toolCallsCount=${ctx.resolvedToolCalls.length} contentLen=${finalContent.length} model=${ctx.resolvedModel}`);
+    if (degradationReason) {
+      log.warn(`agent.run.degraded runId=${ctx.runId} sessionId=${options.sessionId || "none"} reason=${degradationReason} lastStopReason=${lastStopReason} iterations=${ctx.iteration} toolCallsCount=${ctx.resolvedToolCalls.length}`);
+    }
+
+    ctx.publish("done", {
+      terminationReason,
+      abortReason: ctx.abortReason,
+      degradationReason,
+      lastStopReason,
+      iterationsUsed: ctx.iteration,
+      messageId: ctx.runId ? `done:${ctx.runId}` : undefined,
+    });
 
     const terminalDurationMs = Date.now() - startTime;
     const terminalDecision = {
       runId: ctx.runId,
       sessionId: options.sessionId || null,
-      status: ctx.aborted ? "aborted" : "complete",
-      reason: ctx.aborted ? (ctx.abortReason ?? terminationReason) : terminationReason,
+      status,
+      reason: degradationReason ?? (ctx.aborted ? (ctx.abortReason ?? terminationReason) : terminationReason),
       iterations: ctx.iteration,
       durationMs: terminalDurationMs,
       lastStep: ctx.diagnosticLastStep || "terminal",
-      lastStopReason: ctx.diagnosticLastModelStopReason || null,
+      lastStopReason: lastStopReason || null,
       lastToolCallId: ctx.diagnosticLastToolCallId || null,
       hadToolErrors: ctx.diagnosticHadToolErrors,
       failedToolCount: ctx.diagnosticFailedToolCount,
@@ -1896,20 +1924,20 @@ export class AgentExecutor extends EventEmitter {
 
     eventBus.publish({
       category: "agent",
-      event: ctx.aborted ? "agent.run.aborted" : "agent.run.complete",
+      event: status === "degraded"
+        ? "agent.run.degraded"
+        : ctx.aborted
+          ? "agent.run.aborted"
+          : "agent.run.complete",
       payload: { ...terminalDecision, durationMs: terminalDurationMs },
       runId: ctx.runId,
       sessionKey: options.sessionKey,
     });
 
-    // Compute the single status discriminant — callers check this, not terminationReason/abortReason/error
-    const status: ExecutorRunResult["status"] =
-      terminationReason === "yield_to_interactive" ? "yielded"
-      : terminationReason === "complete" ? "succeeded"
-      : "failed";
-
     return {
       status,
+      degradationReason,
+      lastStopReason,
       content: finalContent,
       thinking: allThinkingContent,
       toolCalls: ctx.resolvedToolCalls,
@@ -2137,6 +2165,7 @@ export class AgentExecutor extends EventEmitter {
       diagnosticFailedToolCount: 0,
       currentCycleToolResultTokens: 0,
       iterationToolCalls: [],
+      intentionallyAwaitingUser: false,
       segmentChronology: [],
       systemStepsData: [],
       chronologyThinkingIdx: -1,
@@ -2648,6 +2677,7 @@ export class AgentExecutor extends EventEmitter {
     if (ctx.awaitUserRequested) {
       const toolCallId = ctx.awaitUserRequested.toolCallId;
       ctx.awaitUserRequested = undefined;
+      ctx.intentionallyAwaitingUser = true;
       ctx.publish("tool_use_pause", { content: "" });
       log.log(`await-user boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} toolCallId=${toolCallId}`);
       return {
@@ -2840,6 +2870,7 @@ export class AgentExecutor extends EventEmitter {
         }
       }
       if (continuation === "await_user" || continuation === "provider_system_tool") {
+        ctx.intentionallyAwaitingUser = true;
         ctx.publish("tool_use_pause", { content: "" });
         return {
           finalContent: cleanText,
@@ -3211,6 +3242,7 @@ export class AgentExecutor extends EventEmitter {
 
       return {
         status: "failed" as const,
+        lastStopReason: ctx.diagnosticLastModelStopReason,
         content: mergeIterationResults(iterationResults) || "",
         thinking: ctx.allThinking.join("\n\n"),
         toolCalls: ctx.resolvedToolCalls,
