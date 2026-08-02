@@ -142,9 +142,8 @@ function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) {
   const [copied, setCopied] = useState(false);
   const invite = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/auth/invite", { email: email.trim() })).json() as Promise<InviteResult>,
-    onSuccess: async (nextResult) => {
+    onSuccess: (nextResult) => {
       setResult(nextResult);
-      await queryClient.invalidateQueries({ queryKey: ["/api/auth/users"] });
       toast({ title: "Invite created", description: "No email was sent." });
     },
     onError: (error: Error) => toast({ title: "Could not create invite", description: error.message, variant: "destructive" }),
@@ -158,7 +157,13 @@ function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) {
     invite.reset();
   };
   const handleOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen && !invite.isPending) reset();
+    if (!nextOpen && !invite.isPending) {
+      const shouldRefreshUsers = result !== null;
+      reset();
+      onOpenChange(false);
+      if (shouldRefreshUsers) void queryClient.invalidateQueries({ queryKey: ["/api/auth/users"] });
+      return;
+    }
     onOpenChange(nextOpen);
   };
   const copyRegistrationUrl = async () => {
@@ -172,7 +177,14 @@ function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) {
   };
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      <DialogContent
+        onEscapeKeyDown={(event) => {
+          if (result) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (result) event.preventDefault();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{result ? "Invite created" : "Invite synthetic user"}</DialogTitle>
           <DialogDescription>
@@ -191,6 +203,9 @@ function InviteUserDialog({ open, onOpenChange }: InviteUserDialogProps) {
               </div>
             </div>
             <p className="text-sm text-muted-foreground">Expires {formatDateTime(result.expiresAt)}.</p>
+            <DialogFooter>
+              <Button type="button" onClick={() => handleOpenChange(false)} data-testid="button-finish-invite">Done</Button>
+            </DialogFooter>
           </div>
         ) : (
           <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); invite.mutate(); }}>
