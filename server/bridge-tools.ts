@@ -22,6 +22,7 @@ import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
+import { CANONICAL_REGRESSION_SKILL_ID } from "./skill-identities";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
 import { searchVnextMemory, type VnextSearchOptions } from "./memory/vnext-search";
@@ -7784,6 +7785,18 @@ ${lines.join("\n")}` };
           if (!targetSkill) targetSkill = await storage.getSkillByName(requestedSkill);
           if (!targetSkill) return { result: `Skill "${requestedSkill}" not found`, error: true };
           const skillId = targetSkill.id;
+
+          if (skillId === CANONICAL_REGRESSION_SKILL_ID) {
+            const { startManualRegression } = await import("./regression/regression-admission");
+            const run = await startManualRegression({ wait: args.wait !== false });
+            return {
+              result: [
+                `Regression run ${run.id} ${args.wait === false ? "started" : run.status}.`,
+                `Environment: ${run.environmentId} · deployment: ${run.acceptedDeploymentId} · revision: ${run.acceptedRevision}`,
+                run.skillSessionId ? `Session: ${run.skillSessionId}` : "Session: starting",
+              ].join("\n"),
+            };
+          }
 
           const callingConversationId = args._sessionId;
           if (normalizeSkillIdentifier(skillId) === "spec" && await isSpecSkillSession(callingConversationId)) {

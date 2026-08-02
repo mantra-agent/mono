@@ -9,6 +9,7 @@ import { inArray } from "drizzle-orm";
 import { listSkillPersonaConfiguration, setSkillPersonaPreference } from "./skill-persona-service";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
+import { CANONICAL_REGRESSION_SKILL_ID } from "./skill-identities";
 
 const libraryPageScopeColumns = {
   scope: libraryPages.scope,
@@ -107,6 +108,32 @@ export function registerSkillRoutes(app: Express): void {
         err.message?.includes("user principal") ? 403 : 500;
       log.error("PUT /api/skills/:id/persona-preference error:", err.message);
       res.status(status).json({ error: err.message || "Failed to set persona preference" });
+    }
+  });
+
+  app.post("/api/skills/:id/run", async (req, res) => {
+    try {
+      const skill = await storage.getSkill(req.params.id);
+      if (!skill) return res.status(404).json({ error: "Skill not found" });
+      if (skill.status !== "active") return res.status(409).json({ error: `Skill ${skill.name} is not active` });
+
+      if (skill.id === CANONICAL_REGRESSION_SKILL_ID) {
+        const { startManualRegression } = await import("./regression/regression-admission");
+        const run = await startManualRegression({ wait: false });
+        log.log(`Started Regression skill id=${skill.id} run=${run.id} session=${run.skillSessionId || "pending"}`);
+        return res.status(202).json({ started: true, skillId: skill.id, skillName: skill.name, sessionId: run.skillSessionId });
+      }
+
+      const { executeAutonomousSkillRun } = await import("./autonomous-skill-runner");
+      const launched = await executeAutonomousSkillRun(skill.id, {
+        spawnerTool: "skills.ui.run",
+      });
+      if (!launched) return res.status(409).json({ error: `Skill ${skill.name} is already running` });
+      log.log(`Completed skill name=${skill.name} id=${skill.id} session=${launched.sessionId} status=${launched.status}`);
+      res.status(200).json({ started: true, skillId: skill.id, skillName: skill.name, sessionId: launched.sessionId, status: launched.status });
+    } catch (err: any) {
+      log.error(`POST /api/skills/${req.params.id}/run error:`, err.message);
+      res.status(500).json({ error: err.message || "Failed to run skill" });
     }
   });
 
