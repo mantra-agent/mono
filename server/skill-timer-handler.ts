@@ -163,7 +163,7 @@ export class SkillTimerHandler implements TimerHandler {
       `Skill Timer "${timer.name}" enqueued Runtime runId=${result.run.id} disposition=${result.disposition} timerRunId=${run.id}`,
     );
     return {
-      outcome: "success",
+      outcome: "accepted",
       output: {
         runtimeRunId: result.run.id,
         runtimeDisposition: result.disposition,

@@ -670,7 +670,7 @@ class TimerScheduler {
     };
   }
 
-  private hasSuccessfulScheduledRunForSlot(
+  private hasClaimedScheduledRunForSlot(
     runs: TimerRun[],
     scheduleId: string,
     slot: ScheduledRunSlot,
@@ -679,7 +679,7 @@ class TimerScheduler {
       (run) =>
         run.trigger === "scheduled" &&
         run.scheduleId === scheduleId &&
-        run.status === "success" &&
+        run.status !== "deferred" &&
         run.scheduledSlotStart === slot.slotStart &&
         run.scheduledSlotEnd === slot.slotEnd,
     );
@@ -768,14 +768,14 @@ class TimerScheduler {
         () => timerStorage.getRunsForScheduler(timer, 100),
       );
       if (
-        this.hasSuccessfulScheduledRunForSlot(
+        this.hasClaimedScheduledRunForSlot(
           recentRuns,
           scheduleId,
           scheduledSlot,
         )
       ) {
         log.debug(
-          `skipping timer "${timer.name}" — already ran successfully for scheduled slot ` +
+          `skipping timer "${timer.name}" — scheduled slot already claimed ` +
             `scheduleId=${scheduleId} slotStart=${scheduledSlot.slotStart} slotEnd=${scheduledSlot.slotEnd}`,
         );
         return null;
@@ -901,6 +901,16 @@ class TimerScheduler {
       result.output === undefined
         ? run.metadata
         : { ...(run.metadata ?? {}), handlerOutput: result.output };
+
+    if (result.outcome === "accepted") {
+      await withQueryAttributionAsync("timer-scheduler", () =>
+        timerStorage.updateRun(timer, run.id, { metadata }),
+      );
+      log.log(
+        `Timer "${timer.name}" execution accepted by downstream Runtime; awaiting terminal receipt`,
+      );
+      return;
+    }
 
     const update: Partial<TimerRun> = {
       status:

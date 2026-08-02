@@ -1,8 +1,11 @@
+import type { DrizzleTx } from "../db";
 import type { Principal } from "../principal";
 import type {
   RuntimeAttribution,
+  RuntimeReceiptV1,
   RuntimeResourcePool,
   RuntimeRunOutcome,
+  RuntimeRunRow,
 } from "@shared/models/runtime";
 
 export type RuntimeExecutorProfile =
@@ -66,6 +69,13 @@ export interface RuntimeHandler<Input = unknown> {
   requiredCapabilities: string[];
   authorize(principal: Principal, input: Input): Promise<RuntimeAuthorizationDecision>;
   execute(context: RuntimeExecutionContext, input: Input): Promise<RuntimeAttemptDecision>;
+  projectTerminal?(context: {
+    tx: DrizzleTx;
+    principal: Principal;
+    run: RuntimeRunRow;
+    input: Input;
+    receipt: RuntimeReceiptV1;
+  }): Promise<void>;
 }
 
 function registryKey(key: string, version: number): string {

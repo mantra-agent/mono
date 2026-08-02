@@ -1,5 +1,6 @@
-import type { Timer, TimerRun } from "@shared/models/timers";
-import type { MemoryVnextSourceQueueRow } from "@shared/schema";
+import type { Timer, TimerRun, TimerRunStatus } from "@shared/models/timers";
+import { responsibilityRuns, type MemoryVnextSourceQueueRow } from "@shared/schema";
+import { and, eq, sql } from "drizzle-orm";
 import type { Principal } from "../principal";
 import { getCurrentPrincipal } from "../principal-context";
 import { timerStorage } from "../file-storage/timers";
@@ -62,6 +63,12 @@ function parseWeeklyIdeasInput(value: unknown): WeeklyIdeasInput {
     timerId: parseBoundedString(input.timerId, "timerId", 100),
     sourceSlot: parseBoundedString(input.sourceSlot, "sourceSlot", 100),
   };
+}
+
+function mapRuntimeOutcomeToTimerStatus(outcome: import("@shared/models/runtime").RuntimeRunOutcome): TimerRunStatus {
+  if (outcome === "succeeded") return "success";
+  if (outcome === "degraded" || outcome === "needs_review") return "degraded";
+  return "error";
 }
 
 function parseTimerSkillInput(value: unknown): TimerSkillInput {
@@ -339,6 +346,32 @@ export function registerRuntimeProofPathHandlers(): void {
     requiredCapabilities: ["skill:execute", "timer:skill"],
     authorize: authorizeTimerSkill,
     execute: executeTimerSkill,
+    async projectTerminal({ tx, principal, input, receipt }) {
+      requireUserPrincipal(principal);
+      const status = mapRuntimeOutcomeToTimerStatus(receipt.outcome);
+      const error = status === "success" ? null : receipt.reasonCode;
+      const completedAt = new Date(receipt.terminalAt);
+      const updated = await tx.update(responsibilityRuns).set({
+        status,
+        completedAt,
+        error,
+        metadata: sql`coalesce(${responsibilityRuns.metadata}, '{}'::jsonb) || ${JSON.stringify({
+          runtimeRunId: receipt.runId,
+          runtimeReceiptHash: receipt.receiptHash,
+          runtimeOutcome: receipt.outcome,
+          runtimeReasonCode: receipt.reasonCode,
+          runtimeVerificationLevel: receipt.verificationLevel,
+        })}::jsonb`,
+      }).where(and(
+        eq(responsibilityRuns.runId, input.timerRunId),
+        eq(responsibilityRuns.responsibilityId, input.timerId),
+        eq(responsibilityRuns.ownerUserId, principal.userId!),
+        eq(responsibilityRuns.accountId, principal.accountId!),
+      )).returning({ runId: responsibilityRuns.runId });
+      if (updated.length !== 1) {
+        throw new Error(`Timer Runtime terminal projection could not resolve source run ${input.timerRunId}`);
+      }
+    },
   });
   runtimeHandlerRegistry.register<MemorySourceInput>({
     key: MEMORY_SOURCE_HANDLER_KEY,
