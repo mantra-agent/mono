@@ -1303,12 +1303,14 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
 
   regression: {
-    description: "Run canonical post-deploy regression against durable Issue contracts and the regression run's immutable Platform acceptance target. Actions: list_candidates, get_run, get_issue, upsert_contract, execute_scenario, append_result (blocked only), get_results, associate_plan. Callers never provide a host, credential, cookie, selector, script, or raw browser command; execution is server-owned and target-bound.",
+    description: "Run canonical regression at any time against durable Issue contracts and an immutable snapshot of the selected Platform Environment's latest successful deployment. Actions: start_run, list_candidates, get_run, get_issue, upsert_contract, execute_scenario, append_result (blocked only), get_results, associate_plan. Callers never provide a host, credential, cookie, selector, script, or raw browser command; execution is server-owned and target-bound.",
     category: "execution",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list_candidates", "get_run", "get_issue", "upsert_contract", "execute_scenario", "append_result", "get_results", "associate_plan"], description: "Action to perform" },
+        action: { type: "string", enum: ["start_run", "list_candidates", "get_run", "get_issue", "upsert_contract", "execute_scenario", "append_result", "get_results", "associate_plan"], description: "Action to perform" },
+        environmentId: { type: "number", description: "Platform Environment for start_run; defaults to the current bound runtime" },
+        wait: { type: "boolean", description: "Wait for the Regression Skill to complete; defaults true for start_run" },
         runId: { type: "string", description: "Durable regression run ID" },
         issueId: { type: "number", description: "Canonical Issue ID" },
         planId: { type: "string", description: "Canonical Plan ID or page ID for one-time run association" },

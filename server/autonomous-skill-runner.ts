@@ -341,9 +341,22 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     callType: "full",
     activity: ACTIVITY_WORK,
     temperature: 0.2,
-    timeoutMs: 30 * 60 * 1000,
+    timeoutMs: 3 * 60 * 60 * 1000,
     sessionType: "autonomous",
     admissionTier: "background",
+    async postRunVerify(sessionId: string) {
+      const { reconcileRegressionRunStatus } = await import("./regression/regression-service");
+      const runId = await import("./chat-file-storage").then(async ({ chatFileStorage }) => {
+        const messages = await chatFileStorage.getMessagesBySession(sessionId);
+        const match = messages.find((message) => message.role === "system_prompt")?.content.match(/\breg_[a-z0-9_]+\b/i);
+        return match?.[0] || null;
+      });
+      if (!runId) throw new Error("Regression session has no durable run identity");
+      const run = await reconcileRegressionRunStatus(runId);
+      if (!["completed", "partial", "failed", "skipped"].includes(run.status)) {
+        throw new Error(`Regression run ${runId} is not terminal after Skill completion (${run.status})`);
+      }
+    },
   },
   "enrich-email": {
     skillId: "enrich-email",
@@ -525,6 +538,8 @@ export async function executeAutonomousSkillRun(
     planPageRef?: string;
     workflowRunId?: string;
     workflowStageAttemptId?: number;
+    /** Optional per-instance single-flight key for Skills that support concurrent durable runs. */
+    coordinationKey?: string;
   } = {}
 ): Promise<AutonomousRunResult | null> {
   // ── Ensure user principal context ───────────────────────────────────
@@ -611,8 +626,12 @@ export async function executeAutonomousSkillRun(
   // (parent, reason, skillRun) unique tuple in `session_tree`. Bypassing
   // this gate when a `parentSessionId` is present is required for
   // legitimate parallel fan-out.
-  if (!isSkillless && !options.parentSessionId && isDuplicateSkillRun(skillId!)) {
-    logger.log(`[skill:${skillId}] Already running — skipping`);
+  const coordinationKey = options.coordinationKey || skillId || "skillless";
+  if (!isSkillless && config.skillId === "regression" && !options.coordinationKey) {
+    throw new Error("Regression Skill execution requires a dispatcher-supplied durable run coordination key");
+  }
+  if (!isSkillless && !options.parentSessionId && isDuplicateSkillRun(coordinationKey)) {
+    logger.log(`[skill:${skillId}] Coordination key ${coordinationKey} already running — skipping`);
     return null;
   }
 
@@ -623,7 +642,7 @@ export async function executeAutonomousSkillRun(
   // run of the same skill is relying on for dedupe.
   let didRegisterActiveRun = false;
   if (!isSkillless && !options.parentSessionId) {
-    activeSkillRuns.add(getSkillRunKey(skillId!));
+    activeSkillRuns.add(getSkillRunKey(coordinationKey));
     didRegisterActiveRun = true;
   }
   const startTime = Date.now();
@@ -675,7 +694,7 @@ export async function executeAutonomousSkillRun(
           `[SkillChat] [${config.label}] Pre-flight: admission_deferred ` +
           `(snapshot: ${JSON.stringify(snapshot)}) — deferring skill run`
         );
-        releaseSkillRun(skillId!);
+        releaseSkillRun(coordinationKey);
         return null;
       }
     } catch (admCheckErr: unknown) {
@@ -749,7 +768,7 @@ export async function executeAutonomousSkillRun(
           },
     );
   } catch (err: unknown) {
-    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(skillId));
+    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(coordinationKey));
     const errDetail = err instanceof Error ? (err.stack || err.message) : String(err);
     logger.error(`[SkillChat] phase=session-create FAILED for skill "${config.label}": ${errDetail}`);
     throw new Error(`phase=session-create FAILED for skill "${config.label}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
@@ -1034,7 +1053,7 @@ export async function executeAutonomousSkillRun(
 
     return { sessionId, status: "failed", error: errMsg, durationMs };
   } finally {
-    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(skillId));
+    if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(coordinationKey));
     // Finalize with SessionManager so WS subscribers see the session end
     try {
       const { sessionManager } = await import("./session-manager");
@@ -1303,6 +1322,7 @@ async function runSkillPipeline(
           await config.postRunVerify(sessionId, toolCallLog);
         } catch (verifyErr: unknown) {
           logger.error(`[SkillChat] [${sessionId}] postRunVerify failed: ${verifyErr instanceof Error ? verifyErr.message : String(verifyErr)}`);
+          if (config.skillId === "regression") throw verifyErr;
         }
       }
     }

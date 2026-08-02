@@ -18,14 +18,17 @@ const TERMINAL_STATUSES = ["completed", "partial", "failed", "skipped"] as const
 
 type DispatchableRun = typeof regressionRuns.$inferSelect;
 
-async function claimDueRuns(): Promise<DispatchableRun[]> {
+async function claimDueRuns(runId?: string): Promise<DispatchableRun[]> {
   const now = new Date();
   const staleBefore = new Date(now.getTime() - CLAIM_STALE_MS);
   return db.transaction(async (tx) => {
-    const due = await tx.select().from(regressionRuns).where(or(
+    const duePredicate = or(
       and(eq(regressionRuns.status, "queued"), sql`${regressionRuns.dueAt} <= ${now}`),
       and(eq(regressionRuns.status, "claimed"), sql`${regressionRuns.claimedAt} < ${staleBefore}`),
-    )).orderBy(regressionRuns.dueAt).limit(CLAIM_LIMIT).for("update", { skipLocked: true });
+    );
+    const due = await tx.select().from(regressionRuns).where(
+      runId ? and(eq(regressionRuns.id, runId), duePredicate) : duePredicate,
+    ).orderBy(regressionRuns.dueAt).limit(CLAIM_LIMIT).for("update", { skipLocked: true });
     const claimed: DispatchableRun[] = [];
     for (const run of due) {
       const [updated] = await tx.update(regressionRuns).set({
@@ -74,13 +77,14 @@ async function launchClaimedRun(run: DispatchableRun): Promise<void> {
     await runWithPrincipal(principal, async () => {
       const result = await executeAutonomousSkillRun(CANONICAL_REGRESSION_SKILL_ID, {
         preContext: `Regression run ID: ${run.id}`,
+        coordinationKey: `regression:${run.id}`,
         spawnReason: `regression:${run.id}`,
         spawnerTool: "regression-dispatcher",
         sessionKeyOverride: `regression:${run.id}`,
         titleOverride: `Regression ${run.acceptedRevision.slice(0, 8)}`,
         personaName: "Engineer",
         admissionTier: "background",
-        workflowRunId: run.sourceWorkflowRunId || `regression:${run.id}`,
+        workflowRunId: run.sourceWorkflowRunId || undefined,
         workflowStageAttemptId: run.acceptanceAttemptId || undefined,
         onSessionCreated: async (sessionId) => {
           await db.update(regressionRuns).set({
@@ -115,9 +119,21 @@ async function launchClaimedRun(run: DispatchableRun): Promise<void> {
   }
 }
 
-export async function dispatchDueRegressionRuns(): Promise<number> {
-  const runs = await claimDueRuns();
+export async function dispatchDueRegressionRuns(options: { runId?: string; wait?: boolean } = {}): Promise<number> {
+  const runs = await claimDueRuns(options.runId);
   if (runs.length === 0) return 0;
-  await Promise.all(runs.map(launchClaimedRun));
+  const launches = runs.map(launchClaimedRun);
+  if (options.wait === false) {
+    for (const launch of launches) {
+      void launch.catch((error) => {
+        log.error("regression.dispatch.unhandled", {
+          runId: options.runId || null,
+          errorType: error instanceof Error ? error.name : typeof error,
+        });
+      });
+    }
+  } else {
+    await Promise.all(launches);
+  }
   return runs.length;
 }

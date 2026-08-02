@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { issueRegressionContractInputSchema, regressionResultStatusSchema } from "@shared/models/regression";
+import { getPlanStepAttemptByChildSession, getPlanSteps } from "../plan-service";
 import {
   appendRegressionResult,
   associateRegressionPlan,
@@ -18,10 +19,44 @@ const json = (value: unknown): ToolHandlerResult => ({ result: JSON.stringify(va
 const positiveIssueId = (value: unknown) => z.coerce.number().int().positive().parse(value);
 const requiredRunId = (value: unknown) => z.string().trim().min(1).max(100).parse(value);
 
+async function requireRegressionPlanStep(input: { runId: string; issueId: number; planStepId: string; sessionId?: string }) {
+  const run = await getRegressionRun(input.runId);
+  if (!run) throw new Error(`Regression run not found: ${input.runId}`);
+  if (!run.planId) throw new Error(`Regression run ${input.runId} has no associated Plan`);
+  const snapshot = await listRegressionCandidates(run.id);
+  const candidateIndex = snapshot.candidates.findIndex((candidate) => candidate.issueId === input.issueId);
+  if (candidateIndex < 0) throw new Error(`Issue ${input.issueId} is not a candidate in regression run ${run.id}`);
+  const expectedStepId = `step_${candidateIndex + 1}`;
+  if (input.planStepId !== expectedStepId) {
+    throw new Error(`Issue ${input.issueId} must execute from deterministic Plan step ${expectedStepId}`);
+  }
+  const step = (await getPlanSteps(run.planId)).find((candidate) => candidate.id === expectedStepId);
+  if (!step || step.status !== "running") {
+    throw new Error(`Regression Plan step ${expectedStepId} is not actively running`);
+  }
+  if (input.sessionId && step.sessionId !== input.sessionId) {
+    throw new Error(`Regression Plan step ${expectedStepId} is owned by a different child session`);
+  }
+  if (input.sessionId) {
+    const attempt = await getPlanStepAttemptByChildSession(run.planId, expectedStepId, input.sessionId);
+    if (!attempt || attempt.status !== "running") {
+      throw new Error(`Regression Plan step ${expectedStepId} has no running attempt for this session`);
+    }
+  }
+  return { run, expectedStepId };
+}
+
 export async function handleRegression(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   try {
-    const action = z.enum(["list_candidates", "get_run", "get_issue", "upsert_contract", "execute_scenario", "append_result", "get_results", "associate_plan"]).parse(args.action);
+    const action = z.enum(["start_run", "list_candidates", "get_run", "get_issue", "upsert_contract", "execute_scenario", "append_result", "get_results", "associate_plan"]).parse(args.action);
     switch (action) {
+      case "start_run": {
+        const { startManualRegression } = await import("../regression/regression-admission");
+        return json(await startManualRegression({
+          environmentId: args.environmentId == null ? undefined : z.coerce.number().int().positive().parse(args.environmentId),
+          wait: args.wait !== false,
+        }));
+      }
       case "list_candidates": {
         const runId = requiredRunId(args.runId);
         const snapshot = await listRegressionCandidates(runId);
@@ -39,23 +74,30 @@ export async function handleRegression(args: Record<string, unknown>): Promise<T
         const contract = issueRegressionContractInputSchema.parse(args.contract);
         return json(await upsertIssueRegressionContract(positiveIssueId(args.issueId), contract));
       }
-      case "execute_scenario": return json(await executeRegressionScenario({
-        runId: requiredRunId(args.runId),
-        issueId: positiveIssueId(args.issueId),
-        planStepId: typeof args.planStepId === "string" ? args.planStepId.trim() || undefined : undefined,
-        sessionId: typeof args._sessionId === "string" ? args._sessionId : undefined,
-      }));
+      case "execute_scenario": {
+        const runId = requiredRunId(args.runId);
+        const issueId = positiveIssueId(args.issueId);
+        const planStepId = z.string().trim().min(1).max(100).parse(args.planStepId);
+        const sessionId = typeof args._sessionId === "string" ? args._sessionId : undefined;
+        await requireRegressionPlanStep({ runId, issueId, planStepId, sessionId });
+        return json(await executeRegressionScenario({ runId, issueId, planStepId, sessionId }));
+      }
       case "append_result": {
         const status = regressionResultStatusSchema.parse(args.status);
         if (status !== "blocked") throw new Error("Agent-authored append_result is limited to blocked documentation/execution results; scenario pass/fail is appended by execute_scenario");
+        const runId = requiredRunId(args.runId);
+        const issueId = positiveIssueId(args.issueId);
+        const planStepId = z.string().trim().min(1).max(100).parse(args.planStepId);
+        const sessionId = typeof args._sessionId === "string" ? args._sessionId : undefined;
+        await requireRegressionPlanStep({ runId, issueId, planStepId, sessionId });
         return json(await appendRegressionResult({
-          runId: requiredRunId(args.runId),
-          issueId: positiveIssueId(args.issueId),
+          runId,
+          issueId,
           status,
           reasonCode: z.string().trim().min(1).max(100).parse(args.reasonCode),
           summary: z.string().trim().min(1).max(2_000).parse(args.summary),
-          planStepId: typeof args.planStepId === "string" ? args.planStepId.trim() || undefined : undefined,
-          sessionId: typeof args._sessionId === "string" ? args._sessionId : undefined,
+          planStepId,
+          sessionId,
           contractVersion: args.contractVersion == null ? undefined : z.coerce.number().int().positive().parse(args.contractVersion),
           browserEvidence: { executionAttempted: false, recordedBy: "regression_tool" },
         }));

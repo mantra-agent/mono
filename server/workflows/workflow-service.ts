@@ -52,7 +52,7 @@ import { chatFileStorage } from "../chat-file-storage";
 import { getArtifactsBySession } from "../session-artifacts";
 import { canonicalExecutionArtifactAddress } from "../execution-provenance-address";
 import { linkWorkflowArtifactProduced } from "../execution-provenance-links";
-import { createRegressionRun } from "../regression/regression-service";
+import { admitDeploymentRegressionForEnvironmentOwner } from "../regression/regression-admission";
 
 const log = createLogger("WorkflowService");
 
@@ -1477,12 +1477,11 @@ async function enqueueAcceptedDeploymentRegression(
 ): Promise<void> {
   if (attempt.stageKey !== "acceptance") return;
   const accepted = acceptedDeploymentFromEvidence(detail, evidence);
-  const triggerKey = ["accepted_deployment", accepted.environmentId, accepted.deploymentId, accepted.revision, detail.run.ownerUserId, detail.run.accountId].join(":");
-  await createRegressionRun({
-    triggerKey,
+  await admitDeploymentRegressionForEnvironmentOwner({
     environmentId: accepted.environmentId,
-    acceptedDeploymentId: accepted.deploymentId,
-    acceptedRevision: accepted.revision,
+    deploymentId: accepted.deploymentId,
+    revision: accepted.revision,
+    expectedRevision: accepted.revision,
     lifecycleSnapshot: accepted.lifecycleSnapshot,
     dueAt: new Date(acceptedAt.getTime() + 60 * 60 * 1000),
     sourceWorkflowRunId: detail.run.id,
