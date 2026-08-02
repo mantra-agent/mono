@@ -144,6 +144,24 @@ export async function ensureRuntimeKernelSchema(pool: Pool): Promise<void> {
       CREATE INDEX IF NOT EXISTS transactional_outbox_aggregate ON transactional_outbox(account_id, aggregate_type, aggregate_id);
     `);
 
+    // The original Runtime migration used inline pool checks, which PostgreSQL named
+    // <table>_resource_pool_check. Converge both historical and canonical names so
+    // existing databases accept the same pool vocabulary as fresh installations.
+    await client.query(`
+      ALTER TABLE runtime_runs
+        DROP CONSTRAINT IF EXISTS runtime_runs_resource_pool_check,
+        DROP CONSTRAINT IF EXISTS runtime_runs_pool_check,
+        ADD CONSTRAINT runtime_runs_pool_check CHECK (
+          resource_pool IN ('realtime_agent','interactive_agent','background_agent','short_worker','isolated_execution')
+        );
+      ALTER TABLE runtime_attempts
+        DROP CONSTRAINT IF EXISTS runtime_attempts_resource_pool_check,
+        DROP CONSTRAINT IF EXISTS runtime_attempts_pool_check,
+        ADD CONSTRAINT runtime_attempts_pool_check CHECK (
+          resource_pool IN ('realtime_agent','interactive_agent','background_agent','short_worker','isolated_execution')
+        );
+    `);
+
     await client.query(`
       ALTER TABLE skill_runs ADD COLUMN IF NOT EXISTS runtime_run_id UUID;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_runs_runtime_run_unique
