@@ -349,6 +349,96 @@ export async function migrateCustomizedPlanPeriodContract(): Promise<void> {
   }
 }
 
+const DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION = "7.8";
+const DAILY_BRIEF_REQUIRED_CHILD_SKILLS = ["affirm", "learning"] as const;
+
+function mergeDailyBriefCompositionChecklist(
+  checklist: unknown,
+  canonicalChecklist: SkillDefault["checklist"],
+): Array<Record<string, unknown> & { check: string; weight: number }> {
+  const existing = Array.isArray(checklist)
+    ? checklist.filter((item): item is Record<string, unknown> & { check: string; weight: number } => (
+        Boolean(item)
+        && typeof item === "object"
+        && typeof item.check === "string"
+        && typeof item.weight === "number"
+      ))
+    : [];
+  const required = (canonicalChecklist ?? []).filter((item) => (
+    item.kind === "child_skill_invoked"
+    && typeof item.skill === "string"
+    && DAILY_BRIEF_REQUIRED_CHILD_SKILLS.includes(item.skill as typeof DAILY_BRIEF_REQUIRED_CHILD_SKILLS[number])
+  ));
+  const withoutLegacyRequiredChildren = existing.filter((item) => !(
+    item.kind === "child_skill_invoked"
+    && typeof item.skill === "string"
+    && DAILY_BRIEF_REQUIRED_CHILD_SKILLS.includes(item.skill as typeof DAILY_BRIEF_REQUIRED_CHILD_SKILLS[number])
+  ));
+  return [
+    ...required.map((item) => ({ ...item })),
+    ...withoutLegacyRequiredChildren.map((item) => ({ ...item })),
+  ];
+}
+
+/**
+ * Legacy edits customized the global Daily Brief row before Skill copy-on-write.
+ * Preserve that authored brief while merging only the structural composition
+ * gates and nonzero quality threshold required to prevent inline false greens.
+ */
+export async function migrateCustomizedDailyBriefCompositionContract(): Promise<void> {
+  const canonical = BUILTIN_SKILL_DEFAULTS.find((definition) => definition.name === "brief-daily");
+  if (!canonical || canonical.version !== DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION) {
+    log.error("Cannot reconcile customized Daily Brief skill: canonical v7.8 definition is missing");
+    return;
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const [existing] = await db
+      .select({
+        id: skills.id,
+        author: skills.author,
+        customized: skills.customized,
+        version: skills.version,
+        checklist: skills.checklist,
+        updatedAt: skills.updatedAt,
+      })
+      .from(skills)
+      .where(and(eq(skills.scope, "global"), eq(skills.name, "brief-daily")));
+    if (!existing || existing.author !== "system" || existing.customized !== true) return;
+    if (existing.version !== "7.7") {
+      const order = compareSkillVersions(existing.version, DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION);
+      if (order !== null && order >= 0) return;
+      log.warn("Skipped customized Daily Brief composition reconciliation", {
+        persistedVersion: existing.version,
+        targetVersion: DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION,
+        reason: order === null ? "invalid_version" : "unsupported_base_version",
+      });
+      return;
+    }
+
+    const [updated] = await db
+      .update(skills)
+      .set({
+        checklist: mergeDailyBriefCompositionChecklist(existing.checklist, canonical.checklist),
+        scoreThreshold: canonical.scoreThreshold ?? 0.8,
+        version: DAILY_BRIEF_COMPOSITION_CONTRACT_VERSION,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(skills.id, existing.id),
+        eq(skills.author, "system"),
+        eq(skills.customized, true),
+        eq(skills.version, existing.version),
+        eq(skills.updatedAt, existing.updatedAt),
+      ))
+      .returning({ id: skills.id });
+    if (updated) {
+      log.info("Reconciled customized builtin Daily Brief 7.7 → 7.8 with structural composition gates");
+      return;
+    }
+  }
+}
+
 export async function seedBuiltinSkills(): Promise<void> {
   let inserted = 0;
   let preserved = 0;
