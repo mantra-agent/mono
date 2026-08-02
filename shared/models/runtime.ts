@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const runtimeResourcePools = [
+  "realtime_agent",
   "interactive_agent",
   "background_agent",
   "short_worker",
@@ -88,13 +89,26 @@ export interface RuntimePoolCapacityV1 {
   interactiveReserve: number;
 }
 
+export type RuntimeResourcePoolV1 = Exclude<RuntimeResourcePool, "realtime_agent">;
+
 export interface RuntimeCapacityPolicyV1 {
   version: 1;
   globalLimit: number;
   accountHeadLimit: number;
+  pools: Record<RuntimeResourcePoolV1, RuntimePoolCapacityV1>;
+  accountOverrides: Record<string, Partial<Record<RuntimeResourcePoolV1, { limit: number }>>>;
+}
+
+export interface RuntimeCapacityPolicyV2 {
+  version: 2;
+  globalLimit: number;
+  accountHeadLimit: number;
+  accountScheduling: "work_conserving_fair_share";
   pools: Record<RuntimeResourcePool, RuntimePoolCapacityV1>;
   accountOverrides: Record<string, Partial<Record<RuntimeResourcePool, { limit: number }>>>;
 }
+
+export type RuntimeCapacityPolicy = RuntimeCapacityPolicyV1 | RuntimeCapacityPolicyV2;
 
 export interface RuntimeReceiptV1 {
   version: 1;
@@ -266,7 +280,7 @@ export const runtimeRunEvents = pgTable("runtime_run_events", {
 
 export const runtimeCapacityPolicies = pgTable("runtime_capacity_policies", {
   version: integer("version").primaryKey(),
-  policy: jsonb("policy").$type<RuntimeCapacityPolicyV1>().notNull(),
+  policy: jsonb("policy").$type<RuntimeCapacityPolicy>().notNull(),
   policyHash: text("policy_hash").notNull(),
   createdBy: text("created_by").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import type { Pool } from "pg";
-import { DEFAULT_RUNTIME_CAPACITY_POLICY_V1 } from "./runtime-storage";
+import { DEFAULT_RUNTIME_CAPACITY_POLICY } from "./runtime-storage";
 
 const MIGRATION_LOCK_KEY = "autonomy-runtime-kernel-v1";
 
@@ -46,7 +46,7 @@ export async function ensureRuntimeKernelSchema(pool: Pool): Promise<void> {
         CONSTRAINT runtime_runs_priority_check CHECK (priority BETWEEN -100 AND 100),
         CONSTRAINT runtime_runs_deadline_check CHECK (deadline_at > created_at),
         CONSTRAINT runtime_runs_run_as_check CHECK (run_as_actor_type IN ('user','service')),
-        CONSTRAINT runtime_runs_pool_check CHECK (resource_pool IN ('interactive_agent','background_agent','short_worker','isolated_execution')),
+        CONSTRAINT runtime_runs_pool_check CHECK (resource_pool IN ('realtime_agent','interactive_agent','background_agent','short_worker','isolated_execution')),
         CONSTRAINT runtime_runs_phase_check CHECK (phase IN ('pending','leased','running','terminal')),
         CONSTRAINT runtime_runs_outcome_check CHECK (outcome IS NULL OR outcome IN ('succeeded','degraded','blocked','failed','cancelled','needs_review')),
         CONSTRAINT runtime_runs_attribution_check CHECK (attribution IS NULL OR attribution IN ('runtime','provider','producer','handler','authority','external_dependency','user','system','unknown')),
@@ -82,7 +82,7 @@ export async function ensureRuntimeKernelSchema(pool: Pool): Promise<void> {
         CONSTRAINT runtime_attempts_user_scope_check CHECK (scope = 'user'),
         CONSTRAINT runtime_attempts_number_check CHECK (attempt_number > 0 AND lease_epoch > 0),
         CONSTRAINT runtime_attempts_token_hash_check CHECK (lease_token_hash ~ '^[0-9a-f]{64}$'),
-        CONSTRAINT runtime_attempts_pool_check CHECK (resource_pool IN ('interactive_agent','background_agent','short_worker','isolated_execution')),
+        CONSTRAINT runtime_attempts_pool_check CHECK (resource_pool IN ('realtime_agent','interactive_agent','background_agent','short_worker','isolated_execution')),
         CONSTRAINT runtime_attempts_phase_check CHECK (phase IN ('leased','running','finished')),
         CONSTRAINT runtime_attempts_result_check CHECK (result IS NULL OR result IN ('completed','retry','lost','cancelled','blocked')),
         CONSTRAINT runtime_attempts_attribution_check CHECK (attribution IS NULL OR attribution IN ('runtime','provider','producer','handler','authority','external_dependency','user','system','unknown')),
@@ -178,16 +178,18 @@ export async function ensureRuntimeKernelSchema(pool: Pool): Promise<void> {
       $runtime_domain_shape$;
     `);
 
-    const policyJson = JSON.stringify(DEFAULT_RUNTIME_CAPACITY_POLICY_V1);
-    const policyHash = hashValue(DEFAULT_RUNTIME_CAPACITY_POLICY_V1);
+    const policyJson = JSON.stringify(DEFAULT_RUNTIME_CAPACITY_POLICY);
+    const policyHash = hashValue(DEFAULT_RUNTIME_CAPACITY_POLICY);
     await client.query(
       `INSERT INTO runtime_capacity_policies(version, policy, policy_hash, created_by)
        VALUES ($1, $2::jsonb, $3, 'code:autonomy-runtime-kernel-v1')
        ON CONFLICT (version) DO NOTHING`,
-      [DEFAULT_RUNTIME_CAPACITY_POLICY_V1.version, policyJson, policyHash],
+      [DEFAULT_RUNTIME_CAPACITY_POLICY.version, policyJson, policyHash],
     );
-    const policyResult = await client.query(`SELECT policy_hash FROM runtime_capacity_policies WHERE version = $1`, [DEFAULT_RUNTIME_CAPACITY_POLICY_V1.version]);
-    if (policyResult.rows[0]?.policy_hash !== policyHash) throw new Error("Runtime capacity policy v1 conflicts with the code-owned seed");
+    const policyResult = await client.query(`SELECT policy_hash FROM runtime_capacity_policies WHERE version = $1`, [DEFAULT_RUNTIME_CAPACITY_POLICY.version]);
+    if (policyResult.rows[0]?.policy_hash !== policyHash) {
+      throw new Error(`Runtime capacity policy v${DEFAULT_RUNTIME_CAPACITY_POLICY.version} conflicts with the code-owned seed`);
+    }
 
     await client.query(`DO $runtime_constraints$
       BEGIN
