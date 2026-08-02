@@ -617,8 +617,12 @@ class TimerScheduler {
         `Evaluating ${bootTimers.length} boot timer(s), isNewBuild=${isNewBuild} build=${currentBuildId?.slice(0, 7) ?? "unknown"}`,
       );
       for (const timer of bootTimers) {
-        const schedules = timer.schedules.filter(
-          (schedule) => schedule.fireOnNextBoot || schedule.fireOnNextBuild,
+        const schedules = Array.from(
+          new Map(
+            timer.schedules
+              .filter((schedule) => schedule.fireOnNextBoot || schedule.fireOnNextBuild)
+              .map((schedule) => [schedule.id, schedule]),
+          ).values(),
         );
         for (const schedule of schedules) {
           if (!schedule.fireOnNextBoot && schedule.fireOnNextBuild && !isNewBuild) {

@@ -12,6 +12,7 @@ import {
 import { runtimeHandlerRegistry, type RuntimeAttemptDecision, type RuntimeHandler } from "./runtime-handler";
 
 const WEEKLY_IDEAS_HANDLER_KEY = "skill.execute.weekly_ideas";
+const TIMER_SKILL_HANDLER_KEY = "skill.execute.timer";
 const MEMORY_SOURCE_HANDLER_KEY = "memory.source.process";
 const HANDLER_VERSION = 1;
 const INPUT_SCHEMA_VERSION = 1;
@@ -21,6 +22,13 @@ const HOUR_MS = 60 * 60 * 1000;
 interface WeeklyIdeasInput {
   timerId: string;
   sourceSlot: string;
+}
+
+interface TimerSkillInput {
+  timerId: string;
+  timerRunId: string;
+  skillId: string;
+  prompt?: string;
 }
 
 interface MemorySourceInput {
@@ -53,6 +61,19 @@ function parseWeeklyIdeasInput(value: unknown): WeeklyIdeasInput {
   return {
     timerId: parseBoundedString(input.timerId, "timerId", 100),
     sourceSlot: parseBoundedString(input.sourceSlot, "sourceSlot", 100),
+  };
+}
+
+function parseTimerSkillInput(value: unknown): TimerSkillInput {
+  const input = parseObject(value, "Timer Skill input");
+  const prompt = typeof input.prompt === "string" && input.prompt.trim()
+    ? parseBoundedString(input.prompt, "prompt", 40_000)
+    : undefined;
+  return {
+    timerId: parseBoundedString(input.timerId, "timerId", 100),
+    timerRunId: parseBoundedString(input.timerRunId, "timerRunId", 160),
+    skillId: parseBoundedString(input.skillId, "skillId", 100),
+    prompt,
   };
 }
 
@@ -152,6 +173,92 @@ async function executeWeeklyIdeas(
   return { kind: "complete", outcome: "failed", reasonCode: "weekly_ideas_failed", attribution: "handler", outputRefs, verificationLevel: "observed" };
 }
 
+async function authorizeTimerSkill(principal: Principal, input: TimerSkillInput) {
+  requireUserPrincipal(principal);
+  const { timerStorage } = await import("../file-storage");
+  const timer = await timerStorage.getByIdOrName(input.timerId);
+  const allowed = Boolean(
+    timer
+    && timer.enabled
+    && timer.type === "skill"
+    && timer.skillId === input.skillId
+    && timer.ownerUserId === principal.userId
+    && timer.accountId === principal.accountId,
+  );
+  return { allowed, reasonCode: allowed ? "timer_skill_authorized" : "timer_skill_authority_revoked" };
+}
+
+function terminalSkillRunResult(skillId: string, skillRun: Awaited<ReturnType<typeof storage.getSkillRunByRuntimeRunId>>): RuntimeAttemptDecision | null {
+  if (!skillRun || !["succeeded", "degraded", "failed", "yielded"].includes(skillRun.status)) return null;
+  const outputRefs = skillRun.sessionId ? [`@session:${skillRun.sessionId}`] : [];
+  const outcome = skillRun.status === "succeeded"
+    ? "succeeded"
+    : skillRun.status === "degraded"
+      ? "degraded"
+      : skillRun.status === "yielded"
+        ? "cancelled"
+        : "failed";
+  return {
+    kind: "complete",
+    outcome,
+    reasonCode: `timer_skill_${skillId}_${outcome}`,
+    attribution: "handler",
+    outputRefs,
+    verificationLevel: "observed",
+  };
+}
+
+async function executeTimerSkill(
+  context: Parameters<RuntimeHandler<TimerSkillInput>["execute"]>[0],
+  input: TimerSkillInput,
+): Promise<RuntimeAttemptDecision> {
+  const existing = terminalSkillRunResult(input.skillId, await storage.getSkillRunByRuntimeRunId(context.fence.runId));
+  if (existing) return existing;
+
+  const { executeAutonomousSkillRun } = await import("../autonomous-skill-runner");
+  const result = await executeAutonomousSkillRun(input.skillId, {
+    preContext: input.prompt,
+    coordinationKey: `runtime:${context.fence.runId}`,
+    runtimeFence: { runId: context.fence.runId, attemptId: context.fence.attemptId },
+    signal: context.signal,
+  });
+  if (!result) {
+    return {
+      kind: "retry",
+      failureClass: "transient_runtime_coordination",
+      reasonCode: "timer_skill_coordination_busy",
+      attribution: "runtime",
+      retryAt: new Date(Date.now() + 60_000),
+    };
+  }
+
+  const outputRefs = [`@session:${result.sessionId}`];
+  await context.appendEvidence({
+    eventType: "verification",
+    reasonCode: "timer_skill_run_observed",
+    payload: { timerId: input.timerId, timerRunId: input.timerRunId, skillId: input.skillId, sessionId: result.sessionId, skillStatus: result.status },
+  });
+  if (result.status === "yielded") {
+    return {
+      kind: "complete",
+      outcome: "cancelled",
+      reasonCode: "timer_skill_yielded_to_interactive",
+      attribution: "runtime",
+      outputRefs,
+      verificationLevel: "observed",
+    };
+  }
+  const outcome = result.status === "succeeded" ? "succeeded" : result.status === "degraded" ? "degraded" : "failed";
+  return {
+    kind: "complete",
+    outcome,
+    reasonCode: `timer_skill_${input.skillId}_${outcome}`,
+    attribution: "handler",
+    outputRefs,
+    verificationLevel: "observed",
+  };
+}
+
 async function authorizeMemorySource(principal: Principal, input: MemorySourceInput) {
   requireUserPrincipal(principal);
   const { getSourceQueueRow } = await import("../memory/vnext-source-queue");
@@ -222,6 +329,17 @@ export function registerRuntimeProofPathHandlers(): void {
     authorize: authorizeWeeklyIdeas,
     execute: executeWeeklyIdeas,
   });
+  runtimeHandlerRegistry.register<TimerSkillInput>({
+    key: TIMER_SKILL_HANDLER_KEY,
+    version: HANDLER_VERSION,
+    inputSchemaVersion: INPUT_SCHEMA_VERSION,
+    inputSchema: { parse: parseTimerSkillInput },
+    resourcePool: "background_agent",
+    executorProfile: "in_process_trusted",
+    requiredCapabilities: ["skill:execute", "timer:skill"],
+    authorize: authorizeTimerSkill,
+    execute: executeTimerSkill,
+  });
   runtimeHandlerRegistry.register<MemorySourceInput>({
     key: MEMORY_SOURCE_HANDLER_KEY,
     version: HANDLER_VERSION,
@@ -247,6 +365,29 @@ function runtimeRetryPolicy(): EnqueueRuntimeRunInput["retryPolicy"] {
       "transient_runtime_coordination",
     ],
   };
+}
+
+export async function enqueueTimerSkillRuntimeRun(
+  principal: Principal,
+  timer: Timer,
+  timerRun: TimerRun,
+  skillId: string,
+  prompt?: string,
+) {
+  requireUserPrincipal(principal);
+  return enqueueRuntimeRun(principal, {
+    kind: "timer.skill",
+    handler: { key: TIMER_SKILL_HANDLER_KEY, version: HANDLER_VERSION },
+    source: { type: "timer", id: timer.id },
+    idempotencyKey: `timer-skill/${timerRun.id}`,
+    deadlineAt: new Date(Date.now() + 4 * HOUR_MS),
+    inputSchemaVersion: INPUT_SCHEMA_VERSION,
+    input: { timerId: timer.id, timerRunId: timerRun.id, skillId, prompt },
+    inputRefs: [],
+    authorityPolicyVersionAtEnqueue: AUTHORITY_POLICY_VERSION,
+    budget: runtimeBudget(3 * 60 * 60 * 1000),
+    retryPolicy: runtimeRetryPolicy(),
+  });
 }
 
 export async function enqueueWeeklyIdeasRuntimeRun(

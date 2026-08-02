@@ -8,6 +8,7 @@ import {
   renderScheduledPlanPeriodContract,
 } from "./planning-period-contract";
 import { getCurrentPrincipal } from "./principal-context";
+import { enqueueTimerSkillRuntimeRun } from "./runtime/proof-path-handlers";
 
 const log = createLogger("SkillTimerHandler");
 
@@ -65,23 +66,6 @@ export class SkillTimerHandler implements TimerHandler {
     }
 
     log.debug(`Executing skill timer "${timer.name}" skillId=${skillId}`);
-
-    if (timer.systemKey === "weekly-ideas" && skillId === "ideate") {
-      const principal = getCurrentPrincipal();
-      if (!principal) throw new Error("Weekly Ideas Timer lost its owning principal");
-      const { enqueueWeeklyIdeasRuntimeRun } = await import("./runtime/proof-path-handlers");
-      const result = await enqueueWeeklyIdeasRuntimeRun(principal, timer, run);
-      log.log(
-        `Weekly Ideas enqueued Runtime runId=${result.run.id} disposition=${result.disposition} timerRunId=${run.id}`,
-      );
-      return {
-        outcome: "success",
-        output: {
-          runtimeRunId: result.run.id,
-          runtimeDisposition: result.disposition,
-        },
-      };
-    }
 
     let preContext: string | undefined;
     log.debug(
@@ -172,60 +156,19 @@ export class SkillTimerHandler implements TimerHandler {
       ].join("\n");
     }
 
-    log.debug(
-      `[timer:${timer.name}] phase=skill-import — importing autonomous skill runner`,
-    );
-    const { executeAutonomousSkillRun } =
-      await import("./autonomous-skill-runner");
-    log.debug(
-      `[timer:${timer.name}] phase=pipeline-start — launching executeAutonomousSkillRun for skillId=${skillId}`,
-    );
-    const result = await executeAutonomousSkillRun(skillId, { preContext });
-    if (!result) {
-      log.debug(
-        `Skill timer "${timer.name}" skillId=${skillId} did not start — yielding deferred result: admission_deferred_or_already_running`,
-      );
-      return {
-        outcome: "deferred",
-        reason: "admission_deferred_or_already_running",
-      };
-    }
-
-    if (result.status === "yielded") {
-      log.debug(
-        `Skill timer "${timer.name}" skillId=${skillId} yielded to interactive session — yielding skipped result`,
-      );
-      return { outcome: "skipped", reason: "yield_to_interactive" };
-    }
-
-    if (result.status === "degraded") {
-      const failedChecks = result.failedStructuralChecks ?? result.failedToolChecks ?? [];
-      const failed = failedChecks.join(", ") || "unknown";
-      log.warn(
-        `Skill timer "${timer.name}" run degraded sessionId=${result.sessionId} — structural checklist requirements failed: ${failed}`,
-      );
-      return {
-        outcome: "degraded",
-        reason: `structural_requirements_failed: ${failed}`,
-        output: {
-          sessionId: result.sessionId,
-          skillRunStatus: result.status,
-          failedStructuralChecks: failedChecks,
-        },
-      };
-    }
-
-    if (result.status !== "succeeded") {
-      const errorMsg =
-        result.error || `Skill run finished with status: ${result.status}`;
-      throw new Error(errorMsg);
-    }
+    const principal = getCurrentPrincipal();
+    if (!principal) throw new Error(`Skill Timer "${timer.name}" lost its owning principal`);
+    const result = await enqueueTimerSkillRuntimeRun(principal, timer, run, skillId, preContext);
     log.log(
-      `Skill timer "${timer.name}" autonomous run completed sessionId=${result.sessionId} status=${result.status}`,
+      `Skill Timer "${timer.name}" enqueued Runtime runId=${result.run.id} disposition=${result.disposition} timerRunId=${run.id}`,
     );
     return {
       outcome: "success",
-      output: { sessionId: result.sessionId, skillRunStatus: result.status },
+      output: {
+        runtimeRunId: result.run.id,
+        runtimeDisposition: result.disposition,
+        skillId,
+      },
     };
   }
 
