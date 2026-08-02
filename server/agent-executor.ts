@@ -2547,6 +2547,7 @@ export class AgentExecutor extends EventEmitter {
           runId: ctx.runId,
           sessionId: options.sessionId,
           sessionKey: options.sessionKey,
+          iteration: ctx.iteration,
           activity: options.activity,
         },
         activity: options.activity,

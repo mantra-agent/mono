@@ -175,9 +175,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'Search: { "action": "search", "query": "Sarah" }\nAdd Vault: { "action": "add_vault_membership", "id": "person-id", "vaultId": "vault-id" }\nReplace Vaults: { "action": "set_vault_memberships", "id": "person-id", "vaultIds": ["vault-id"], "confirmReplace": true }',
   },
   work: {
-    description: "Manage projects and work status — create projects, list/get projects with tasks, manage files, milestones, and goal links. Actions: create_project, status, list_projects, get_project, list_tasks, set_goal, add_file, read_file, remove_file, add_milestone, update_milestone, remove_milestone.",
-    whenToUse: "User asks about projects, work status, or wants to manage project-level resources. For individual task operations, use the `tasks` tool instead.",
-    example: 'List projects: { "action": "list_projects" }\nGet project details: { "action": "get_project", "id": 1 }',
+    description: "Manage projects and work status. Project detail returns metadata, milestones, task counts by status, and a small actionable slice; list_tasks returns an explicit bounded page with total and continuation. Actions: create_project, status, list_projects, get_project, list_tasks, set_goal, add_file, read_file, remove_file, add_milestone, update_milestone, remove_milestone.",
+    whenToUse: "User asks about projects, work status, or wants to manage project-level resources. Use list_tasks with taskStatus, limit, and offset to inspect larger task sets. For individual task operations, use the `tasks` tool instead.",
+    example: 'List projects: { "action": "list_projects" }\nGet project overview: { "action": "get_project", "id": 1 }\nPage active tasks: { "action": "list_tasks", "id": 1, "taskStatus": "active", "limit": 25, "offset": 0 }',
   },
   gmail: {
     description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, update_draft, recent, download_attachment, triage_log, email_cache. update_draft uses one explicit body operation: findReplace for exact edits, rangePatch with expectedBodyHash for guarded offsets, or replaceBody for intentional whole-body rewrites. There is no tool-level send action.",
@@ -210,9 +210,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: '{ "action": "list" }',
   },
   router: {
-    description: "Call and inspect the production model routing layer. Actions: eval, list_inference_calls, get_inference_call.",
-    whenToUse: "When Agent needs to test prompt compositions through the real persona/connector routing system or inspect audited inference calls.",
-    example: '{ "action": "eval", "profile": "balanced", "systemPrompt": "Return JSON", "userPrompt": "Sample text", "jsonMode": true }',
+    description: "Call and inspect the production model routing layer. Inference lists are bounded and expose run/session correlation; detail returns compact metadata plus a canonical inference-context reference rather than replaying provider payloads. Actions: eval, list_inference_calls, get_inference_call.",
+    whenToUse: "When Agent needs to test prompt compositions through the real persona/connector routing system or inspect principal-scoped audited inference calls. Filter by exact runId or sessionId before attributing a call.",
+    example: '{ "action": "list_inference_calls", "sessionId": "session-id", "limit": 50 }',
   },
   skills: {
     description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search.",

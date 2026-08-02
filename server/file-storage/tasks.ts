@@ -1,6 +1,6 @@
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, type DrizzleTx } from "../db";
 import { milestones, projects, tasks } from "@shared/schema";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, inArray, sql } from "drizzle-orm";
 import type { Task, InsertTask, TaskStatus, AssigneeSubjectType } from "@shared/models/work";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
@@ -41,6 +41,25 @@ export interface TaskMutationProvenance {
   originType: "meeting" | "manual";
   originId?: string | null;
 }
+
+export interface TaskPageOptions {
+  status?: TaskStatus;
+  statuses?: TaskStatus[];
+  projectId?: number;
+  owner?: string;
+  priority?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface TaskPage {
+  tasks: Task[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export type TaskStatusCounts = Record<TaskStatus, number>;
 
 type AssignmentSubject = { subjectType: AssigneeSubjectType; subjectId: string };
 
@@ -136,34 +155,102 @@ export class FileTaskStorage {
     eventBus.publish({ category: "system", event: "data:tasks_changed", payload: { source: "task_storage" } });
   }
 
+  private taskReadPredicate(options?: Omit<TaskPageOptions, "limit" | "offset">) {
+    const conditions = [];
+    if (options?.status) conditions.push(eq(tasks.status, options.status));
+    if (options?.statuses?.length) conditions.push(inArray(tasks.status, options.statuses));
+    if (options?.projectId !== undefined) conditions.push(eq(tasks.projectId, options.projectId));
+    if (options?.owner) conditions.push(eq(tasks.owner, options.owner));
+    if (options?.priority) conditions.push(eq(tasks.priority, options.priority));
+    return conditions.length > 0 ? and(...conditions) : undefined;
+  }
+
+  async getTaskPage(options: TaskPageOptions = {}): Promise<TaskPage> {
+    const limit = Math.max(1, Math.min(options.limit ?? 25, 100));
+    const offset = Math.max(0, Math.min(options.offset ?? 0, 10_000));
+    const predicate = this.taskReadPredicate(options);
+    const scoped = combineWithTaskAccess(
+      getCurrentPrincipalOrSystem(),
+      taskScopeColumns,
+      "read",
+      predicate,
+    );
+
+    const [rows, countRows] = await Promise.all([
+      db.select().from(tasks).where(scoped)
+        .orderBy(
+          sql`CASE ${tasks.priority} WHEN 'high' THEN 0 WHEN 'mid' THEN 1 ELSE 2 END`,
+          desc(tasks.createdAt),
+        )
+        .limit(limit)
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)::int` }).from(tasks).where(scoped),
+    ]);
+
+    const total = Number(countRows[0]?.count ?? 0);
+    log.debug(`getTaskPage count=${rows.length} total=${total} limit=${limit} offset=${offset}`);
+    return { tasks: rows.map(rowToTask), total, limit, offset };
+  }
+
+  async getTaskStatusCounts(projectId: number): Promise<TaskStatusCounts> {
+    const scoped = combineWithTaskAccess(
+      getCurrentPrincipalOrSystem(),
+      taskScopeColumns,
+      "read",
+      eq(tasks.projectId, projectId),
+    );
+    const rows = await db.select({
+      status: tasks.status,
+      count: sql<number>`count(*)::int`,
+    }).from(tasks).where(scoped).groupBy(tasks.status);
+
+    const counts: TaskStatusCounts = { on_hold: 0, ready: 0, active: 0, done: 0 };
+    for (const row of rows) {
+      const status = (row.status === "push" ? "on_hold" : row.status) as TaskStatus;
+      if (status in counts) counts[status] = Number(row.count ?? 0);
+    }
+    return counts;
+  }
+
+  async getTaskCountsByProject(projectIds: number[]): Promise<Map<number, number>> {
+    const uniqueIds = [...new Set(projectIds.filter(id => Number.isInteger(id) && id > 0))];
+    if (uniqueIds.length === 0) return new Map();
+    const scoped = combineWithTaskAccess(
+      getCurrentPrincipalOrSystem(),
+      taskScopeColumns,
+      "read",
+      inArray(tasks.projectId, uniqueIds),
+    );
+    const rows = await db.select({
+      projectId: tasks.projectId,
+      count: sql<number>`count(*)::int`,
+    }).from(tasks).where(scoped).groupBy(tasks.projectId);
+    return new Map(rows.flatMap(row => row.projectId == null
+      ? []
+      : [[row.projectId, Number(row.count ?? 0)] as const]));
+  }
+
   async getTasks(options?: { status?: string; projectId?: number; owner?: string; priority?: string }): Promise<Task[]> {
-      const conditions = [];
-      if (options?.status) {
-        // Legacy "push" status maps to "on_hold"
-        const statusVal = options.status === "push" ? "on_hold" : options.status;
-        conditions.push(eq(tasks.status, statusVal));
-      }
-      if (options?.projectId !== undefined) conditions.push(eq(tasks.projectId, options.projectId));
-      if (options?.owner) conditions.push(eq(tasks.owner, options.owner));
-      if (options?.priority) conditions.push(eq(tasks.priority, options.priority));
+    const normalizedStatus = options?.status === "push" ? "on_hold" : options?.status;
+    const predicate = this.taskReadPredicate({
+      ...options,
+      status: normalizedStatus as TaskStatus | undefined,
+    });
+    const rows = await db.select().from(tasks).where(
+      combineWithTaskAccess(getCurrentPrincipalOrSystem(), taskScopeColumns, "read", predicate),
+    );
 
-      const predicate = conditions.length > 0 ? and(...conditions) : undefined;
-      const rows = await db.select().from(tasks).where(
-        combineWithTaskAccess(getCurrentPrincipalOrSystem(), taskScopeColumns, "read", predicate),
-      );
+    const result = rows.map(rowToTask);
+    result.sort((a, b) => {
+      const priorityOrder: Record<string, number> = { high: 0, mid: 1, low: 2 };
+      const pa = priorityOrder[a.priority] ?? 1;
+      const pb = priorityOrder[b.priority] ?? 1;
+      if (pa !== pb) return pa - pb;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
 
-      const result = rows.map(rowToTask);
-
-      result.sort((a, b) => {
-        const priorityOrder: Record<string, number> = { high: 0, mid: 1, low: 2 };
-        const pa = priorityOrder[a.priority] ?? 1;
-        const pb = priorityOrder[b.priority] ?? 1;
-        if (pa !== pb) return pa - pb;
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      });
-
-      log.log(`getTasks count=${result.length} status=${options?.status || "all"}`);
-      return result;
+    log.log(`getTasks count=${result.length} status=${options?.status || "all"}`);
+    return result;
   }
 
   async getTodoTasks(): Promise<Task[]> {

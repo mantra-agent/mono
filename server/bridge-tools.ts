@@ -6416,15 +6416,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
           });
 
+          const taskCounts = await fileTaskStorage.getTaskCountsByProject(projects.map((project: any) => project.id));
           const sections: string[] = [];
           for (const status of sortedStatuses) {
             const group = projectsByStatus.get(status)!;
-            const lines = await Promise.all(group.map(async (p: any) => {
+            const lines = group.map((p: any) => {
               const milestoneCount = p.milestones?.length || 0;
-              const taskCount = (await fileTaskStorage.getTasks({ projectId: p.id })).length;
+              const taskCount = taskCounts.get(p.id) ?? 0;
               const goalPart = p.goalId ? `, goalId: ${p.goalId}, goalName: "${goalMap.get(p.goalId) || "unknown"}"` : "";
               return `- **${p.title}** (id: ${p.id}, ${p.status}${goalPart}) — ${milestoneCount} milestones, ${taskCount} tasks`;
-            }));
+            });
             sections.push(`## ${status.charAt(0).toUpperCase() + status.slice(1)}\n${lines.join("\n")}`);
           }
 
@@ -6436,7 +6437,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (!projectId) return { result: "Missing project id", error: true };
           const project = await fileProjectStorage.getProject(Number(projectId));
           if (!project) return { result: `Project ${projectId} not found`, error: true };
-          const tasks = await fileTaskStorage.getTasks({ projectId: project.id });
+          const [statusCounts, taskPage] = await Promise.all([
+            fileTaskStorage.getTaskStatusCounts(project.id),
+            fileTaskStorage.getTaskPage({
+              projectId: project.id,
+              statuses: ["active", "ready", "on_hold"],
+              limit: 12,
+              offset: 0,
+            }),
+          ]);
+          const totalTasks = Object.values(statusCounts).reduce((sum, count) => sum + count, 0);
           let goalName = "";
           if (project.goalId) {
             const goal = await goalsServiceWork.get(project.goalId);
@@ -6447,11 +6457,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           if (project.milestones?.length) {
             parts.push(`Milestones: ${project.milestones.map((m: any) => `[${m.id}] ${m.name} (${m.status || "pending"})`).join(", ")}`);
           }
-          if (tasks.length > 0) {
-            const taskLines = tasks.map((t: any) => formatTaskForBridge(t));
-            parts.push(`Tasks (${tasks.length}):\n${taskLines.join("\n")}`);
+          parts.push(`Task summary (${totalTasks} total): active ${statusCounts.active}, ready ${statusCounts.ready}, on_hold ${statusCounts.on_hold}, done ${statusCounts.done}.`);
+          if (taskPage.tasks.length > 0) {
+            const taskLines = taskPage.tasks.map((task: any) => formatTaskForBridge(task));
+            const remaining = Math.max(0, statusCounts.active + statusCounts.ready + statusCounts.on_hold - taskPage.tasks.length);
+            parts.push(`Actionable tasks (showing ${taskPage.tasks.length}${remaining ? `, ${remaining} more` : ""}):\n${taskLines.join("\n")}\nUse work.list_tasks with id=${project.id}, taskStatus, limit, and offset for a bounded page.`);
           } else {
-            parts.push("No tasks.");
+            parts.push("No actionable tasks. Use work.list_tasks with taskStatus=done for completed history.");
           }
           if (project.notes?.length) {
             const noteLines = project.notes.map((n: any) => `  - [${n.id}] ${n.content.slice(0, 100)}${n.content.length > 100 ? "..." : ""}`);
@@ -6465,13 +6477,23 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
         case "list_tasks": {
           const projectId = args.id;
-          const opts: any = {};
-          if (projectId) opts.projectId = Number(projectId);
-          if (args.status) opts.status = args.status;
-          const tasks = await fileTaskStorage.getTasks(opts);
-          if (tasks.length === 0) return { result: projectId ? `No tasks for project ${projectId}.` : "No tasks found." };
-          const lines = tasks.map((t: any) => formatTaskForBridge(t));
-          return { result: `${tasks.length} tasks:\n${lines.join("\n")}` };
+          const limit = Math.max(1, Math.min(parseInt(args.limit) || 25, 100));
+          const offset = Math.max(0, Math.min(parseInt(args.offset) || 0, 10_000));
+          const status = args.taskStatus || (["on_hold", "ready", "active", "done"].includes(args.status) ? args.status : undefined);
+          const page = await fileTaskStorage.getTaskPage({
+            ...(projectId ? { projectId: Number(projectId) } : {}),
+            ...(status ? { status } : {}),
+            limit,
+            offset,
+          });
+          if (page.total === 0) return { result: projectId ? `No tasks for project ${projectId}.` : "No tasks found." };
+          const lines = page.tasks.map((task: any) => formatTaskForBridge(task));
+          const shownFrom = page.tasks.length > 0 ? offset + 1 : 0;
+          const shownTo = offset + page.tasks.length;
+          const remaining = Math.max(0, page.total - shownTo);
+          const parts = [`${page.total} total tasks${projectId ? ` for project ${projectId}` : ""}${status ? ` with status ${status}` : ""} (showing ${shownFrom}–${shownTo}):\n${lines.join("\n")}`];
+          if (remaining > 0) parts.push(`\n→ ${remaining} more. Use offset=${shownTo} for the next bounded page.`);
+          return { result: parts.join("") };
         }
         case "add_file": {
           const projectId = args.id;
@@ -8048,49 +8070,65 @@ ${lines.join("\n")}` };
       switch (action) {
         case "list_inference_calls": {
           const { fileApiCallStorage } = await import("./file-storage/api-calls");
-          const limit = Math.min(parseInt(args.limit) || 50, 200);
-          let calls = await fileApiCallStorage.getApiCalls(limit, 0);
-
-          if (args.profile) calls = calls.filter(c => c.profile === args.profile);
-          if (args.model) calls = calls.filter(c => c.model === args.model);
-          if (args.status) {
-            const { eventBus } = await import("./event-bus");
-            const bootTime = new Date(eventBus.bootTimestamp).getTime();
-            if (args.status === "complete") {
-              calls = calls.filter(c => new Date(c.timestamp as any).getTime() >= bootTime);
-            } else if (args.status === "past") {
-              calls = calls.filter(c => new Date(c.timestamp as any).getTime() < bootTime);
-            }
-          }
+          const limit = Math.max(1, Math.min(parseInt(args.limit) || 50, 200));
+          const offset = Math.max(0, Math.min(parseInt(args.offset) || 0, 10_000));
+          const { eventBus } = await import("./event-bus");
+          const bootTime = new Date(eventBus.bootTimestamp);
+          const calls = await fileApiCallStorage.getApiCalls(limit + 1, offset, undefined, {
+            ...(args.profile ? { profile: String(args.profile) } : {}),
+            ...(args.model ? { model: String(args.model) } : {}),
+            ...(args.runId ? { runId: String(args.runId) } : {}),
+            ...(args.sessionId ? { sessionId: String(args.sessionId) } : {}),
+            ...(args.status === "complete" ? { since: bootTime } : {}),
+            ...(args.status === "past" ? { before: bootTime } : {}),
+          });
 
           if (calls.length === 0) return { result: "No inference calls found matching the criteria." };
-          const lines = calls.slice(0, limit).map(c => {
+          const page = calls.slice(0, limit);
+          const lines = page.map(c => {
             const ts = c.timestamp instanceof Date ? c.timestamp.toISOString() : c.timestamp;
-            const cost = c.costTotal ? `$${c.costTotal.toFixed(4)}` : "$0";
+            const cost = c.costTotal ? "$" + c.costTotal.toFixed(4) : "$0";
             const duration = c.durationMs ? `${(c.durationMs / 1000).toFixed(1)}s` : "n/a";
-            return `- [${ts}] id:${c.id} model:${c.model} profile:${c.profile || "unknown"} cost:${cost} in:${c.inputTokens} out:${c.outputTokens} dur:${duration}`;
+            const metadata = c.metadata && typeof c.metadata === "object" ? c.metadata as Record<string, unknown> : {};
+            const runId = typeof metadata.runId === "string" ? metadata.runId : null;
+            const sessionId = typeof metadata.sessionId === "string" ? metadata.sessionId : null;
+            const iteration = typeof metadata.iteration === "number" ? metadata.iteration : null;
+            const correlation = [
+              runId ? `run:${runId}` : null,
+              sessionId ? `session:${sessionId}` : null,
+              iteration != null ? `iteration:${iteration}` : null,
+              !sessionId && c.sessionKey ? `sessionKey:${c.sessionKey}` : null,
+            ].filter(Boolean).join(" ");
+            return `- [${ts}] id:${c.id} model:${c.model} profile:${c.profile || "unknown"} cost:${cost} in:${c.inputTokens} out:${c.outputTokens} dur:${duration}${correlation ? ` ${correlation}` : ""}`;
           });
-          return { result: `${calls.length} inference calls:\n${lines.join("\n")}` };
+          const more = calls.length > limit ? `\n→ More results available. Use offset=${offset + limit}.` : "";
+          return { result: `${page.length} inference calls (offset ${offset}):\n${lines.join("\n")}${more}` };
         }
         case "get_inference_call": {
           const id = parseInt(args.id || "");
           if (isNaN(id)) return { result: "Missing or invalid inference call id", error: true };
           const { fileApiCallStorage } = await import("./file-storage/api-calls");
-          const call = await fileApiCallStorage.getApiCall(id);
+          const call = await fileApiCallStorage.getApiCall(id, false);
           if (!call) return { result: `Inference call ${id} not found`, error: true };
           const ts = call.timestamp instanceof Date ? call.timestamp.toISOString() : call.timestamp;
+          const metadata = call.metadata && typeof call.metadata === "object" ? call.metadata as Record<string, unknown> : {};
           const parts = [
             `**Inference Call #${call.id}**`,
             `Model: ${call.model} | Provider: ${call.provider}`,
             `Profile: ${call.profile || "unknown"}`,
             `Tokens: ${call.inputTokens} in / ${call.outputTokens} out (${call.totalTokens} total)`,
-            `Cost: $${(call.costTotal || 0).toFixed(4)} (input: $${(call.costInput || 0).toFixed(4)}, output: $${(call.costOutput || 0).toFixed(4)})`,
+            `Cache: ${call.cacheReadTokens || 0} read / ${call.cacheWriteTokens || 0} write`,
+            "Cost: $" + (call.costTotal || 0).toFixed(4) + " (input: $" + (call.costInput || 0).toFixed(4) + ", output: $" + (call.costOutput || 0).toFixed(4) + ")",
             `Duration: ${call.durationMs ? `${(call.durationMs / 1000).toFixed(1)}s` : "n/a"}`,
             `Timestamp: ${ts}`,
             `Stop Reason: ${call.stopReason || "n/a"}`,
+            `Run: ${typeof metadata.runId === "string" ? metadata.runId : "n/a"}`,
+            `Session: ${typeof metadata.sessionId === "string" ? metadata.sessionId : "n/a"}`,
+            `Session Key: ${call.sessionKey || "n/a"}`,
+            `Activity: ${typeof metadata.activity === "string" ? metadata.activity : "n/a"}`,
+            `Source: ${typeof metadata.source === "string" ? metadata.source : "n/a"}`,
+            `Capture: ${call.captureId ? `@inference_context:${call.captureId}` : "n/a"}`,
           ];
-          if (call.requestContent) parts.push(`\n--- Input ---\n${call.requestContent}`);
-          if (call.responseContent) parts.push(`\n--- Output ---\n${call.responseContent}`);
           return { result: parts.join("\n") };
         }
         case "eval": {
@@ -16252,6 +16290,7 @@ type EngineeringContextRoot = {
 
 const ENGINEERING_TOOL_NAMES = new Set(["code", "shell", "git", "npm_dependencies", "system", "railway", "sentry"]);
 const ENGINEERING_REF_CACHE = new Map<string, Set<string>>();
+const ENGINEERING_CONTEXT_LOAD_QUEUE = new Map<string, Promise<string | null>>();
 const ENGINEERING_ROOT_REPO_HINTS = ["repos/", "AGENTS.md", "DESIGN.md", "npm run build", "git ", "server/", "client/", "mobile/", "shared/"];
 const CODING_SUBDIRS: CodingSubdir[] = ["client", "server", "mobile"];
 
@@ -16385,7 +16424,7 @@ async function loadSubdirAgent(root: string, dir: CodingSubdir): Promise<string>
   return `\n## ${relativePath}\n\n${await readInstructionFile(root, relativePath)}`;
 }
 
-async function ensureCodingContextLoaded(
+async function loadMissingCodingContext(
   toolName: string,
   args: Record<string, any>,
   context?: BridgeToolContext,
@@ -16468,6 +16507,28 @@ async function ensureCodingContextLoaded(
     },
   });
   return parts.join("\n\n");
+}
+
+async function ensureCodingContextLoaded(
+  toolName: string,
+  args: Record<string, any>,
+  context?: BridgeToolContext,
+): Promise<string | null> {
+  if (!shouldEnsureCodingContext(toolName, args)) return null;
+  const contextRoot = resolveEngineeringContextRoot(toolName, args);
+  const queueKey = cacheKeyForContext(contextRoot.root, context);
+  const prior = ENGINEERING_CONTEXT_LOAD_QUEUE.get(queueKey) ?? Promise.resolve(null);
+  const current = prior
+    .catch(() => null)
+    .then(() => loadMissingCodingContext(toolName, args, context));
+  ENGINEERING_CONTEXT_LOAD_QUEUE.set(queueKey, current);
+  try {
+    return await current;
+  } finally {
+    if (ENGINEERING_CONTEXT_LOAD_QUEUE.get(queueKey) === current) {
+      ENGINEERING_CONTEXT_LOAD_QUEUE.delete(queueKey);
+    }
+  }
 }
 
 export async function executeTool(
