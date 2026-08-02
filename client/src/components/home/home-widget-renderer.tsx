@@ -20,7 +20,10 @@ interface SimpleWidgetRendererProps {
 }
 
 export function SimpleWidgetRenderer({ item, depth = 0, onDelete, autoExpandItemId }: SimpleWidgetRendererProps) {
-  const content = getInlineContent(item);
+  // Build completions use the tree row's canonical reference presentation. The
+  // generic Inbox widget would add a second icon and kind badge, shifting the
+  // build icon off the shared row grid.
+  const content = item.payload?.kind === "build_deployment" ? null : getInlineContent(item);
 
   // State widget is a special full-width display, not a tree row
   if (item.widgetType === "state") return <StateWidget item={item} />;

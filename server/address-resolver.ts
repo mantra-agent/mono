@@ -20,6 +20,7 @@ import {
   milestones,
   planExecutions,
   planStepAttempts,
+  platformDeploymentObservations,
   platformProductEnvironments,
   platformProducts,
   platforms,
@@ -98,6 +99,11 @@ interface ResolutionFields {
 }
 
 const pageScope = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
+const buildObservationScope = {
+  scope: platformDeploymentObservations.scope,
+  ownerUserId: platformDeploymentObservations.ownerUserId,
+  accountId: platformDeploymentObservations.accountId,
+};
 const companyScope = { scope: companies.scope, ownerUserId: companies.ownerUserId, accountId: companies.accountId };
 const principleScope = { scope: principles.scope, ownerUserId: principles.ownerUserId, accountId: principles.accountId };
 const roleScope = { scope: jobRoles.scope, ownerUserId: jobRoles.ownerUserId, accountId: jobRoles.accountId };
@@ -396,6 +402,38 @@ const adapters: AddressResolverAdapter[] = [
       .where(and(inArray(platformProductEnvironments.id, numbers(refs)), visiblePlatform()));
     const byId = new Map(rows.map(row => [String(row.id), row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: `${byId.get(ref.id)!.platformName} / ${byId.get(ref.id)!.productName} / ${byId.get(ref.id)!.name}`, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
+  simpleAdapter("build", async (principal, refs) => {
+    if (!hasPermission(principal, "build:read")) return unauthorizedMap(refs);
+    const rows = await db.select({
+      id: platformDeploymentObservations.id,
+      platformEnvironmentId: platformDeploymentObservations.platformEnvironmentId,
+      platformName: platformDeploymentObservations.platformName,
+      productName: platformDeploymentObservations.productName,
+      environmentName: platformDeploymentObservations.environmentName,
+      deployedAt: platformDeploymentObservations.deployedAt,
+      commitSha: platformDeploymentObservations.commitSha,
+    })
+      .from(platformDeploymentObservations)
+      .where(combineWithVisibleScope(
+        principal,
+        buildObservationScope,
+        inArray(platformDeploymentObservations.id, refs.map(ref => ref.id)),
+      ));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => {
+      const row = byId.get(ref.id);
+      if (!row) return [];
+      const label = `${row.platformName} / ${row.productName} / ${row.environmentName}`;
+      const commit = row.commitSha ? ` at ${row.commitSha.slice(0, 7)}` : "";
+      return [[requestedAddress(ref), resolved(ref, {
+        label,
+        summary: `Successful Railway deployment${commit}`,
+        route: `/platform-environments/${encodeURIComponent(row.platformEnvironmentId)}`,
+        updatedAt: row.deployedAt,
+        capabilities: ["read"],
+      })]];
+    }));
   }),
   simpleAdapter("skill", async (principal, refs) => {
     const rows = await db.select({ id: skills.id, name: skills.name, description: skills.description, updatedAt: skills.updatedAt }).from(skills)

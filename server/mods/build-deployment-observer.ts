@@ -131,10 +131,13 @@ type DiscoveredBuildOwner = Awaited<ReturnType<typeof discoverActiveBuildOwners>
 async function observeOwner(user: DiscoveredBuildOwner["user"]) {
   const principal = await createUserSessionPrincipal(user);
   return runWithPrincipal(principal, async () => {
-    if (!(await hasActiveBuildAccess(principal))) return { observationsCreated: 0, projectionsCreated: 0, errors: 0 };
+    if (!(await hasActiveBuildAccess(principal))) {
+      return { observationsCreated: 0, projectionsCreated: 0, completions: [], errors: 0 };
+    }
     const environments = await listVisibleRailwayEnvironments(principal);
     let observationsCreated = 0;
     let projectionsCreated = 0;
+    const completions: Awaited<ReturnType<typeof recordSuccessfulRailwayDeployments>>["completions"] = [];
     let errors = 0;
 
     for (const environment of environments) {
@@ -142,6 +145,7 @@ async function observeOwner(user: DiscoveredBuildOwner["user"]) {
         const result = await observeEnvironment(principal, environment);
         observationsCreated += result.observationsCreated;
         projectionsCreated += result.projectionsCreated;
+        completions.push(...result.completions);
       } catch (error) {
         errors += 1;
         log.warn("Railway deployment observation degraded", {
@@ -156,10 +160,17 @@ async function observeOwner(user: DiscoveredBuildOwner["user"]) {
       eventBus.publish({
         category: "system",
         event: "data:home_changed",
-        payload: { source: "build_deployment_observer", projectionsCreated },
+        payload: {
+          source: "build_deployment_observer",
+          projectionsCreated,
+          buildCompletions: completions.map(completion => ({
+            ...completion,
+            deployedAt: completion.deployedAt.toISOString(),
+          })),
+        },
       }, principal);
     }
-    return { observationsCreated, projectionsCreated, errors };
+    return { observationsCreated, projectionsCreated, completions, errors };
   });
 }
 
