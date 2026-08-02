@@ -87,6 +87,10 @@ The server is a Node.js/Express/TypeScript monolith running all backend logic: A
 
 ---
 
+## Autonomy Runtime Kernel
+
+`server/runtime/` owns the durable physics for executable autonomous work. `runtime_runs` is the account-owned intent, `runtime_attempts` is the sole fenced capacity lease, `runtime_run_events` is append-only evidence plus the exactly-one terminal receipt, and `runtime_capacity_policies` is immutable versioned operational policy. The code-owned `RuntimeHandler` registry alone binds handler versions to input validation, authority, resource pool, executor profile, and execution. Producers may enqueue; they may not write attempts or terminal state. Claims serialize with a transaction-scoped advisory lock per truthful resource pool and select bounded account heads before limiting. Every worker mutation presents the current token+epoch fence and every attempt start restores and re-authorizes the exact current user principal. Terminalization commits the receipt and `runtime.run.terminalized` through the repository-wide `transactional_outbox` in one transaction. No domain may introduce another capacity ledger, scheduler-state cursor, runtime-private outbox, mutable terminal receipt, or nested admission queue after receiving a runtime lease.
+
 ## Database Architecture
 
 ### Connection and access model
