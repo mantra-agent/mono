@@ -15,6 +15,7 @@ import {
   type RuntimeRunRow,
   type RuntimeRetryPolicyV1,
 } from "@shared/models/runtime";
+import { transactionalOutbox } from "@shared/models/outbox";
 import { normalizeProtocolAddress } from "@shared/life-addressing";
 import { users } from "@shared/schema";
 import {
@@ -49,6 +50,7 @@ const DEFAULT_ACCOUNT_HEAD_LIMIT = 50;
 const runScope = { scope: runtimeRuns.scope, ownerUserId: runtimeRuns.ownerUserId, accountId: runtimeRuns.accountId };
 const attemptScope = { scope: runtimeAttempts.scope, ownerUserId: runtimeAttempts.ownerUserId, accountId: runtimeAttempts.accountId };
 const eventScope = { scope: runtimeRunEvents.scope, ownerUserId: runtimeRunEvents.ownerUserId, accountId: runtimeRunEvents.accountId };
+const outboxScope = { scope: transactionalOutbox.scope, ownerUserId: transactionalOutbox.ownerUserId, accountId: transactionalOutbox.accountId };
 
 export const DEFAULT_RUNTIME_BUDGET_V1: RuntimeBudgetV1 = {
   maxWallClockMs: 15 * 60 * 1000,
@@ -133,12 +135,20 @@ function scopeWritable(principal: Principal, predicate?: SQL): SQL {
   return combineWithWritableScope(principal, runScope, predicate);
 }
 
+function attemptVisible(principal: Principal, predicate?: SQL): SQL {
+  return combineWithVisibleScope(principal, attemptScope, predicate);
+}
+
 function attemptWritable(principal: Principal, predicate?: SQL): SQL {
   return combineWithWritableScope(principal, attemptScope, predicate);
 }
 
 function eventVisible(principal: Principal, predicate?: SQL): SQL {
   return combineWithVisibleScope(principal, eventScope, predicate);
+}
+
+function outboxVisible(principal: Principal, predicate?: SQL): SQL {
+  return combineWithVisibleScope(principal, outboxScope, predicate);
 }
 
 function fenceTokenHash(token: string): string {
@@ -1133,4 +1143,243 @@ export async function getRuntimeReceipt(principal: Principal, runIdInput: string
   const [event] = await db.select({ payload: runtimeRunEvents.payload }).from(runtimeRunEvents)
     .where(eventVisible(principal, and(eq(runtimeRunEvents.id, run.receiptEventId), eq(runtimeRunEvents.runId, run.id), eq(runtimeRunEvents.eventType, "terminal_receipt")))).limit(1);
   return (event?.payload as unknown as RuntimeReceiptV1 | undefined) ?? null;
+}
+
+export interface RuntimeRunDiagnosticsSummary {
+  id: string;
+  kind: string;
+  handler: { key: string; version: number };
+  source: { type: string; id: string };
+  idempotencyKey: string;
+  resourcePool: RuntimeResourcePool;
+  executorProfile: string;
+  authorityPolicyVersionAtEnqueue: string;
+  phase: RuntimeRunRow["phase"];
+  outcome: RuntimeRunRow["outcome"];
+  outcomeReasonCode: string | null;
+  attribution: RuntimeRunRow["attribution"];
+  currentAttemptId: string | null;
+  receiptEventId: string | null;
+  availableAt: string;
+  deadlineAt: string;
+  cancellationRequestedAt: string | null;
+  terminalAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RuntimeDiagnosticsFilters {
+  limit?: number;
+  kind?: string;
+  handlerKey?: string;
+  sourceType?: string;
+  sourceId?: string;
+  phase?: RuntimeRunRow["phase"];
+}
+
+export interface RuntimeRunDiagnostics {
+  run: RuntimeRunDiagnosticsSummary;
+  attempts: Array<{
+    id: string;
+    attemptNumber: number;
+    resourcePool: RuntimeResourcePool;
+    leaseEpoch: number;
+    capacityPolicyVersion: number;
+    phase: RuntimeAttemptRow["phase"];
+    result: RuntimeAttemptRow["result"];
+    failureClass: string | null;
+    reasonCode: string | null;
+    attribution: RuntimeAttemptRow["attribution"];
+    usageSummary: Record<string, number>;
+    leasedAt: string;
+    startedAt: string | null;
+    lastHeartbeatAt: string | null;
+    leaseExpiresAt: string;
+    finishedAt: string | null;
+  }>;
+  events: Array<{
+    id: string;
+    attemptId: string | null;
+    eventType: string;
+    reasonCode: string | null;
+    payloadHash: string;
+    occurredAt: string;
+  }>;
+  receipt: (Omit<RuntimeReceiptV1, "accountId" | "runAs"> & { runAsActorType: RuntimeReceiptV1["runAs"]["actorType"] }) | null;
+  terminalOutbox: {
+    id: string;
+    eventType: string;
+    idempotencyKey: string;
+    availableAt: string;
+    publishedAt: string | null;
+    deliveryAttempts: number;
+    lastErrorCode: string | null;
+    createdAt: string;
+  } | null;
+}
+
+function toIso(value: Date | null): string | null {
+  return value?.toISOString() ?? null;
+}
+
+function projectRuntimeRunDiagnosticsSummary(run: RuntimeRunRow): RuntimeRunDiagnosticsSummary {
+  return {
+    id: run.id,
+    kind: run.kind,
+    handler: { key: run.handlerKey, version: run.handlerVersion },
+    source: { type: run.sourceType, id: run.sourceId },
+    idempotencyKey: run.idempotencyKey,
+    resourcePool: run.resourcePool,
+    executorProfile: run.executorProfile,
+    authorityPolicyVersionAtEnqueue: run.authorityPolicyVersionAtEnqueue,
+    phase: run.phase,
+    outcome: run.outcome,
+    outcomeReasonCode: run.outcomeReasonCode,
+    attribution: run.attribution,
+    currentAttemptId: run.currentAttemptId,
+    receiptEventId: run.receiptEventId,
+    availableAt: run.availableAt.toISOString(),
+    deadlineAt: run.deadlineAt.toISOString(),
+    cancellationRequestedAt: toIso(run.cancellationRequestedAt),
+    terminalAt: toIso(run.terminalAt),
+    createdAt: run.createdAt.toISOString(),
+    updatedAt: run.updatedAt.toISOString(),
+  };
+}
+
+export async function listRuntimeRunDiagnostics(
+  principal: Principal,
+  filters: RuntimeDiagnosticsFilters = {},
+): Promise<RuntimeRunDiagnosticsSummary[]> {
+  requireUserPrincipal(principal);
+  const limit = filters.limit ?? 20;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+    throw Object.assign(new Error("limit must be an integer from 1 to 50"), { status: 400 });
+  }
+  const predicates: SQL[] = [];
+  if (filters.kind) predicates.push(eq(runtimeRuns.kind, boundedText(filters.kind, "kind", 120)));
+  if (filters.handlerKey) predicates.push(eq(runtimeRuns.handlerKey, boundedText(filters.handlerKey, "handlerKey", 120)));
+  if (filters.sourceType) predicates.push(eq(runtimeRuns.sourceType, boundedText(filters.sourceType, "sourceType", 120)));
+  if (filters.sourceId) predicates.push(eq(runtimeRuns.sourceId, boundedText(filters.sourceId, "sourceId", 500)));
+  if (filters.phase) predicates.push(eq(runtimeRuns.phase, filters.phase));
+  const rows = await db.select().from(runtimeRuns)
+    .where(scopeVisible(principal, predicates.length > 0 ? and(...predicates) : undefined))
+    .orderBy(desc(runtimeRuns.createdAt), desc(runtimeRuns.id))
+    .limit(limit);
+  return rows.map(projectRuntimeRunDiagnosticsSummary);
+}
+
+async function listRuntimeAttemptDiagnostics(
+  principal: Principal,
+  runId: string,
+): Promise<RuntimeRunDiagnostics["attempts"]> {
+  const rows = await db.select({
+    id: runtimeAttempts.id,
+    attemptNumber: runtimeAttempts.attemptNumber,
+    resourcePool: runtimeAttempts.resourcePool,
+    leaseEpoch: runtimeAttempts.leaseEpoch,
+    capacityPolicyVersion: runtimeAttempts.capacityPolicyVersion,
+    phase: runtimeAttempts.phase,
+    result: runtimeAttempts.result,
+    failureClass: runtimeAttempts.failureClass,
+    reasonCode: runtimeAttempts.reasonCode,
+    attribution: runtimeAttempts.attribution,
+    usageSummary: runtimeAttempts.usageSummary,
+    leasedAt: runtimeAttempts.leasedAt,
+    startedAt: runtimeAttempts.startedAt,
+    lastHeartbeatAt: runtimeAttempts.lastHeartbeatAt,
+    leaseExpiresAt: runtimeAttempts.leaseExpiresAt,
+    finishedAt: runtimeAttempts.finishedAt,
+  }).from(runtimeAttempts)
+    .where(attemptVisible(principal, eq(runtimeAttempts.runId, runId)))
+    .orderBy(asc(runtimeAttempts.attemptNumber))
+    .limit(20);
+  return rows.map((attempt) => ({
+    ...attempt,
+    leasedAt: attempt.leasedAt.toISOString(),
+    startedAt: toIso(attempt.startedAt),
+    lastHeartbeatAt: toIso(attempt.lastHeartbeatAt),
+    leaseExpiresAt: attempt.leaseExpiresAt.toISOString(),
+    finishedAt: toIso(attempt.finishedAt),
+  }));
+}
+
+async function listRuntimeEventDiagnostics(
+  principal: Principal,
+  runId: string,
+): Promise<RuntimeRunDiagnostics["events"]> {
+  const rows = await db.select({
+    id: runtimeRunEvents.id,
+    attemptId: runtimeRunEvents.attemptId,
+    eventType: runtimeRunEvents.eventType,
+    reasonCode: runtimeRunEvents.reasonCode,
+    payloadHash: runtimeRunEvents.payloadHash,
+    occurredAt: runtimeRunEvents.occurredAt,
+  }).from(runtimeRunEvents)
+    .where(eventVisible(principal, eq(runtimeRunEvents.runId, runId)))
+    .orderBy(asc(runtimeRunEvents.occurredAt), asc(runtimeRunEvents.id))
+    .limit(MAX_EVIDENCE_EVENTS_PER_RECEIPT + 1);
+  return rows.map((event) => ({ ...event, occurredAt: event.occurredAt.toISOString() }));
+}
+
+async function getRuntimeOutboxDiagnostics(
+  principal: Principal,
+  runId: string,
+): Promise<RuntimeRunDiagnostics["terminalOutbox"]> {
+  const [row] = await db.select({
+    id: transactionalOutbox.id,
+    eventType: transactionalOutbox.eventType,
+    idempotencyKey: transactionalOutbox.idempotencyKey,
+    availableAt: transactionalOutbox.availableAt,
+    publishedAt: transactionalOutbox.publishedAt,
+    deliveryAttempts: transactionalOutbox.deliveryAttempts,
+    lastErrorCode: transactionalOutbox.lastErrorCode,
+    createdAt: transactionalOutbox.createdAt,
+  }).from(transactionalOutbox)
+    .where(outboxVisible(principal, and(
+      eq(transactionalOutbox.aggregateType, "runtime_run"),
+      eq(transactionalOutbox.aggregateId, runId),
+      eq(transactionalOutbox.eventType, "runtime.run.terminalized"),
+    )))
+    .orderBy(desc(transactionalOutbox.createdAt))
+    .limit(1);
+  return row ? {
+    ...row,
+    availableAt: row.availableAt.toISOString(),
+    publishedAt: toIso(row.publishedAt),
+    createdAt: row.createdAt.toISOString(),
+  } : null;
+}
+
+function projectRuntimeReceiptDiagnostics(
+  receipt: RuntimeReceiptV1 | null,
+): RuntimeRunDiagnostics["receipt"] {
+  if (!receipt) return null;
+  const { accountId: _accountId, runAs, ...proof } = receipt;
+  return { ...proof, runAsActorType: runAs.actorType };
+}
+
+export async function getRuntimeRunDiagnostics(
+  principal: Principal,
+  runIdInput: string,
+): Promise<RuntimeRunDiagnostics | null> {
+  requireUserPrincipal(principal);
+  const runId = boundedText(runIdInput, "runId", 100);
+  const [run] = await db.select().from(runtimeRuns)
+    .where(scopeVisible(principal, eq(runtimeRuns.id, runId)))
+    .limit(1);
+  if (!run) return null;
+  const [attempts, events, receipt, terminalOutbox] = await Promise.all([
+    listRuntimeAttemptDiagnostics(principal, run.id),
+    listRuntimeEventDiagnostics(principal, run.id),
+    getRuntimeReceipt(principal, run.id),
+    getRuntimeOutboxDiagnostics(principal, run.id),
+  ]);
+  return {
+    run: projectRuntimeRunDiagnosticsSummary(run),
+    attempts,
+    events,
+    receipt: projectRuntimeReceiptDiagnostics(receipt),
+    terminalOutbox,
+  };
 }
