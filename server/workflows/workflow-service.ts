@@ -2017,7 +2017,12 @@ export async function captureAcceptanceEvidence(input: { workflowRunId: string; 
   const targetUrl = configuredTargetUrl(acceptanceTarget, truth);
   const routePath = safeRoutePath(input.routePath || acceptanceTarget.routePath || acceptanceTarget.screenshotRoutePath, "/workflows");
   const healthCheckPath = safeRoutePath(acceptanceTarget.healthCheckPath, "/");
-  const screenshotRoutePath = safeRoutePath(acceptanceTarget.screenshotRoutePath || routePath, routePath);
+  const acceptanceExplicitRouteDisabled =
+    process.env.WORKFLOW_ACCEPTANCE_EXPLICIT_ROUTE_DISABLED === "true" ||
+    process.env.WORKFLOW_ACCEPTANCE_EXPLICIT_ROUTE_DISABLED === "1";
+  const screenshotRoutePath = acceptanceExplicitRouteDisabled
+    ? safeRoutePath(acceptanceTarget.screenshotRoutePath || routePath, routePath)
+    : safeRoutePath(input.routePath || acceptanceTarget.screenshotRoutePath || acceptanceTarget.routePath, routePath);
   const targetRouteUrl = targetUrl ? joinUrl(targetUrl, screenshotRoutePath) : null;
   const healthUrl = targetUrl ? joinUrl(targetUrl, healthCheckPath) : null;
   const authMode = typeof acceptanceConfig.authMode === "string" && acceptanceConfig.authMode.trim() ? acceptanceConfig.authMode.trim() : configuredAuthMode(lifecycleSnapshot);
