@@ -3573,7 +3573,7 @@ const foundationTokens: TokenItem[] = [
     name: "card",
     value: "222 20% 11%",
     className: "bg-card",
-    usage: "Content groups on structured data pages. Always pair with overflow-hidden min-w-0. Never black.",
+    usage: "Modal decision surfaces only. Always pair with overflow-hidden min-w-0. Never use as a page or object-grouping container.",
   },
   {
     name: "muted",
@@ -3900,8 +3900,8 @@ export function DesignTab() {
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
             Dark-first, frameless, mobile-first. Content sits directly on the
-            canvas. Cards are rare, borders are structural, and every color
-            earns its place. DESIGN.md is canonical.
+            canvas. Hierarchy Trees organize UIs, Cards belong only in modals,
+            borders are structural, and every color earns its place. DESIGN.md is canonical.
           </p>
           <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span><span className="text-foreground">CTA</span> — filled primary, outline secondary</span>
@@ -4067,16 +4067,14 @@ export function DesignTab() {
             first; semantic tints only when the surface literally communicates
             state.
           </p>
-          <div className="mt-4 rounded-md border border-border/30 bg-card p-3">
-            <div className="text-sm font-medium mb-2">Card philosophy</div>
+          <div className="mt-4 border-l border-border py-1 pl-3">
+            <div className="text-sm font-medium mb-2">Surface philosophy</div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Frameless is the starting point, not the whole story.
-              Content-consumption UIs (chat, reading) sit directly on the dark
-              canvas. Structured data pages (Brain, Settings, Config) use
-              bg-card Cards to group related content. Cards must always contain
-              their content (overflow-hidden, min-w-0). A Card should never be
-              black — that&apos;s the canvas. Overflow escaping a Card is always
-              a bug.
+              Route and embedded UIs sit directly on the canvas and organize
+              objects through the canonical Hierarchy Tree. Do not use Cards for
+              pages, dashboards, settings, detail views, object groups, or embedded
+              panels. Cards belong only in modal decision surfaces, where they use
+              bg-card and contain their content with overflow-hidden and min-w-0.
             </p>
           </div>
         </DesignSection>
@@ -4385,10 +4383,12 @@ export function DesignTab() {
             <div className="rounded-md border border-border/20 p-3">
               <div className="text-sm font-medium">Surface rule</div>
               <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                When a screen needs to surface many objects, prefer the Hierarchy
-                Tree before cards, tables, loose lists, or bespoke layouts. The
-                tree gives users scan, selection, nesting, completion, expansion,
-                and row actions through one compact interaction model.
+                Every route or embedded UI that surfaces objects or structured data
+                uses the Hierarchy Tree. Tables and bespoke layouts require a
+                constraint the tree cannot represent truthfully; Cards are never an
+                alternative outside modal decision surfaces. The tree gives users
+                scan, selection, nesting, completion, expansion, and row actions
+                through one compact interaction model.
               </p>
             </div>
           </div>
