@@ -36,6 +36,7 @@ export interface AdmissionSlot {
 interface InternalAdmissionSlot extends AdmissionSlot {
   principal: Principal & { actorType: "user"; userId: string; accountId: string };
   lease: LegacyRuntimeCapacityLease;
+  heartbeatInFlight?: Promise<void>;
 }
 
 interface QueuedRequest {
@@ -394,6 +395,7 @@ export class RunAdmissionController {
     if (!slot) return;
     this.slots.delete(runId);
     try {
+      await slot.heartbeatInFlight;
       await runWithPrincipal(slot.principal, () => releaseLegacyRuntimeCapacity(slot.principal, slot.lease.fence, input));
     } catch (error) {
       log.error("runtime.legacy_facade.release_failed", {
@@ -500,18 +502,25 @@ export class RunAdmissionController {
   private async heartbeatSlots(): Promise<void> {
     const slots = [...this.slots.values()];
     for (const slot of slots) {
-      try {
-        await runWithPrincipal(slot.principal, () => heartbeatRuntimeAttempt(slot.lease.fence));
-      } catch (error) {
-        slot.yieldRequested = true;
-        log.error("runtime.legacy_facade.heartbeat_failed", {
-          externalRunId: slot.runId,
-          runtimeRunId: slot.runtimeRunId,
-          runtimeAttemptId: slot.runtimeAttemptId,
-          resourcePool: slot.resourcePool,
-          errorType: error instanceof Error ? error.name : typeof error,
+      if (slot.heartbeatInFlight) continue;
+      let heartbeat: Promise<void>;
+      heartbeat = runWithPrincipal(slot.principal, () => heartbeatRuntimeAttempt(slot.lease.fence))
+        .then(() => undefined)
+        .catch((error) => {
+          slot.yieldRequested = true;
+          log.error("runtime.legacy_facade.heartbeat_failed", {
+            externalRunId: slot.runId,
+            runtimeRunId: slot.runtimeRunId,
+            runtimeAttemptId: slot.runtimeAttemptId,
+            resourcePool: slot.resourcePool,
+            errorType: error instanceof Error ? error.name : typeof error,
+          });
+        })
+        .finally(() => {
+          if (slot.heartbeatInFlight === heartbeat) slot.heartbeatInFlight = undefined;
         });
-      }
+      slot.heartbeatInFlight = heartbeat;
+      await heartbeat;
     }
   }
 
