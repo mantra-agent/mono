@@ -2081,6 +2081,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let assistantDraftCheckpointWrite: Promise<void> = Promise.resolve();
     let settlement: { status: "completed" | "failed"; assistantMessageId?: string; error?: string } | null = null;
     let terminalDurableRevision: number | undefined;
+    let terminalPersistenceEndedAt: number | undefined;
 
     // This identity begins before executor initialization because pre-executor
     // checkpoints are already durable. The executor must publish this same ID;
@@ -2115,6 +2116,22 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         preSteps[0].elapsedMs = turnElapsedMs;
         preSteps[0].endedAt = turnEndedAt;
         if (detail) preSteps[0].detail = detail;
+      }
+      if (terminalPersistenceEndedAt != null) {
+        eventBus.publish({
+          category: "agent",
+          event: "agent.stage_timing",
+          payload: {
+            runId,
+            sessionId,
+            stage: "finalization",
+            outcome: status === "done" ? "succeeded" : "failed",
+            durationMs: Math.max(0, turnEndedAt - terminalPersistenceEndedAt),
+            source: "chat",
+          },
+          runId,
+          sessionKey,
+        });
       }
     };
 
@@ -2472,6 +2489,22 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       chatRunLifecycle.assertCurrent(lease);
       const contextEndedAt = Date.now();
       const contextElapsedMs = contextEndedAt - contextStartedAt;
+      eventBus.publish({
+        category: "agent",
+        event: "agent.stage_timing",
+        payload: {
+          runId,
+          sessionId,
+          stage: "context_assembly",
+          outcome: "succeeded",
+          durationMs: contextElapsedMs,
+          messageCount: messages.length,
+          toolCount: toolDefs.length,
+          source: "chat",
+        },
+        runId,
+        sessionKey,
+      });
       // NOT emitting end: publishChatStreamEvent(sessionKey, sessionId, {...})
       const contextStepIndex = preSteps.length;
       preSteps.push({
@@ -2730,6 +2763,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             result?: unknown;
             error?: string;
             status: string;
+            outcome: import("../../agent-executor").ToolOutcome;
             parentId?: string;
           }>
         | undefined;
@@ -2744,6 +2778,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               ? String(tc.error)
               : undefined,
           status: tc.error ? "error" : "done",
+          outcome: tc.outcome,
           parentId: tc.parentId,
         }));
         for (const tc of persistedToolCalls) {
@@ -2801,6 +2836,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // Skip entire message persistence for superseded runs — draft already
       // deleted above, no message to save, no journal entry to create.
       if (!isSuperseded) {
+      const persistenceStartedAt = Date.now();
       chatLog.log(
         `saving message sessionId=${sessionId} thinkingLen=${persistedThinking?.length || 0} toolCallsCount=${persistedToolCalls?.length || 0} contentLen=${responseContent.length} systemSteps=${mergedSystemSteps.length}`,
       );
@@ -2845,6 +2881,21 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       if (terminalDraftWrite) {
         terminalDurableRevision = terminalDraftWrite.durableRevision;
       }
+      terminalPersistenceEndedAt = Date.now();
+      eventBus.publish({
+        category: "agent",
+        event: "agent.stage_timing",
+        payload: {
+          runId,
+          sessionId,
+          stage: "persistence",
+          outcome: "succeeded",
+          durationMs: terminalPersistenceEndedAt - persistenceStartedAt,
+          source: "chat",
+        },
+        runId,
+        sessionKey,
+      });
 
       if (persistedThinking && persistedThinking.length >= 50) {
         try {

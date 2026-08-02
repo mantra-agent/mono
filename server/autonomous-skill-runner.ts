@@ -114,6 +114,7 @@ async function persistExecutorResult(
     result?: unknown;
     error?: string | Record<string, unknown>;
     status: string;
+    outcome: import("./agent-executor").ToolOutcome;
   }> | undefined;
 
   if (result.toolCalls && result.toolCalls.length > 0) {
@@ -124,6 +125,7 @@ async function persistExecutorResult(
       result: tc.result,
       error: tc.error && typeof tc.error !== "boolean" ? String(tc.error) : undefined,
       status: tc.error ? "error" : "done",
+      outcome: tc.outcome,
     }));
   }
 
