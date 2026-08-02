@@ -502,7 +502,7 @@ export class RunAdmissionController {
   private async heartbeatSlots(): Promise<void> {
     const slots = [...this.slots.values()];
     for (const slot of slots) {
-      if (slot.heartbeatInFlight) continue;
+      if (this.slots.get(slot.runId) !== slot || slot.heartbeatInFlight) continue;
       let heartbeat: Promise<void>;
       heartbeat = runWithPrincipal(slot.principal, () => heartbeatRuntimeAttempt(slot.lease.fence))
         .then(() => undefined)
