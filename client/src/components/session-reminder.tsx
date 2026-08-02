@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
+import type { ChatSession } from "@shared/models/chat";
 
 interface ReminderState {
   active: boolean;
@@ -25,6 +26,14 @@ interface SessionReminderMenuItemProps {
   sessionTitle?: string | null;
   onOpenChange?: (open: boolean) => void;
   onReminderSet?: (sessionId: string) => void;
+}
+
+function applyReminderToSessionCache(sessionId: string, reminder: ReminderState | undefined): void {
+  queryClient.setQueryData<ChatSession[]>(["/api/sessions"], (sessions) =>
+    sessions?.map((session) =>
+      session.id === sessionId ? { ...session, reminder } : session,
+    ),
+  );
 }
 
 function getPresetOptions() {
@@ -121,10 +130,12 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
 
   const setReminderMutation = useMutation({
     mutationFn: async ({ toastTimeLabel: _toastTimeLabel, ...payload }: SetReminderInput) => {
-      await apiRequest("POST", `/api/sessions/${sessionId}/reminder`, payload);
+      const response = await apiRequest("POST", `/api/sessions/${sessionId}/reminder`, payload);
+      return response.json() as Promise<ReminderState>;
     },
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId, "reminder"] });
+    onSuccess: (reminder, variables) => {
+      queryClient.setQueryData(["/api/sessions", sessionId, "reminder"], reminder);
+      applyReminderToSessionCache(sessionId, reminder);
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
       toast({ title: buildReminderToastTitle(sessionId, variables.toastTimeLabel) });
       setOpen(false);
@@ -138,10 +149,12 @@ export function SessionReminderPopover({ sessionId, sessionTitle, onOpenChange, 
 
   const cancelMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("DELETE", `/api/sessions/${sessionId}/reminder`);
+      const response = await apiRequest("DELETE", `/api/sessions/${sessionId}/reminder`);
+      return response.json() as Promise<ReminderState>;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId, "reminder"] });
+    onSuccess: (reminder) => {
+      queryClient.setQueryData(["/api/sessions", sessionId, "reminder"], reminder);
+      applyReminderToSessionCache(sessionId, undefined);
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
       toast({ title: "Reminder cancelled" });
       setOpen(false);
