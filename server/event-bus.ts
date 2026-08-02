@@ -67,6 +67,7 @@ function payloadContains(actual: unknown, expected: unknown): boolean {
 const TERMINAL_RUN_EVENTS = new Set([
   "agent.run.terminal_decision",
   "agent.run.complete",
+  "agent.run.degraded",
   "agent.run.aborted",
   "agent.run.error",
   "runtime.active_run.cleared",
