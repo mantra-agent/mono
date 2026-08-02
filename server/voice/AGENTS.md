@@ -13,7 +13,7 @@ voice/
 ├── sse.ts                — SSE stream primitives, orphan handling, lifecycle event wiring, backpressure tracking
 ├── persistence.ts        — Turn data persistence: messages, early transcript, error messages, orphaned turns
 ├── prompt.ts             — System prompt assembly (cached), conversation messages, tool list, resolvePromptAndMessages
-├── circuit-breaker.ts    — Circuit breaker, concurrency cap, blocker wait, executor run detection
+├── circuit-breaker.ts    — Circuit breaker, blocker wait, executor run detection (runtime capacity authority owns voice admission)
 ├── pipeline-log.ts       — Pipeline stage logging, turn forensics, completion summaries, expected-stage auditing
 ├── turn-io.ts            — Coalescing, backpressure, cascade keepalive, stream chunk handler, timing constants
 ├── turn-handlers.ts      — Success/abort/error handlers, runExecutorPhase (LLM agent wiring)

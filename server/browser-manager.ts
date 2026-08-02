@@ -12,11 +12,11 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import * as fs from "fs";
 import * as path from "path";
+import { randomUUID } from "crypto";
 
 const execAsync = promisify(exec);
 const log = createLogger("BrowserManager");
 
-const MAX_CONCURRENT_PAGES = 3;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const PAGE_TIMEOUT_MS = 30_000;
 
@@ -24,10 +24,33 @@ let browser: Browser | null = null;
 let context: BrowserContext | null = null;
 let launchPromise: Promise<Browser> | null = null;
 let activePages = 0;
+let waitingForCapacity = 0;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let _isLaunching = false;
 
-const pageQueue: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+async function withIsolatedBrowserCapacity<T>(activity: string, fn: () => Promise<T>): Promise<T> {
+  const { admissionController } = await import("./run-admission");
+  const runId = `browser:${activity}:${randomUUID()}`;
+  let waiting = true;
+  waitingForCapacity++;
+  try {
+    return await admissionController.withResourcePool("isolated_execution", runId, async () => {
+      if (waiting) {
+        waiting = false;
+        waitingForCapacity--;
+      }
+      activePages++;
+      try {
+        return await fn();
+      } finally {
+        activePages--;
+        resetIdleTimer();
+      }
+    }, { activity, timeout: PAGE_TIMEOUT_MS });
+  } finally {
+    if (waiting) waitingForCapacity--;
+  }
+}
 
 // Discovers a working Chromium binary. Prefers Playwright's bundled Chrome for
 // Testing (version-matched to playwright-core) over the system chromium package,
@@ -134,39 +157,9 @@ async function ensureBrowser(): Promise<Browser> {
   }
 }
 
-async function acquirePageSlot(): Promise<void> {
-  if (activePages < MAX_CONCURRENT_PAGES) {
-    activePages++;
-    return;
-  }
-
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      const idx = pageQueue.indexOf(entry);
-      if (idx >= 0) pageQueue.splice(idx, 1);
-      reject(new Error(`Timed out waiting for browser page slot (max ${MAX_CONCURRENT_PAGES} concurrent).`));
-    }, PAGE_TIMEOUT_MS);
-
-    const entry = {
-      resolve: () => { clearTimeout(timer); activePages++; resolve(); },
-      reject,
-    };
-    pageQueue.push(entry);
-  });
-}
-
-function releasePageSlot() {
-  activePages--;
-  if (pageQueue.length > 0 && activePages < MAX_CONCURRENT_PAGES) {
-    const next = pageQueue.shift();
-    if (next) next.resolve();
-  }
-}
-
 export async function fetchWithBrowser(url: string, timeoutMs: number = PAGE_TIMEOUT_MS): Promise<string> {
-  await acquirePageSlot();
-
-  try {
+  return withIsolatedBrowserCapacity("browser.fetch", async () => {
+    try {
     await ensureBrowser();
     if (!context) throw new Error("Browser context not available");
 
@@ -189,10 +182,10 @@ export async function fetchWithBrowser(url: string, timeoutMs: number = PAGE_TIM
         try { await page.close(); } catch {}
       }
     }
-  } finally {
-    releasePageSlot();
-    resetIdleTimer();
-  }
+    } finally {
+      resetIdleTimer();
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +267,7 @@ export async function screenshotPage(
     userId?: string;
   }
 ): Promise<{ path: string; width: number; height: number; truncated: boolean }> {
-  await acquirePageSlot();
+  return withIsolatedBrowserCapacity("browser.screenshot", async () => {
   let page: Page | null = null;
   let screenshotContext: BrowserContext | null = null;
 
@@ -392,10 +385,10 @@ export async function screenshotPage(
   } finally {
     if (page) { try { await page.close(); } catch {} }
     if (screenshotContext) { try { await screenshotContext.close(); } catch {} }
-    releasePageSlot();
     resetIdleTimer();
     if (session) await session.cleanup();
   }
+  });
 }
 
 export interface TargetBoundBrowserEvidence {
@@ -422,7 +415,7 @@ export async function withTargetBoundBrowserPage<T>(
   }
   const targetOrigin = parsedEntry.origin;
   const auth = options.authentication || { mode: "none" as const };
-  await acquirePageSlot();
+  return withIsolatedBrowserCapacity("browser.regression", async () => {
 
   let page: Page | null = null;
   let targetContext: BrowserContext | null = null;
@@ -535,9 +528,9 @@ export async function withTargetBoundBrowserPage<T>(
     if (page) { try { await page.close(); } catch {} }
     if (targetContext) { try { await targetContext.close(); } catch {} }
     if (session) await session.cleanup();
-    releasePageSlot();
     resetIdleTimer();
   }
+  });
 }
 
 export interface BrowserSessionEvidenceStep {
@@ -587,7 +580,7 @@ export async function captureBrowserSessionEvidence(
     };
   },
 ): Promise<BrowserSessionEvidence> {
-  await acquirePageSlot();
+  return withIsolatedBrowserCapacity("browser.acceptance", async () => {
   let page: Page | null = null;
   let screenshotContext: BrowserContext | null = null;
   const startedAt = new Date().toISOString();
@@ -737,7 +730,6 @@ export async function captureBrowserSessionEvidence(
   } finally {
     if (page) { try { currentUrl = page.url(); } catch {} try { await page.close(); } catch {} }
     if (screenshotContext) { try { await screenshotContext.close(); } catch {} }
-    releasePageSlot();
     resetIdleTimer();
     if (session) await session.cleanup();
   }
@@ -758,6 +750,7 @@ export async function captureBrowserSessionEvidence(
     steps,
     error,
   };
+  });
 }
 
 export async function closeBrowser(): Promise<void> {
@@ -797,11 +790,10 @@ export function isBrowserReady(): boolean {
 // Defensive on purpose. In the production esbuild bundle this module is only
 // reached via dynamic import; historically esbuild's lazy `__esm` wrapper
 // memoised itself as "initialised" before the init body finished, so a throw
-// mid-init left hoisted module-level vars (e.g. `pageQueue`) as `undefined`
+// mid-init left hoisted module-level diagnostics as `undefined`
 // while `getBrowserStats` itself remained callable via the exported
 // namespace. The /api/gateway/processes probe hits this every ~2s and
-// previously flooded prod logs with "Cannot read properties of undefined
-// (reading 'length')".
+// previously flooded prod logs when a hoisted diagnostic counter was absent.
 //
 // The `__esm` helper is now patched at build time by
 // `script/safe-esm-helper-plugin.ts` (task #928) so a failed init re-throws
@@ -814,8 +806,7 @@ export function getBrowserStats(): { activeBrowsers: number; activePages: number
     let active = 0;
     try { active = isBrowserReady() ? 1 : 0; } catch { active = 0; }
 
-    const queueRef: unknown = pageQueue;
-    const queued = Array.isArray(queueRef) ? queueRef.length : 0;
+    const queued = Number.isFinite(waitingForCapacity) ? Math.max(0, waitingForCapacity) : 0;
 
     const pagesRef: unknown = activePages;
     const pages = typeof pagesRef === "number" && Number.isFinite(pagesRef) ? pagesRef : 0;

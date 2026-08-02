@@ -291,6 +291,234 @@ async function currentCapacityPolicy(tx: DrizzleTx): Promise<{ version: number; 
   return { version: row.version, policy };
 }
 
+const GLOBAL_CAPACITY_LOCK_KEY = "__runtime_global_capacity__";
+
+async function acquireCapacityLocks(tx: DrizzleTx, resourcePool: RuntimeResourcePool): Promise<void> {
+  // Pool-local locks cannot protect a deployment-wide ceiling when two pools
+  // claim concurrently. All admissions take the global lock first, then the
+  // selected pool lock, in one deterministic order.
+  await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.RUNTIME_POOL, GLOBAL_CAPACITY_LOCK_KEY);
+  await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.RUNTIME_POOL, resourcePool);
+}
+
+export interface RuntimeCapacitySnapshot {
+  policyVersion: number;
+  globalLimit: number;
+  globalActive: number;
+  poolLimit: number;
+  poolActive: number;
+  accountLimit: number;
+  accountActive: number;
+  interactiveReserve: number;
+  interactiveActive: number;
+  protectedInteractiveReserve: number;
+}
+
+export type RuntimeCapacitySaturationReason =
+  | "global_saturated"
+  | "pool_saturated"
+  | "account_saturated"
+  | "interactive_reserve_protected";
+
+async function readCapacitySnapshot(
+  tx: DrizzleTx,
+  policyVersion: number,
+  policy: RuntimeCapacityPolicyV1,
+  resourcePool: RuntimeResourcePool,
+  accountId: string,
+): Promise<RuntimeCapacitySnapshot> {
+  const result = await tx.execute(sql`
+    SELECT
+      COUNT(*) FILTER (WHERE phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS global_active,
+      COUNT(*) FILTER (WHERE resource_pool = ${resourcePool} AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS pool_active,
+      COUNT(*) FILTER (WHERE account_id = ${accountId} AND resource_pool = ${resourcePool} AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS account_active,
+      COUNT(*) FILTER (WHERE resource_pool = 'interactive_agent' AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS interactive_active
+    FROM runtime_attempts
+  `);
+  const row = (result.rows as Array<{
+    global_active: number | string;
+    pool_active: number | string;
+    account_active: number | string;
+    interactive_active: number | string;
+  }>)[0];
+  const poolPolicy = policy.pools[resourcePool];
+  const interactiveReserve = policy.pools.interactive_agent.interactiveReserve;
+  const interactiveActive = Number(row?.interactive_active ?? 0);
+  return {
+    policyVersion,
+    globalLimit: policy.globalLimit,
+    globalActive: Number(row?.global_active ?? 0),
+    poolLimit: poolPolicy.limit,
+    poolActive: Number(row?.pool_active ?? 0),
+    accountLimit: policy.accountOverrides[accountId]?.[resourcePool]?.limit ?? poolPolicy.accountLimit,
+    accountActive: Number(row?.account_active ?? 0),
+    interactiveReserve,
+    interactiveActive,
+    protectedInteractiveReserve: Math.max(0, interactiveReserve - interactiveActive),
+  };
+}
+
+function saturationReason(
+  resourcePool: RuntimeResourcePool,
+  snapshot: RuntimeCapacitySnapshot,
+): RuntimeCapacitySaturationReason | null {
+  if (snapshot.poolActive >= snapshot.poolLimit) return "pool_saturated";
+  if (snapshot.accountActive >= snapshot.accountLimit) return "account_saturated";
+  if (snapshot.globalActive >= snapshot.globalLimit) return "global_saturated";
+  if (
+    resourcePool !== "interactive_agent" &&
+    snapshot.globalActive >= snapshot.globalLimit - snapshot.protectedInteractiveReserve
+  ) {
+    return "interactive_reserve_protected";
+  }
+  return null;
+}
+
+export interface LegacyRuntimeCapacityLease {
+  run: RuntimeRunRow;
+  attempt: RuntimeAttemptRow;
+  fence: RuntimeFence;
+  snapshot: RuntimeCapacitySnapshot;
+}
+
+export async function acquireLegacyRuntimeCapacity(
+  principal: Principal,
+  input: {
+    externalRunId: string;
+    resourcePool: RuntimeResourcePool;
+    sourceType: string;
+    activity?: string;
+    deadlineAt: Date;
+    workerId: string;
+  },
+): Promise<
+  | { disposition: "acquired"; lease: LegacyRuntimeCapacityLease }
+  | { disposition: "saturated"; reason: RuntimeCapacitySaturationReason; snapshot: RuntimeCapacitySnapshot }
+> {
+  requireUserPrincipal(principal);
+  const externalRunId = boundedText(input.externalRunId, "externalRunId", 200);
+  const sourceType = boundedText(input.sourceType, "sourceType", 120);
+  const workerId = boundedText(input.workerId, "workerId", 200);
+  if (!(input.deadlineAt instanceof Date) || !Number.isFinite(input.deadlineAt.getTime()) || input.deadlineAt <= new Date()) {
+    throw Object.assign(new Error("deadlineAt must be a future date"), { status: 400 });
+  }
+
+  return runWithPrincipal(principal, () => db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+    await acquireCapacityLocks(tx, input.resourcePool);
+    const { version: policyVersion, policy } = await currentCapacityPolicy(tx);
+    const poolPolicy = policy.pools[input.resourcePool];
+    const snapshot = await readCapacitySnapshot(tx, policyVersion, policy, input.resourcePool, principal.accountId);
+    const reason = saturationReason(input.resourcePool, snapshot);
+    if (reason) {
+      log.debug("runtime.capacity.saturated", {
+        accountId: principal.accountId,
+        resourcePool: input.resourcePool,
+        reasonCode: reason,
+        ...snapshot,
+      });
+      return { disposition: "saturated" as const, reason, snapshot };
+    }
+
+    const now = new Date();
+    const leaseToken = crypto.randomBytes(32).toString("base64url");
+    const idempotencyKey = `legacy-capacity/${crypto.randomUUID()}`;
+    const budget: RuntimeBudgetV1 = {
+      ...DEFAULT_RUNTIME_BUDGET_V1,
+      maxWallClockMs: Math.max(1, input.deadlineAt.getTime() - now.getTime()),
+      maxAttempts: 1,
+    };
+    const retryPolicy: RuntimeRetryPolicyV1 = {
+      ...DEFAULT_RUNTIME_RETRY_POLICY_V1,
+      maxAttempts: 1,
+      retryableFailureClasses: [],
+    };
+    const requestShape = {
+      compatibility: true,
+      externalRunId,
+      sourceType,
+      activity: input.activity?.slice(0, 120) ?? null,
+      resourcePool: input.resourcePool,
+      idempotencyKey,
+    };
+    const ownership = ownedInsertValues(principal, runScope);
+    const [run] = await tx.insert(runtimeRuns).values({
+      kind: "legacy.capacity",
+      handlerKey: "legacy.capacity",
+      handlerVersion: 1,
+      sourceType,
+      sourceId: externalRunId,
+      idempotencyKey,
+      requestHash: hashValue(requestShape),
+      runAsActorType: "user",
+      runAsSubjectId: principal.userId,
+      resourcePool: input.resourcePool,
+      executorProfile: input.resourcePool === "isolated_execution" ? "isolated_browser" : "in_process_trusted",
+      priority: 0,
+      availableAt: now,
+      deadlineAt: input.deadlineAt,
+      inputSchemaVersion: 1,
+      input: requestShape,
+      inputRefs: [],
+      authorityPolicyVersionAtEnqueue: "legacy-facade-v1",
+      budget,
+      retryPolicy,
+      ...ownership,
+      createdByUserId: principal.userId,
+    }).returning();
+    if (!run) throw new Error("Legacy runtime capacity run creation failed");
+
+    const leaseExpiresAt = new Date(now.getTime() + poolPolicy.leaseSeconds * 1000);
+    const [attempt] = await tx.insert(runtimeAttempts).values({
+      runId: run.id,
+      accountId: run.accountId,
+      attemptNumber: 1,
+      resourcePool: input.resourcePool,
+      leaseEpoch: 1,
+      leaseTokenHash: fenceTokenHash(leaseToken),
+      leaseExpiresAt,
+      workerId,
+      executorProfile: run.executorProfile,
+      capacityPolicyVersion: policyVersion,
+      phase: "running",
+      startedAt: now,
+      lastHeartbeatAt: now,
+      scope: "user",
+      ownerUserId: principal.userId,
+      createdByUserId: principal.userId,
+    }).returning();
+    if (!attempt) throw new Error("Legacy runtime capacity attempt creation failed");
+    const [runningRun] = await tx.update(runtimeRuns).set({
+      phase: "running",
+      currentAttemptId: attempt.id,
+      updatedAt: now,
+    }).where(and(eq(runtimeRuns.id, run.id), eq(runtimeRuns.phase, "pending"), isNull(runtimeRuns.currentAttemptId))).returning();
+    if (!runningRun) throw new Error("Legacy runtime capacity run activation failed");
+
+    const fence = {
+      accountId: principal.accountId,
+      runId: runningRun.id,
+      attemptId: attempt.id,
+      leaseEpoch: 1,
+      leaseToken,
+    };
+    log.info("runtime.legacy_facade.acquired", {
+      runId: runningRun.id,
+      attemptId: attempt.id,
+      accountId: principal.accountId,
+      resourcePool: input.resourcePool,
+      sourceType,
+      policyVersion,
+      globalActive: snapshot.globalActive + 1,
+      poolActive: snapshot.poolActive + 1,
+      accountActive: snapshot.accountActive + 1,
+    });
+    return {
+      disposition: "acquired" as const,
+      lease: { run: runningRun, attempt, fence, snapshot },
+    };
+  })));
+}
+
 interface AccountHeadRow {
   id: string;
   account_id: string;
@@ -308,7 +536,7 @@ export async function claimNextRuntimeRun(
 ): Promise<{ run: RuntimeRunRow; attempt: RuntimeAttemptRow; fence: RuntimeFence } | null> {
   const workerId = boundedText(workerIdInput, "workerId", 200);
   return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
-    await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.RUNTIME_POOL, resourcePool);
+    await acquireCapacityLocks(tx, resourcePool);
     const { version: policyVersion, policy } = await currentCapacityPolicy(tx);
     const poolPolicy = policy.pools[resourcePool];
     if (!poolPolicy || poolPolicy.limit < 1) return null;
@@ -332,15 +560,22 @@ export async function claimNextRuntimeRun(
         AND run.deadline_at > CURRENT_TIMESTAMP
     `);
 
-    const capacityResult = await tx.execute(sql`
-      SELECT
-        COUNT(*) FILTER (WHERE phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS global_active,
-        COUNT(*) FILTER (WHERE resource_pool = ${resourcePool} AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS pool_active
-      FROM runtime_attempts
-    `);
-    const capacity = (capacityResult.rows as Array<{ global_active: number | string; pool_active: number | string }>)[0];
-    if (Number(capacity?.global_active ?? 0) >= policy.globalLimit || Number(capacity?.pool_active ?? 0) >= poolPolicy.limit) {
-      log.debug("runtime.dispatch.budget_blocked", { resourcePool, policyVersion, globalActive: Number(capacity?.global_active ?? 0), poolActive: Number(capacity?.pool_active ?? 0) });
+    // Candidate selection below determines the account, but global and pool
+    // saturation can be decided now. Non-interactive pools may not consume the
+    // still-unused interactive reserve.
+    const globalSnapshot = await readCapacitySnapshot(tx, policyVersion, policy, resourcePool, "__candidate__");
+    const globalReason = saturationReason(resourcePool, {
+      ...globalSnapshot,
+      accountActive: 0,
+      accountLimit: Number.MAX_SAFE_INTEGER,
+    });
+    if (globalReason && globalReason !== "account_saturated") {
+      log.debug("runtime.dispatch.budget_blocked", {
+        resourcePool,
+        policyVersion,
+        reasonCode: globalReason,
+        ...globalSnapshot,
+      });
       return null;
     }
 
@@ -383,7 +618,17 @@ export async function claimNextRuntimeRun(
       const accountLimit = override ?? poolPolicy.accountLimit;
       return Number(candidate.active_count) < accountLimit;
     });
-    if (!selected) return null;
+    if (!selected) {
+      if (candidates.length > 0) {
+        log.debug("runtime.dispatch.budget_blocked", {
+          resourcePool,
+          policyVersion,
+          reasonCode: "account_saturated",
+          eligibleAccountCount: candidates.length,
+        });
+      }
+      return null;
+    }
 
     const [run] = await tx.select().from(runtimeRuns).where(and(eq(runtimeRuns.id, selected.id), eq(runtimeRuns.phase, "pending"))).limit(1);
     if (!run) return null;
@@ -581,6 +826,43 @@ export async function appendRuntimeEvidence(
     const current = await loadFencedAttempt(tx, fence, ["running"]);
     return appendEventInTransaction(tx, current.run, { ...input, attemptId: current.attempt.id });
   }));
+}
+
+export async function releaseLegacyRuntimeCapacity(
+  principal: Principal,
+  fence: RuntimeFence,
+  input: {
+    outcome?: "succeeded" | "failed" | "cancelled";
+    reasonCode?: string;
+    attribution?: RuntimeAttribution;
+  } = {},
+): Promise<void> {
+  requireUserPrincipal(principal);
+  if (principal.accountId !== fence.accountId) {
+    throw Object.assign(new Error("Runtime fence account mismatch"), { status: 403 });
+  }
+  const outcome = input.outcome ?? "succeeded";
+  const reasonCode = input.reasonCode ?? "legacy_capacity_released";
+  // Release is idempotent for a façade handle. This matters when a nested
+  // failure settles the lease before its outer finally block runs.
+  const existing = await getRuntimeRun(principal, fence.runId);
+  if (existing?.phase === "terminal") return;
+  const result = await resolveRuntimeAttempt(principal, fence, {
+    kind: "complete",
+    outcome,
+    reasonCode,
+    attribution: input.attribution ?? (outcome === "succeeded" ? "system" : "runtime"),
+    outputRefs: [],
+    verificationLevel: "observed",
+  });
+  log.info("runtime.legacy_facade.released", {
+    runId: fence.runId,
+    attemptId: fence.attemptId,
+    accountId: fence.accountId,
+    outcome,
+    reasonCode,
+    phase: result.phase,
+  });
 }
 
 async function buildReceipt(

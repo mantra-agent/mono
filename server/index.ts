@@ -1001,7 +1001,7 @@ async function shutdownApplication(input: RuntimeTerminationInput): Promise<void
     timerScheduler.stop();
     const { stopMeetingAudioExpiry } = await import("./meeting/audio-retention-expiry");
     stopMeetingAudioExpiry();
-    admissionController.shutdown();
+    await admissionController.shutdown();
     executorManager.stopSupervisor();
     await executorManager.stop().catch((error) => {
       serverLog.warn(`executor shutdown degraded: ${error instanceof Error ? error.message : String(error)}`);

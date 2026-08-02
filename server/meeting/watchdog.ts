@@ -28,6 +28,11 @@ async function processOwnerMeetings(
   const principal = createUserPrincipalFromUser(user, foundation.accountId);
 
   return runWithPrincipal(principal, async () => {
+    const { admissionController } = await import("../run-admission");
+    return admissionController.withResourcePool(
+      "short_worker",
+      `meeting-watchdog:${user.id}:${now.getTime()}`,
+      async () => {
     const lookback = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const { events, errors: accountErrors } = await listAllEvents({
       timeMin: lookback.toISOString(),
@@ -95,6 +100,9 @@ async function processOwnerMeetings(
       interactionsLogged,
       errors,
     };
+      },
+      { activity: "timer.meeting_watchdog" },
+    );
   });
 }
 

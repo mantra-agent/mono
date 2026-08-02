@@ -442,17 +442,27 @@ export async function processSettledSources(): Promise<{
 
   for (const row of sources) {
     try {
-      await markProcessing(row.id);
-
       const principal = buildOwnerPrincipal(row);
       const result = await runWithPrincipal(principal, async () => {
-        const backfill = await memoryVnextClaimStorage.backfillMissingActiveEmbeddings(25);
-        if (backfill.errors > 0) {
-          throw new Error(
-            `vNext embedding backfill incomplete for owner=${principal.userId}: ${backfill.errors} error(s)`,
-          );
-        }
-        return processSource(row);
+        const { admissionController } = await import("../run-admission");
+        return admissionController.withResourcePool(
+          "short_worker",
+          `memory-source:${row.id}:${Date.now()}`,
+          async () => {
+            // Domain lifecycle remains legacy in this phase. Capacity is
+            // acquired first so markProcessing can never independently
+            // authorize work across replicas.
+            await markProcessing(row.id);
+            const backfill = await memoryVnextClaimStorage.backfillMissingActiveEmbeddings(25);
+            if (backfill.errors > 0) {
+              throw new Error(
+                `vNext embedding backfill incomplete for owner=${principal.userId}: ${backfill.errors} error(s)`,
+              );
+            }
+            return processSource(row);
+          },
+          { activity: "memory.vnext.source" },
+        );
       });
 
       processed++;

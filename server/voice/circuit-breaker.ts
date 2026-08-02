@@ -1,9 +1,10 @@
 /**
- * Voice circuit breaker — rapid-cancellation detection, concurrency
- * capping, zombie executor detection, and recovery wait loops.
+ * Voice circuit breaker — rapid-cancellation detection, zombie executor
+ * detection, and recovery wait loops. Interactive admission capacity is
+ * owned by the runtime capacity authority via the admission façade.
  */
 import type { VoiceSession } from "./types";
-import { voiceSessionKey, getActiveVoiceRunCount, publishVoiceDiagnostic } from "./session";
+import { voiceSessionKey, publishVoiceDiagnostic } from "./session";
 import { agentExecutor } from "../agent-executor";
 import { createLogger } from "../log";
 
@@ -14,7 +15,6 @@ const log = createLogger("VoiceLlm");
 export const CIRCUIT_BREAKER_WINDOW_MS = 20_000;
 const CIRCUIT_BREAKER_THRESHOLD = 15;
 const CIRCUIT_BREAKER_COOLDOWN_MS = 3_000;
-const MAX_CONCURRENT_VOICE_RUNS = 2;
 const CB_RETRY_WAIT_MS = 2_000;
 export const CB_MAX_RETRIES = 7;
 
@@ -54,18 +54,6 @@ export function computeCircuitBreakerWaitMs(session: VoiceSession): number {
   const remaining = oldest > 0 ? CIRCUIT_BREAKER_COOLDOWN_MS - (now - oldest) : CIRCUIT_BREAKER_COOLDOWN_MS;
   const clamped = Math.max(CB_RETRY_WAIT_MS, Math.min(remaining + 500, CIRCUIT_BREAKER_COOLDOWN_MS + 1_000));
   return clamped;
-}
-
-// ── Concurrency Cap ──────────────────────────────────────────────────────
-
-export function checkVoiceConcurrencyCap(): boolean {
-  const count = getActiveVoiceRunCount();
-  if (count >= MAX_CONCURRENT_VOICE_RUNS) {
-    log.warn(`[VoiceConcurrency] cap reached: ${count}/${MAX_CONCURRENT_VOICE_RUNS} voice runs active — rejecting new run`);
-    return true;
-  }
-  log.log(`[VoiceConcurrency] OK: ${count}/${MAX_CONCURRENT_VOICE_RUNS} voice runs active`);
-  return false;
 }
 
 // ── Active Executor Run Check ────────────────────────────────────────────
@@ -110,12 +98,6 @@ export async function waitForBlockerToClear(
     } else if (reason === "circuit_breaker") {
       if (!checkCircuitBreaker(session, currentTurn)) {
         log.log(`[CBRetry] circuit breaker cleared after attempt ${attempt} session=${session.id} turn=${currentTurn}`);
-        publishVoiceDiagnostic(session, "recovery", `Recovered from ${reason}`, { turn: currentTurn, elapsedMs: attempt * CB_RETRY_WAIT_MS });
-        return true;
-      }
-    } else if (reason === "concurrency_cap") {
-      if (!checkVoiceConcurrencyCap()) {
-        log.log(`[CBRetry] concurrency cap cleared after attempt ${attempt} session=${session.id} turn=${currentTurn}`);
         publishVoiceDiagnostic(session, "recovery", `Recovered from ${reason}`, { turn: currentTurn, elapsedMs: attempt * CB_RETRY_WAIT_MS });
         return true;
       }
