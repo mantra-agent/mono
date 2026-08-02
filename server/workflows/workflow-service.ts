@@ -52,6 +52,8 @@ import { chatFileStorage } from "../chat-file-storage";
 import { getArtifactsBySession } from "../session-artifacts";
 import { canonicalExecutionArtifactAddress } from "../execution-provenance-address";
 import { linkWorkflowArtifactProduced } from "../execution-provenance-links";
+import { getActiveBuildRegressionResource } from "../mods/build-managed-resources";
+import { timerStorage } from "../file-storage/timers";
 
 const log = createLogger("WorkflowService");
 
@@ -1424,6 +1426,63 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
   return { ...attempt, childSessionId, inputContext: persistedInputContext };
 }
 
+function acceptedDeploymentIdentity(
+  detail: WorkflowRunDetail,
+  evidence: unknown,
+): { environmentId: number; deploymentId: string; revision: string } {
+  const packet = evidence && typeof evidence === "object" ? evidence as AcceptanceEvidencePacket : null;
+  const latest = packet?.deployment?.latest && typeof packet.deployment.latest === "object"
+    ? packet.deployment.latest as Record<string, unknown>
+    : null;
+  const environmentId = detail.run.linkedEnvironmentId;
+  const deploymentId = typeof latest?.id === "string" ? latest.id.trim() : "";
+  const revisionValue = latest?.commitSha ?? latest?.commitHash;
+  const revision = typeof revisionValue === "string" ? revisionValue.trim().toLowerCase() : "";
+  if (!environmentId || !deploymentId || !revision) {
+    throw new Error("Passed Build acceptance requires environment, deployment, and revision identity before managed regression enqueue");
+  }
+  return { environmentId, deploymentId, revision };
+}
+
+async function enqueueAcceptedBuildRegression(
+  tx: import("../db").DrizzleTx,
+  detail: WorkflowRunDetail,
+  attempt: WorkflowStageAttempt,
+  evidence: unknown,
+  acceptedAt: Date,
+): Promise<void> {
+  if (detail.template.id !== BUILD_WORKFLOW_TEMPLATE_ID || attempt.stageKey !== "acceptance") return;
+  const principal = getCurrentPrincipalOrSystem();
+  const managed = await getActiveBuildRegressionResource(tx, principal);
+  if (!managed) {
+    throw new Error("Active Build acceptance requires its active Post-acceptance Regression managed resource");
+  }
+  const accepted = acceptedDeploymentIdentity(detail, evidence);
+  const accountId = principal.accountId;
+  if (!accountId) throw new Error("Build acceptance regression enqueue requires an account principal");
+  const runId = `build-accepted:${accountId}:${accepted.environmentId}:${accepted.deploymentId}`;
+  await timerStorage.appendRunInTransaction(tx, managed.timer, {
+    id: runId,
+    timerId: managed.timer.id,
+    scheduleId: "build-accepted-deployment",
+    status: "pending",
+    startedAt: acceptedAt.toISOString(),
+    trigger: "scheduled",
+    intendedFireAt: acceptedAt.toISOString(),
+    scheduledSlotStart: acceptedAt.toISOString(),
+    scheduledSlotEnd: acceptedAt.toISOString(),
+    metadata: {
+      eventType: "build.acceptance.passed",
+      workflowRunId: detail.run.id,
+      workflowStageAttemptId: attempt.id,
+      platformEnvironmentId: accepted.environmentId,
+      deploymentId: accepted.deploymentId,
+      revision: accepted.revision,
+      acceptedAt: acceptedAt.toISOString(),
+    },
+  });
+}
+
 function acceptanceGateFailureFromEvidence(attempt: WorkflowStageAttempt, result: string, evidence: unknown): Record<string, unknown> | null {
   if (attempt.stageKey !== "acceptance" || result !== "passed") return null;
   const packet = evidence && typeof evidence === "object" ? evidence as Record<string, any> : {};
@@ -1474,8 +1533,9 @@ export async function completeStageAttempt(workflowRunId: string, attemptId: num
     }
     : null;
 
-  // Claim completion once. Post-build Issue review is owned independently by
-  // the existing next-build Timer trigger after the deployed process boots.
+  // Claim completion and enqueue the Build-managed Regression Timer run in the
+  // same transaction. A process crash cannot commit acceptance without its
+  // durable consequence; replay converges on the deterministic run identity.
   const completion = await db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
     const acceptedAt = new Date();
     const [completedAttempt] = await tx.update(workflowStageAttempts).set({
@@ -1494,6 +1554,15 @@ export async function completeStageAttempt(workflowRunId: string, attemptId: num
       isNull(workflowStageAttempts.completedAt),
     ))).returning();
     if (!completedAttempt) return null;
+    if (result === "passed") {
+      await enqueueAcceptedBuildRegression(
+        tx,
+        beforeDetail,
+        completedAttempt,
+        resultInput.evidence || attempt.evidence || {},
+        acceptedAt,
+      );
+    }
     return completedAttempt;
   }));
   if (!completion) {

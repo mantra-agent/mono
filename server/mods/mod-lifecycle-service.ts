@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { userProfiles } from "@shared/schema";
 import {
   ADVISORY_LOCK_NS,
   acquireAdvisoryTransactionLock,
@@ -24,6 +25,11 @@ import {
   type ModInstallationRow,
   type ModKey,
 } from "@shared/schema";
+import {
+  disableBuildManagedResources,
+  materializeBuildManagedResources,
+} from "./build-managed-resources";
+import { timerStorage } from "../file-storage/timers";
 
 const log = createLogger("mod-lifecycle");
 
@@ -98,8 +104,8 @@ interface AccountContext {
  * Canonical, idempotent, replayable mutation boundary for account-level Mod
  * entitlement and installation state. Every transition serializes on a single
  * per-account + per-Mod advisory lock and persists through scoped-storage
- * helpers. Materialization of managed hooks/timers is a typed no-op stub in
- * this phase; the installation state machine
+ * helpers. Build-managed Timer rows are adopted or created through the
+ * installation-resource ledger; the installation state machine
  * (installing → active → disabling → disabled/error) is real and durable.
  */
 export class ModLifecycleService {
@@ -157,36 +163,32 @@ export class ModLifecycleService {
     return true;
   }
 
-  /**
-   * Materialize managed Hooks/Timers for this installation through their
-   * canonical services with deterministic idempotency keys.
-   *
-   * TODO(mod-platform, later step): implement real materialization once the
-   * code-owned Mod registry (contribution definitions) lands. This is a typed
-   * no-op today; the installation state machine above is fully real.
-   */
+  /** Materialize managed rows without granting permissions or credentials. */
   private async materializeManagedResources(
-    _tx: DrizzleTx,
-    _principal: Principal,
-    _installation: ModInstallationRow,
-    _modKey: ModKey,
+    tx: DrizzleTx,
+    principal: Principal,
+    installation: ModInstallationRow,
+    modKey: ModKey,
   ): Promise<void> {
-    // Deterministic per-resource idempotency key contract for the later step:
-    //   `${installation.id}:${contributionId}:${subjectUserId ?? ""}`
-    return;
+    if (modKey !== "build") return;
+    const [profile] = await tx.select({ timezone: userProfiles.timezone })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, principal.userId!))
+      .limit(1);
+    const timezone = profile?.timezone?.trim() || "America/New_York";
+    await materializeBuildManagedResources(tx, principal, installation, timezone);
+    timerStorage.invalidateCache();
   }
 
-  /**
-   * Detach/disable managed Hooks/Timers on uninstall through canonical services.
-   *
-   * TODO(mod-platform, later step): implement real detachment. Typed no-op today.
-   */
+  /** Disable exact ledger-owned resources while retaining rows and history. */
   private async detachManagedResources(
-    _tx: DrizzleTx,
-    _principal: Principal,
-    _installation: ModInstallationRow,
+    tx: DrizzleTx,
+    principal: Principal,
+    installation: ModInstallationRow,
   ): Promise<void> {
-    return;
+    if (installation.modKey !== "build") return;
+    await disableBuildManagedResources(tx, principal, installation);
+    timerStorage.invalidateCache();
   }
 
   /** Grant (or refresh) account-level entitlement. Idempotent by (account, Mod). */
@@ -275,8 +277,14 @@ export class ModLifecycleService {
           .where(combineWithWritableScope(principal, installationScope, eq(modInstallations.modKey, modKey)))
           .limit(1);
         if (existing?.status === "active") {
-          log.debug("mod install replay: already active", { accountId: ctx.accountId, modKey });
-          return existing;
+          await this.materializeManagedResources(tx, principal, existing, modKey);
+          const [reconciled] = await tx.update(modInstallations).set({
+            ...(input.resolvedVersion ? { resolvedVersion: input.resolvedVersion } : {}),
+            updatedByUserId: ctx.userId,
+            updatedAt: new Date(),
+          }).where(combineWithWritableScope(principal, installationScope, eq(modInstallations.id, existing.id))).returning();
+          log.debug("mod install replay: active resources reconciled", { accountId: ctx.accountId, modKey });
+          return reconciled ?? existing;
         }
 
         // Transition to `installing` (create or reuse the durable row).
@@ -307,7 +315,7 @@ export class ModLifecycleService {
           .returning();
         if (!installing) throw new ModPlatformError("install_upsert_failed", "Installation upsert failed", 500);
 
-        // Materialize managed contributions (typed no-op stub this phase).
+        // Materialize or adopt managed contributions before activation.
         await this.materializeManagedResources(tx, principal, installing, modKey);
 
         // Transition to `active` only after required local writes succeed.
@@ -358,7 +366,8 @@ export class ModLifecycleService {
           throw new ModPlatformError("installation_not_found", `Mod is not installed: ${modKey}`, 404);
         }
         if (existing.status === "disabled") {
-          log.debug("mod disable replay: already disabled", { accountId: ctx.accountId, modKey });
+          await this.detachManagedResources(tx, principal, existing);
+          log.debug("mod disable replay: resources confirmed disabled", { accountId: ctx.accountId, modKey });
           return existing;
         }
 
@@ -569,6 +578,25 @@ export class ModLifecycleService {
         .limit(100),
     ]);
     return { entitlements, installations };
+  }
+
+  /**
+   * Universally install Build for accounts that have never made an explicit
+   * Build lifecycle choice. Existing disabled rows remain disabled. This grants
+   * only product entitlement/installation state; permissions and provider
+   * credentials remain independent authorities.
+   */
+  async ensureBuildInstalled(principal: Principal): Promise<void> {
+    this.assertEnabled();
+    this.requireAccountContext(principal);
+    if (!principalHasPermission(principal, "mods:manage")) return;
+    const [existing] = await db.select({ id: modInstallations.id, status: modInstallations.status })
+      .from(modInstallations)
+      .where(combineWithWritableScope(principal, installationScope, eq(modInstallations.modKey, "build")))
+      .limit(1);
+    if (existing?.status === "disabled" || existing?.status === "disabling") return;
+    await this.grantBaselineEntitlement(principal, "build");
+    await this.install(principal, { modKey: "build", resolvedVersion: "1.0.0" });
   }
 
   /**

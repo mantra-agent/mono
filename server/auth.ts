@@ -326,6 +326,8 @@ async function completeUserAuth(
   delete req.session.servicePrincipal;
   req.session.userId = user.id;
   const principal = await attachUserPrincipal(req, user);
+  const { modLifecycleService } = await import("./mods/mod-lifecycle-service");
+  await runWithPrincipal(principal, () => modLifecycleService.ensureBuildInstalled(principal));
   const { systemTimerRegistry } = await import("./system-timer-registry");
   await runWithPrincipal(principal, () => systemTimerRegistry.reconcileUserTimers(principal));
   const { timerScheduler } = await import("./timer-scheduler");

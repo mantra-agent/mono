@@ -123,6 +123,17 @@ export class SkillTimerHandler implements TimerHandler {
       } else {
         preContext = contract;
       }
+    } else if (skillId === "regression" && run.metadata?.eventType === "build.acceptance.passed") {
+      preContext = [
+        "# Accepted Build Deployment",
+        `workflowRunId: ${String(run.metadata.workflowRunId ?? "unknown")}`,
+        `workflowStageAttemptId: ${String(run.metadata.workflowStageAttemptId ?? "unknown")}`,
+        `platformEnvironmentId: ${String(run.metadata.platformEnvironmentId ?? "unknown")}`,
+        `deploymentId: ${String(run.metadata.deploymentId ?? "unknown")}`,
+        `revision: ${String(run.metadata.revision ?? "unknown")}`,
+        `acceptedAt: ${String(run.metadata.acceptedAt ?? run.intendedFireAt ?? run.startedAt)}`,
+        "Review the unresolved Issue queue against this accepted deployment using the ordinary Regression Skill contract.",
+      ].join("\n");
     } else if (skillId === "plan") {
       const cadence = this.getSkillCadence(timer, skillId) ?? "weekly";
       const anchorSource = run.intendedFireAt

@@ -117,6 +117,8 @@ const DEFERRED_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_DEFERRED_RETRY_COUNT = Math.ceil(
   DEFERRED_RETRY_WINDOW_MS / DEFERRED_RETRY_DELAY_MS,
 );
+const MANAGED_EVENT_CLAIM_STALE_MS = 35 * 60 * 1000;
+
 const DEFERRED_RETRY_REASONS = [
   "admission_deferred_or_already_running",
   "admission_timeout",
@@ -244,6 +246,7 @@ class TimerScheduler {
     }
     await this.fireBootReminders();
     await this.rescheduleAll();
+    await this.dispatchManagedEventRuns();
     await this.retryDeferredRuns();
 
     this.checkInterval = setInterval(() => {
@@ -269,6 +272,7 @@ class TimerScheduler {
 
   private async maintainSchedules(): Promise<void> {
     await this.rescheduleAll();
+    await this.dispatchManagedEventRuns();
     await this.retryDeferredRuns();
   }
 
@@ -327,6 +331,41 @@ class TimerScheduler {
         this.timers.delete(key);
       }
     });
+  }
+
+  private async dispatchManagedEventRuns(): Promise<void> {
+    if (!this.started || this.globalPaused) return;
+    const now = Date.now();
+    const staleBefore = new Date(now - MANAGED_EVENT_CLAIM_STALE_MS);
+    const runs = await withQueryAttributionAsync("timer-scheduler", () =>
+      timerStorage.getPendingManagedEventRunsForScheduler(
+        new Date(now - DEFERRED_RETRY_WINDOW_MS),
+        new Date(now - DEFERRED_RETRY_DELAY_MS),
+        staleBefore,
+        20,
+      ),
+    );
+    for (const run of runs) {
+      const timer = await withQueryAttributionAsync("timer-scheduler", () =>
+        timerStorage.getForScheduler(run.timerId),
+      );
+      if (!timer?.enabled) continue;
+      const attemptCount = typeof run.metadata?.dispatchAttempt === "number" && Number.isFinite(run.metadata.dispatchAttempt)
+        ? run.metadata.dispatchAttempt
+        : 0;
+      const metadata: TimerRun["metadata"] = {
+        ...(run.metadata ?? {}),
+        dispatchAttempt: attemptCount + 1,
+        claimedAt: new Date(now).toISOString(),
+        retryCount: typeof run.metadata?.retryCount === "number" ? run.metadata.retryCount : 0,
+      };
+      const claimed = await withQueryAttributionAsync("timer-scheduler", () =>
+        timerStorage.claimManagedEventRunForScheduler(timer, run.id, metadata, staleBefore),
+      );
+      if (!claimed) continue;
+      log.log(`dispatching managed Build event timer="${timer.name}" runId=${run.id} attempt=${attemptCount + 1}`);
+      this.enqueueDeferredTimerExecution(timer, { ...run, status: "running" }, metadata);
+    }
   }
 
   private async retryDeferredRuns(): Promise<void> {

@@ -6,7 +6,7 @@
 // renders from these yet (Phase 1 shadow).
 
 import type { ModDefinition } from "@shared/models/mod-registry";
-import { clientRoute, integration, nav, widget, workflowRef } from "./contribution-builders";
+import { clientRoute, integration, nav, timerTemplateRef, widget, workflowRef } from "./contribution-builders";
 import { actionsForOwner } from "./action-catalog";
 
 const MIN_CORE = "1.0.0";
@@ -83,6 +83,11 @@ const build: ModDefinition = {
       integration("build.integration.sentry", "sentry", "available", ["error-tracking"]),
     ],
     workflows: [workflowRef("build.workflow.build-v1", "build-v1")],
+    timers: [
+      timerTemplateRef("build.timer.reliability-sentinel-30m", "build-reliability-sentinel-30m"),
+      timerTemplateRef("build.timer.security-sentinel-weekly", "build-security-sentinel-weekly"),
+      timerTemplateRef("build.timer.post-acceptance-regression", "post-build-regression"),
+    ],
     actions: actionsForOwner("build"),
   },
 };

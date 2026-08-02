@@ -4898,6 +4898,10 @@ export async function runSchemaBootstrap(
     `);
     await pool.query(`DROP INDEX IF EXISTS idx_responsibility_runs_scheduled_slot_unique`);
     await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_responsibility_runs_run_id_unique
+      ON responsibility_runs(run_id)
+    `);
+    await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_responsibility_runs_successful_scheduled_slot_unique
       ON responsibility_runs(responsibility_id, schedule_id, scheduled_slot_start, scheduled_slot_end)
       WHERE trigger = 'scheduled' AND status = 'success' AND scheduled_slot_start IS NOT NULL AND scheduled_slot_end IS NOT NULL
