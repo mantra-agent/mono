@@ -76,6 +76,12 @@ function compactSchedule(schedule: Schedule): Record<string, unknown> {
     .map(([key, value]) => [key, Array.isArray(value) ? [...value].sort() : value]));
 }
 
+function uniqueSchedules(schedules: readonly Schedule[]): Schedule[] {
+  const byId = new Map<string, Schedule>();
+  for (const schedule of schedules) byId.set(schedule.id, schedule);
+  return Array.from(byId.values());
+}
+
 function definitionPayload(definition: BuildManagedTimerDefinition, timezone: string) {
   return {
     contributionId: definition.contributionId,
@@ -85,7 +91,7 @@ function definitionPayload(definition: BuildManagedTimerDefinition, timezone: st
     type: definition.type,
     skillId: definition.skillId ?? null,
     prompt: definition.prompt ?? "",
-    schedules: (definition.schedules ?? []).map(compactSchedule).sort((a, b) => String(a.id).localeCompare(String(b.id))),
+    schedules: uniqueSchedules(definition.schedules ?? []).map(compactSchedule).sort((a, b) => String(a.id).localeCompare(String(b.id))),
     enabled: true,
     timezone,
   };
@@ -103,7 +109,7 @@ function timerValues(definition: BuildManagedTimerDefinition, timezone: string, 
     prompt: definition.prompt ?? "",
     skillId: definition.skillId ?? null,
     systemKey: definition.systemKey,
-    schedules: definition.schedules ?? [],
+    schedules: uniqueSchedules(definition.schedules ?? []),
     enabled: true,
     timezone,
     updatedAt: now,

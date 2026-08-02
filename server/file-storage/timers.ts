@@ -194,6 +194,11 @@ export class FileTimerStorage {
   async getByIdOrName(idOrName: string): Promise<Timer | null> {
     const byId = await this.get(idOrName);
     if (byId) return byId;
+    const [bySystemKey] = await db.select().from(timers).where(and(
+      eq(timers.systemKey, idOrName),
+      visibleTimerPredicate(),
+    )).limit(1);
+    if (bySystemKey) return rowToTimer(bySystemKey);
     const matches = await this.searchByName(idOrName, 2);
     return matches.find((timer) => timer.name === idOrName) || matches[0] || null;
   }
