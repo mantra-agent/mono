@@ -33,6 +33,7 @@ export const REFERENCE_TYPE_LABELS: Record<string, string> = {
   meeting: "Meeting",
 
   decision: "Decision",
+  principle: "Principle",
   wellness_activity: "Wellness",
   priority: "Priority",
   file: "File",

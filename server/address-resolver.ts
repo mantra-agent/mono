@@ -23,6 +23,8 @@ import {
   platformProductEnvironments,
   platformProducts,
   platforms,
+  principleRevisions,
+  principles,
   projects,
   skills,
   strategies,
@@ -97,6 +99,7 @@ interface ResolutionFields {
 
 const pageScope = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
 const companyScope = { scope: companies.scope, ownerUserId: companies.ownerUserId, accountId: companies.accountId };
+const principleScope = { scope: principles.scope, ownerUserId: principles.ownerUserId, accountId: principles.accountId };
 const roleScope = { scope: jobRoles.scope, ownerUserId: jobRoles.ownerUserId, accountId: jobRoles.accountId };
 const strategyScope = { scope: strategies.scope, ownerUserId: strategies.ownerUserId, accountId: strategies.accountId };
 const opportunityScope = { scope: opportunities.scope, ownerUserId: opportunities.ownerUserId, accountId: opportunities.accountId, vaultId: opportunities.vaultId };
@@ -223,6 +226,14 @@ const adapters: AddressResolverAdapter[] = [
       .where(combineWithProjectDerivedWorkAccess(principal, milestoneScope, "milestone", "read", or(...parsed.map(item => and(eq(milestones.projectId, item.parts[0]), eq(milestones.id, item.parts[1]))))));
     const byId = new Map(rows.map(row => [`${row.projectId}~${row.id}`, row]));
     return new Map(parsed.flatMap(({ ref }) => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
+  simpleAdapter("principle", async (principal, refs) => {
+    const rows = await db.select({ id: principles.id, title: principleRevisions.title, layer1: principleRevisions.layer1, updatedAt: principles.updatedAt })
+      .from(principles)
+      .innerJoin(principleRevisions, and(eq(principleRevisions.id, principles.currentRevisionId), eq(principleRevisions.principleId, principles.id)))
+      .where(combineWithVisibleScope(principal, principleScope, inArray(principles.id, refs.map(ref => ref.id))));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title, summary: byId.get(ref.id)!.layer1, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
   simpleAdapter("role", async (principal, refs) => {
     if (!principalHasPermission(principal, "system:read")) return resultMap(refs, "unauthorized");

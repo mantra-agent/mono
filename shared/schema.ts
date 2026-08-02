@@ -724,6 +724,7 @@ export const principles = pgTable("principles", {
   autoTags: jsonb("auto_tags").notNull().default([]),
   manualTags: jsonb("manual_tags").notNull().default([]),
   relatedIds: jsonb("related_ids").notNull().default([]),
+  currentRevisionId: text("current_revision_id").notNull(),
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
@@ -733,7 +734,25 @@ export const principles = pgTable("principles", {
   index("idx_principles_scope_owner").on(table.scope, table.ownerUserId),
 ]);
 
+export const principleRevisions = pgTable("principle_revisions", {
+  id: text("id").primaryKey(),
+  principleId: text("principle_id").notNull().references(() => principles.id, { onDelete: "cascade" }),
+  revisionNumber: integer("revision_number").notNull(),
+  title: text("title").notNull(),
+  layer1: text("layer1").notNull().default(""),
+  layer2: text("layer2").notNull().default(""),
+  scope: text("scope").notNull().default("user"),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("principle_revisions_principle_revision_idx").on(table.principleId, table.revisionNumber),
+  uniqueIndex("principle_revisions_principle_id_idx").on(table.principleId, table.id),
+  index("principle_revisions_account_idx").on(table.accountId),
+]);
+
 export type PrincipleRow = typeof principles.$inferSelect;
+export type PrincipleRevisionRow = typeof principleRevisions.$inferSelect;
 
 // ── Companies ─────────────────────────────────────────────────────
 export const companies = pgTable("companies", {
