@@ -154,6 +154,8 @@ const ACTIVITY_AFTERGLOW_EPSILON = 0.004;
 const ACTIVITY_LINK_AFTERGLOW_DEPOSIT = 0.18;
 const ACTIVITY_LINK_AFTERGLOW_CEILING = 1;
 const ACTIVITY_LINK_LUMINANCE_RESPONSE = 1.35;
+const RESTING_LINK_MIN_LUMINANCE = 0.68;
+const RESTING_LINK_MAX_LUMINANCE = 1;
 const ACTIVITY_NODE_AFTERGLOW_DEPOSIT = 0.2;
 const ACTIVITY_NODE_AFTERGLOW_CEILING = 0.75;
 // Global emission runs ~10x faster than before; a tight max clamp removes the
@@ -253,8 +255,10 @@ const nodeFragmentShader = `
     float rim = pow(edge, 1.6);
     float emphasis = 1.0 + vEmphasis * 0.5;
     vec3 baseColor = vTint * rim * emphasis;
-    vec3 impactColor = mix(baseColor, vec3(1.0), vImpact) * (1.0 + vImpact * 0.35);
-    float impactAlpha = mix(vVisibility, 1.0, vImpact);
+    float impactRim = smoothstep(0.35, 0.95, edge);
+    vec3 impactTint = mix(vTint, vec3(1.0), 0.58);
+    vec3 impactColor = baseColor + impactTint * impactRim * vImpact * (0.82 + vImpact * 0.38);
+    float impactAlpha = mix(vVisibility, 1.0, vImpact * impactRim);
     gl_FragColor = vec4(impactColor, impactAlpha);
   }
 `;
@@ -617,8 +621,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       to: nodeBaseColors[link.toIndex].clone(),
     }));
     renderedLinks.forEach((link, linkIndex) => {
-      const brightness = (0.15 + Math.pow(Math.max(0, link.strength), 1.6) * 0.85) * 0.18;
-      linkBrightness[linkIndex] = brightness;
+      const normalizedStrength = THREE.MathUtils.clamp(link.strength, 0, 1);
+      linkBrightness[linkIndex] = THREE.MathUtils.lerp(
+        RESTING_LINK_MIN_LUMINANCE,
+        RESTING_LINK_MAX_LUMINANCE,
+        Math.pow(normalizedStrength, 1.6),
+      );
     });
     linkGeometry.setPositions(linkPositions);
     linkGeometry.setColors(linkColors);
