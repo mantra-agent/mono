@@ -455,6 +455,10 @@ Persona `tool_bundle` selects the initial callable working set; it is a context 
 ### Tool Output Artifact Layer
 `tool-output-artifacts.ts` owns the single archive boundary for tool results. `ensureToolOutputArchived(...)` stores exact bytes through principal-scoped `indexed_content`/object storage and supports replay-safe ref reuse; legacy oversized-output callers delegate to it.
 
+Potentially unbounded read tools must be bounded at their producer/storage query: return totals or aggregates plus a caller-paged useful slice and a stable continuation. Never load an unbounded collection merely to truncate its rendered result. Complete generated evidence that cannot be queried naturally may be indexed behind a principal-scoped reference, but historical tool evidence must never be rewritten or automatically rehydrated. `work.get_project` is the reference overview contract: project metadata, milestone summaries, task counts by status, and a small actionable slice; `work.list_tasks` owns explicit pagination.
+
+Engineering preflight instructions remain complete model-visible evidence. `bridge-tools.ts` serializes missing-reference loads by Session and effective repository root; one caller may return each missing instruction set while concurrent followers wait and recompute against the same loaded-reference cache. Do not weaken or summarize repository instructions, and do not let parallel engineering tools append duplicate copies.
+
 `working-set-projector.ts` is AgentExecutor's model-facing tool-evidence boundary. It must preserve exact in-run tool results: a later assistant message proves observation in one inference, not semantic consumption by future stateless inferences. Large results may be archived as exact sidecars for recovery and diagnostics, but archival must not replace provider-visible evidence with a receipt until an explicit semantic working-set contract can prove that evidence was superseded, deliberately released, or preserved in an adequate synthesis. Never persist a provider receipt in place of exact tool evidence, mutate saved history to relieve provider pressure, or add a second archive/retrieval system.
 
 Environment knobs:

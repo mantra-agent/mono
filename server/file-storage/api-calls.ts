@@ -130,6 +130,16 @@ export interface TokenUsageSummary {
   peakInputTokens: number;
 }
 
+export interface ApiCallListFilters {
+  runId?: string;
+  sessionId?: string;
+  sessionKey?: string;
+  profile?: string;
+  model?: string;
+  since?: Date;
+  before?: Date;
+}
+
 let writeQueue: Promise<void> = Promise.resolve();
 
 function enqueueWrite<T>(fn: () => Promise<T>): Promise<T> {
@@ -315,28 +325,47 @@ export class FileApiCallStorage {
     });
   }
 
-  async getApiCalls(limit = 50, offset = 0, since?: Date): Promise<ApiCall[]> {
-    const { query: baseQuery, params } = buildSinceQuery(
-      `SELECT id, timestamp, scope, owner_user_id, account_id, model, provider, profile, input_tokens, output_tokens,
+  async getApiCalls(
+    limit = 50,
+    offset = 0,
+    since?: Date,
+    filters: ApiCallListFilters = {},
+  ): Promise<ApiCall[]> {
+    const ownership = ownershipClause("api_calls");
+    const params: Array<Date | number | string> = [...ownership.params];
+    const conditions = [ownership.clause];
+    const addCondition = (condition: string, value: Date | number | string) => {
+      params.push(value);
+      conditions.push(condition.replace("$VALUE", "$" + params.length));
+    };
+    const effectiveSince = filters.since ?? since;
+    if (effectiveSince) addCondition("timestamp >= $VALUE", effectiveSince);
+    if (filters.before) addCondition("timestamp < $VALUE", filters.before);
+    if (filters.runId) addCondition("metadata->>'runId' = $VALUE", filters.runId);
+    if (filters.sessionId) addCondition("metadata->>'sessionId' = $VALUE", filters.sessionId);
+    if (filters.sessionKey) addCondition("session_key = $VALUE", filters.sessionKey);
+    if (filters.profile) addCondition("profile = $VALUE", filters.profile);
+    if (filters.model) addCondition("model = $VALUE", filters.model);
+
+    params.push(Math.max(1, Math.min(limit, 100_000)));
+    const limitIdx = params.length;
+    params.push(Math.max(0, Math.min(offset, 100_000)));
+    const offsetIdx = params.length;
+    const query = `SELECT id, timestamp, scope, owner_user_id, account_id, model, provider, profile, input_tokens, output_tokens,
         cache_read_tokens, cache_write_tokens, total_tokens, cost_input, cost_output, cost_total,
         session_key, session_id, duration_ms, stop_reason, metadata,
         ${captureIdProjection()} AS capture_id
-        FROM api_calls`,
-      since
-    );
-    params.push(limit);
-    const limitIdx = params.length;
-    params.push(offset);
-    const offsetIdx = params.length;
-    const query = `${baseQuery} ORDER BY timestamp DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+      FROM api_calls
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY timestamp DESC LIMIT ${"$"}${limitIdx} OFFSET ${"$"}${offsetIdx}`;
 
     const result = await pool.query<ApiCallRow>(query, params);
     const calls = result.rows.map(rowToApiCallLight);
-    log.log(`getApiCalls count=${calls.length} limit=${limit} offset=${offset}`);
+    log.debug(`getApiCalls count=${calls.length} limit=${limit} offset=${offset} filtered=${conditions.length > 1}`);
     return calls as ApiCall[];
   }
 
-  async getApiCall(id: number): Promise<ApiCall | undefined> {
+  async getApiCall(id: number, includeContent = true): Promise<ApiCall | undefined> {
     const ownership = ownershipClause("api_calls", 2);
     const result = await pool.query<ApiCallRow>(`
       SELECT api_calls.*,
@@ -351,11 +380,12 @@ export class FileApiCallStorage {
     log.log(`getApiCall id=${id} found`);
     const call = rowToApiCall(result.rows[0]);
 
-    // Try to fetch content from S3
-    const content = await this.fetchContentFromS3(id);
-    if (content) {
-      call.requestContent = content.requestContent;
-      call.responseContent = content.responseContent;
+    if (includeContent) {
+      const content = await this.fetchContentFromS3(id);
+      if (content) {
+        call.requestContent = content.requestContent;
+        call.responseContent = content.responseContent;
+      }
     }
 
     return call;
