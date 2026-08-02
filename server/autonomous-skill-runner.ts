@@ -948,12 +948,14 @@ export async function executeAutonomousSkillRun(
         await chatFileStorage.setErrorSeverity(sessionId, "warn").catch(() => undefined);
         await chatFileStorage.updateSessionStatus(sessionId, "failed");
       }
-      const yieldedRun = await storage.updateSkillRunStatus(sessionId, "yielded", result.durationMs, error).catch((e: unknown) => {
-        logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status to yielded: ${e instanceof Error ? e.message : String(e)}`);
-        return null;
-      });
-      if (!yieldedRun) {
-        throw new Error(`SkillRun yielded-state persistence failed for session ${sessionId}`);
+      if (!isSkillless) {
+        const yieldedRun = await storage.updateSkillRunStatus(sessionId, "yielded", result.durationMs, error).catch((e: unknown) => {
+          logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status to yielded: ${e instanceof Error ? e.message : String(e)}`);
+          return null;
+        });
+        if (!yieldedRun) {
+          throw new Error(`SkillRun yielded-state persistence failed for session ${sessionId}`);
+        }
       }
       if (options.parentSessionId) {
         const { onChildSessionCompleted } = await import("./sessions/child-block-lifecycle");
@@ -1041,12 +1043,14 @@ export async function executeAutonomousSkillRun(
           ? result.error || "executor_degraded"
           : `structural_requirements_failed: ${failedStructuralChecks.join(", ")}`
         : undefined;
-    const settledRun = await storage.updateSkillRunStatus(sessionId, runStatus, result.durationMs, terminalFailureReason).catch((e: unknown) => {
-      logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status: ${e instanceof Error ? e.message : String(e)}`);
-      return null;
-    });
-    if (!settledRun) {
-      throw new Error(`SkillRun terminal persistence failed for session ${sessionId}`);
+    if (!isSkillless) {
+      const settledRun = await storage.updateSkillRunStatus(sessionId, runStatus, result.durationMs, terminalFailureReason).catch((e: unknown) => {
+        logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status: ${e instanceof Error ? e.message : String(e)}`);
+        return null;
+      });
+      if (!settledRun) {
+        throw new Error(`SkillRun terminal persistence failed for session ${sessionId}`);
+      }
     }
     if (runStatus === "degraded") {
       if (await conversationExists(sessionId)) {
@@ -1135,10 +1139,12 @@ export async function executeAutonomousSkillRun(
       logger.warn(`[SkillChat] [${sessionId}] Session deleted mid-run — skipping post-crash writes`);
     }
 
-    await storage.updateSkillRunStatus(sessionId, "failed", durationMs, `${failureReason}: ${errMsg}`).catch((e: unknown) => {
-      logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status after crash: ${e instanceof Error ? e.message : String(e)}`);
-      return null;
-    });
+    if (!isSkillless) {
+      await storage.updateSkillRunStatus(sessionId, "failed", durationMs, `${failureReason}: ${errMsg}`).catch((e: unknown) => {
+        logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status after crash: ${e instanceof Error ? e.message : String(e)}`);
+        return null;
+      });
+    }
 
     eventBus.publish({
       category: "chat",
