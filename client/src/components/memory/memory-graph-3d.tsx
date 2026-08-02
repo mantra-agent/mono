@@ -58,6 +58,7 @@ interface MemoryGraph3DProps {
   highlightedNodeIds: ReadonlySet<number>;
   activityEnabled: boolean;
   settings: MemoryGraphSettings;
+  visibleNodeIds: ReadonlySet<number>;
   nodeDetail?: MemoryGraph3DNodeDetail | null;
   onNodeSelect: (nodeId: number) => void;
   onNodeHover: (nodeId: number | null) => void;
@@ -131,6 +132,7 @@ interface GraphRuntime {
   setActivityEnabled: (enabled: boolean) => void;
   setSelectedNodeId: (nodeId: number | null) => void;
   updateSettings: (settings: MemoryGraphSettings) => void;
+  updateVisibleNodeIds: (nodeIds: ReadonlySet<number>) => void;
 }
 
 const MAX_RENDERED_LINKS = 2_500;
@@ -183,7 +185,7 @@ const ACTIVITY_MAX_DESKTOP_PACKETS = 90;
 const ACTIVITY_MAX_MOBILE_PACKETS = 24;
 const ACTIVITY_MOBILE_BREAKPOINT_PX = 768;
 const ACTIVITY_BEAD_SPACING = 0.035;
-const ACTIVITY_BEAD_RADIUS = 1.1;
+const ACTIVITY_BEAD_BASE_RADIUS = 1.1;
 // Cold claims never disappear entirely: they hold a faint floor so the field keeps its ghosts.
 // Recency → opacity is a gentle high-ceiling curve. The most recent nodes/links
 // settle near the ceiling (deliberately below 1 so hover/selection still reads as
@@ -466,6 +468,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     highlightedNodeIds,
     activityEnabled,
     settings,
+    visibleNodeIds,
     nodeDetail,
     onNodeSelect,
     onNodeHover,
@@ -480,6 +483,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   nodeDetailRef.current = nodeDetail;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const visibleNodeIdsRef = useRef(visibleNodeIds);
+  visibleNodeIdsRef.current = visibleNodeIds;
   const runtimeRef = useRef<GraphRuntime | null>(null);
   const [focusNeighborhoodNodeIds, setFocusNeighborhoodNodeIds] = useState<number[]>([]);
   const selectedNodeIdRef = useRef(selectedNodeId);
@@ -497,12 +502,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
   const overlayNodes = useMemo(() => {
     const focusNeighborhood = new Set(focusNeighborhoodNodeIds);
-    return nodes.filter((node) => (
+    return nodes.filter((node) => visibleNodeIds.has(node.id) && (
       highlightedNodeIds.has(node.id)
       || focusNeighborhood.has(node.id)
       || selectedNodeId === node.id
     ));
-  }, [focusNeighborhoodNodeIds, highlightedNodeIds, nodes, selectedNodeId]);
+  }, [focusNeighborhoodNodeIds, highlightedNodeIds, nodes, selectedNodeId, visibleNodeIds]);
 
   useImperativeHandle(forwardedRef, () => ({
     zoomIn: () => {
@@ -523,7 +528,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     fitToView: () => {
       const runtime = runtimeRef.current;
       if (!runtime) return;
-      fitCamera(runtime.camera, runtime.controls, runtime.nodes);
+      fitCamera(
+        runtime.camera,
+        runtime.controls,
+        runtime.nodes.filter((node) => visibleNodeIdsRef.current.has(node.id)),
+      );
       runtime.requestRender();
     },
   }), []);
@@ -545,6 +554,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   }, [settings]);
 
   useEffect(() => {
+    runtimeRef.current?.updateVisibleNodeIds(visibleNodeIds);
+  }, [visibleNodeIds]);
+
+  useEffect(() => {
     runtimeRef.current?.requestRender();
   }, [nodeDetail, overlayNodes]);
 
@@ -554,6 +567,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     const effectStartedAt = performance.now();
     let activeSettings = settingsRef.current;
+    let activeVisibleNodeIds = new Set(visibleNodeIdsRef.current);
     const { sceneNodes, simulationLinks, renderedLinks, nodeIndex, adjacency } = buildSceneGraph(nodes, links, activeSettings);
     const sceneNodeById = new Map(sceneNodes.map((node) => [node.id, node]));
     const isLargeGraph = sceneNodes.length >= LARGE_GRAPH_THRESHOLD;
@@ -697,7 +711,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const maxActivityPackets = host.clientWidth < ACTIVITY_MOBILE_BREAKPOINT_PX
       ? ACTIVITY_MAX_MOBILE_PACKETS
       : ACTIVITY_MAX_DESKTOP_PACKETS;
-    const activityGeometry = new THREE.SphereGeometry(ACTIVITY_BEAD_RADIUS, 8, 8);
+    const activityGeometry = new THREE.SphereGeometry(ACTIVITY_BEAD_BASE_RADIUS, 8, 8);
     const activityMaterial = new THREE.MeshBasicMaterial({
       color: selectedColor,
       transparent: true,
@@ -724,7 +738,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const cameraSpace = new THREE.Vector3();
     const nodeInstanceOrder = sceneNodes.map((_, index) => index);
     const nodeDepths = new Float32Array(sceneNodes.length);
-    let selectedIndex = selectedNodeIdRef.current == null ? null : nodeIndex.get(selectedNodeIdRef.current) ?? null;
+    let selectedIndex = selectedNodeIdRef.current == null || !activeVisibleNodeIds.has(selectedNodeIdRef.current)
+      ? null
+      : nodeIndex.get(selectedNodeIdRef.current) ?? null;
     let hoveredIndex: number | null = null;
     let focusNeighborIndices = new Set<number>();
     let focusedSimulationLinks: SceneLink[] = [];
@@ -773,7 +789,16 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       return paths;
     });
 
+    function isNodeVisible(index: number): boolean {
+      return activeVisibleNodeIds.has(sceneNodes[index].id);
+    }
+
+    function isLinkVisible(link: SceneLink): boolean {
+      return isNodeVisible(link.fromIndex) && isNodeVisible(link.toIndex);
+    }
+
     function getNodeScale(index: number) {
+      if (!isNodeVisible(index)) return 0;
       const focusIndex = hoveredIndex ?? selectedIndex;
       if (hoveredIndex === index) return 1.28;
       if (selectedIndex === index) return 1.22;
@@ -813,6 +838,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     function sortNodeInstancesByDepth() {
       camera.updateMatrixWorld();
       sceneNodes.forEach((node, index) => {
+        if (!isNodeVisible(index)) {
+          nodeDepths[index] = Number.POSITIVE_INFINITY;
+          return;
+        }
         cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
         nodeDepths[index] = -cameraSpace.z;
       });
@@ -995,6 +1024,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const viewportHeight = Math.max(1, host.clientHeight);
       const pixelsPerRadian = viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
       sceneNodes.forEach((node, index) => {
+        if (!isNodeVisible(index)) {
+          nodeLinkVisibility[index] = 0;
+          return;
+        }
         cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
         const depth = -cameraSpace.z;
         const projectedRadius = depth > 0 ? node.radius * pixelsPerRadian / depth : 0;
@@ -1011,12 +1044,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       });
 
       renderedLinks.forEach((link, linkIndex) => {
-        const focused = focusIndex != null && focusedRenderedLinkIndices.has(linkIndex);
+        const layerVisible = isLinkVisible(link);
+        const focused = layerVisible && focusIndex != null && focusedRenderedLinkIndices.has(linkIndex);
         const focusDim = focusIndex != null && !focused ? 0.42 : 1;
         // The focused overlay owns incident edges. Suppress their straight base pass
         // so two translucent lines never add into a bright seam at either node.
         const basePassVisibility = focused ? 0 : 1;
-        const edgeBrightness = linkBrightness[linkIndex] * focusDim * basePassVisibility;
+        const edgeBrightness = layerVisible
+          ? linkBrightness[linkIndex] * focusDim * basePassVisibility
+          : 0;
         visibleLinkBrightnessFrom[linkIndex] = edgeBrightness * nodeLinkVisibility[link.fromIndex];
         visibleLinkBrightnessTo[linkIndex] = edgeBrightness * nodeLinkVisibility[link.toIndex];
       });
@@ -1040,6 +1076,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     function syncNodeAppearance() {
       const focusIndex = hoveredIndex ?? selectedIndex;
       sceneNodes.forEach((node, index) => {
+        if (!isNodeVisible(index)) {
+          nodeEmphasis[index] = 0;
+          nodeVisibility[index] = 0;
+          nodeBaseColors[index].toArray(nodeTints, index * 3);
+          return;
+        }
         const isSelected = selectedIndex === index;
         const isFocus = focusIndex === index;
         const neighbor = focusNeighborIndices.has(index);
@@ -1069,7 +1111,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       return new Set(
         [...neighborNodeIds].flatMap((nodeId): number[] => {
           const neighborIndex = nodeIndex.get(nodeId);
-          return neighborIndex == null ? [] : [neighborIndex];
+          return neighborIndex == null || !isNodeVisible(neighborIndex) ? [] : [neighborIndex];
         }),
       );
     }
@@ -1082,12 +1124,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const focusIndex = hoveredIndex ?? selectedIndex;
       const focusNode = focusIndex == null ? null : sceneNodes[focusIndex];
       focusNeighborIndices = neighborIndicesOf(focusIndex);
-      focusedSimulationLinks = focusNode == null
+      focusedSimulationLinks = focusNode == null || focusIndex == null || !isNodeVisible(focusIndex)
         ? []
-        : adjacency.simulationLinksByNodeId.get(focusNode.id) ?? [];
-      focusedRenderedLinkIndices = focusNode == null
+        : (adjacency.simulationLinksByNodeId.get(focusNode.id) ?? []).filter(isLinkVisible);
+      focusedRenderedLinkIndices = focusNode == null || focusIndex == null || !isNodeVisible(focusIndex)
         ? new Set<number>()
-        : new Set(adjacency.renderedLinkIndicesByNodeId.get(focusNode.id) ?? []);
+        : new Set(
+          [...(adjacency.renderedLinkIndicesByNodeId.get(focusNode.id) ?? [])]
+            .filter((linkIndex) => isLinkVisible(renderedLinks[linkIndex])),
+        );
       const neighborNodeIds = [...focusNeighborIndices].map((index) => sceneNodes[index].id);
       setFocusNeighborhoodNodeIds(focusNode == null ? [] : [focusNode.id, ...neighborNodeIds]);
       syncNodeAppearance();
@@ -1096,6 +1141,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     // Frame the selected node together with its one-hop neighborhood (item 2).
     function fitCameraToIndex(index: number) {
+      if (!isNodeVisible(index)) return;
       const subset = [sceneNodes[index], ...[...neighborIndicesOf(index)].map((neighborIndex) => sceneNodes[neighborIndex])];
       fitCamera(camera, controls, subset);
     }
@@ -1105,7 +1151,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const detail = nodeDetailRef.current;
       if (!element || !detail) return;
       const node = sceneNodeById.get(detail.nodeId);
-      if (!node) {
+      if (!node || !activeVisibleNodeIds.has(node.id)) {
         element.style.display = "none";
         return;
       }
@@ -1135,7 +1181,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const projectedLabels: ProjectedLabel[] = [];
       labelRefs.current.forEach((element, nodeId) => {
         const node = sceneNodeById.get(nodeId);
-        if (!node) return;
+        if (!node || !activeVisibleNodeIds.has(node.id)) {
+          if (element) element.style.display = "none";
+          return;
+        }
         projected.set(node.x, node.y, node.z).project(camera);
         const visible = projected.z > -1 && projected.z < 1 && Math.abs(projected.x) < 1.02 && Math.abs(projected.y) < 1.02;
         if (!visible) {
@@ -1179,7 +1228,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       // activity keeps flowing while a node is hovered or selected.
       return activityIsEnabled
         && !document.hidden
-        && activityPaths.length > 0;
+        && activityPaths.some((path) => isNodeVisible(path.sourceIndex) && isNodeVisible(path.destinationIndex));
     }
 
     function clearActivityVisuals() {
@@ -1202,6 +1251,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       // beads at once, which is what makes busy regions read as concentrated.
       // Its short cooldown still spaces re-selection so it never floods every tick.
       return activityPaths.filter((path) => {
+        if (!isNodeVisible(path.sourceIndex) || !isNodeVisible(path.destinationIndex)) return false;
         const heat = THREE.MathUtils.smoothstep(path.destinationRecency, ACTIVITY_RECENCY_THRESHOLD, 1);
         const cooldown = THREE.MathUtils.lerp(
           ACTIVITY_MAX_NODE_COOLDOWN_MS,
@@ -1270,7 +1320,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           renderedLinkPaths[packet.linkIndex],
           forward ? progress : 1 - progress,
         );
-        const arrivalRadius = destination.radius + ACTIVITY_BEAD_RADIUS;
+        const arrivalRadius = destination.radius + ACTIVITY_BEAD_BASE_RADIUS * activeSettings.pulseSize;
         const hasReachedDestination = progress >= 1
           || activityPoint.distanceToSquared(destination) <= arrivalRadius * arrivalRadius;
         if (hasReachedDestination) {
@@ -1291,7 +1341,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
             forward ? beadProgress : 1 - beadProgress,
           );
           transform.position.copy(activityPoint);
-          transform.scale.setScalar(1 - bead * 0.12);
+          transform.scale.setScalar(activeSettings.pulseSize * (1 - bead * 0.12));
           transform.updateMatrix();
           activityMesh.setMatrixAt(beadInstance, transform.matrix);
           beadInstance += 1;
@@ -1377,7 +1427,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function setSelectedNodeId(nextNodeId: number | null) {
-      selectedIndex = nextNodeId == null ? null : nodeIndex.get(nextNodeId) ?? null;
+      const nextIndex = nextNodeId == null ? null : nodeIndex.get(nextNodeId) ?? null;
+      selectedIndex = nextIndex != null && isNodeVisible(nextIndex) ? nextIndex : null;
       syncFocusNeighborhood();
       if (selectedIndex != null) fitCameraToIndex(selectedIndex);
       requestRender();
@@ -1403,6 +1454,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       let nearestDepth = Number.POSITIVE_INFINITY;
 
       sceneNodes.forEach((node, index) => {
+        if (!isNodeVisible(index)) return;
         cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
         const depth = -cameraSpace.z;
         if (depth <= 0) return;
@@ -1426,7 +1478,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       pointer.y = -((pendingPointer.y - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const renderSlot = raycaster.intersectObject(nodeMesh, false)[0]?.instanceId ?? null;
-      const exactIndex = renderSlot == null ? null : nodeInstanceOrder[renderSlot] ?? null;
+      const candidateIndex = renderSlot == null ? null : nodeInstanceOrder[renderSlot] ?? null;
+      const exactIndex = candidateIndex != null && isNodeVisible(candidateIndex) ? candidateIndex : null;
       return exactIndex ?? pickProjectedNode(rect);
     }
 
@@ -1631,6 +1684,45 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
     restartLayoutFromCurrentPositions();
 
+    function updateVisibleNodeIds(nextVisibleNodeIds: ReadonlySet<number>) {
+      activeVisibleNodeIds = new Set(nextVisibleNodeIds);
+
+      if (hoveredIndex != null && !isNodeVisible(hoveredIndex)) {
+        hoveredIndex = null;
+        onNodeHoverRef.current(null);
+      }
+      if (selectedIndex != null && !isNodeVisible(selectedIndex)) selectedIndex = null;
+
+      for (let packetIndex = activePackets.length - 1; packetIndex >= 0; packetIndex -= 1) {
+        const packet = activePackets[packetIndex];
+        if (!isNodeVisible(packet.sourceIndex) || !isNodeVisible(packet.destinationIndex)) {
+          activePackets.splice(packetIndex, 1);
+        }
+      }
+      for (let impactIndex = activeImpacts.length - 1; impactIndex >= 0; impactIndex -= 1) {
+        if (!isNodeVisible(activeImpacts[impactIndex].nodeIndex)) activeImpacts.splice(impactIndex, 1);
+      }
+      sceneNodes.forEach((_node, index) => {
+        if (isNodeVisible(index)) return;
+        nodeAfterglow[index] = 0;
+        nodeImpact[index] = 0;
+        lastPulseAtByNodeIndex.delete(index);
+      });
+      renderedLinks.forEach((link, linkIndex) => {
+        if (!isLinkVisible(link)) linkAfterglow[linkIndex] = 0;
+      });
+      activityMesh.count = 0;
+
+      nodeDepthOrderDirty = true;
+      syncFocusNeighborhood();
+      sortNodeInstancesByDepth();
+      syncLinkVisibility();
+      syncLabels();
+      syncNodeImpactAttribute();
+      syncActivityRunState();
+      requestRender();
+    }
+
     function updateSettings(nextSettings: MemoryGraphSettings) {
       const previousSettings = activeSettings;
       activeSettings = nextSettings;
@@ -1705,7 +1797,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     resize();
-    fitCamera(camera, controls, sceneNodes);
+    fitCamera(
+      camera,
+      controls,
+      sceneNodes.filter((_node, index) => isNodeVisible(index)),
+    );
     sortNodeInstancesByDepth();
     syncLinkPositions();
     syncFocusNeighborhood();
@@ -1737,8 +1833,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       setActivityEnabled,
       setSelectedNodeId,
       updateSettings,
+      updateVisibleNodeIds,
     };
     updateSettings(settingsRef.current);
+    updateVisibleNodeIds(visibleNodeIdsRef.current);
     requestRender();
     if (activityIsEnabled && activityTimer === null) scheduleNextActivity(600);
 
