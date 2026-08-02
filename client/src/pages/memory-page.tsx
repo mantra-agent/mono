@@ -1756,21 +1756,19 @@ function GraphTab({
               className="w-[min(22rem,calc(100vw-1rem))] border-card-border bg-popover p-3"
               data-testid="memory-graph-mixer"
             >
-              <div className="space-y-4" role="group" aria-label="Memory Graph appearance">
+              <div className="space-y-2" role="group" aria-label="Memory Graph appearance">
                 {MEMORY_GRAPH_SETTING_DEFINITIONS.map((definition) => (
-                  <div key={definition.key} className="space-y-2">
-                    <div className="flex items-center gap-3 text-sm">
-                      <Label htmlFor={`memory-graph-setting-${definition.key}`} className="min-w-0 flex-1">
-                        {definition.label}
-                      </Label>
-                      <output
-                        htmlFor={`memory-graph-setting-${definition.key}`}
-                        className="w-14 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground"
-                        data-testid={`memory-graph-setting-value-${definition.key}`}
-                      >
-                        {formatMemoryGraphSettingValue(definition.key, graphSettings[definition.key])}
-                      </output>
-                    </div>
+                  <div
+                    key={definition.key}
+                    className="grid grid-cols-[minmax(0,1fr)_minmax(6rem,1.2fr)_3rem] items-center gap-2"
+                  >
+                    <Label
+                      htmlFor={`memory-graph-setting-${definition.key}`}
+                      className="min-w-0 truncate text-sm"
+                      title={definition.label}
+                    >
+                      {definition.label}
+                    </Label>
                     <Slider
                       id={`memory-graph-setting-${definition.key}`}
                       min={definition.min}
@@ -1787,6 +1785,13 @@ function GraphTab({
                       aria-label={definition.label}
                       data-testid={`memory-graph-setting-${definition.key}`}
                     />
+                    <output
+                      htmlFor={`memory-graph-setting-${definition.key}`}
+                      className="text-right font-mono text-xs tabular-nums text-muted-foreground"
+                      data-testid={`memory-graph-setting-value-${definition.key}`}
+                    >
+                      {formatMemoryGraphSettingValue(definition.key, graphSettings[definition.key])}
+                    </output>
                   </div>
                 ))}
               </div>

@@ -129,7 +129,6 @@ interface GraphRuntime {
   setSelectedNodeId: (nodeId: number | null) => void;
 }
 
-const CURVE_SEGMENTS = 3;
 const MAX_RENDERED_LINKS = 2_500;
 const LARGE_GRAPH_THRESHOLD = 1_000;
 const LABEL_POSITION_TICKS = 4;
@@ -241,6 +240,7 @@ const nodeVertexShader = `
 
 const nodeFragmentShader = `
   uniform float uNodeBrightness;
+  uniform float uPulseBrightness;
   varying vec3 vNormal;
   varying vec3 vViewDirection;
   varying vec3 vTint;
@@ -252,13 +252,14 @@ const nodeFragmentShader = `
     float facing = abs(dot(normalize(vNormal), normalize(vViewDirection)));
     float edge = 1.0 - facing;
     float pulse = clamp(vImpact, 0.0, 1.0);
-    float rampExponent = mix(1.6, 0.0, pulse);
+    float pulseIllumination = pulse * uPulseBrightness;
+    float rampExponent = mix(1.6, 0.0, clamp(pulseIllumination, 0.0, 1.0));
     float luminanceRamp = pow(max(edge, 0.0001), rampExponent);
     float emphasis = 1.0 + vEmphasis * 0.5;
-    float pulseBrightness = 1.0 + pulse * 0.85;
+    float pulseGain = 1.0 + pulseIllumination * 0.85;
     vec3 pulseTint = mix(vTint, vec3(1.0), pulse);
-    vec3 nodeColor = pulseTint * luminanceRamp * emphasis * pulseBrightness;
-    float nodeAlpha = mix(vVisibility, 1.0, pulse);
+    vec3 nodeColor = pulseTint * luminanceRamp * emphasis * pulseGain;
+    float nodeAlpha = mix(vVisibility, 1.0, clamp(pulseIllumination, 0.0, 1.0));
     gl_FragColor = vec4(nodeColor * uNodeBrightness, nodeAlpha);
   }
 `;
@@ -595,6 +596,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       fragmentShader: nodeFragmentShader,
       uniforms: {
         uNodeBrightness: { value: settings.nodeBrightnessFactor },
+        uPulseBrightness: { value: settings.pulseBrightness },
       },
       transparent: true,
       depthWrite: true,
@@ -606,14 +608,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     nodeMesh.frustumCulled = false;
     scene.add(nodeMesh);
 
-    const linkPositions = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
-    const linkColors = new Float32Array(renderedLinks.length * CURVE_SEGMENTS * 6);
+    const curveSegments = settings.linkComplexity;
+    const linkPositions = new Float32Array(renderedLinks.length * curveSegments * 6);
+    const linkColors = new Float32Array(renderedLinks.length * curveSegments * 6);
     const focusedLinkCapacity = Math.max(
       0,
       ...[...adjacency.simulationLinksByNodeId.values()].map((incidentLinks) => incidentLinks.length),
     );
-    const focusedLinkPositions = new Float32Array(focusedLinkCapacity * CURVE_SEGMENTS * 6);
-    const focusedLinkColors = new Float32Array(focusedLinkCapacity * CURVE_SEGMENTS * 6);
+    const focusedLinkPositions = new Float32Array(focusedLinkCapacity * curveSegments * 6);
+    const focusedLinkColors = new Float32Array(focusedLinkCapacity * curveSegments * 6);
     const linkBrightness = new Float32Array(renderedLinks.length);
     const visibleLinkBrightnessFrom = new Float32Array(renderedLinks.length);
     const visibleLinkBrightnessTo = new Float32Array(renderedLinks.length);
@@ -695,6 +698,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let focusedRenderedLinkIndices = new Set<number>();
     let pointerDown = { x: 0, y: 0 };
     let pendingPointer = { x: 0, y: 0 };
+    let cameraInteractionActive = false;
     let renderFrame = 0;
     let pointerFrame = 0;
     let activityFrame = 0;
@@ -799,10 +803,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         path.toY = toY;
         path.toZ = toZ;
       }
-      for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
-        const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
-        writeQuadraticPoint(positions, offset, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, segment / CURVE_SEGMENTS);
-        writeQuadraticPoint(positions, offset + 3, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, (segment + 1) / CURVE_SEGMENTS);
+      for (let segment = 0; segment < curveSegments; segment += 1) {
+        const offset = (linkIndex * curveSegments + segment) * 6;
+        writeQuadraticPoint(positions, offset, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, segment / curveSegments);
+        writeQuadraticPoint(positions, offset + 3, fromX, fromY, fromZ, controlX, controlY, controlZ, toX, toY, toZ, (segment + 1) / curveSegments);
       }
     }
 
@@ -827,10 +831,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const toVisibility = nodeLinkVisibility[link.toIndex];
         const fromColor = nodeBaseColors[link.fromIndex];
         const toColor = nodeBaseColors[link.toIndex];
-        for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
-          const focusedOffset = (focusedLinkIndex * CURVE_SEGMENTS + segment) * 6;
-          const fromProgress = segment / CURVE_SEGMENTS;
-          const toProgress = (segment + 1) / CURVE_SEGMENTS;
+        for (let segment = 0; segment < curveSegments; segment += 1) {
+          const focusedOffset = (focusedLinkIndex * curveSegments + segment) * 6;
+          const fromProgress = segment / curveSegments;
+          const toProgress = (segment + 1) / curveSegments;
           restingLinkColor.copy(fromColor).lerp(toColor, fromProgress);
           restingLinkColor.multiplyScalar(
             focusedBrightness * THREE.MathUtils.lerp(fromVisibility, toVisibility, fromProgress),
@@ -843,7 +847,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           restingLinkColor.toArray(focusedLinkColors, focusedOffset + 3);
         }
       });
-      focusedLinkGeometry.instanceCount = focusedSimulationLinks.length * CURVE_SEGMENTS;
+      focusedLinkGeometry.instanceCount = focusedSimulationLinks.length * curveSegments;
       focusedLinkLines.visible = focusedSimulationLinks.length > 0;
       const focusedInstanceStart = focusedLinkGeometry.getAttribute("instanceStart");
       if (focusedInstanceStart && "data" in focusedInstanceStart) {
@@ -860,10 +864,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const energy = linkAfterglow[linkIndex];
         const activityMultiplier = 1 + energy * ACTIVITY_LINK_LUMINANCE_RESPONSE;
         const restingColors = restingLinkColors[linkIndex];
-        for (let segment = 0; segment < CURVE_SEGMENTS; segment += 1) {
-          const offset = (linkIndex * CURVE_SEGMENTS + segment) * 6;
-          const fromProgress = segment / CURVE_SEGMENTS;
-          const toProgress = (segment + 1) / CURVE_SEGMENTS;
+        for (let segment = 0; segment < curveSegments; segment += 1) {
+          const offset = (linkIndex * curveSegments + segment) * 6;
+          const fromProgress = segment / curveSegments;
+          const toProgress = (segment + 1) / curveSegments;
           const fromBrightness = Math.min(
             ACTIVITY_LINK_MAX_LUMINANCE * settings.linkBrightnessFactor,
             THREE.MathUtils.lerp(
@@ -1324,6 +1328,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function pickNode() {
       pointerFrame = 0;
+      if (cameraInteractionActive) return;
       const rect = renderer.domElement.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return;
       const nextHoveredIndex = resolvePickedIndex(rect);
@@ -1337,7 +1342,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function handlePointerMove(event: PointerEvent) {
       pendingPointer = { x: event.clientX, y: event.clientY };
-      if (pointerFrame === 0) pointerFrame = requestAnimationFrame(pickNode);
+      if (!cameraInteractionActive && pointerFrame === 0) pointerFrame = requestAnimationFrame(pickNode);
     }
 
     function handlePointerDown(event: PointerEvent) {
@@ -1483,14 +1488,33 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       startMainThreadSimulation();
     }
 
+    function handleControlsStart() {
+      cameraInteractionActive = true;
+      if (pointerFrame !== 0) cancelAnimationFrame(pointerFrame);
+      pointerFrame = 0;
+      if (hoveredIndex !== null) {
+        hoveredIndex = null;
+        syncFocusNeighborhood();
+        onNodeHoverRef.current(null);
+      }
+      renderer.domElement.style.cursor = "grabbing";
+    }
+
     function handleControlsChange() {
       syncCameraClippingPlanes(camera, controls.target);
       requestRender();
     }
 
+    function handleControlsEnd() {
+      cameraInteractionActive = false;
+      renderer.domElement.style.cursor = "grab";
+    }
+
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(host);
+    controls.addEventListener("start", handleControlsStart);
     controls.addEventListener("change", handleControlsChange);
+    controls.addEventListener("end", handleControlsEnd);
     renderer.domElement.addEventListener("pointermove", handlePointerMove);
     renderer.domElement.addEventListener("pointerdown", handlePointerDown);
     renderer.domElement.addEventListener("pointerup", handlePointerUp);
@@ -1548,7 +1572,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       if (activityTimer !== null) clearTimeout(activityTimer);
       runtimeRef.current = null;
       resizeObserver.disconnect();
+      controls.removeEventListener("start", handleControlsStart);
       controls.removeEventListener("change", handleControlsChange);
+      controls.removeEventListener("end", handleControlsEnd);
       controls.dispose();
       renderer.domElement.removeEventListener("pointermove", handlePointerMove);
       renderer.domElement.removeEventListener("pointerdown", handlePointerDown);
