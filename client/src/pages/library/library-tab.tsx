@@ -16,7 +16,9 @@ import type { LibraryPage, LibraryPageFull, TreeNode, DropPosition } from "./typ
 import { LibraryPageEditor, EmptyLibraryState, TrashSection, MovePageDialog, PageEmoji } from "./library-components";
 import { flattenTree, DndTree } from "./library-tree";
 import { useVaultSections } from "./use-vault-sections";
-import type { Vault } from "@/hooks/use-vaults";
+import { useVaults, type Vault } from "@/hooks/use-vaults";
+import { MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
+import { libraryPageTitleColor, type LibraryPageTitleColorResolver } from "./library-title-color";
 import { useLibraryUnread, computeHasUnreadDescendantIds } from "@/components/library-activity-indicator";
 import { HierarchySectionHeader, HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-header";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -135,6 +137,7 @@ interface VaultTreeSectionProps {
   toggleExpand: (id: string) => void;
   unreadIds: Set<string>;
   hasUnreadDescendantIds: Set<string>;
+  resolveTitleColor: LibraryPageTitleColorResolver;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAddPage: () => void;
@@ -149,7 +152,7 @@ interface VaultTreeSectionProps {
 function VaultTreeSection({
   vault, rootNodes, selectedId, expandedIds,
   onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, onReorder, toggleExpand,
-  unreadIds, hasUnreadDescendantIds,
+  unreadIds, hasUnreadDescendantIds, resolveTitleColor,
   open, onOpenChange, onAddPage,
 }: VaultTreeSectionProps) {
   const [dragActiveId, setDragActiveId] = useState<string | null>(null);
@@ -190,6 +193,7 @@ function VaultTreeSection({
             toggleExpand={toggleExpand}
             unreadIds={unreadIds}
             hasUnreadDescendantIds={hasUnreadDescendantIds}
+            resolveTitleColor={resolveTitleColor}
           />
         )}
       </CollapsibleContent>
@@ -227,6 +231,13 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
     return DEFAULT_SIDEBAR_WIDTH;
   });
   const isResizing = useRef(false);
+  const { vaults, activeVaultId } = useVaults();
+  const vaultById = useMemo(() => new Map(vaults.map((vault) => [vault.id, vault])), [vaults]);
+  const defaultVaultId = useMemo(() => vaults.find((vault) => vault.isDefault)?.id ?? null, [vaults]);
+  const resolveTitleColor = useCallback<LibraryPageTitleColorResolver>(
+    (page, alpha) => libraryPageTitleColor(page, defaultVaultId, vaultById, activeVaultId, alpha),
+    [activeVaultId, defaultVaultId, vaultById],
+  );
 
   const { data: pages = [] } = useQuery<LibraryPage[]>({
     queryKey: ["/api/info/library"],
@@ -660,7 +671,10 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                   {recent.length === 0 ? (
                     <div className={QUIET_ROW_CLASS}>Nothing recent yet.</div>
                   ) : (
-                    recent.map((p) => (
+                    recent.map((p) => {
+                      const titleColor = resolveTitleColor(p, MUTED_TITLE_ALPHA);
+                      const titleStyle = titleColor ? { color: titleColor } : undefined;
+                      return (
                       <button
                         key={p.id}
                         type="button"
@@ -671,10 +685,11 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                         )}
                         data-testid={`library-recent-${p.id}`}
                       >
-                        <PageEmoji emoji={p.emoji} size="xs" />
-                        <span className="min-w-0 flex-1 truncate text-left">{p.title || "Untitled"}</span>
+                        <span style={titleStyle}><PageEmoji emoji={p.emoji} size="xs" /></span>
+                        <span className="min-w-0 flex-1 truncate text-left" style={titleStyle}>{p.title || "Untitled"}</span>
                       </button>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               )}
@@ -703,6 +718,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                       toggleExpand={toggleExpand}
                       unreadIds={unreadIds}
                       hasUnreadDescendantIds={hasUnreadDescendantIds}
+                      resolveTitleColor={resolveTitleColor}
                       open={isSearching ? true : !collapsedVaultIds.has(section.vault.id)}
                       onOpenChange={(next) => setVaultOpen(section.vault.id, next)}
                       onAddPage={() => {
@@ -747,12 +763,14 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                   toggleExpand={toggleExpand}
                   unreadIds={unreadIds}
                   hasUnreadDescendantIds={hasUnreadDescendantIds}
+                  resolveTitleColor={resolveTitleColor}
                 />
               )}
             </>
           )}
           <TrashSection
             trashedPages={trashedPages}
+            resolveTitleColor={resolveTitleColor}
             open={trashOpen}
             onOpenChange={setTrashOpen}
             onRestore={handleRestore}
@@ -787,6 +805,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
               onTogglePin={handleTogglePin}
               onDiscuss={discussPage}
               discussPending={discussMutation.isPending && discussMutation.variables?.id === selectedPageFull.id}
+              resolveTitleColor={resolveTitleColor}
               onDeleteRequest={(id) => deleteMutation.mutate(id)}
             />
           )
@@ -805,6 +824,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
             onOpenChange={(open) => { if (!open) setTreeMoveId(null); }}
             page={movePage}
             pages={pages}
+            resolveTitleColor={resolveTitleColor}
           />
         );
       })()}

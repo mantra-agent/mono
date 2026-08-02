@@ -17,6 +17,8 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { LibraryPage, TreeNode, FlatNode, DropPosition } from "./types";
 import { PageEmoji } from "./library-components";
+import type { LibraryPageTitleColorResolver } from "./library-title-color";
+import { MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 
 const MAX_INDENT_PX = 96;
 const INDENT_STEP_PX = 16;
@@ -53,7 +55,7 @@ export function isDescendant(tree: TreeNode[], parentId: string, childId: string
   return check(parent.children);
 }
 
-export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, dropTarget, expandedSet, toggleExpand, unreadIds, hasUnreadDescendantIds }: {
+export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, dropTarget, expandedSet, toggleExpand, unreadIds, hasUnreadDescendantIds, resolveTitleColor }: {
   flatNode: FlatNode;
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -71,6 +73,7 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
   toggleExpand: (id: string) => void;
   unreadIds?: Set<string>;
   hasUnreadDescendantIds?: Set<string>;
+  resolveTitleColor: LibraryPageTitleColorResolver;
 }) {
   const { node, depth } = flatNode;
   const [iconHovered, setIconHovered] = useState(false);
@@ -98,6 +101,8 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
   const isSelected = selectedId === node.id;
   const isUnread = unreadIds?.has(node.id) ?? false;
   const hasUnreadDescendant = !isUnread && (hasUnreadDescendantIds?.has(node.id) ?? false);
+  const titleColor = resolveTitleColor(node, isUnread ? 1 : MUTED_TITLE_ALPHA);
+  const titleStyle = titleColor ? { color: titleColor } : undefined;
   const indentPx = Math.min(depth * INDENT_STEP_PX, MAX_INDENT_PX);
   const pageTooltip = node.oneLiner || node.summary || undefined;
   const isPinned = !!node.isPinned;
@@ -165,14 +170,19 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
                         data-testid={`icon-library-pin-${node.id}`}
                       />
                     ) : (
-                      <PageEmoji emoji={node.emoji} size="xs" />
+                      <span style={titleStyle}>
+                        <PageEmoji emoji={node.emoji} size="xs" />
+                      </span>
                     )}
                   </span>
-                  <span className={cn(
-                    "min-w-0 flex-1 truncate pr-6 text-sm",
-                    isUnread ? "font-medium text-foreground" : "font-normal",
-                    hasUnreadDescendant && "font-medium text-muted-foreground",
-                  )}>
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate pr-6 text-sm",
+                      isUnread ? "font-medium text-foreground" : "font-normal",
+                      hasUnreadDescendant && "font-medium text-muted-foreground",
+                    )}
+                    style={titleStyle}
+                  >
                     {node.title || "Untitled"}
                   </span>
                   {node.scope === "shared" && (
@@ -285,11 +295,13 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
   );
 }
 
-function DragOverlayContent({ node }: { node: TreeNode }) {
+function DragOverlayContent({ node, resolveTitleColor }: { node: TreeNode; resolveTitleColor: LibraryPageTitleColorResolver }) {
+  const titleColor = resolveTitleColor(node, 1);
+  const titleStyle = titleColor ? { color: titleColor } : undefined;
   return (
     <div className="flex items-center gap-2 rounded-md border border-border bg-popover px-3 py-1.5 text-sm text-foreground shadow-sm">
-      <PageEmoji emoji={node.emoji} size="xs" />
-      <span className="truncate">{node.title || "Untitled"}</span>
+      <span style={titleStyle}><PageEmoji emoji={node.emoji} size="xs" /></span>
+      <span className="truncate" style={titleStyle}>{node.title || "Untitled"}</span>
     </div>
   );
 }
@@ -319,6 +331,7 @@ interface DndTreeProps {
   toggleExpand: (id: string) => void;
   unreadIds?: Set<string>;
   hasUnreadDescendantIds?: Set<string>;
+  resolveTitleColor: LibraryPageTitleColorResolver;
 }
 
 export function DndTree({
@@ -328,6 +341,7 @@ export function DndTree({
   onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, onReorder, toggleExpand,
   unreadIds,
   hasUnreadDescendantIds,
+  resolveTitleColor,
 }: DndTreeProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -446,11 +460,12 @@ export function DndTree({
             toggleExpand={toggleExpand}
             unreadIds={unreadIds}
             hasUnreadDescendantIds={hasUnreadDescendantIds}
+            resolveTitleColor={resolveTitleColor}
           />
         ))}
       </SortableContext>
       <DragOverlay>
-        {draggedNode ? <DragOverlayContent node={draggedNode} /> : null}
+        {draggedNode ? <DragOverlayContent node={draggedNode} resolveTitleColor={resolveTitleColor} /> : null}
       </DragOverlay>
     </DndContext>
     </div>
