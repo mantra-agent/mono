@@ -578,8 +578,8 @@ const FOCUS_TRACE_BACK_RECIPES: Record<string, FocusTraceBackRecipe> = {
     route: (id) => `/strategy/${id}`,
   },
   issue: {
-    tool: "system",
-    example: "system action=get_issue id=<id>",
+    tool: "issues",
+    example: "issues action=get id=<id>",
     route: (id) => `/issues/${id}`,
   },
   note: {

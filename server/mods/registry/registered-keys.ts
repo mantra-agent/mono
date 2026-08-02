@@ -57,7 +57,6 @@ export const REGISTERED_SURFACE_KEYS = [
   "zero",
   "interface-preview",
   "dev-orb",
-  "debug-toast",
   "library",
   "audiences",
   "campaigns",

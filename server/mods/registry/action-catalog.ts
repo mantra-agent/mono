@@ -10,7 +10,7 @@
 
 import type { ActionContribution, PermissionKey } from "@shared/models/mod-registry";
 
-type Owner = "core" | "planning" | "building" | "business" | "coaching" | "wellness" | "network" | "finance";
+type Owner = "core" | "planning" | "build" | "business" | "coaching" | "wellness" | "network" | "finance";
 
 interface ActionRow {
   slug: string;
@@ -66,12 +66,11 @@ const ACTION_ROWS: ActionRow[] = [
   { slug: "business-model", owner: "business", routeId: "business.route.business-model", permission: "system:read" },
   { slug: "advantage", owner: "business", routeId: "business.route.advantage" },
   { slug: "roles", owner: "business", routeId: "business.route.job-roles", permission: "system:read" },
-  { slug: "platforms", owner: "building", routeId: "building.route.platforms", permission: "build:read" },
-  { slug: "design", owner: "building", routeId: "building.route.design", permission: "build:read" },
-  { slug: "toast", owner: "building", routeId: "building.route.debug-toast", permission: "build:read" },
-  { slug: "database", owner: "building", routeId: "building.route.database", permission: "build:read" },
-  { slug: "issues", owner: "building", routeId: "building.route.build", permission: "build:read" },
-  { slug: "prompts", owner: "building", routeId: "building.route.build", permission: "build:read" },
+  { slug: "platforms", owner: "build", routeId: "build.route.platforms", permission: "build:read" },
+  { slug: "design", owner: "build", routeId: "build.route.design", permission: "build:read" },
+  { slug: "database", owner: "build", routeId: "build.route.database", permission: "build:read" },
+  { slug: "issues", owner: "build", routeId: "build.route.build", permission: "build:read" },
+  { slug: "prompts", owner: "core", routeId: "core.route.system", permission: "build:read" },
 ];
 
 function slugToLabel(slug: string): string {

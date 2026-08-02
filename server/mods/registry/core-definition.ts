@@ -89,6 +89,7 @@ export const coreDefinition: CoreDefinition = {
       nav("core.nav.logs", "System", "Logs", "ScrollText", "core.route.system", 2, { requiredPermissions: ["system:read"] }),
       nav("core.nav.events", "System", "Events", "Zap", "core.route.system", 3, { requiredPermissions: ["system:read"] }),
       nav("core.nav.tools", "System", "Tools", "Wrench", "core.route.system", 4, { requiredPermissions: ["system:read"] }),
+      nav("core.nav.prompts", "System", "Prompts", "FileText", "core.route.system", 5, { requiredPermissions: ["build:read"] }),
       nav("core.nav.context", "System", "Context", "BrainCircuit", "core.route.brain", 6),
       nav("core.nav.router", "System", "Router", "Brain", "core.route.system", 7, { requiredPermissions: ["system:read"] }),
       nav("core.nav.models", "System", "Models", "SlidersHorizontal", "core.route.brain", 8),

@@ -118,6 +118,32 @@ export async function ensureModPlatformSchema(pool: Pool): Promise<void> {
       ON mod_installation_resources(scope, owner_user_id, account_id)
     `);
 
+    // ── Durable Mod-key migration: building → build (idempotent, guarded) ─────
+    // The Building Mod was renamed to Build. Move any account entitlement /
+    // installation rows keyed on the retired 'building' key to 'build'. The
+    // NOT EXISTS guard prevents a unique-constraint conflict if a 'build' row
+    // already exists for the same account. installation_resources follow via
+    // their installation_id FK and need no key rewrite. Replay-safe: after the
+    // first run there are no 'building' rows left to move.
+    await client.query(`
+      UPDATE mod_entitlements e
+      SET mod_key = 'build', updated_at = CURRENT_TIMESTAMP
+      WHERE e.mod_key = 'building'
+        AND NOT EXISTS (
+          SELECT 1 FROM mod_entitlements x
+          WHERE x.account_id = e.account_id AND x.mod_key = 'build'
+        )
+    `);
+    await client.query(`
+      UPDATE mod_installations i
+      SET mod_key = 'build', updated_at = CURRENT_TIMESTAMP
+      WHERE i.mod_key = 'building'
+        AND NOT EXISTS (
+          SELECT 1 FROM mod_installations x
+          WHERE x.account_id = i.account_id AND x.mod_key = 'build'
+        )
+    `);
+
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

@@ -656,18 +656,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   system: {
-    description: "System operations — get system state snapshot, fetch a specific issue, create issues, retrieve runtime logs, check budget, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. Actions: state, get_issue, create_issue, logs, log_files, budget, frontend_performance, context_health, events, active_runs, clear_active_run, accounts, tool_stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename.",
+    description: "System operations — get system state snapshot, retrieve runtime logs, check budget, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. Actions: state, logs, log_files, budget, frontend_performance, context_health, events, active_runs, clear_active_run, accounts, tool_stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename.",
     category: "system",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["state", "get_issue", "create_issue", "logs", "log_files", "budget", "frontend_performance", "context_health", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action to perform. Use log_files to list available log files; use logs to read a specific log file." },
-        id: { type: "string", description: "Issue ID (for get_issue)" },
-        title: { type: "string", description: "Issue title (for create_issue)" },
-        description: { type: "string", description: "Issue description (for create_issue)" },
-        priority: { type: "string", description: "Priority level — high, mid, or low (for create_issue)" },
-        labels: { type: "string", description: "Comma-separated labels (for create_issue)" },
+        action: { type: "string", enum: ["state", "logs", "log_files", "budget", "frontend_performance", "context_health", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action to perform. Use log_files to list available log files; use logs to read a specific log file." },
         limit: { type: "number", description: "Max entries to return (for logs/events, default 100)" },
         level: { type: "string", description: "Filter by log level: debug, info, warn, error (for logs)" },
         source: { type: "string", description: "Filter by source module name (for logs)" },
@@ -678,6 +673,21 @@ export const TOOLS: Record<string, ToolMeta> = {
         reason: { type: "string", description: "Reason for clearing an active run (for clear_active_run)" },
         provider: { type: "string", description: "Filter accounts by provider (for accounts)" },
         hours: { type: "number", description: "Summary window in hours for frontend_performance/context_health (default 24, max 168)" },
+      },
+      required: ["action"],
+    },
+  },
+  issues: {
+    description: "Track product issues — create a new issue or fetch one by ID. Part of the Build product area. Actions: create, get.",
+    category: "system",
+
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["create", "get"], description: "Action to perform" },
+        id: { type: "string", description: "Issue ID (for get)" },
+        title: { type: "string", description: "Issue title (for create)" },
+        description: { type: "string", description: "Issue description (for create)" },
       },
       required: ["action"],
     },
@@ -2140,7 +2150,7 @@ function buildExampleJson(toolName: string, params: { type: string; properties: 
     create_task: { title: "YOUR_TASK_TITLE" },
     complete_task: { title: "TASK_TITLE_TO_COMPLETE" },
     update_task: { title: "TASK_TITLE", priority: "high" },
-    create_issue: { title: "YOUR_ISSUE_TITLE" },
+    issues: { action: "create", title: "YOUR_ISSUE_TITLE" },
   };
 
   if (examples[toolName]) return JSON.stringify(examples[toolName]);
