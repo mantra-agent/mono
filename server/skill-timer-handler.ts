@@ -180,7 +180,13 @@ export class SkillTimerHandler implements TimerHandler {
     log.debug(
       `[timer:${timer.name}] phase=pipeline-start — launching executeAutonomousSkillRun for skillId=${skillId}`,
     );
-    const result = await executeAutonomousSkillRun(skillId, { preContext });
+    const coordinationKey = skillId === "regression"
+      ? `timer:${timer.id}:run:${run.id}`
+      : undefined;
+    const result = await executeAutonomousSkillRun(skillId, {
+      preContext,
+      coordinationKey,
+    });
     if (!result) {
       log.debug(
         `Skill timer "${timer.name}" skillId=${skillId} did not start — yielding deferred result: admission_deferred_or_already_running`,
