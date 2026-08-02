@@ -135,11 +135,6 @@ const LARGE_GRAPH_THRESHOLD = 1_000;
 const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
 const MIN_NODE_HIT_RADIUS_PX = 12;
-// Nodes are world-space orbs, so far/low-degree nodes otherwise shrink to sub-pixel
-// and read darker than the edges, which hold a 1px screen-space linewidth floor plus
-// a 0.5 distance-visibility floor. Give nodes their own screen-space presence floor so
-// they always stay at least as visible as the edges when the camera pulls back.
-const MIN_NODE_SCREEN_RADIUS_PX = 3;
 const ACTIVITY_RECENCY_THRESHOLD = 0.25;
 const ACTIVITY_PACKET_BEADS = 5;
 const ACTIVITY_PACKET_DURATION_MS = 1_150;
@@ -245,6 +240,7 @@ const nodeVertexShader = `
 `;
 
 const nodeFragmentShader = `
+  uniform float uNodeBrightness;
   varying vec3 vNormal;
   varying vec3 vViewDirection;
   varying vec3 vTint;
@@ -262,7 +258,7 @@ const nodeFragmentShader = `
     vec3 impactTint = mix(vTint, vec3(1.0), 0.58);
     vec3 impactColor = baseColor + impactTint * impactRim * vImpact * (0.82 + vImpact * 0.38);
     float impactAlpha = mix(vVisibility, 1.0, vImpact * impactRim);
-    gl_FragColor = vec4(impactColor, impactAlpha);
+    gl_FragColor = vec4(impactColor * uNodeBrightness, impactAlpha);
   }
 `;
 
@@ -596,8 +592,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const nodeMaterial = new THREE.ShaderMaterial({
       vertexShader: nodeVertexShader,
       fragmentShader: nodeFragmentShader,
+      uniforms: {
+        uNodeBrightness: { value: settings.nodeBrightnessFactor },
+      },
       transparent: true,
-      depthWrite: false,
+      depthWrite: true,
       depthTest: true,
       side: THREE.FrontSide,
     });
@@ -743,23 +742,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function syncNodeMatrices() {
-      camera.updateMatrixWorld();
-      const viewportHeight = Math.max(1, host.clientHeight);
-      const pixelsPerRadian = viewportHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
       sceneNodes.forEach((node, index) => {
-        const worldRadius = node.radius * getNodeScale(index);
-        // Enforce a screen-space presence floor: if the node would project smaller
-        // than MIN_NODE_SCREEN_RADIUS_PX, grow its world radius just enough to hold
-        // that pixel size, so distant nodes never dim/vanish before the edges.
-        cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
-        const depth = -cameraSpace.z;
-        let renderRadius = worldRadius;
-        if (depth > 0) {
-          const minWorldRadius = MIN_NODE_SCREEN_RADIUS_PX * depth / pixelsPerRadian;
-          if (renderRadius < minWorldRadius) renderRadius = minWorldRadius;
-        }
         transform.position.set(node.x, node.y, node.z);
-        transform.scale.setScalar(renderRadius);
+        transform.scale.setScalar(node.radius * getNodeScale(index));
         transform.updateMatrix();
         nodeMesh.setMatrixAt(index, transform.matrix);
       });
@@ -1273,9 +1258,6 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function renderNow() {
       renderFrame = 0;
-      // Node scale now depends on the camera (screen-space size floor), so matrices
-      // must re-sync whenever the view changes (zoom/pan/rotate), not only on ticks.
-      syncNodeMatrices();
       syncLabels();
       syncLinkVisibility();
       renderer.render(scene, camera);
