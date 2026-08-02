@@ -2696,11 +2696,27 @@ export const ChatTurn = memo(function ChatTurn({
   );
   // Content @plan refs render as plain chips only, never as widgets, so a
   // content mention must not suppress the tool-result widget promotion.
-  const { fromToolResults: planWidgetIds } = referenceIdsFromSegments(
-    segments,
-    "plan",
-    isPlanWidgetToolCall,
-  );
+  const planWidgetOwnerSegmentById = new Map<string, number>();
+  segments.forEach((segment, segmentIndex) => {
+    if (segment.type !== "timeline") return;
+    const { fromToolResults } = referenceIdsFromSegments(
+      [segment],
+      "plan",
+      isPlanWidgetToolCall,
+    );
+    for (const planId of fromToolResults) {
+      // Create and execute may both appear in one turn. The last qualifying
+      // tool boundary owns the one visible widget, immediately before any
+      // completion prose that follows it.
+      planWidgetOwnerSegmentById.set(planId, segmentIndex);
+    }
+  });
+  const planWidgetIdsBySegment = new Map<number, string[]>();
+  for (const [planId, segmentIndex] of planWidgetOwnerSegmentById) {
+    const ids = planWidgetIdsBySegment.get(segmentIndex) ?? [];
+    ids.push(planId);
+    planWidgetIdsBySegment.set(segmentIndex, ids);
+  }
   const { fromToolResults: workflowWidgetIds } = referenceIdsFromSegments(
     segments,
     "workflow",
@@ -2944,6 +2960,20 @@ export const ChatTurn = memo(function ChatTurn({
                 stripTags={shouldStripTags}
                 contentCompact
                 planSessionId={message.sessionId}
+                renderAfterTimelineSegment={(segmentIndex) => {
+                  const planIds = planWidgetIdsBySegment.get(segmentIndex);
+                  if (!planIds || planIds.length === 0) return null;
+                  return planIds.map((id) => (
+                    <InlinePlanWidget
+                      key={`tool-plan-${id}`}
+                      planId={id}
+                      sessionId={message.sessionId}
+                      ownedChildBlocks={planOwnedChildBlocks}
+                      sessionTitleById={sessionTitleById}
+                      sessionStreams={sessionStreams}
+                    />
+                  ));
+                }}
               />
             ) : (
               message.content && (
@@ -2982,16 +3012,6 @@ export const ChatTurn = memo(function ChatTurn({
                   onCancel={onQuestionCancel}
                 />
               ))}
-            {layer > 0 && planWidgetIds.map((id) => (
-              <InlinePlanWidget
-                key={`tool-plan-${id}`}
-                planId={id}
-                sessionId={message.sessionId}
-                ownedChildBlocks={planOwnedChildBlocks}
-                sessionTitleById={sessionTitleById}
-                sessionStreams={sessionStreams}
-              />
-            ))}
             {layer > 0 && workflowWidgetIds.map((id) => (
               <InlineWorkflowWidget
                 key={`tool-workflow-${id}`}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { Fragment, useEffect, useMemo, type ReactNode } from "react";
 import type { MessageSegment } from "@shared/streaming-types";
 import { ActiveThinkingStatus, ExecutionTimeline, MarkdownContent, filterStepsByLayer, findThinkingStartTime } from "@/components/chat-shared";
 import { createLogger } from "@/lib/logger";
@@ -98,6 +98,7 @@ export interface SegmentStreamProps {
   contentClassName?: string;
   contentCompact?: boolean;
   planSessionId?: string;
+  renderAfterTimelineSegment?: (sourceIndex: number) => ReactNode;
 }
 
 /**
@@ -105,7 +106,7 @@ export interface SegmentStreamProps {
  * Handles the "Thinking..." indicator and empty-streaming fallback.
  * Extracted from ChatTurn's assistant branch for reuse.
  */
-export function SegmentStream({ segments, isStreaming, layer, stripTags = false, suppressTrailingThinking = false, contentClassName, contentCompact = false, planSessionId }: SegmentStreamProps) {
+export function SegmentStream({ segments, isStreaming, layer, stripTags = false, suppressTrailingThinking = false, contentClassName, contentCompact = false, planSessionId, renderAfterTimelineSegment }: SegmentStreamProps) {
   const renderSegments = useMemo(
     () => normalizeRenderSegments(segments, layer, isStreaming),
     [segments, isStreaming, layer],
@@ -158,14 +159,21 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
         {renderSegments.map((seg, i) => {
           if (seg.type === "timeline") {
             return (
-              <ExecutionTimeline
-                key={`timeline-${seg.sourceIndexes.join("-")}`}
-                steps={seg.segment.steps}
-                graphSteps={graphSteps}
-                isStreaming={isStreaming}
-                autoCollapse
-                layer={layer}
-              />
+              <Fragment key={`timeline-${seg.sourceIndexes.join("-")}`}>
+                <ExecutionTimeline
+                  steps={seg.segment.steps}
+                  graphSteps={graphSteps}
+                  isStreaming={isStreaming}
+                  autoCollapse
+                  layer={layer}
+                />
+                {seg.sourceIndexes.flatMap((sourceIndex) => {
+                  const rendered = renderAfterTimelineSegment?.(sourceIndex);
+                  return rendered == null
+                    ? []
+                    : [<Fragment key={`timeline-artifact-${sourceIndex}`}>{rendered}</Fragment>];
+                })}
+              </Fragment>
             );
           }
           if (seg.type === "content") {
