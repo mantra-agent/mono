@@ -287,11 +287,13 @@ export function ConversationItem({
   const isAwaitingPlanReview = !!conv.reviewKinds?.includes("plan_review");
   const isAwaitingEmailReview = !!conv.reviewKinds?.some((kind) => !["question", "plan_review"].includes(kind));
   const isAwaitingReview = !!conv.awaitingReview || isAwaitingQuestion;
+  // Vault tint preserves the read-state hierarchy: full strength when unread,
+  // shared muted treatment when read.
   const sessionTitleColor = vaultTitleColor(
     conv.vaultId ? [conv.vaultId] : undefined,
     vaultById,
     activeVaultId,
-    isLive || isDurablyActiveSession(conv) ? 1 : MUTED_TITLE_ALPHA,
+    hasUnreadResult ? 1 : MUTED_TITLE_ALPHA,
   );
   const statusTextClass = conv.errorSeverity === "error" && !isLive
     ? "text-error"
