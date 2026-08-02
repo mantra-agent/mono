@@ -4,12 +4,13 @@ import {
   acquireAdvisoryTransactionLock,
   BOOT_ID,
   db,
+  getAmbientDatabaseTransaction,
   hasAmbientDatabaseTransaction,
   runOutsideDatabaseTransaction,
   runWithDatabaseTransaction,
 } from "./db";
 import { accounts, users, documentStoreDocuments, planStepAttempts, planSteps, sessionArtifacts, sessionTree, compactionOperations } from "@shared/schema";
-import { replaceSessionSearchProjection } from "./memory/session-search-projection";
+import { enqueueSessionSearchProjection } from "./memory/session-search-projection";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import { assertWritableVault } from "./library-domain";
@@ -646,9 +647,14 @@ function withConvLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
   };
   const next = prev.then(wrapped, wrapped);
   convLocks.set(id, next);
-  next.finally(() => {
-    if (convLocks.get(id) === next) convLocks.delete(id);
-  });
+  void next.then(
+    () => {
+      if (convLocks.get(id) === next) convLocks.delete(id);
+    },
+    () => {
+      if (convLocks.get(id) === next) convLocks.delete(id);
+    },
+  );
   return next;
 }
 
@@ -848,6 +854,30 @@ function serializeSessionContent(data: SessionData): string {
   return JSON.stringify(content);
 }
 
+function shouldProjectSessionSearch(data: SessionData): boolean {
+  return (
+    !["streaming", "pending"].includes(data.status)
+    && !data.messages.some(message => message.assistantState === "streaming")
+  );
+}
+
+async function enqueueSearchProjectionAfterCanonicalWrite(
+  documentStoreId: number,
+  data: SessionData,
+): Promise<void> {
+  if (!shouldProjectSessionSearch(data)) return;
+  const transaction = getAmbientDatabaseTransaction();
+  const principal = getCurrentPrincipalOrSystem();
+  if (!transaction || principal.actorType !== "user" || !principal.userId || !principal.accountId) {
+    throw new Error(`Session search projection enqueue requires the canonical user transaction: chat/${data.id}`);
+  }
+  await enqueueSessionSearchProjection(transaction, principal, {
+    documentStoreId,
+    sessionId: data.id,
+    durableRevision: normalizeDurableRevision(data.durableRevision),
+  });
+}
+
 async function writeConvInAmbientTransaction(data: SessionData): Promise<number> {
   const vaultId = await resolveSessionWriteVaultId(data);
   data.vaultId = vaultId;
@@ -864,7 +894,7 @@ async function writeConvInAmbientTransaction(data: SessionData): Promise<number>
     serializeSessionContent(data),
     buildConvDocumentMetadata(data),
   ));
-  await replaceSessionSearchProjection(document.documentStoreId, data);
+  await enqueueSearchProjectionAfterCanonicalWrite(document.documentStoreId, data);
   if (
     !["streaming", "pending"].includes(data.status)
     && data.type !== "meeting"
@@ -2832,7 +2862,7 @@ export const chatFileStorage: IChatFileStorage = {
           metadata: buildConvDocumentMetadata(data),
         }),
       );
-      await replaceSessionSearchProjection(document.documentStoreId, data);
+      await enqueueSearchProjectionAfterCanonicalWrite(document.documentStoreId, data);
       const session = convToMeta(data);
       invalidateSessionsCache({ action: "updated", sessionId, session });
       log.info("Session Vault moved", {
@@ -2869,7 +2899,7 @@ export const chatFileStorage: IChatFileStorage = {
         content: serializeSessionContent(data),
         metadata: buildConvDocumentMetadata(data),
       });
-      await replaceSessionSearchProjection(document.documentStoreId, data);
+      await enqueueSearchProjectionAfterCanonicalWrite(document.documentStoreId, data);
       const session = convToMeta(data);
       invalidateSessionsCache({ action: "updated", sessionId, session });
       return session;

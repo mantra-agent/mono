@@ -214,12 +214,14 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
       ordinal INTEGER NOT NULL,
       content TEXT NOT NULL,
       projection_version INTEGER NOT NULL DEFAULT 1,
+      projection_revision INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT ck_session_search_segments_kind CHECK (segment_kind IN ('title', 'agenda', 'message', 'tool')),
       CONSTRAINT ck_session_search_segments_ordinal CHECK (ordinal >= 0),
       CONSTRAINT ck_session_search_segments_content CHECK (char_length(content) BETWEEN 1 AND 4096)
     )
   `);
+  await pool.query(`ALTER TABLE session_search_segments ADD COLUMN IF NOT EXISTS projection_revision INTEGER NOT NULL DEFAULT 0`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_session_search_segments_document_key ON session_search_segments(document_store_id, segment_key)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_search_segments_document ON session_search_segments(document_store_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_migration_key ON document_store_documents(migration_key)`);
