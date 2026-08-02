@@ -19,6 +19,7 @@ import type { VoiceSessionContextValue, VoiceTranscriptEntry } from "@/hooks/use
 export interface SessionTranscriptSurfaceProps {
   activeSession: string;
   sessionKey?: string | null;
+  reviewPlanId?: string;
   messages: Message[];
   streaming: StreamingContent;
   isSessionStreaming: boolean;
@@ -55,6 +56,7 @@ export interface SessionTranscriptSurfaceProps {
 export function SessionTranscriptSurface({
   activeSession,
   sessionKey,
+  reviewPlanId,
   messages,
   streaming,
   isSessionStreaming,
@@ -169,6 +171,7 @@ export function SessionTranscriptSurface({
                 msgsLoading={msgsLoading}
                 activeSession={activeSession}
                 sessionKey={sessionKey}
+                reviewPlanId={reviewPlanId}
                 voiceActive={voiceActive}
                 voiceStatus={voiceStatus}
                 voiceTranscript={voiceTranscript}

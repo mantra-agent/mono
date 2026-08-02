@@ -51,6 +51,8 @@ interface MessageListProps {
   msgsLoading: boolean;
   activeSession: string | null;
   sessionKey?: string | null;
+  /** Server-projected Plan currently awaiting human review in this session. */
+  reviewPlanId?: string;
   voiceActive: boolean;
   voiceStatus: string;
   voiceTranscript: VoiceTranscriptEntry[];
@@ -227,6 +229,7 @@ export function MessageList({
   msgsLoading,
   activeSession,
   sessionKey,
+  reviewPlanId,
   voiceActive,
   voiceStatus,
   voiceTranscript,
@@ -304,7 +307,8 @@ export function MessageList({
     streaming.segments.length === 0 &&
     !voiceTranscript.length &&
     voiceStatus !== "connecting" &&
-    !hasLive
+    !hasLive &&
+    !reviewPlanId
   ) {
     return (
       <ChatEmptyState className="min-h-[calc(100dvh-160px)] py-12" />
@@ -338,18 +342,24 @@ export function MessageList({
   const isWorkflowOwnedChildBlock = (meta: ChildSessionBlockMeta): boolean =>
     Boolean(meta.workflowRunId) || Boolean(meta.spawnReason?.startsWith("workflow:"));
 
-  // Detect plan IDs that have child blocks but no per-message widget.
-  // When a plan was created elsewhere, compacted, or spawned by a workflow,
-  // the parent session has child_session_blocks with a planId but no assistant
-  // message with a matching create/associate/execute/resume tool call. These
-  // "orphaned" plans need a session-level widget so they remain visible.
-  const childBlockPlanIds = new Set<string>();
+  // Detect session-owned Plans that have no visible per-message widget. Child
+  // lifecycle blocks cover normal execution; reviewPlanId covers compacted and
+  // legacy sessions whose durable review gate outlives its transcript artifact.
+  const sessionPlanIds = new Set<string>();
   for (const meta of planOwnedChildBlocks.values()) {
-    if (meta.planId) childBlockPlanIds.add(meta.planId);
+    if (meta.planId) sessionPlanIds.add(meta.planId);
   }
+  if (!historical && reviewPlanId) sessionPlanIds.add(reviewPlanId);
+
+  const firstCompactionMessageIndex = messages.findIndex(
+    message => message.model === "compaction-marker",
+  );
+  const visibleMessages = firstCompactionMessageIndex > 0
+    ? messages.slice(firstCompactionMessageIndex)
+    : messages;
   const toolMatchedPlanIds = new Set<string>();
-  if (childBlockPlanIds.size > 0) {
-    for (const msg of messages) {
+  if (sessionPlanIds.size > 0) {
+    for (const msg of visibleMessages) {
       if (msg.role !== "assistant" || !msg.toolCalls || !Array.isArray(msg.toolCalls)) continue;
       const segments = segmentsFromSavedMessage(msg);
       const { fromToolResults } = referenceIdsFromSegments(
@@ -363,8 +373,8 @@ export function MessageList({
     // Child lifecycle events can persist before the assistant tool call that
     // created the plan. During that handoff, the authoritative stream already
     // owns the inline widget even though persisted messages do not. Include the
-    // displayed stream in the same ownership set so the orphan fallback cannot
-    // render a second copy below the active assistant turn.
+    // displayed stream in the same ownership set so the fallback cannot render
+    // a second copy below the active assistant turn.
     const { fromToolResults: streamingPlanIds } = referenceIdsFromSegments(
       effectiveStreaming.segments,
       "plan",
@@ -372,7 +382,7 @@ export function MessageList({
     );
     for (const id of streamingPlanIds) toolMatchedPlanIds.add(id);
   }
-  const orphanedPlanIds = [...childBlockPlanIds].filter(id => !toolMatchedPlanIds.has(id));
+  const orphanedPlanIds = [...sessionPlanIds].filter(id => !toolMatchedPlanIds.has(id));
 
   const persistedCrossKeys = new Set(
     messages
