@@ -1575,6 +1575,27 @@ export async function advanceWorkflowRun(runId: string, trigger: WorkflowTransit
       return detail;
     }
   }
+  // Preemption boundary. Workflow stage children stream to completion with no
+  // mid-inference abort (see monitorWorkflowChild), so the only safe place to
+  // enforce a human hold is the stage transition boundary. The caller has
+  // already recorded this attempt's terminal result and evidence; if a human has
+  // since paused or canceled the run, record the held result but never overwrite
+  // that status or spawn the next stage. Resuming (startWorkflowRun) re-activates
+  // and continues. This fires only for already-held runs, so active runs are
+  // unaffected; reverting this block restores the prior always-advance behavior.
+  if (detail.run.status === "paused" || detail.run.status === "canceled") {
+    log.warn(`advanceWorkflowRun: run ${runId} is ${detail.run.status}; recording ${result} for stage ${current} without advancing or spawning the next stage.`);
+    await recordTransition({
+      workflowRunId: runId,
+      fromStageKey: current,
+      toStageKey: detail.run.currentStageKey ?? null,
+      fromAttemptId,
+      trigger: "system",
+      reason: `Stage result ${result} recorded while run ${detail.run.status}; run held, not advancing.`,
+      render: false,
+    });
+    return (await getWorkflowRun(runId)) ?? detail;
+  }
   const stage = stageFor(detail, current);
   const event = workflowResultEvent(result);
   const transitionDef = stage.allowedTransitions.find((t) => t.on === event) || stage.allowedTransitions.find((t) => t.on === "manual");
