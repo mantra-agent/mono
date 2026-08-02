@@ -5699,17 +5699,7 @@ export async function runSchemaBootstrap(
       )
     `);
     await pool.query(`ALTER TABLE plan_steps ADD COLUMN IF NOT EXISTS persona TEXT`);
-    await pool.query(`
-      DO $plan_persona$
-      BEGIN
-        ALTER TABLE plan_steps
-          ADD CONSTRAINT chk_plan_steps_persona
-          CHECK (persona IS NULL OR persona IN ('Engineer', 'Architect', 'Default'));
-      EXCEPTION
-        WHEN duplicate_object THEN NULL;
-      END
-      $plan_persona$
-    `);
+    await pool.query(`ALTER TABLE plan_steps DROP CONSTRAINT IF EXISTS chk_plan_steps_persona`);
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_plan_steps_plan_id ON plan_steps(plan_id)`,
     );

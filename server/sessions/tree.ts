@@ -51,7 +51,7 @@ export interface SpawnChildSessionOptions {
    */
   titleOverride?: string;
   /** Explicit persona applied before child context assembly and first inference. */
-  personaName?: "Engineer" | "Architect" | "Default";
+  personaName?: string;
   /** Root-derived admission priority. User-originated descendants are foreground. */
   admissionTier?: AdmissionTier;
   /** Stable root session identity shared by the parent and all descendants. */
