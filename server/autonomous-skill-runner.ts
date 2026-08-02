@@ -346,19 +346,6 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     timeoutMs: 3 * 60 * 60 * 1000,
     sessionType: "autonomous",
     admissionTier: "background",
-    async postRunVerify(sessionId: string) {
-      const { reconcileRegressionRunStatus } = await import("./regression/regression-service");
-      const runId = await import("./chat-file-storage").then(async ({ chatFileStorage }) => {
-        const messages = await chatFileStorage.getMessagesBySession(sessionId);
-        const match = messages.find((message) => message.role === "system_prompt")?.content.match(/\breg_[a-z0-9_]+\b/i);
-        return match?.[0] || null;
-      });
-      if (!runId) throw new Error("Regression session has no durable run identity");
-      const run = await reconcileRegressionRunStatus(runId);
-      if (!["completed", "partial", "failed", "skipped"].includes(run.status)) {
-        throw new Error(`Regression run ${runId} is not terminal after Skill completion (${run.status})`);
-      }
-    },
   },
   "enrich-email": {
     skillId: "enrich-email",
@@ -648,9 +635,6 @@ export async function executeAutonomousSkillRun(
   // this gate when a `parentSessionId` is present is required for
   // legitimate parallel fan-out.
   const coordinationKey = options.coordinationKey || skillId || "skillless";
-  if (!isSkillless && config.skillId === "regression" && !options.coordinationKey) {
-    throw new Error("Regression Skill execution requires a dispatcher-supplied durable run coordination key");
-  }
   if (!options.runtimeFence && !isSkillless && !options.parentSessionId && isDuplicateSkillRun(coordinationKey)) {
     logger.log(`[skill:${skillId}] Coordination key ${coordinationKey} already running — skipping`);
     return null;
