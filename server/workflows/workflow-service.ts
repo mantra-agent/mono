@@ -300,14 +300,6 @@ function originatingRequest(detail: WorkflowRunDetail): string | undefined {
   return content || undefined;
 }
 
-function workflowResultEvent(result: string): string {
-  return result === "passed" ? "pass"
-    : result === "needs_review" ? "needs_review"
-      : result === "blocked" ? "blocked"
-        : result === "skipped" ? "manual"
-          : "fail";
-}
-
 // The stage verdict has exactly one source of truth: the structured
 // complete_stage_attempt row (enum-validated, atomically claimed, drives the
 // transition). There is deliberately no prose fallback. A child that ends
@@ -568,7 +560,7 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
     `Workflow run: ${context.workflowRunId}.${stageAttemptIdForCompletion !== null ? ` Stage attempt: ${stageAttemptIdForCompletion}.` : ""} Attempt ${context.attemptNumber}/${context.maxAttempts}.`,
     "Execute only this assigned stage. Do not create or start another workflow; this workflow owns downstream orchestration.",
     "Your terminal action MUST be a single `complete_stage_attempt` call that records this attempt's verdict as structured data: pass the workflow run ID, the stage attempt ID above, and `result` set to exactly one of `passed`, `failed`, `blocked`, `needs_review`, or `skipped`, together with the evidence you produced and — for any fail or blocker — the failure reason and the next required action.",
-    "Do not report the verdict only as prose. A stage attempt that ends without a `complete_stage_attempt` call records no verdict, is treated as a failed attempt, and is retried.",
+    "Do not report the verdict only as prose. A stage attempt that ends without a `complete_stage_attempt` call records no verdict, is treated as a failed attempt, and holds the workflow on this stage for explicit recovery.",
   );
   return lines.join("\n");
 }
@@ -633,7 +625,7 @@ function calibrationStageContext(detail: WorkflowRunDetail): Record<string, unkn
         detected: true,
         consecutiveIdenticalFailures: lastTwo.length,
         repeatedFailedGates: getFailedGates(lastTwo[0]).split(","),
-        directive: "MANDATORY: The same acceptance gates have failed identically ≥2 consecutive times. This indicates a tooling or infrastructure issue that code changes cannot fix. You MUST open a user gate (complete with result 'needs_review') so the user can inspect and decide. Do NOT loop back to implement.",
+        directive: "MANDATORY: The same acceptance gates have failed identically ≥2 consecutive times. Complete with result 'blocked' and preserve the repeated failure diagnosis for user inspection. Do not route backward or continue automatically.",
       };
     }
   }
@@ -642,7 +634,7 @@ function calibrationStageContext(detail: WorkflowRunDetail): Record<string, unkn
     calibrationContract: {
       compareAgainst: "Build workflow v1 spec: Design → Design Review → Implement → Implementation Review → Acceptance Test → Calibration → Documentation.",
       inspectArtifacts: acceptanceArtifacts.map((artifact) => ({ id: artifact.id, kind: artifact.kind, title: artifact.title, summary: artifact.summary, metadata: artifact.metadata })),
-      requiredDecision: "Pass only if acceptance evidence is complete enough and no hard gate remains. Fail back to implementation for product defects. Block/surface gate only for hard user gates, danger/security/privacy, principle conflict, production release, or exhausted retries.",
+      requiredDecision: "Pass only if acceptance evidence is complete enough and no hard gate remains. Any other verdict holds Calibration with the diagnosis and next action preserved in evidence; never route backward automatically.",
       documentationUpdatePolicy: "Attach a calibration artifact recording workflow/spec/doc updates needed or made. Do not create a user gate for routine documentation updates.",
       ...(repeatedFailureEscalation ? { repeatedFailureEscalation } : {}),
     },
@@ -715,9 +707,9 @@ async function monitorWorkflowChild(
       // active — i.e. it never recorded a verdict through complete_stage_attempt
       // (had it done so, the status check above would have short-circuited). We
       // do not infer the verdict from prose: an unrecorded verdict is a failed
-      // attempt, retried with a fresh, more forceful instruction. The run never
-      // advances on a guessed pass.
-      log.warn(`[monitor] Workflow child ${childSessionId} ended without recording a verdict for ${stageTitle} #${attemptNumber}; failing attempt ${attemptId} as missing_verdict for retry`);
+      // attempt that holds the run on this stage. Explicit resume creates the
+      // fresh recovery attempt; the run never advances on a guessed pass.
+      log.warn(`[monitor] Workflow child ${childSessionId} ended without recording a verdict for ${stageTitle} #${attemptNumber}; failing attempt ${attemptId} as missing_verdict and holding the stage`);
       await completeStageAttempt(runId, attemptId, {
         result: "failed",
         outputSummary: truncateOutput(result.output, 500),
@@ -787,52 +779,55 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
       entryCriteria: ["Start from the originating request. Inspect only enough repository and runtime evidence to identify the failed invariant and the smallest coherent repair."],
       evidenceRequirements: ["A durable specification artifact (`kind: spec`) that names the smallest coherent implementation, success conditions, target truth, verification path, and terminal state. Any expansion beyond the request must cite the repository evidence and invariant that require it."],
       exitCriteria: ["The design satisfies the request without speculative systems, migrations, abstractions, or adjacent improvements."],
-      allowedTransitions: [{ toStageKey: "design_review", on: "pass" }, { toStageKey: "scope", on: "fail" }, { toStageKey: null, on: "blocked" }],
+      allowedTransitions: [{ toStageKey: "design_review", on: "pass" }],
     },
     {
       key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review", persona: "Architect",
       entryCriteria: ["Compare the proposed design directly with the originating request, relevant repository evidence, and only the governing artifacts implicated by that change."],
       evidenceRequirements: ["Find and report material defects, omissions, unsupported scope expansion, unjustified complexity, and governing-context violations. Require structural cures before passing."],
       exitCriteria: ["Pass only when every material component is necessary to satisfy the originating request or preserve a repository-proven invariant. Reject speculative systems and adjacent improvements."],
-      allowedTransitions: [{ toStageKey: "implement", on: "pass" }, { toStageKey: "scope", on: "fail" }],
+      allowedTransitions: [{ toStageKey: "implement", on: "pass" }],
     },
     {
       key: "implement", title: "Implement", position: 2, autonomyMode: "autonomous", persona: "Engineer",
       entryCriteria: ["Load and implement the approved specification from Stage Inputs."],
       evidenceRequirements: ["Implementation evidence, build result, impact/change-scope evidence, and branch/commit references proving the approved specification was executed under the loaded governing context."],
-      allowedTransitions: [{ toStageKey: "code_review", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "design_review", on: "blocked" }],
+      allowedTransitions: [{ toStageKey: "code_review", on: "pass" }],
     },
     {
       key: "code_review", title: "Implementation Review", position: 3, autonomyMode: "requires_agent_review", persona: "Engineer",
       entryCriteria: ["Inspect the complete implementation, affected systems, approved design, and every loaded governing artifact before judging readiness."],
       evidenceRequirements: ["Find and report material defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation. State required cures, residual risk, and acceptance readiness."],
       exitCriteria: ["Pass only when no material implementation or governing-context violation remains."],
-      allowedTransitions: [{ toStageKey: "acceptance", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "design_review", on: "blocked" }],
+      allowedTransitions: [{ toStageKey: "acceptance", on: "pass" }],
     },
     {
       key: "acceptance", title: "Acceptance Test", position: 4, autonomyMode: "autonomous", persona: "Engineer",
       entryCriteria: ["Load the approved specification from Stage Inputs, then confirm the merged implementation is deployed and healthy in the target environment."],
       evidenceRequirements: ["Deployment, boot/health, target-route, screenshot, runtime-log, and safe feature-path evidence sufficient to determine whether the deployed result does what the approved specification requires."],
       exitCriteria: ["Pass only when the deployed system boots successfully and satisfies the approved specification."],
-      allowedTransitions: [{ toStageKey: "calibration", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "implement", on: "blocked" }],
+      allowedTransitions: [{ toStageKey: "calibration", on: "pass" }],
     },
     {
       key: "calibration", title: "Calibration", position: 5, autonomyMode: "autonomous", persona: "Architect",
       entryCriteria: ["Load the approved specification and acceptance evidence from Stage Inputs."],
       evidenceRequirements: ["Compare the approved specification, implementation outcome, retries, and acceptance evidence to identify what the run taught us about the product and what should change next."],
-      allowedTransitions: [{ toStageKey: "documentation", on: "pass" }, { toStageKey: "implement", on: "fail" }, { toStageKey: "scope", on: "blocked" }, { toStageKey: null, on: "needs_review", reason: "hard gate" }],
+      allowedTransitions: [{ toStageKey: "documentation", on: "pass" }],
     },
     {
       key: "documentation", title: "Documentation", position: 6, autonomyMode: "autonomous", persona: "Default",
       evidenceRequirements: ["Durable final documentation that records the implemented truth, linked evidence, decisions, handoff, and any remaining gates under the loaded governing context."],
-      allowedTransitions: [{ toStageKey: null, on: "pass", reason: "complete" }, { toStageKey: "documentation", on: "fail" }],
+      allowedTransitions: [{ toStageKey: null, on: "pass", reason: "complete" }],
     },
   ],
   terminalStatuses: ["completed", "failed", "canceled"],
 });
 
 const buildRetryPolicy = {
-  maxAttemptsPerStage: 10,
+  // Retries are explicit human recovery actions, never autonomous failure routes.
+  // The second attempt leaves room to resume a stopped stage once without
+  // turning the workflow into an unbounded orchestration loop.
+  maxAttemptsPerStage: 2,
   freshSessionPerRetry: true,
   requireDifferentApproachInstruction: true,
   escalateOnDanger: true,
@@ -1510,7 +1505,7 @@ function acceptanceGateFailureFromEvidence(attempt: WorkflowStageAttempt, result
   if (failedGates.length === 0) return null;
   return packet.failurePacket && typeof packet.failurePacket === "object"
     ? packet.failurePacket as Record<string, unknown>
-    : { reason: "acceptance_gate_failure", failedGates, gates, nextSuggestedFix: "Return to Implement, fix the failed gate, publish again, and rerun acceptance." };
+    : { reason: "acceptance_gate_failure", failedGates, gates, nextSuggestedFix: "Fix the failed condition, publish if needed, then resume and rerun Acceptance Test." };
 }
 
 export async function completeStageAttempt(workflowRunId: string, attemptId: number, resultInput: { result: string; outputSummary?: string; evidence?: unknown; failureContext?: unknown; createdBySessionId?: string }): Promise<WorkflowRunDetail> {
@@ -1626,26 +1621,44 @@ export async function advanceWorkflowRun(runId: string, trigger: WorkflowTransit
     });
     return (await getWorkflowRun(runId)) ?? detail;
   }
-  const stage = stageFor(detail, current);
-  const event = workflowResultEvent(result);
-  const transitionDef = stage.allowedTransitions.find((t) => t.on === event) || stage.allowedTransitions.find((t) => t.on === "manual");
-  if (!transitionDef) {
-    const failurePacket = {
-      reason: "missing_stage_transition",
-      stageKey: current,
-      event,
-      result,
-      fromAttemptId: fromAttemptId || null,
-      nextSuggestedFix: `Add an explicit ${event} transition to stage ${current}, then resume the workflow.`,
-    };
-    log.error(`Workflow ${runId} has no transition for ${current} on ${event}; blocking run instead of leaving it active`);
+  if (result !== "passed") {
     await recordTransition({
       workflowRunId: runId,
       fromStageKey: current,
       toStageKey: current,
       fromAttemptId,
       trigger: "system",
-      reason: `Missing transition for ${event}; run blocked for repair.`,
+      reason: reason || `Stage result ${result}; run held on ${current} for explicit recovery.`,
+      render: false,
+    });
+    await db.update(workflowRuns).set({
+      status: "blocked",
+      completedAt: null,
+      updatedAt: new Date(),
+    }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
+    await renderWorkflowRunPage(runId);
+    return (await getWorkflowRun(runId))!;
+  }
+
+  const stage = stageFor(detail, current);
+  const transitionDef = stage.allowedTransitions.find((transition) => transition.on === "pass");
+  if (!transitionDef) {
+    const failurePacket = {
+      reason: "missing_stage_transition",
+      stageKey: current,
+      event: "pass",
+      result,
+      fromAttemptId: fromAttemptId || null,
+      nextSuggestedFix: `Add an explicit pass transition to stage ${current}, then resume the workflow.`,
+    };
+    log.error(`Workflow ${runId} has no pass transition for ${current}; blocking run instead of leaving it active`);
+    await recordTransition({
+      workflowRunId: runId,
+      fromStageKey: current,
+      toStageKey: current,
+      fromAttemptId,
+      trigger: "system",
+      reason: "Missing pass transition; run blocked for repair.",
       evidence: failurePacket,
       render: false,
     });
@@ -1659,12 +1672,8 @@ export async function advanceWorkflowRun(runId: string, trigger: WorkflowTransit
     return (await getWorkflowRun(runId))!;
   }
   const next = transitionDef.toStageKey;
-  await recordTransition({ workflowRunId: runId, fromStageKey: current, toStageKey: next, fromAttemptId, trigger, reason: reason || transitionDef.reason || event });
-  // A named destination is a recovery transition. Keep the run active so the
-  // destination can start; only destination-less blocks and review gates pause.
-  const nextStatus = next
-    ? result === "needs_review" ? "needs_review" : "active"
-    : result === "passed" ? "completed" : result === "blocked" ? "blocked" : result === "needs_review" ? "needs_review" : "failed";
+  await recordTransition({ workflowRunId: runId, fromStageKey: current, toStageKey: next, fromAttemptId, trigger, reason: reason || transitionDef.reason || "pass" });
+  const nextStatus = next ? "active" : "completed";
   await db.update(workflowRuns).set({ status: nextStatus, completedAt: next ? null : new Date(), updatedAt: new Date() }).where(writable(runScopeColumns, eq(workflowRuns.id, runId)));
   await renderWorkflowRunPage(runId);
   const updated = (await getWorkflowRun(runId))!;
@@ -2039,7 +2048,7 @@ function buildAcceptanceFailurePacket(packet: AcceptanceEvidencePacket, health: 
     screenshot: packet.screenshot || null,
     clientLogErrors: packet.logs.client,
     serverLogErrors: packet.logs.server,
-    nextSuggestedFix: "Return to Implement with this packet. Fix the first failed required gate, then rerun publish/acceptance evidence instead of bypassing the gate.",
+    nextSuggestedFix: "Fix the first failed required gate, publish if needed, then resume and rerun Acceptance Test with this packet.",
   };
 }
 
