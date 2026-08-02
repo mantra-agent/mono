@@ -482,6 +482,137 @@ async function ensureTimerOwnershipSchema(pool: {
   }
 }
 
+const PRINCIPLE_REVISION_SCHEMA_KEY = "schema:principle-revisions:v1";
+
+async function ensurePrincipleRevisionSchema(pool: {
+  connect: () => Promise<{
+    query: (sql: string, params?: unknown[]) => Promise<unknown>;
+    release: () => void;
+  }>;
+}): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('${PRINCIPLE_REVISION_SCHEMA_KEY}'))`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS principles (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        layer1 TEXT NOT NULL DEFAULT '',
+        layer2 TEXT NOT NULL DEFAULT '',
+        auto_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+        manual_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+        related_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+        current_revision_id TEXT,
+        scope TEXT NOT NULL DEFAULT 'user',
+        owner_user_id TEXT,
+        account_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      ALTER TABLE principles ADD COLUMN IF NOT EXISTS current_revision_id TEXT;
+      ALTER TABLE principles ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'user';
+      ALTER TABLE principles ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
+      ALTER TABLE principles ADD COLUMN IF NOT EXISTS account_id TEXT;
+
+      CREATE TABLE IF NOT EXISTS principle_revisions (
+        id TEXT PRIMARY KEY,
+        principle_id TEXT NOT NULL REFERENCES principles(id) ON DELETE CASCADE,
+        revision_number INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        layer1 TEXT NOT NULL DEFAULT '',
+        layer2 TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL DEFAULT 'user',
+        owner_user_id TEXT,
+        account_id TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS principle_revisions_principle_revision_idx
+        ON principle_revisions(principle_id, revision_number);
+      CREATE UNIQUE INDEX IF NOT EXISTS principle_revisions_principle_id_idx
+        ON principle_revisions(principle_id, id);
+      CREATE INDEX IF NOT EXISTS principle_revisions_account_idx
+        ON principle_revisions(account_id);
+      CREATE INDEX IF NOT EXISTS idx_principles_scope_owner
+        ON principles(scope, owner_user_id);
+
+      INSERT INTO principle_revisions (
+        id,
+        principle_id,
+        revision_number,
+        title,
+        layer1,
+        layer2,
+        scope,
+        owner_user_id,
+        account_id,
+        created_at
+      )
+      SELECT
+        gen_random_uuid()::text,
+        principle.id,
+        1,
+        principle.title,
+        principle.layer1,
+        principle.layer2,
+        principle.scope,
+        principle.owner_user_id,
+        principle.account_id,
+        principle.created_at
+      FROM principles AS principle
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM principle_revisions AS revision
+        WHERE revision.principle_id = principle.id
+      );
+
+      UPDATE principles AS principle
+      SET current_revision_id = (
+        SELECT revision.id
+        FROM principle_revisions AS revision
+        WHERE revision.principle_id = principle.id
+        ORDER BY revision.revision_number DESC
+        LIMIT 1
+      )
+      WHERE principle.current_revision_id IS NULL
+         OR principle.current_revision_id = ''
+         OR NOT EXISTS (
+           SELECT 1
+           FROM principle_revisions AS selected_revision
+           WHERE selected_revision.id = principle.current_revision_id
+             AND selected_revision.principle_id = principle.id
+         );
+
+      ALTER TABLE principles ALTER COLUMN current_revision_id SET NOT NULL;
+
+      DO $principle_revision_fk$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'principles_current_revision_fk'
+        ) THEN
+          ALTER TABLE principles
+            ADD CONSTRAINT principles_current_revision_fk
+            FOREIGN KEY (id, current_revision_id)
+            REFERENCES principle_revisions(principle_id, id)
+            ON DELETE RESTRICT;
+        END IF;
+      END
+      $principle_revision_fk$;
+    `);
+    await client.query("COMMIT");
+    log("principle revision schema ensured", "migration");
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function ensurePromptModuleTables(pool: { query: (sql: string) => Promise<unknown> }): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS prompt_modules (
@@ -621,6 +752,7 @@ export async function runSchemaBootstrap(
   await ensureDocumentStoreDocumentsSchema(pool);
   await ensureMeetingTurnEnrollmentSchema(pool);
   await ensureTimerOwnershipSchema(pool);
+  await ensurePrincipleRevisionSchema(pool);
   await ensureBrowserPerformanceTelemetrySchema(pool);
 
   // Signal/news schema is ensured on the canonical boot path — not lazily on the
