@@ -23,6 +23,8 @@ import { runSchemaBootstrap } from "./schema-bootstrap";
 import { isRecoverablePostgresConnectionError } from "./postgres-errors";
 import { closeDatabasePools } from "./db";
 import { admissionController } from "./run-admission";
+import { runtimeDispatcher } from "./runtime/runtime-dispatcher";
+import { registerRuntimeProofPathHandlers } from "./runtime/proof-path-handlers";
 import { timerScheduler } from "./timer-scheduler";
 import { closeBrowser } from "./browser-manager";
 import { stopMemoryWatchdog } from "./memory-watchdog";
@@ -364,6 +366,7 @@ app.use((req, res, next) => {
   const { ensureRuntimeKernelSchema } = await import("./runtime/runtime-schema");
   const { pool } = await import("./db");
   await ensureRuntimeKernelSchema(pool);
+  registerRuntimeProofPathHandlers();
   const { ensureLifeAddressingSchema } = await import("./life-addressing-schema");
   await ensureLifeAddressingSchema(pool);
   const { ensureModPlatformSchema } = await import("./mod-schema");
@@ -737,10 +740,10 @@ app.use((req, res, next) => {
       // immediately and catches any backlog from a restart.
       const VNEXT_SOURCE_POLLER_INTERVAL_MS = 5 * 60 * 1000;
       const runVnextSourcePoller = () => {
-        import("./memory/vnext-source-poller").then(async ({ processSettledSources }) => {
-          const result = await processSettledSources();
+        import("./memory/vnext-source-poller").then(async ({ enqueueSettledSources }) => {
+          const result = await enqueueSettledSources();
           log(
-            `[scheduled] vnext source poller: processed=${result.processed} created=${result.totalCreated} reinforced=${result.totalReinforced} skipped=${result.totalSkipped} errors=${result.errors}`,
+            `[scheduled] vnext source poller: enqueued=${result.enqueued} existing=${result.existing} errors=${result.errors}`,
             "boot",
           );
         }).catch((err) => {
@@ -980,6 +983,7 @@ async function shutdownApplication(input: RuntimeTerminationInput): Promise<void
     })}`);
 
     timerScheduler.stop();
+    runtimeDispatcher.beginShutdown();
     const { stopMeetingAudioExpiry } = await import("./meeting/audio-retention-expiry");
     stopMeetingAudioExpiry();
     await admissionController.shutdown();
@@ -987,6 +991,7 @@ async function shutdownApplication(input: RuntimeTerminationInput): Promise<void
     await executorManager.stop().catch((error) => {
       serverLog.warn(`executor shutdown degraded: ${error instanceof Error ? error.message : String(error)}`);
     });
+    await runtimeDispatcher.stop();
     stopMemoryWatchdog();
     stopSnapshotHeartbeat();
 
@@ -1107,6 +1112,9 @@ function startDeferredBackgroundServices(): void {
   Promise.allSettled(services).then(async () => {
     bootTracker.completePhase("background_services");
     bootTracker.markReady();
+
+    runtimeDispatcher.start();
+    log("[startup] native Runtime dispatcher started", "boot");
 
     const { getRuntimeIdentity } = await import("./runtime-identity");
     const runtimeIdentity = await getRuntimeIdentity();

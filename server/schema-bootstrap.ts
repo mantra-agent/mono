@@ -2761,12 +2761,20 @@ export async function runSchemaBootstrap(
         status TEXT NOT NULL DEFAULT 'pending',
         last_extracted_at TIMESTAMPTZ,
         content_hash TEXT,
+        runtime_run_id UUID,
+        runtime_source_version TIMESTAMPTZ,
+        runtime_attempt_id UUID,
+        runtime_lease_epoch INTEGER,
         owner_user_id TEXT,
         account_id TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT uk_vnext_source_queue_type_id_owner UNIQUE (source_type, source_id, owner_user_id)
       )
     `);
+    await pool.query(`ALTER TABLE memory_vnext_source_queue ADD COLUMN IF NOT EXISTS runtime_run_id UUID`);
+    await pool.query(`ALTER TABLE memory_vnext_source_queue ADD COLUMN IF NOT EXISTS runtime_source_version TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE memory_vnext_source_queue ADD COLUMN IF NOT EXISTS runtime_attempt_id UUID`);
+    await pool.query(`ALTER TABLE memory_vnext_source_queue ADD COLUMN IF NOT EXISTS runtime_lease_epoch INTEGER`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vnext_source_queue_status ON memory_vnext_source_queue(status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vnext_source_queue_pending_settle ON memory_vnext_source_queue(status, last_modified_at)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_vnext_source_queue_owner ON memory_vnext_source_queue(owner_user_id)`);
@@ -4748,6 +4756,7 @@ export async function runSchemaBootstrap(
       { name: "parent_session_id", type: "TEXT" },
       { name: "parent_skill_run_id", type: "INTEGER" },
       { name: "parent_tool_call_id", type: "TEXT" },
+      { name: "runtime_run_id", type: "UUID" },
     ];
     for (const col of scoringColumns) {
       await pool.query(
@@ -4758,7 +4767,11 @@ export async function runSchemaBootstrap(
       CREATE INDEX IF NOT EXISTS idx_skill_runs_parent_lineage
       ON skill_runs(parent_skill_run_id, parent_tool_call_id, skill_name)
     `);
-    log("auto-heal: ensured skill_runs scoring and lineage columns exist", "migration");
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_runs_runtime_run_unique
+      ON skill_runs(runtime_run_id) WHERE runtime_run_id IS NOT NULL
+    `);
+    log("auto-heal: ensured skill_runs scoring, lineage, and Runtime relation columns exist", "migration");
   });
 
   await heal("core scoped table columns", async () => {

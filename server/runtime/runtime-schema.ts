@@ -144,6 +144,40 @@ export async function ensureRuntimeKernelSchema(pool: Pool): Promise<void> {
       CREATE INDEX IF NOT EXISTS transactional_outbox_aggregate ON transactional_outbox(account_id, aggregate_type, aggregate_id);
     `);
 
+    await client.query(`
+      ALTER TABLE skill_runs ADD COLUMN IF NOT EXISTS runtime_run_id UUID;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_runs_runtime_run_unique
+        ON skill_runs(runtime_run_id) WHERE runtime_run_id IS NOT NULL;
+
+      ALTER TABLE memory_vnext_source_queue ADD COLUMN IF NOT EXISTS runtime_run_id UUID;
+      ALTER TABLE memory_vnext_source_queue ADD COLUMN IF NOT EXISTS runtime_source_version TIMESTAMPTZ;
+      ALTER TABLE memory_vnext_source_queue ADD COLUMN IF NOT EXISTS runtime_attempt_id UUID;
+      ALTER TABLE memory_vnext_source_queue ADD COLUMN IF NOT EXISTS runtime_lease_epoch INTEGER;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_vnext_source_queue_runtime_run_unique
+        ON memory_vnext_source_queue(runtime_run_id) WHERE runtime_run_id IS NOT NULL;
+
+      DO $runtime_domain_shape$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'memory_vnext_source_queue_runtime_fence_shape'
+        ) THEN
+          ALTER TABLE memory_vnext_source_queue
+          ADD CONSTRAINT memory_vnext_source_queue_runtime_fence_shape CHECK (
+            (runtime_run_id IS NULL AND runtime_source_version IS NULL AND runtime_attempt_id IS NULL AND runtime_lease_epoch IS NULL)
+            OR (
+              runtime_run_id IS NOT NULL AND runtime_source_version IS NOT NULL
+              AND (
+                (runtime_attempt_id IS NULL AND runtime_lease_epoch IS NULL)
+                OR (runtime_attempt_id IS NOT NULL AND runtime_lease_epoch IS NOT NULL)
+              )
+            )
+          );
+        END IF;
+      END
+      $runtime_domain_shape$;
+    `);
+
     const policyJson = JSON.stringify(DEFAULT_RUNTIME_CAPACITY_POLICY_V1);
     const policyHash = hashValue(DEFAULT_RUNTIME_CAPACITY_POLICY_V1);
     await client.query(
@@ -171,6 +205,21 @@ export async function ensureRuntimeKernelSchema(pool: Pool): Promise<void> {
           ALTER TABLE runtime_runs ADD CONSTRAINT runtime_runs_causal_parent_account_fk
           FOREIGN KEY (account_id, causal_parent_run_id)
           REFERENCES runtime_runs(account_id, id) ON DELETE RESTRICT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'skill_runs_runtime_run_account_fk') THEN
+          ALTER TABLE skill_runs ADD CONSTRAINT skill_runs_runtime_run_account_fk
+          FOREIGN KEY (account_id, runtime_run_id)
+          REFERENCES runtime_runs(account_id, id) ON DELETE RESTRICT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_vnext_source_queue_runtime_run_account_fk') THEN
+          ALTER TABLE memory_vnext_source_queue ADD CONSTRAINT memory_vnext_source_queue_runtime_run_account_fk
+          FOREIGN KEY (account_id, runtime_run_id)
+          REFERENCES runtime_runs(account_id, id) ON DELETE RESTRICT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_vnext_source_queue_runtime_attempt_fence_fk') THEN
+          ALTER TABLE memory_vnext_source_queue ADD CONSTRAINT memory_vnext_source_queue_runtime_attempt_fence_fk
+          FOREIGN KEY (account_id, runtime_run_id, runtime_attempt_id)
+          REFERENCES runtime_attempts(account_id, run_id, id) ON DELETE RESTRICT;
         END IF;
       END
     $runtime_constraints$`);

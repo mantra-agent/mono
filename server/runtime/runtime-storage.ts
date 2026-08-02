@@ -65,7 +65,7 @@ export const DEFAULT_RUNTIME_RETRY_POLICY_V1: RuntimeRetryPolicyV1 = {
   maxAttempts: 3,
   baseDelayMs: 5_000,
   maxDelayMs: 5 * 60 * 1000,
-  retryableFailureClasses: ["transient_database", "transient_network", "provider_transient", "lease_lost", "safe_timeout"],
+  retryableFailureClasses: ["transient_database", "transient_network", "provider_transient", "lease_lost", "safe_timeout", "handler_transient"],
 };
 
 export const DEFAULT_RUNTIME_CAPACITY_POLICY_V1: RuntimeCapacityPolicyV1 = {
@@ -634,7 +634,20 @@ export async function claimNextRuntimeRun(
     if (!run) return null;
     const handler = runtimeHandlerRegistry.get(run.handlerKey, run.handlerVersion);
     if (!handler || handler.executorProfile !== run.executorProfile || handler.resourcePool !== run.resourcePool) {
-      log.warn("runtime.dispatch.handler_unavailable", { runId: run.id, accountId: run.accountId, handler: `${run.handlerKey}@${run.handlerVersion}`, resourcePool });
+      const recoveryPrincipal = createNamedSystemPrincipal("runtime-authority-recovery");
+      const terminal = await terminalizeInTransaction(tx, recoveryPrincipal, run, null, {
+        outcome: "blocked",
+        reasonCode: "handler_version_unavailable",
+        attribution: "runtime",
+        outputRefs: [],
+        verificationLevel: "observed",
+      });
+      log.warn("runtime.dispatch.handler_unavailable", {
+        runId: terminal.run.id,
+        accountId: terminal.run.accountId,
+        handler: `${run.handlerKey}@${run.handlerVersion}`,
+        resourcePool,
+      });
       return null;
     }
 

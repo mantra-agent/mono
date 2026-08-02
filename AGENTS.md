@@ -361,8 +361,8 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 2. **Fragmented PostgreSQL access** — Ordinary work crosses the `db` proxy, but raw general-pool calls, a separate auth pool, route-time DDL, and exceptional dedicated clients remain; instrumentation, lane selection, and shutdown ownership are not universal
 3. **Session blob storage** — `document_store_documents.content` rewrites the full session JSON under a per-session advisory transaction lock; no message-row pagination
 4. **Distributed schema convergence** — Migration SQL, `runSchemaBootstrap`, subsystem ensures, route registration, and post-ready index maintenance all participate in deployed schema state
-5. **Memory source queue claim race** — Poll and `markProcessing` are separate unguarded statements, so multiple app replicas can select and process the same settled source
-6. **Timer execution is strictly serial per app process** — One slow timer blocks that process's queue; PostgreSQL run-slot claims provide selected cross-replica idempotency, not a universal scheduler lease
+5. **Autonomy Runtime migration is partial** — Weekly Ideas and settled memory-source extraction use native fenced Runtime attempts, but other Timers, Hooks, Plans, Workflows, Regression, and Council execution still retain compatibility schedulers or domain lifecycle owners until later cutovers.
+6. **Timer execution is serial per app process except Weekly Ideas** — Legacy Timer handlers still share one process queue; Weekly Ideas exits after idempotent Runtime enqueue and executes under the native background-agent dispatcher.
 
 ## Subdirectory Context
 

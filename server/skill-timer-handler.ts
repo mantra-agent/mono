@@ -7,6 +7,7 @@ import {
   buildScheduledPlanPeriodContract,
   renderScheduledPlanPeriodContract,
 } from "./planning-period-contract";
+import { getCurrentPrincipal } from "./principal-context";
 
 const log = createLogger("SkillTimerHandler");
 
@@ -64,6 +65,23 @@ export class SkillTimerHandler implements TimerHandler {
     }
 
     log.debug(`Executing skill timer "${timer.name}" skillId=${skillId}`);
+
+    if (timer.systemKey === "weekly-ideas" && skillId === "ideate") {
+      const principal = getCurrentPrincipal();
+      if (!principal) throw new Error("Weekly Ideas Timer lost its owning principal");
+      const { enqueueWeeklyIdeasRuntimeRun } = await import("./runtime/proof-path-handlers");
+      const result = await enqueueWeeklyIdeasRuntimeRun(principal, timer, run);
+      log.log(
+        `Weekly Ideas enqueued Runtime runId=${result.run.id} disposition=${result.disposition} timerRunId=${run.id}`,
+      );
+      return {
+        outcome: "success",
+        output: {
+          runtimeRunId: result.run.id,
+          runtimeDisposition: result.disposition,
+        },
+      };
+    }
 
     let preContext: string | undefined;
     log.debug(

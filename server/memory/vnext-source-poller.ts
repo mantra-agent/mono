@@ -6,9 +6,10 @@ import type { MemoryVnextSourceQueueRow, MemorySource } from "@shared/schema";
 import { parseReferenceText } from "@shared/reference-parser";
 import {
   pollSettledSources,
-  markProcessing,
-  markCompleted,
-  resetStuckProcessing,
+  bindSourceRuntimeRun,
+  completeSourceForRuntime,
+  withSourceRuntimeFence,
+  resetLegacyStuckProcessing,
   cleanupAutonomousSessionSources,
 } from "./vnext-source-queue";
 import {
@@ -238,8 +239,10 @@ interface ProcessSourceResult {
   retirementCandidates: number;
 }
 
-async function processSource(
+export async function processSourceForRuntime(
   row: MemoryVnextSourceQueueRow,
+  fence: { runId: string; attemptId: string; leaseEpoch: number },
+  principal: Principal,
 ): Promise<ProcessSourceResult> {
   log.info(
     `processSource: start source=${row.sourceType}:${row.sourceId} queueId=${row.id}`,
@@ -250,7 +253,9 @@ async function processSource(
     log.info(
       `processSource: no content source=${row.sourceType}:${row.sourceId}, marking completed`,
     );
-    await markCompleted(row.id, "empty");
+    if (!await completeSourceForRuntime(row.id, row.lastModifiedAt, fence, "empty", principal)) {
+      throw Object.assign(new Error("Memory source Runtime fence changed before empty completion"), { code: "stale_fence" });
+    }
     return { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
   }
 
@@ -260,7 +265,9 @@ async function processSource(
     log.debug(
       `processSource: unchanged source=${row.sourceType}:${row.sourceId} hash=${contentHash.slice(0, 8)}`,
     );
-    await markCompleted(row.id, contentHash);
+    if (!await completeSourceForRuntime(row.id, row.lastModifiedAt, fence, contentHash, principal)) {
+      throw Object.assign(new Error("Memory source Runtime fence changed before unchanged completion"), { code: "stale_fence" });
+    }
     return { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
   }
 
@@ -293,7 +300,13 @@ async function processSource(
 
   let result: ProcessSourceResult = { created: 0, reinforced: 0, skipped: 0, decayed: 0, retirementCandidates: 0 };
   if (observation.claims.length > 0) {
-    const persistResult = await persistPollerObservation(observation, sourceContent, row);
+    const persistResult = await withSourceRuntimeFence(
+      row.id,
+      row.lastModifiedAt,
+      fence,
+      principal,
+      () => persistPollerObservation(observation, sourceContent, row),
+    );
     result.created = persistResult.created;
     result.reinforced = persistResult.reinforced;
     result.skipped = persistResult.skipped;
@@ -302,7 +315,9 @@ async function processSource(
   // Absence from a re-extraction pass is not negative evidence. Existing claims,
   // certainty, lifecycle stage, and availability remain unchanged.
 
-  await markCompleted(row.id, contentHash);
+  if (!await completeSourceForRuntime(row.id, row.lastModifiedAt, fence, contentHash, principal)) {
+    throw Object.assign(new Error("Memory source Runtime fence changed before completion"), { code: "stale_fence" });
+  }
 
   log.info(
     `processSource: complete source=${row.sourceType}:${row.sourceId} created=${result.created} reinforced=${result.reinforced} skipped=${result.skipped} decayed=${result.decayed} retirementCandidates=${result.retirementCandidates}`,
@@ -340,27 +355,13 @@ function buildOwnerPrincipal(row: MemoryVnextSourceQueueRow): Principal {
 // ---------------------------------------------------------------------------
 
 /**
- * Process settled sources from the extraction queue.
- *
- * Called periodically (every 5 minutes) by a system timer.
- * For each settled source:
- * 1. Mark as processing (prevents concurrent extraction)
- * 2. Load full content, hash, chunk
- * 3. Extract claims from each chunk via v6 prompt
- * 4. Dedup against existing claims (semantic vector search)
- * 5. Create new claims or reinforce existing ones
- * 6. Mark as completed with content hash
- *
- * Each source is processed within its owning user's principal context
- * for multi-user data ownership safety.
+ * Enqueue settled source versions into the Autonomy Runtime Kernel.
+ * Maintenance remains bounded here; execution ownership begins only when the
+ * native short-worker handler claims a fenced Runtime attempt.
  */
-export async function processSettledSources(): Promise<{
-  processed: number;
-  totalCreated: number;
-  totalReinforced: number;
-  totalSkipped: number;
-  totalDecayed: number;
-  totalRetirementCandidates: number;
+export async function enqueueSettledSources(): Promise<{
+  enqueued: number;
+  existing: number;
   errors: number;
 }> {
   const hashBackfill = await runWithPrincipal(
@@ -368,7 +369,7 @@ export async function processSettledSources(): Promise<{
     () => memoryVnextClaimStorage.backfillOwnerScopedContentHashes(250),
   );
   if (hashBackfill > 0) {
-    log.info(`processSettledSources: owner-scoped content hashes updated=${hashBackfill}`);
+    log.info(`enqueueSettledSources: owner-scoped content hashes updated=${hashBackfill}`);
   }
 
   let migrationErrors = 0;
@@ -386,7 +387,7 @@ export async function processSettledSources(): Promise<{
       ruleMigration.errors > 0
     ) {
       log.info(
-        `processSettledSources: Rule audit scanned=${ruleMigration.scanned} retained=${ruleMigration.retained} restored=${ruleMigration.restored} deleted=${ruleMigration.deleted} errors=${ruleMigration.errors}`,
+        `enqueueSettledSources: Rule audit scanned=${ruleMigration.scanned} retained=${ruleMigration.retained} restored=${ruleMigration.restored} deleted=${ruleMigration.deleted} errors=${ruleMigration.errors}`,
       );
     }
 
@@ -396,7 +397,7 @@ export async function processSettledSources(): Promise<{
     const preferenceMigration = await migrateLegacyPreferences();
     if (preferenceMigration.scanned > 0 || preferenceMigration.errors > 0) {
       log.info(
-        `processSettledSources: preference migration scanned=${preferenceMigration.scanned} migrated=${preferenceMigration.migrated} errors=${preferenceMigration.errors}`,
+        `enqueueSettledSources: preference migration scanned=${preferenceMigration.scanned} migrated=${preferenceMigration.migrated} errors=${preferenceMigration.errors}`,
       );
     }
     migrationErrors = ruleMigration.errors + preferenceMigration.errors;
@@ -409,92 +410,50 @@ export async function processSettledSources(): Promise<{
   // idempotent, and includes completed rows that would never be polled again.
   const cleanup = await cleanupAutonomousSessionSources(100);
   if (cleanup.removed > 0) {
-    log.info(`processSettledSources: autonomous cleanup scanned=${cleanup.scanned} removed=${cleanup.removed}`);
+    log.info(`enqueueSettledSources: autonomous cleanup scanned=${cleanup.scanned} removed=${cleanup.removed}`);
   }
 
-  // Reset any stuck processing rows first (crash recovery)
-  await resetStuckProcessing(STUCK_PROCESSING_TIMEOUT_MINUTES);
+  // Recover only pre-cutover legacy rows. Runtime-bound source projections are
+  // reclaimed solely by the kernel's expired-attempt reconciliation.
+  await resetLegacyStuckProcessing(STUCK_PROCESSING_TIMEOUT_MINUTES);
 
   const sources = await pollSettledSources(SETTLE_MINUTES, MAX_SOURCES_PER_RUN);
 
   if (sources.length === 0) {
-    log.debug("processSettledSources: no settled sources");
-    return {
-      processed: 0,
-      totalCreated: 0,
-      totalReinforced: 0,
-      totalSkipped: 0,
-      totalDecayed: 0,
-      totalRetirementCandidates: 0,
-      errors: migrationErrors,
-    };
+    log.debug("enqueueSettledSources: no settled sources");
+    return { enqueued: 0, existing: 0, errors: migrationErrors };
   }
 
-  log.info(`processSettledSources: found ${sources.length} settled sources`);
+  log.info(`enqueueSettledSources: found ${sources.length} settled sources`);
 
-  let processed = 0;
-  let totalCreated = 0;
-  let totalReinforced = 0;
-  let totalSkipped = 0;
-  let totalDecayed = 0;
-  let totalRetirementCandidates = 0;
+  let enqueued = 0;
+  let existing = 0;
   let errors = migrationErrors;
 
   for (const row of sources) {
     try {
       const principal = buildOwnerPrincipal(row);
-      const result = await runWithPrincipal(principal, async () => {
-        const { admissionController } = await import("../run-admission");
-        return admissionController.withResourcePool(
-          "short_worker",
-          `memory-source:${row.id}:${Date.now()}`,
-          async () => {
-            // Domain lifecycle remains legacy in this phase. Capacity is
-            // acquired first so markProcessing can never independently
-            // authorize work across replicas.
-            await markProcessing(row.id);
-            const backfill = await memoryVnextClaimStorage.backfillMissingActiveEmbeddings(25);
-            if (backfill.errors > 0) {
-              throw new Error(
-                `vNext embedding backfill incomplete for owner=${principal.userId}: ${backfill.errors} error(s)`,
-              );
-            }
-            return processSource(row);
-          },
-          { activity: "memory.vnext.source" },
-        );
+      await runWithPrincipal(principal, async () => {
+        const { enqueueMemorySourceRuntimeRun } = await import("../runtime/proof-path-handlers");
+        const result = await enqueueMemorySourceRuntimeRun(principal, row);
+        if (!await bindSourceRuntimeRun(row.id, row.lastModifiedAt, result.run.id, principal)) {
+          throw Object.assign(new Error("Memory source version changed before Runtime binding"), { code: "source_version_changed" });
+        }
+        if (result.disposition === "created") enqueued++;
+        else existing++;
       });
-
-      processed++;
-      totalCreated += result.created;
-      totalReinforced += result.reinforced;
-      totalSkipped += result.skipped;
-      totalDecayed += result.decayed;
-      totalRetirementCandidates += result.retirementCandidates;
     } catch (err) {
       errors++;
       const errorDetails = getPostgresErrorDetails(err);
       log.error(JSON.stringify({
-        event: "memory.vnext.source_processing_failed",
+        event: "memory.vnext.source_enqueue_failed",
         sourceType: row.sourceType,
         queueId: row.id,
         ...errorDetails,
       }));
-      // Leave as "processing" — resetStuckProcessing will recover it next run
     }
   }
 
-  log.info(
-    `processSettledSources: complete processed=${processed} created=${totalCreated} reinforced=${totalReinforced} skipped=${totalSkipped} decayed=${totalDecayed} retirementCandidates=${totalRetirementCandidates} errors=${errors}`,
-  );
-
-  return {
-    processed,
-    totalCreated,
-    totalReinforced,
-    totalSkipped,
-    totalDecayed,
-    totalRetirementCandidates,
-    errors,
-  };
+  log.info(`enqueueSettledSources: complete enqueued=${enqueued} existing=${existing} errors=${errors}`);
+  return { enqueued, existing, errors };
 }

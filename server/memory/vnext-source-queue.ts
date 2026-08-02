@@ -1,5 +1,5 @@
-import { and, eq, lt, sql, desc, inArray } from "drizzle-orm";
-import { db } from "../db";
+import { and, eq, lt, sql, desc, inArray, isNull, or } from "drizzle-orm";
+import { db, runWithDatabaseTransaction } from "../db";
 import { createLogger } from "../log";
 import type { Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
@@ -307,6 +307,10 @@ export async function markSourceChanged(
       set: {
         lastModifiedAt: new Date(),
         status: "pending",
+        runtimeRunId: null,
+        runtimeSourceVersion: null,
+        runtimeAttemptId: null,
+        runtimeLeaseEpoch: null,
       },
     });
 
@@ -369,6 +373,7 @@ export async function pollSettledSources(
     .where(
       and(
         eq(memoryVnextSourceQueue.status, "pending"),
+        isNull(memoryVnextSourceQueue.runtimeRunId),
         lt(memoryVnextSourceQueue.lastModifiedAt, settleThreshold),
       ),
     )
@@ -381,36 +386,154 @@ export async function pollSettledSources(
   return rows;
 }
 
-/**
- * Mark a source as processing to prevent concurrent extraction.
- */
-export async function markProcessing(id: number): Promise<void> {
-  await db
+/** Bind one settled source version to its idempotent Runtime Run. */
+export async function bindSourceRuntimeRun(
+  id: number,
+  sourceVersion: Date,
+  runtimeRunId: string,
+  principal: Principal,
+): Promise<boolean> {
+  const [row] = await db
     .update(memoryVnextSourceQueue)
-    .set({ status: "processing" })
-    .where(eq(memoryVnextSourceQueue.id, id));
+    .set({ runtimeRunId, runtimeSourceVersion: sourceVersion })
+    .where(
+      combineWithWritableScope(
+        principal,
+        scopeColumns,
+        and(
+          eq(memoryVnextSourceQueue.id, id),
+          eq(memoryVnextSourceQueue.status, "pending"),
+          eq(memoryVnextSourceQueue.lastModifiedAt, sourceVersion),
+          or(isNull(memoryVnextSourceQueue.runtimeRunId), eq(memoryVnextSourceQueue.runtimeRunId, runtimeRunId)),
+        ),
+      ),
+    )
+    .returning({ id: memoryVnextSourceQueue.id });
+  return Boolean(row);
+}
 
-  log.debug(`marked processing id=${id}`);
+/** Claim domain processing only with the current native Runtime fence. */
+export async function claimSourceForRuntime(
+  id: number,
+  sourceVersion: Date,
+  fence: { runId: string; attemptId: string; leaseEpoch: number },
+  principal: Principal,
+): Promise<MemoryVnextSourceQueueRow | null> {
+  const [row] = await db
+    .update(memoryVnextSourceQueue)
+    .set({
+      status: "processing",
+      runtimeAttemptId: fence.attemptId,
+      runtimeLeaseEpoch: fence.leaseEpoch,
+    })
+    .where(
+      combineWithWritableScope(
+        principal,
+        scopeColumns,
+        and(
+          eq(memoryVnextSourceQueue.id, id),
+          eq(memoryVnextSourceQueue.lastModifiedAt, sourceVersion),
+          eq(memoryVnextSourceQueue.runtimeRunId, fence.runId),
+          or(
+            and(
+              eq(memoryVnextSourceQueue.status, "pending"),
+              isNull(memoryVnextSourceQueue.runtimeAttemptId),
+              isNull(memoryVnextSourceQueue.runtimeLeaseEpoch),
+            ),
+            and(
+              eq(memoryVnextSourceQueue.status, "processing"),
+              sql`EXISTS (
+                SELECT 1
+                FROM runtime_attempts AS previous_attempt
+                WHERE previous_attempt.id = ${memoryVnextSourceQueue.runtimeAttemptId}
+                  AND previous_attempt.run_id = ${memoryVnextSourceQueue.runtimeRunId}
+                  AND previous_attempt.account_id = ${memoryVnextSourceQueue.accountId}
+                  AND previous_attempt.lease_epoch = ${memoryVnextSourceQueue.runtimeLeaseEpoch}
+                  AND previous_attempt.phase = 'finished'
+                  AND previous_attempt.result IN ('retry', 'lost')
+              )`,
+            ),
+          ),
+        ),
+      ),
+    )
+    .returning();
+  return row ?? null;
 }
 
 /**
- * Mark a source as completed after successful extraction.
- * Records the content hash for change detection on future edits.
+ * Run the canonical claim-graph mutation while holding the exact source-version
+ * and Runtime-attempt projection lock. `applyObservation` inherits this ambient
+ * transaction, so a source edit cannot slip between fence validation and graph
+ * writes.
  */
-export async function markCompleted(
+export async function withSourceRuntimeFence<T>(
   id: number,
+  sourceVersion: Date,
+  fence: { runId: string; attemptId: string; leaseEpoch: number },
+  principal: Principal,
+  mutation: () => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+    const [row] = await tx
+      .select({ id: memoryVnextSourceQueue.id })
+      .from(memoryVnextSourceQueue)
+      .where(
+        combineWithWritableScope(
+          principal,
+          scopeColumns,
+          and(
+            eq(memoryVnextSourceQueue.id, id),
+            eq(memoryVnextSourceQueue.status, "processing"),
+            eq(memoryVnextSourceQueue.lastModifiedAt, sourceVersion),
+            eq(memoryVnextSourceQueue.runtimeRunId, fence.runId),
+            eq(memoryVnextSourceQueue.runtimeAttemptId, fence.attemptId),
+            eq(memoryVnextSourceQueue.runtimeLeaseEpoch, fence.leaseEpoch),
+          ),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!row) {
+      throw Object.assign(new Error("Memory source Runtime fence is stale"), { code: "stale_fence" });
+    }
+    return mutation();
+  }));
+}
+
+/** Complete one source only while its exact Runtime fence still owns it. */
+export async function completeSourceForRuntime(
+  id: number,
+  sourceVersion: Date,
+  fence: { runId: string; attemptId: string; leaseEpoch: number },
   contentHash: string,
-): Promise<void> {
-  await db
+  principal: Principal,
+): Promise<boolean> {
+  const [row] = await db
     .update(memoryVnextSourceQueue)
     .set({
       status: "completed",
       lastExtractedAt: new Date(),
       contentHash,
+      runtimeAttemptId: null,
+      runtimeLeaseEpoch: null,
     })
-    .where(eq(memoryVnextSourceQueue.id, id));
-
-  log.debug(`marked completed id=${id} hash=${contentHash.slice(0, 8)}...`);
+    .where(
+      combineWithWritableScope(
+        principal,
+        scopeColumns,
+        and(
+          eq(memoryVnextSourceQueue.id, id),
+          eq(memoryVnextSourceQueue.status, "processing"),
+          eq(memoryVnextSourceQueue.lastModifiedAt, sourceVersion),
+          eq(memoryVnextSourceQueue.runtimeRunId, fence.runId),
+          eq(memoryVnextSourceQueue.runtimeAttemptId, fence.attemptId),
+          eq(memoryVnextSourceQueue.runtimeLeaseEpoch, fence.leaseEpoch),
+        ),
+      ),
+    )
+    .returning({ id: memoryVnextSourceQueue.id });
+  return Boolean(row);
 }
 
 /**
@@ -437,6 +560,19 @@ export async function getQueueStatus(): Promise<{
     counts.total += row.count;
   }
   return counts;
+}
+
+/** Get one queue row through the owning principal boundary. */
+export async function getSourceQueueRow(
+  id: number,
+  principal: Principal,
+): Promise<MemoryVnextSourceQueueRow | null> {
+  const [row] = await db
+    .select()
+    .from(memoryVnextSourceQueue)
+    .where(combineWithVisibleScope(principal, scopeColumns, eq(memoryVnextSourceQueue.id, id)))
+    .limit(1);
+  return row ?? null;
 }
 
 /**
@@ -485,23 +621,24 @@ export async function listVisibleSources(
 }
 
 /**
- * Reset a stuck "processing" row back to "pending" (recovery from crashes).
- * Only resets rows that have been processing longer than the given timeout.
+ * Legacy-only recovery for rows created before native Runtime ownership.
+ * Runtime-bound rows recover through attempt lease reconciliation and fenced
+ * takeover; this maintenance path must never clear a canonical fence.
  */
-export async function resetStuckProcessing(
+export async function resetLegacyStuckProcessing(
   timeoutMinutes: number,
 ): Promise<number> {
   const threshold = sql`NOW() - INTERVAL '${sql.raw(String(timeoutMinutes))} minutes'`;
 
   const result = await db
     .update(memoryVnextSourceQueue)
-    .set({
-      status: "pending",
-      lastModifiedAt: new Date(),
-    })
+    .set({ status: "pending" })
     .where(
       and(
         eq(memoryVnextSourceQueue.status, "processing"),
+        isNull(memoryVnextSourceQueue.runtimeRunId),
+        isNull(memoryVnextSourceQueue.runtimeAttemptId),
+        isNull(memoryVnextSourceQueue.runtimeLeaseEpoch),
         lt(memoryVnextSourceQueue.lastModifiedAt, threshold),
       ),
     )
@@ -509,7 +646,7 @@ export async function resetStuckProcessing(
 
   if (result.length > 0) {
     log.warn(
-      `reset ${result.length} stuck processing rows (timeout=${timeoutMinutes}min)`,
+      `reset ${result.length} legacy stuck processing rows (timeout=${timeoutMinutes}min)`,
     );
   }
   return result.length;

@@ -112,6 +112,8 @@ export interface ExecutorRunOptions {
   onEvent?: (event: StreamEvent) => void;
   querySubsystem?: import("./db").QuerySubsystem;
   tier?: import("./run-admission").AdmissionTier;
+  /** Capacity is normally acquired through the legacy façade; native Runtime handlers already own a fenced attempt. */
+  capacityOwner?: { kind: "legacy_admission" } | { kind: "runtime"; runId: string; attemptId: string };
   /** Stable root identity shared by parent and descendant runs for lineage-safe admission. */
   lineageId?: string;
   /** Voice session ID for claiming pre-warmed CLI handles on the first turn. */
@@ -130,8 +132,11 @@ export interface ExecutorRunOptions {
 }
 
 function toolTransfersExecutionToChild(name: string, args: Record<string, unknown>): boolean {
-  if (name !== "plan") return false;
-  return args.action === "execute" || args.action === "resume";
+  if (name === "plan") return args.action === "execute" || args.action === "resume";
+  if (name === "skills") return args.action === "run";
+  if (name === "session") return args.action === "spawn_child";
+  if (name === "workflows") return args.action === "start_run" || args.action === "resume_run";
+  return false;
 }
 
 export type AbortReason = "idle_timeout" | "stream_idle_timeout" | "pipeline_timeout" | "run_time_limit" | "cancelled" | "superseded" | "error" | "circuit_breaker" | "zombie_timeout";
@@ -1701,6 +1706,9 @@ export class AgentExecutor extends EventEmitter {
       let toolResult: ToolExecutorResult;
       try {
         if (toolTransfersExecutionToChild(tc.name, tc.input)) {
+          if (options.capacityOwner?.kind === "runtime") {
+            throw new Error("Native Runtime handlers cannot transfer execution into a nested scheduler");
+          }
           const { admissionController } = await import("./run-admission");
           toolResult = await admissionController.withSuspendedSlot(ctx.runId, () => options.toolExecutor!(tc.name, tc.input));
         } else {
@@ -2475,6 +2483,9 @@ export class AgentExecutor extends EventEmitter {
       const boundedToolExecutor = options.toolExecutor
         ? async (name: string, args: Record<string, unknown>, toolContext?: { toolCallId: string; order: number }) => {
             const execute = () => options.toolExecutor!(name, args);
+            if (toolTransfersExecutionToChild(name, args) && options.capacityOwner?.kind === "runtime") {
+              throw new Error("Native Runtime handlers cannot transfer execution into a nested scheduler");
+            }
             const result = toolTransfersExecutionToChild(name, args)
               ? await (await import("./run-admission")).admissionController.withSuspendedSlot(ctx.runId, execute)
               : await execute();
@@ -3019,6 +3030,7 @@ export class AgentExecutor extends EventEmitter {
     const iterationResults: Array<{ content: string; continuationType?: "tool_call" | "max_tokens" }> = [];
 
     const tier = options.tier ?? (options.querySubsystem === "autonomous" ? "background" as const : "communication" as const);
+    const capacityOwner = options.capacityOwner ?? { kind: "legacy_admission" as const };
     const { admissionController } = await import("./run-admission");
     const { withAdmissionTier } = await import("./db");
     let admissionGranted = false;
@@ -3031,13 +3043,20 @@ export class AgentExecutor extends EventEmitter {
 
     const runBody = async (): Promise<ExecutorRunResult> => {
     try {
-      await admissionController.requestSlot(tier, runId, {
-        sessionId: options.sessionId,
-        activity: options.activity,
-        lineageId: options.lineageId ?? options.sessionId,
-        signal: abortController.signal,
-      });
-      admissionGranted = true;
+      if (capacityOwner.kind === "legacy_admission") {
+        await admissionController.requestSlot(tier, runId, {
+          sessionId: options.sessionId,
+          activity: options.activity,
+          lineageId: options.lineageId ?? options.sessionId,
+          signal: abortController.signal,
+        });
+        admissionGranted = true;
+      } else {
+        log.debug(
+          `autonomous.lifecycle phase=runtime-capacity-owned runId=${runId} runtimeRunId=${capacityOwner.runId} ` +
+          `runtimeAttemptId=${capacityOwner.attemptId}`,
+        );
+      }
       const admittedAt = Date.now();
       const activeRun = this.activeRuns.get(runId);
       if (activeRun) {
@@ -3070,7 +3089,7 @@ export class AgentExecutor extends EventEmitter {
           break;
         }
 
-        if (admissionController.isYieldRequested(runId)) {
+        if (capacityOwner.kind === "legacy_admission" && admissionController.isYieldRequested(runId)) {
           lastExitCause = "yield_to_interactive";
           log.debug(`run YIELD runId=${runId} tier=${tier} — yielding to higher-priority run at iteration ${ctx.iteration}`);
           break;
@@ -3342,7 +3361,9 @@ export class AgentExecutor extends EventEmitter {
     }
     };
 
-    return admissionController.withRunContext(runId, () => withAdmissionTier(tier, runBody));
+    return capacityOwner.kind === "runtime"
+      ? withAdmissionTier(tier, runBody)
+      : admissionController.withRunContext(runId, () => withAdmissionTier(tier, runBody));
   }
 }
 
