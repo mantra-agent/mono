@@ -294,7 +294,7 @@ export async function ensureVaults(): Promise<void> {
         AND vaults.color IS DISTINCT FROM migration.to_color
     `, [legacyColors, brandColors]);
     if (migratedColorCount && migratedColorCount > 0) {
-      log.log(`Migrated ${migratedColorCount} vault color(s) to the near-white palette`);
+      log.log(`Migrated ${migratedColorCount} vault color(s) to the light-tinted palette`);
     }
 
     // ── 5. Backfill vault_id on all owned rows ─────────────────────
