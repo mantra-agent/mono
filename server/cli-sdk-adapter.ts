@@ -910,6 +910,7 @@ function createMcpTools(
       async (args: Record<string, unknown>) => {
         const invocationOrder = toolCallCounter++;
         const callId = pendingToolCallIdQueue.shift() || `sdk-tool-${Date.now()}-${invocationOrder}`;
+        const executionStartedAt = Date.now();
 
         const HEARTBEAT_INTERVAL_MS = 15_000;
         const emitKeepalive = (reason: string) => {
@@ -929,6 +930,8 @@ function createMcpTools(
             order: invocationOrder,
             result: errText,
             error: true,
+            outcome: "failed",
+            durationMs: Date.now() - executionStartedAt,
           });
           notifyToolEvent?.();
           return { content: [{ type: "text" as const, text: errText }], isError: true };
@@ -956,6 +959,8 @@ function createMcpTools(
             result: result.result,
             error: result.error,
             continuation: result.continuation,
+            outcome: result.outcome ?? (result.error ? "failed" : "succeeded"),
+            durationMs: Date.now() - executionStartedAt,
           });
           if (result.continuation) {
             await new Promise<void>((resolve) => {
@@ -982,6 +987,8 @@ function createMcpTools(
             order: invocationOrder,
             result: errText,
             error: true,
+            outcome: "failed",
+            durationMs: Date.now() - executionStartedAt,
           });
           notifyToolEvent?.();
           return { content: [{ type: "text" as const, text: errText }], isError: true };

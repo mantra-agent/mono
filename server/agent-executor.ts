@@ -59,6 +59,7 @@ import type { ToolDefinition } from "@shared/models/tools";
 export type { ToolDefinition };
 
 export type ToolContinuation = "persona_switch" | "tool_schema_refresh" | "await_user" | "provider_system_tool" | "working_set_refresh";
+export type ToolOutcome = "succeeded" | "degraded" | "failed" | "cancelled";
 
 export type ToolExecutorResult = {
   /** Exact result for canonical transcript persistence and user-visible streaming. */
@@ -66,6 +67,7 @@ export type ToolExecutorResult = {
   /** Optional ephemeral result returned only to the provider's current working set. */
   providerResult?: string;
   error?: boolean;
+  outcome?: ToolOutcome;
   sideEffectOnly?: boolean;
   continuation?: ToolContinuation;
   normalizedArguments?: Record<string, unknown>;
@@ -170,7 +172,7 @@ export interface ExecutorRunResult {
   lastStopReason?: string;
   content: string;
   thinking: string;
-  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; error?: boolean; durationMs: number; parentId?: string }>;
+  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; durationMs: number; parentId?: string }>;
   model: string;
   provider: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -1509,7 +1511,16 @@ export class AgentExecutor extends EventEmitter {
         if (toolCallId) ctx.toolCallArgsCache.delete(toolCallId);
         const toolIdx = ctx.resolvedToolCalls.length;
         const resolvedArgs = matchingCall?.input || cachedArgs || event.arguments || {};
-        ctx.resolvedToolCalls.push({ id: toolCallId, name: normalizedName || event.toolName, args: resolvedArgs, result: event.result, error: event.error, durationMs: 0, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
+        this.recordToolOutcome({
+          ctx,
+          options,
+          id: toolCallId,
+          name: normalizedName || event.toolName,
+          input: resolvedArgs,
+          result: event.result,
+          outcome: event.outcome ?? (event.error ? "failed" : "succeeded"),
+          durationMs: event.durationMs ?? 0,
+        });
         if (toolCallId && !ctx.iterationToolCalls.some((call) => call.id === toolCallId)) {
           ctx.iterationToolCalls.push({
             id: toolCallId,
@@ -1701,6 +1712,23 @@ export class AgentExecutor extends EventEmitter {
         if (waitedMs > 2000) {
           log.warn(`[Executor] dispatch slow callId=${tc.id} name=${tc.name} waitedMs=${waitedMs}`);
         }
+        eventBus.publish({
+          category: "agent",
+          event: "agent.stage_timing",
+          payload: {
+            runId: ctx.runId,
+            sessionId: options.sessionId || null,
+            iteration: ctx.iteration,
+            stage: "tool_dispatch",
+            outcome: waitedMs > 2000 ? "degraded" : "succeeded",
+            durationMs: waitedMs,
+            toolCallId: tc.id,
+            toolName: tc.name,
+            source: options.activity || "agent",
+          },
+          runId: ctx.runId,
+          sessionKey: options.sessionKey,
+        });
       }
       log.verbose(() => `Tool "${tc.name}" starting id=${tc.id} inputKeys=${Object.keys(tc.input).join(",") || "none"} runId=${ctx.runId}`);
       let toolResult: ToolExecutorResult;
@@ -1715,7 +1743,11 @@ export class AgentExecutor extends EventEmitter {
           toolResult = await options.toolExecutor!(tc.name, tc.input);
         }
       } catch (err: unknown) {
-        toolResult = { result: `Tool execution error: ${err instanceof Error ? err.message : String(err)}`, error: true };
+        toolResult = {
+          result: `Tool execution error: ${err instanceof Error ? err.message : String(err)}`,
+          error: true,
+          outcome: "failed",
+        };
       } finally {
         clearInterval(toolHeartbeat);
         markRunToolActivity();
@@ -1742,7 +1774,28 @@ export class AgentExecutor extends EventEmitter {
         runId: ctx.runId,
       });
       const toolIdx = ctx.resolvedToolCalls.length;
-      ctx.resolvedToolCalls.push({ id: tc.id, name: tc.name, args: canonicalArgs, result: toolResult.result, error: toolResult.error, durationMs, parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}` });
+      const projectedResultTokens = estimateToolOutputSize(immediateProjection.providerResult).estimatedTokens;
+      ctx.currentCycleToolResultTokens += projectedResultTokens;
+      this.emitContextGrowthCanary({
+        ctx,
+        options,
+        boundary: "tool_result_reinjection",
+        messageTokens: estimateTotalTokens(messages) + ctx.currentCycleToolResultTokens,
+        toolResultTokens: ctx.currentCycleToolResultTokens,
+        budgetTokens: getContextRequestBudget(ctx.modelString, options.tools).operatingInputLimit,
+        toolCallId: tc.id,
+        toolName: tc.name,
+      });
+      this.recordToolOutcome({
+        ctx,
+        options,
+        id: tc.id,
+        name: tc.name,
+        input: canonicalArgs,
+        result: toolResult.result,
+        outcome: toolResult.outcome ?? (toolResult.error ? "failed" : "succeeded"),
+        durationMs,
+      });
       // Chronology: record tool entry pointing to resolvedToolCalls index
       ctx.segmentChronology.push({ s: "tool", i: toolIdx });
       sideEffectFlags.push(!!toolResult.sideEffectOnly);
@@ -1803,6 +1856,90 @@ export class AgentExecutor extends EventEmitter {
     _abortController: AbortController,
   ): void {
     // No-op: boundary tracking in model-client.ts handles inference recording.
+  }
+
+  private recordToolOutcome(args: {
+    ctx: RunIterationContext;
+    options: ExecutorRunOptions;
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+    result: string;
+    outcome: ToolOutcome;
+    durationMs: number;
+  }): void {
+    const { ctx, options, id, name, input, result, outcome, durationMs } = args;
+    const error = outcome === "failed" || outcome === "cancelled";
+    ctx.resolvedToolCalls.push({
+      id,
+      name,
+      args: input,
+      result,
+      outcome,
+      error: error || undefined,
+      durationMs,
+      parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}`,
+    });
+
+    const metadata = {
+      runId: ctx.runId,
+      sessionId: options.sessionId,
+      toolCallId: id,
+      toolName: name,
+      outcome,
+      durationMs,
+      iteration: ctx.iteration,
+      executionMode: ctx.executionMode,
+    };
+    if (outcome === "failed" || outcome === "cancelled") {
+      log.error("agent.tool_outcome", metadata);
+    } else if (outcome === "degraded") {
+      log.warn("agent.tool_outcome", metadata);
+    } else {
+      log.debug("agent.tool_outcome", metadata);
+    }
+    eventBus.publish({
+      category: "agent",
+      event: "agent.stage_timing",
+      payload: {
+        ...metadata,
+        stage: "tool_execution",
+      },
+      runId: ctx.runId,
+      sessionKey: options.sessionKey,
+    });
+  }
+
+  private emitContextGrowthCanary(args: {
+    ctx: RunIterationContext;
+    options: ExecutorRunOptions;
+    boundary: "tool_result_reinjection" | "pre_inference";
+    messageTokens: number;
+    toolResultTokens: number;
+    budgetTokens: number;
+    toolCallId?: string;
+    toolName?: string;
+  }): void {
+    const { ctx, options, boundary, messageTokens, toolResultTokens, budgetTokens, toolCallId, toolName } = args;
+    const ratio = budgetTokens > 0 ? messageTokens / budgetTokens : 0;
+    const event = {
+      event: "agent.context_growth_canary",
+      runId: ctx.runId,
+      sessionId: options.sessionId,
+      iteration: ctx.iteration,
+      boundary,
+      messageTokens,
+      toolResultTokens,
+      budgetTokens,
+      ratio: Number(ratio.toFixed(4)),
+      toolCallId,
+      toolName,
+    };
+    if (messageTokens > budgetTokens || toolResultTokens > CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS) {
+      log.warn("agent.context_growth_canary", event);
+    } else {
+      log.debug("agent.context_growth_canary", event);
+    }
   }
 
   // Drain the run's owned background work — pending cost-log inserts and any
@@ -2501,6 +2638,16 @@ export class AgentExecutor extends EventEmitter {
               runId: ctx.runId,
             });
             ctx.currentCycleToolResultTokens += estimateToolOutputSize(immediateProjection.providerResult).estimatedTokens;
+            this.emitContextGrowthCanary({
+              ctx,
+              options,
+              boundary: "tool_result_reinjection",
+              messageTokens: estimateTotalTokens(messages) + ctx.currentCycleToolResultTokens,
+              toolResultTokens: ctx.currentCycleToolResultTokens,
+              budgetTokens: contextBudget.operatingInputLimit,
+              toolCallId: callId,
+              toolName: name,
+            });
             const budgetReached = !result.error
               && !result.continuation
               && ctx.currentCycleToolResultTokens >= CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS;
@@ -2520,6 +2667,14 @@ export class AgentExecutor extends EventEmitter {
         source: options.activity || "agent",
       });
       const providerMessages = workingSet.messages;
+      this.emitContextGrowthCanary({
+        ctx,
+        options,
+        boundary: "pre_inference",
+        messageTokens: workingSet.telemetry.tokensProjected,
+        toolResultTokens: ctx.currentCycleToolResultTokens,
+        budgetTokens: contextBudget.operatingInputLimit,
+      });
       const pendingToolResultMessages = providerMessages.filter(m => m.role === "tool_result").length;
       log.debug(`agent.loop.model_request runId=${ctx.runId} sessionId=${options.sessionId || "none"} iteration=${ctx.iteration} pendingToolResults=${pendingToolResultMessages} messageCount=${providerMessages.length} workingSetOutcome=${workingSet.telemetry.outcome} projectedTokens=${workingSet.telemetry.tokensProjected}`);
       eventBus.publish({
@@ -2606,6 +2761,33 @@ export class AgentExecutor extends EventEmitter {
 
       this.emitModelCallTimingStep(ctx, modelSpanId);
       ctx.publish("system_step", { step: "llm_call", status: responseStatus, stepId: modelSpanId });
+
+      const modelCompletedAt = Date.now();
+      const ttftMs = ctx.firstOutputTime && ctx.llmCallStartTime
+        ? ctx.firstOutputTime - ctx.llmCallStartTime
+        : null;
+      const decodeMs = ctx.firstOutputTime
+        ? modelCompletedAt - ctx.firstOutputTime
+        : null;
+      eventBus.publish({
+        category: "agent",
+        event: "agent.stage_timing",
+        payload: {
+          runId: ctx.runId,
+          sessionId: options.sessionId || null,
+          iteration: ctx.iteration,
+          stage: "model",
+          outcome: responseStatus === "done" ? "succeeded" : "failed",
+          durationMs: ctx.llmCallStartTime ? modelCompletedAt - ctx.llmCallStartTime : null,
+          ttftMs,
+          decodeMs,
+          effectiveReasoningEffort: routingDecision.modelConfig?.reasoningEffort ?? thinking ?? null,
+          model: modelString,
+          source: options.activity || "agent",
+        },
+        runId: ctx.runId,
+        sessionKey: options.sessionKey,
+      });
 
       ctx.lastStreamDiagnostics = {
         eventCount: streamEventCount,
@@ -2880,6 +3062,7 @@ export class AgentExecutor extends EventEmitter {
     }
 
     if (unresolvedToolCalls.length > 0 && options.toolExecutor) {
+      ctx.currentCycleToolResultTokens = 0;
       const { toolResults, allSideEffectOnly, continuation } = await this.executeToolCalls(unresolvedToolCalls, ctx, options, messages, cleanText);
       messages.push({ role: "tool_result", content: toolResults });
       if (continuation === "persona_switch") {
@@ -3071,6 +3254,22 @@ export class AgentExecutor extends EventEmitter {
       } else {
         log.debug(`Admission granted for ${tier} run ${runId} (${admissionWaitMs}ms)`);
       }
+      eventBus.publish({
+        category: "agent",
+        event: "agent.stage_timing",
+        payload: {
+          runId,
+          sessionId: options.sessionId || null,
+          stage: "admission",
+          outcome: "succeeded",
+          durationMs: admissionWaitMs,
+          capacityOwner: capacityOwner.kind,
+          tier,
+          source: options.activity || "agent",
+        },
+        runId,
+        sessionKey: options.sessionKey,
+      });
       // Notify upstream (skill runner) that admission is granted so it can
       // start its inactivity timer at the right moment.
       options.onEvent?.({ type: "admitted" } as any);
