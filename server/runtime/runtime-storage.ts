@@ -44,7 +44,8 @@ const MAX_EVIDENCE_BYTES = 16 * 1024;
 const MAX_EVIDENCE_EVENTS_PER_RECEIPT = 100;
 const MAX_RECEIPT_BYTES = 64 * 1024;
 const MAX_OUTPUT_REFERENCES = 100;
-const DEFAULT_ACCOUNT_HEAD_LIMIT = 50;
+const TEN_ACCOUNT_FAIRNESS_FLOOR = 10;
+const MAX_ACCOUNT_HEAD_LIMIT = 100;
 
 const runScope = { scope: runtimeRuns.scope, ownerUserId: runtimeRuns.ownerUserId, accountId: runtimeRuns.accountId };
 const attemptScope = { scope: runtimeAttempts.scope, ownerUserId: runtimeAttempts.ownerUserId, accountId: runtimeAttempts.accountId };
@@ -71,7 +72,7 @@ export const DEFAULT_RUNTIME_RETRY_POLICY_V1: RuntimeRetryPolicyV1 = {
 export const DEFAULT_RUNTIME_CAPACITY_POLICY_V1: RuntimeCapacityPolicyV1 = {
   version: 1,
   globalLimit: 20,
-  accountHeadLimit: DEFAULT_ACCOUNT_HEAD_LIMIT,
+  accountHeadLimit: 50,
   pools: {
     interactive_agent: { limit: 4, accountLimit: 2, leaseSeconds: 60, heartbeatSeconds: 15, interactiveReserve: 2 },
     background_agent: { limit: 10, accountLimit: 2, leaseSeconds: 60, heartbeatSeconds: 15, interactiveReserve: 0 },
@@ -579,7 +580,8 @@ export async function claimNextRuntimeRun(
       return null;
     }
 
-    const headLimit = Math.max(1, Math.min(policy.accountHeadLimit || DEFAULT_ACCOUNT_HEAD_LIMIT, 50));
+    const configuredHeadLimit = policy.accountHeadLimit || 50;
+    const headLimit = Math.max(TEN_ACCOUNT_FAIRNESS_FLOOR, Math.min(configuredHeadLimit, MAX_ACCOUNT_HEAD_LIMIT));
     const candidatesResult = await tx.execute(sql`
       WITH account_heads AS (
         SELECT DISTINCT ON (run.account_id)
@@ -662,6 +664,18 @@ export async function claimNextRuntimeRun(
     const [leasedRun] = await tx.update(runtimeRuns).set({ phase: "leased", currentAttemptId: attempt.id, updatedAt: new Date() })
       .where(and(eq(runtimeRuns.id, run.id), eq(runtimeRuns.phase, "pending"), isNull(runtimeRuns.currentAttemptId))).returning();
     if (!leasedRun) throw new Error("Runtime run claim changed concurrently under pool lock");
+    log.info("runtime.dispatch.selected", {
+      runId: run.id,
+      attemptId: attempt.id,
+      accountId: run.accountId,
+      handler: `${run.handlerKey}@${run.handlerVersion}`,
+      resourcePool,
+      policyVersion,
+      eligibleAccountCount: candidates.length,
+      accountHeadLimit: headLimit,
+      priorAccountActive: Number(selected.active_count),
+      lastClaimAt: selected.last_claim_at ? new Date(selected.last_claim_at).toISOString() : null,
+    });
     log.info("runtime.attempt.leased", { runId: run.id, attemptId: attempt.id, accountId: run.accountId, handler: `${run.handlerKey}@${run.handlerVersion}`, resourcePool, policyVersion });
     return {
       run: leasedRun,
@@ -681,14 +695,34 @@ async function loadFencedAttempt(tx: DrizzleTx, fence: RuntimeFence, phases: Arr
     inArray(runtimeAttempts.phase, phases),
     gt(runtimeAttempts.leaseExpiresAt, new Date()),
   )).limit(1);
-  if (!attempt) throw Object.assign(new Error("Runtime lease fence is stale or expired"), { status: 409, code: "stale_fence" });
+  if (!attempt) {
+    log.warn("runtime.fence.rejected", {
+      runId: fence.runId,
+      attemptId: fence.attemptId,
+      accountId: fence.accountId,
+      leaseEpoch: fence.leaseEpoch,
+      reasonCode: "attempt_stale_or_expired",
+      expectedPhases: phases,
+    });
+    throw Object.assign(new Error("Runtime lease fence is stale or expired"), { status: 409, code: "stale_fence" });
+  }
   const [run] = await tx.select().from(runtimeRuns).where(and(
     eq(runtimeRuns.id, fence.runId),
     eq(runtimeRuns.accountId, fence.accountId),
     eq(runtimeRuns.currentAttemptId, fence.attemptId),
     inArray(runtimeRuns.phase, phases),
   )).limit(1);
-  if (!run) throw Object.assign(new Error("Runtime run fence is stale"), { status: 409, code: "stale_fence" });
+  if (!run) {
+    log.warn("runtime.fence.rejected", {
+      runId: fence.runId,
+      attemptId: fence.attemptId,
+      accountId: fence.accountId,
+      leaseEpoch: fence.leaseEpoch,
+      reasonCode: "run_fence_changed",
+      expectedPhases: phases,
+    });
+    throw Object.assign(new Error("Runtime run fence is stale"), { status: 409, code: "stale_fence" });
+  }
   return { run, attempt };
 }
 

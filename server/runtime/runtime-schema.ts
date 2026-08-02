@@ -155,6 +155,22 @@ export async function ensureRuntimeKernelSchema(pool: Pool): Promise<void> {
     const policyResult = await client.query(`SELECT policy_hash FROM runtime_capacity_policies WHERE version = $1`, [DEFAULT_RUNTIME_CAPACITY_POLICY_V1.version]);
     if (policyResult.rows[0]?.policy_hash !== policyHash) throw new Error("Runtime capacity policy v1 conflicts with the code-owned seed");
 
+    await client.query(`
+      ALTER TABLE skill_runs ADD COLUMN IF NOT EXISTS runtime_run_id UUID;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_runs_runtime_run_unique
+        ON skill_runs(runtime_run_id) WHERE runtime_run_id IS NOT NULL;
+
+      ALTER TABLE responsibility_runs ADD COLUMN IF NOT EXISTS runtime_run_id UUID;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_responsibility_runs_runtime_run_unique
+        ON responsibility_runs(runtime_run_id) WHERE runtime_run_id IS NOT NULL;
+
+      ALTER TABLE memory_vnext_source_queue
+        ADD COLUMN IF NOT EXISTS source_version INTEGER NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS runtime_run_id UUID;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_vnext_source_queue_runtime_run_unique
+        ON memory_vnext_source_queue(runtime_run_id) WHERE runtime_run_id IS NOT NULL;
+    `);
+
     await client.query(`DO $runtime_constraints$
       BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'runtime_runs_current_attempt_fk') THEN
@@ -171,6 +187,18 @@ export async function ensureRuntimeKernelSchema(pool: Pool): Promise<void> {
           ALTER TABLE runtime_runs ADD CONSTRAINT runtime_runs_causal_parent_account_fk
           FOREIGN KEY (account_id, causal_parent_run_id)
           REFERENCES runtime_runs(account_id, id) ON DELETE RESTRICT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'skill_runs_runtime_run_fk') THEN
+          ALTER TABLE skill_runs ADD CONSTRAINT skill_runs_runtime_run_fk
+          FOREIGN KEY (runtime_run_id) REFERENCES runtime_runs(id) ON DELETE RESTRICT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'responsibility_runs_runtime_run_fk') THEN
+          ALTER TABLE responsibility_runs ADD CONSTRAINT responsibility_runs_runtime_run_fk
+          FOREIGN KEY (runtime_run_id) REFERENCES runtime_runs(id) ON DELETE RESTRICT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_vnext_source_queue_runtime_run_fk') THEN
+          ALTER TABLE memory_vnext_source_queue ADD CONSTRAINT memory_vnext_source_queue_runtime_run_fk
+          FOREIGN KEY (runtime_run_id) REFERENCES runtime_runs(id) ON DELETE SET NULL;
         END IF;
       END
     $runtime_constraints$`);

@@ -99,6 +99,7 @@ export interface TimerRun {
   completedAt?: string;
   durationMs?: number;
   sessionId?: string;
+  runtimeRunId?: string;
   error?: string;
   trigger: "scheduled" | "manual";
   intendedFireAt?: string;

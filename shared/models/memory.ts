@@ -12,6 +12,7 @@ import {
   uniqueIndex,
   vector,
   check,
+  uuid,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -1540,6 +1541,8 @@ export const memoryVnextSourceQueue = pgTable(
       precision: 6,
     }),
     contentHash: text("content_hash"),
+    sourceVersion: integer("source_version").notNull().default(1),
+    runtimeRunId: uuid("runtime_run_id"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
     createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
@@ -1558,6 +1561,7 @@ export const memoryVnextSourceQueue = pgTable(
       table.lastModifiedAt,
     ),
     index("idx_vnext_source_queue_owner").on(table.ownerUserId),
+    uniqueIndex("idx_vnext_source_queue_runtime_run_unique").on(table.runtimeRunId).where(sql`${table.runtimeRunId} IS NOT NULL`),
   ],
 );
 

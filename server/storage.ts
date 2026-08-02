@@ -136,6 +136,7 @@ export interface IStorage {
     parentSessionId?: string;
     parentSkillRunId?: number;
     parentToolCallId?: string;
+    runtimeRunId?: string;
   }): Promise<SkillRun>;
   updateSkillRunStatus(sessionId: string, status: SkillRunStatus, durationMs?: number, failureReason?: string): Promise<SkillRun | null>;
   reconcileSkillRunStatus(sessionId: string, fromStatus: SkillRunStatus, toStatus: SkillRunStatus, failureReason: string): Promise<SkillRun | null>;
@@ -844,6 +845,7 @@ export class HybridStorage implements IStorage {
       parentSessionId: data.parentSessionId ?? null,
       parentSkillRunId: data.parentSkillRunId ?? null,
       parentToolCallId: data.parentToolCallId ?? null,
+      runtimeRunId: data.runtimeRunId ?? null,
       ...ownedInsertValues(getCurrentPrincipalOrSystem(), skillRunScopeColumns),
     }).onConflictDoNothing({ target: skillRuns.sessionId }).returning();
     if (inserted) return inserted;
@@ -855,6 +857,7 @@ export class HybridStorage implements IStorage {
       && existing.parentSessionId === (data.parentSessionId ?? null)
       && existing.parentSkillRunId === (data.parentSkillRunId ?? null)
       && existing.parentToolCallId === (data.parentToolCallId ?? null)
+      && existing.runtimeRunId === (data.runtimeRunId ?? null)
     ) {
       return existing;
     }

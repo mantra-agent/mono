@@ -1,4 +1,5 @@
 export * from "./runtime-handler";
+export { startRuntimeWorker, stopRuntimeWorker, runtimeProcessOwnsClaims, type RuntimeProcessRole } from "./runtime-worker";
 export {
   DEFAULT_RUNTIME_BUDGET_V1,
   DEFAULT_RUNTIME_CAPACITY_POLICY_V1,

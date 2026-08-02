@@ -1,7 +1,9 @@
 import { and, eq, lt, sql, desc, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
-import type { Principal } from "../principal";
+import { createUserPrincipalFromUser, type Principal } from "../principal";
+import { storage } from "../storage";
+import { getUserEffectivePermissions } from "../permissions";
 import { runWithPrincipal } from "../principal-context";
 import {
   combineWithVisibleScope,
@@ -246,20 +248,17 @@ export async function cleanupAutonomousSessionSources(
       log.warn(`cleanup skipped queueId=${row.id} reason=missing_owner`);
       continue;
     }
-    const principal: Principal = {
-      actorType: "user",
-      userId: row.ownerUserId,
-      accountId: row.accountId,
-      role: "owner",
-      scopes: ["user:read", "user:write"],
-      permissions: [],
-      isAdmin: false,
-      impersonation: {
-        impersonatedByActorType: "system",
-        reason: "vnext autonomous source cleanup",
-      },
-      source: "system",
-    };
+    if (!row.ownerUserId || !row.accountId) {
+      log.warn(`cleanup skipped queueId=${row.id} reason=missing_owner`);
+      continue;
+    }
+    const user = await storage.getUser(row.ownerUserId);
+    if (!user) {
+      log.warn(`cleanup skipped queueId=${row.id} reason=owner_missing`);
+      continue;
+    }
+    const principal = createUserPrincipalFromUser(user, row.accountId);
+    principal.permissions = await getUserEffectivePermissions(user.id);
     await runWithPrincipal(principal, async () => {
       if (!await isAutonomousSessionSource(row.sourceId)) return;
       await removeAutonomousSessionSource(row.sourceId, principal);
@@ -307,6 +306,8 @@ export async function markSourceChanged(
       set: {
         lastModifiedAt: new Date(),
         status: "pending",
+        sourceVersion: sql`${memoryVnextSourceQueue.sourceVersion} + 1`,
+        runtimeRunId: null,
       },
     });
 
@@ -381,36 +382,60 @@ export async function pollSettledSources(
   return rows;
 }
 
-/**
- * Mark a source as processing to prevent concurrent extraction.
- */
-export async function markProcessing(id: number): Promise<void> {
-  await db
+/** Link one settled source version to its canonical runtime run. */
+export async function linkRuntimeRun(
+  id: number,
+  sourceVersion: number,
+  runtimeRunId: string,
+  principal: Principal,
+): Promise<boolean> {
+  const [updated] = await db
     .update(memoryVnextSourceQueue)
-    .set({ status: "processing" })
-    .where(eq(memoryVnextSourceQueue.id, id));
-
-  log.debug(`marked processing id=${id}`);
+    .set({ runtimeRunId })
+    .where(
+      combineWithWritableScope(
+        principal,
+        scopeColumns,
+        and(
+          eq(memoryVnextSourceQueue.id, id),
+          eq(memoryVnextSourceQueue.sourceVersion, sourceVersion),
+          eq(memoryVnextSourceQueue.status, "pending"),
+        ),
+      ),
+    )
+    .returning({ id: memoryVnextSourceQueue.id });
+  return !!updated;
 }
 
-/**
- * Mark a source as completed after successful extraction.
- * Records the content hash for change detection on future edits.
- */
-export async function markCompleted(
+/** Complete exactly the source version owned by a native runtime attempt. */
+export async function markCompletedForRuntime(
   id: number,
+  sourceVersion: number,
+  runtimeRunId: string,
   contentHash: string,
-): Promise<void> {
-  await db
+  principal: Principal,
+): Promise<boolean> {
+  const [updated] = await db
     .update(memoryVnextSourceQueue)
     .set({
       status: "completed",
       lastExtractedAt: new Date(),
       contentHash,
     })
-    .where(eq(memoryVnextSourceQueue.id, id));
-
-  log.debug(`marked completed id=${id} hash=${contentHash.slice(0, 8)}...`);
+    .where(
+      combineWithWritableScope(
+        principal,
+        scopeColumns,
+        and(
+          eq(memoryVnextSourceQueue.id, id),
+          eq(memoryVnextSourceQueue.sourceVersion, sourceVersion),
+          eq(memoryVnextSourceQueue.runtimeRunId, runtimeRunId),
+        ),
+      ),
+    )
+    .returning({ id: memoryVnextSourceQueue.id });
+  if (updated) log.debug(`completed source version id=${id} version=${sourceVersion}`);
+  return !!updated;
 }
 
 /**
@@ -442,6 +467,18 @@ export async function getQueueStatus(): Promise<{
 /**
  * Get a single queue entry by source type and source ID for a given principal.
  */
+export async function getByIdForRuntime(
+  id: number,
+  principal: Principal,
+): Promise<MemoryVnextSourceQueueRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(memoryVnextSourceQueue)
+    .where(combineWithVisibleScope(principal, scopeColumns, eq(memoryVnextSourceQueue.id, id)))
+    .limit(1);
+  return row;
+}
+
 export async function getBySource(
   sourceType: VnextSourceType,
   sourceId: string,

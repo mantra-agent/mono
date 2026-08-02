@@ -492,7 +492,16 @@ class TimerScheduler {
     scheduleId: string,
     intendedFireAt?: number,
   ): void {
-    // Front-load the gate: hold every timer in a real serial wait queue rather
+    if (timerName === "Weekly Ideas") {
+      this.inFlightCount++;
+      void this.executeTimer(timerId, scheduleId, "scheduled", intendedFireAt)
+        .catch((err: unknown) => {
+          log.error(`execution error timer=${timerId}:`, err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => { this.inFlightCount--; });
+      return;
+    }
+    // Front-load the gate: hold every non-migrated timer in a real serial wait queue rather
     // than firing-then-stalling-mid-callback. The 12s STAGGER_DELAY_MS now acts
     // as a between-runs *cooldown* (applied only once a previous run has
     // finished), and per-timer jitter (0..TIMER_JITTER_MAX_MS) prevents
@@ -852,6 +861,24 @@ class TimerScheduler {
     const handlerOutput = isPlainObject(result.output)
       ? result.output
       : undefined;
+    if (result.outcome === "deferred" && result.reason === "runtime_enqueued") {
+      if (typeof handlerOutput?.runtimeRunId !== "string") {
+        throw new Error(`runtime-enqueued timer result missing runtimeRunId: ${run.id}`);
+      }
+      await withQueryAttributionAsync("timer-scheduler", () =>
+        timerStorage.updateRun(timer, run.id, {
+          runtimeRunId: handlerOutput.runtimeRunId as string,
+          metadata: { ...(run.metadata ?? {}), runtimeRunId: handlerOutput.runtimeRunId },
+        }),
+      );
+      eventBus.publish({
+        category: "timer",
+        event: "timer.run.enqueued",
+        payload: { runId: run.id, timerId: timer.id, name: timer.name, runtimeRunId: handlerOutput.runtimeRunId },
+      });
+      log.log(`enqueued "${timer.name}" runId=${run.id} runtimeRunId=${handlerOutput.runtimeRunId}`);
+      return;
+    }
     const metadata =
       result.output === undefined
         ? run.metadata

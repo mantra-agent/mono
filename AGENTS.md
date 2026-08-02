@@ -283,7 +283,7 @@ Procedural coding workflows, diagnostic workflow, git/PR workflow, verification 
 ```
 Layer 6: Intelligence    — Skills, prompt modules, scoring, campaigns, council deliberation
 Layer 5: Interface       — Chat streaming, voice (ElevenLabs), 56 UI pages, Focus widget
-Layer 4: Orchestration   — Agent executor, timer scheduler, admission controller, hooks
+Layer 4: Orchestration   — Autonomy Runtime Kernel, Agent executor, timer producers, compatibility admission façade, hooks
 Layer 3: Domain Services — Memory, people, finance, wellness, library, email, social
 Layer 2: Storage         — PostgreSQL SQL tables + PostgreSQL document store, S3 object storage, process-local TTL caches
 Layer 1: Infrastructure  — Express server, WebSocket, event bus, PostgreSQL pools, auth
@@ -340,7 +340,7 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 1. **Chat Streaming** — Server-side `SessionManager` maintains authoritative streaming state per session. Clients subscribe via WebSocket (`session.subscribe`) and receive snapshot + deltas. Single channel, single source of truth. Types in `shared/streaming-types.ts`, reducers in `server/streaming-reducers.ts`
 2. **Chat → Memory** — Persisted sessions enqueue canonical vNext sources → bounded extraction → claim persistence and source provenance
 3. **Session → Artifact Linking** — Tool call succeeds → `recordSessionArtifact()` → `session_artifacts` table; session resolves → scorer enriches transcript with artifact content; output buffer reads linked pages from artifacts table
-4. **Timer → Skill** — Timer fires → scheduler preconditions → pre-context → autonomous skill execution
+4. **Timer → Runtime → Skill** — migrated Timer fires → deterministic runtime enqueue → fair fenced worker claim → native Skill handler; non-migrated Timers retain the compatibility executor
 5. **Intention → Execution** — Intention selected → autonomous conversation → context → agent executor → artifacts
 6. **Email Sync → Triage → Enrich** — Gmail poll → cache → LLM classification → thread enrichment → People integration
 7. **Social Pipeline** — Draft → review → scheduled + calendar → timer claims → X/Twitter post
@@ -361,8 +361,8 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 2. **Fragmented PostgreSQL access** — Ordinary work crosses the `db` proxy, but raw general-pool calls, a separate auth pool, route-time DDL, and exceptional dedicated clients remain; instrumentation, lane selection, and shutdown ownership are not universal
 3. **Session blob storage** — `document_store_documents.content` rewrites the full session JSON under a per-session advisory transaction lock; no message-row pagination
 4. **Distributed schema convergence** — Migration SQL, `runSchemaBootstrap`, subsystem ensures, route registration, and post-ready index maintenance all participate in deployed schema state
-5. **Memory source queue claim race** — Poll and `markProcessing` are separate unguarded statements, so multiple app replicas can select and process the same settled source
-6. **Timer execution is strictly serial per app process** — One slow timer blocks that process's queue; PostgreSQL run-slot claims provide selected cross-replica idempotency, not a universal scheduler lease
+5. **Runtime cutover incomplete outside proof paths** — Weekly Ideas and memory sources use native kernel attempts; remaining Timer, Hook, Plan, Workflow, Regression, and other legacy callers still cross the compatibility admission façade until migrated.
+6. **Stage worker topology is deployment-bound** — code supports enqueue-only Web/API (`RUNTIME_PROCESS_ROLE=web`) plus dedicated claim workers (`worker`), while a single-service deployment must run `combined` and cannot prove event-loop isolation.
 
 ## Subdirectory Context
 

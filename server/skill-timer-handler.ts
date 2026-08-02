@@ -143,6 +143,31 @@ export class SkillTimerHandler implements TimerHandler {
       ].join("\n");
     }
 
+    if (timer.systemKey === "weekly-ideas" && run.trigger === "scheduled") {
+      const principal = (await import("./principal-context")).getCurrentPrincipal();
+      if (!principal?.userId || !principal.accountId) {
+        return { outcome: "failed", error: "weekly_ideas_owner_missing" };
+      }
+      const slotUtc = run.intendedFireAt ?? run.scheduledSlotEnd ?? run.startedAt;
+      const { enqueueRuntimeRun } = await import("./runtime");
+      const enqueued = await enqueueRuntimeRun(principal, {
+        kind: "skill.execute",
+        handler: { key: "skill.execute", version: 1 },
+        source: { type: "timer", id: timer.id },
+        idempotencyKey: `timer/${timer.id}/slot/${slotUtc}`,
+        deadlineAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        inputSchemaVersion: 1,
+        input: { skillId, preContext, timerId: timer.id, timerRunId: run.id },
+        inputRefs: [],
+        authorityPolicyVersionAtEnqueue: "weekly-ideas-v1",
+      });
+      return {
+        outcome: "deferred",
+        reason: "runtime_enqueued",
+        output: { runtimeRunId: enqueued.run.id },
+      };
+    }
+
     log.debug(
       `[timer:${timer.name}] phase=skill-import — importing autonomous skill runner`,
     );

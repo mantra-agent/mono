@@ -113,6 +113,8 @@ export interface ExecutorRunOptions {
   tier?: import("./run-admission").AdmissionTier;
   /** Stable root identity shared by parent and descendant runs for lineage-safe admission. */
   lineageId?: string;
+  /** Native runtime handlers already hold the sole fenced capacity lease. */
+  admissionMode?: "legacy" | "runtime_owned";
   /** Voice session ID for claiming pre-warmed CLI handles on the first turn. */
   voiceSessionId?: string;
   /** Outer Diagnostic span created before context assembly. */
@@ -2956,6 +2958,7 @@ export class AgentExecutor extends EventEmitter {
     const iterationResults: Array<{ content: string; continuationType?: "tool_call" | "max_tokens" }> = [];
 
     const tier = options.tier ?? (options.querySubsystem === "autonomous" ? "background" as const : "communication" as const);
+    const runtimeOwnsAdmission = options.admissionMode === "runtime_owned";
     const { admissionController } = await import("./run-admission");
     const { withAdmissionTier } = await import("./db");
     let admissionGranted = false;
@@ -2968,12 +2971,14 @@ export class AgentExecutor extends EventEmitter {
 
     const runBody = async (): Promise<ExecutorRunResult> => {
     try {
-      await admissionController.requestSlot(tier, runId, {
-        sessionId: options.sessionId,
-        activity: options.activity,
-        lineageId: options.lineageId ?? options.sessionId,
-        signal: abortController.signal,
-      });
+      if (!runtimeOwnsAdmission) {
+        await admissionController.requestSlot(tier, runId, {
+          sessionId: options.sessionId,
+          activity: options.activity,
+          lineageId: options.lineageId ?? options.sessionId,
+          signal: abortController.signal,
+        });
+      }
       admissionGranted = true;
       const admittedAt = Date.now();
       const activeRun = this.activeRuns.get(runId);
@@ -3004,7 +3009,7 @@ export class AgentExecutor extends EventEmitter {
           break;
         }
 
-        if (admissionController.isYieldRequested(runId)) {
+        if (!runtimeOwnsAdmission && admissionController.isYieldRequested(runId)) {
           lastExitCause = "yield_to_interactive";
           log.debug(`run YIELD runId=${runId} tier=${tier} — yielding to higher-priority run at iteration ${ctx.iteration}`);
           break;
@@ -3244,7 +3249,7 @@ export class AgentExecutor extends EventEmitter {
         const msg = drainErr instanceof Error ? drainErr.message : String(drainErr);
         log.error(`drainBackgroundWork threw runId=${runId}: ${msg}`);
       }
-      if (admissionGranted) {
+      if (admissionGranted && !runtimeOwnsAdmission) {
         await admissionController.releaseSlot(runId);
       }
       log.debug(
