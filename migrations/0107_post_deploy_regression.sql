@@ -1,3 +1,7 @@
+-- HISTORICAL MIGRATION: this domain is terminally retired by
+-- 0114_retire_post_deploy_regression.sql. Do not use this file as a runtime
+-- schema owner or reintroduce its tables without a new product/security review.
+
 CREATE TABLE IF NOT EXISTS regression_runs (
   id TEXT PRIMARY KEY,
   trigger_key TEXT NOT NULL,

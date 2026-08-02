@@ -1,6 +1,7 @@
 import { documentStorage } from "../memory/document-storage";
-import type { Issue, InsertIssue, IssueStatus, IssueNote } from "@shared/schema";
+import { issueStatusEnum, type Issue, type InsertIssue, type IssueStatus, type IssueNote } from "@shared/schema";
 import { createLogger } from "../log";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "../db";
 
 const log = createLogger("StoreIssues");
 
@@ -204,15 +205,42 @@ export class FileIssueStorage {
     return full;
   }
 
-  async updateIssue(id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined> {
+  private async updateIssueLocked(id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined> {
     const existing = await this.getIssue(id);
     if (!existing) {
       log.log(`updateIssue id=${id} not-found`);
       return undefined;
     }
 
-    const updated: Issue = { ...existing, ...updates, id: existing.id, createdAt: existing.createdAt };
+    const effectiveUpdates: Partial<InsertIssue> = { ...updates };
+    if (effectiveUpdates.feedback && effectiveUpdates.status === undefined) {
+      effectiveUpdates.status = "open";
+    }
+    if (effectiveUpdates.status !== undefined) {
+      effectiveUpdates.status = issueStatusEnum.parse(effectiveUpdates.status);
+    }
+    if (effectiveUpdates.status && effectiveUpdates.status !== existing.status) {
+      const notes = Array.isArray(effectiveUpdates.notes)
+        ? effectiveUpdates.notes as IssueNote[]
+        : Array.isArray(existing.notes)
+          ? existing.notes as IssueNote[]
+          : [];
+      effectiveUpdates.notes = [
+        ...notes,
+        {
+          id: `status-${Date.now()}`,
+          author: "agent",
+          content: "",
+          timestamp: new Date().toISOString(),
+          statusChange: {
+            from: existing.status as IssueStatus,
+            to: effectiveUpdates.status as IssueStatus,
+          },
+        },
+      ];
+    }
 
+    const updated: Issue = { ...existing, ...effectiveUpdates, id: existing.id, createdAt: existing.createdAt };
     const content = issueToContent(updated);
     const metadata: Record<string, unknown> = {
       id: updated.id,
@@ -233,8 +261,46 @@ export class FileIssueStorage {
       metadata
     );
 
-    log.log(`updateIssue id=${id} fields=${Object.keys(updates).join(",")}`);
+    log.log(`updateIssue id=${id} fields=${Object.keys(effectiveUpdates).join(",")}`);
     return updated;
+  }
+
+  async updateIssue(id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined> {
+    return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.ISSUE, String(id));
+      return this.updateIssueLocked(id, updates);
+    }));
+  }
+
+  async resolveWithEvidence(id: number, evidenceNote: string): Promise<Issue | undefined> {
+    const note = evidenceNote.trim();
+    if (!note || note.length > 2_000) {
+      throw new Error("Issue resolution evidence must be 1-2000 characters");
+    }
+
+    return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.ISSUE, String(id));
+      const existing = await this.getIssue(id);
+      if (!existing) return undefined;
+      if (existing.status === "resolved") return existing;
+
+      const timestamp = new Date().toISOString();
+      const existingNotes = Array.isArray(existing.notes)
+        ? existing.notes as IssueNote[]
+        : [];
+      return this.updateIssueLocked(id, {
+        status: "resolved",
+        notes: [
+          ...existingNotes,
+          {
+            id: `evidence-${Date.now()}`,
+            author: "agent",
+            content: note,
+            timestamp,
+          },
+        ],
+      });
+    }));
   }
 
   async deleteIssue(id: number): Promise<boolean> {

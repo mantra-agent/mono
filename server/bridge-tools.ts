@@ -22,7 +22,6 @@ import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
-import { CANONICAL_REGRESSION_SKILL_ID } from "./skill-identities";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
 import { searchVnextMemory, type VnextSearchOptions } from "./memory/vnext-search";
@@ -4248,11 +4247,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     return handleWorkflows(args);
   },
 
-  async regression(args) {
-    const { handleRegression } = await import("./tools/regression");
-    return handleRegression(args);
-  },
-
   async message_sibling(args) {
     return handleCrossSessionMessage(args, "sibling");
   },
@@ -5090,7 +5084,42 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const { storage } = await import("./storage");
     const action = (args.action as string | undefined) || "create";
 
-    if (action === "get") {
+    if (action === "list") {
+      const allowedStatuses = new Set(["open", "in_progress", "in_review", "resolved"]);
+      const status = typeof args.status === "string" && args.status.trim()
+        ? args.status.trim()
+        : undefined;
+      const excludeStatus = typeof args.excludeStatus === "string" && args.excludeStatus.trim()
+        ? args.excludeStatus.trim()
+        : undefined;
+      if (status && !allowedStatuses.has(status)) {
+        return { result: `Invalid Issue status '${status}'`, error: true };
+      }
+      if (excludeStatus && !allowedStatuses.has(excludeStatus)) {
+        return { result: `Invalid excluded Issue status '${excludeStatus}'`, error: true };
+      }
+      const limit = Math.max(1, Math.min(Number(args.limit) || 100, 500));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+      try {
+        const issues = await storage.getIssues({ status, excludeStatus, lightweight: true });
+        const page = issues.slice(offset, offset + limit);
+        const nextOffset = offset + page.length;
+        return {
+          result: JSON.stringify({
+            issues: page,
+            offset,
+            nextOffset: nextOffset < issues.length ? nextOffset : null,
+            hasMore: nextOffset < issues.length,
+            total: issues.length,
+          }),
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { result: `Failed to list Issues: ${message}`, error: true };
+      }
+    }
+
+    if (action === "get" || action === "resolve") {
       const rawId = args.id;
       if (rawId === undefined || rawId === null || rawId === "") {
         return { result: "Missing issue id", error: true };
@@ -5100,11 +5129,22 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return { result: `Invalid issue id '${rawId}'; expected a positive integer`, error: true };
       }
       try {
-        const issue = await storage.getIssue(idNum);
+        if (action === "get") {
+          const issue = await storage.getIssue(idNum);
+          if (!issue) return { result: `Issue ${idNum} not found`, error: true };
+          return { result: JSON.stringify(issue) };
+        }
+
+        const evidence = typeof args.evidence === "string" ? args.evidence.trim() : "";
+        if (!evidence || evidence.length > 2_000) {
+          return { result: "resolve requires an affirmative evidence note of 1-2000 characters", error: true };
+        }
+        const issue = await storage.resolveIssueWithEvidence(idNum, evidence);
         if (!issue) return { result: `Issue ${idNum} not found`, error: true };
         return { result: JSON.stringify(issue) };
-      } catch (err: any) {
-        return { result: `Failed to get issue ${idNum}: ${err.message}`, error: true };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { result: `Failed to ${action} issue ${idNum}: ${message}`, error: true };
       }
     }
 
@@ -5126,7 +5166,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    return { result: `Unknown issues action: ${action}. Available: create, get`, error: true };
+    return { result: `Unknown issues action: ${action}. Available: create, list, get, resolve`, error: true };
   },
 
   async goals(args) {
@@ -7807,18 +7847,6 @@ ${lines.join("\n")}` };
           if (!targetSkill) targetSkill = await storage.getSkillByName(requestedSkill);
           if (!targetSkill) return { result: `Skill "${requestedSkill}" not found`, error: true };
           const skillId = targetSkill.id;
-
-          if (skillId === CANONICAL_REGRESSION_SKILL_ID) {
-            const { startManualRegression } = await import("./regression/regression-admission");
-            const run = await startManualRegression({ wait: args.wait !== false });
-            return {
-              result: [
-                `Regression run ${run.id} ${args.wait === false ? "started" : run.status}.`,
-                `Environment: ${run.environmentId} · deployment: ${run.acceptedDeploymentId} · revision: ${run.acceptedRevision}`,
-                run.skillSessionId ? `Session: ${run.skillSessionId}` : "Session: starting",
-              ].join("\n"),
-            };
-          }
 
           const callingConversationId = args._sessionId;
           if (normalizeSkillIdentifier(skillId) === "spec" && await isSpecSkillSession(callingConversationId)) {
