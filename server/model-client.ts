@@ -446,6 +446,12 @@ function isAbortError(err: unknown, signal?: AbortSignal): boolean {
   return !!signal?.aborted || e?.name === "AbortError" || e?.code === "ERR_CANCELED";
 }
 
+export function isModelContextOverflow(error: unknown): boolean {
+  return error instanceof ModelProviderError
+    ? error.kind === "context_overflow" || error.providerFailure.providerCode === "context_length_exceeded"
+    : false;
+}
+
 function matchesExpectedAbortReason(signal: AbortSignal | undefined, expectedReason: string | undefined): boolean {
   if (!signal?.aborted || !expectedReason) return false;
   const actualReason = signal.reason instanceof Error
@@ -639,7 +645,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
       return await executeChatCompletion({ ...options, routingDecision: routing }, routing);
     } catch (error) {
       lastError = error;
-      if (isAbortError(error, options.signal)) throw error;
+      if (isAbortError(error, options.signal) || isModelContextOverflow(error)) throw error;
       failures = appendFailedAttempt(routing, error);
       const next = candidates[index + 1];
       if (next) log.warn(`model connector fallback connector=${routing.connectorId} tier=${routing.tier} model=${routing.model} nextConnector=${next.connectorId} nextModel=${next.model} failure=${error instanceof Error ? error.message : String(error)}`);
@@ -896,6 +902,7 @@ export type ModelProviderFailureKind =
   | "http_retryable"
   | "http_permanent"
   | "rate_limited"
+  | "context_overflow"
   | "time_to_first_event"
   | "stream_interrupted"
   | "provider_failed"
@@ -1306,9 +1313,16 @@ function parseProviderErrorBody(body: string): {
 function codexHttpAttemptError(response: Response, bodySnippet: string, scope: CodexAttemptScope): ModelProviderAttemptError {
   const retryable = isRetryableCodexStatus(response.status);
   const detail = parseProviderErrorBody(bodySnippet);
+  const contextOverflow = detail.providerCode === "context_length_exceeded";
   return new ModelProviderAttemptError({
-    kind: response.status === 429 ? "rate_limited" : retryable ? "http_retryable" : "http_permanent",
-    retryable,
+    kind: contextOverflow
+      ? "context_overflow"
+      : response.status === 429
+        ? "rate_limited"
+        : retryable
+          ? "http_retryable"
+          : "http_permanent",
+    retryable: contextOverflow ? false : retryable,
     message: detail.providerMessage || `HTTP ${response.status}`,
     status: response.status,
     bodySnippet,
@@ -1349,7 +1363,11 @@ function responsesProviderFailure(
   const providerParam = sanitizeProviderDiagnostic(chunk.param ?? undefined);
 
   return new ModelProviderAttemptError({
-    kind: providerCode === "rate_limit_exceeded" ? "rate_limited" : "provider_failed",
+    kind: providerCode === "context_length_exceeded"
+      ? "context_overflow"
+      : providerCode === "rate_limit_exceeded"
+        ? "rate_limited"
+        : "provider_failed",
     retryable: !providerCode || !permanentCodes.has(providerCode),
     status: context.status ?? 0,
     message: providerMessage,
@@ -1510,6 +1528,7 @@ function openaiSdkAttemptError(err: unknown, clientRequestId: string): ModelProv
     ? null
     : sanitizeProviderDiagnostic(detail?.param || sdkError?.param || undefined);
   const retryable = status > 0 ? isRetryableCodexStatus(status) : true;
+  const contextOverflow = providerCode === "context_length_exceeded";
   const bodySnippet = safeStringify(sdkError?.error || { message: sdkError?.message }, {
     maxBytes: MAX_PROVIDER_DIAGNOSTIC_CHARS,
     maxStrLen: MAX_PROVIDER_DIAGNOSTIC_CHARS,
@@ -1517,8 +1536,14 @@ function openaiSdkAttemptError(err: unknown, clientRequestId: string): ModelProv
   });
 
   return new ModelProviderAttemptError({
-    kind: status === 429 ? "rate_limited" : status > 0 ? (retryable ? "http_retryable" : "http_permanent") : "transport",
-    retryable,
+    kind: contextOverflow
+      ? "context_overflow"
+      : status === 429
+        ? "rate_limited"
+        : status > 0
+          ? (retryable ? "http_retryable" : "http_permanent")
+          : "transport",
+    retryable: contextOverflow ? false : retryable,
     status,
     message: providerMessage || (status > 0 ? `HTTP ${status}` : "OpenAI SDK transport error"),
     bodySnippet,
@@ -2032,7 +2057,7 @@ export async function* chatCompletionStream(options: ChatCompletionStreamOptions
       return;
     } catch (error) {
       lastError = error;
-      if (isAbortError(error, options.signal) || emittedContent) throw error;
+      if (isAbortError(error, options.signal) || emittedContent || isModelContextOverflow(error)) throw error;
       failures = appendFailedAttempt(routing, error);
       const next = candidates[index + 1];
       if (next) log.warn(`model stream connector fallback connector=${routing.connectorId} tier=${routing.tier} model=${routing.model} nextConnector=${next.connectorId} nextModel=${next.model} failure=${error instanceof Error ? error.message : String(error)}`);

@@ -1610,7 +1610,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         ? (resolvedModel || "").split("/").slice(1).join("/")
         : resolvedModel || "";
       const contextWindow = getContextWindow(bareModel);
-      const convBudget = Math.floor(contextWindow * 0.5);
       const estimateConversationTokens = () =>
         conversationHistory.reduce((sum, m: any) => {
           let tokens =
@@ -1629,7 +1628,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         }, 0);
 
       preRunConversationTokens = estimateConversationTokens();
-      preRunCompactionThreshold = getBetweenTurnCompactionThreshold(convBudget);
+      preRunCompactionThreshold = getBetweenTurnCompactionThreshold(contextWindow);
       durableCompactionAttempted =
         preRunConversationTokens > preRunCompactionThreshold;
       endTokens();
@@ -1641,7 +1640,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         ? await runBetweenTurnCompaction(
             sessionId,
             conversationHistory,
-            convBudget,
+            contextWindow,
             callerGeneration,
             onCompactionActivity,
           )
@@ -1875,9 +1874,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       ? (resolvedModel || "").split("/").slice(1).join("/")
       : resolvedModel || "";
     const contextWindow = getContextWindow(bareModel);
-    const contextLimit = Math.floor(contextWindow * 0.9);
-    const executorStage1Threshold = Math.floor(contextLimit * 0.65);
-    const fullPreExecutorTokens = estimateExecutorMessagesTokens(messages);
+    const { estimateToolDefinitionTokens, getContextRequestBudget } = await import("../../context-budget");
+    const maxTokens = (await import("../../model-registry")).getMaxOutputTokens(bareModel);
+    const requestBudget = getContextRequestBudget(contextWindow, maxTokens);
+    const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
+    const executorStage1Threshold = Math.floor(requestBudget.operatingInputLimit * 0.65);
+    const fullPreExecutorTokens = estimateExecutorMessagesTokens(messages) + toolDefinitionTokens;
     const toolResultCount = messages.reduce((sum, msg) => {
       if (!Array.isArray(msg.content)) return sum;
       return (
@@ -1893,7 +1895,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
 
     chatLog.log(
-      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} threshold=${executorStage1Threshold} toolResults=${toolResultCount} sessionId=${sessionId}`,
+      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} threshold=${executorStage1Threshold} operating=${requestBudget.operatingInputLimit} hard=${requestBudget.hardInputLimit} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
     );
     return {
       messages,
@@ -1909,7 +1911,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         messageCount: messages.length,
         toolCount: toolResultCount,
         contextWindow,
-        contextLimit,
+        contextLimit: requestBudget.operatingInputLimit,
       },
     };
   }
