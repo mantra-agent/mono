@@ -168,7 +168,18 @@ class HookExecutor {
         this.executionCounts.set(hook.id, (this.executionCounts.get(hook.id) ?? 0) + 1);
         this.executionsThisMinute++;
 
-        runWithPrincipal(principal, () => this.dispatchAction(hook, resolvedConfig, eventDbId)).catch(err => {
+        runWithPrincipal(principal, async () => {
+          if (hook.actionType === "run_skill") {
+            return this.dispatchAction(hook, resolvedConfig, eventDbId);
+          }
+          const { admissionController } = await import("./run-admission");
+          return admissionController.withResourcePool(
+            "short_worker",
+            `hook:${hook.id}:${busEvent.id}:${Date.now()}`,
+            () => this.dispatchAction(hook, resolvedConfig, eventDbId),
+            { activity: `hook.${hook.actionType}` },
+          );
+        }).catch(err => {
           log.error(`dispatch contract failed hook=${hook.name} action=${hook.actionType}: ${err.message}`);
         });
       } catch (err: any) {

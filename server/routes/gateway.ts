@@ -593,7 +593,7 @@ export async function registerGatewayRoutes(app: Express) {
       if (id === "run-admission") {
         if (action === "restart") {
           const { admissionController } = await import("../run-admission");
-          admissionController.reset();
+          await admissionController.reset();
           return res.json({ message: "Run admission controller reset" });
         }
         return res.status(400).json({ error: `Run admission controller does not support ${action}` });

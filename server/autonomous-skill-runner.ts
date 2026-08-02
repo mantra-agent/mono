@@ -675,7 +675,7 @@ export async function executeAutonomousSkillRun(
     try {
       const { admissionController } = await import("./run-admission");
       const activity = config.activity;
-      const snapshot = admissionController.getAdmissionSnapshot({ activity });
+      const snapshot = admissionController.getAdmissionSnapshot();
       if (!admissionController.canAdmitBackground({ activity })) {
         logger.log(
           `[SkillChat] [${config.label}] Pre-flight: admission_deferred ` +

@@ -3245,7 +3245,7 @@ export class AgentExecutor extends EventEmitter {
         log.error(`drainBackgroundWork threw runId=${runId}: ${msg}`);
       }
       if (admissionGranted) {
-        admissionController.releaseSlot(runId);
+        await admissionController.releaseSlot(runId);
       }
       log.debug(
         `autonomous.lifecycle phase=executor-released runId=${runId} sessionId=${options.sessionId ?? "none"} ` +
@@ -3256,7 +3256,7 @@ export class AgentExecutor extends EventEmitter {
     }
     };
 
-    return withAdmissionTier(tier, runBody);
+    return admissionController.withRunContext(runId, () => withAdmissionTier(tier, runBody));
   }
 }
 

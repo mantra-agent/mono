@@ -86,7 +86,6 @@ import {
 
 import {
   checkCircuitBreaker,
-  checkVoiceConcurrencyCap,
   hasActiveExecutorRun,
   waitForBlockerToClear,
   CB_MAX_RETRIES,
@@ -515,22 +514,6 @@ async function executeVoiceTurn(
       }
       publishVoiceDiagnostic(session, "circuit_breaker", `Circuit breaker cleared`, { turn: currentTurn });
       log.debug(`turn ${currentTurn} CIRCUIT_BREAKER_RECOVERED — proceeding with turn session=${session.id}`);
-    }
-
-    if (checkVoiceConcurrencyCap()) {
-      log.warn(`turn ${currentTurn} CONCURRENCY_CAP — attempting inline recovery session=${session.id}`);
-      publishVoiceDiagnostic(session, "concurrency_cap", `Concurrency cap hit — waiting for recovery`, { turn: currentTurn, status: "active" });
-      if (!res.headersSent) sendBriefAck(res, `chatcmpl-${session.id}-${currentTurn}`, Math.floor(Date.now() / 1000), { closeResponse: false, reason: "concurrency_cap" });
-      const cleared = await waitForBlockerToClear(session, currentTurn, "concurrency_cap");
-      if (!cleared) {
-        publishVoiceDiagnostic(session, "concurrency_cap_failed", `Concurrency cap recovery failed`, { turn: currentTurn, status: "error" });
-        closeSSEWithError(res, session, currentTurn, "Too many active conversations right now. Please try again shortly.");
-        persistVoiceErrorMessage(session, "Voice processing hit the concurrency limit. Please try again.").catch((e: unknown) => log.debug(`persistVoiceErrorMessage failed session=${session.id}: ${e instanceof Error ? e.message : String(e)}`));
-        writeVoiceJournal(session, "error", { error: `voice_circuit_breaker: turn=${currentTurn} reason=concurrency_cap — recovery failed` });
-        return;
-      }
-      log.debug(`turn ${currentTurn} CONCURRENCY_RECOVERED — proceeding with turn session=${session.id}`);
-      publishVoiceDiagnostic(session, "concurrency_cap_recovered", `Concurrency cap cleared`, { turn: currentTurn });
     }
 
     if (session.activeTurnNumber !== currentTurn) {

@@ -279,10 +279,15 @@ export async function runCurrentUserEmailSync(): Promise<CurrentUserEmailSyncRes
         };
         result.vaultsScanned++;
         try {
-          const vaultResult = await runWithPrincipal(
-            principal,
-            () => withAdmissionTier("realtime", () => runEmailSync()),
-          );
+          const vaultResult = await runWithPrincipal(principal, async () => {
+            const { admissionController } = await import("./run-admission");
+            return admissionController.withResourcePool(
+              "short_worker",
+              `email-sync:manual:${principal.activeVaultId ?? "none"}:${Date.now()}`,
+              () => withAdmissionTier("realtime", () => runEmailSync()),
+              { activity: "request.email_sync", tier: "realtime" },
+            );
+          });
           result.accountsDiscovered += vaultResult.accountsDiscovered;
           result.accountsSynced += vaultResult.accountsSynced;
           result.errors.push(...vaultResult.errors);
@@ -320,7 +325,15 @@ export async function runEmailSyncTimer(): Promise<EmailSyncTimerResult> {
           const principals = await loadOwnerVaultPrincipals(user);
           for (const principal of principals) {
             result.vaultsScanned++;
-            const vaultResult = await runWithPrincipal(principal, runOwnerVaultPipeline);
+            const vaultResult = await runWithPrincipal(principal, async () => {
+              const { admissionController } = await import("./run-admission");
+              return admissionController.withResourcePool(
+                "short_worker",
+                `email-sync:${user.id}:${principal.activeVaultId ?? "none"}:${Date.now()}`,
+                runOwnerVaultPipeline,
+                { activity: "timer.email_sync" },
+              );
+            });
             if (vaultResult.accountsDiscovered === 0) continue;
 
             ownersWithAccounts.add(user.id);
