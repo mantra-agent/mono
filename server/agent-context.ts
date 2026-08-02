@@ -8,6 +8,7 @@ import { withTimeout, isTimeoutError, CONTEXT_ASSEMBLY_TIMEOUT_MS } from "./time
 import { createLogger } from "./log";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { isRecapFtueSession } from "./ftue-session";
+import { getConversationRetentionBudget } from "./context-budget";
 
 const log = createLogger("AgentContext");
 
@@ -103,17 +104,8 @@ function truncateConversationHistory(
   return [messages[messages.length - 1]];
 }
 
-const BETWEEN_TURN_COMPACTION_THRESHOLD = 0.6;
-const BETWEEN_TURN_COMPACTION_TOKEN_CEILING = 100_000;
-
-export function getBetweenTurnCompactionThreshold(conversationBudget: number): number {
-  return Math.max(
-    0,
-    Math.min(
-      Math.floor(conversationBudget * BETWEEN_TURN_COMPACTION_THRESHOLD),
-      BETWEEN_TURN_COMPACTION_TOKEN_CEILING,
-    ),
-  );
+export function getBetweenTurnCompactionThreshold(contextWindow: number): number {
+  return getConversationRetentionBudget(contextWindow);
 }
 
 type CompactableHistoryMessage = {
@@ -172,7 +164,7 @@ const COMPACTION_JOIN_WAIT_MS = 3 * 60_000;
 export async function runBetweenTurnCompaction(
   sessionId: string,
   conversationHistory: CompactableHistoryMessage[],
-  conversationBudget: number,
+  contextWindow: number,
   callerGeneration?: number,
   onActivity?: (update: CompactionActivityUpdate) => void,
 ): Promise<CompactionOutcome> {
@@ -181,7 +173,7 @@ export async function runBetweenTurnCompaction(
     totalTokens += estimateHistoryTokens(msg);
   }
 
-  const threshold = getBetweenTurnCompactionThreshold(conversationBudget);
+  const threshold = getBetweenTurnCompactionThreshold(contextWindow);
   if (totalTokens <= threshold) {
     return { outcome: "below_threshold" };
   }

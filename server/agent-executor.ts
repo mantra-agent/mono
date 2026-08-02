@@ -23,7 +23,8 @@ import { withQueryAttributionAsync } from "./db";
 import { abortTrace } from "./abort-trace";
 import type { ExecutorStreamEvent, ModelProviderFailureInfo, PersonaSnapshot, TerminalDegradationReason } from "@shared/models/chat";
 import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-storage";
-import { ModelProviderError, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
+import { ModelProviderError, isModelContextOverflow, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
+import { ContextOperatingBudgetExceededError, estimateToolDefinitionTokens, getContextRequestBudget, type ContextRequestBudget } from "./context-budget";
 import { estimateToolOutputSize } from "./tool-output-artifacts";
 import { CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS, projectImmediateToolResult, projectWorkingSet } from "./working-set-projector";
 import { buildContinuationCapsule, renderContinuationCapsule, type ContinuationCapsuleEntry } from "./continuation-capsule";
@@ -295,6 +296,7 @@ const CONTEXT_LIMIT_PATTERNS = [
 ];
 
 function isContextLengthError(error: unknown): boolean {
+  if (isModelContextOverflow(error)) return true;
   const errorObj = error as Record<string, unknown> | null | undefined;
   const msg = (error instanceof Error ? error.message : String(error)) || (errorObj && typeof errorObj === "object" ? String(errorObj.error || "") : "") || String(error);
   return CONTEXT_LIMIT_PATTERNS.some(p => p.test(msg));
@@ -421,6 +423,9 @@ interface CompactionTelemetry {
   preToolRunPressure?: boolean;
   reason: string;
   contextLimit: number;
+  hardInputLimit: number;
+  operatingInputLimit: number;
+  toolDefinitionTokens: number;
   threshold1: number;
   threshold2: number;
   threshold3: number;
@@ -613,15 +618,18 @@ function compactStage3(messages: ExecutorMessage[]): { messages: ExecutorMessage
 
 async function runCompaction(
   messages: ExecutorMessage[],
-  contextLimit: number,
+  budget: ContextRequestBudget,
+  toolDefinitionTokens: number,
   publish: (type: JournalEntry["type"], extra?: Partial<JournalEntry>) => void,
   hasRunStage2: boolean,
 ): Promise<{ messages: ExecutorMessage[]; stage: number; summaryContent?: string; telemetry: CompactionTelemetry }> {
-  const threshold1 = Math.floor(contextLimit * 0.65);
-  const threshold2 = Math.floor(contextLimit * 0.80);
-  const threshold3 = Math.floor(contextLimit * 0.90);
+  const threshold1 = Math.floor(budget.operatingInputLimit * 0.65);
+  const threshold2 = Math.floor(budget.operatingInputLimit * 0.80);
+  const threshold3 = budget.operatingInputLimit;
+  const estimateRequestTokens = (requestMessages: ExecutorMessage[]) =>
+    estimateTotalTokens(requestMessages) + toolDefinitionTokens;
 
-  let currentTokens = estimateTotalTokens(messages);
+  let currentTokens = estimateRequestTokens(messages);
   const tokensBefore = currentTokens;
   const messagesBefore = messages.length;
   const preToolRunPressure = messages.every(m => m.role !== "tool_result");
@@ -630,7 +638,7 @@ async function runCompaction(
   let stage2Telemetry: Stage2CompactionTelemetry | undefined;
 
   if (currentTokens <= threshold1) {
-    log.debug(`Compaction not needed: ${currentTokens} tokens <= ${threshold1} threshold (65% of ${contextLimit})`);
+    log.debug(`Compaction not needed: request=${currentTokens} tokens <= stage1=${threshold1} operating=${budget.operatingInputLimit} hard=${budget.hardInputLimit}`);
     return {
       messages,
       stage: 0,
@@ -640,7 +648,10 @@ async function runCompaction(
         trigger: "mid-run",
         preToolRunPressure,
         reason: "below_threshold",
-        contextLimit,
+        contextLimit: budget.contextWindow,
+        hardInputLimit: budget.hardInputLimit,
+        operatingInputLimit: budget.operatingInputLimit,
+        toolDefinitionTokens,
         threshold1,
         threshold2,
         threshold3,
@@ -654,35 +665,33 @@ async function runCompaction(
     };
   }
 
-  log.debug(`Compaction needed: ${currentTokens} tokens > ${threshold1} threshold (65% of ${contextLimit})`);
+  log.debug(`Compaction needed: request=${currentTokens} tokens > stage1=${threshold1} operating=${budget.operatingInputLimit} hard=${budget.hardInputLimit}`);
   const compactionStepId = `compaction-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   publish("compacting", { stepId: compactionStepId, status: "active", content: "Working context compression started..." });
-  const preparedStage2Capsule = currentTokens > threshold2 && !hasRunStage2
+  const preparedStage2Capsule = currentTokens > threshold2
     ? prepareStage2Capsule(messages)
     : null;
 
   const s1 = compactStage1(messages);
   if (s1.compacted) {
     messages = s1.messages;
-    currentTokens = estimateTotalTokens(messages);
+    currentTokens = estimateRequestTokens(messages);
     stage = 1;
     log.debug(`Stage 1 compaction complete: ${currentTokens} tokens`);
   }
 
-  if (currentTokens > threshold2 && !hasRunStage2) {
-    log.debug(`Stage 2 needed: ${currentTokens} tokens > ${threshold2} threshold (80%)`);
+  if (currentTokens > threshold2) {
+    log.debug(`Stage 2 needed: request=${currentTokens} tokens > stage2=${threshold2} operating=${budget.operatingInputLimit}`);
     publish("compacting", { stepId: compactionStepId, status: "active", content: "Folding earlier working context..." });
     const s2 = compactStage2(messages, preparedStage2Capsule);
     stage2Telemetry = s2.telemetry;
     if (s2.compacted) {
       messages = s2.messages;
-      currentTokens = estimateTotalTokens(messages);
+      currentTokens = estimateRequestTokens(messages);
       stage = 2;
       summaryContent = s2.summaryContent;
       log.debug(`Stage 2 compaction complete: ${currentTokens} tokens`);
     }
-  } else if (currentTokens > threshold2 && hasRunStage2) {
-    log.debug(`Stage 2 skipped: already ran stage 2 this run. tokens=${currentTokens}`);
   }
 
   if (currentTokens > threshold3) {
@@ -691,7 +700,7 @@ async function runCompaction(
     const s3 = compactStage3(messages);
     if (s3.compacted) {
       messages = s3.messages;
-      currentTokens = estimateTotalTokens(messages);
+      currentTokens = estimateRequestTokens(messages);
       stage = 3;
       log.debug(`Stage 3 compaction complete: ${currentTokens} tokens`);
     }
@@ -713,7 +722,10 @@ async function runCompaction(
       trigger: "mid-run",
       preToolRunPressure,
       reason: tokensBefore > threshold1 ? "above_threshold" : "below_threshold",
-      contextLimit,
+      contextLimit: budget.contextWindow,
+      hardInputLimit: budget.hardInputLimit,
+      operatingInputLimit: budget.operatingInputLimit,
+      toolDefinitionTokens,
       threshold1,
       threshold2,
       threshold3,
@@ -1534,13 +1546,17 @@ export class AgentExecutor extends EventEmitter {
         break;
       }
 
-      case "error":
+      case "error": {
         ctx.lastError = event.error || ctx.lastError || "Stream error";
         ctx.providerFailure = event.providerFailure || ctx.providerFailure;
-        ctx.publish("error", { error: ctx.lastError, providerFailure: ctx.providerFailure });
-        throw event.providerFailure
+        const streamError = event.providerFailure
           ? new ModelProviderError(event.providerFailure)
           : new Error(ctx.lastError);
+        if (!isContextLengthError(streamError)) {
+          ctx.publish("error", { error: ctx.lastError, providerFailure: ctx.providerFailure });
+        }
+        throw streamError;
+      }
     }
   }
 
@@ -2265,7 +2281,8 @@ export class AgentExecutor extends EventEmitter {
     routingTier: string,
     routingDecision: ModelRoutingDecision,
     chatCompletionStream: typeof import("./model-client")["chatCompletionStream"],
-    contextLimit: number,
+    contextBudget: ContextRequestBudget,
+    toolDefinitionTokens: number,
     hasRunStage2: boolean,
   ): Promise<{
     finalContent: string;
@@ -2288,7 +2305,13 @@ export class AgentExecutor extends EventEmitter {
 
     const tokensBefore = estimateTotalTokens(messages);
     const messagesBefore = messages.length;
-    const compactionResult = await runCompaction(messages, contextLimit, ctx.publish, hasRunStage2);
+    const compactionResult = await runCompaction(
+      messages,
+      contextBudget,
+      toolDefinitionTokens,
+      ctx.publish,
+      hasRunStage2,
+    );
     if (compactionResult.stage > 0) {
       messages.splice(0, messages.length, ...compactionResult.messages);
       const tokensAfter = estimateTotalTokens(messages);
@@ -2326,6 +2349,11 @@ export class AgentExecutor extends EventEmitter {
         log.debug(`Mid-run compaction applied in-memory: sessionId=${options.sessionId || "none"} stage=${compactionResult.stage} tokensBefore=${tokensBefore} tokensAfter=${tokensAfter} messagesBefore=${messagesBefore} messagesAfter=${messages.length} summaryLen=${compactionResult.summaryContent.length}`);
         eventBus.publish({ category: "system", event: "compaction.applied", payload: { sessionId: options.sessionId || null, runId: ctx.runId, ...compactionResult.telemetry, tokensBefore, tokensAfter, tokensSaved: tokensBefore - tokensAfter, messagesBefore, messagesAfter: messages.length, summaryLength: compactionResult.summaryContent.length } });
       }
+    }
+
+    const requestTokens = estimateTotalTokens(messages) + toolDefinitionTokens;
+    if (requestTokens > contextBudget.operatingInputLimit) {
+      throw new ContextOperatingBudgetExceededError(requestTokens, contextBudget);
     }
 
     ctx.iteration++;
@@ -2600,7 +2628,6 @@ export class AgentExecutor extends EventEmitter {
       if (providerFailure) {
         ctx.lastError = providerFailure.userMessage;
         ctx.providerFailure = providerFailure;
-        ctx.publish("error", { error: providerFailure.userMessage, providerFailure });
       }
       this.finishResponsePhase(ctx, "error");
       ctx.publish("system_step", { step: "llm_call", status: "error", stepId: modelSpanId });
@@ -2613,14 +2640,19 @@ export class AgentExecutor extends EventEmitter {
         ctx.emergencyCompactionRetries++;
         if (ctx.emergencyCompactionRetries > MAX_EMERGENCY_RETRIES) {
           log.error(`Emergency compaction retry limit reached (${MAX_EMERGENCY_RETRIES}). Context is fundamentally too large. runId=${ctx.runId} tokens=${estimateTotalTokens(messages)} messages=${messages.length}`);
-          throw new Error(`Context length error persists after ${MAX_EMERGENCY_RETRIES} emergency compaction retries. Context may be fundamentally too large.`);
+          throw streamErr;
         }
         log.debug(`Emergency compaction attempt ${ctx.emergencyCompactionRetries}/${MAX_EMERGENCY_RETRIES} runId=${ctx.runId}`);
         const emergency = await this.handleEmergencyCompaction(messages, options, ctx.publish);
         if (emergency.compacted) {
           if (emergency.hasRunStage2) hasRunStage2 = true;
+          ctx.providerFailure = undefined;
+          ctx.lastError = undefined;
           return { finalContent: "", shouldContinue: true, hasRunStage2 };
         }
+      }
+      if (providerFailure) {
+        ctx.publish("error", { error: providerFailure.userMessage, providerFailure });
       }
       throw streamErr;
     } finally {
@@ -3024,7 +3056,10 @@ export class AgentExecutor extends EventEmitter {
       options.onEvent?.({ type: "admitted" } as any);
 
       const { chatCompletionStream } = await import("./model-client");
-      let contextLimit = getContextWindow(modelString);
+      let contextBudget = getContextRequestBudget(
+        getContextWindow(modelString),
+        maxTokens,
+      );
       let lastExitCause: "natural_stop" | "aborted" | "circuit_breaker" | "yield_to_interactive" | undefined;
 
       while (true) {
@@ -3041,7 +3076,23 @@ export class AgentExecutor extends EventEmitter {
           break;
         }
 
-        const result = await this.executeIteration(messages, ctx, options, abortController, modelString, maxTokens, thinkingBudget, thinking, routingTier, routingDecision, chatCompletionStream, contextLimit, hasRunStage2);
+        const toolDefinitionTokens = estimateToolDefinitionTokens(options.tools);
+        const result = await this.executeIteration(
+          messages,
+          ctx,
+          options,
+          abortController,
+          modelString,
+          maxTokens,
+          thinkingBudget,
+          thinking,
+          routingTier,
+          routingDecision,
+          chatCompletionStream,
+          contextBudget,
+          toolDefinitionTokens,
+          hasRunStage2,
+        );
         if (result.finalContent) {
           iterationResults.push({
             content: result.finalContent,
@@ -3098,7 +3149,10 @@ export class AgentExecutor extends EventEmitter {
           thinkingBudget = thinking.thinking.type === "enabled" ? (thinking.thinking.budgetTokens ?? 0) : 0;
           const { getMaxOutputTokens } = await import("./model-registry");
           maxTokens = getMaxOutputTokens(parsedModel);
-          contextLimit = getContextWindow(modelString);
+          contextBudget = getContextRequestBudget(
+            getContextWindow(modelString),
+            maxTokens,
+          );
           const systemIndex = messages.findIndex((message) => message.role === "system");
           const systemMessage: ExecutorMessage = { role: "system", content: refreshed.systemPrompt };
           if (systemIndex >= 0) messages[systemIndex] = systemMessage;
