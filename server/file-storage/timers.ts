@@ -1,5 +1,5 @@
-import { db, pool } from "../db";
-import { timers, responsibilityRuns } from "@shared/schema";
+import { db, pool, type DrizzleTx } from "../db";
+import { timers, responsibilityRuns, modInstallationResources, modInstallations } from "@shared/schema";
 import { and, eq, desc, count, ilike, or, isNotNull, isNull, gte, lte, inArray, sql } from "drizzle-orm";
 import { getSetting, setSetting } from "../system-settings";
 import { TTLCache } from "../utils/ttl-cache";
@@ -114,7 +114,7 @@ export class FileTimerStorage {
   private readonly _cache = new TTLCache<Timer[]>("Timers", Infinity);
   private readonly _schedulerStateCache = new TTLCache<SchedulerState>("TimerSchedulerState", Infinity);
 
-  private invalidateCache(): void {
+  invalidateCache(): void {
     this._cache.invalidateAll();
   }
 
@@ -334,9 +334,9 @@ export class FileTimerStorage {
     return result.rowCount ?? 0;
   }
 
-  async appendRun(timer: Timer, run: TimerRun): Promise<void> {
+  private runValues(timer: Timer, run: TimerRun) {
     const ownership = ownershipForTimer(timer);
-    await db.insert(responsibilityRuns).values({
+    return {
       runId: run.id, responsibilityId: run.timerId, scheduleId: run.scheduleId, status: run.status,
       startedAt: new Date(run.startedAt), completedAt: run.completedAt ? new Date(run.completedAt) : null,
       durationMs: run.durationMs ?? null, sessionId: run.sessionId ?? null, trigger: run.trigger,
@@ -344,7 +344,19 @@ export class FileTimerStorage {
       scheduledSlotStart: run.scheduledSlotStart ? new Date(run.scheduledSlotStart) : null,
       scheduledSlotEnd: run.scheduledSlotEnd ? new Date(run.scheduledSlotEnd) : null,
       error: run.error ?? null, metadata: run.metadata ?? null, ...ownership,
-    });
+    };
+  }
+
+  async appendRun(timer: Timer, run: TimerRun): Promise<void> {
+    await db.insert(responsibilityRuns).values(this.runValues(timer, run));
+  }
+
+  async appendRunInTransaction(tx: DrizzleTx, timer: Timer, run: TimerRun): Promise<boolean> {
+    const [inserted] = await tx.insert(responsibilityRuns)
+      .values(this.runValues(timer, run))
+      .onConflictDoNothing({ target: responsibilityRuns.runId })
+      .returning({ runId: responsibilityRuns.runId });
+    return Boolean(inserted);
   }
 
   async updateRun(timer: Timer, runId: string, updates: Partial<TimerRun>): Promise<void> {
@@ -397,6 +409,7 @@ export class FileTimerStorage {
       .where(and(
         eq(responsibilityRuns.status, "deferred"),
         eq(responsibilityRuns.trigger, "scheduled"),
+        sql`${responsibilityRuns.scheduleId} <> 'build-accepted-deployment'`,
         inArray(responsibilityRuns.error, reasons),
         gte(responsibilityRuns.intendedFireAt, intendedAfter),
         lte(responsibilityRuns.completedAt, completedBefore),
@@ -418,6 +431,98 @@ export class FileTimerStorage {
       if (!newestBySchedule.has(key)) newestBySchedule.set(key, run);
     }
     return Array.from(newestBySchedule.values()).slice(0, boundedLimit);
+  }
+
+  async getPendingManagedEventRunsForScheduler(
+    intendedAfter: Date,
+    deferredBefore: Date,
+    staleBefore: Date,
+    limit = 20,
+  ): Promise<TimerRun[]> {
+    const rows = await db.select({
+      runId: responsibilityRuns.runId,
+      responsibilityId: responsibilityRuns.responsibilityId,
+      scheduleId: responsibilityRuns.scheduleId,
+      status: responsibilityRuns.status,
+      startedAt: responsibilityRuns.startedAt,
+      completedAt: responsibilityRuns.completedAt,
+      durationMs: responsibilityRuns.durationMs,
+      sessionId: responsibilityRuns.sessionId,
+      trigger: responsibilityRuns.trigger,
+      intendedFireAt: responsibilityRuns.intendedFireAt,
+      scheduledSlotStart: responsibilityRuns.scheduledSlotStart,
+      scheduledSlotEnd: responsibilityRuns.scheduledSlotEnd,
+      error: responsibilityRuns.error,
+      metadata: responsibilityRuns.metadata,
+    }).from(responsibilityRuns)
+      .innerJoin(timers, eq(timers.id, responsibilityRuns.responsibilityId))
+      .innerJoin(modInstallationResources, and(
+        eq(modInstallationResources.resourceId, timers.id),
+        eq(modInstallationResources.contributionId, "build.timer.post-acceptance-regression"),
+        eq(modInstallationResources.status, "active"),
+        eq(modInstallationResources.ownerUserId, responsibilityRuns.ownerUserId),
+        eq(modInstallationResources.accountId, responsibilityRuns.accountId),
+      ))
+      .innerJoin(modInstallations, and(
+        eq(modInstallations.id, modInstallationResources.installationId),
+        eq(modInstallations.modKey, "build"),
+        eq(modInstallations.status, "active"),
+        eq(modInstallations.ownerUserId, responsibilityRuns.ownerUserId),
+        eq(modInstallations.accountId, responsibilityRuns.accountId),
+      ))
+      .where(and(
+        eq(responsibilityRuns.trigger, "scheduled"),
+        eq(responsibilityRuns.scheduleId, "build-accepted-deployment"),
+        eq(timers.enabled, true),
+        validSchedulerTimerPredicate(),
+        gte(responsibilityRuns.intendedFireAt, intendedAfter),
+        or(
+          eq(responsibilityRuns.status, "pending"),
+          and(
+            eq(responsibilityRuns.status, "deferred"),
+            lte(responsibilityRuns.completedAt, deferredBefore),
+          ),
+          and(eq(responsibilityRuns.status, "running"), lte(responsibilityRuns.startedAt, staleBefore)),
+        ),
+      ))
+      .orderBy(responsibilityRuns.startedAt)
+      .limit(Math.max(1, Math.min(limit, 100)));
+    return rows.map(rowToRun);
+  }
+
+  async claimManagedEventRunForScheduler(
+    timer: Timer,
+    runId: string,
+    metadata: TimerRun["metadata"],
+    staleBefore: Date,
+  ): Promise<boolean> {
+    const ownership = ownershipForTimer(timer);
+    const ownershipPredicate = ownership.scope === "user"
+      ? and(
+          eq(responsibilityRuns.scope, "user"),
+          eq(responsibilityRuns.ownerUserId, ownership.ownerUserId),
+          eq(responsibilityRuns.accountId, ownership.accountId),
+        )
+      : eq(responsibilityRuns.scope, "system");
+    const result = await db.update(responsibilityRuns).set({
+      status: "running",
+      startedAt: new Date(),
+      completedAt: null,
+      durationMs: null,
+      error: null,
+      metadata: metadata ?? null,
+    }).where(and(
+      eq(responsibilityRuns.runId, runId),
+      eq(responsibilityRuns.responsibilityId, timer.id),
+      eq(responsibilityRuns.scheduleId, "build-accepted-deployment"),
+      ownershipPredicate,
+      or(
+        eq(responsibilityRuns.status, "pending"),
+        eq(responsibilityRuns.status, "deferred"),
+        and(eq(responsibilityRuns.status, "running"), lte(responsibilityRuns.startedAt, staleBefore)),
+      ),
+    ));
+    return (result.rowCount ?? 0) === 1;
   }
 
   async claimDeferredRunForRetry(

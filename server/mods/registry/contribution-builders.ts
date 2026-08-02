@@ -12,6 +12,7 @@ import type {
   WidgetContribution,
   WidgetSlot,
   WorkflowContribution,
+  TimerTemplateContribution,
 } from "@shared/models/mod-registry";
 import type {
   RegisteredConnectorKey,
@@ -20,6 +21,7 @@ import type {
   RegisteredSurfaceKey,
   RegisteredWidgetKey,
   RegisteredWorkflowKey,
+  RegisteredTimerTemplateKey,
 } from "./registered-keys";
 
 interface RouteOpts {
@@ -94,4 +96,11 @@ export function workflowRef(
   workflowKey: RegisteredWorkflowKey,
 ): WorkflowContribution {
   return { kind: "workflow", id, workflowKey, audience: "diagnostic" };
+}
+
+export function timerTemplateRef(
+  id: string,
+  templateKey: RegisteredTimerTemplateKey,
+): TimerTemplateContribution {
+  return { kind: "timer-template", id, templateKey, audience: "diagnostic" };
 }

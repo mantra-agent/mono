@@ -165,6 +165,15 @@ export type RegisteredCollectorKey = (typeof REGISTERED_COLLECTOR_KEYS)[number];
 export const REGISTERED_WORKFLOW_KEYS = ["build-v1"] as const;
 export type RegisteredWorkflowKey = (typeof REGISTERED_WORKFLOW_KEYS)[number];
 
+// Code-owned managed Timer templates. These keys are lifecycle identities,
+// never permission or credential grants.
+export const REGISTERED_TIMER_TEMPLATE_KEYS = [
+  "build-reliability-sentinel-30m",
+  "build-security-sentinel-weekly",
+  "post-build-regression",
+] as const;
+export type RegisteredTimerTemplateKey = (typeof REGISTERED_TIMER_TEMPLATE_KEYS)[number];
+
 // Trusted server route-group keys. Server route-group contributions are a
 // Phase 4 concern; no first-party definition declares one yet, so this catalog
 // is intentionally empty but present so validation can enforce membership when
@@ -188,6 +197,7 @@ export const REGISTERED_KEY_CATALOGS = {
   widget: new Set<string>(REGISTERED_WIDGET_KEYS),
   collector: new Set<string>(REGISTERED_COLLECTOR_KEYS),
   workflow: new Set<string>(REGISTERED_WORKFLOW_KEYS),
+  timerTemplate: new Set<string>(REGISTERED_TIMER_TEMPLATE_KEYS),
   routeGroup: new Set<string>(REGISTERED_ROUTE_GROUP_KEYS),
   command: new Set<string>(REGISTERED_COMMAND_KEYS),
   slot: new Set<string>(REGISTERED_EXTENSION_SLOT_KEYS),

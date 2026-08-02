@@ -532,6 +532,7 @@ export const responsibilityRuns = pgTable("responsibility_runs", {
     (${table.scope} = 'user' AND ${table.ownerUserId} IS NOT NULL AND ${table.accountId} IS NOT NULL)
     OR (${table.scope} IN ('system', 'quarantine') AND ${table.ownerUserId} IS NULL AND ${table.accountId} IS NULL)
   `),
+  uniqueIndex("idx_responsibility_runs_run_id_unique").on(table.runId),
   uniqueIndex("idx_responsibility_runs_successful_scheduled_slot_unique")
     .on(table.responsibilityId, table.scheduleId, table.scheduledSlotStart, table.scheduledSlotEnd)
     .where(sql`${table.trigger} = 'scheduled' AND ${table.status} = 'success' AND ${table.scheduledSlotStart} IS NOT NULL AND ${table.scheduledSlotEnd} IS NOT NULL`),
