@@ -37,9 +37,19 @@ import {
 import { resolveMeetingTransportSession } from "./meeting/owner-principal";
 import { eventBus } from "./event-bus";
 import type { SessionReviewKind } from "@shared/models/chat";
+import { isValidReferenceIdentifier } from "@shared/references";
 
 const log = createLogger("EmailDraftStorage");
 const EMAIL_REVIEW_QUERY_BATCH_SIZE = 500;
+
+function isValidEmailDraftId(id: string): boolean {
+  return isValidReferenceIdentifier("email_draft", id);
+}
+
+function assertValidEmailDraftId(id: string): void {
+  if (isValidEmailDraftId(id)) return;
+  throw Object.assign(new Error("Invalid email draft ID"), { status: 400 });
+}
 
 function publishSessionReviewChanged(sessionId: string | null): void {
   if (!sessionId) return;
@@ -238,6 +248,7 @@ export class EmailDraftStorage {
    * Get a single draft visible to the principal.
    */
   async getById(principal: Principal, id: string): Promise<EmailDraft | null> {
+    if (!isValidEmailDraftId(id)) return null;
     const [row] = await db
       .select()
       .from(emailDrafts)
@@ -455,6 +466,7 @@ export class EmailDraftStorage {
     personId: string,
     email: string,
   ): Promise<RecapRecipientMutationResult> {
+    assertValidEmailDraftId(draftId);
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw Object.assign(new Error("Recap recipient changes require an authenticated user"), { status: 403 });
     }
@@ -757,6 +769,7 @@ export class EmailDraftStorage {
     principal: Principal,
     id: string,
   ): Promise<EmailDraft> {
+    assertValidEmailDraftId(id);
     if (!principal.accountId) {
       throw Object.assign(new Error("Email sending requires an account-bound principal"), { status: 403 });
     }

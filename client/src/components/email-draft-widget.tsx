@@ -24,6 +24,7 @@ import {
   RecapRecipientSelector,
   type RecapRecipientSelection,
 } from "@/components/recap-recipient-selector";
+import { isValidReferenceIdentifier } from "@shared/references";
 
 const log = createLogger("EmailDraftWidget");
 
@@ -236,12 +237,14 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
   // Local edit state — initialized from server, patches sent on change
   const [localEdits, setLocalEdits] = useState<Partial<EmailDraft>>({});
 
+  const hasValidDraftId = isValidReferenceIdentifier("email_draft", draftId);
   const { data, isLoading, error } = useQuery<{
     draft: EmailDraft;
     recipientMode: EmailDraftRecipientMode;
     threadMessages: ThreadMessage[];
   }>({
     queryKey: ["/api/email-drafts", draftId],
+    enabled: hasValidDraftId,
     queryFn: async () => {
       log.debug("EMAIL_DRAFT_WIDGET:LOAD_START", { draftId });
       const res = await fetch(`/api/email-drafts/${draftId}`, { credentials: "include" });
@@ -378,6 +381,10 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, []);
+
+  // Streamed reference text may contain an email_draft prefix before its UUID
+  // is complete. Keep the widget inert until the canonical identifier exists.
+  if (!hasValidDraftId) return null;
 
   // ---------------------------------------------------------------------------
   // Loading / Error

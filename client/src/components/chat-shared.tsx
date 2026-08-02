@@ -167,6 +167,7 @@ import { WorkflowWidget } from "@/components/workflow-widget";
 import type { WorkflowWidgetRun } from "@/components/workflow-shared";
 import type { PlanData } from "@/components/plan-shared";
 import { parseReferenceText } from "@shared/reference-parser";
+import { isValidReferenceIdentifier } from "@shared/references";
 import { stripExpressionTags } from "@shared/expression-tags";
 
 export { stripExpressionTags } from "@shared/expression-tags";
@@ -1853,7 +1854,9 @@ export function emailDraftIdsFromSegments(segments: MessageSegment[]): {
       ? parseReferenceText(segment.content)
           .filter(
             (part) =>
-              part.kind === "reference" && part.ref.type === "email_draft",
+              part.kind === "reference"
+              && part.ref.type === "email_draft"
+              && isValidReferenceIdentifier("email_draft", part.ref.id),
           )
           .map((part) => part.ref.id)
       : [],
@@ -1868,7 +1871,9 @@ export function emailDraftIdsFromSegments(segments: MessageSegment[]): {
           return parseReferenceText(tool.result)
             .filter(
               (part) =>
-                part.kind === "reference" && part.ref.type === "email_draft",
+                part.kind === "reference"
+                && part.ref.type === "email_draft"
+                && isValidReferenceIdentifier("email_draft", part.ref.id),
             )
             .map((part) => part.ref.id);
         });
@@ -2132,7 +2137,11 @@ export function MarkdownContent({
   const draftIds: string[] = [];
   const textWithoutWidgets = parts
     .map((part) => {
-      if (part.kind === "reference" && part.ref.type === "email_draft") {
+      if (
+        part.kind === "reference"
+        && part.ref.type === "email_draft"
+        && isValidReferenceIdentifier("email_draft", part.ref.id)
+      ) {
         draftIds.push(part.ref.id);
         return ""; // Strip from inline text — rendered as block widget below.
       }
