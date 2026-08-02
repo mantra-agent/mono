@@ -731,8 +731,13 @@ function connectorMaxOutputTokens(config: OpenAITierModelConfig | undefined, run
 }
 
 function connectorReasoningEffort(config: OpenAITierModelConfig | undefined, model: string, thinking: ChatCompletionOptions["thinking"], surface: "responses" | "codex"): OpenAIReasoningEffort | undefined {
-  if (config?.reasoningEffort) return config.reasoningEffort as OpenAIReasoningEffort;
-  return supportsSelectableEffort(model) ? resolveOpenAIReasoningEffort(thinking, surface) : undefined;
+  if (!supportsSelectableEffort(model)) return undefined;
+
+  // The job/profile thinking policy is the per-call source of truth. Connector
+  // effort is a fallback for callers that do not provide an explicit policy;
+  // allowing it to win silently turns a tier default into a permanent xhigh tax.
+  if (thinking) return resolveOpenAIReasoningEffort(thinking, surface);
+  return config?.reasoningEffort as OpenAIReasoningEffort | undefined;
 }
 
 function buildOpenAIReasoningConfig(config: OpenAITierModelConfig | undefined, model: string, thinking: ChatCompletionOptions["thinking"], surface: "responses" | "codex"): Record<string, unknown> | undefined {
