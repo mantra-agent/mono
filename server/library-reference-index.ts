@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { and, asc, count, eq, gt, inArray, like, or, sql } from "drizzle-orm";
 import { extractPositionedReferences } from "@shared/reference-parser";
-import { normalizeProtocolAddress, REFERENCE_OCCURRENCE_BATCH_LIMIT } from "@shared/life-addressing";
+import { normalizeProtocolAddress, REFERENCE_OCCURRENCE_SOURCE_LIMIT } from "@shared/life-addressing";
 import { libraryPageLinks, libraryPages, type LibraryPage } from "@shared/models/info";
 import { referenceOccurrences, referenceOccurrenceSources } from "@shared/schema";
 import { db } from "./db";
@@ -96,8 +96,8 @@ export async function indexLibraryPageReferences(
 ): Promise<LibraryReferenceIndexResult> {
   requireUserPrincipal(principal);
   const positioned = extractPositionedReferences(page.plainTextContent, { includeUnknownTypes: true });
-  if (positioned.length > REFERENCE_OCCURRENCE_BATCH_LIMIT) {
-    throw Object.assign(new Error(`Library page contains too many references (max ${REFERENCE_OCCURRENCE_BATCH_LIMIT})`), { status: 400 });
+  if (positioned.length > REFERENCE_OCCURRENCE_SOURCE_LIMIT) {
+    throw Object.assign(new Error(`Library page contains too many references (max ${REFERENCE_OCCURRENCE_SOURCE_LIMIT})`), { status: 400 });
   }
 
   const pageTargets = positioned.filter(item => item.ref.type === "page").map(item => item.ref.id);

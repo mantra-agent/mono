@@ -12,7 +12,8 @@ import {
   ADDRESS_LINK_BATCH_LIMIT,
   boundedReplayLimit,
   normalizeProtocolAddress,
-  REFERENCE_OCCURRENCE_BATCH_LIMIT,
+  REFERENCE_OCCURRENCE_INSERT_BATCH_LIMIT,
+  REFERENCE_OCCURRENCE_SOURCE_LIMIT,
   type AddressLink,
   type AddressReplayPage,
   type OccurrenceReplaceResult,
@@ -177,7 +178,7 @@ export async function replaceReferenceOccurrences(
   const sourceAddress = normalizeAddress(input.sourceAddress, "sourceAddress");
   const sourceRevision = boundedText(input.sourceRevision, 200, "sourceRevision");
   if (!(input.observedAt instanceof Date) || Number.isNaN(input.observedAt.getTime())) throw Object.assign(new Error("observedAt must be a valid Date"), { status: 400 });
-  if (input.occurrences.length > REFERENCE_OCCURRENCE_BATCH_LIMIT) throw Object.assign(new Error(`Too many occurrences (max ${REFERENCE_OCCURRENCE_BATCH_LIMIT})`), { status: 400 });
+  if (input.occurrences.length > REFERENCE_OCCURRENCE_SOURCE_LIMIT) throw Object.assign(new Error(`Too many occurrences (max ${REFERENCE_OCCURRENCE_SOURCE_LIMIT})`), { status: 400 });
 
   const normalized = input.occurrences.map(item => ({
     targetAddress: normalizeAddress(item.targetAddress, "targetAddress"),
@@ -241,20 +242,23 @@ export async function replaceReferenceOccurrences(
     ));
     if (normalized.length > 0) {
       const occurrenceOwnership = ownedInsertValues(principal, occurrenceScope);
-      await tx.insert(referenceOccurrences).values(normalized.map((item, occurrenceOrdinal) => ({
-        sourceProjectionId: source.id,
-        sourceAddress,
-        sourceRevision,
-        occurrenceOrdinal,
-        targetAddress: item.targetAddress,
-        locationBlockId: item.location?.blockId ?? null,
-        locationStart: item.location?.start ?? null,
-        locationEnd: item.location?.end ?? null,
-        origin: "embedded" as const,
-        observedAt: input.observedAt,
-        ...occurrenceOwnership,
-        createdByUserId: principal.userId,
-      })));
+      for (let ordinalOffset = 0; ordinalOffset < normalized.length; ordinalOffset += REFERENCE_OCCURRENCE_INSERT_BATCH_LIMIT) {
+        const batch = normalized.slice(ordinalOffset, ordinalOffset + REFERENCE_OCCURRENCE_INSERT_BATCH_LIMIT);
+        await tx.insert(referenceOccurrences).values(batch.map((item, batchOrdinal) => ({
+          sourceProjectionId: source.id,
+          sourceAddress,
+          sourceRevision,
+          occurrenceOrdinal: ordinalOffset + batchOrdinal,
+          targetAddress: item.targetAddress,
+          locationBlockId: item.location?.blockId ?? null,
+          locationStart: item.location?.start ?? null,
+          locationEnd: item.location?.end ?? null,
+          origin: "embedded" as const,
+          observedAt: input.observedAt,
+          ...occurrenceOwnership,
+          createdByUserId: principal.userId,
+        })));
+      }
     }
     return { outcome: "replaced", sourceAddress, sourceRevision, occurrenceCount: normalized.length };
   }));

@@ -44,7 +44,7 @@ export const referenceOccurrenceSources = pgTable("reference_occurrence_sources"
   check("reference_occurrence_sources_address_length_check", sql`char_length(${table.sourceAddress}) BETWEEN 3 AND 2048`),
   check("reference_occurrence_sources_revision_length_check", sql`char_length(${table.sourceRevision}) BETWEEN 1 AND 200`),
   check("reference_occurrence_sources_hash_check", sql`${table.projectionHash} ~ '^[0-9a-f]{64}$'`),
-  check("reference_occurrence_sources_count_check", sql`${table.occurrenceCount} BETWEEN 0 AND 500`),
+  check("reference_occurrence_sources_count_check", sql`${table.occurrenceCount} BETWEEN 0 AND 5000`),
 ]);
 
 /** Rebuildable, repeated authored mentions for the current source revision. */
@@ -78,7 +78,7 @@ export const referenceOccurrences = pgTable("reference_occurrences", {
   check("reference_occurrences_source_length_check", sql`char_length(${table.sourceAddress}) BETWEEN 3 AND 2048`),
   check("reference_occurrences_target_length_check", sql`char_length(${table.targetAddress}) BETWEEN 3 AND 2048`),
   check("reference_occurrences_revision_length_check", sql`char_length(${table.sourceRevision}) BETWEEN 1 AND 200`),
-  check("reference_occurrences_ordinal_check", sql`${table.occurrenceOrdinal} BETWEEN 0 AND 499`),
+  check("reference_occurrences_ordinal_check", sql`${table.occurrenceOrdinal} BETWEEN 0 AND 4999`),
   check("reference_occurrences_origin_check", sql`${table.origin} = 'embedded'`),
   check("reference_occurrences_block_length_check", sql`${table.locationBlockId} IS NULL OR char_length(${table.locationBlockId}) BETWEEN 1 AND 200`),
   check("reference_occurrences_location_check", sql`
