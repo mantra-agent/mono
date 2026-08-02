@@ -1,6 +1,7 @@
 import type { Timer, TimerRun } from "@shared/models/timers";
 
 export type TimerHandlerResult =
+  | { outcome: "accepted"; output?: unknown }
   | { outcome: "success"; output?: unknown }
   | { outcome: "skipped"; reason: string; output?: unknown }
   | { outcome: "failed"; error: string; output?: unknown }

@@ -1180,6 +1180,17 @@ async function terminalizeInTransaction(
     return { run, receipt: existing };
   }
   const receipt = await buildReceipt(tx, run, attempt, decision);
+  const handler = runtimeHandlerRegistry.require(run.handlerKey, run.handlerVersion);
+  const parsedInput = handler.inputSchema.parse(run.input);
+  if (handler.projectTerminal) {
+    await handler.projectTerminal({
+      tx,
+      principal,
+      run,
+      input: parsedInput,
+      receipt,
+    });
+  }
   const receiptEventId = crypto.randomUUID();
   await tx.insert(runtimeRunEvents).values({
     id: receiptEventId,
