@@ -15,19 +15,19 @@ import { sql } from "drizzle-orm";
  *
  * Vault colors are persisted values because they identify user-defined data
  * partitions across surfaces. Keep every picker and default sourced here.
- * The family uses near-white tints so Vault identity stays legible on the
- * product's black canvas without competing with content or CTA color.
+ * The family uses light, chromatic tints so Vault identity stays legible on
+ * the product's black canvas without competing with content or CTA color.
  */
 export const VAULT_COLOR_PALETTE = [
   { value: "#FFFFFF", label: "White" },
-  { value: "#D9F2FF", label: "Sky" },
-  { value: "#D9FFFC", label: "Aqua" },
-  { value: "#D9FFE6", label: "Mint" },
-  { value: "#F2FFD9", label: "Lime" },
-  { value: "#FFF2D9", label: "Gold" },
-  { value: "#FFDED9", label: "Coral" },
-  { value: "#FFD9E9", label: "Rose" },
-  { value: "#E4D9FF", label: "Violet" },
+  { value: "#BFEAFF", label: "Sky" },
+  { value: "#BFFFFA", label: "Aqua" },
+  { value: "#BFFFD4", label: "Mint" },
+  { value: "#EAFFBF", label: "Lime" },
+  { value: "#FFEABF", label: "Gold" },
+  { value: "#FFC7BF", label: "Coral" },
+  { value: "#FFBFDA", label: "Rose" },
+  { value: "#D5BFFF", label: "Violet" },
 ] as const;
 
 /** Persisted Vault colors use one browser-compatible six-digit hex contract. */
@@ -37,7 +37,7 @@ export function normalizeVaultColor(color: string): string {
   return color.toUpperCase();
 }
 
-/** Generic user-created vaults start on the brand blue. */
+/** Generic user-created vaults start on the light Sky tint. */
 export const DEFAULT_VAULT_COLOR = VAULT_COLOR_PALETTE[1].value;
 
 /** Personal is the neutral identity partition, represented by full white. */
@@ -45,7 +45,16 @@ export const PERSONAL_VAULT_COLOR = VAULT_COLOR_PALETTE[0].value;
 
 /** Known retired product presets. Arbitrary custom colors are untouched. */
 export const LEGACY_VAULT_COLOR_MIGRATIONS = [
+  // The Personal migration reads this first entry as its retired neutral color.
   { from: "#828A96", to: VAULT_COLOR_PALETTE[0].value },
+  { from: "#D9F2FF", to: VAULT_COLOR_PALETTE[1].value },
+  { from: "#D9FFFC", to: VAULT_COLOR_PALETTE[2].value },
+  { from: "#D9FFE6", to: VAULT_COLOR_PALETTE[3].value },
+  { from: "#F2FFD9", to: VAULT_COLOR_PALETTE[4].value },
+  { from: "#FFF2D9", to: VAULT_COLOR_PALETTE[5].value },
+  { from: "#FFDED9", to: VAULT_COLOR_PALETTE[6].value },
+  { from: "#FFD9E9", to: VAULT_COLOR_PALETTE[7].value },
+  { from: "#E4D9FF", to: VAULT_COLOR_PALETTE[8].value },
   { from: "#6BA3B5", to: VAULT_COLOR_PALETTE[1].value },
   { from: "#6E8B74", to: VAULT_COLOR_PALETTE[2].value },
   { from: "#9B9B6F", to: VAULT_COLOR_PALETTE[3].value },
