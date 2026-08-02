@@ -824,6 +824,8 @@ export const ADVISORY_LOCK_NS = {
   REFERENCE_OCCURRENCES: 0x52464f43, // 'RFOC' — serializes one authored source projection replacement
   ADDRESS_LINK: 0x41444c4b, // 'ADLK' — serializes one explicit-link idempotency or lifecycle mutation
   MOD_LIFECYCLE: 0x4d4f444c, // 'MODL' — serializes one account+mod entitlement/install lifecycle transition
+  RUNTIME_POOL: 0x5254504c, // 'RTPL' — serializes one runtime resource-pool claim transaction
+  RUNTIME_RUN: 0x5254524e, // 'RTRN' — serializes one runtime run terminal/retry/cancel transition
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";

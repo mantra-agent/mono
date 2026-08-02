@@ -361,8 +361,10 @@ app.use((req, res, next) => {
   bootTracker.startPhase("database");
   const tMigrate0 = Date.now();
   await runSchemaBootstrap("boot");
-  const { ensureLifeAddressingSchema } = await import("./life-addressing-schema");
+  const { ensureRuntimeKernelSchema } = await import("./runtime/runtime-schema");
   const { pool } = await import("./db");
+  await ensureRuntimeKernelSchema(pool);
+  const { ensureLifeAddressingSchema } = await import("./life-addressing-schema");
   await ensureLifeAddressingSchema(pool);
   const { ensureModPlatformSchema } = await import("./mod-schema");
   await ensureModPlatformSchema(pool);
