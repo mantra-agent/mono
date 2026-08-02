@@ -25,7 +25,7 @@ import {
   type DrizzleTx,
 } from "../db";
 import { createLogger } from "../log";
-import { createUserSessionPrincipal, type Principal } from "../principal";
+import { createNamedSystemPrincipal, createUserSessionPrincipal, type Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { appendTransactionalOutboxEvent } from "../transactional-outbox";
@@ -501,15 +501,8 @@ export async function startRuntimeAttempt(
     authorization = await runWithPrincipal(principal, () => handler.authorize(principal, parsedInput));
   } catch (error) {
     const reasonCode = error && typeof error === "object" && "code" in error ? String(error.code) : "authority_subject_missing";
-    const fallbackPrincipal = await restoreRunPrincipal(snapshot.run).catch(() => ({
-      actorType: "user" as const,
-      userId: snapshot.run.ownerUserId,
-      accountId: snapshot.run.accountId,
-      role: "member" as const,
-      scopes: [], permissions: [], isAdmin: false, source: "system" as const,
-      visibleVaultIds: [], activeVaultId: null,
-    }));
-    await terminalizeWithoutDecision(fallbackPrincipal, snapshot.run.id, snapshot.attempt.id, {
+    const recoveryPrincipal = createNamedSystemPrincipal("runtime-authority-recovery");
+    await terminalizeWithoutDecision(recoveryPrincipal, snapshot.run.id, snapshot.attempt.id, {
       outcome: "blocked",
       reasonCode: boundedReasonCode(reasonCode),
       attribution: "authority",
@@ -643,7 +636,7 @@ async function buildReceipt(
 
 async function terminalizeInTransaction(
   tx: DrizzleTx,
-  principal: Principal & { actorType: "user"; userId: string; accountId: string },
+  principal: Principal,
   run: RuntimeRunRow,
   attempt: RuntimeAttemptRow | null,
   decision: {
@@ -684,6 +677,9 @@ async function terminalizeInTransaction(
       finishedAt: terminalAt,
     }).where(and(eq(runtimeAttempts.id, attempt.id), inArray(runtimeAttempts.phase, ["leased", "running"])));
   }
+  const terminalPredicate = principal.actorType === "user"
+    ? and(eq(runtimeRuns.id, run.id), eq(runtimeRuns.accountId, principal.accountId!), sql`${runtimeRuns.phase} <> 'terminal'`)
+    : and(eq(runtimeRuns.id, run.id), eq(runtimeRuns.accountId, run.accountId), eq(runtimeRuns.ownerUserId, run.ownerUserId), sql`${runtimeRuns.phase} <> 'terminal'`);
   const [terminalRun] = await tx.update(runtimeRuns).set({
     phase: "terminal",
     outcome: decision.outcome,
@@ -692,9 +688,9 @@ async function terminalizeInTransaction(
     receiptEventId,
     terminalAt,
     updatedAt: terminalAt,
-  }).where(and(eq(runtimeRuns.id, run.id), eq(runtimeRuns.accountId, principal.accountId), sql`${runtimeRuns.phase} <> 'terminal'`)).returning();
+  }).where(terminalPredicate).returning();
   if (!terminalRun) throw Object.assign(new Error("Runtime terminalization changed concurrently"), { status: 409 });
-  await appendTransactionalOutboxEvent(tx, principal, {
+  await appendTransactionalOutboxEvent(tx, principal, { userId: run.ownerUserId, accountId: run.accountId }, {
     eventType: "runtime.run.terminalized",
     aggregateType: "runtime_run",
     aggregateId: run.id,
@@ -705,7 +701,7 @@ async function terminalizeInTransaction(
 }
 
 async function terminalizeWithoutDecision(
-  principal: Principal & { actorType: "user"; userId: string; accountId: string },
+  principal: Principal,
   runId: string,
   attemptId: string | null,
   decision: {
@@ -717,7 +713,7 @@ async function terminalizeWithoutDecision(
   },
 ): Promise<{ run: RuntimeRunRow; receipt: RuntimeReceiptV1 }> {
   return runWithPrincipal(principal, () => db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
-    await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.RUNTIME_RUN, `${principal.accountId}:${runId}`);
+    await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.RUNTIME_RUN, `${principal.accountId ?? "system"}:${runId}`);
     const [run] = await tx.select().from(runtimeRuns).where(scopeWritable(principal, eq(runtimeRuns.id, runId))).limit(1);
     if (!run) throw Object.assign(new Error("Runtime run not found or not writable"), { status: 404 });
     const [attempt] = attemptId
