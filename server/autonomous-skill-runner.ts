@@ -17,7 +17,7 @@ import { getSideEffectTier, type SideEffectTier } from "./autonomy-tiers";
 import { isAgentType } from "@shared/instance-config";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { getCurrentPrincipal } from "./principal-context";
-import { extractSuccessfulToolInvocations, evaluateDeterministicItem } from "./skill-scoring";
+import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
 import type { ChecklistItem } from "@shared/schema";
 
 const logger = createLogger("AutonomousSkillRunner");
@@ -376,7 +376,9 @@ export interface AutonomousRunResult {
   status: "succeeded" | "degraded" | "failed" | "yielded";
   summary?: string;
   error?: string;
-  /** Tools from failed deterministic checklist items (present when status === "degraded"). */
+  /** Failed deterministic checklist requirements (present when status === "degraded"). */
+  failedStructuralChecks?: string[];
+  /** @deprecated Compatibility projection for callers expecting the old tool-only field. */
   failedToolChecks?: string[];
   durationMs: number;
 }
@@ -387,28 +389,31 @@ const activeSkillRuns = new Set<string>();
  * Terminal-time evaluation of the skill checklist's deterministic items
  * (kind "tool_invoked"), using the same shared evaluator the scorer uses —
  * one specification (the checklist), one evaluator, two invocation points.
- * Returns the tool names whose checks failed. Fails open on read errors,
- * safely: the async scoring pass re-evaluates the identical items minutes
- * later and reconciles status downward if the failure is real.
+ * Returns stable labels for failed structural checks. Fails closed on evidence
+ * read errors so missing lineage or persisted tool evidence can never produce
+ * a false green; async scoring later re-evaluates the identical contract.
  */
-async function findFailedDeterministicChecks(sessionId: string, skillName: string): Promise<string[]> {
+async function findFailedStructuralChecks(sessionId: string, skillName: string): Promise<string[]> {
   try {
     const skill = await storage.getSkillByName(skillName);
     const checklist = Array.isArray(skill?.checklist) ? (skill.checklist as ChecklistItem[]) : [];
-    if (!checklist.some((c) => c?.kind === "tool_invoked")) return [];
+    if (!checklist.some((c) => c?.kind === "tool_invoked" || c?.kind === "child_skill_invoked")) return [];
     const messages = await chatFileStorage.getMessagesBySession(sessionId);
-    const invoked = extractSuccessfulToolInvocations(messages);
+    const evidence = await buildStructuralRunEvidence(sessionId, messages);
     const failed: string[] = [];
     for (const item of checklist) {
-      const result = evaluateDeterministicItem(item, invoked);
-      if (result && !result.passed && typeof item.tool === "string") {
-        failed.push(`${item.tool}${typeof item.action === "string" ? `:${item.action}` : ""}`);
+      const result = evaluateStructuralItem(item, evidence);
+      if (!result || result.passed) continue;
+      if (item.kind === "tool_invoked" && typeof item.tool === "string") {
+        failed.push(`tool:${item.tool}${typeof item.action === "string" ? `:${item.action}` : ""}`);
+      } else if (item.kind === "child_skill_invoked" && typeof item.skill === "string") {
+        failed.push(`child_skill:${item.skill}`);
       }
     }
     return failed;
   } catch (err) {
-    logger.warn(`[SkillChat] [${sessionId}] Deterministic checklist evaluation failed open: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
+    logger.error(`[SkillChat] [${sessionId}] Structural checklist evaluation failed closed: ${err instanceof Error ? err.message : String(err)}`);
+    return ["structural_evaluation_unavailable"];
   }
 }
 
@@ -488,6 +493,7 @@ export async function executeAutonomousSkillRun(
     spawnReason?: string;
     spawnerTool?: string;
     spawnerSkillRun?: string;
+    parentToolCallId?: string;
     onSessionCreated?: (sessionId: string) => void | Promise<void>;
     /**
      * Optional explicit model identifier (e.g. "anthropic/claude-opus-4-6").
@@ -765,10 +771,29 @@ export async function executeAutonomousSkillRun(
 
   if (!isSkillless) {
     try {
-      await storage.insertSkillRun({ skillName: config.skillId, sessionId });
-      logger.log(`[SkillChat] [${sessionId}] Inserted skill_runs row for "${config.skillId}"`);
+      let parentSkillRunId: number | undefined;
+      if (options.parentSessionId && options.parentToolCallId) {
+        const parentRun = await storage.getSkillRunBySessionId(options.parentSessionId);
+        if (!parentRun) {
+          throw new Error(`Parent SkillRun is missing for composed child session ${sessionId}`);
+        }
+        parentSkillRunId = parentRun.id;
+      }
+      await storage.insertSkillRun({
+        skillName: config.skillId,
+        sessionId,
+        parentSessionId: options.parentSessionId,
+        parentSkillRunId,
+        parentToolCallId: options.parentToolCallId,
+      });
+      logger.log(`[SkillChat] [${sessionId}] Inserted skill_runs row for "${config.skillId}"${parentSkillRunId ? ` parentSkillRunId=${parentSkillRunId}` : ""}`);
     } catch (runInsertErr: unknown) {
-      logger.error(`[SkillChat] [${sessionId}] Failed to insert skill_runs row: ${runInsertErr instanceof Error ? runInsertErr.message : String(runInsertErr)}`);
+      const message = runInsertErr instanceof Error ? runInsertErr.message : String(runInsertErr);
+      logger.error(`[SkillChat] [${sessionId}] Failed to insert skill_runs row: ${message}`);
+      await chatFileStorage.setEndReason(sessionId, "skill_run_lineage_persistence_failed").catch(() => undefined);
+      await chatFileStorage.setErrorSeverity(sessionId, "error").catch(() => undefined);
+      await chatFileStorage.updateSessionStatus(sessionId, "failed").catch(() => undefined);
+      throw new Error(`SkillRun persistence failed for session ${sessionId}`, { cause: runInsertErr });
     }
   }
 
@@ -863,9 +888,13 @@ export async function executeAutonomousSkillRun(
         await chatFileStorage.setErrorSeverity(sessionId, "warn").catch(() => undefined);
         await chatFileStorage.updateSessionStatus(sessionId, "failed");
       }
-      storage.updateSkillRunStatus(sessionId, "yielded", result.durationMs, error).catch((e: unknown) => {
+      const yieldedRun = await storage.updateSkillRunStatus(sessionId, "yielded", result.durationMs, error).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status to yielded: ${e instanceof Error ? e.message : String(e)}`);
+        return null;
       });
+      if (!yieldedRun) {
+        throw new Error(`SkillRun yielded-state persistence failed for session ${sessionId}`);
+      }
       if (options.parentSessionId) {
         const { onChildSessionCompleted } = await import("./sessions/child-block-lifecycle");
         const { updateSpawnStatus } = await import("./sessions/tree");
@@ -929,33 +958,41 @@ export async function executeAutonomousSkillRun(
     // a clean success. Computed here — the single terminal-status mutation
     // point — so every launch path (timer, tool, hook) inherits the verdict.
     let runStatus: "succeeded" | "degraded" | "failed" = result.status === "succeeded" ? "succeeded" : "failed";
-    let failedToolChecks: string[] = [];
+    let failedStructuralChecks: string[] = [];
     if (runStatus === "succeeded" && config.skillId) {
-      failedToolChecks = await findFailedDeterministicChecks(sessionId, config.skillId);
-      if (failedToolChecks.length > 0) runStatus = "degraded";
+      failedStructuralChecks = await findFailedStructuralChecks(sessionId, config.skillId);
+      if (failedStructuralChecks.length > 0) runStatus = "degraded";
+    }
+    if (runStatus === "degraded" && options.parentSessionId) {
+      const { updateSpawnStatus } = await import("./sessions/tree");
+      await updateSpawnStatus(sessionId, "failed");
     }
     const terminalFailureReason = runStatus === "failed"
       ? result.error
       : runStatus === "degraded"
-        ? `tool_coverage_failed: ${failedToolChecks.join(", ")}`
+        ? `structural_requirements_failed: ${failedStructuralChecks.join(", ")}`
         : undefined;
-    storage.updateSkillRunStatus(sessionId, runStatus, result.durationMs, terminalFailureReason).catch((e: unknown) => {
+    const settledRun = await storage.updateSkillRunStatus(sessionId, runStatus, result.durationMs, terminalFailureReason).catch((e: unknown) => {
       logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
     });
+    if (!settledRun) {
+      throw new Error(`SkillRun terminal persistence failed for session ${sessionId}`);
+    }
     if (runStatus === "degraded") {
       if (await conversationExists(sessionId)) {
-        await chatFileStorage.setEndReason(sessionId, terminalFailureReason || "tool_coverage_failed").catch((e: unknown) => {
+        await chatFileStorage.setEndReason(sessionId, terminalFailureReason || "structural_requirements_failed").catch((e: unknown) => {
           logger.error(`[SkillChat] [${sessionId}] Failed to reconcile degraded endReason: ${e instanceof Error ? e.message : String(e)}`);
         });
         await chatFileStorage.setErrorSeverity(sessionId, "warn").catch((e: unknown) => {
           logger.error(`[SkillChat] [${sessionId}] Failed to reconcile degraded errorSeverity: ${e instanceof Error ? e.message : String(e)}`);
         });
       }
-      logger.warn(`[SkillChat] [${sessionId}] Run degraded — deterministic checklist tool checks failed: ${failedToolChecks.join(", ")}`);
+      logger.warn(`[SkillChat] [${sessionId}] Run degraded — structural checklist requirements failed: ${failedStructuralChecks.join(", ")}`);
       eventBus.publish({
         category: "skill",
         event: "skill.run.degraded",
-        payload: { sessionId, skillId, skillName: config.label, reason: "tool_coverage_failed", failedToolChecks },
+        payload: { sessionId, skillId, skillName: config.label, reason: "structural_requirements_failed", failedStructuralChecks },
       });
     }
 
@@ -971,7 +1008,12 @@ export async function executeAutonomousSkillRun(
     );
 
     if (runStatus === "degraded") {
-      return { ...result, status: "degraded", failedToolChecks };
+      return {
+        ...result,
+        status: "degraded",
+        failedStructuralChecks,
+        failedToolChecks: failedStructuralChecks,
+      };
     }
     return result;
   } catch (err: unknown) {
@@ -1017,8 +1059,9 @@ export async function executeAutonomousSkillRun(
       logger.warn(`[SkillChat] [${sessionId}] Session deleted mid-run — skipping post-crash writes`);
     }
 
-    storage.updateSkillRunStatus(sessionId, "failed", durationMs, `${failureReason}: ${errMsg}`).catch((e: unknown) => {
+    await storage.updateSkillRunStatus(sessionId, "failed", durationMs, `${failureReason}: ${errMsg}`).catch((e: unknown) => {
       logger.error(`[SkillChat] [${sessionId}] Failed to update skill_runs status after crash: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
     });
 
     eventBus.publish({

@@ -170,17 +170,18 @@ export class SkillTimerHandler implements TimerHandler {
     }
 
     if (result.status === "degraded") {
-      const failed = result.failedToolChecks?.join(", ") || "unknown";
+      const failedChecks = result.failedStructuralChecks ?? result.failedToolChecks ?? [];
+      const failed = failedChecks.join(", ") || "unknown";
       log.warn(
-        `Skill timer "${timer.name}" run degraded sessionId=${result.sessionId} — deterministic checklist tool checks failed: ${failed}`,
+        `Skill timer "${timer.name}" run degraded sessionId=${result.sessionId} — structural checklist requirements failed: ${failed}`,
       );
       return {
         outcome: "degraded",
-        reason: `tool_coverage_failed: ${failed}`,
+        reason: `structural_requirements_failed: ${failed}`,
         output: {
           sessionId: result.sessionId,
           skillRunStatus: result.status,
-          failedToolChecks: result.failedToolChecks,
+          failedStructuralChecks: failedChecks,
         },
       };
     }

@@ -129,7 +129,14 @@ export interface IStorage {
   getSkillFailedNames(): Promise<{ name: string; scoredAt: string }[]>;
   dismissSkillFailure(skillName: string): Promise<void>;
 
-  insertSkillRun(data: { skillName: string; sessionId: string; status?: SkillRunStatus }): Promise<SkillRun>;
+  insertSkillRun(data: {
+    skillName: string;
+    sessionId: string;
+    status?: SkillRunStatus;
+    parentSessionId?: string;
+    parentSkillRunId?: number;
+    parentToolCallId?: string;
+  }): Promise<SkillRun>;
   updateSkillRunStatus(sessionId: string, status: SkillRunStatus, durationMs?: number, failureReason?: string): Promise<SkillRun | null>;
   reconcileSkillRunStatus(sessionId: string, fromStatus: SkillRunStatus, toStatus: SkillRunStatus, failureReason: string): Promise<SkillRun | null>;
   updateSkillRunScore(sessionId: string, data: {
@@ -142,6 +149,7 @@ export interface IStorage {
     comparativeReason?: string | null;
   }): Promise<SkillRun | null>;
   getSkillRunBySessionId(sessionId: string): Promise<SkillRun | null>;
+  getChildSkillRunsByParent(parentSkillRunId: number): Promise<SkillRun[]>;
   getSkillRuns(skillName: string, limit?: number): Promise<SkillRun[]>;
   getSkillRunLastRuns(): Promise<Record<string, string>>;
   getLatestScoredSkillRun(skillName: string): Promise<SkillRun | null>;
@@ -821,14 +829,36 @@ export class HybridStorage implements IStorage {
   }
 
 
-  async insertSkillRun(data: { skillName: string; sessionId: string; status?: SkillRunStatus }): Promise<SkillRun> {
-    const [row] = await db.insert(skillRuns).values({
+  async insertSkillRun(data: {
+    skillName: string;
+    sessionId: string;
+    status?: SkillRunStatus;
+    parentSessionId?: string;
+    parentSkillRunId?: number;
+    parentToolCallId?: string;
+  }): Promise<SkillRun> {
+    const [inserted] = await db.insert(skillRuns).values({
       skillName: data.skillName,
       sessionId: data.sessionId,
       status: data.status || "running",
+      parentSessionId: data.parentSessionId ?? null,
+      parentSkillRunId: data.parentSkillRunId ?? null,
+      parentToolCallId: data.parentToolCallId ?? null,
       ...ownedInsertValues(getCurrentPrincipalOrSystem(), skillRunScopeColumns),
-    }).returning();
-    return row;
+    }).onConflictDoNothing({ target: skillRuns.sessionId }).returning();
+    if (inserted) return inserted;
+    const [existing] = await db.select().from(skillRuns)
+      .where(this.runWritable(eq(skillRuns.sessionId, data.sessionId)));
+    if (
+      existing
+      && existing.skillName === data.skillName
+      && existing.parentSessionId === (data.parentSessionId ?? null)
+      && existing.parentSkillRunId === (data.parentSkillRunId ?? null)
+      && existing.parentToolCallId === (data.parentToolCallId ?? null)
+    ) {
+      return existing;
+    }
+    throw new Error(`SkillRun replay identity conflict for session ${data.sessionId}`);
   }
 
   async updateSkillRunStatus(sessionId: string, status: SkillRunStatus, durationMs?: number, failureReason?: string): Promise<SkillRun | null> {
@@ -881,6 +911,13 @@ export class HybridStorage implements IStorage {
   async getSkillRunBySessionId(sessionId: string): Promise<SkillRun | null> {
     const [row] = await db.select().from(skillRuns).where(this.runVisible(eq(skillRuns.sessionId, sessionId)));
     return row ?? null;
+  }
+
+  async getChildSkillRunsByParent(parentSkillRunId: number): Promise<SkillRun[]> {
+    return db.select().from(skillRuns)
+      .where(this.runVisible(eq(skillRuns.parentSkillRunId, parentSkillRunId)))
+      .orderBy(desc(skillRuns.startedAt))
+      .limit(50);
   }
 
   async getSkillRuns(skillName: string, limit = 20): Promise<SkillRun[]> {

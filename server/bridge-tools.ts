@@ -162,6 +162,14 @@ async function validateChecklistToolRefs(checklist: unknown): Promise<string | n
     (item): item is { check?: unknown; kind?: unknown; tool?: unknown; action?: unknown } =>
       !!item && typeof item === "object" && (item as { kind?: unknown }).kind === "tool_invoked",
   );
+  const childSkills = checklist.filter(
+    (item): item is { check?: unknown; kind?: unknown; skill?: unknown } =>
+      !!item && typeof item === "object" && (item as { kind?: unknown }).kind === "child_skill_invoked",
+  );
+  const missingChildSkills = childSkills.filter((item) => typeof item.skill !== "string" || item.skill.trim().length === 0);
+  if (missingChildSkills.length > 0) {
+    return `Checklist items with kind "child_skill_invoked" require a skill name (${missingChildSkills.length} item(s) missing one).`;
+  }
   if (deterministic.length === 0) return null;
   const missing = deterministic.filter((item) => typeof item.tool !== "string" || item.tool.trim().length === 0);
   if (missing.length > 0) {
@@ -206,12 +214,14 @@ function formatChecklistForXyz(checklist: unknown): string {
     return "Checklist: (no structured checklist defined — scorer will fall back to default checks)";
   }
   const lines = checklist.map((item: unknown, i: number) => {
-    const obj = (item ?? {}) as { check?: unknown; weight?: unknown; kind?: unknown; tool?: unknown; action?: unknown };
+    const obj = (item ?? {}) as { check?: unknown; weight?: unknown; kind?: unknown; tool?: unknown; action?: unknown; skill?: unknown };
     const text = typeof obj.check === "string" ? obj.check : JSON.stringify(item);
     const weight = typeof obj.weight === "number" ? obj.weight : 1;
     const deterministic = obj.kind === "tool_invoked" && typeof obj.tool === "string"
       ? `, requires:${obj.tool}${typeof obj.action === "string" ? `:${obj.action}` : ""}`
-      : "";
+      : obj.kind === "child_skill_invoked" && typeof obj.skill === "string"
+        ? `, requires-child-skill:${obj.skill}`
+        : "";
     return `${i + 1}. ${text} (w:${weight}${deterministic})`;
   });
   return `Checklist (${checklist.length} weighted items used by the scorer):\n${lines.join("\n")}`;
@@ -7793,16 +7803,20 @@ ${lines.join("\n")}` };
             spawnReason?: string;
             spawnerTool?: string;
             spawnerSkillRun?: string;
+            parentToolCallId?: string;
             onSessionCreated?: (id: string) => void;
           } = {
             preContext,
             parentSessionId: callingConversationId || undefined,
             spawnReason: callingConversationId ? `skill:${skillId}` : undefined,
             spawnerTool: "skills.run",
-            // Idempotency tuple: same (parent, skill) combination from the
-            // same parent session collapses into one child instead of
-            // spawning duplicates.
-            spawnerSkillRun: callingConversationId ? `skills.run:${callingConversationId}:${skillId}` : undefined,
+            parentToolCallId: callingConversationId ? String(args._toolCallId || "") || undefined : undefined,
+            // Freshness + replay safety: one provider tool call owns one child
+            // spawn tuple. A replay of that exact call converges; a later call
+            // from the same parent creates a fresh child SkillRun.
+            spawnerSkillRun: callingConversationId
+              ? `skills.run:${callingConversationId}:${String(args._toolCallId || "missing")}:${skillId}`
+              : undefined,
           };
 
           if (waitForResult) {
@@ -16470,6 +16484,7 @@ export async function executeTool(
   // Authority context is server-derived and injected only after public argument
   // validation so capability introspection can describe this exact execution.
   if (context?.sessionId) enrichedArgs._sessionId = context.sessionId;
+  enrichedArgs._toolCallId = toolCallId;
   if (context?.sessionKey) enrichedArgs._sessionKey = context.sessionKey;
   if (context?.clientId) enrichedArgs._clientId = context.clientId;
   if (context?.uiNarrationState) enrichedArgs._uiNarrationState = context.uiNarrationState;

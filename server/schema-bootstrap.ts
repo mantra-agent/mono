@@ -3333,6 +3333,28 @@ export async function runSchemaBootstrap(
   });
 
   try {
+    // Built-in bootstrap depends on the morphogenic namespace invariant. Converge
+    // it here before any global template lookup/insert so a same-named user Skill
+    // can never collide with or masquerade as the canonical global template.
+    await ensureColumns("skills", [
+      { name: "scope", type: "TEXT NOT NULL DEFAULT 'global'" },
+      { name: "owner_user_id", type: "TEXT" },
+      { name: "account_id", type: "TEXT" },
+      { name: "score_threshold", type: "REAL" },
+    ]);
+    await pool.query(`ALTER TABLE skills DROP CONSTRAINT IF EXISTS skills_name_unique`);
+    await pool.query(`DROP INDEX IF EXISTS skills_name_unique`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_global_name_unique
+      ON skills(name)
+      WHERE scope = 'global'
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_owner_name_unique
+      ON skills(owner_user_id, account_id, name)
+      WHERE scope = 'user'
+    `);
+
     const {
       seedBuiltinSkills,
       migrateCustomizedPlanPeriodContract,
@@ -4703,7 +4725,10 @@ export async function runSchemaBootstrap(
         comparative_vs_id INTEGER,
         comparative_winner TEXT,
         comparative_reason TEXT,
-        failure_reason TEXT
+        failure_reason TEXT,
+        parent_session_id TEXT,
+        parent_skill_run_id INTEGER,
+        parent_tool_call_id TEXT
       )
     `);
     log("auto-heal: created skill_runs table", "migration");
@@ -4716,13 +4741,20 @@ export async function runSchemaBootstrap(
       { name: "comparative_winner", type: "TEXT" },
       { name: "comparative_reason", type: "TEXT" },
       { name: "failure_reason", type: "TEXT" },
+      { name: "parent_session_id", type: "TEXT" },
+      { name: "parent_skill_run_id", type: "INTEGER" },
+      { name: "parent_tool_call_id", type: "TEXT" },
     ];
     for (const col of scoringColumns) {
       await pool.query(
         `ALTER TABLE skill_runs ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`,
       );
     }
-    log("auto-heal: ensured skill_runs scoring columns exist", "migration");
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_skill_runs_parent_lineage
+      ON skill_runs(parent_skill_run_id, parent_tool_call_id, skill_name)
+    `);
+    log("auto-heal: ensured skill_runs scoring and lineage columns exist", "migration");
   });
 
   await heal("core scoped table columns", async () => {

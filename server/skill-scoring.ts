@@ -139,19 +139,61 @@ export function extractSuccessfulToolInvocations(messages: FileMessage[]): Set<s
   return invoked;
 }
 
+export interface StructuralRunEvidence {
+  invokedTools: Set<string>;
+  childSkillStatuses: Map<string, string[]>;
+}
+
+export async function buildStructuralRunEvidence(
+  sessionId: string,
+  messages: FileMessage[],
+): Promise<StructuralRunEvidence> {
+  const invokedTools = extractSuccessfulToolInvocations(messages);
+  const childSkillStatuses = new Map<string, string[]>();
+  const parentRun = await storage.getSkillRunBySessionId(sessionId);
+  if (!parentRun) return { invokedTools, childSkillStatuses };
+  const childRuns = await storage.getChildSkillRunsByParent(parentRun.id);
+  for (const child of childRuns) {
+    if (!child.parentToolCallId || child.parentSessionId !== sessionId) continue;
+    const statuses = childSkillStatuses.get(child.skillName) ?? [];
+    statuses.push(child.status);
+    childSkillStatuses.set(child.skillName, statuses);
+  }
+  return { invokedTools, childSkillStatuses };
+}
+
+export function evaluateStructuralItem(item: ChecklistItem, evidence: StructuralRunEvidence): CheckResult | null {
+  if (item?.kind === "tool_invoked" && typeof item.tool === "string") {
+    const action = typeof item.action === "string" && item.action.trim() ? item.action.trim() : null;
+    const invocation = action ? `${item.tool}:${action}` : item.tool;
+    const passed = evidence.invokedTools.has(invocation);
+    const label = action ? `tool action "${invocation}"` : `tool "${item.tool}"`;
+    return {
+      check: item.check,
+      passed,
+      evidence: passed
+        ? `Deterministic: ${label} had a successful invocation.`
+        : `Deterministic: no successful invocation of ${label} in this run.`,
+    };
+  }
+  if (item?.kind === "child_skill_invoked" && typeof item.skill === "string") {
+    const statuses = evidence.childSkillStatuses.get(item.skill) ?? [];
+    const passed = statuses.length > 0 && statuses.every((status) => status === "succeeded");
+    return {
+      check: item.check,
+      passed,
+      evidence: passed
+        ? `Deterministic: a fresh child SkillRun for "${item.skill}" succeeded under this parent run.`
+        : statuses.length > 0
+          ? `Deterministic: child SkillRun "${item.skill}" completed with status ${statuses.join(", ")}; every invocation must succeed.`
+          : `Deterministic: no fresh child SkillRun for "${item.skill}" is linked to this parent run.`,
+    };
+  }
+  return null;
+}
+
 export function evaluateDeterministicItem(item: ChecklistItem, invokedTools: Set<string>): CheckResult | null {
-  if (item?.kind !== "tool_invoked" || typeof item.tool !== "string") return null;
-  const action = typeof item.action === "string" && item.action.trim() ? item.action.trim() : null;
-  const invocation = action ? `${item.tool}:${action}` : item.tool;
-  const passed = invokedTools.has(invocation);
-  const label = action ? `tool action "${invocation}"` : `tool "${item.tool}"`;
-  return {
-    check: item.check,
-    passed,
-    evidence: passed
-      ? `Deterministic: ${label} had a successful invocation.`
-      : `Deterministic: no successful invocation of ${label} in this run.`,
-  };
+  return evaluateStructuralItem(item, { invokedTools, childSkillStatuses: new Map() });
 }
 
 export function registerSkillScoringListener(): void {
@@ -206,6 +248,8 @@ async function scoreSkillRun(
   sessionId: string,
   durationMs?: number,
 ): Promise<void> {
+  const skillRun = await storage.getSkillRunBySessionId(sessionId);
+  if (!skillRun) return;
   const skill = await storage.getSkillByName(skillId);
   if (!skill) return;
 
@@ -226,10 +270,10 @@ async function scoreSkillRun(
   // One checklist, two evaluator kinds: deterministic items are computed in
   // code from persisted tool calls; only judgment items go to the LLM. Results
   // merge back in checklist order into a single passRate.
-  const invokedTools = extractSuccessfulToolInvocations(messages);
+  const structuralEvidence = await buildStructuralRunEvidence(sessionId, messages);
   const deterministicByIndex = new Map<number, CheckResult>();
   checklist.forEach((item, i) => {
-    const result = evaluateDeterministicItem(item, invokedTools);
+    const result = evaluateStructuralItem(item, structuralEvidence);
     if (result) deterministicByIndex.set(i, result);
   });
   const judgmentIndexes = checklist.map((_, i) => i).filter((i) => !deterministicByIndex.has(i));
@@ -252,7 +296,11 @@ async function scoreSkillRun(
 
   const passed = checkResults.filter((r) => r.passed).length;
   const total = checkResults.length;
-  const passRate = total > 0 ? passed / total : 0;
+  const totalWeight = checklist.reduce((sum, item) => sum + (typeof item.weight === "number" && item.weight > 0 ? item.weight : 1), 0);
+  const passedWeight = checklist.reduce((sum, item, i) => (
+    sum + (checkResults[i]?.passed ? (typeof item.weight === "number" && item.weight > 0 ? item.weight : 1) : 0)
+  ), 0);
+  const passRate = totalWeight > 0 ? passedWeight / totalWeight : 0;
 
   let comparativeVsId: number | null = null;
   let comparativeWinner: ComparativeResult["winner"] | null = null;

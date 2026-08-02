@@ -18,7 +18,15 @@ import {
     addToMemory?: boolean;
     author?: string;
     version?: string;
-    checklist?: Array<{ check: string; weight: number }>;
+    checklist?: Array<{
+      check: string;
+      weight: number;
+      kind?: "judgment" | "tool_invoked" | "child_skill_invoked";
+      tool?: string;
+      action?: string;
+      skill?: string;
+    }>;
+    scoreThreshold?: number | null;
     whenToUse?: string;
     outputSpec?: string;
     recommendedPersona?: "Strategist" | "Coach" | "Operator" | "Creative" | "Companion" | "Architect" | "Investigator" | "Engineer";
@@ -129,12 +137,15 @@ No preamble. No source list. No explanation of your process. No extra headings.
     category: "communication",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "7.3",
+    version: "7.8",
     addToMemory: true,
+    scoreThreshold: 0.8,
     pinnedToContext: false,
     whenToUse: "Used for communication operations",
     outputSpec: "See process instructions",
     checklist: [
+      { check: "Successfully invokes a fresh affirm child Skill run from this Daily Brief run", weight: 3, kind: "child_skill_invoked", skill: "affirm" },
+      { check: "Successfully invokes a fresh learning child Skill run from this Daily Brief run", weight: 3, kind: "child_skill_invoked", skill: "learning" },
       { check: "Opens with the affirmation itself as a bolded standalone first line, with no section label or prefix", weight: 3 },
       { check: "Second line is the thesis sentence itself, with no section label or prefix", weight: 2 },
       { check: "Output contains the full brief text with substantive content, not just a delivery confirmation or page link", weight: 3 },
