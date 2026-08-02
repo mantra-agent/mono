@@ -8,7 +8,7 @@ export const EMBEDDING_API_TIMEOUT_MS = 10_000;
 export const DB_STATEMENT_TIMEOUT_MS = 10_000;
 // Total PostgreSQL budget per app process. Voice capacity is reserved from
 // this total, never added on top of it.
-export const DB_POOL_MAX = 30;
+export const DB_POOL_MAX = 54;
 export const DB_POOL_MIN = 20;
 export const VOICE_DB_POOL_MAX = 4;
 export const VOICE_DB_POOL_MIN = 4;
