@@ -1,10 +1,7 @@
-export const PLAN_STEP_PERSONAS = ["Engineer", "Architect", "Default"] as const;
+import { personaStorage } from "./file-storage/persona-storage";
 
-export type PlanStepPersona = typeof PLAN_STEP_PERSONAS[number];
-
-export function isPlanStepPersona(value: unknown): value is PlanStepPersona {
-  return typeof value === "string" && PLAN_STEP_PERSONAS.includes(value as PlanStepPersona);
-}
+/** Durable Plan step identity stores the canonical name of any selectable persona. */
+export type PlanStepPersona = string;
 
 /** Compatibility inference for plans created before persona became explicit step state. */
 export function inferPlanStepPersona(title: string, instructions: string): PlanStepPersona {
@@ -36,12 +33,28 @@ export function inferPlanStepPersona(title: string, instructions: string): PlanS
   return "Default";
 }
 
-export function resolvePlanStepPersona(
+export async function resolveExplicitPlanStepPersona(persona: unknown): Promise<PlanStepPersona> {
+  if (typeof persona !== "string" || !persona.trim()) {
+    throw new Error("Plan steps require a selectable persona name");
+  }
+  const visiblePersona = await personaStorage.getByName(persona.trim());
+  if (!visiblePersona) {
+    throw new Error(`Plan persona "${persona.trim()}" is not selectable for the current user`);
+  }
+  return visiblePersona.name;
+}
+
+export async function resolvePlanStepPersona(
   persona: string | null | undefined,
   title: string,
   instructions: string,
-): { persona: PlanStepPersona; inferred: boolean } {
-  return isPlanStepPersona(persona)
-    ? { persona, inferred: false }
-    : { persona: inferPlanStepPersona(title, instructions), inferred: true };
+): Promise<{ persona: PlanStepPersona; inferred: boolean }> {
+  const inferred = typeof persona !== "string" || !persona.trim();
+  const requestedPersona = inferred
+    ? inferPlanStepPersona(title, instructions)
+    : persona;
+  return {
+    persona: await resolveExplicitPlanStepPersona(requestedPersona),
+    inferred,
+  };
 }

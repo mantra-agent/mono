@@ -427,7 +427,7 @@ async function executeStep(input: ExecuteStepInput): Promise<ExecuteStepResult> 
       );
 
       const idleTimeoutMs = (step.timeoutMinutes ?? DEFAULT_IDLE_TIMEOUT_MINUTES) * 60 * 1000;
-      const personaResolution = resolvePlanStepPersona(step.persona, step.title, stepInstructions);
+      const personaResolution = await resolvePlanStepPersona(step.persona, step.title, stepInstructions);
       if (personaResolution.inferred) {
         await updatePlanStepFields(planId, step.id, { persona: personaResolution.persona });
         step.persona = personaResolution.persona;

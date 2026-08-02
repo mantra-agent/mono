@@ -26,7 +26,7 @@ import {
   ownedInsertValues,
 } from "../scoped-storage";
 import { createLogger } from "../log";
-import { isPlanStepPersona, resolvePlanStepPersona, type PlanStepPersona } from "../plan-persona";
+import { resolveExplicitPlanStepPersona, resolvePlanStepPersona, type PlanStepPersona } from "../plan-persona";
 import {
   generatePlanId,
   generateStepId,
@@ -176,17 +176,34 @@ async function handleCreate(
   if (!title)
     return { result: "Missing required 'title' parameter.", error: true };
 
+  const principal = getCurrentPrincipalOrSystem();
+  if (!principal.userId || !principal.accountId) {
+    return { result: "Plan creation requires an explicit user principal.", error: true };
+  }
+
   const rawStepsInput = args.steps as Array<{
     title: string;
     instructions: string;
     persona?: PlanStepPersona;
   }>;
-  const stepsInput = Array.isArray(rawStepsInput)
-    ? rawStepsInput.map((step) => ({
+  let stepsInput = rawStepsInput;
+  if (Array.isArray(rawStepsInput)) {
+    try {
+      stepsInput = await Promise.all(rawStepsInput.map(async (step) => ({
         ...step,
-        persona: resolvePlanStepPersona(step.persona, step.title || "", step.instructions || "").persona,
-      }))
-    : rawStepsInput;
+        persona: (await resolvePlanStepPersona(
+          step.persona,
+          step.title || "",
+          step.instructions || "",
+        )).persona,
+      })));
+    } catch (error) {
+      return {
+        result: error instanceof Error ? error.message : "Could not resolve Plan step persona.",
+        error: true,
+      };
+    }
+  }
   if (!Array.isArray(stepsInput) || stepsInput.length === 0) {
     return {
       result:
@@ -201,15 +218,11 @@ async function handleCreate(
       return { result: `Step ${i + 1} missing 'title'.`, error: true };
     if (!s.instructions)
       return { result: `Step ${i + 1} missing 'instructions'.`, error: true };
-    if (!isPlanStepPersona(s.persona))
-      return { result: `Step ${i + 1} requires persona Engineer, Architect, or Default.`, error: true };
+    if (!s.persona)
+      return { result: `Step ${i + 1} requires a selectable persona.`, error: true };
   }
 
   const sessionId = (args._sessionId as string) || "";
-  const principal = getCurrentPrincipalOrSystem();
-  if (!principal.userId || !principal.accountId) {
-    return { result: "Plan creation requires an explicit user principal.", error: true };
-  }
   const planId = generatePlanId();
   const blocking = typeof args.blocking === "boolean" ? args.blocking : false;
 
@@ -927,10 +940,14 @@ async function handleEdit(
       if (typeof edit.instructions === "string")
         setStep.instructions = edit.instructions;
       if (edit.persona !== undefined) {
-        if (!isPlanStepPersona(edit.persona)) {
-          return { result: `Invalid persona "${edit.persona}" for step "${edit.stepId}". Use Engineer, Architect, or Default.`, error: true };
+        try {
+          setStep.persona = await resolveExplicitPlanStepPersona(edit.persona);
+        } catch (error) {
+          return {
+            result: error instanceof Error ? error.message : `Invalid persona for step "${edit.stepId}".`,
+            error: true,
+          };
         }
-        setStep.persona = edit.persona;
       }
       if (edit.status) {
         if (!validStatuses.has(edit.status)) {
@@ -1013,20 +1030,32 @@ async function handleAddSteps(
     instructions: string;
     persona?: PlanStepPersona;
   }>;
-  const newSteps = Array.isArray(rawNewSteps)
-    ? rawNewSteps.map((step) => ({
+  let newSteps = rawNewSteps;
+  if (Array.isArray(rawNewSteps)) {
+    try {
+      newSteps = await Promise.all(rawNewSteps.map(async (step) => ({
         ...step,
-        persona: resolvePlanStepPersona(step.persona, step.title || "", step.instructions || "").persona,
-      }))
-    : rawNewSteps;
+        persona: (await resolvePlanStepPersona(
+          step.persona,
+          step.title || "",
+          step.instructions || "",
+        )).persona,
+      })));
+    } catch (error) {
+      return {
+        result: error instanceof Error ? error.message : "Could not resolve new Plan step persona.",
+        error: true,
+      };
+    }
+  }
   if (!Array.isArray(newSteps) || newSteps.length === 0) {
     return { result: "Missing required 'newSteps' array.", error: true };
   }
   for (let i = 0; i < newSteps.length; i++) {
     if (!newSteps[i]?.title || !newSteps[i]?.instructions)
       return { result: `New step ${i + 1} requires title and instructions.`, error: true };
-    if (!isPlanStepPersona(newSteps[i].persona))
-      return { result: `New step ${i + 1} requires persona Engineer, Architect, or Default.`, error: true };
+    if (!newSteps[i].persona)
+      return { result: `New step ${i + 1} requires a selectable persona.`, error: true };
   }
 
   const resolved = await resolvePlanWithPage(planId);
