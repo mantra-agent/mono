@@ -32,6 +32,14 @@ Every piece of data or configuration has exactly one authoritative location. Eve
 
 Build in bounded modules with explicit interfaces. A module owns its data, exposes its API, hides its implementation. The cognitive loop, memory system, tool registry, voice architecture, and strategy system are separate modules. Keep them that way.
 
+**Core and Mod Ownership**
+
+Classify every new product capability before implementation as either non-installable Core or owned by exactly one installable Mod. Core is the stable substrate required for identity, safety, composition, and genuinely shared infrastructure; optional coherent product families belong to Mods. Shared primitives may live in Core, but optional user-facing behavior must not be smuggled into Core for implementation convenience.
+
+Mod ownership is end-to-end. A Mod's routes, navigation, Home projections, widgets, actions, tools, Skills, Workflows, Hooks, Timers, integrations, onboarding, search providers, and notifications must be declared through the canonical Mod registry and resolved through the composition/lifecycle system. Do not add parallel hard-coded registration or ad hoc installation gates. If the contribution model cannot express a required surface, extend the canonical protocol rather than bypassing it.
+
+Installation controls composition and owned-resource lifecycle; it never grants authority. Principal permissions, account scope, integration readiness, credentials, and provider authorization remain independent server-side gates. Disabling a Mod must stop its execution and projection without deleting durable user state or history, and reinstall must be replay-safe. Core exposes stable contracts and extension slots without depending on individual Mods.
+
 **Encode Invariants in Structure, Not Guards**
 
 When multiple guards cooperate to enforce a single invariant, the invariant belongs in the data model. Encode ownership in data so invalid states become unrepresentable, not merely prevented. If deleting any one guard reintroduces the bug, the fix is procedural and fragile.

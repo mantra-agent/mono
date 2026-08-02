@@ -73,17 +73,18 @@ Before any code diagnosis, system debugging, file edit, build, PR, or merge:
 2. Load this root `CODING.md`.
 3. Load the relevant subdirectory `AGENTS.md` for any touched subtree. Relevant means: if you inspect, edit, or rely on files under `client/`, `server/`, `mobile/`, or a nested subtree that has its own `AGENTS.md`, load that subtree's nearest `AGENTS.md` before acting on that code. If a task crosses multiple subtrees, load each applicable file. If the path is unknown, load root `AGENTS.md` and `CODING.md` first, then load subdir instructions as soon as the path becomes known.
 4. Check loaded AGENTS.md files for existing patterns that apply to your change before designing.
-5. Apply the Engineering Principles in root `AGENTS.md`.
-6. Load `DESIGN.md` for UI/product-facing work.
-7. Before making changes, write the implementation plan/design and compare it against root `AGENTS.md`, auditing specifically for Engineering Principle violations. Cure architectural violations in the plan before editing.
-8. Use Code/GitNexus for architecture and navigation before touching code.
-9. Run impact analysis before editing touched symbols, shared modules, data flows, tool contracts, or cross-boundary behavior. For docs-only changes, note that impact is low/no-code rather than forcing symbol analysis to invent relevance.
-10. Work in an isolated `repos/` clone. Never modify the workspace root directly.
-11. Use shell git only for read-only inspection. Use git MCP for clone, branch, checkout writes, add, commit, push, PR, merge, and branch deletion.
-12. Verify with `npm run build`. Do not run tests or standalone TypeScript checks unless Ray explicitly asks.
-13. PRs target `main`. Never merge directly to `live`.
-14. Do not report coding work as done until the PR is merged to `main`, unless Ray explicitly asks for PR-only/review-first or merge is blocked.
-15. Final reports include instructions loaded, files changed, implementation-plan/design check against Engineering Principles, Engineering Principles violations cured in the plan, impact/change-scope evidence, build result, PR reference (canonical `@pr:repo/number`), merge SHA, and any degraded proof.
+5. For every new or materially changed product capability, classify it before implementation as Core or owned by exactly one Mod. Name the owner, every contribution surface, install/disable/reinstall behavior, and the independent authority gates in the implementation plan. If the canonical Mod registry cannot express the capability, extend its contribution protocol before wiring the feature; never bypass composition with parallel hard-coded registration. For changes that do not affect product ownership, state that explicitly.
+6. Apply the Engineering Principles in root `AGENTS.md`.
+7. Load `DESIGN.md` for UI/product-facing work.
+8. Before making changes, write the implementation plan/design and compare it against root `AGENTS.md`, auditing specifically for Engineering Principle violations. Cure architectural violations in the plan before editing.
+9. Use Code/GitNexus for architecture and navigation before touching code.
+10. Run impact analysis before editing touched symbols, shared modules, data flows, tool contracts, or cross-boundary behavior. For docs-only changes, note that impact is low/no-code rather than forcing symbol analysis to invent relevance.
+11. Work in an isolated `repos/` clone. Never modify the workspace root directly.
+12. Use shell git only for read-only inspection. Use git MCP for clone, branch, checkout writes, add, commit, push, PR, merge, and branch deletion.
+13. Verify with `npm run build`. Do not run tests or standalone TypeScript checks unless Ray explicitly asks.
+14. PRs target `main`. Never merge directly to `live`.
+15. Do not report coding work as done until the PR is merged to `main`, unless Ray explicitly asks for PR-only/review-first or merge is blocked.
+16. Final reports include instructions loaded, files changed, implementation-plan/design check against Engineering Principles, Engineering Principles violations cured in the plan, impact/change-scope evidence, build result, PR reference (canonical `@pr:repo/number`), merge SHA, and any degraded proof.
 
 ## Execution Defaults
 
