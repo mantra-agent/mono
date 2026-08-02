@@ -12,7 +12,8 @@ const outboxScope = {
 
 export async function appendTransactionalOutboxEvent(
   tx: DrizzleTx,
-  principal: Principal & { actorType: "user"; userId: string; accountId: string },
+  principal: Principal,
+  owner: { userId: string; accountId: string },
   input: {
     eventType: string;
     aggregateType: string;
@@ -29,14 +30,16 @@ export async function appendTransactionalOutboxEvent(
     idempotencyKey: input.idempotencyKey,
     payload: input.payload,
     availableAt: input.availableAt ?? new Date(),
-    ...ownedInsertValues(principal, outboxScope),
-    createdByUserId: principal.userId,
+    ...(principal.actorType === "user"
+      ? ownedInsertValues(principal, outboxScope)
+      : { scope: "user", ownerUserId: owner.userId, accountId: owner.accountId }),
+    createdByUserId: owner.userId,
   }).onConflictDoNothing({
     target: [transactionalOutbox.ownerUserId, transactionalOutbox.accountId, transactionalOutbox.idempotencyKey],
   }).returning();
   const [row] = inserted ? [inserted] : await tx.select().from(transactionalOutbox).where(and(
-    eq(transactionalOutbox.ownerUserId, principal.userId),
-    eq(transactionalOutbox.accountId, principal.accountId),
+    eq(transactionalOutbox.ownerUserId, owner.userId),
+    eq(transactionalOutbox.accountId, owner.accountId),
     eq(transactionalOutbox.idempotencyKey, input.idempotencyKey),
   )).limit(1);
   if (!row) throw new Error("Transactional outbox append failed");
