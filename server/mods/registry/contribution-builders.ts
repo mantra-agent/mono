@@ -14,6 +14,7 @@ import type {
   WorkflowContribution,
   TimerTemplateContribution,
 } from "@shared/models/mod-registry";
+import type { UiInteractionTarget } from "@shared/ui-interaction";
 import type {
   RegisteredConnectorKey,
   RegisteredCollectorKey,
@@ -55,6 +56,7 @@ export function nav(
   section: string,
   label: string,
   iconKey: RegisteredIconKey,
+  target: UiInteractionTarget,
   routeId: string,
   order: number,
   opts: NavOpts = {},
@@ -65,6 +67,7 @@ export function nav(
     section,
     label,
     iconKey,
+    target,
     routeId,
     order,
     audience: "primary",

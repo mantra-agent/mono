@@ -26,6 +26,7 @@ import type {
 import { CORE_CAPABILITY_KEYS, listContributions } from "@shared/models/mod-registry";
 import { MOD_KEYS, type ModKey } from "@shared/models/mods";
 import { PERMISSIONS } from "@shared/permissions-vocabulary";
+import { UI_INTERACTION_TARGET_ROUTES } from "@shared/ui-interaction";
 import { REGISTERED_KEY_CATALOGS } from "./registered-keys";
 
 export class ModRegistryValidationError extends Error {
@@ -105,6 +106,7 @@ export function validateModRegistry(registry: ModRegistry): string[] {
   // ── First pass: identity indexes ─────────────────────────────────────────
   const contributionIdCounts = new Map<string, number>();
   const clientRouteIds = new Set<string>();
+  const clientRoutePaths = new Map<string, string>();
   const routePaths = new Map<string, number>();
   const actionIds = new Set<string>();
 
@@ -112,6 +114,7 @@ export function validateModRegistry(registry: ModRegistry): string[] {
     contributionIdCounts.set(contribution.id, (contributionIdCounts.get(contribution.id) ?? 0) + 1);
     if (contribution.kind === "client-route") {
       clientRouteIds.add(contribution.id);
+      clientRoutePaths.set(contribution.id, contribution.path);
       routePaths.set(contribution.path, (routePaths.get(contribution.path) ?? 0) + 1);
     }
     if (contribution.kind === "action") {
@@ -129,7 +132,7 @@ export function validateModRegistry(registry: ModRegistry): string[] {
 
   // ── Second pass: per-contribution reference + policy checks ───────────────
   for (const { owner, contribution } of owned) {
-    validateContribution(owner, contribution, { clientRouteIds, push });
+    validateContribution(owner, contribution, { clientRouteIds, clientRoutePaths, push });
   }
 
   // ── Per-definition policy: prefixes, permissions, capabilities, deps ──────
@@ -142,6 +145,7 @@ export function validateModRegistry(registry: ModRegistry): string[] {
 
 interface ContributionCtx {
   clientRouteIds: Set<string>;
+  clientRoutePaths: Map<string, string>;
   push: (msg: string) => void;
 }
 
@@ -172,11 +176,22 @@ function validateContribution(owner: string, c: AnyContribution, ctx: Contributi
     case "client-route":
       requireKey("surface", c.surfaceKey, c.id, ctx);
       break;
-    case "navigation":
+    case "navigation": {
       requireKey("icon", c.iconKey, c.id, ctx);
-      if (!ctx.clientRouteIds.has(c.routeId)) push(`Navigation "${c.id}" references unknown route ID "${c.routeId}".`);
+      if (!ctx.clientRouteIds.has(c.routeId)) {
+        push(`Navigation "${c.id}" references unknown route ID "${c.routeId}".`);
+      } else {
+        const targetPath = UI_INTERACTION_TARGET_ROUTES[c.target].href.split("?")[0];
+        const routePath = ctx.clientRoutePaths.get(c.routeId);
+        if (routePath !== targetPath) {
+          push(
+            `Navigation "${c.id}" target "${c.target}" resolves to "${targetPath}" but route "${c.routeId}" resolves to "${routePath}".`,
+          );
+        }
+      }
       if (!Number.isFinite(c.order)) push(`Navigation "${c.id}" has a non-numeric order.`);
       break;
+    }
     case "widget":
       requireKey("widget", c.surfaceKey, c.id, ctx);
       requireKey("collector", c.collectorKey, c.id, ctx);

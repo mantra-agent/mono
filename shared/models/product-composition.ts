@@ -8,6 +8,7 @@
 // / db imports so it stays client-safe (mirrors shared/models/mod-registry.ts).
 
 import type { ModKey } from "./mods";
+import type { UiInteractionTarget } from "../ui-interaction";
 
 export type ContributionModality = "web" | "mobile" | "voice";
 
@@ -36,6 +37,7 @@ export interface ResolvedNavigationItem {
   section: string;
   label: string;
   iconKey: string;
+  target: UiInteractionTarget;
   routeId: string;
   order: number;
   sourceMod: "core" | ModKey;

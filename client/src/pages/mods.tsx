@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
+import { PRODUCT_COMPOSITION_QUERY_KEY } from "@/hooks/use-product-composition";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
@@ -131,7 +132,11 @@ export default function ModsPage() {
       const res = await apiRequest("POST", `/api/mods/${key}/${action}`);
       return res.json();
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/mods"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mods"] });
+      queryClient.invalidateQueries({ queryKey: [PRODUCT_COMPOSITION_QUERY_KEY] });
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
+    },
     onError: (error: Error) => toast({ title: "Could not update Mod", description: error.message, variant: "destructive" }),
     onSettled: () => setPendingKey(null),
   });

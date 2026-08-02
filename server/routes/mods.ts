@@ -9,6 +9,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "../auth";
 import { requirePermission, principalHasPermission } from "../permissions";
 import { createLogger } from "../log";
+import { eventBus } from "../event-bus";
 import { modRegistry } from "../mods/registry";
 import {
   ModPlatformError,
@@ -16,6 +17,7 @@ import {
 } from "../mods/mod-lifecycle-service";
 import { BASELINE_MOD_KEYS } from "../mods/mod-lifecycle-service";
 import type { ModInstallationRow, ModKey } from "@shared/schema";
+import type { Principal } from "../principal";
 
 const log = createLogger("mods-route");
 
@@ -55,6 +57,14 @@ function statusFromInstallation(row: ModInstallationRow | undefined): ModCatalog
     default:
       return "available";
   }
+}
+
+function publishCompositionChanged(principal: Principal, modKey: ModKey, action: "install" | "reinstall" | "disable"): void {
+  eventBus.publish({
+    category: "system",
+    event: "data:product_composition_changed",
+    payload: { modKey, action },
+  }, principal);
 }
 
 function handleError(res: Response, error: unknown): Response {
@@ -120,6 +130,7 @@ export function registerModsRoutes(app: Express): void {
     if (!key) return res;
     try {
       const row = await modLifecycleService.installProductMod(principal, key);
+      publishCompositionChanged(principal, key, "install");
       return res.json({ key, status: statusFromInstallation(row) });
     } catch (error) {
       return handleError(res, error);
@@ -136,6 +147,7 @@ export function registerModsRoutes(app: Express): void {
     if (!key) return res;
     try {
       const row = await modLifecycleService.installProductMod(principal, key);
+      publishCompositionChanged(principal, key, "reinstall");
       return res.json({ key, status: statusFromInstallation(row) });
     } catch (error) {
       return handleError(res, error);
@@ -151,6 +163,7 @@ export function registerModsRoutes(app: Express): void {
     if (!key) return res;
     try {
       const row = await modLifecycleService.disable(principal, { modKey: key });
+      publishCompositionChanged(principal, key, "disable");
       return res.json({ key, status: statusFromInstallation(row) });
     } catch (error) {
       return handleError(res, error);

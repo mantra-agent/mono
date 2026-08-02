@@ -76,7 +76,6 @@ import {
 } from "@/components/ui/collapsible";
 import { useUiInteraction, useUiInteractionTarget } from "@/hooks/use-ui-interaction";
 import {
-  UI_INTERACTION_TARGET_ROUTES,
   getUiInteractionTargetHref,
   getUiInteractionTargetPermission,
   type UiInteractionTarget,
@@ -156,11 +155,6 @@ const MOD_NAV_ICONS = {
   Zap,
 } satisfies Record<string, LucideIcon>;
 
-function targetForRoute(path: string): UiInteractionTarget | null {
-  const entry = Object.entries(UI_INTERACTION_TARGET_ROUTES).find(([, value]) => value.href.split("?")[0] === path);
-  return entry ? entry[0] as UiInteractionTarget : null;
-}
-
 function mergeResolvedNavigation(
   staticSections: NavSection[],
   composition: ResolvedProductComposition | undefined,
@@ -176,27 +170,26 @@ function mergeResolvedNavigation(
   for (const contribution of composition.navigation) {
     const route = routeById.get(contribution.routeId);
     const icon = MOD_NAV_ICONS[contribution.iconKey as keyof typeof MOD_NAV_ICONS];
-    const target = route ? targetForRoute(route.path) : null;
-    if (!route || !icon || !target) continue;
+    const target = contribution.target;
+    if (!route || !icon) continue;
 
     let section = sections.find((candidate) => candidate.label === contribution.section);
     if (!section) {
       section = { label: contribution.section, defaultOpen: false, items: [] };
       sections.push(section);
     }
-    if (section.items.some((item) => item.url === route.path)) continue;
+    if (section.items.some((item) => item.target === target)) continue;
 
-    const lowerRoutePaths = new Set(
+    const lowerTargets = new Set(
       composition.navigation
         .filter((item) => item.section === contribution.section && item.order < contribution.order)
-        .map((item) => routeById.get(item.routeId)?.path)
-        .filter((path): path is string => !!path),
+        .map((item) => item.target),
     );
-    const insertionIndex = section.items.filter((item) => lowerRoutePaths.has(item.url)).length;
+    const insertionIndex = section.items.filter((item) => lowerTargets.has(item.target)).length;
     section.items.splice(insertionIndex, 0, {
       title: contribution.label,
       target,
-      url: route.path,
+      url: getUiInteractionTargetHref(target),
       icon,
       permission: getUiInteractionTargetPermission(target),
     });

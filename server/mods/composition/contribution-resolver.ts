@@ -360,6 +360,7 @@ function compose(
             section: contribution.section,
             label: contribution.label,
             iconKey: contribution.iconKey,
+            target: contribution.target,
             routeId: contribution.routeId,
             order: contribution.order,
             sourceMod: bundle.owner,
