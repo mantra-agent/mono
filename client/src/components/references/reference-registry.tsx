@@ -161,6 +161,11 @@ const registry: Record<string, RegistryEntry> = {
     fallbackLabel: ref => metadataString(ref, "label") || `Workflow ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/workflows/${encodeURIComponent(ref.id)}`,
   },
+  principle: {
+    Icon: Compass,
+    fallbackLabel: ref => metadataString(ref, "label") || `Principle ${ref.id}`,
+    href: ref => metadataString(ref, "href") || "/orientation",
+  },
   strategy: {
     Icon: Route,
     fallbackLabel: ref => metadataString(ref, "label") || `Strategy ${ref.id}`,

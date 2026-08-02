@@ -1,6 +1,6 @@
 import { db } from "../db";
-import { principles } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { principleRevisions, principles } from "@shared/schema";
+import { and, eq, sql } from "drizzle-orm";
 import { chatCompletion } from "../model-client";
 import { ACTIVITY_WORK } from "../job-profiles";
 import { tagRegistry } from "./tags";
@@ -19,6 +19,8 @@ import {
 
 export interface Principle {
   id: string;
+  currentRevisionId: string;
+  revisionNumber: number;
   title: string;
   layer1: string;
   layer2: string;
@@ -70,9 +72,46 @@ Respond in JSON format:
   "relatedIds": ["id1", "id2"]
 }`;
 
-function rowToPrinciple(row: typeof principles.$inferSelect): Principle {
+const currentPrincipleProjection = {
+  id: principles.id,
+  currentRevisionId: principleRevisions.id,
+  revisionNumber: principleRevisions.revisionNumber,
+  title: principleRevisions.title,
+  layer1: principleRevisions.layer1,
+  layer2: principleRevisions.layer2,
+  autoTags: principles.autoTags,
+  manualTags: principles.manualTags,
+  relatedIds: principles.relatedIds,
+  createdAt: principles.createdAt,
+  updatedAt: principles.updatedAt,
+};
+
+type CurrentPrincipleRow = {
+  id: string;
+  currentRevisionId: string;
+  revisionNumber: number;
+  title: string;
+  layer1: string;
+  layer2: string;
+  autoTags: unknown;
+  manualTags: unknown;
+  relatedIds: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function currentRevisionJoin() {
+  return and(
+    eq(principleRevisions.id, principles.currentRevisionId),
+    eq(principleRevisions.principleId, principles.id),
+  );
+}
+
+function rowToPrinciple(row: CurrentPrincipleRow): Principle {
   return {
     id: row.id,
+    currentRevisionId: row.currentRevisionId,
+    revisionNumber: row.revisionNumber,
     title: row.title,
     layer1: row.layer1,
     layer2: row.layer2,
@@ -111,7 +150,9 @@ export class FilePrincipleStorage {
   async getPrinciples(): Promise<Principle[]> {
     const principal = getCurrentPrincipalOrSystem();
     return this._principlesCache.getOrFetch(principalCacheKey("principles"), async () => {
-      const rows = await db.select().from(principles)
+      const rows = await db.select(currentPrincipleProjection)
+        .from(principles)
+        .innerJoin(principleRevisions, currentRevisionJoin())
         .where(combineWithVisibleScope(principal, principlesScopeColumns));
       const result = rows.map(rowToPrinciple);
       result.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -122,7 +163,9 @@ export class FilePrincipleStorage {
 
   async getPrinciple(id: string): Promise<Principle | null> {
     const principal = getCurrentPrincipalOrSystem();
-    const rows = await db.select().from(principles)
+    const rows = await db.select(currentPrincipleProjection)
+      .from(principles)
+      .innerJoin(principleRevisions, currentRevisionJoin())
       .where(combineWithVisibleScope(principal, principlesScopeColumns, eq(principles.id, id)))
       .limit(1);
     if (rows.length === 0) {
@@ -144,26 +187,43 @@ export class FilePrincipleStorage {
     const principal = getCurrentPrincipalOrSystem();
     const now = new Date();
     const id = generateId();
+    const currentRevisionId = generateId("prrev_");
+    const ownership = ownedInsertValues(principal, principlesScopeColumns);
 
-    const [row] = await db.insert(principles).values({
-      id,
-      title: input.title,
-      layer1: input.layer1,
-      layer2: input.layer2,
-      autoTags: input.autoTags || [],
-      manualTags: input.manualTags || [],
-      relatedIds: input.relatedIds || [],
-      ...ownedInsertValues(principal, principlesScopeColumns),
-      createdAt: now,
-      updatedAt: now,
-    }).returning();
+    await db.transaction(async (tx) => {
+      await tx.insert(principles).values({
+        id,
+        title: input.title,
+        layer1: input.layer1,
+        layer2: input.layer2,
+        autoTags: input.autoTags || [],
+        manualTags: input.manualTags || [],
+        relatedIds: input.relatedIds || [],
+        currentRevisionId,
+        ...ownership,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await tx.insert(principleRevisions).values({
+        id: currentRevisionId,
+        principleId: id,
+        revisionNumber: 1,
+        title: input.title,
+        layer1: input.layer1,
+        layer2: input.layer2,
+        ...ownership,
+        createdAt: now,
+      });
+    });
 
     const allTags = [...(input.autoTags || []), ...(input.manualTags || [])];
     tagRegistry.syncEntityTags("principle", id, input.title, allTags).catch(err => log.warn(`tag sync failed`, err));
 
-    log.log(`createPrinciple id=${id} title="${input.title}"`);
+    log.log(`createPrinciple id=${id} revision=${currentRevisionId} title="${input.title}"`);
     this.invalidateCache();
-    return rowToPrinciple(row);
+    const created = await this.getPrinciple(id);
+    if (!created) throw new Error(`Created principle ${id} could not be loaded`);
+    return created;
   }
 
   async updatePrinciple(
@@ -177,29 +237,74 @@ export class FilePrincipleStorage {
     }
 
     const principal = getCurrentPrincipalOrSystem();
-    const setValues: Record<string, unknown> = { updatedAt: new Date() };
-    if (updates.title !== undefined) setValues.title = updates.title;
-    if (updates.layer1 !== undefined) setValues.layer1 = updates.layer1;
-    if (updates.layer2 !== undefined) setValues.layer2 = updates.layer2;
-    if (updates.autoTags !== undefined) setValues.autoTags = updates.autoTags;
-    if (updates.manualTags !== undefined) setValues.manualTags = updates.manualTags;
-    if (updates.relatedIds !== undefined) setValues.relatedIds = updates.relatedIds;
-
-    const [row] = await db.update(principles).set(setValues)
+    const now = new Date();
+    const [identity] = await db.select({
+      currentRevisionId: principles.currentRevisionId,
+    }).from(principles)
       .where(combineWithWritableScope(principal, principlesScopeColumns, eq(principles.id, id)))
-      .returning();
-
-    if (!row) {
+      .limit(1);
+    const current = identity ? await this.getPrinciple(id) : null;
+    if (!identity || !current) {
       log.log(`updatePrinciple id=${id} not-writable`);
       return null;
     }
 
-    const merged = rowToPrinciple(row);
+    const contentChanged = updates.title !== undefined || updates.layer1 !== undefined || updates.layer2 !== undefined;
+    const nextRevisionId = contentChanged ? generateId("prrev_") : current.currentRevisionId;
+    const nextTitle = updates.title ?? current.title;
+    const nextLayer1 = updates.layer1 ?? current.layer1;
+    const nextLayer2 = updates.layer2 ?? current.layer2;
+
+    await db.transaction(async (tx) => {
+      const setValues: Record<string, unknown> = { updatedAt: now };
+      if (updates.title !== undefined) setValues.title = updates.title;
+      if (updates.layer1 !== undefined) setValues.layer1 = updates.layer1;
+      if (updates.layer2 !== undefined) setValues.layer2 = updates.layer2;
+      if (updates.autoTags !== undefined) setValues.autoTags = updates.autoTags;
+      if (updates.manualTags !== undefined) setValues.manualTags = updates.manualTags;
+      if (updates.relatedIds !== undefined) setValues.relatedIds = updates.relatedIds;
+
+      if (contentChanged) {
+        const [revision] = await tx.insert(principleRevisions).select(
+          tx.select({
+            id: sql<string>`${nextRevisionId}`,
+            principleId: principles.id,
+            revisionNumber: sql<number>`${current.revisionNumber + 1}`,
+            title: sql<string>`${nextTitle}`,
+            layer1: sql<string>`${nextLayer1}`,
+            layer2: sql<string>`${nextLayer2}`,
+            scope: principles.scope,
+            ownerUserId: principles.ownerUserId,
+            accountId: principles.accountId,
+            createdAt: sql<Date>`${now}`,
+          }).from(principles).where(combineWithWritableScope(principal, principlesScopeColumns, and(
+            eq(principles.id, id),
+            eq(principles.currentRevisionId, current.currentRevisionId),
+          )))
+        ).returning({ id: principleRevisions.id });
+        if (!revision) {
+          throw new Error(`Principle ${id} changed during update`);
+        }
+        setValues.currentRevisionId = nextRevisionId;
+      }
+
+      const updated = await tx.update(principles)
+        .set(setValues)
+        .where(combineWithWritableScope(principal, principlesScopeColumns, and(
+          eq(principles.id, id),
+          eq(principles.currentRevisionId, current.currentRevisionId),
+        )))
+        .returning({ id: principles.id });
+      if (updated.length === 0) throw new Error(`Principle changed concurrently or is not writable: ${id}`);
+    });
+
+    this.invalidateCache();
+    const merged = await this.getPrinciple(id);
+    if (!merged) throw new Error(`Updated principle ${id} could not be loaded`);
     const allTags = [...merged.autoTags, ...merged.manualTags];
     tagRegistry.syncEntityTags("principle", id, merged.title, allTags).catch(err => log.warn(`tag sync failed`, err));
 
-    log.log(`updatePrinciple id=${id} fields=${Object.keys(updates).join(",")}`);
-    this.invalidateCache();
+    log.log(`updatePrinciple id=${id} revision=${merged.currentRevisionId} fields=${Object.keys(updates).join(",")}`);
     return merged;
   }
 
