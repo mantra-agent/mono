@@ -101,6 +101,7 @@ export interface IStorage {
   getIssue(id: number): Promise<Issue | undefined>;
   createIssue(issue: InsertIssue): Promise<Issue>;
   updateIssue(id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined>;
+  resolveIssueWithEvidence(id: number, note: string): Promise<Issue | undefined>;
   deleteIssue(id: number): Promise<boolean>;
 
   getGmailSkipList(): Promise<{ email: string; name?: string; skippedAt: string }[]>;
@@ -330,6 +331,10 @@ export class HybridStorage implements IStorage {
 
   async updateIssue(id: number, updates: Partial<InsertIssue>): Promise<Issue | undefined> {
     return fileIssueStorage.updateIssue(id, updates);
+  }
+
+  async resolveIssueWithEvidence(id: number, note: string): Promise<Issue | undefined> {
+    return fileIssueStorage.resolveWithEvidence(id, note);
   }
 
   async deleteIssue(id: number): Promise<boolean> {

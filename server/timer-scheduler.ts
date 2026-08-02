@@ -3,7 +3,7 @@ import { timerStorage } from "./file-storage";
 import { eventBus } from "./event-bus";
 import type { Timer, Schedule, TimerRun } from "@shared/models/timers";
 import { createLogger } from "./log";
-import { withQueryAttributionAsync } from "./db";
+import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction, withQueryAttributionAsync } from "./db";
 import { systemTimerRegistry } from "./system-timer-registry";
 import { timerHandlerRouter } from "./timer-handler-router";
 import { getSetting, setSetting } from "./system-settings";
@@ -16,7 +16,7 @@ import { storage } from "./storage";
 
 const log = createLogger("TimerScheduler");
 
-// Single source of truth for build identity across boots. Next-build reminders
+// Single source of truth for build identity across boots. Next-build timers
 // fire only when the running build differs from the build recorded at the
 // previous boot, so crash-restarts of the same build do not re-fire them.
 const LAST_BOOT_BUILD_ID_KEY = "system.lastBootBuildId";
@@ -545,55 +545,57 @@ class TimerScheduler {
   private async fireBootReminders(): Promise<void> {
     if (this.globalPaused) return;
     try {
-      // Determine build identity before evaluating reminders, and persist it
-      // on every evaluated boot so the comparison is always against the
-      // previous boot. Unknown build identity degrades next-build reminders
-      // to next-boot behavior (fire) rather than never firing.
-      const currentBuildId = getCurrentBuildId();
-      let isNewBuild = true;
-      if (currentBuildId) {
-        const lastBuildId = await getSetting<string>(LAST_BOOT_BUILD_ID_KEY);
-        isNewBuild = lastBuildId !== currentBuildId;
-        if (lastBuildId !== currentBuildId) {
-          await setSetting(LAST_BOOT_BUILD_ID_KEY, currentBuildId);
-        }
-      } else {
-        log.warn(
-          "build identity unavailable (RAILWAY_GIT_COMMIT_SHA unset); next-build reminders degrade to next-boot behavior",
-        );
-      }
-
       const allTimers = await withQueryAttributionAsync("timer-scheduler", () =>
         timerStorage.getAllForScheduler(),
       );
-      const bootReminders = allTimers.filter(
-        (t) =>
-          t.type === "reminder" &&
-          t.enabled &&
-          t.schedules?.some((s) => s.fireOnNextBoot || s.fireOnNextBuild),
+      const bootTimers = allTimers.filter(
+        (timer) =>
+          timer.enabled &&
+          timer.schedules?.some((schedule) => schedule.fireOnNextBoot || schedule.fireOnNextBuild),
       );
-      if (bootReminders.length === 0) return;
-      log.debug(
-        `Evaluating ${bootReminders.length} boot reminder(s), isNewBuild=${isNewBuild} build=${currentBuildId?.slice(0, 7) ?? "unknown"}`,
-      );
-      for (const timer of bootReminders) {
-        const schedule = timer.schedules.find(
-          (s) => s.fireOnNextBoot || s.fireOnNextBuild,
+      if (bootTimers.length === 0) return;
+
+      // Claim the current build once across replicas only after there is real
+      // next-build work to evaluate. The committed marker prevents a
+      // same-build restart or second replica from launching it again.
+      const currentBuildId = getCurrentBuildId();
+      let isNewBuild = true;
+      if (currentBuildId) {
+        isNewBuild = await db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+          await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.TIMER_BUILD, LAST_BOOT_BUILD_ID_KEY);
+          const lastBuildId = await getSetting<string>(LAST_BOOT_BUILD_ID_KEY);
+          if (lastBuildId === currentBuildId) return false;
+          await setSetting(LAST_BOOT_BUILD_ID_KEY, currentBuildId);
+          return true;
+        }));
+      } else {
+        log.warn(
+          "build identity unavailable (RAILWAY_GIT_COMMIT_SHA unset); next-build timers degrade to next-boot behavior",
         );
-        if (!schedule) continue;
-        if (!schedule.fireOnNextBoot && schedule.fireOnNextBuild && !isNewBuild) {
-          log.debug(
-            `holding next-build reminder "${timer.name}" — same build as previous boot`,
-          );
-          continue;
-        }
-        try {
-          await this.executeTimer(timer.id, schedule.id, "scheduled");
-        } catch (err: unknown) {
-          log.error(
-            `fireBootReminders error for "${timer.name}":`,
-            err instanceof Error ? err.message : String(err),
-          );
+      }
+
+      log.debug(
+        `Evaluating ${bootTimers.length} boot timer(s), isNewBuild=${isNewBuild} build=${currentBuildId?.slice(0, 7) ?? "unknown"}`,
+      );
+      for (const timer of bootTimers) {
+        const schedules = timer.schedules.filter(
+          (schedule) => schedule.fireOnNextBoot || schedule.fireOnNextBuild,
+        );
+        for (const schedule of schedules) {
+          if (!schedule.fireOnNextBoot && schedule.fireOnNextBuild && !isNewBuild) {
+            log.debug(
+              `holding next-build timer "${timer.name}" — same build as previous boot`,
+            );
+            continue;
+          }
+          try {
+            await this.executeTimer(timer.id, schedule.id, "scheduled");
+          } catch (err: unknown) {
+            log.error(
+              `fireBootReminders error for "${timer.name}":`,
+              err instanceof Error ? err.message : String(err),
+            );
+          }
         }
       }
     } catch (err: unknown) {
