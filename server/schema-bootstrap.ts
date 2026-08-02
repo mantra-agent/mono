@@ -3358,6 +3358,7 @@ export async function runSchemaBootstrap(
     const {
       seedBuiltinSkills,
       migrateCustomizedPlanPeriodContract,
+      migrateCustomizedDailyBriefCompositionContract,
       verifyRequiredSkills,
       migrateSkillRenames,
       migrateLegacyPromptOverrides,
@@ -3376,6 +3377,7 @@ export async function runSchemaBootstrap(
     await migrateSkillRenames();
     await seedBuiltinSkills();
     await migrateCustomizedPlanPeriodContract();
+    await migrateCustomizedDailyBriefCompositionContract();
     await migrateLegacySkillPersonaPreferences();
     await migrateLegacyPromptOverrides();
     await migrateSkillProcessToToolBased();
