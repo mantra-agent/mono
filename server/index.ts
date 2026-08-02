@@ -364,6 +364,7 @@ app.use((req, res, next) => {
   const { ensureRuntimeKernelSchema } = await import("./runtime/runtime-schema");
   const { pool } = await import("./db");
   await ensureRuntimeKernelSchema(pool);
+  await import("./runtime/proof-handlers");
   const { ensureLifeAddressingSchema } = await import("./life-addressing-schema");
   await ensureLifeAddressingSchema(pool);
   const { ensureModPlatformSchema } = await import("./mod-schema");
@@ -999,6 +1000,8 @@ async function shutdownApplication(input: RuntimeTerminationInput): Promise<void
     })}`);
 
     timerScheduler.stop();
+    const { stopRuntimeWorker } = await import("./runtime");
+    await stopRuntimeWorker();
     const { stopMeetingAudioExpiry } = await import("./meeting/audio-retention-expiry");
     stopMeetingAudioExpiry();
     await admissionController.shutdown();
@@ -1058,6 +1061,15 @@ function startDeferredBackgroundServices(): void {
   bootTracker.startPhase("background_services");
 
   const services: Promise<void>[] = [];
+
+  services.push(
+    import("./runtime").then(({ startRuntimeWorker }) => {
+      startRuntimeWorker();
+      log("[startup] autonomy runtime worker started", "boot");
+    }).catch((err) => {
+      log(`[startup] autonomy runtime worker failed to start: ${err instanceof Error ? err.message : String(err)}`, "boot");
+    }),
+  );
 
   services.push(
     import("./skill-scoring").then(({ registerSkillScoringListener }) => {

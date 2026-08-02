@@ -459,6 +459,7 @@ function getSkillTools(
   sessionId: string,
   authoritySkillId?: string,
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation,
+  runtimeRunId?: string,
 ): {
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   toolExecutor: (name: string, args: Record<string, unknown>) => Promise<{ result: string; error: boolean }>;
@@ -473,7 +474,9 @@ function getSkillTools(
   }));
 
   const toolExecutor = async (name: string, args: Record<string, unknown>) => {
-    const toolCallId = generateToolCallId("auto-tc");
+    const toolCallId = runtimeRunId
+      ? `${runtimeRunId}:${generateToolCallId("auto-tc")}`
+      : generateToolCallId("auto-tc");
     const result = await executeTool(name, toolCallId, args, {
       sessionKey,
       sessionId,
@@ -531,6 +534,8 @@ export async function executeAutonomousSkillRun(
     planPageRef?: string;
     workflowRunId?: string;
     workflowStageAttemptId?: number;
+    /** Native kernel run identity; skips legacy admission and keys replay-safe domain records. */
+    runtimeRunId?: string;
   } = {}
 ): Promise<AutonomousRunResult | null> {
   // ── Ensure user principal context ───────────────────────────────────
@@ -671,7 +676,7 @@ export async function executeAutonomousSkillRun(
   // creating a session, assembling context, and queueing for admission
   // only to be killed by the inactivity timer. The next scheduled trigger
   // will retry with a fresh start.
-  if (!options.parentSessionId && !isSkillless && (config.admissionTier ?? "background") === "background") {
+  if (!options.runtimeRunId && !options.parentSessionId && !isSkillless && (config.admissionTier ?? "background") === "background") {
     try {
       const { admissionController } = await import("./run-admission");
       const activity = config.activity;
@@ -730,30 +735,51 @@ export async function executeAutonomousSkillRun(
   const effectiveTitle = options.titleOverride ?? config.label;
   try {
     logger.log(`[SkillChat] phase=session-create — creating session for ${isSkillless ? "skillless" : `skill "${skillId}"`} title="${effectiveTitle}" type=${sessType} addToMemory=${addToMemory}${options.titleOverride ? ` (titleOverride applied)` : ""}`);
-    conversation = await chatFileStorage.createAutonomousSession(
-      effectiveTitle,
-      sessType,
-      isSkillless ? `auto:skillless` : `auto:${skillId}`,
-      undefined,
-      undefined,
-      options.parentSessionId
-        ? {
-            personaId: initialRunPersona?.id,
-            parentSessionId: options.parentSessionId,
-            spawnReason: effectiveSpawnReason,
-            spawnerTool: effectiveSpawnerTool,
-            spawnerSkillRun: effectiveSpawnerSkillRun,
-            triggerType: (options as any).hookTriggerId ? "hook" as const : "skill" as const,
-            triggerId: (options as any).hookTriggerId || skillId || undefined,
-            triggerName: (options as any).hookTriggerName || config.label,
-          }
-        : {
-            personaId: initialRunPersona?.id,
-            triggerType: (options as any).hookTriggerId ? "hook" as const : "skill" as const,
-            triggerId: (options as any).hookTriggerId || skillId || undefined,
-            triggerName: (options as any).hookTriggerName || config.label,
+    if (options.runtimeRunId) {
+      if (options.parentSessionId) {
+        throw new Error("Native runtime Skill execution currently supports top-level runs only");
+      }
+      const replay = await chatFileStorage.createSessionOnce(
+        effectiveTitle,
+        `runtime:skill:${options.runtimeRunId}`,
+        undefined,
+        {
+          sessionType: sessType,
+          personaId: initialRunPersona?.id,
+          provenance: {
+            triggerType: "skill",
+            triggerId: skillId || undefined,
+            triggerName: config.label,
           },
-    );
+        },
+      );
+      conversation = replay.session;
+    } else {
+      conversation = await chatFileStorage.createAutonomousSession(
+        effectiveTitle,
+        sessType,
+        isSkillless ? `auto:skillless` : `auto:${skillId}`,
+        undefined,
+        undefined,
+        options.parentSessionId
+          ? {
+              personaId: initialRunPersona?.id,
+              parentSessionId: options.parentSessionId,
+              spawnReason: effectiveSpawnReason,
+              spawnerTool: effectiveSpawnerTool,
+              spawnerSkillRun: effectiveSpawnerSkillRun,
+              triggerType: (options as any).hookTriggerId ? "hook" as const : "skill" as const,
+              triggerId: (options as any).hookTriggerId || skillId || undefined,
+              triggerName: (options as any).hookTriggerName || config.label,
+            }
+          : {
+              personaId: initialRunPersona?.id,
+              triggerType: (options as any).hookTriggerId ? "hook" as const : "skill" as const,
+              triggerId: (options as any).hookTriggerId || skillId || undefined,
+              triggerName: (options as any).hookTriggerName || config.label,
+            },
+      );
+    }
   } catch (err: unknown) {
     if (didRegisterActiveRun && skillId) activeSkillRuns.delete(getSkillRunKey(skillId));
     const errDetail = err instanceof Error ? (err.stack || err.message) : String(err);
@@ -785,6 +811,7 @@ export async function executeAutonomousSkillRun(
         parentSessionId: options.parentSessionId,
         parentSkillRunId,
         parentToolCallId: options.parentToolCallId,
+        runtimeRunId: options.runtimeRunId,
       });
       logger.log(`[SkillChat] [${sessionId}] Inserted skill_runs row for "${config.skillId}"${parentSkillRunId ? ` parentSkillRunId=${parentSkillRunId}` : ""}`);
     } catch (runInsertErr: unknown) {
@@ -1146,7 +1173,7 @@ async function runCouncilPipeline(
 async function runSkillPipeline(
   config: SkillRunConfig,
   sessionId: string,
-  options: { preContext?: string; parentSessionId?: string; spawnReason?: string; spawnerTool?: string; spawnerSkillRun?: string; modelOverride?: string; sessionKeyOverride?: string; admissionTier?: AdmissionTier; lineageId?: string },
+  options: { preContext?: string; parentSessionId?: string; spawnReason?: string; spawnerTool?: string; spawnerSkillRun?: string; modelOverride?: string; sessionKeyOverride?: string; admissionTier?: AdmissionTier; lineageId?: string; runtimeRunId?: string },
   authoritySkillId: string | undefined,
 ): Promise<AutonomousRunResult> {
   const startTime = Date.now();
@@ -1215,7 +1242,7 @@ async function runSkillPipeline(
       sessionKey,
     });
     const trustedDelegation = options.planId ? "plan" : options.workflowRunId ? "workflow" : undefined;
-    const { tools, toolExecutor } = getSkillTools(config.activity, sessionKey, sessionId, authoritySkillId, trustedDelegation);
+    const { tools, toolExecutor } = getSkillTools(config.activity, sessionKey, sessionId, authoritySkillId, trustedDelegation, options.runtimeRunId);
 
     let toolCallCount = 0;
     const toolCallLog: Array<{ name: string; action?: string; error?: boolean; result?: string }> = [];
@@ -1282,6 +1309,8 @@ async function runSkillPipeline(
         querySubsystem: "autonomous",
         tier: effectiveAdmissionTier,
         lineageId: effectiveLineageId,
+        runId: options.runtimeRunId,
+        admissionMode: options.runtimeRunId ? "runtime_owned" : "legacy",
       }),
       abortController.signal,
       15_000,

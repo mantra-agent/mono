@@ -515,6 +515,7 @@ export const responsibilityRuns = pgTable("responsibility_runs", {
   completedAt: timestamp("completed_at", { withTimezone: true, precision: 6 }),
   durationMs: integer("duration_ms"),
   sessionId: text("conversation_id"),
+  runtimeRunId: uuid("runtime_run_id"),
   trigger: text("trigger").notNull().default("scheduled"),
   intendedFireAt: timestamp("intended_fire_at", { withTimezone: true, precision: 6 }),
   scheduledSlotStart: timestamp("scheduled_slot_start", { withTimezone: true, precision: 6 }),
@@ -527,6 +528,7 @@ export const responsibilityRuns = pgTable("responsibility_runs", {
 }, (table) => [
   index("idx_responsibility_runs_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_responsibility_runs_account").on(table.accountId),
+  uniqueIndex("idx_responsibility_runs_runtime_run_unique").on(table.runtimeRunId).where(sql`${table.runtimeRunId} IS NOT NULL`),
   check("responsibility_runs_ownership_contract", sql`
     (${table.scope} = 'user' AND ${table.ownerUserId} IS NOT NULL AND ${table.accountId} IS NOT NULL)
     OR (${table.scope} IN ('system', 'quarantine') AND ${table.ownerUserId} IS NULL AND ${table.accountId} IS NULL)

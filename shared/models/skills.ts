@@ -152,6 +152,7 @@ export const skillRuns = pgTable("skill_runs", {
   parentSessionId: text("parent_session_id"),
   parentSkillRunId: integer("parent_skill_run_id"),
   parentToolCallId: text("parent_tool_call_id"),
+  runtimeRunId: uuid("runtime_run_id"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
   vaultId: text("vault_id"),
@@ -159,6 +160,7 @@ export const skillRuns = pgTable("skill_runs", {
   index("idx_skill_runs_owner_started").on(table.ownerUserId, table.startedAt),
   index("idx_skill_runs_account_started").on(table.accountId, table.startedAt),
   index("idx_skill_runs_parent_lineage").on(table.parentSkillRunId, table.parentToolCallId, table.skillName),
+  uniqueIndex("idx_skill_runs_runtime_run_unique").on(table.runtimeRunId).where(sql`${table.runtimeRunId} IS NOT NULL`),
 ]);
 
 export type SkillRun = typeof skillRuns.$inferSelect;

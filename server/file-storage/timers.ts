@@ -52,6 +52,7 @@ interface RunRow {
   completedAt: Date | string | null;
   durationMs: number | null;
   sessionId: string | null;
+  runtimeRunId: string | null;
   trigger: string;
   intendedFireAt: Date | string | null;
   scheduledSlotStart: Date | string | null;
@@ -73,6 +74,7 @@ function rowToRun(row: RunRow): TimerRun {
     completedAt: row.completedAt instanceof Date ? row.completedAt.toISOString() : row.completedAt || undefined,
     durationMs: row.durationMs ?? undefined,
     sessionId: row.sessionId ?? undefined,
+    runtimeRunId: row.runtimeRunId ?? undefined,
     trigger: row.trigger as "scheduled" | "manual",
     intendedFireAt: row.intendedFireAt instanceof Date ? row.intendedFireAt.toISOString() : row.intendedFireAt || undefined,
     scheduledSlotStart: row.scheduledSlotStart instanceof Date ? row.scheduledSlotStart.toISOString() : row.scheduledSlotStart || undefined,
@@ -339,7 +341,7 @@ export class FileTimerStorage {
     await db.insert(responsibilityRuns).values({
       runId: run.id, responsibilityId: run.timerId, scheduleId: run.scheduleId, status: run.status,
       startedAt: new Date(run.startedAt), completedAt: run.completedAt ? new Date(run.completedAt) : null,
-      durationMs: run.durationMs ?? null, sessionId: run.sessionId ?? null, trigger: run.trigger,
+      durationMs: run.durationMs ?? null, sessionId: run.sessionId ?? null, runtimeRunId: run.runtimeRunId ?? null, trigger: run.trigger,
       intendedFireAt: run.intendedFireAt ? new Date(run.intendedFireAt) : null,
       scheduledSlotStart: run.scheduledSlotStart ? new Date(run.scheduledSlotStart) : null,
       scheduledSlotEnd: run.scheduledSlotEnd ? new Date(run.scheduledSlotEnd) : null,
@@ -354,6 +356,7 @@ export class FileTimerStorage {
     if (updates.completedAt !== undefined) setValues.completedAt = new Date(updates.completedAt);
     if (updates.durationMs !== undefined) setValues.durationMs = updates.durationMs;
     if (updates.sessionId !== undefined) setValues.sessionId = updates.sessionId;
+    if (updates.runtimeRunId !== undefined) setValues.runtimeRunId = updates.runtimeRunId;
     if (updates.error !== undefined) setValues.error = updates.error;
     if (updates.metadata !== undefined) setValues.metadata = updates.metadata;
     if (Object.keys(setValues).length === 0) return;
@@ -385,6 +388,7 @@ export class FileTimerStorage {
         completedAt: responsibilityRuns.completedAt,
         durationMs: responsibilityRuns.durationMs,
         sessionId: responsibilityRuns.sessionId,
+        runtimeRunId: responsibilityRuns.runtimeRunId,
         trigger: responsibilityRuns.trigger,
         intendedFireAt: responsibilityRuns.intendedFireAt,
         scheduledSlotStart: responsibilityRuns.scheduledSlotStart,
@@ -501,10 +505,10 @@ export class FileTimerStorage {
       started_at: Date; completed_at: Date | null; duration_ms: number | null;
       session_id: string | null; trigger: string; intended_fire_at: Date | null;
       scheduled_slot_start: Date | null; scheduled_slot_end: Date | null;
-      error: string | null; metadata: unknown;
+      error: string | null; metadata: unknown; runtime_run_id: string | null;
     }>(`
       SELECT run_id, responsibility_id, schedule_id, status, started_at, completed_at,
-             duration_ms, conversation_id AS session_id, trigger, intended_fire_at,
+             duration_ms, conversation_id AS session_id, runtime_run_id, trigger, intended_fire_at,
              scheduled_slot_start, scheduled_slot_end, error, metadata
       FROM (
         SELECT runs.*, row_number() OVER (
@@ -525,7 +529,7 @@ export class FileTimerStorage {
       runs.push(rowToRun({
         runId: row.run_id, responsibilityId: row.responsibility_id, scheduleId: row.schedule_id,
         status: row.status, startedAt: row.started_at, completedAt: row.completed_at,
-        durationMs: row.duration_ms, sessionId: row.session_id, trigger: row.trigger,
+        durationMs: row.duration_ms, sessionId: row.session_id, runtimeRunId: row.runtime_run_id, trigger: row.trigger,
         intendedFireAt: row.intended_fire_at, scheduledSlotStart: row.scheduled_slot_start,
         scheduledSlotEnd: row.scheduled_slot_end, error: row.error, metadata: row.metadata,
       }));
