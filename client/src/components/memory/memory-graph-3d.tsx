@@ -16,7 +16,10 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { MemorySourceIcon } from "@/components/memory/memory-source-icon";
 import { recordBrowserTelemetry } from "@/lib/browser-telemetry";
-import type { MemoryGraphSettings } from "@shared/memory-graph-settings";
+import {
+  MEMORY_GRAPH_SETTING_DEFINITIONS,
+  type MemoryGraphSettings,
+} from "@shared/memory-graph-settings";
 
 export interface MemoryGraph3DNode {
   id: number;
@@ -127,9 +130,13 @@ interface GraphRuntime {
   refreshAppearance: () => void;
   setActivityEnabled: (enabled: boolean) => void;
   setSelectedNodeId: (nodeId: number | null) => void;
+  updateSettings: (settings: MemoryGraphSettings) => void;
 }
 
 const MAX_RENDERED_LINKS = 2_500;
+const MAX_LINK_COMPLEXITY = MEMORY_GRAPH_SETTING_DEFINITIONS.find(
+  (definition) => definition.key === "linkComplexity",
+)?.max ?? 12;
 const LARGE_GRAPH_THRESHOLD = 1_000;
 const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
@@ -471,6 +478,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   const detailRef = useRef<HTMLDivElement>(null);
   const nodeDetailRef = useRef(nodeDetail);
   nodeDetailRef.current = nodeDetail;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const runtimeRef = useRef<GraphRuntime | null>(null);
   const [focusNeighborhoodNodeIds, setFocusNeighborhoodNodeIds] = useState<number[]>([]);
   const selectedNodeIdRef = useRef(selectedNodeId);
@@ -532,6 +541,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
   }, [activityEnabled]);
 
   useEffect(() => {
+    runtimeRef.current?.updateSettings(settings);
+  }, [settings]);
+
+  useEffect(() => {
     runtimeRef.current?.requestRender();
   }, [nodeDetail, overlayNodes]);
 
@@ -540,7 +553,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     if (!host || nodes.length === 0) return;
 
     const effectStartedAt = performance.now();
-    const { sceneNodes, simulationLinks, renderedLinks, nodeIndex, adjacency } = buildSceneGraph(nodes, links, settings);
+    let activeSettings = settingsRef.current;
+    const { sceneNodes, simulationLinks, renderedLinks, nodeIndex, adjacency } = buildSceneGraph(nodes, links, activeSettings);
     const sceneNodeById = new Map(sceneNodes.map((node) => [node.id, node]));
     const isLargeGraph = sceneNodes.length >= LARGE_GRAPH_THRESHOLD;
     const scene = new THREE.Scene();
@@ -579,7 +593,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     // channel so old nodes stay ghosted without recency collapsing into opacity.
     const nodeBaseColors = sceneNodes.map((node) => signalColor.clone().lerp(
       selectedColor,
-      recencyToWhiteMix(node.recency, settings.recencyBrightness),
+      recencyToWhiteMix(node.recency, activeSettings.recencyBrightness),
     ));
     const nodeGeometry = new THREE.IcosahedronGeometry(1, 2);
     const nodeVisibility = new Float32Array(sceneNodes.length);
@@ -591,7 +605,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const renderedImpact = new Float32Array(sceneNodes.length);
     const renderedTints = new Float32Array(sceneNodes.length * 3);
     sceneNodes.forEach((node, index) => {
-      nodeVisibility[index] = recencyToVisibility(node.recency, settings.recencyBrightness);
+      nodeVisibility[index] = recencyToVisibility(node.recency, activeSettings.recencyBrightness);
       (node.pendingDeletion ? deletionColor : nodeBaseColors[index]).toArray(nodeTints, index * 3);
     });
     nodeGeometry.setAttribute("aVisibility", new THREE.InstancedBufferAttribute(renderedVisibility, 1));
@@ -603,8 +617,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       vertexShader: nodeVertexShader,
       fragmentShader: nodeFragmentShader,
       uniforms: {
-        uNodeBrightness: { value: settings.nodeBrightnessFactor },
-        uPulseBrightness: { value: settings.pulseBrightness },
+        uNodeBrightness: { value: activeSettings.nodeBrightnessFactor },
+        uPulseBrightness: { value: activeSettings.pulseBrightness },
       },
       transparent: true,
       depthWrite: true,
@@ -617,15 +631,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     nodeMesh.renderOrder = NODE_RENDER_ORDER;
     scene.add(nodeMesh);
 
-    const curveSegments = settings.linkComplexity;
-    const linkPositions = new Float32Array(renderedLinks.length * curveSegments * 6);
-    const linkColors = new Float32Array(renderedLinks.length * curveSegments * 6);
+    let curveSegments = activeSettings.linkComplexity;
+    const linkPositions = new Float32Array(renderedLinks.length * MAX_LINK_COMPLEXITY * 6);
+    const linkColors = new Float32Array(renderedLinks.length * MAX_LINK_COMPLEXITY * 6);
     const focusedLinkCapacity = Math.max(
       0,
       ...[...adjacency.simulationLinksByNodeId.values()].map((incidentLinks) => incidentLinks.length),
     );
-    const focusedLinkPositions = new Float32Array(focusedLinkCapacity * curveSegments * 6);
-    const focusedLinkColors = new Float32Array(focusedLinkCapacity * curveSegments * 6);
+    const focusedLinkPositions = new Float32Array(focusedLinkCapacity * MAX_LINK_COMPLEXITY * 6);
+    const focusedLinkColors = new Float32Array(focusedLinkCapacity * MAX_LINK_COMPLEXITY * 6);
     const linkBrightness = new Float32Array(renderedLinks.length);
     const visibleLinkBrightnessFrom = new Float32Array(renderedLinks.length);
     const visibleLinkBrightnessTo = new Float32Array(renderedLinks.length);
@@ -668,6 +682,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       depthWrite: false,
       resolution: new THREE.Vector2(host.clientWidth, host.clientHeight),
     });
+    linkGeometry.instanceCount = renderedLinks.length * curveSegments;
+    focusedLinkGeometry.instanceCount = 0;
     const linkLines = new LineSegments2(linkGeometry, linkMaterial);
     const focusedLinkLines = new LineSegments2(focusedLinkGeometry, focusedLinkMaterial);
     linkLines.frustumCulled = false;
@@ -723,6 +739,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let activityTimer: ReturnType<typeof setTimeout> | null = null;
     let activityIsEnabled = activityEnabledRef.current;
     let simulationTick = 0;
+    let layoutRevision = 0;
     const activePackets: ActivityPacket[] = [];
     const activeImpacts: ActivityImpact[] = [];
     const nodeAfterglow = new Float32Array(sceneNodes.length);
@@ -871,21 +888,24 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function syncLinkPositions() {
       renderedLinks.forEach((link, linkIndex) => {
-        writeLinkCurve(linkPositions, link, linkIndex, true, settings.linkBendFactor);
+        writeLinkCurve(linkPositions, link, linkIndex, true, activeSettings.linkBendFactor);
       });
+      linkGeometry.instanceCount = renderedLinks.length * curveSegments;
       const instanceStartAttr = linkGeometry.getAttribute("instanceStart");
       if (instanceStartAttr && "data" in instanceStartAttr) (instanceStartAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
+      const instanceEndAttr = linkGeometry.getAttribute("instanceEnd");
+      if (instanceEndAttr && "data" in instanceEndAttr) (instanceEndAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
     }
 
     function syncFocusedLinkGeometry() {
       focusedSimulationLinks.forEach((link, focusedLinkIndex) => {
-        writeLinkCurve(focusedLinkPositions, link, focusedLinkIndex, false, settings.linkBendFactor);
+        writeLinkCurve(focusedLinkPositions, link, focusedLinkIndex, false, activeSettings.linkBendFactor);
         const normalizedStrength = THREE.MathUtils.clamp(link.strength, 0, 1);
         const focusedBrightness = THREE.MathUtils.lerp(
           FOCUSED_LINK_MIN_LUMINANCE,
           FOCUSED_LINK_MAX_LUMINANCE,
           Math.pow(normalizedStrength, 1.25),
-        ) * settings.linkBrightnessFactor;
+        ) * activeSettings.linkBrightnessFactor;
         const fromVisibility = nodeLinkVisibility[link.fromIndex];
         const toVisibility = nodeLinkVisibility[link.toIndex];
         const fromColor = nodeBaseColors[link.fromIndex];
@@ -912,9 +932,17 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       if (focusedInstanceStart && "data" in focusedInstanceStart) {
         (focusedInstanceStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
       }
+      const focusedInstanceEnd = focusedLinkGeometry.getAttribute("instanceEnd");
+      if (focusedInstanceEnd && "data" in focusedInstanceEnd) {
+        (focusedInstanceEnd as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
+      }
       const focusedInstanceColorStart = focusedLinkGeometry.getAttribute("instanceColorStart");
       if (focusedInstanceColorStart && "data" in focusedInstanceColorStart) {
         (focusedInstanceColorStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
+      }
+      const focusedInstanceColorEnd = focusedLinkGeometry.getAttribute("instanceColorEnd");
+      if (focusedInstanceColorEnd && "data" in focusedInstanceColorEnd) {
+        (focusedInstanceColorEnd as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
       }
     }
 
@@ -928,20 +956,20 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           const fromProgress = segment / curveSegments;
           const toProgress = (segment + 1) / curveSegments;
           const fromBrightness = Math.min(
-            ACTIVITY_LINK_MAX_LUMINANCE * settings.linkBrightnessFactor,
+            ACTIVITY_LINK_MAX_LUMINANCE * activeSettings.linkBrightnessFactor,
             THREE.MathUtils.lerp(
               visibleLinkBrightnessFrom[linkIndex],
               visibleLinkBrightnessTo[linkIndex],
               fromProgress,
-            ) * activityMultiplier * settings.linkBrightnessFactor,
+            ) * activityMultiplier * activeSettings.linkBrightnessFactor,
           );
           const toBrightness = Math.min(
-            ACTIVITY_LINK_MAX_LUMINANCE * settings.linkBrightnessFactor,
+            ACTIVITY_LINK_MAX_LUMINANCE * activeSettings.linkBrightnessFactor,
             THREE.MathUtils.lerp(
               visibleLinkBrightnessFrom[linkIndex],
               visibleLinkBrightnessTo[linkIndex],
               toProgress,
-            ) * activityMultiplier * settings.linkBrightnessFactor,
+            ) * activityMultiplier * activeSettings.linkBrightnessFactor,
           );
           restingLinkColor.copy(restingColors.from).lerp(restingColors.to, fromProgress);
           composeActivityColor(activityColor, restingLinkColor, selectedColor, energy, fromBrightness);
@@ -954,6 +982,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const instanceColorStart = linkGeometry.getAttribute("instanceColorStart");
       if (instanceColorStart && "data" in instanceColorStart) {
         (instanceColorStart as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
+      }
+      const instanceColorEnd = linkGeometry.getAttribute("instanceColorEnd");
+      if (instanceColorEnd && "data" in instanceColorEnd) {
+        (instanceColorEnd as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
       }
     }
 
@@ -974,7 +1006,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           && focusIndex !== index
           && !focusNeighborIndices.has(index);
         nodeLinkVisibility[index] = distanceVisibility
-          * recencyToVisibility(node.recency, settings.recencyBrightness)
+          * recencyToVisibility(node.recency, activeSettings.recencyBrightness)
           * (unrelated ? 0.62 : 1);
       });
 
@@ -990,6 +1022,19 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       });
       syncLinkColors();
       syncFocusedLinkGeometry();
+    }
+
+    function syncNodeBaseColors() {
+      sceneNodes.forEach((node, index) => {
+        nodeBaseColors[index].copy(signalColor).lerp(
+          selectedColor,
+          recencyToWhiteMix(node.recency, activeSettings.recencyBrightness),
+        );
+      });
+      renderedLinks.forEach((link, linkIndex) => {
+        restingLinkColors[linkIndex].from.copy(nodeBaseColors[link.fromIndex]);
+        restingLinkColors[linkIndex].to.copy(nodeBaseColors[link.toIndex]);
+      });
     }
 
     function syncNodeAppearance() {
@@ -1011,7 +1056,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         tint.toArray(nodeTints, index * 3);
         nodeVisibility[index] = isSelected
           ? 1
-          : recencyToVisibility(node.recency, settings.recencyBrightness) * (unrelated ? 0.62 : 1);
+          : recencyToVisibility(node.recency, activeSettings.recencyBrightness) * (unrelated ? 0.62 : 1);
       });
       syncNodeTransforms();
       syncNodeAppearanceAttributes();
@@ -1162,7 +1207,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           ACTIVITY_MAX_NODE_COOLDOWN_MS,
           ACTIVITY_MIN_NODE_COOLDOWN_MS,
           heat,
-        ) / Math.max(0.1, settings.pulseRate);
+        ) / Math.max(0.1, activeSettings.pulseRate);
         return now - (lastPulseAtByNodeIndex.get(path.destinationIndex) ?? Number.NEGATIVE_INFINITY) >= cooldown;
       });
     }
@@ -1202,7 +1247,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           return;
         }
         if (activityFrame === 0) activityFrame = requestAnimationFrame(animateActivity);
-        scheduleNextActivity(activityEmitGapMs(settings.pulseRate));
+        scheduleNextActivity(activityEmitGapMs(activeSettings.pulseRate));
       }, delayMs);
     }
 
@@ -1448,6 +1493,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     let simulation: Simulation<SceneNode> | null = null;
     let layoutWorker: Worker | null = null;
+    let layoutRestartTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Apply a batch of worker-computed positions, then run the same per-tick sync the
     // in-process simulation used. Bounded: one O(nodes) pass plus a coalesced render.
@@ -1469,6 +1515,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     // Fail-open fallback: run the force layout on the main thread exactly as before.
     function startMainThreadSimulation() {
+      if (simulation) {
+        simulation.stop();
+        simulation.on("tick", null);
+        simulation.on("end", null);
+      }
       const linkForce = forceLink<SceneNode, SceneLink>(simulationLinks)
         .id((node) => node.id)
         .distance((link) => {
@@ -1479,11 +1530,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         })
         .strength((link) => (
           0.08 + Math.max(0.1, link.strength || 0.5) * 0.12
-        ) * settings.linkAttractionFactor)
+        ) * activeSettings.linkAttractionFactor)
         .iterations(1);
       simulation = forceSimulation(sceneNodes, 3)
         .force("charge", forceManyBody<SceneNode>()
-          .strength((node) => -(135 + Math.sqrt(node.degree) * 9) * settings.nodeRepulsionFactor)
+          .strength((node) => -(135 + Math.sqrt(node.degree) * 9) * activeSettings.nodeRepulsionFactor)
           .theta(0.76)
           .distanceMin(2)
           .distanceMax(520))
@@ -1506,6 +1557,48 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       simulation.on("end", requestRender);
     }
 
+    function restartLayoutFromCurrentPositions() {
+      layoutRestartTimer = null;
+      layoutRevision += 1;
+      if (layoutWorker) {
+        if (simulation) {
+          simulation.stop();
+          simulation.on("tick", null);
+          simulation.on("end", null);
+          simulation = null;
+        }
+        layoutWorker.postMessage({
+          type: "init",
+          revision: layoutRevision,
+          nodes: sceneNodes.map((node) => ({
+            id: node.id,
+            degree: node.degree,
+            radius: node.radius,
+            x: node.x,
+            y: node.y,
+            z: node.z,
+          })),
+          links: simulationLinks.map((link) => ({
+            id: link.id,
+            fromId: link.fromId,
+            toId: link.toId,
+            strength: link.strength,
+          })),
+          settings: {
+            linkAttractionFactor: activeSettings.linkAttractionFactor,
+            nodeRepulsionFactor: activeSettings.nodeRepulsionFactor,
+          },
+        });
+      } else {
+        startMainThreadSimulation();
+      }
+    }
+
+    function scheduleLayoutRestart() {
+      if (layoutRestartTimer !== null) clearTimeout(layoutRestartTimer);
+      layoutRestartTimer = setTimeout(restartLayoutFromCurrentPositions, 80);
+    }
+
     // Compute layout off the main thread so the interactive init task stays bounded.
     try {
       layoutWorker = new Worker(new URL("../../lib/graph-layout-worker.ts", import.meta.url), { type: "module" });
@@ -1514,10 +1607,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
     if (layoutWorker) {
       layoutWorker.onmessage = (event: MessageEvent) => {
-        const data = event.data as { type?: string; positions?: Float32Array };
-        if (data?.type === "positions" && data.positions) {
+        const data = event.data as { type?: string; revision?: number; positions?: Float32Array };
+        if (data.revision !== layoutRevision) return;
+        if (data.type === "positions" && data.positions) {
           applyLayoutPositions(data.positions);
-        } else if (data?.type === "end") {
+        } else if (data.type === "end") {
           if (data.positions) applyLayoutPositions(data.positions);
           recordBrowserTelemetry({
             kind: "graph",
@@ -1532,19 +1626,49 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       layoutWorker.onerror = () => {
         layoutWorker?.terminate();
         layoutWorker = null;
-        if (!simulation) startMainThreadSimulation();
+        startMainThreadSimulation();
       };
-      layoutWorker.postMessage({
-        type: "init",
-        nodes: sceneNodes.map((node) => ({ id: node.id, degree: node.degree, radius: node.radius, x: node.x, y: node.y, z: node.z })),
-        links: simulationLinks.map((link) => ({ id: link.id, fromId: link.fromId, toId: link.toId, strength: link.strength })),
-        settings: {
-          linkAttractionFactor: settings.linkAttractionFactor,
-          nodeRepulsionFactor: settings.nodeRepulsionFactor,
-        },
-      });
-    } else {
-      startMainThreadSimulation();
+    }
+    restartLayoutFromCurrentPositions();
+
+    function updateSettings(nextSettings: MemoryGraphSettings) {
+      const previousSettings = activeSettings;
+      activeSettings = nextSettings;
+      const radiiChanged = previousSettings.smallestNode !== nextSettings.smallestNode
+        || previousSettings.largestNode !== nextSettings.largestNode;
+      const forcesChanged = previousSettings.linkAttractionFactor !== nextSettings.linkAttractionFactor
+        || previousSettings.nodeRepulsionFactor !== nextSettings.nodeRepulsionFactor;
+      const recencyChanged = previousSettings.recencyBrightness !== nextSettings.recencyBrightness;
+      const complexityChanged = previousSettings.linkComplexity !== nextSettings.linkComplexity;
+
+      nodeMaterial.uniforms.uNodeBrightness.value = nextSettings.nodeBrightnessFactor;
+      nodeMaterial.uniforms.uPulseBrightness.value = nextSettings.pulseBrightness;
+      nodeMaterial.uniformsNeedUpdate = true;
+
+      if (radiiChanged) {
+        const degrees = sceneNodes.map((node) => node.degree);
+        const minDegree = Math.min(...degrees);
+        const maxDegree = Math.max(...degrees);
+        const degreeRange = Math.max(1, maxDegree - minDegree);
+        sceneNodes.forEach((node) => {
+          const degreeRatio = (node.degree - minDegree) / degreeRange;
+          node.radius = nextSettings.smallestNode
+            + Math.pow(degreeRatio, 0.6) * (nextSettings.largestNode - nextSettings.smallestNode);
+        });
+      }
+      if (recencyChanged) syncNodeBaseColors();
+      if (complexityChanged) curveSegments = nextSettings.linkComplexity;
+
+      syncNodeAppearance();
+      syncLinkPositions();
+      syncLinkVisibility();
+      syncLabels();
+      nodeDepthOrderDirty = true;
+      if (radiiChanged || forcesChanged) scheduleLayoutRestart();
+      if (activityTimer !== null && previousSettings.pulseRate !== nextSettings.pulseRate) {
+        scheduleNextActivity(activityEmitGapMs(nextSettings.pulseRate));
+      }
+      requestRender();
     }
 
     function handleControlsStart() {
@@ -1612,9 +1736,11 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       },
       setActivityEnabled,
       setSelectedNodeId,
+      updateSettings,
     };
+    updateSettings(settingsRef.current);
     requestRender();
-    if (activityIsEnabled) scheduleNextActivity(600);
+    if (activityIsEnabled && activityTimer === null) scheduleNextActivity(600);
 
     return () => {
       if (layoutWorker) {
@@ -1630,6 +1756,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       if (pointerFrame !== 0) cancelAnimationFrame(pointerFrame);
       if (activityFrame !== 0) cancelAnimationFrame(activityFrame);
       if (activityTimer !== null) clearTimeout(activityTimer);
+      if (layoutRestartTimer !== null) clearTimeout(layoutRestartTimer);
       runtimeRef.current = null;
       resizeObserver.disconnect();
       controls.removeEventListener("start", handleControlsStart);
@@ -1652,7 +1779,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [links, nodes, settings]);
+  }, [links, nodes]);
 
   return (
     <div ref={hostRef} className="relative h-full w-full overflow-hidden bg-background">

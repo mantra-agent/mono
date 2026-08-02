@@ -1540,8 +1540,10 @@ function GraphTab({
     key: keyof MemoryGraphSettings,
     value: number,
   ) => {
-    setGraphSettings((current) => normalizeMemoryGraphSettings({ ...current, [key]: value }));
-  }, []);
+    const next = normalizeMemoryGraphSettings({ ...graphSettings, [key]: value });
+    setGraphSettings(next);
+    setAppliedGraphSettings(next);
+  }, [graphSettings]);
 
   const saveGraphSettings = useCallback((settings: MemoryGraphSettings) => {
     const snapshot = normalizeMemoryGraphSettings(settings);

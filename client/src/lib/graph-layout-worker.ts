@@ -46,6 +46,7 @@ interface LayoutSettings {
 
 interface InitMessage {
   type: "init";
+  revision: number;
   nodes: LayoutNode[];
   links: LayoutLinkInput[];
   settings: LayoutSettings;
@@ -62,6 +63,7 @@ let simulation: Simulation<LayoutNode> | null = null;
 let nodes: LayoutNode[] = [];
 let tickTimer: ReturnType<typeof setTimeout> | null = null;
 let lastPostAt = 0;
+let activeRevision = 0;
 
 function stop() {
   if (tickTimer !== null) {
@@ -80,7 +82,7 @@ function postPositions(final: boolean) {
     positions[index * 3 + 1] = node.y;
     positions[index * 3 + 2] = node.z;
   }
-  ctx.postMessage({ type: final ? "end" : "positions", positions }, [positions.buffer]);
+  ctx.postMessage({ type: final ? "end" : "positions", revision: activeRevision, positions }, [positions.buffer]);
 }
 
 function step() {
@@ -105,6 +107,7 @@ function step() {
 
 function start(message: InitMessage) {
   stop();
+  activeRevision = message.revision;
   nodes = message.nodes.map((node) => ({ ...node }));
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const links: SimLink[] = message.links
