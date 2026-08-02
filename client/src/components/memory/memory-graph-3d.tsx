@@ -134,6 +134,10 @@ const LARGE_GRAPH_THRESHOLD = 1_000;
 const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
 const MIN_NODE_HIT_RADIUS_PX = 12;
+const NODE_RENDER_ORDER = 0;
+const RESTING_LINK_RENDER_ORDER = 1;
+const FOCUSED_LINK_RENDER_ORDER = 2;
+const ACTIVITY_RENDER_ORDER = 3;
 const ACTIVITY_RECENCY_THRESHOLD = 0.25;
 const ACTIVITY_PACKET_BEADS = 5;
 const ACTIVITY_PACKET_DURATION_MS = 1_150;
@@ -578,18 +582,22 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       recencyToWhiteMix(node.recency, settings.recencyBrightness),
     ));
     const nodeGeometry = new THREE.IcosahedronGeometry(1, 2);
-    const visibility = new Float32Array(sceneNodes.length);
-    const emphasis = new Float32Array(sceneNodes.length);
-    const impact = new Float32Array(sceneNodes.length);
-    const tints = new Float32Array(sceneNodes.length * 3);
+    const nodeVisibility = new Float32Array(sceneNodes.length);
+    const nodeEmphasis = new Float32Array(sceneNodes.length);
+    const nodeImpact = new Float32Array(sceneNodes.length);
+    const nodeTints = new Float32Array(sceneNodes.length * 3);
+    const renderedVisibility = new Float32Array(sceneNodes.length);
+    const renderedEmphasis = new Float32Array(sceneNodes.length);
+    const renderedImpact = new Float32Array(sceneNodes.length);
+    const renderedTints = new Float32Array(sceneNodes.length * 3);
     sceneNodes.forEach((node, index) => {
-      visibility[index] = recencyToVisibility(node.recency, settings.recencyBrightness);
-      (node.pendingDeletion ? deletionColor : nodeBaseColors[index]).toArray(tints, index * 3);
+      nodeVisibility[index] = recencyToVisibility(node.recency, settings.recencyBrightness);
+      (node.pendingDeletion ? deletionColor : nodeBaseColors[index]).toArray(nodeTints, index * 3);
     });
-    nodeGeometry.setAttribute("aVisibility", new THREE.InstancedBufferAttribute(visibility, 1));
-    nodeGeometry.setAttribute("aEmphasis", new THREE.InstancedBufferAttribute(emphasis, 1));
-    nodeGeometry.setAttribute("aImpact", new THREE.InstancedBufferAttribute(impact, 1));
-    nodeGeometry.setAttribute("aTint", new THREE.InstancedBufferAttribute(tints, 3));
+    nodeGeometry.setAttribute("aVisibility", new THREE.InstancedBufferAttribute(renderedVisibility, 1));
+    nodeGeometry.setAttribute("aEmphasis", new THREE.InstancedBufferAttribute(renderedEmphasis, 1));
+    nodeGeometry.setAttribute("aImpact", new THREE.InstancedBufferAttribute(renderedImpact, 1));
+    nodeGeometry.setAttribute("aTint", new THREE.InstancedBufferAttribute(renderedTints, 3));
 
     const nodeMaterial = new THREE.ShaderMaterial({
       vertexShader: nodeVertexShader,
@@ -606,6 +614,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const nodeMesh = new THREE.InstancedMesh(nodeGeometry, nodeMaterial, sceneNodes.length);
     nodeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     nodeMesh.frustumCulled = false;
+    nodeMesh.renderOrder = NODE_RENDER_ORDER;
     scene.add(nodeMesh);
 
     const curveSegments = settings.linkComplexity;
@@ -646,6 +655,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       // dark against the canvas. Hover still reads brighter via focusedLinkMaterial.
       opacity: 0.68,
       linewidth: 1,
+      depthTest: true,
       depthWrite: false,
       resolution: new THREE.Vector2(host.clientWidth, host.clientHeight),
     });
@@ -654,6 +664,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       transparent: true,
       opacity: 0.9,
       linewidth: 2.5,
+      depthTest: true,
       depthWrite: false,
       resolution: new THREE.Vector2(host.clientWidth, host.clientHeight),
     });
@@ -661,6 +672,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const focusedLinkLines = new LineSegments2(focusedLinkGeometry, focusedLinkMaterial);
     linkLines.frustumCulled = false;
     focusedLinkLines.frustumCulled = false;
+    linkLines.renderOrder = RESTING_LINK_RENDER_ORDER;
+    focusedLinkLines.renderOrder = FOCUSED_LINK_RENDER_ORDER;
     focusedLinkLines.visible = false;
     scene.add(linkLines);
     scene.add(focusedLinkLines);
@@ -674,6 +687,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       transparent: true,
       opacity: 0.92,
       blending: THREE.AdditiveBlending,
+      depthTest: true,
       depthWrite: false,
     });
     const activityMesh = new THREE.InstancedMesh(
@@ -684,6 +698,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     activityMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     activityMesh.count = 0;
     activityMesh.frustumCulled = false;
+    activityMesh.renderOrder = ACTIVITY_RENDER_ORDER;
     scene.add(activityMesh);
 
     const transform = new THREE.Object3D();
@@ -691,6 +706,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const pointer = new THREE.Vector2();
     const projected = new THREE.Vector3();
     const cameraSpace = new THREE.Vector3();
+    const nodeInstanceOrder = sceneNodes.map((_, index) => index);
+    const nodeDepths = new Float32Array(sceneNodes.length);
     let selectedIndex = selectedNodeIdRef.current == null ? null : nodeIndex.get(selectedNodeIdRef.current) ?? null;
     let hoveredIndex: number | null = null;
     let focusNeighborIndices = new Set<number>();
@@ -699,6 +716,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let pointerDown = { x: 0, y: 0 };
     let pendingPointer = { x: 0, y: 0 };
     let cameraInteractionActive = false;
+    let nodeDepthOrderDirty = true;
     let renderFrame = 0;
     let pointerFrame = 0;
     let activityFrame = 0;
@@ -746,14 +764,55 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       return focusIndex == null ? 1 : 0.94;
     }
 
-    function syncNodeMatrices() {
-      sceneNodes.forEach((node, index) => {
+    function syncNodeTransforms() {
+      nodeInstanceOrder.forEach((nodeIndex, renderSlot) => {
+        const node = sceneNodes[nodeIndex];
         transform.position.set(node.x, node.y, node.z);
-        transform.scale.setScalar(node.radius * getNodeScale(index));
+        transform.scale.setScalar(node.radius * getNodeScale(nodeIndex));
         transform.updateMatrix();
-        nodeMesh.setMatrixAt(index, transform.matrix);
+        nodeMesh.setMatrixAt(renderSlot, transform.matrix);
       });
       nodeMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    function syncNodeAppearanceAttributes() {
+      nodeInstanceOrder.forEach((nodeIndex, renderSlot) => {
+        renderedVisibility[renderSlot] = nodeVisibility[nodeIndex];
+        renderedEmphasis[renderSlot] = nodeEmphasis[nodeIndex];
+        renderedTints.set(nodeTints.subarray(nodeIndex * 3, nodeIndex * 3 + 3), renderSlot * 3);
+      });
+      (nodeGeometry.getAttribute("aVisibility") as THREE.InstancedBufferAttribute).needsUpdate = true;
+      (nodeGeometry.getAttribute("aEmphasis") as THREE.InstancedBufferAttribute).needsUpdate = true;
+      (nodeGeometry.getAttribute("aTint") as THREE.InstancedBufferAttribute).needsUpdate = true;
+    }
+
+    function syncNodeImpactAttribute() {
+      nodeInstanceOrder.forEach((nodeIndex, renderSlot) => {
+        renderedImpact[renderSlot] = nodeImpact[nodeIndex];
+      });
+      (nodeGeometry.getAttribute("aImpact") as THREE.InstancedBufferAttribute).needsUpdate = true;
+    }
+
+    function sortNodeInstancesByDepth() {
+      camera.updateMatrixWorld();
+      sceneNodes.forEach((node, index) => {
+        cameraSpace.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
+        nodeDepths[index] = -cameraSpace.z;
+      });
+      nodeInstanceOrder.sort((leftIndex, rightIndex) => (
+        nodeDepths[rightIndex] - nodeDepths[leftIndex]
+        || sceneNodes[leftIndex].id - sceneNodes[rightIndex].id
+      ));
+      syncNodeTransforms();
+      syncNodeAppearanceAttributes();
+      syncNodeImpactAttribute();
+      nodeDepthOrderDirty = false;
+    }
+
+    function syncNodeDepthOrderIfNeeded(): boolean {
+      if (!nodeDepthOrderDirty) return false;
+      sortNodeInstancesByDepth();
+      return true;
     }
 
     function writeLinkCurve(positions: Float32Array, link: SceneLink, linkIndex: number, captureActivityPath = false, arcScale = 1) {
@@ -941,7 +1000,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const neighbor = focusNeighborIndices.has(index);
         const searchMatch = highlightedNodeIdsRef.current.has(node.id);
         const unrelated = focusIndex != null && !isFocus && !neighbor;
-        emphasis[index] = isSelected || isFocus ? 1 : neighbor ? 0.58 : searchMatch ? 0.72 : unrelated ? -0.35 : 0;
+        nodeEmphasis[index] = isSelected || isFocus ? 1 : neighbor ? 0.58 : searchMatch ? 0.72 : unrelated ? -0.35 : 0;
         const tint = isSelected
           ? selectedColor
           : node.pendingDeletion
@@ -949,15 +1008,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
             : isFocus || neighbor || searchMatch
               ? selectedColor
               : nodeBaseColors[index];
-        tint.toArray(tints, index * 3);
-        visibility[index] = isSelected
+        tint.toArray(nodeTints, index * 3);
+        nodeVisibility[index] = isSelected
           ? 1
           : recencyToVisibility(node.recency, settings.recencyBrightness) * (unrelated ? 0.62 : 1);
       });
-      syncNodeMatrices();
-      (nodeGeometry.getAttribute("aVisibility") as THREE.InstancedBufferAttribute).needsUpdate = true;
-      (nodeGeometry.getAttribute("aEmphasis") as THREE.InstancedBufferAttribute).needsUpdate = true;
-      (nodeGeometry.getAttribute("aTint") as THREE.InstancedBufferAttribute).needsUpdate = true;
+      syncNodeTransforms();
+      syncNodeAppearanceAttributes();
     }
 
     function neighborIndicesOf(index: number | null): Set<number> {
@@ -1083,13 +1140,13 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     function clearActivityVisuals() {
       activePackets.length = 0;
       activeImpacts.length = 0;
-      impact.fill(0);
+      nodeImpact.fill(0);
       nodeAfterglow.fill(0);
       linkAfterglow.fill(0);
       afterglowUpdatedAt = 0;
       activityMesh.count = 0;
       syncLinkColors();
-      (nodeGeometry.getAttribute("aImpact") as THREE.InstancedBufferAttribute).needsUpdate = true;
+      syncNodeImpactAttribute();
       if (activityFrame !== 0) cancelAnimationFrame(activityFrame);
       activityFrame = 0;
       requestRender();
@@ -1214,7 +1271,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       afterglowUpdatedAt = hasAfterglow ? now : 0;
       syncLinkColors();
 
-      impact.set(nodeAfterglow);
+      nodeImpact.set(nodeAfterglow);
       for (let impactIndex = activeImpacts.length - 1; impactIndex >= 0; impactIndex -= 1) {
         const currentImpact = activeImpacts[impactIndex];
         const progress = (now - currentImpact.startedAt) / ACTIVITY_IMPACT_DURATION_MS;
@@ -1227,12 +1284,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           ACTIVITY_IMPACT_HOLD_RATIO,
           1,
         );
-        impact[currentImpact.nodeIndex] = Math.min(
+        nodeImpact[currentImpact.nodeIndex] = Math.min(
           1,
-          impact[currentImpact.nodeIndex] + flashStrength,
+          nodeImpact[currentImpact.nodeIndex] + flashStrength,
         );
       }
-      (nodeGeometry.getAttribute("aImpact") as THREE.InstancedBufferAttribute).needsUpdate = true;
+      if (!syncNodeDepthOrderIfNeeded()) syncNodeImpactAttribute();
       renderer.render(scene, camera);
 
       if (activePackets.length > 0 || activeImpacts.length > 0 || hasAfterglow) {
@@ -1263,6 +1320,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function renderNow() {
       renderFrame = 0;
+      syncNodeDepthOrderIfNeeded();
       syncLabels();
       syncLinkVisibility();
       renderer.render(scene, camera);
@@ -1322,7 +1380,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       pointer.x = ((pendingPointer.x - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((pendingPointer.y - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      const exactIndex = raycaster.intersectObject(nodeMesh, false)[0]?.instanceId ?? null;
+      const renderSlot = raycaster.intersectObject(nodeMesh, false)[0]?.instanceId ?? null;
+      const exactIndex = renderSlot == null ? null : nodeInstanceOrder[renderSlot] ?? null;
       return exactIndex ?? pickProjectedNode(rect);
     }
 
@@ -1401,7 +1460,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         node.z = positions[index * 3 + 2];
       }
       simulationTick += 1;
-      syncNodeMatrices();
+      sortNodeInstancesByDepth();
       syncLinkPositions();
       syncLinkVisibility();
       if (simulationTick % LABEL_POSITION_TICKS === 0) syncLabels();
@@ -1438,7 +1497,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         .velocityDecay(0.3);
       simulation.on("tick", () => {
         simulationTick += 1;
-        syncNodeMatrices();
+        sortNodeInstancesByDepth();
         syncLinkPositions();
         syncLinkVisibility();
         if (simulationTick % LABEL_POSITION_TICKS === 0) syncLabels();
@@ -1501,6 +1560,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function handleControlsChange() {
+      nodeDepthOrderDirty = true;
       syncCameraClippingPlanes(camera, controls.target);
       requestRender();
     }
@@ -1521,9 +1581,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     resize();
-    syncNodeMatrices();
-    syncLinkPositions();
     fitCamera(camera, controls, sceneNodes);
+    sortNodeInstancesByDepth();
+    syncLinkPositions();
     syncFocusNeighborhood();
     // Durable performance instrumentation for the named budgets. The heavy force layout
     // now runs in the worker, so this synchronous init task should stay under budget.
