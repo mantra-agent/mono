@@ -9,7 +9,7 @@
 
 **Zero Interface.** The best possible interface is no interface. The second best is the theoretical minimum that matters at any given moment. Not a dashboard, not a form. A dynamic surface, generated just-in-time for whatever matters most. Every design decision is measured against this: does it move toward the theoretical minimum, or does it add surface area the user must manage?
 
-**Dark Canvas, Cards Where They Earn It.** The background is the interface. `bg-background` (pure black in dark mode) is the default canvas. Content-consumption UIs (chat, reading, streaming) sit directly on the canvas without wrappers. Structured data pages (Brain, Settings, Config) use `bg-card` Cards to group related content, creating visual separation from the canvas. Cards must always contain their content: overflow is a bug, not a style choice. Add `overflow-hidden` and `min-w-0` to every Card. Borders are structural separators (`border-b border-border/20`), not decoration. The rule: frameless is the starting point, cards are welcomed when they aid grouping, but a Card should never be black (that's the canvas) and should never leak its content.
+**Dark Canvas, Trees for UI, Cards for Modals.** The background is the interface. `bg-background` (pure black in dark mode) is the default canvas. Route and embedded UIs sit directly on that canvas and organize objects through the canonical Hierarchy Tree: compact rows, nesting, disclosure, selection, and structural separators. Do not use Cards as page, dashboard, settings, detail, or object-grouping containers. The Card primitive is reserved for modal decision surfaces, where it must use `bg-card`, `overflow-hidden`, and `min-w-0`. Borders are structural separators (`border-b border-border/20`), not decoration.
 
 **Clarity Above All.** Remove everything that isn't essential. Every element on screen earns its place through utility, orientation, or delight. Maximize Tufte's data-ink ratio. If removing an element changes nothing about comprehension, it shouldn't be there.
 
@@ -171,16 +171,16 @@ colors:
 
 ### Background color system
 
-Background color is structural first, semantic only when the surface is literally communicating state. Do not tint panels because they feel important. The default surface is the page canvas (`bg-background`). Where cards belong depends on the UI type:
+Background color is structural first, semantic only when the surface is literally communicating state. Do not tint panels because they feel important. The default and required page surface is the canvas (`bg-background`).
 
-- **Content-consumption UIs** (chat, reading, streaming): Content sits directly on the canvas. Cards are the exception, used only for discrete interactive units.
-- **Structured data pages** (Brain, Settings, Config, dashboards): Cards wrap content groups to create visual separation from the canvas. Each logical section gets a Card.
-- **All Cards**: Must use `bg-card` (never black/`bg-background`), must contain their content with `overflow-hidden` and `min-w-0`. Overflow escaping a Card boundary is always a bug.
+- **Route and embedded UIs**: Content sits directly on the canvas. Object sets and structured data use the canonical Hierarchy Tree, not Cards.
+- **Grouping**: Use tree sections, indentation, quiet rails, row expansion, and structural borders. Do not create a Card merely to establish visual separation.
+- **Cards**: Reserved for modal decision surfaces only. Modal Cards use `bg-card` (never black/`bg-background`) and contain their content with `overflow-hidden` and `min-w-0`.
 
 | Role | Token/class | Use | Forbidden |
 |---|---|---|---|
 | Page canvas | `background` / `bg-background` | Full page, root panels, terminal/log canvases. **Default surface for all content.** | — |
-| Grouped surface | `card` / `bg-card` | Content groups on structured data pages, discrete interactive units, modal bodies. Always pair with `overflow-hidden min-w-0`. | Using `bg-background` for a card (cards must be visually distinct from canvas) |
+| Modal decision surface | `card` / `bg-card` | Isolated modal workflow moments only. Always pair with `overflow-hidden min-w-0`. | Using Cards for routes, dashboards, settings, detail pages, object groups, or embedded panels |
 | Passive inset | `muted` / `bg-muted` | Code, metadata wells, disabled zones, quiet nested areas | Selected state, CTA emphasis, alerts |
 | Hover/selected chrome | `accent` / `bg-accent` | Transient hover, selected navigation rows, neutral UI chrome | Persistent semantic callouts |
 | Primary CTA fill | `cta` / `bg-cta` | The one primary action button or equivalent decisive control | Background tints, panels, generic icons, badges, decorative examples |
@@ -199,8 +199,8 @@ Audit finding: the client currently has many semantic background usages (`bg-pri
 - Use CTA directly as the interactive text color for secondary actions, textual links, and resolved reference links. Do not maintain a separate link color family.
 - **Screen:** the full route/page or modal-level workflow.
 - **Viewport:** the currently visible part of that screen. Never show two primary CTAs in the same viewport.
-- **Region:** a contained module, card, or panel inside a screen. Regions may have secondary, outline, ghost, or text actions, but they do not earn their own CTA unless they are the whole decision surface.
-- **Decision surface:** an isolated workflow moment where the user chooses the next meaningful action. A decision surface can be a full page, modal, or focused stepper, but not every card on a dashboard.
+- **Region:** a contained module or tree branch inside a screen. Regions may have secondary, outline, ghost, or text actions, but they do not earn their own CTA unless they are the whole decision surface.
+- **Decision surface:** an isolated workflow moment where the user chooses the next meaningful action. It can be a full page, modal, or focused stepper; only the modal form may use a Card.
 - Do not use CTA color for category badges, decorative icons, charts, secondary buttons, selected tabs, generic active states, or status indicators.
 - If more than one element uses the CTA hue, the screen must identify the one true action and demote the rest to foreground, outline, muted, secondary, or text treatment.
 - Focus rings may use the CTA hue because focus is transient interaction feedback, not persistent visual competition.
@@ -231,7 +231,7 @@ Audit finding: the client currently has many semantic background usages (`bg-pri
 
 ### Color proportions
 
-- **60% Neutral** — Background, cards, surfaces (`background`, `card`, `muted`). The quiet canvas.
+- **60% Neutral** — Background, modal Cards, and muted surfaces (`background`, `card`, `muted`). The quiet canvas.
 - **30% Supporting** — Secondary surfaces, borders, navigation chrome (`secondary`, `accent`, `border`, sidebar). Creates grouping without competing.
 - **10% Accent** — The protected CTA, true warnings/errors, and necessary status. The color that means "look here."
 - If accent color exceeds ~10-15% of visible pixels, the interface is over-saturated.
@@ -262,7 +262,7 @@ typography:
   weights:
     normal:   400       # body text, descriptions
     medium:   500       # labels, nav items, table headers
-    semibold: 600       # emphasis, card titles, section headers
+    semibold: 600       # emphasis, modal titles, section headers
     bold:     700       # page headings only
 
   line-height:
@@ -387,7 +387,7 @@ components:
 
 Hierarchy Tree is the primary modality for surfacing UI objects.
 
-Use it before cards, tables, loose lists, or bespoke layouts when a screen needs to surface many objects with relationships, completion, expansion, selection, or row actions.
+Use it for every route or embedded UI that surfaces objects or structured data. Tables and bespoke layouts require a constraint the tree cannot represent truthfully; Cards are not an alternative outside modals.
 
 ```yaml
 hierarchy-tree:
@@ -419,7 +419,7 @@ hierarchy-tree:
 
 #### Hierarchy Tree rules
 
-- For new root pages, mirror the SessionMenu interaction grammar rather than inventing a page-local list, card grid, or table.
+- For new root pages and embedded object UIs, mirror the SessionMenu interaction grammar rather than inventing a page-local list, card grid, dashboard panel, or table.
 - Search comes first.
 - Creation sits directly under search when creation is a primary action. Use the blue `+ New Thing` row as the persistent primary CTA.
 - Use collapsible sections to reduce scanning cost.
@@ -590,9 +590,9 @@ Scrollbars are structural. They should indicate containment and scrollability wi
 
 Avoid these unless Ray explicitly chooses a local exception:
 
-- Decorative cards that add no information hierarchy.
+- Cards anywhere outside modal decision surfaces.
 - Generic layout anatomy diagrams in production docs.
-- Large object sets split across cards, tables, and lists when a tree would unify them.
+- Route, dashboard, settings, detail, or embedded-object UIs split across cards, tables, and loose lists instead of one coherent tree.
 - `max-w-* mx-auto` on page shells.
 - Non-canonical references.
 - Hover-only actions with no keyboard path.
