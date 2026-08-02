@@ -36,6 +36,7 @@ import {
   type PublishCommit,
 } from "../github-pr";
 import { storage } from "../../storage";
+import { requireActiveBuild } from "../../mods/build-route-access";
 interface PublishCommitHead {
   sha: string;
   shortSha: string;
@@ -86,6 +87,8 @@ function handleError(res: Response, err: unknown, fallback = "Railway request fa
 }
 
 export function registerRailwayRoutes(app: Express) {
+  app.use("/api/railway", requireAuth, requireActiveBuild);
+
   const environmentParamsSchema = z.object({
     platformEnvironmentId: z.coerce.number().int().positive(),
   });

@@ -40,6 +40,7 @@ export * from "./models/agendas";
 export * from "./models/meeting-audio";
 export * from "./models/life-addressing";
 export * from "./models/mods";
+export * from "./models/build-deployments";
 export * from "./models/runtime";
 export * from "./models/outbox";
 

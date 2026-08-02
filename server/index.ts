@@ -371,6 +371,8 @@ app.use((req, res, next) => {
   await ensureLifeAddressingSchema(pool);
   const { ensureModPlatformSchema } = await import("./mod-schema");
   await ensureModPlatformSchema(pool);
+  const { ensureBuildDeploymentSchema } = await import("./build-deployment-schema");
+  await ensureBuildDeploymentSchema(pool);
   // Validate the code-owned first-party Mod registry before accepting requests.
   // First-party key collisions and dangling references are deployment defects
   // (spec §6.1) and must fail loudly. Pure and additive — nothing renders from
@@ -752,6 +754,14 @@ app.use((req, res, next) => {
       };
       setTimeout(runVnextSourcePoller, 30_000).unref();
       setInterval(runVnextSourcePoller, VNEXT_SOURCE_POLLER_INTERVAL_MS).unref();
+
+      import("./mods/build-deployment-observer")
+        .then(({ startBuildDeploymentObserver }) => startBuildDeploymentObserver())
+        .catch((error) => {
+          serverLog.error("Build deployment observer unavailable", {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        });
 
       // Meeting auto-join scheduler: joins the Recall.ai bot to calendar
       // events whose per-event agent toggle is enabled, at start time.

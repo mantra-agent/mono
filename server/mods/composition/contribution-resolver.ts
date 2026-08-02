@@ -57,6 +57,7 @@ import {
   type ResolvedWidget,
 } from "@shared/models/product-composition";
 import { resolveConnectorReadiness, type ConnectorReadiness } from "./connector-readiness";
+import { isModPlatformEnabled } from "../mod-platform-config";
 
 const log = createLogger("mod-composition-resolver");
 
@@ -116,7 +117,7 @@ const REGISTRY_VERSION: string = (() => {
 })();
 
 /** Minimal x.y.z semver "a <= b" comparison for Core compatibility checks. */
-function semverLte(a: string, b: string): boolean {
+export function semverLte(a: string, b: string): boolean {
   const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
   const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < 3; i++) {
@@ -203,6 +204,7 @@ function entitlementIsActive(row: ModEntitlementRow | undefined, now: Date): boo
 /** A Mod is active iff registered ∩ Core-compatible ∩ entitled ∩ installation active. */
 function computeActiveMods(inputs: CompositionInputs, now: Date): Set<ModKey> {
   const active = new Set<ModKey>();
+  if (!isModPlatformEnabled()) return active;
   const registry = getModRegistry();
   for (const def of registry.mods) {
     const compatible = semverLte(def.compatibility.minimumCoreVersion, CORE_VERSION);
@@ -520,6 +522,7 @@ function cacheKey(principal: Principal, inputs: CompositionInputs, modality: Con
     connectors: [...inputs.connectorReadiness.entries()].map(([k, v]) => `${k}:${v}`).sort(),
     modality,
     registry: REGISTRY_VERSION,
+    modPlatformEnabled: isModPlatformEnabled(),
   };
   return createHash("sha256").update(JSON.stringify(activeInputs)).digest("hex").slice(0, 32);
 }

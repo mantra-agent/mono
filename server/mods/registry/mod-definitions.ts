@@ -88,6 +88,9 @@ const build: ModDefinition = {
       timerTemplateRef("build.timer.security-sentinel-weekly", "build-security-sentinel-weekly"),
       timerTemplateRef("build.timer.post-acceptance-regression", "post-build-regression"),
     ],
+    widgets: [
+      widget("build.widget.deployment-inbox", "home.inbox", "inbox_item", "build-deployments", 1),
+    ],
     actions: actionsForOwner("build"),
   },
 };

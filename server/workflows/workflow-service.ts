@@ -54,6 +54,7 @@ import { canonicalExecutionArtifactAddress } from "../execution-provenance-addre
 import { linkWorkflowArtifactProduced } from "../execution-provenance-links";
 import { getActiveBuildRegressionResource } from "../mods/build-managed-resources";
 import { timerStorage } from "../file-storage/timers";
+import { hasActiveBuildAccess } from "../mods/build-access";
 
 const log = createLogger("WorkflowService");
 
@@ -771,6 +772,14 @@ async function monitorWorkflowChild(
 
 export const BUILD_WORKFLOW_TEMPLATE_ID = "build-v1";
 
+async function assertBuildWorkflowAccess(templateId: string): Promise<void> {
+  if (templateId !== BUILD_WORKFLOW_TEMPLATE_ID) return;
+  const principal = getCurrentPrincipal();
+  if (!principal || !(await hasActiveBuildAccess(principal))) {
+    throw new Error("Build Mod is inactive; build-v1 Workflow mutation is blocked");
+  }
+}
+
 const buildDefinition = workflowTemplateDefinitionSchema.parse({
   stages: [
     {
@@ -1142,6 +1151,7 @@ export async function createWorkflowRun(input: {
   createdBySessionId?: string;
 }): Promise<WorkflowRunDetail> {
   const templateId = input.templateId || BUILD_WORKFLOW_TEMPLATE_ID;
+  await assertBuildWorkflowAccess(templateId);
   const template = await getWorkflowTemplate(templateId) || (templateId === BUILD_WORKFLOW_TEMPLATE_ID ? await seedBuildWorkflowTemplate() : null);
   if (!template) throw new Error(`Workflow template not found: ${templateId}`);
   if (!input.title?.trim()) throw new Error("Workflow title is required");
@@ -1312,6 +1322,7 @@ export async function recordTransition(input: { workflowRunId: string; fromStage
 export async function startWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
   const detail = await getWorkflowRun(runId);
   if (!detail) throw new Error(`Workflow run not found: ${runId}`);
+  await assertBuildWorkflowAccess(detail.template.id);
   if (!["draft", "paused", "blocked"].includes(detail.run.status)) throw new Error(`Workflow run status is ${detail.run.status}; cannot start.`);
   await assertNoOpenGate(runId);
 
@@ -1355,6 +1366,7 @@ function stageFor(detail: WorkflowRunDetail, stageKey: string) {
 export async function startStageAttempt(runId: string, stageKey?: string, options: { childSessionId?: string; linkedPlanId?: string; inputContext?: unknown; createdBySessionId?: string; spawnChildSession?: boolean } = {}): Promise<WorkflowStageAttempt> {
   const initialDetail = await getWorkflowRun(runId);
   if (!initialDetail) throw new Error(`Workflow run not found: ${runId}`);
+  await assertBuildWorkflowAccess(initialDetail.template.id);
   await assertNoOpenGate(runId);
   const key = stageKey || initialDetail.run.currentStageKey;
   if (!key) throw new Error(`Workflow run ${runId} has no current stage.`);
@@ -1509,6 +1521,7 @@ export async function completeStageAttempt(workflowRunId: string, attemptId: num
   if (!attempt) throw new Error(`Stage attempt ${attemptId} not found in workflow run ${workflowRunId}`);
   const beforeDetail = await getWorkflowRun(workflowRunId);
   if (!beforeDetail) throw new Error(`Workflow run not found: ${workflowRunId}`);
+  await assertBuildWorkflowAccess(beforeDetail.template.id);
   if (attempt.status !== "active" || attempt.completedAt) {
     log.log(`completeStageAttempt received replay for terminal attempt ${attemptId}; returning current workflow state.`);
     return beforeDetail;

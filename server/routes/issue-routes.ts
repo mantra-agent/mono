@@ -4,6 +4,7 @@ import { storage } from "../storage";
 import { documentStorage } from "../memory";
 import { requireAuth, requireAdmin } from "../auth";
 import { createLogger } from "../log";
+import { requireActiveBuild } from "../mods/build-route-access";
 
 const log = createLogger("IssueRoutes");
 
@@ -24,7 +25,7 @@ function generateIssueTitleSync(description?: string): string {
 }
 
 export function registerIssueRoutes(app: Express) {
-  app.use("/api/issues", requireAuth, requireAdmin);
+  app.use("/api/issues", requireAuth, requireActiveBuild, requireAdmin);
 
   app.post("/api/issues", async (req, res) => {
     try {
