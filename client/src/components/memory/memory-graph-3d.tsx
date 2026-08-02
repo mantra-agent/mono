@@ -811,9 +811,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     }
 
     function syncLinkPositions() {
-      // Base edges render as straight lines in the single GPU pass; only the focused
-      // neighborhood keeps curved, brighter links (syncFocusedLinkGeometry uses arcScale=1).
-      renderedLinks.forEach((link, linkIndex) => writeLinkCurve(linkPositions, link, linkIndex, true, 0));
+      renderedLinks.forEach((link, linkIndex) => {
+        writeLinkCurve(linkPositions, link, linkIndex, true, settings.linkBendFactor);
+      });
       const instanceStartAttr = linkGeometry.getAttribute("instanceStart");
       if (instanceStartAttr && "data" in instanceStartAttr) (instanceStartAttr as THREE.InterleavedBufferAttribute).data.needsUpdate = true;
     }
