@@ -3815,6 +3815,7 @@ export const chatFileStorage: IChatFileStorage = {
             data.endReason = "process_restart";
             data.errorSeverity = "warning";
             data.updatedAt = now;
+            data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
             const updated = await tx
               .update(documentStoreDocuments)
               .set({
@@ -3838,7 +3839,7 @@ export const chatFileStorage: IChatFileStorage = {
             if (updated.length !== 1) {
               throw new Error(`Locked chat document update failed: chat/${id}`);
             }
-            await replaceSessionSearchProjection(locked.id, data);
+            await enqueueSearchProjectionAfterCanonicalWrite(locked.id, data);
             invalidateSessionsCache({
               action: "updated",
               sessionId: id,
