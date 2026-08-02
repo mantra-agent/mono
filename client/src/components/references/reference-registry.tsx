@@ -3,6 +3,7 @@ import {
   Brain,
   Building2,
   CalendarDays,
+  Compass,
   ListTodo,
   Diamond,
   FileText,
