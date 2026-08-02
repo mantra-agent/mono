@@ -9,7 +9,6 @@ import * as path from "path";
 import {
   CANONICAL_AFFIRM_SKILL_ID,
   CANONICAL_DAILY_BRIEF_SKILL_ID,
-  CANONICAL_LEARNING_SKILL_ID,
   CANONICAL_REGRESSION_SKILL_ID,
   CANONICAL_SCAN_SKILL_ID,
 } from "./skill-identities";
@@ -174,7 +173,6 @@ export async function migrateLegacySkillPersonaPreferences(): Promise<void> {
 const CANONICAL_BUILTIN_SKILL_IDS: Readonly<Record<string, string>> = {
   affirm: CANONICAL_AFFIRM_SKILL_ID,
   "brief-daily": CANONICAL_DAILY_BRIEF_SKILL_ID,
-  learning: CANONICAL_LEARNING_SKILL_ID,
   regression: CANONICAL_REGRESSION_SKILL_ID,
 };
 
