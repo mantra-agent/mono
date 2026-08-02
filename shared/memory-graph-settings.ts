@@ -3,6 +3,8 @@ export interface MemoryGraphSettings {
   linkBendFactor: number;
   nodeRepulsionFactor: number;
   pulseRate: number;
+  pulseBrightness: number;
+  linkComplexity: number;
   linkBrightnessFactor: number;
   nodeBrightnessFactor: number;
   recencyBrightness: number;
@@ -28,6 +30,8 @@ export const MEMORY_GRAPH_SETTINGS_DEFAULTS: Readonly<MemoryGraphSettings> = {
   linkBendFactor: 1,
   nodeRepulsionFactor: 1,
   pulseRate: 1,
+  pulseBrightness: 1,
+  linkComplexity: 3,
   linkBrightnessFactor: 1,
   nodeBrightnessFactor: 2,
   recencyBrightness: 0.85,
@@ -38,10 +42,12 @@ export const MEMORY_GRAPH_SETTINGS_DEFAULTS: Readonly<MemoryGraphSettings> = {
 export const MEMORY_GRAPH_SETTING_DEFINITIONS: readonly MemoryGraphSettingDefinition[] = [
   { key: "linkAttractionFactor", label: "Link Attraction Factor", min: 0, max: 10, step: 0.05, precision: 2 },
   { key: "linkBendFactor", label: "Link Bend Factor", min: 0, max: 6, step: 0.05, precision: 2 },
-  { key: "nodeRepulsionFactor", label: "Node Repulsion Factor", min: 0, max: 10, step: 0.05, precision: 2 },
-  { key: "pulseRate", label: "Pulse Rate", min: 0.1, max: 20, step: 0.1, precision: 1 },
+  { key: "linkComplexity", label: "Link Complexity", min: 1, max: 12, step: 1, precision: 0 },
   { key: "linkBrightnessFactor", label: "Link Brightness Factor", min: 0.1, max: 10, step: 0.1, precision: 1 },
+  { key: "nodeRepulsionFactor", label: "Node Repulsion Factor", min: 0, max: 10, step: 0.05, precision: 2 },
   { key: "nodeBrightnessFactor", label: "Node Brightness Factor", min: 0.1, max: 10, step: 0.1, precision: 1 },
+  { key: "pulseRate", label: "Pulse Rate", min: 0.1, max: 20, step: 0.1, precision: 1 },
+  { key: "pulseBrightness", label: "Pulse Brightness", min: 0, max: 2, step: 0.05, precision: 2 },
   { key: "recencyBrightness", label: "Recency Brightness", min: 0.22, max: 1, step: 0.01, precision: 2 },
   { key: "smallestNode", label: "Smallest Node", min: 0.5, max: 30, step: 0.5, precision: 1 },
   { key: "largestNode", label: "Largest Node", min: 5, max: 120, step: 1, precision: 0 },
