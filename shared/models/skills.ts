@@ -22,7 +22,7 @@ export type SkillInputType = typeof skillInputTypes[number];
 export const skillCategories = ["memory", "thinking", "chat", "goals", "people", "projects", "strategy", "reflection", "development", "other"] as const;
 export type SkillCategory = typeof skillCategories[number];
 
-export const checklistKinds = ["judgment", "tool_invoked"] as const;
+export const checklistKinds = ["judgment", "tool_invoked", "child_skill_invoked"] as const;
 export type ChecklistKind = typeof checklistKinds[number];
 
 export interface ChecklistItem {
@@ -38,6 +38,9 @@ export interface ChecklistItem {
   /** Optional action discriminator for kind "tool_invoked". When present, the
    * run must successfully invoke this exact tool action, not merely the tool. */
   action?: string;
+  /** Skill name for kind "child_skill_invoked". The gate passes only when an
+   * exact, freshly spawned child skill_run linked to this parent succeeds. */
+  skill?: string;
 }
 
 export interface CheckResult {
@@ -57,8 +60,14 @@ export const checklistItemSchema = z.object({
   kind: z.enum(checklistKinds).optional(),
   tool: z.string().min(1).optional(),
   action: z.string().min(1).optional(),
-}).refine((item) => item.kind !== "tool_invoked" || typeof item.tool === "string", {
-  message: 'checklist items with kind "tool_invoked" require a tool name',
+  skill: z.string().min(1).optional(),
+}).superRefine((item, ctx) => {
+  if (item.kind === "tool_invoked" && typeof item.tool !== "string") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'checklist items with kind "tool_invoked" require a tool name' });
+  }
+  if (item.kind === "child_skill_invoked" && typeof item.skill !== "string") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'checklist items with kind "child_skill_invoked" require a skill name' });
+  }
 });
 
 export const skills = pgTable("skills", {
@@ -140,12 +149,16 @@ export const skillRuns = pgTable("skill_runs", {
   comparativeWinner: text("comparative_winner"),
   comparativeReason: text("comparative_reason"),
   failureReason: text("failure_reason"),
+  parentSessionId: text("parent_session_id"),
+  parentSkillRunId: integer("parent_skill_run_id"),
+  parentToolCallId: text("parent_tool_call_id"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
   vaultId: text("vault_id"),
 }, (table) => [
   index("idx_skill_runs_owner_started").on(table.ownerUserId, table.startedAt),
   index("idx_skill_runs_account_started").on(table.accountId, table.startedAt),
+  index("idx_skill_runs_parent_lineage").on(table.parentSkillRunId, table.parentToolCallId, table.skillName),
 ]);
 
 export type SkillRun = typeof skillRuns.$inferSelect;

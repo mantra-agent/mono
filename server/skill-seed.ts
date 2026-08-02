@@ -2,7 +2,7 @@ import { createLogger } from "./log";
 import { db } from "./db";
 import { getPostgresErrorDetails } from "./postgres-errors";
 import { skills, libraryPages, personas, skillPersonaPreferences } from "@shared/schema";
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { BUILTIN_SKILL_DEFAULTS, type SkillDefault } from "./skill-defaults";
 import * as fs from "fs";
 import * as path from "path";
@@ -187,6 +187,7 @@ function builtinSkillDefinitionPatch(def: (typeof BUILTIN_SKILL_DEFAULTS)[number
     whenToUse: def.whenToUse ?? `Used for ${def.category} operations`,
     outputSpec: def.outputSpec ?? "See process instructions",
     checklist: def.checklist ?? [],
+    scoreThreshold: def.scoreThreshold ?? null,
     version: def.version || "1.0",
     author: def.author || "system",
     status: "active",
@@ -386,15 +387,33 @@ export async function seedBuiltinSkills(): Promise<void> {
         }
       }
 
+      const canonicalId = CANONICAL_BUILTIN_SKILL_IDS[def.name];
       let [existing] = await db
         .select({
           id: skills.id,
+          name: skills.name,
+          scope: skills.scope,
           author: skills.author,
           customized: skills.customized,
           version: skills.version,
         })
         .from(skills)
-        .where(and(eq(skills.scope, "global"), eq(skills.name, def.name)));
+        .where(
+          canonicalId
+            ? or(
+                and(eq(skills.scope, "global"), eq(skills.name, def.name)),
+                eq(skills.id, canonicalId),
+              )
+            : and(eq(skills.scope, "global"), eq(skills.name, def.name)),
+        );
+
+      if (existing && (existing.scope !== "global" || existing.name !== def.name)) {
+        log.warn(
+          `Skipped builtin skill "${def.name}": canonical id ${canonicalId} is occupied by ${existing.scope} skill "${existing.name}"`,
+        );
+        errored++;
+        continue;
+      }
 
       if (existing) {
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -435,12 +454,25 @@ export async function seedBuiltinSkills(): Promise<void> {
           [existing] = await db
             .select({
               id: skills.id,
+              name: skills.name,
+              scope: skills.scope,
               author: skills.author,
               customized: skills.customized,
               version: skills.version,
             })
             .from(skills)
-            .where(and(eq(skills.scope, "global"), eq(skills.name, def.name)));
+            .where(
+              canonicalId
+                ? or(
+                    and(eq(skills.scope, "global"), eq(skills.name, def.name)),
+                    eq(skills.id, canonicalId),
+                  )
+                : and(eq(skills.scope, "global"), eq(skills.name, def.name)),
+            );
+          if (existing && (existing.scope !== "global" || existing.name !== def.name)) {
+            log.warn(`Stopped builtin skill sync for "${def.name}": canonical identity changed during reconciliation`);
+            break;
+          }
           if (!existing) break;
         }
         preserved++;
@@ -469,6 +501,7 @@ export async function seedBuiltinSkills(): Promise<void> {
         outputSpec: def.outputSpec ?? "See process instructions",
         qualityCriteria: "",
         checklist: def.checklist ?? [],
+        scoreThreshold: def.scoreThreshold ?? null,
         status: "active",
         author: def.author || "system",
         version: defVersion,
@@ -484,7 +517,24 @@ export async function seedBuiltinSkills(): Promise<void> {
     } catch (error: unknown) {
       const details = getPostgresErrorDetails(error);
       if (details.code === "23505") {
-        preserved++;
+        const canonicalId = CANONICAL_BUILTIN_SKILL_IDS[def.name];
+        const [converged] = await db
+          .select({ id: skills.id })
+          .from(skills)
+          .where(
+            canonicalId
+              ? and(eq(skills.scope, "global"), eq(skills.name, def.name), eq(skills.id, canonicalId))
+              : and(eq(skills.scope, "global"), eq(skills.name, def.name)),
+          );
+        if (converged) {
+          preserved++;
+        } else {
+          errored++;
+          log.error("Failed to bootstrap builtin skill: uniqueness conflict did not converge to the canonical global template", {
+            skillName: def.name,
+            sqlState: details.code,
+          });
+        }
       } else {
         errored++;
         log.error("Failed to bootstrap builtin skill", {
