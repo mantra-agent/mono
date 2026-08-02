@@ -810,16 +810,22 @@ export async function preparePlanForResume(planId: string): Promise<PlanResumeRe
   }
 
   const steps = await getStepsFromDb(planId);
-  if (currentStatus !== "paused" && currentStatus !== "needs_review") {
+  if (currentStatus === "needs_review") {
     return {
       ready: false, planId, status: currentStatus, recovered, totalSteps: steps.length,
-      error: `Plan status is "${currentStatus}", not paused or needs_review`,
+      error: "Plan needs human review; resolve the open review gate before resuming",
+    };
+  }
+  if (currentStatus !== "paused") {
+    return {
+      ready: false, planId, status: currentStatus, recovered, totalSteps: steps.length,
+      error: `Plan status is "${currentStatus}", not paused`,
     };
   }
 
-  // Resume resets only the first non-resolved step that is in a retryable state.
-  // Subsequent needs_review/blocked gates are preserved so the executor stops again.
-  let firstGateResolved = false;
+  // Resume recovers failed/running work and blocked dependency gates only.
+  // A needs_review gate is never cleared here; PlanService review resolution owns it.
+  let firstBlockedGateResolved = false;
   for (const step of steps) {
     if (step.status === "failed") {
       const childClosed = await closeAbandonedChildSessionBlock(
@@ -842,15 +848,22 @@ export async function preparePlanForResume(planId: string): Promise<PlanResumeRe
         error: null, sessionId: null, durationSeconds: null,
         startedAt: null, completedAt: null,
       }, "resumePlan reset");
-    } else if (step.status === "blocked" || step.status === "needs_review") {
-      if (!firstGateResolved) {
-        // Resolve only the first gate — the user is approving this one
-        await transitionStep(planId, step.id, step.status, "pending", {
+    } else if (step.status === "blocked") {
+      if (!firstBlockedGateResolved) {
+        await transitionStep(planId, step.id, "blocked", "pending", {
           error: null, durationSeconds: null, startedAt: null, completedAt: null,
-        }, "resumePlan review/block resolved");
-        firstGateResolved = true;
+        }, "resumePlan blocked dependency resolved");
+        firstBlockedGateResolved = true;
       }
-      // Leave subsequent gates intact — executor will stop at them
+    } else if (step.status === "needs_review") {
+      return {
+        ready: false,
+        planId,
+        status: "needs_review",
+        recovered,
+        totalSteps: steps.length,
+        error: `Step ${step.id} still needs human review`,
+      };
     } else if (step.status === "running") {
       const childClosed = await closeAbandonedChildSessionBlock(
         plan.originSessionId,
@@ -1110,7 +1123,7 @@ async function notifyOriginSession(
     if (event === "completed") {
       msg = `Plan completed: **${planTitle}** — all steps passed.`;
     } else if (event === "needs_review" && step) {
-      msg = `👀 Plan **${planTitle}** needs review at step "${step.title}" — the step finished executing and its output is ready for your review. Use plan(action: "resume") to approve and continue.`;
+      msg = `👀 Plan **${planTitle}** needs review at step "${step.title}" — the step finished executing and its evidence is ready in the Plan review card.`;
     } else if (event === "blocked" && step) {
       msg = `⏸️ Plan **${planTitle}** paused at step "${step.title}" — step is blocked. Resolve the blocker, then use plan(action: "resume") to continue.`;
     } else if (step) {

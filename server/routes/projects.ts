@@ -11,21 +11,24 @@ import { requireAuth } from "../auth";
 import { parsePlanFromContent } from "../lib/plan-utils";
 import { db } from "../db";
 import { libraryPages } from "@shared/models/info";
-import { planExecutions, planStepAttempts, planSteps } from "@shared/schema";
+import { planExecutions, planStepAttempts, planStepReviews, planSteps } from "@shared/schema";
+import { isPlanReviewDecision, PLAN_REVIEW_REASON_MAX_LENGTH } from "@shared/plan-review";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { logPatchClearAudit, sanitizePatch } from "../lib/patch-guard";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
-import { eq, desc, ilike, type SQL } from "drizzle-orm";
+import { and, eq, desc, ilike, type SQL } from "drizzle-orm";
 
 const log = createLogger("WorkRoutes");
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: planSteps.accountId };
 const planAttemptScopeColumns = { ownerUserId: planStepAttempts.ownerUserId, accountId: planStepAttempts.accountId };
+const planReviewScopeColumns = { ownerUserId: planStepReviews.ownerUserId, accountId: planStepReviews.accountId };
 const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
 function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 function writablePlan(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
 function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
 function visiblePlanAttempt(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planAttemptScopeColumns, predicate); }
+function visiblePlanReview(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planReviewScopeColumns, predicate); }
 function visibleLibrary(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), libraryScopeColumns, predicate); }
 
 function routeError(error: unknown, operation: string): { message: string; operation: string } {
@@ -36,6 +39,7 @@ function routeError(error: unknown, operation: string): { message: string; opera
 
 export async function registerProjectsRoutes(app: Express) {
   app.use("/api/projects", requireAuth);
+  app.use("/api/plans", requireAuth);
 
   app.get("/api/projects/todo", async (_req, res) => {
     try {
@@ -479,11 +483,21 @@ export async function registerProjectsRoutes(app: Express) {
         const attempts = await db.select().from(planStepAttempts)
           .where(visiblePlanAttempt(eq(planStepAttempts.planId, dbPlan.id)))
           .orderBy(planStepAttempts.stepId, planStepAttempts.attemptNumber);
+        const reviews = await db.select().from(planStepReviews)
+          .where(visiblePlanReview(and(
+            eq(planStepReviews.planId, dbPlan.id),
+            eq(planStepReviews.status, dbPlan.status === "needs_review" ? "open" : "resolved"),
+          )))
+          .orderBy(planStepReviews.stepId, desc(planStepReviews.openedAt));
         const attemptsByStep = new Map<string, typeof attempts[number][]>();
         for (const attempt of attempts) {
           const list = attemptsByStep.get(attempt.stepId) ?? [];
           list.push(attempt);
           attemptsByStep.set(attempt.stepId, list);
+        }
+        const reviewByStep = new Map<string, typeof reviews[number]>();
+        for (const review of reviews) {
+          if (!reviewByStep.has(review.stepId)) reviewByStep.set(review.stepId, review);
         }
         effectiveSteps = dbSteps.map(s => ({
           id: s.id,
@@ -505,6 +519,16 @@ export async function registerProjectsRoutes(app: Express) {
             outcome: attempt.outcome,
             error: attempt.error,
           })),
+          review: reviewByStep.has(s.id) ? {
+            id: reviewByStep.get(s.id)!.id,
+            attemptId: reviewByStep.get(s.id)!.attemptId,
+            status: reviewByStep.get(s.id)!.status,
+            prompt: reviewByStep.get(s.id)!.prompt,
+            decision: reviewByStep.get(s.id)!.decision,
+            decisionReason: reviewByStep.get(s.id)!.decisionReason,
+            openedAt: reviewByStep.get(s.id)!.openedAt.toISOString(),
+            resolvedAt: reviewByStep.get(s.id)!.resolvedAt?.toISOString() ?? null,
+          } : undefined,
           startedAt: s.startedAt?.toISOString(),
           completedAt: s.completedAt?.toISOString(),
         }));
@@ -658,8 +682,11 @@ export async function registerProjectsRoutes(app: Express) {
       if (!parsed) return res.status(404).json({ error: "Page does not contain plan data" });
 
       const effectiveStatus = dbStatus ?? parsed.meta.status;
-      if (effectiveStatus !== "created" && effectiveStatus !== "paused" && effectiveStatus !== "needs_review") {
-        return res.status(409).json({ error: `Plan status is "${effectiveStatus}" — can only execute created, paused, or review-pending plans.` });
+      if (effectiveStatus === "needs_review") {
+        return res.status(409).json({ error: "Plan needs human review. Use the review card before execution can continue." });
+      }
+      if (effectiveStatus !== "created" && effectiveStatus !== "paused") {
+        return res.status(409).json({ error: `Plan status is "${effectiveStatus}" — can only execute created or paused plans.` });
       }
 
       const internalId = dbPlan?.id ?? parsed.meta.id;
@@ -724,26 +751,79 @@ export async function registerProjectsRoutes(app: Express) {
         return res.status(404).json({ error: "Plan execution record not found in database" });
       }
 
-      const planTitle = (page.title || "Untitled Plan").replace(/^Plan:\s*/, "");
-      const { preparePlanForResume, resumePlan } = await import("../plan-executor");
-      const readiness = await preparePlanForResume(dbPlan.id);
-
-      if (!readiness.ready) {
-        return res.status(409).json({
-          error: readiness.error,
-          status: readiness.status,
-          recovered: readiness.recovered,
-        });
+      if (dbPlan.status === "needs_review") {
+        return res.status(409).json({ error: "Plan needs human review. Use the review card before resuming.", status: dbPlan.status });
       }
-
-      resumePlan(readiness.planId, dbPlan.originSessionId, planTitle, false).catch(err => {
-        log.error(`Plan ${readiness.planId} resume failed: ${err instanceof Error ? err.message : String(err)}`);
+      const planTitle = (page.title || "Untitled Plan").replace(/^Plan:\s*/, "");
+      const { resumePlan } = await import("../plan-executor");
+      resumePlan(dbPlan.id, dbPlan.originSessionId, planTitle, false).catch(err => {
+        log.error(`Plan ${dbPlan.id} resume failed: ${err instanceof Error ? err.message : String(err)}`);
       });
 
-      res.json({ ok: true, status: "executing", recovered: readiness.recovered });
+      res.json({ ok: true, status: "executing" });
     } catch (error: unknown) {
       const err = routeError(error, "resume_plan");
       res.status(500).json({ error: err.message, operation: err.operation });
+    }
+  });
+
+  app.post("/api/plans/:id/steps/:stepId/review", async (req, res) => {
+    try {
+      const idParam = req.params.id;
+      const stepId = req.params.stepId;
+      const reviewId = Number(req.body?.reviewId);
+      if (!Number.isInteger(reviewId) || reviewId <= 0) {
+        return res.status(400).json({ error: "A valid reviewId is required." });
+      }
+      if (!isPlanReviewDecision(req.body?.decision)) {
+        return res.status(400).json({ error: "Invalid review decision. Use approve, request_changes, retry, or stop." });
+      }
+      const reason = typeof req.body?.reason === "string"
+        ? req.body.reason.trim().slice(0, PLAN_REVIEW_REASON_MAX_LENGTH)
+        : "";
+      if (req.body.decision === "request_changes" && !reason) {
+        return res.status(400).json({ error: "Request changes requires a reason." });
+      }
+
+      let dbPlan = await db.select().from(planExecutions)
+        .where(visiblePlan(eq(planExecutions.id, idParam)))
+        .then((rows) => rows[0]);
+      let page = dbPlan
+        ? await db.select().from(libraryPages).where(visibleLibrary(eq(libraryPages.id, dbPlan.pageId))).then((rows) => rows[0])
+        : null;
+      if (!dbPlan) {
+        const byId = await db.select().from(libraryPages).where(visibleLibrary(eq(libraryPages.id, idParam)));
+        page = byId[0] || (await db.select().from(libraryPages).where(visibleLibrary(eq(libraryPages.slug, idParam))))[0];
+        if (page) dbPlan = await getPlanDbState(page.id);
+      }
+      if (!dbPlan || !page) return res.status(404).json({ error: "Plan not found" });
+      if (dbPlan.status !== "needs_review") {
+        return res.status(409).json({ error: `Plan status is "${dbPlan.status}" — no human review is pending.` });
+      }
+
+      const { resolvePlanStepReview } = await import("../plan-service");
+      const result = await resolvePlanStepReview({
+        planId: dbPlan.id,
+        stepId,
+        reviewId,
+        decision: req.body.decision,
+        reason,
+        source: "ui",
+        resolvedBySessionId: dbPlan.originSessionId,
+      });
+
+      if (result.shouldExecute) {
+        const planTitle = (page.title || "Untitled Plan").replace(/^Plan:\s*/, "");
+        const { resumePlan } = await import("../plan-executor");
+        resumePlan(dbPlan.id, dbPlan.originSessionId, planTitle, false).catch(err => {
+          log.error(`Plan ${dbPlan!.id} post-review execution failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
+      res.json({ ok: true, ...result, status: result.shouldExecute ? "executing" : result.planStatus });
+    } catch (error: unknown) {
+      const err = routeError(error, "review_plan_step");
+      res.status(409).json({ error: err.message, operation: err.operation });
     }
   });
 

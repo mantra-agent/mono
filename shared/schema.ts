@@ -5,6 +5,7 @@ import { z } from "zod";
 import { libraryPages } from "./models/info";
 import { vaults } from "./models/vaults";
 import { DEFAULT_AGENT_NAME } from "./instance-config";
+import { PLAN_REVIEW_DECISIONS } from "./plan-review";
 
 export * from "./models/chat";
 export * from "./models/goals";
@@ -1689,6 +1690,44 @@ export const planStepAttempts = pgTable("plan_step_attempts", {
 
 export type PlanStepAttemptRow = typeof planStepAttempts.$inferSelect;
 export type InsertPlanStepAttempt = typeof planStepAttempts.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Plan Step Reviews
+// Durable human-review gates bound to one exact Plan step attempt.
+// ---------------------------------------------------------------------------
+export const planStepReviews = pgTable("plan_step_reviews", {
+  id: serial("id").primaryKey(),
+  planId: text("plan_id").notNull().references(() => planExecutions.id, { onDelete: "cascade" }),
+  stepId: text("step_id").notNull(),
+  attemptId: integer("attempt_id").references(() => planStepAttempts.id, { onDelete: "set null" }),
+  ownerUserId: text("owner_user_id").notNull(),
+  accountId: text("account_id").notNull(),
+  status: text("status").notNull().default("open"),
+  prompt: text("prompt").notNull(),
+  decision: text("decision"),
+  decisionReason: text("decision_reason"),
+  openedBySessionId: text("opened_by_session_id"),
+  resolvedByUserId: text("resolved_by_user_id"),
+  resolvedBySessionId: text("resolved_by_session_id"),
+  resolutionSource: text("resolution_source"),
+  openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("idx_plan_step_reviews_plan").on(table.planId),
+  index("idx_plan_step_reviews_step").on(table.planId, table.stepId),
+  index("idx_plan_step_reviews_attempt").on(table.attemptId),
+  index("idx_plan_step_reviews_owner").on(table.ownerUserId),
+  index("idx_plan_step_reviews_account").on(table.accountId),
+  uniqueIndex("idx_plan_step_reviews_open_unique").on(table.planId, table.stepId).where(sql`status = 'open'`),
+  check("chk_plan_step_reviews_status", sql`${table.status} IN ('open', 'resolved')`),
+  check("chk_plan_step_reviews_decision", sql`${table.decision} IS NULL OR ${table.decision} IN (${sql.join(PLAN_REVIEW_DECISIONS.map((decision) => sql`${decision}`), sql`, `)})`),
+  check("chk_plan_step_reviews_resolution", sql`(${table.status} = 'open' AND ${table.decision} IS NULL AND ${table.resolvedAt} IS NULL AND ${table.resolvedByUserId} IS NULL) OR (${table.status} = 'resolved' AND ${table.decision} IS NOT NULL AND ${table.resolvedAt} IS NOT NULL AND ${table.resolvedByUserId} IS NOT NULL)`),
+]);
+
+export type PlanStepReviewRow = typeof planStepReviews.$inferSelect;
+export type InsertPlanStepReview = typeof planStepReviews.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // Workflow System

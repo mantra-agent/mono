@@ -11,11 +11,15 @@ import { eq, and, desc, gt, inArray, sql, type SQL } from "drizzle-orm";
 import { planExecutions, planSteps } from "@shared/schema";
 import {
   createPlanSessionLink,
+  getOpenPlanStepReview,
   getPlanStepAttemptByChildSession,
   renderPlanProjection,
+  reportPlanStepNeedsReview,
+  resolvePlanStepReview,
   unlinkPlanSession,
 } from "../plan-service";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { isPlanReviewDecision, PLAN_REVIEW_REASON_MAX_LENGTH } from "@shared/plan-review";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -151,11 +155,13 @@ export async function handlePlan(
       return handleAddSteps(args);
     case "pause":
       return handlePause(args);
+    case "review":
+      return handleReview(args);
     case "resume":
       return handleResume(args);
     default:
       return {
-        result: `Unknown plan action: "${action}". Available: create, get, associate_session, unlink_session, list, reconcile_library, execute, update_step, edit, add_steps, pause, resume`,
+        result: `Unknown plan action: "${action}". Available: create, get, associate_session, unlink_session, list, reconcile_library, execute, update_step, edit, add_steps, pause, review, resume`,
         error: true,
       };
   }
@@ -542,13 +548,15 @@ async function handleExecute(
   const { plan, page } = resolved;
   const planId = plan.id;
 
-  if (
-    plan.status !== "created" &&
-    plan.status !== "paused" &&
-    plan.status !== "needs_review"
-  ) {
+  if (plan.status === "needs_review") {
     return {
-      result: `Plan status is "${plan.status}" — can only execute plans with status "created", "paused", or "needs_review". Use plan(action: "resume") for paused or review-pending plans.`,
+      result: `Plan status is "needs_review" — execution cannot bypass the open human gate. Use plan(action: "review") only after a later human turn, or use the review widget.`,
+      error: true,
+    };
+  }
+  if (plan.status !== "created" && plan.status !== "paused") {
+    return {
+      result: `Plan status is "${plan.status}" — can only execute plans with status "created" or "paused".`,
       error: true,
     };
   }
@@ -686,7 +694,7 @@ async function handleExecuteLegacy(
     };
   } else if (result.status === "needs_review") {
     return {
-      result: `👀 Plan **${planTitle}** needs review. Use plan(action: "resume", planId: "${meta.id}") to approve and continue. @plan:${meta.id} @page:${page.slug}`,
+      result: `👀 Plan **${planTitle}** needs review. Use the Plan review card or wait for a later human turn before plan(action: "review"). @plan:${meta.id} @page:${page.slug}`,
     };
   } else if (result.status === "paused") {
     return {
@@ -723,6 +731,12 @@ async function handleUpdateStep(
     .then((rows) => rows.find((r) => r.id === stepId));
   if (!step)
     return { result: `Step "${stepId}" not found in plan.`, error: true };
+  if (plan.status === "needs_review" && step.status !== "needs_review") {
+    return {
+      result: "This Plan has an open human review gate. Other step mutations are blocked until it is resolved.",
+      error: true,
+    };
+  }
 
   const setFields: Record<string, any> = { updatedAt: new Date() };
   const requestedStatus = args.status as string | undefined;
@@ -744,6 +758,39 @@ async function handleUpdateStep(
           : `Attempt ${callerAttempt.attemptNumber} is no longer the active owner of step "${step.title}". No plan state was changed.`,
       };
     }
+    if (requestedStatus === "needs_review") {
+      const reviewPrompt = typeof args.outcome === "string" && args.outcome.trim()
+        ? args.outcome.trim()
+        : typeof args.error === "string" && args.error.trim()
+          ? args.error.trim()
+          : "Review the completed step before the Plan continues.";
+      const review = await reportPlanStepNeedsReview({
+        planId: resolvedPlanId,
+        stepId,
+        childSessionId: callerSessionId,
+        prompt: reviewPrompt,
+        outcome: typeof args.outcome === "string" ? args.outcome : null,
+      });
+      const latestPlan = await db.select().from(planExecutions)
+        .where(visiblePlan(eq(planExecutions.id, resolvedPlanId)))
+        .then((rows) => rows[0]);
+      if (latestPlan) await refreshPlanPage(latestPlan, page);
+      return {
+        result: `Step "${step.title}" is awaiting human review (review ${review.id}). End this child session; the parent executor will stop at the gate.`,
+      };
+    }
+  }
+  if (step.status === "needs_review") {
+    return {
+      result: "This step has an open human review gate. Resolve it with plan(action: \"review\") or the review widget; update_step cannot change it.",
+      error: true,
+    };
+  }
+  if (requestedStatus === "needs_review" && !callerAttempt) {
+    return {
+      result: "Only the active managed step child may open a needs-review gate. Human decisions use plan(action: \"review\").",
+      error: true,
+    };
   }
   if (requestedStatus) {
     const validStatuses = new Set([
@@ -813,6 +860,12 @@ async function handleEdit(
   if (!resolved) return planNotFound(planId);
   const { plan, page } = resolved;
   const resolvedPlanId = plan.id;
+  if (plan.status === "needs_review") {
+    return {
+      result: "This Plan has an open human review gate. Resolve it before editing Plan or step state.",
+      error: true,
+    };
+  }
 
   const setPlan: Record<string, any> = { updatedAt: new Date() };
   if (typeof args.blocking === "boolean") setPlan.blocking = args.blocking;
@@ -883,6 +936,22 @@ async function handleEdit(
         if (!validStatuses.has(edit.status)) {
           return {
             result: `Invalid status "${edit.status}" for step "${edit.stepId}". Use pending, completed, failed, skipped, blocked, or needs_review.`,
+            error: true,
+          };
+        }
+        if (edit.status === "needs_review") {
+          return {
+            result: `Step "${edit.stepId}" can enter needs_review only from its active managed child attempt.`,
+            error: true,
+          };
+        }
+        const existingStep = await db.select({ status: planSteps.status })
+          .from(planSteps)
+          .where(visiblePlanStep(and(eq(planSteps.planId, resolvedPlanId), eq(planSteps.id, edit.stepId))))
+          .then((rows) => rows[0]);
+        if (existingStep?.status === "needs_review") {
+          return {
+            result: `Step "${edit.stepId}" has an open review gate. Resolve it through plan(action: "review") or the review widget.`,
             error: true,
           };
         }
@@ -964,6 +1033,12 @@ async function handleAddSteps(
   if (!resolved) return planNotFound(planId);
   const { plan, page } = resolved;
   const resolvedPlanId = plan.id;
+  if (plan.status === "needs_review") {
+    return {
+      result: "This Plan has an open human review gate. Resolve it before changing the execution graph.",
+      error: true,
+    };
+  }
 
   const existingSteps = await db
     .select()
@@ -1051,6 +1126,95 @@ async function handlePause(
   return { result: `Plan is not executing (status: ${plan.status}).` };
 }
 
+async function hasLaterHumanTurn(sessionId: string, openedAt: Date): Promise<boolean> {
+  if (!sessionId) return false;
+  const { chatFileStorage } = await import("../chat-file-storage");
+  const session = await chatFileStorage.getSession(sessionId).catch(() => null);
+  const messages = (session as { messages?: Array<{ role?: string; createdAt?: string; visibility?: string }> } | null)?.messages ?? [];
+  return messages.some((message) =>
+    message.role === "user" &&
+    message.visibility !== "diagnostic" &&
+    typeof message.createdAt === "string" &&
+    new Date(message.createdAt).getTime() > openedAt.getTime(),
+  );
+}
+
+async function handleReview(
+  args: Record<string, any>,
+): Promise<ToolHandlerResult> {
+  const planId = args.planId as string;
+  const stepId = args.stepId as string;
+  if (!planId) return { result: "Missing required 'planId' parameter.", error: true };
+  if (!stepId) return { result: "Missing required 'stepId' parameter.", error: true };
+  if (!isPlanReviewDecision(args.decision)) {
+    return { result: "Invalid review decision. Use approve, request_changes, retry, or stop.", error: true };
+  }
+  const reason = typeof args.reason === "string" ? args.reason.trim().slice(0, PLAN_REVIEW_REASON_MAX_LENGTH) : "";
+  if (args.decision === "request_changes" && !reason) {
+    return { result: "Request changes requires a reason.", error: true };
+  }
+
+  const authority = args._authorityContext as { origin?: string } | undefined;
+  const callerSessionId = typeof args._sessionId === "string" ? args._sessionId : "";
+  if (!callerSessionId || (authority?.origin !== "interactive" && authority?.origin !== "voice")) {
+    return { result: "Plan review requires a later human turn or the review widget.", error: true };
+  }
+
+  const resolved = await resolvePlanWithPage(planId);
+  if (!resolved) return planNotFound(planId);
+  const { plan, page } = resolved;
+  if (plan.originSessionId !== callerSessionId) {
+    return { result: "Plan review through chat must come from the Plan's originating human conversation. Use the review widget instead.", error: true };
+  }
+  if (plan.status !== "needs_review") {
+    return { result: `Plan status is "${plan.status}" — no review gate is open.`, error: true };
+  }
+  const review = await getOpenPlanStepReview(plan.id, stepId);
+  if (!review) return { result: `Step "${stepId}" has no open review gate.`, error: true };
+  if (!(await hasLaterHumanTurn(callerSessionId, review.openedAt))) {
+    return { result: "This gate can be resolved only after a human sends a new message after the review opened. Use the review widget or ask the human to respond.", error: true };
+  }
+
+  const decision = await resolvePlanStepReview({
+    planId: plan.id,
+    stepId,
+    reviewId: review.id,
+    decision: args.decision,
+    reason,
+    source: "later_human_turn",
+    resolvedBySessionId: callerSessionId,
+  });
+
+  if (!decision.shouldExecute) {
+    return {
+      result: decision.planStatus === "completed"
+        ? `✅ Plan **${page.title.replace(/^Plan:\s*/, "")}** completed after review. @plan:${plan.id} @page:${page.slug}`
+        : decision.planStatus === "aborted"
+          ? `Plan **${page.title.replace(/^Plan:\s*/, "")}** was stopped by human review. @plan:${plan.id} @page:${page.slug}`
+          : `Plan **${page.title.replace(/^Plan:\s*/, "")}** remains paused after the review decision. @plan:${plan.id} @page:${page.slug}`,
+    };
+  }
+
+  const planTitle = page.title.replace(/^Plan:\s*/, "") || "Untitled Plan";
+  const { resumePlan } = await import("../plan-executor");
+  if (!plan.blocking) {
+    resumePlan(plan.id, plan.originSessionId, planTitle, false).catch((err) => {
+      log.error(`[${plan.id}] Background post-review execution failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+    return { result: `Plan **${planTitle}** review recorded; execution resumed in background. @plan:${plan.id} @page:${page.slug}` };
+  }
+
+  const result = await resumePlan(plan.id, plan.originSessionId, planTitle, true);
+  return {
+    result: result.status === "completed" || result.status === "completed_with_failures"
+      ? `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps. @plan:${plan.id} @page:${page.slug}`
+      : result.status === "needs_review"
+        ? `👀 Plan **${planTitle}** reached another review gate. @plan:${plan.id} @page:${page.slug}`
+        : `Plan **${planTitle}** is ${result.status}. ${result.error || ""} @plan:${plan.id} @page:${page.slug}`,
+    error: result.status === "failed",
+  };
+}
+
 async function handleResume(
   args: Record<string, any>,
 ): Promise<ToolHandlerResult> {
@@ -1063,20 +1227,25 @@ async function handleResume(
   const { plan, page } = resolved;
   const resolvedPlanId = plan.id;
 
-  if (plan.status !== "paused" && plan.status !== "needs_review") {
+  if (plan.status === "needs_review") {
     return {
-      result: `Plan status is "${plan.status}" — can only resume paused or review-pending plans.`,
+      result: `Plan **${page.title.replace(/^Plan:\s*/, "")}** is awaiting a human review decision. Use plan(action: "review", planId: "${resolvedPlanId}", stepId: "<stepId>", decision: "approve|request_changes|retry|stop") only after a later human turn, or use the review widget.`,
+      error: true,
+    };
+  }
+  if (plan.status !== "paused") {
+    return {
+      result: `Plan status is "${plan.status}" — can only resume paused plans.`,
       error: true,
     };
   }
 
-  const sessionId = (args._sessionId as string) || plan.originSessionId;
   const planTitle = (page?.title || "Untitled Plan").replace(/^Plan:\s*/, "");
 
   const { resumePlan } = await import("../plan-executor");
 
   if (!plan.blocking) {
-    resumePlan(resolvedPlanId, sessionId, planTitle, false).catch((err) => {
+    resumePlan(resolvedPlanId, plan.originSessionId, planTitle, false).catch((err) => {
       log.error(
         `[${resolvedPlanId}] Background resume failed: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -1084,7 +1253,7 @@ async function handleResume(
     return { result: `Plan **${planTitle}** resumed in background.` };
   }
 
-  const result = await resumePlan(resolvedPlanId, sessionId, planTitle, true);
+  const result = await resumePlan(resolvedPlanId, plan.originSessionId, planTitle, true);
 
   const isResumeComplete =
     result.status === "completed" ||

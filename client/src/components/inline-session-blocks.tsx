@@ -88,6 +88,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   sessionTitleById,
   childStream,
   hierarchyStepCompleted,
+  hierarchyLabel,
 }: {
   meta: ChildSessionBlockMeta;
   sessionKey?: string | null;
@@ -95,6 +96,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   sessionTitleById?: Record<string, string>;
   childStream?: SessionStreamState;
   hierarchyStepCompleted?: boolean;
+  hierarchyLabel?: string;
 }) {
   const stepCompleted = hierarchyStepCompleted;
   const insideHierarchy = stepCompleted !== undefined;
@@ -171,9 +173,9 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   // because orient may overwrite the live session title mid-execution.
   const spawnTitle = meta.role;
   const liveTitle = childSession?.title || sessionTitleById?.[meta.childSessionId];
-  const displayTitle = (spawnTitle && /^Step \d+:/.test(spawnTitle))
+  const displayTitle = hierarchyLabel || ((spawnTitle && /^Step \d+:/.test(spawnTitle))
     ? spawnTitle
-    : (liveTitle || spawnTitle || meta.childSessionId);
+    : (liveTitle || spawnTitle || meta.childSessionId));
   const hasError = Boolean(meta.error);
   const iconClass = hasError
     ? "text-destructive"

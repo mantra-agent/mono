@@ -1,18 +1,20 @@
 import { randomUUID } from "crypto";
 import type { PlanStepPersona } from "./plan-persona";
-import { and, eq, isNull, lt, or, type SQL } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { db, runWithDatabaseTransaction } from "./db";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
-import { planExecutions, planSessionLinks, planStepAttempts, planSteps, type PlanExecutionRow, type PlanStepAttemptRow, type PlanStepRow } from "@shared/schema";
-import { buildPlanPageContent, type PlanMeta, type PlanStatus, type PlanStep } from "./lib/plan-utils";
+import { planExecutions, planSessionLinks, planStepAttempts, planStepReviews, planSteps, type PlanExecutionRow, type PlanStepAttemptRow, type PlanStepReviewRow, type PlanStepRow } from "@shared/schema";
+import { PLAN_REVIEW_REASON_MAX_LENGTH, type PlanReviewDecision } from "@shared/plan-review";
+import { buildPlanPageContent, isPlanDone, type PlanMeta, type PlanStatus, type PlanStep } from "./lib/plan-utils";
 
 const log = createLogger("PlanService");
 
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: planSteps.accountId };
 const planAttemptScopeColumns = { ownerUserId: planStepAttempts.ownerUserId, accountId: planStepAttempts.accountId };
+const planReviewScopeColumns = { ownerUserId: planStepReviews.ownerUserId, accountId: planStepReviews.accountId };
 const planLinkScopeColumns = { ownerUserId: planSessionLinks.ownerUserId, accountId: planSessionLinks.accountId };
 
 function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
@@ -21,6 +23,8 @@ function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(
 function writablePlanStep(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
 function visiblePlanAttempt(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planAttemptScopeColumns, predicate); }
 function writablePlanAttempt(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planAttemptScopeColumns, predicate); }
+function visiblePlanReview(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planReviewScopeColumns, predicate); }
+function writablePlanReview(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planReviewScopeColumns, predicate); }
 function writablePlanLink(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planLinkScopeColumns, predicate); }
 
 export type PlanStepStatus = PlanStep["status"];
@@ -88,7 +92,17 @@ export async function updatePlanStepFields(
   stepId: string,
   fields: Partial<typeof planSteps.$inferInsert>,
 ): Promise<void> {
-  await db.update(planSteps).set({ ...fields, updatedAt: new Date() }).where(writablePlanStep(and(eq(planSteps.planId, planId), eq(planSteps.id, stepId))));
+  const updated = await db.update(planSteps)
+    .set({ ...fields, updatedAt: new Date() })
+    .where(writablePlanStep(and(
+      eq(planSteps.planId, planId),
+      eq(planSteps.id, stepId),
+      fields.status === "needs_review" ? undefined : sql`${planSteps.status} <> 'needs_review'`,
+    )))
+    .returning({ id: planSteps.id });
+  if (updated.length === 0) {
+    throw new Error(`[state] Step ${stepId} has an open review gate or is no longer writable`);
+  }
 }
 
 export const PLAN_EXECUTION_LEASE_MS = 2 * 60 * 1000;
@@ -232,6 +246,291 @@ export async function getPlanStepAttemptByChildSession(
     eq(planStepAttempts.childSessionId, childSessionId),
   )));
   return rows[0] ?? null;
+}
+
+export async function getLatestPlanStepReview(planId: string, stepId: string): Promise<PlanStepReviewRow | null> {
+  const rows = await db.select().from(planStepReviews)
+    .where(visiblePlanReview(and(eq(planStepReviews.planId, planId), eq(planStepReviews.stepId, stepId))))
+    .orderBy(desc(planStepReviews.openedAt), desc(planStepReviews.id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function getOpenPlanStepReview(planId: string, stepId: string): Promise<PlanStepReviewRow | null> {
+  const rows = await db.select().from(planStepReviews)
+    .where(visiblePlanReview(and(
+      eq(planStepReviews.planId, planId),
+      eq(planStepReviews.stepId, stepId),
+      eq(planStepReviews.status, "open"),
+    )))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function reportPlanStepNeedsReview(params: {
+  planId: string;
+  stepId: string;
+  childSessionId: string;
+  prompt: string;
+  outcome?: string | null;
+}): Promise<PlanStepReviewRow> {
+  const principal = getCurrentPrincipalOrSystem();
+  if (!principal.userId || !principal.accountId || principal.actorType !== "user") {
+    throw new Error("Plan review gates require the owning user principal");
+  }
+  const prompt = params.prompt.trim().slice(0, PLAN_REVIEW_REASON_MAX_LENGTH);
+  if (!prompt) throw new Error("Review prompt is required");
+
+  return db.transaction(async (tx) => {
+    const [plan] = await tx.select().from(planExecutions)
+      .where(visiblePlan(eq(planExecutions.id, params.planId)))
+      .limit(1)
+      .for("update");
+    if (!plan || plan.status !== "executing") {
+      throw new Error(`Plan ${params.planId} is no longer executing`);
+    }
+
+    const [step] = await tx.select().from(planSteps)
+      .where(visiblePlanStep(and(
+        eq(planSteps.planId, params.planId),
+        eq(planSteps.id, params.stepId),
+      )))
+      .limit(1)
+      .for("update");
+    if (!step) throw new Error(`Plan step not found: ${params.stepId}`);
+    if (step.status !== "running" || step.sessionId !== params.childSessionId) {
+      throw new Error(`Step ${params.stepId} is no longer owned by child ${params.childSessionId}`);
+    }
+
+    const [attempt] = await tx.select().from(planStepAttempts)
+      .where(visiblePlanAttempt(and(
+        eq(planStepAttempts.planId, params.planId),
+        eq(planStepAttempts.stepId, params.stepId),
+        eq(planStepAttempts.childSessionId, params.childSessionId),
+      )))
+      .orderBy(desc(planStepAttempts.attemptNumber))
+      .limit(1)
+      .for("update");
+    if (!attempt || attempt.status !== "running") {
+      throw new Error(`Active Plan attempt not found for child ${params.childSessionId}`);
+    }
+
+    const now = new Date();
+    const outcome = params.outcome?.trim().slice(0, PLAN_REVIEW_REASON_MAX_LENGTH) || prompt;
+    const stepUpdated = await tx.update(planSteps).set({
+      status: "needs_review",
+      outcome,
+      error: null,
+      durationSeconds: step.startedAt
+        ? Math.max(0, Math.round((now.getTime() - step.startedAt.getTime()) / 1_000))
+        : step.durationSeconds,
+      completedAt: now,
+      updatedAt: now,
+    }).where(writablePlanStep(and(
+      eq(planSteps.planId, params.planId),
+      eq(planSteps.id, params.stepId),
+      eq(planSteps.status, "running"),
+      eq(planSteps.sessionId, params.childSessionId),
+    ))).returning({ id: planSteps.id });
+    if (stepUpdated.length === 0) throw new Error(`Step ${params.stepId} lost active ownership before review opened`);
+
+    const attemptUpdated = await tx.update(planStepAttempts).set({
+      status: "needs_review",
+      outcome,
+      error: null,
+      durationSeconds: step.startedAt
+        ? Math.max(0, Math.round((now.getTime() - step.startedAt.getTime()) / 1_000))
+        : step.durationSeconds,
+      completedAt: now,
+      updatedAt: now,
+    }).where(writablePlanAttempt(and(
+      eq(planStepAttempts.id, attempt.id),
+      eq(planStepAttempts.planId, params.planId),
+      eq(planStepAttempts.stepId, params.stepId),
+      eq(planStepAttempts.status, "running"),
+      eq(planStepAttempts.childSessionId, params.childSessionId),
+    ))).returning({ id: planStepAttempts.id });
+    if (attemptUpdated.length === 0) throw new Error(`Attempt ${attempt.id} lost active ownership before review opened`);
+
+    const [inserted] = await tx.insert(planStepReviews).values({
+      ...ownedInsertValues(getCurrentPrincipalOrSystem(), planReviewScopeColumns),
+      planId: params.planId,
+      stepId: params.stepId,
+      attemptId: attempt.id,
+      status: "open",
+      prompt,
+      openedBySessionId: params.childSessionId,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoNothing().returning();
+
+    let review = inserted;
+    if (!review) {
+      const [existing] = await tx.select().from(planStepReviews).where(visiblePlanReview(and(
+        eq(planStepReviews.planId, params.planId),
+        eq(planStepReviews.stepId, params.stepId),
+        eq(planStepReviews.status, "open"),
+      ))).limit(1);
+      if (!existing) throw new Error(`Open review could not be created for step ${params.stepId}`);
+      review = existing;
+    }
+
+    const planUpdated = await tx.update(planExecutions).set({
+      status: "needs_review",
+      updatedAt: now,
+    }).where(writablePlan(and(
+      eq(planExecutions.id, params.planId),
+      eq(planExecutions.status, "executing"),
+    ))).returning({ id: planExecutions.id });
+    if (planUpdated.length === 0) throw new Error(`Plan ${params.planId} could not enter review state`);
+
+    return review;
+  });
+}
+
+export interface ResolvePlanStepReviewResult {
+  planId: string;
+  stepId: string;
+  decision: PlanReviewDecision;
+  planStatus: PlanStatus;
+  shouldExecute: boolean;
+}
+
+export async function resolvePlanStepReview(params: {
+  planId: string;
+  stepId: string;
+  reviewId: number;
+  decision: PlanReviewDecision;
+  reason?: string | null;
+  source: "ui" | "later_human_turn";
+  resolvedBySessionId?: string | null;
+}): Promise<ResolvePlanStepReviewResult> {
+  const principal = getCurrentPrincipalOrSystem();
+  if (!principal.userId || !principal.accountId || principal.actorType !== "user") {
+    throw new Error("Plan review requires an authenticated human principal");
+  }
+  const reason = params.reason?.trim().slice(0, PLAN_REVIEW_REASON_MAX_LENGTH) || null;
+  if (params.decision === "request_changes" && !reason) {
+    throw new Error("Request changes requires a reason");
+  }
+
+  const result = await db.transaction(async (tx) => {
+    const [plan] = await tx.select().from(planExecutions)
+      .where(visiblePlan(and(
+        eq(planExecutions.id, params.planId),
+        eq(planExecutions.status, "needs_review"),
+      )))
+      .limit(1)
+      .for("update");
+    if (!plan) throw new Error("Plan is no longer awaiting this review decision");
+
+    const [review] = await tx.select().from(planStepReviews)
+      .where(visiblePlanReview(and(
+        eq(planStepReviews.id, params.reviewId),
+        eq(planStepReviews.planId, params.planId),
+        eq(planStepReviews.stepId, params.stepId),
+      )))
+      .limit(1)
+      .for("update");
+    if (!review) throw new Error("Plan review not found");
+    if (review.status !== "open") throw new Error("Plan review has already been resolved");
+
+    const [step] = await tx.select().from(planSteps)
+      .where(visiblePlanStep(and(
+        eq(planSteps.planId, params.planId),
+        eq(planSteps.id, params.stepId),
+      )))
+      .limit(1)
+      .for("update");
+    if (!step || step.status !== "needs_review") {
+      throw new Error(`Plan step is not awaiting review`);
+    }
+
+    const now = new Date();
+    const reviewUpdated = await tx.update(planStepReviews).set({
+      status: "resolved",
+      decision: params.decision,
+      decisionReason: reason,
+      resolvedByUserId: principal.userId,
+      resolvedBySessionId: params.resolvedBySessionId ?? null,
+      resolutionSource: params.source,
+      resolvedAt: now,
+      updatedAt: now,
+    }).where(writablePlanReview(and(eq(planStepReviews.id, review.id), eq(planStepReviews.status, "open"))))
+      .returning({ id: planStepReviews.id });
+    if (reviewUpdated.length === 0) throw new Error("Plan review resolution lost ownership");
+
+    if (review.attemptId) {
+      const attemptUpdated = await tx.update(planStepAttempts).set({
+        status: params.decision === "approve" ? "completed" : params.decision === "stop" ? "blocked" : "failed",
+        error: params.decision === "approve" ? null : reason,
+        completedAt: now,
+        updatedAt: now,
+      }).where(writablePlanAttempt(and(
+        eq(planStepAttempts.id, review.attemptId),
+        eq(planStepAttempts.planId, params.planId),
+        eq(planStepAttempts.stepId, params.stepId),
+        eq(planStepAttempts.status, "needs_review"),
+      ))).returning({ id: planStepAttempts.id });
+      if (attemptUpdated.length === 0) throw new Error("Plan review attempt is no longer awaiting this decision");
+    }
+
+    const nextStepStatus = params.decision === "approve"
+      ? "completed"
+      : params.decision === "stop"
+        ? "blocked"
+        : "pending";
+    const stepPatch: Partial<typeof planSteps.$inferInsert> = {
+      status: nextStepStatus,
+      error: params.decision === "approve" ? null : reason,
+      updatedAt: now,
+    };
+    if (nextStepStatus === "pending") {
+      stepPatch.sessionId = null;
+      stepPatch.durationSeconds = null;
+      stepPatch.startedAt = null;
+      stepPatch.completedAt = null;
+    }
+    const stepUpdated = await tx.update(planSteps).set(stepPatch).where(writablePlanStep(and(
+      eq(planSteps.planId, params.planId),
+      eq(planSteps.id, params.stepId),
+      eq(planSteps.status, "needs_review"),
+      eq(planSteps.sessionId, review.openedBySessionId ?? ""),
+    ))).returning({ id: planSteps.id });
+    if (stepUpdated.length === 0) throw new Error("Plan review step is no longer awaiting this decision");
+
+    const steps = await tx.select().from(planSteps)
+      .where(visiblePlanStep(eq(planSteps.planId, params.planId)))
+      .orderBy(planSteps.position);
+    const planStatus: PlanStatus = params.decision === "stop"
+      ? "aborted"
+      : isPlanDone(steps)
+        ? "completed"
+        : "paused";
+    const planUpdated = await tx.update(planExecutions).set({ status: planStatus, updatedAt: now })
+      .where(writablePlan(and(
+        eq(planExecutions.id, params.planId),
+        eq(planExecutions.status, "needs_review"),
+      )))
+      .returning({ id: planExecutions.id });
+    if (planUpdated.length === 0) throw new Error("Plan is no longer awaiting this review decision");
+
+    return {
+      planId: params.planId,
+      stepId: params.stepId,
+      decision: params.decision,
+      planStatus,
+      shouldExecute: params.decision !== "stop" && planStatus !== "completed",
+    };
+  });
+
+  await renderPlanProjection(result.planId).catch((error) => {
+    log.warn(
+      `[${result.planId}] Review decision committed but Plan projection refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+  return result;
 }
 
 export type CompletePlanStepAttemptOutcome =

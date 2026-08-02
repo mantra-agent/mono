@@ -938,7 +938,7 @@ export interface SessionAgenda {
   items: SessionAgendaItem[];
 }
 
-export type SessionReviewKind = "question" | "email_draft" | "email_reply" | "meeting_recap";
+export type SessionReviewKind = "question" | "plan_review" | "email_draft" | "email_reply" | "meeting_recap";
 
 export interface ChatSession {
   id: string;
