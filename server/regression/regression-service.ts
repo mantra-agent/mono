@@ -101,6 +101,10 @@ function classifyCandidate(issue: Issue, contract: IssueRegressionContract | und
   };
 }
 
+export function deploymentRegressionTriggerKey(environmentId: number, deploymentId: string, revision: string): string {
+  return ["deployment", environmentId, deploymentId.trim(), revision.trim().toLowerCase()].join(":");
+}
+
 export async function createRegressionRun(input: {
   triggerKey: string;
   environmentId: number;
@@ -114,7 +118,7 @@ export async function createRegressionRun(input: {
   const triggerKey = z.string().trim().min(1).max(500).parse(input.triggerKey);
   const environmentId = z.number().int().positive().parse(input.environmentId);
   const deploymentId = z.string().trim().min(1).max(500).parse(input.acceptedDeploymentId);
-  const revision = z.string().trim().min(1).max(200).parse(input.acceptedRevision);
+  const revision = z.string().trim().min(1).max(200).parse(input.acceptedRevision).toLowerCase();
   if (!input.lifecycleSnapshot || typeof input.lifecycleSnapshot !== "object") throw new Error("Regression run requires an immutable lifecycle snapshot");
   if (!(input.dueAt instanceof Date) || !Number.isFinite(input.dueAt.getTime())) throw new Error("Regression run dueAt must be a valid Date");
   if (!await getVisibleEnvironment(environmentId)) throw new Error(`Environment ${environmentId} is not visible`);
@@ -138,6 +142,21 @@ export async function createRegressionRun(input: {
   }
   const [existing] = await db.select().from(regressionRuns).where(visible(runScope, eq(regressionRuns.triggerKey, triggerKey))).limit(1);
   if (!existing) throw new Error("Regression run conflict did not resolve to a visible run");
+  if (existing.status === "queued" && existing.dueAt.getTime() > input.dueAt.getTime()) {
+    const [accelerated] = await db.update(regressionRuns).set({ dueAt: input.dueAt, updatedAt: new Date() })
+      .where(writable(runScope, and(eq(regressionRuns.id, existing.id), eq(regressionRuns.status, "queued"))))
+      .returning();
+    if (accelerated) return accelerated;
+  }
+  const workflowAttribution = existing.sourceWorkflowRunId === null && input.sourceWorkflowRunId
+    ? { sourceWorkflowRunId: input.sourceWorkflowRunId, acceptanceAttemptId: input.acceptanceAttemptId || null, updatedAt: new Date() }
+    : null;
+  if (workflowAttribution) {
+    const [attributed] = await db.update(regressionRuns).set(workflowAttribution)
+      .where(writable(runScope, and(eq(regressionRuns.id, existing.id), sql`${regressionRuns.sourceWorkflowRunId} IS NULL`)))
+      .returning();
+    if (attributed) return attributed;
+  }
   return existing;
 }
 

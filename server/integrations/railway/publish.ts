@@ -33,6 +33,7 @@ import {
   type ReleaseDraft,
   type VersionIncrement,
 } from "./release-versioning";
+import { admitDeploymentRegressionForEnvironmentOwner } from "../../regression/regression-admission";
 
 const log = createLogger("RailwayPublish");
 const PUBLISH_RUN_STATE_KEY = "system.railway.publish.latestRun";
@@ -1633,6 +1634,32 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
         runId: run.id,
         version: run.release.version,
         reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+    try {
+      if (!run.deploymentId || !run.newProdCommitSha) {
+        throw new Error("Publish readiness is missing deployment identity for Regression admission");
+      }
+      const regressionRun = await admitDeploymentRegressionForEnvironmentOwner({
+        environmentId: run.targetPlatformEnvironmentId,
+        deploymentId: run.deploymentId,
+        revision: run.newProdCommitSha,
+        expectedRevision: run.newProdCommitSha,
+      });
+      log.info("Admitted Regression after healthy production publish", {
+        publishRunId: run.id,
+        regressionRunId: regressionRun.id,
+        environmentId: run.targetPlatformEnvironmentId,
+        deploymentId: run.deploymentId,
+        revision: run.newProdCommitSha,
+      });
+    } catch (err) {
+      log.error("Production is healthy but Regression admission failed", {
+        runId: run.id,
+        environmentId: run.targetPlatformEnvironmentId,
+        deploymentId: run.deploymentId,
+        revision: run.newProdCommitSha,
+        errorType: err instanceof Error ? err.name : typeof err,
       });
     }
     const totalMs = Date.now() - Date.parse(run.startedAt);
