@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { and, eq } from "drizzle-orm";
 import type { DrizzleTx } from "./db";
 import type { Principal } from "./principal";
@@ -47,7 +48,7 @@ export async function appendTransactionalOutboxEvent(
     row.eventType !== input.eventType
     || row.aggregateType !== input.aggregateType
     || row.aggregateId !== input.aggregateId
-    || JSON.stringify(row.payload) !== JSON.stringify(input.payload)
+    || !isDeepStrictEqual(row.payload, input.payload)
   ) {
     throw Object.assign(new Error("Transactional outbox idempotency key names different content"), { status: 409 });
   }
