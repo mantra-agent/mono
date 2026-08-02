@@ -7,6 +7,8 @@ import {
 } from "./references";
 
 export const REFERENCE_OCCURRENCE_BATCH_LIMIT = 500;
+export const REFERENCE_OCCURRENCE_SOURCE_LIMIT = 5_000;
+export const REFERENCE_OCCURRENCE_INSERT_BATCH_LIMIT = 250;
 export const ADDRESS_LINK_BATCH_LIMIT = 500;
 export const ADDRESS_REPLAY_BATCH_LIMIT = 100;
 

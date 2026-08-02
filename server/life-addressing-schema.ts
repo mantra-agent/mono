@@ -26,7 +26,7 @@ export async function ensureLifeAddressingSchema(pool: Pool): Promise<void> {
         CONSTRAINT reference_occurrence_sources_address_length_check CHECK (char_length(source_address) BETWEEN 3 AND 2048),
         CONSTRAINT reference_occurrence_sources_revision_length_check CHECK (char_length(source_revision) BETWEEN 1 AND 200),
         CONSTRAINT reference_occurrence_sources_hash_check CHECK (projection_hash ~ '^[0-9a-f]{64}$'),
-        CONSTRAINT reference_occurrence_sources_count_check CHECK (occurrence_count BETWEEN 0 AND 500)
+        CONSTRAINT reference_occurrence_sources_count_check CHECK (occurrence_count BETWEEN 0 AND 5000)
       )
     `);
     await client.query(`
@@ -63,7 +63,7 @@ export async function ensureLifeAddressingSchema(pool: Pool): Promise<void> {
         CONSTRAINT reference_occurrences_source_length_check CHECK (char_length(source_address) BETWEEN 3 AND 2048),
         CONSTRAINT reference_occurrences_target_length_check CHECK (char_length(target_address) BETWEEN 3 AND 2048),
         CONSTRAINT reference_occurrences_revision_length_check CHECK (char_length(source_revision) BETWEEN 1 AND 200),
-        CONSTRAINT reference_occurrences_ordinal_check CHECK (occurrence_ordinal BETWEEN 0 AND 499),
+        CONSTRAINT reference_occurrences_ordinal_check CHECK (occurrence_ordinal BETWEEN 0 AND 4999),
         CONSTRAINT reference_occurrences_origin_check CHECK (origin = 'embedded'),
         CONSTRAINT reference_occurrences_block_length_check CHECK (location_block_id IS NULL OR char_length(location_block_id) BETWEEN 1 AND 200),
         CONSTRAINT reference_occurrences_location_check CHECK (
@@ -72,6 +72,40 @@ export async function ensureLifeAddressingSchema(pool: Pool): Promise<void> {
           AND (location_start IS NULL OR location_end IS NULL OR location_end >= location_start)
         )
       )
+    `);
+    await client.query(`
+      DO $constraint$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conrelid = 'reference_occurrence_sources'::regclass
+            AND conname = 'reference_occurrence_sources_count_check'
+            AND pg_get_constraintdef(oid) LIKE '%5000%'
+        ) THEN
+          ALTER TABLE reference_occurrence_sources
+            DROP CONSTRAINT IF EXISTS reference_occurrence_sources_count_check,
+            ADD CONSTRAINT reference_occurrence_sources_count_check CHECK (occurrence_count BETWEEN 0 AND 5000);
+        END IF;
+      END
+      $constraint$
+    `);
+    await client.query(`
+      DO $constraint$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conrelid = 'reference_occurrences'::regclass
+            AND conname = 'reference_occurrences_ordinal_check'
+            AND pg_get_constraintdef(oid) LIKE '%4999%'
+        ) THEN
+          ALTER TABLE reference_occurrences
+            DROP CONSTRAINT IF EXISTS reference_occurrences_ordinal_check,
+            ADD CONSTRAINT reference_occurrences_ordinal_check CHECK (occurrence_ordinal BETWEEN 0 AND 4999);
+        END IF;
+      END
+      $constraint$
     `);
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS uk_reference_occurrence_projection_ordinal
