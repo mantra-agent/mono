@@ -672,7 +672,10 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                     <div className={QUIET_ROW_CLASS}>Nothing recent yet.</div>
                   ) : (
                     recent.map((p) => {
-                      const titleColor = resolveTitleColor(p, MUTED_TITLE_ALPHA);
+                      const titleColor = resolveTitleColor(
+                        p,
+                        unreadIds.has(p.id) ? 1 : MUTED_TITLE_ALPHA,
+                      );
                       const titleStyle = titleColor ? { color: titleColor } : undefined;
                       return (
                       <button
