@@ -33,6 +33,8 @@ import { useVisibleVaults } from "./use-vault-sections";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-header";
 import { useVaults, type Vault } from "@/hooks/use-vaults";
+import type { LibraryPageTitleColorResolver } from "./library-title-color";
+import { MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 
 
 const log = createLogger("LibraryComponents");
@@ -159,6 +161,7 @@ interface LibraryPageEditorProps {
   onTogglePin: (id: string, isPinned: boolean) => void;
   onDiscuss: (page: LibraryPage) => void;
   discussPending: boolean;
+  resolveTitleColor: LibraryPageTitleColorResolver;
   onDeleteRequest?: (id: string) => void;
 }
 
@@ -169,6 +172,7 @@ export function LibraryPageEditor({
   onTogglePin,
   onDiscuss,
   discussPending,
+  resolveTitleColor,
   onDeleteRequest,
 }: LibraryPageEditorProps) {
   const editorRef = useRef<RichTextEditorHandle>(null);
@@ -180,6 +184,8 @@ export function LibraryPageEditor({
   const [bodyFocused, setBodyFocused] = useState(false);
   const [isTitleEditing, setIsTitleEditing] = useState(() => !selectedPage.title && !selectedPage.plainTextContent?.trim());
   const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
+  const titleColor = resolveTitleColor(selectedPage, 1);
+  const titleStyle = titleColor ? { color: titleColor } : undefined;
 
   useEffect(() => {
     const nextTarget = document.getElementById("library-page-header-slot");
@@ -268,7 +274,7 @@ export function LibraryPageEditor({
         <div className="flex min-w-0 flex-1 items-center gap-1">
           <Popover open={emojiPickerOpen} onOpenChange={setEmojiPickerOpen}>
             <PopoverTrigger asChild>
-            <button className="shrink-0 h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors" data-testid="button-emoji-picker" title="Set page icon">
+            <button className="shrink-0 h-7 w-7 flex items-center justify-center rounded hover:bg-accent transition-colors" style={titleStyle} data-testid="button-emoji-picker" title="Set page icon">
               <PageEmoji emoji={selectedPage.emoji} size="md" />
             </button>
           </PopoverTrigger>
@@ -301,12 +307,14 @@ export function LibraryPageEditor({
             }}
             placeholder="New page"
             className="min-w-0 flex-1 h-7 border-none bg-transparent p-0 text-sm font-medium shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
+            style={titleStyle}
             data-testid="input-library-title"
           />
         ) : (
           <button
             type="button"
-            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground hover:text-cta"
+            className="min-w-0 flex-1 truncate text-left text-sm font-medium text-foreground transition-opacity hover:opacity-80"
+            style={titleStyle}
             onClick={() => setIsTitleEditing(true)}
             title={editTitle || "Untitled"}
             data-testid="button-edit-library-title"
@@ -371,9 +379,9 @@ export function LibraryPageEditor({
           <PageLinks slug={selectedPage.slug} plainText={editPlainText} pages={pages} />
         </>} />
       </div>
-      <PageLinkPickerDialog open={specPickerOpen} onOpenChange={setSpecPickerOpen} query={specPickerQuery} onQueryChange={setSpecPickerQuery} pages={pages} editorRef={editorRef} />
+      <PageLinkPickerDialog open={specPickerOpen} onOpenChange={setSpecPickerOpen} query={specPickerQuery} onQueryChange={setSpecPickerQuery} pages={pages} editorRef={editorRef} resolveTitleColor={resolveTitleColor} />
       <PageDetailsDialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen} page={selectedPage} pages={pages} />
-      <MovePageDialog open={moveDialogOpen} onOpenChange={setMoveDialogOpen} page={selectedPage} pages={pages} />
+      <MovePageDialog open={moveDialogOpen} onOpenChange={setMoveDialogOpen} page={selectedPage} pages={pages} resolveTitleColor={resolveTitleColor} />
     </>
   );
 }
@@ -392,8 +400,8 @@ export function EmptyLibraryState({ onCreate }: { onCreate: () => void }) {
   );
 }
 
-function PageLinkPickerDialog({ open, onOpenChange, query, onQueryChange, pages, editorRef }: {
-  open: boolean; onOpenChange: (open: boolean) => void; query: string; onQueryChange: (query: string) => void; pages: LibraryPage[]; editorRef: React.RefObject<RichTextEditorHandle | null>;
+function PageLinkPickerDialog({ open, onOpenChange, query, onQueryChange, pages, editorRef, resolveTitleColor }: {
+  open: boolean; onOpenChange: (open: boolean) => void; query: string; onQueryChange: (query: string) => void; pages: LibraryPage[]; editorRef: React.RefObject<RichTextEditorHandle | null>; resolveTitleColor: LibraryPageTitleColorResolver;
 }) {
   const { toast } = useToast();
   return (
@@ -410,7 +418,10 @@ function PageLinkPickerDialog({ open, onOpenChange, query, onQueryChange, pages,
         <ScrollArea className="max-h-48">
           {pages
             .filter(p => !query || p.title.toLowerCase().includes(query.toLowerCase()) || p.slug.includes(query.toLowerCase()))
-            .map(page => (
+            .map(page => {
+              const titleColor = resolveTitleColor(page, MUTED_TITLE_ALPHA);
+              const titleStyle = titleColor ? { color: titleColor } : undefined;
+              return (
               <button key={page.id} className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-accent/50 flex items-center gap-2" data-testid={`button-page-pick-${page.id}`}
                 onClick={() => {
                   const linkText = `[[${page.title}]]`;
@@ -418,10 +429,11 @@ function PageLinkPickerDialog({ open, onOpenChange, query, onQueryChange, pages,
                   else { navigator.clipboard.writeText(linkText).catch((err) => log.warn("clipboard write failed", err)); toast({ title: "Copied to clipboard", description: `${linkText} — paste it in your content` }); }
                   onOpenChange(false);
                 }}>
-                <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
-                <span className="truncate flex-1">{page.title}</span>
+                <FileText className="h-3 w-3 shrink-0" style={titleStyle} />
+                <span className="truncate flex-1" style={titleStyle}>{page.title}</span>
               </button>
-            ))}
+              );
+            })}
           {pages.length === 0 && <p className="text-xs text-muted-foreground text-center py-3">No pages yet</p>}
         </ScrollArea>
       </DialogContent>
@@ -447,17 +459,21 @@ function TrashNode({
   childrenByParent,
   onRestore,
   restorePendingId,
+  resolveTitleColor,
 }: {
   page: LibraryPage;
   depth: number;
   childrenByParent: Map<string, LibraryPage[]>;
   onRestore: (id: string) => void;
   restorePendingId: string | null;
+  resolveTitleColor: LibraryPageTitleColorResolver;
 }) {
   const children = childrenByParent.get(page.id) ?? [];
   const indentPx = Math.min(depth * TRASH_INDENT_STEP_PX, TRASH_MAX_INDENT_PX);
   const isRoot = depth === 0;
   const isRestoring = restorePendingId === page.id;
+  const titleColor = resolveTitleColor(page, MUTED_TITLE_ALPHA);
+  const titleStyle = titleColor ? { color: titleColor } : undefined;
 
   return (
     <div className="min-w-0">
@@ -466,8 +482,8 @@ function TrashNode({
         data-testid={`trash-node-${page.id}`}
       >
         {indentPx > 0 && <div className="shrink-0" style={{ width: indentPx }} aria-hidden="true" />}
-        <PageEmoji emoji={page.emoji} size="xs" />
-        <span className="min-w-0 flex-1 truncate">{page.title || "Untitled"}</span>
+        <span style={titleStyle}><PageEmoji emoji={page.emoji} size="xs" /></span>
+        <span className="min-w-0 flex-1 truncate" style={titleStyle}>{page.title || "Untitled"}</span>
         {isRoot && (
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
@@ -498,6 +514,7 @@ function TrashNode({
           childrenByParent={childrenByParent}
           onRestore={onRestore}
           restorePendingId={restorePendingId}
+          resolveTitleColor={resolveTitleColor}
         />
       ))}
     </div>
@@ -514,6 +531,7 @@ function TrashNode({
  */
 export function TrashSection({
   trashedPages,
+  resolveTitleColor,
   open,
   onOpenChange,
   onRestore,
@@ -522,6 +540,7 @@ export function TrashSection({
   emptyTrashPending,
 }: {
   trashedPages: LibraryPage[];
+  resolveTitleColor: LibraryPageTitleColorResolver;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onRestore: (id: string) => void;
@@ -659,6 +678,7 @@ export function TrashSection({
                 childrenByParent={childrenByParent}
                 onRestore={onRestore}
                 restorePendingId={restorePendingId}
+                resolveTitleColor={resolveTitleColor}
               />
             ))}
           </>
@@ -766,8 +786,8 @@ function getDescendantIds(pages: LibraryPage[], rootId: string): Set<string> {
   return descendants;
 }
 
-export function MovePageDialog({ open, onOpenChange, page, pages }: {
-  open: boolean; onOpenChange: (open: boolean) => void; page: LibraryPage | LibraryPageFull; pages: LibraryPage[];
+export function MovePageDialog({ open, onOpenChange, page, pages, resolveTitleColor }: {
+  open: boolean; onOpenChange: (open: boolean) => void; page: LibraryPage | LibraryPageFull; pages: LibraryPage[]; resolveTitleColor: LibraryPageTitleColorResolver;
 }) {
   const [query, setQuery] = useState("");
   const { visibleVaults, resolveVaultId, isLoading: areVaultsLoading } = useVisibleVaults();
@@ -845,7 +865,10 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
                 <span className="min-w-0 flex-1 truncate">{vault.name}</span>
                 {page.parentId === null && currentVaultId === vault.id && <span className="text-xs">Current</span>}
               </button>
-              {destinationPages.map((destinationPage) => (
+              {destinationPages.map((destinationPage) => {
+                const titleColor = resolveTitleColor(destinationPage, MUTED_TITLE_ALPHA);
+                const titleStyle = titleColor ? { color: titleColor } : undefined;
+                return (
                 <button
                   type="button"
                   key={destinationPage.id}
@@ -857,11 +880,12 @@ export function MovePageDialog({ open, onOpenChange, page, pages }: {
                   disabled={moveMutation.isPending || destinationPage.id === page.parentId}
                   onClick={() => moveMutation.mutate({ id: page.id, parentId: destinationPage.id, destinationVaultId: vault.id })}
                 >
-                  <PageEmoji emoji={destinationPage.emoji} />
-                  <span className="min-w-0 flex-1 truncate">{destinationPage.title || "Untitled"}</span>
+                  <span style={titleStyle}><PageEmoji emoji={destinationPage.emoji} /></span>
+                  <span className="min-w-0 flex-1 truncate" style={titleStyle}>{destinationPage.title || "Untitled"}</span>
                   {destinationPage.id === page.parentId && <span className="text-xs">Current</span>}
                 </button>
-              ))}
+                );
+              })}
             </div>
           ))}
           {!areVaultsLoading && destinationSections.length === 0 && (
