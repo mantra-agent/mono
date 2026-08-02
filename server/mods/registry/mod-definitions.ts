@@ -1,5 +1,5 @@
 // ─── First-party Mod definitions (spec §1.2, §3.3, §4) ─────────────────────
-// Seven code-owned ModDefinitions whose contributions reproduce today's product
+// Six code-owned ModDefinitions whose contributions reproduce today's product
 // exactly. Ownership follows the spec §1.2 product boundaries; the navigation
 // `section` field preserves each item's CURRENT sidebar placement so an
 // all-Mods-active account resolves to the same sidebar/router as today. Nothing
@@ -134,38 +134,20 @@ const business: ModDefinition = {
   },
 };
 
-const coaching: ModDefinition = {
-  key: "coaching",
-  version: "1.0.0",
-  name: "Coaching",
-  description: "Development, reflection, accountability, and coaching programs. Recommends Planning; never owns Goals or Plans.",
-  outcome: {
-    label: "Grow with coaching",
-    promise: "Development, reflection, and accountability that build on your goals without owning them.",
-    activationSignals: [],
-  },
-  // No distinct coaching surface exists in the current product, so Coaching
-  // contributes nothing yet. It recommends Planning per spec §1.2.
-  experience: { primaryObjectKind: "reflection", primaryActionId: "planning.action.goals" },
-  compatibility: { minimumCoreVersion: MIN_CORE },
-  requiresCore: ["agent", "automation", "ui-composition"],
-  recommendsMods: ["planning"],
-  contributions: {},
-};
-
 const wellness: ModDefinition = {
   key: "wellness",
   version: "1.0.0",
   name: "Wellness",
-  description: "Wellness activities, routines, health signals, and health integrations.",
+  description: "Wellness activities, routines, health signals, reflection, coaching, and health integrations.",
   outcome: {
-    label: "Improve health and routines",
-    promise: "Build sustainable routines and track the health signals that matter.",
+    label: "Improve health and grow",
+    promise: "Build sustainable routines, reflect, and grow with coaching grounded in the health signals that matter.",
     activationSignals: ["wellness.route.wellness"],
   },
   experience: { primaryObjectKind: "wellness_activity", primaryActionId: "wellness.action.wellness", rootSurfaceKey: "wellness" },
   compatibility: { minimumCoreVersion: MIN_CORE },
-  requiresCore: ["automation", "integration-custody", "ui-composition"],
+  requiresCore: ["agent", "automation", "integration-custody", "ui-composition"],
+  recommendsMods: ["planning"],
   contributions: {
     clientRoutes: [clientRoute("wellness.route.wellness", "/wellness", "wellness")],
     navigation: [nav("wellness.nav.wellness", "Tools", "Wellness", "Activity", "navigation.wellness.open", "wellness.route.wellness", 8)],
@@ -234,7 +216,6 @@ export const modDefinitions: ModDefinition[] = [
   planning,
   build,
   business,
-  coaching,
   wellness,
   network,
   finance,

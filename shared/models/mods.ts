@@ -23,7 +23,6 @@ export const MOD_KEYS = [
   "planning",
   "build",
   "business",
-  "coaching",
   "wellness",
   "network",
   "finance",
