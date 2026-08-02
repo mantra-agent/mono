@@ -215,6 +215,7 @@ export const sessionSearchSegments = pgTable(
     projectionVersion: integer("projection_version")
       .notNull()
       .default(SESSION_SEARCH_PROJECTION_VERSION),
+    sourceRevision: integer("source_revision").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true, precision: 6 })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),

@@ -4,12 +4,16 @@ import {
   acquireAdvisoryTransactionLock,
   BOOT_ID,
   db,
+  getAmbientDatabaseTransactionOrThrow,
   hasAmbientDatabaseTransaction,
   runOutsideDatabaseTransaction,
   runWithDatabaseTransaction,
 } from "./db";
 import { accounts, users, documentStoreDocuments, planStepAttempts, planSteps, sessionArtifacts, sessionTree, compactionOperations } from "@shared/schema";
-import { replaceSessionSearchProjection } from "./memory/session-search-projection";
+import {
+  enqueueSessionSearchProjection,
+  isSessionSearchProjectionEligible,
+} from "./memory/session-search-projection";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { combineWithVisibleScope, combineWithWritableScope } from "./scoped-storage";
 import { assertWritableVault } from "./library-domain";
@@ -646,9 +650,14 @@ function withConvLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
   };
   const next = prev.then(wrapped, wrapped);
   convLocks.set(id, next);
-  next.finally(() => {
-    if (convLocks.get(id) === next) convLocks.delete(id);
-  });
+  void next.then(
+    () => {
+      if (convLocks.get(id) === next) convLocks.delete(id);
+    },
+    () => {
+      if (convLocks.get(id) === next) convLocks.delete(id);
+    },
+  );
   return next;
 }
 
@@ -864,18 +873,16 @@ async function writeConvInAmbientTransaction(data: SessionData): Promise<number>
     serializeSessionContent(data),
     buildConvDocumentMetadata(data),
   ));
-  await replaceSessionSearchProjection(document.documentStoreId, data);
-  if (
-    !["streaming", "pending"].includes(data.status)
-    && data.type !== "meeting"
-    && data.sessionType !== "meeting"
-    && !data.messages.some(message => message.assistantState === "streaming")
-  ) {
-    const principal = getCurrentPrincipalOrSystem();
-    if (principal.actorType === "user") {
-      const { indexSettledSessionReferences } = await import("./session-reference-index");
-      await indexSettledSessionReferences(principal, data);
-    }
+  if (isSessionSearchProjectionEligible(data)) {
+    await enqueueSessionSearchProjection(
+      getAmbientDatabaseTransactionOrThrow(),
+      writePrincipal,
+      {
+        documentStoreId: document.documentStoreId,
+        sessionId: data.id,
+        durableRevision: data.durableRevision,
+      },
+    );
   }
   return data.durableRevision;
 }
@@ -2832,7 +2839,17 @@ export const chatFileStorage: IChatFileStorage = {
           metadata: buildConvDocumentMetadata(data),
         }),
       );
-      await replaceSessionSearchProjection(document.documentStoreId, data);
+      if (isSessionSearchProjectionEligible(data)) {
+        await enqueueSessionSearchProjection(
+          getAmbientDatabaseTransactionOrThrow(),
+          destinationPrincipal,
+          {
+            documentStoreId: document.documentStoreId,
+            sessionId: data.id,
+            durableRevision: normalizeDurableRevision(data.durableRevision),
+          },
+        );
+      }
       const session = convToMeta(data);
       invalidateSessionsCache({ action: "updated", sessionId, session });
       log.info("Session Vault moved", {
@@ -2864,12 +2881,27 @@ export const chatFileStorage: IChatFileStorage = {
       data.vaultId = vaultId;
       data.meeting = { ...data.meeting, vaultId, libraryNodePageId };
       data.updatedAt = new Date().toISOString();
-      const document = await documentStorage.moveDocumentToVault("chat", sessionId, vaultId, {
-        title: data.title,
-        content: serializeSessionContent(data),
-        metadata: buildConvDocumentMetadata(data),
-      });
-      await replaceSessionSearchProjection(document.documentStoreId, data);
+      data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
+      const principalAtMove = getCurrentPrincipalOrSystem();
+      const destinationPrincipal = { ...principalAtMove, activeVaultId: vaultId };
+      const document = await runWithPrincipal(destinationPrincipal, () =>
+        documentStorage.moveDocumentToVault("chat", sessionId, vaultId, {
+          title: data.title,
+          content: serializeSessionContent(data),
+          metadata: buildConvDocumentMetadata(data),
+        }),
+      );
+      if (isSessionSearchProjectionEligible(data)) {
+        await enqueueSessionSearchProjection(
+          getAmbientDatabaseTransactionOrThrow(),
+          destinationPrincipal,
+          {
+            documentStoreId: document.documentStoreId,
+            sessionId: data.id,
+            durableRevision: data.durableRevision,
+          },
+        );
+      }
       const session = convToMeta(data);
       invalidateSessionsCache({ action: "updated", sessionId, session });
       return session;
@@ -3785,6 +3817,7 @@ export const chatFileStorage: IChatFileStorage = {
             data.endReason = "process_restart";
             data.errorSeverity = "warning";
             data.updatedAt = now;
+            data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
             const updated = await tx
               .update(documentStoreDocuments)
               .set({
@@ -3808,7 +3841,17 @@ export const chatFileStorage: IChatFileStorage = {
             if (updated.length !== 1) {
               throw new Error(`Locked chat document update failed: chat/${id}`);
             }
-            await replaceSessionSearchProjection(locked.id, data);
+            if (isSessionSearchProjectionEligible(data)) {
+              await enqueueSessionSearchProjection(
+                getAmbientDatabaseTransactionOrThrow(),
+                principal,
+                {
+                  documentStoreId: locked.id,
+                  sessionId: data.id,
+                  durableRevision: normalizeDurableRevision(data.durableRevision),
+                },
+              );
+            }
             invalidateSessionsCache({
               action: "updated",
               sessionId: id,

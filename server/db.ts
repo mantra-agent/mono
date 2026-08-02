@@ -761,6 +761,14 @@ export function hasAmbientDatabaseTransaction(): boolean {
   return databaseTransactionALS.getStore() !== undefined;
 }
 
+export function getAmbientDatabaseTransactionOrThrow(): DrizzleTransaction {
+  const transaction = databaseTransactionALS.getStore();
+  if (!transaction) {
+    throw new Error("An ambient database transaction is required");
+  }
+  return transaction;
+}
+
 /**
  * Run durable evidence or recovery work without inheriting the caller's
  * business transaction. Other async context remains intact.
