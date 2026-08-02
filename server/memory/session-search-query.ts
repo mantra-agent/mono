@@ -100,6 +100,7 @@ export function buildTargetSessionSearchQuery(
           sql`${updatedAt} >= ${cutoffIso}`,
           sql`coalesce((${documentStoreDocuments.metadata}->>'messageCount')::int, 0) > 0`,
           eq(sessionSearchSegments.projectionVersion, SESSION_SEARCH_PROJECTION_VERSION),
+          sql`${sessionSearchSegments.projectionRevision} = coalesce((${documentStoreDocuments.metadata}->>'durableRevision')::int, 0)`,
           sql`${sessionSearchSegments.content} ILIKE ${searchPattern} ESCAPE '!'`,
         ),
       ),
