@@ -508,14 +508,6 @@ async function buildLifecycleSnapshot(lifecycle: EnvironmentBuildLifecycleContex
   };
 }
 
-export async function snapshotEnvironmentBuildLifecycle(environmentId: number) {
-  const lifecycle = await getEnvironmentBuildLifecycleConfig(environmentId);
-  if (!lifecycle?.config?.enabled) {
-    throw new Error(`Environment ${environmentId} has no enabled build lifecycle config`);
-  }
-  return buildLifecycleSnapshot(lifecycle, await getBindingContext(environmentId));
-}
-
 export async function listEnvironmentBuildWorkflows(environmentId: number, limit = 20) {
   const lifecycle = await getEnvironmentBuildLifecycleConfig(environmentId, { includeDisabled: true });
   if (!lifecycle) return null;

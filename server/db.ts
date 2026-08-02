@@ -817,9 +817,9 @@ export const ADVISORY_LOCK_NS = {
   AGENDA_DEFINITION: 0x41474446, // 'AGDF' — serializes agenda definition mutations and reserved seeding per owner/account
   PERSON_EMAIL: 0x50454d4c, // 'PEML' — serializes account-local Person identity by normalized email
   RECIPIENT_RECAP: 0x52524350, // 'RRCP' — serializes one recipient-owned recap materialization
-  REGRESSION_RUN: 0x5247524e, // 'RGRN' — serializes candidate snapshots and one-Plan association per run
-  REGRESSION_CONTRACT: 0x52474354, // 'RGCT' — serializes versioned contract mutation per issue
-  REGRESSION_RESULT: 0x52475253, // 'RGRS' — serializes one append-only result per run + issue
+  ISSUE: 0x49535355, // 'ISSU' — serializes one Issue read-modify-write transition
+  TIMER_BUILD: 0x54424c44, // 'TBLD' — serializes the cross-replica new-build Timer claim
+  REGRESSION_RETIREMENT: 0x52475244, // 'RGRD' — serializes terminal retirement of the removed Regression schema
   MEETING_AUDIO_SAMPLE: 0x4d415544, // 'MAUD' — serializes retained-audio capture, replay, and deletion per sample
   REFERENCE_OCCURRENCES: 0x52464f43, // 'RFOC' — serializes one authored source projection replacement
   ADDRESS_LINK: 0x41444c4b, // 'ADLK' — serializes one explicit-link idempotency or lifecycle mutation

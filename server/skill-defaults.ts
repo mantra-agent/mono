@@ -982,42 +982,38 @@ If the page has already been created but you later decide it should be surfaced,
   {
     name: "regression",
     recommendedPersona: "Engineer",
-    description: "Executes one durable Regression run against an immutable successful deployment snapshot by creating exactly one associated Plan and one fresh-context issue step per deterministic candidate.",
+    description: "Reviews existing open Issues after a new build and closes only those with clear evidence that the reported problem is resolved.",
     category: "engineering",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.1",
+    version: "2.0",
     addToMemory: false,
     pinnedToContext: false,
-    whenToUse: "Launch manually at any time through Skills or regression.start_run, or automatically after a healthy deployment event. The dispatcher supplies the durable regression run ID in preContext.",
-    outputSpec: "A compact terminal summary containing the regression run ID, associated Plan reference, candidate/result counts, exclusions, and aggregate status.",
+    whenToUse: "Runs automatically after a genuinely new deployed build through the existing Timer scheduler, or manually from Skills when an operator wants to recheck open Issues.",
+    outputSpec: "A compact report listing every reviewed Issue under still open, resolved, or blocked on testing, with the evidence used for each classification.",
     checklist: [
-      { check: "Loaded the durable run through regression.get_run", weight: 3, kind: "tool_invoked", tool: "regression", action: "get_run" },
-      { check: "Loaded the deterministic candidate snapshot through regression.list_candidates", weight: 3, kind: "tool_invoked", tool: "regression", action: "list_candidates" },
-      { check: "Created exactly one Plan and associated it to the regression run before execution", weight: 4 },
-      { check: "Created exactly one fresh-context Plan step per candidate issue with exact run ID, issue ID, and Plan step ID instructions", weight: 4 },
-      { check: "Missing or invalid regression documentation was recorded as a blocked result rather than skipped", weight: 4 },
-      { check: "Executed the blocking Plan and loaded durable results before reporting", weight: 4, kind: "tool_invoked", tool: "regression", action: "get_results" },
-      { check: "Did not mutate Issue status, notes, contracts, or accepted target identity", weight: 4 },
+      { check: "Loaded every unresolved Issue page through issues.list", weight: 4, kind: "tool_invoked", tool: "issues", action: "list" },
+      { check: "Inspected every returned Issue individually through issues.get", weight: 4, kind: "tool_invoked", tool: "issues", action: "get" },
+      { check: "Closed only Issues with affirmative evidence that the reported behavior is resolved", weight: 5 },
+      { check: "Classified every reviewed Issue exactly once as still open, resolved, or blocked on testing", weight: 4 },
+      { check: "Reported concise evidence for every classification", weight: 3 },
     ],
-    process: `You execute one durable Regression run. The dispatcher supplies only a regression run ID in preContext.
+    process: `Review the current open Issue queue. This is an automated checking pipeline, not a product-definition system.
 
-1. Parse the exact run ID. Call \`regression(action: "get_run", runId)\` and \`regression(action: "list_candidates", runId)\`.
-2. If the run already has a Plan, reuse it. Otherwise create exactly one blocking Plan with \`plan(action: "create", blocking: true)\` and immediately associate it with \`regression(action: "associate_plan")\`. If association reports an existing Plan, discard no state and use the already-associated Plan.
-3. Create exactly one Plan step per candidate issue, in candidate order. Use persona Engineer. Plan creation deterministically names these steps \`step_1\`, \`step_2\`, and so on. Each step instruction must contain the exact run ID, issue ID, and its deterministic step ID and must tell the fresh child to:
-   - call \`regression(action: "get_issue", runId, issueId)\`;
-   - when contractState is missing or invalid, call \`regression(action: "append_result", status: "blocked", reasonCode: "missing_contract" or "invalid_contract", summary: a bounded documentation-gap explanation, planStepId: its exact step ID)\`;
-   - otherwise call \`regression(action: "execute_scenario", runId, issueId, planStepId: its exact step ID)\`;
-   - never edit Issue status, notes, contract, run target, or result history.
-4. Call \`plan(action: "execute", planId)\`. Each Plan step becomes its own fresh-context child session.
-5. After Plan completion, call \`regression(action: "get_results", runId)\` and \`regression(action: "get_run", runId)\`. Report the durable aggregate state and exclusions.
+1. Call \`issues(action: "list", excludeStatus: "resolved", limit: 500, offset: 0)\`. Follow \`nextOffset\` until \`hasMore\` is false so every unresolved Issue is included.
+2. Iterate through every returned Issue in order. For each Issue:
+   - call \`issues(action: "get", id: issueId)\`;
+   - inspect the Issue's description, logs, screenshot, page, notes, dependencies, and linked evidence;
+   - use existing read-only automation and diagnostics when they are authorized and can determine the current state, such as authenticated page verification, runtime logs, deployments, Sentry, code inspection, or build state; if a tool is unavailable under the Timer owner's authority, classify the Issue as \`blocked_on_testing\` rather than widening authority;
+   - assign exactly one outcome:
+     - \`still_open\`: affirmative evidence shows the problem still exists;
+     - \`resolved\`: affirmative evidence shows the reported problem no longer exists;
+     - \`blocked_on_testing\`: the available automation cannot decide safely, including cases requiring credentials, destructive actions, unsupported interaction, unavailable environments, or human judgment.
+3. Only for \`resolved\`, call \`issues(action: "resolve", id: issueId, evidence: "<brief affirmative evidence>")\`.
+4. Leave \`still_open\` and \`blocked_on_testing\` Issues open. Do not create replacement Issues, Regression contracts, Plans, product definitions, scenarios, or a second result ledger.
+5. Report three compact sections: Still open, Resolved, Blocked on testing. Include every reviewed Issue exactly once with its ID, title, and decisive evidence. If there are no open Issues, report that and stop.
 
-Hard rules:
-- Do not invent, repair, or update a regression contract during execution. Documentation gaps are blocked results.
-- Do not supply a hostname, URL origin, credential, cookie, selector, JavaScript, shell command, or Issue status mutation.
-- One run has one blocking Plan. One candidate has one step. One run+issue has one terminal result.
-- Never call \`regression.start_run\` from inside the Regression Skill; launch adapters and the dispatcher already own the durable run.
-- Treat exclusions as counted outcomes, never silent skips.`,
+A passing build, merged change, or absence of an error in a narrow log window is not enough by itself to resolve an Issue. When evidence is ambiguous, use \`blocked_on_testing\`.`,
   },
   {
     name: "plan",
