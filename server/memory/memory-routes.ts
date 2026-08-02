@@ -39,7 +39,7 @@ import { getLibraryAuthoredOccurrences, getLibraryReferenceNeighborhood, schedul
 import { normalizeProtocolAddress } from "@shared/life-addressing";
 import { assemblePersonalGraph, libraryFirstGraphEnabled } from "./personal-graph-projection";
 import {
-  isCompleteMemoryGraphSettings,
+  isAcceptedMemoryGraphSettingsSnapshot,
   normalizeMemoryGraphSettings,
 } from "@shared/memory-graph-settings";
 
@@ -345,7 +345,7 @@ async function handleSetMemoryGraphSettings(req: Request, res: Response): Promis
       res.status(401).json({ error: "User session required" });
       return;
     }
-    if (!isCompleteMemoryGraphSettings(req.body?.settings)) {
+    if (!isAcceptedMemoryGraphSettingsSnapshot(req.body?.settings)) {
       res.status(400).json({ error: "Invalid Memory Graph settings" });
       return;
     }

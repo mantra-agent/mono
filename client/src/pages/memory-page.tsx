@@ -1522,11 +1522,6 @@ function GraphTab({
     () => new Set(visibleGraphNodes.map((node) => node.id)),
     [visibleGraphNodes],
   );
-  const visibleGraphLinks = useMemo(
-    () => graphLinks.filter((link) => visibleNodeIds.has(link.fromId) && visibleNodeIds.has(link.toId)),
-    [graphLinks, visibleNodeIds],
-  );
-
   const toggleNodeType = useCallback((typeId: string) => {
     setHiddenNodeTypes((current) => {
       const next = new Set(current);
@@ -1805,12 +1800,13 @@ function GraphTab({
         <div className="flex-1 relative overflow-hidden bg-background">
           <MemoryGraph3D
             ref={graphRef}
-            nodes={visibleGraphNodes}
-            links={visibleGraphLinks}
+            nodes={graphNodes}
+            links={graphLinks}
             selectedNodeId={selectedNode?.id ?? null}
             highlightedNodeIds={graphSearchMatchIds}
             activityEnabled={activityEnabled}
             settings={appliedGraphSettings}
+            visibleNodeIds={visibleNodeIds}
             nodeDetail={nodeDetail}
             onNodeSelect={handleNodeSelect}
             onNodeHover={handleNodeHover}
