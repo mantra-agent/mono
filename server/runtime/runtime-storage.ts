@@ -8,7 +8,10 @@ import {
   type RuntimeAttemptRow,
   type RuntimeAttribution,
   type RuntimeBudgetV1,
+  type RuntimeCapacityPolicy,
   type RuntimeCapacityPolicyV1,
+  type RuntimeCapacityPolicyV2,
+  type RuntimePoolCapacityV1,
   type RuntimeReceiptV1,
   type RuntimeResourcePool,
   type RuntimeRunOutcome,
@@ -46,6 +49,8 @@ const MAX_EVIDENCE_EVENTS_PER_RECEIPT = 100;
 const MAX_RECEIPT_BYTES = 64 * 1024;
 const MAX_OUTPUT_REFERENCES = 100;
 const DEFAULT_ACCOUNT_HEAD_LIMIT = 50;
+export const DEFAULT_PROTECTED_ACCOUNT_SHARE = 2;
+const LEGACY_CAPACITY_HANDLER_KEY = "legacy.capacity";
 
 const runScope = { scope: runtimeRuns.scope, ownerUserId: runtimeRuns.ownerUserId, accountId: runtimeRuns.accountId };
 const attemptScope = { scope: runtimeAttempts.scope, ownerUserId: runtimeAttempts.ownerUserId, accountId: runtimeAttempts.accountId };
@@ -82,6 +87,23 @@ export const DEFAULT_RUNTIME_CAPACITY_POLICY_V1: RuntimeCapacityPolicyV1 = {
   },
   accountOverrides: {},
 };
+
+export const DEFAULT_RUNTIME_CAPACITY_POLICY_V2: RuntimeCapacityPolicyV2 = {
+  version: 2,
+  globalLimit: 20,
+  accountHeadLimit: DEFAULT_ACCOUNT_HEAD_LIMIT,
+  accountScheduling: "work_conserving_fair_share",
+  pools: {
+    realtime_agent: { limit: 20, accountLimit: DEFAULT_PROTECTED_ACCOUNT_SHARE, leaseSeconds: 60, heartbeatSeconds: 15, interactiveReserve: 0 },
+    interactive_agent: { limit: 14, accountLimit: DEFAULT_PROTECTED_ACCOUNT_SHARE, leaseSeconds: 60, heartbeatSeconds: 15, interactiveReserve: 0 },
+    background_agent: { limit: 6, accountLimit: DEFAULT_PROTECTED_ACCOUNT_SHARE, leaseSeconds: 60, heartbeatSeconds: 15, interactiveReserve: 14 },
+    short_worker: { limit: 6, accountLimit: DEFAULT_PROTECTED_ACCOUNT_SHARE, leaseSeconds: 60, heartbeatSeconds: 15, interactiveReserve: 14 },
+    isolated_execution: { limit: 2, accountLimit: 1, leaseSeconds: 60, heartbeatSeconds: 15, interactiveReserve: 14 },
+  },
+  accountOverrides: {},
+};
+
+export const DEFAULT_RUNTIME_CAPACITY_POLICY: RuntimeCapacityPolicy = DEFAULT_RUNTIME_CAPACITY_POLICY_V2;
 
 function requireUserPrincipal(principal: Principal): asserts principal is Principal & { actorType: "user"; userId: string; accountId: string } {
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
@@ -293,12 +315,39 @@ export async function enqueueRuntimeRun(
   return { run: existing, disposition: "existing" };
 }
 
-async function currentCapacityPolicy(tx: DrizzleTx): Promise<{ version: number; policy: RuntimeCapacityPolicyV1 }> {
+async function currentCapacityPolicy(tx: DrizzleTx): Promise<{ version: number; policy: RuntimeCapacityPolicy }> {
   const [row] = await tx.select().from(runtimeCapacityPolicies).orderBy(desc(runtimeCapacityPolicies.version)).limit(1);
   if (!row) throw new Error("Runtime capacity policy is missing");
-  const policy = row.policy;
-  if (policy.version !== row.version || !policy.pools) throw new Error("Runtime capacity policy is invalid");
+  const policy = row.policy as RuntimeCapacityPolicy;
+  if ((policy.version !== 1 && policy.version !== 2) || policy.version !== row.version || !policy.pools) {
+    throw new Error("Runtime capacity policy is invalid");
+  }
   return { version: row.version, policy };
+}
+
+function requirePoolCapacity(
+  policy: RuntimeCapacityPolicy,
+  resourcePool: RuntimeResourcePool,
+): RuntimePoolCapacityV1 {
+  if (policy.version === 1) {
+    if (resourcePool === "realtime_agent") {
+      throw new Error("Runtime capacity policy v1 does not define pool realtime_agent");
+    }
+    return policy.pools[resourcePool];
+  }
+  return policy.pools[resourcePool];
+}
+
+function accountOverrideLimit(
+  policy: RuntimeCapacityPolicy,
+  accountId: string,
+  resourcePool: RuntimeResourcePool,
+): number | undefined {
+  if (policy.version === 1) {
+    if (resourcePool === "realtime_agent") return undefined;
+    return policy.accountOverrides[accountId]?.[resourcePool]?.limit;
+  }
+  return policy.accountOverrides[accountId]?.[resourcePool]?.limit;
 }
 
 const GLOBAL_CAPACITY_LOCK_KEY = "__runtime_global_capacity__";
@@ -319,6 +368,8 @@ export interface RuntimeCapacitySnapshot {
   poolActive: number;
   accountLimit: number;
   accountActive: number;
+  poolAccountLimit: number;
+  poolAccountActive: number;
   interactiveReserve: number;
   interactiveActive: number;
   protectedInteractiveReserve: number;
@@ -330,38 +381,107 @@ export type RuntimeCapacitySaturationReason =
   | "account_saturated"
   | "interactive_reserve_protected";
 
+async function readWaitingReservedCapacity(tx: DrizzleTx): Promise<number> {
+  const result = await tx.execute(sql`
+    WITH pending_accounts AS (
+      SELECT DISTINCT account_id
+      FROM runtime_runs
+      WHERE phase = 'pending'
+        AND available_at <= CURRENT_TIMESTAMP
+        AND deadline_at > CURRENT_TIMESTAMP
+        AND cancellation_requested_at IS NULL
+    ), active_accounts AS (
+      SELECT account_id, COUNT(*)::int AS active_count
+      FROM runtime_attempts
+      WHERE phase IN ('leased','running')
+        AND lease_expires_at > CURRENT_TIMESTAMP
+      GROUP BY account_id
+    )
+    SELECT COALESCE(SUM(GREATEST(
+      0,
+      ${DEFAULT_PROTECTED_ACCOUNT_SHARE} - COALESCE(active.active_count, 0)
+    )), 0)::int AS reserved_capacity
+    FROM pending_accounts AS pending
+    LEFT JOIN active_accounts AS active ON active.account_id = pending.account_id
+  `);
+  const row = (result.rows as Array<{ reserved_capacity: number | string }>)[0];
+  return Number(row?.reserved_capacity ?? 0);
+}
+
+function accountCapacityLimits(
+  policy: RuntimeCapacityPolicy,
+  resourcePool: RuntimeResourcePool,
+  accountId: string,
+  accountActive: number,
+  waitingReservedCapacity: number,
+): { accountLimit: number; poolAccountLimit: number } {
+  const poolPolicy = requirePoolCapacity(policy, resourcePool);
+  const accountOverride = accountOverrideLimit(policy, accountId, resourcePool);
+  const configuredAccountLimit = accountOverride ?? poolPolicy.accountLimit;
+  if (policy.version === 1) {
+    return { accountLimit: configuredAccountLimit, poolAccountLimit: configuredAccountLimit };
+  }
+
+  const accountReservedCapacity = Math.max(0, DEFAULT_PROTECTED_ACCOUNT_SHARE - accountActive);
+  const peerReserve = Math.max(0, waitingReservedCapacity - accountReservedCapacity);
+  const accountCeiling = accountOverride ?? policy.accountHeadLimit;
+  return {
+    accountLimit: Math.min(
+      Math.max(DEFAULT_PROTECTED_ACCOUNT_SHARE, policy.globalLimit - peerReserve),
+      accountCeiling,
+    ),
+    poolAccountLimit: accountCeiling,
+  };
+}
+
 async function readCapacitySnapshot(
   tx: DrizzleTx,
   policyVersion: number,
-  policy: RuntimeCapacityPolicyV1,
+  policy: RuntimeCapacityPolicy,
   resourcePool: RuntimeResourcePool,
   accountId: string,
+  protectWaitingPeers = true,
+  knownWaitingReservedCapacity?: number,
 ): Promise<RuntimeCapacitySnapshot> {
   const result = await tx.execute(sql`
     SELECT
       COUNT(*) FILTER (WHERE phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS global_active,
       COUNT(*) FILTER (WHERE resource_pool = ${resourcePool} AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS pool_active,
-      COUNT(*) FILTER (WHERE account_id = ${accountId} AND resource_pool = ${resourcePool} AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS account_active,
-      COUNT(*) FILTER (WHERE resource_pool = 'interactive_agent' AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS interactive_active
+      COUNT(*) FILTER (WHERE account_id = ${accountId} AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS global_account_active,
+      COUNT(*) FILTER (WHERE account_id = ${accountId} AND resource_pool = ${resourcePool} AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS pool_account_active,
+      COUNT(*) FILTER (WHERE resource_pool IN ('realtime_agent', 'interactive_agent') AND phase IN ('leased','running') AND lease_expires_at > CURRENT_TIMESTAMP)::int AS interactive_active
     FROM runtime_attempts
   `);
   const row = (result.rows as Array<{
     global_active: number | string;
     pool_active: number | string;
-    account_active: number | string;
+    global_account_active: number | string;
+    pool_account_active: number | string;
     interactive_active: number | string;
   }>)[0];
-  const poolPolicy = policy.pools[resourcePool];
-  const interactiveReserve = policy.pools.interactive_agent.interactiveReserve;
+  const poolPolicy = requirePoolCapacity(policy, resourcePool);
+  const interactiveReserve = requirePoolCapacity(policy, "background_agent").interactiveReserve;
   const interactiveActive = Number(row?.interactive_active ?? 0);
+  const waitingReservedCapacity = policy.version === 2 && protectWaitingPeers
+    ? knownWaitingReservedCapacity ?? await readWaitingReservedCapacity(tx)
+    : 0;
+  const { accountLimit, poolAccountLimit } = accountCapacityLimits(
+    policy,
+    resourcePool,
+    accountId,
+    Number(row?.global_account_active ?? 0),
+    waitingReservedCapacity,
+  );
   return {
     policyVersion,
     globalLimit: policy.globalLimit,
     globalActive: Number(row?.global_active ?? 0),
     poolLimit: poolPolicy.limit,
     poolActive: Number(row?.pool_active ?? 0),
-    accountLimit: policy.accountOverrides[accountId]?.[resourcePool]?.limit ?? poolPolicy.accountLimit,
-    accountActive: Number(row?.account_active ?? 0),
+    accountLimit,
+    accountActive: Number(row?.global_account_active ?? 0),
+    poolAccountLimit,
+    poolAccountActive: Number(row?.pool_account_active ?? 0),
     interactiveReserve,
     interactiveActive,
     protectedInteractiveReserve: Math.max(0, interactiveReserve - interactiveActive),
@@ -373,10 +493,12 @@ function saturationReason(
   snapshot: RuntimeCapacitySnapshot,
 ): RuntimeCapacitySaturationReason | null {
   if (snapshot.poolActive >= snapshot.poolLimit) return "pool_saturated";
-  if (snapshot.accountActive >= snapshot.accountLimit) return "account_saturated";
+  if (snapshot.accountActive >= snapshot.accountLimit || snapshot.poolAccountActive >= snapshot.poolAccountLimit) {
+    return "account_saturated";
+  }
   if (snapshot.globalActive >= snapshot.globalLimit) return "global_saturated";
   if (
-    resourcePool !== "interactive_agent" &&
+    resourcePool !== "realtime_agent" && resourcePool !== "interactive_agent" &&
     snapshot.globalActive >= snapshot.globalLimit - snapshot.protectedInteractiveReserve
   ) {
     return "interactive_reserve_protected";
@@ -391,33 +513,121 @@ export interface LegacyRuntimeCapacityLease {
   snapshot: RuntimeCapacitySnapshot;
 }
 
-export async function acquireLegacyRuntimeCapacity(
-  principal: Principal,
-  input: {
-    externalRunId: string;
-    resourcePool: RuntimeResourcePool;
-    sourceType: string;
-    activity?: string;
-    deadlineAt: Date;
-    workerId: string;
-  },
-): Promise<
-  | { disposition: "acquired"; lease: LegacyRuntimeCapacityLease }
-  | { disposition: "saturated"; reason: RuntimeCapacitySaturationReason; snapshot: RuntimeCapacitySnapshot }
-> {
-  requireUserPrincipal(principal);
+interface LegacyRuntimeCapacityRequestInput {
+  externalRunId: string;
+  admissionRequestId: string;
+  resourcePool: RuntimeResourcePool;
+  sourceType: string;
+  activity?: string;
+  deadlineAt: Date;
+  workerId: string;
+}
+
+function validateLegacyRuntimeCapacityInput(input: LegacyRuntimeCapacityRequestInput): {
+  externalRunId: string;
+  admissionRequestId: string;
+  sourceType: string;
+  workerId: string;
+} {
   const externalRunId = boundedText(input.externalRunId, "externalRunId", 200);
+  const admissionRequestId = boundedText(input.admissionRequestId, "admissionRequestId", 200);
   const sourceType = boundedText(input.sourceType, "sourceType", 120);
   const workerId = boundedText(input.workerId, "workerId", 200);
   if (!(input.deadlineAt instanceof Date) || !Number.isFinite(input.deadlineAt.getTime()) || input.deadlineAt <= new Date()) {
     throw Object.assign(new Error("deadlineAt must be a future date"), { status: 400 });
   }
+  return { externalRunId, admissionRequestId, sourceType, workerId };
+}
+
+async function ensureLegacyRuntimeCapacityRun(
+  tx: DrizzleTx,
+  principal: Principal & { actorType: "user"; userId: string; accountId: string },
+  input: LegacyRuntimeCapacityRequestInput,
+): Promise<RuntimeRunRow> {
+  const { externalRunId, admissionRequestId, sourceType } = validateLegacyRuntimeCapacityInput(input);
+  const now = new Date();
+  const idempotencyKey = `legacy-capacity/${admissionRequestId}`;
+  const budget: RuntimeBudgetV1 = {
+    ...DEFAULT_RUNTIME_BUDGET_V1,
+    maxWallClockMs: Math.max(1, input.deadlineAt.getTime() - now.getTime()),
+    maxAttempts: 1,
+  };
+  const retryPolicy: RuntimeRetryPolicyV1 = {
+    ...DEFAULT_RUNTIME_RETRY_POLICY_V1,
+    maxAttempts: 1,
+    retryableFailureClasses: [],
+  };
+  const requestShape = {
+    compatibility: true,
+    externalRunId,
+    admissionRequestId,
+    sourceType,
+    activity: input.activity?.slice(0, 120) ?? null,
+    resourcePool: input.resourcePool,
+    idempotencyKey,
+  };
+  const ownership = ownedInsertValues(principal, runScope);
+  const inserted = await tx.insert(runtimeRuns).values({
+    kind: LEGACY_CAPACITY_HANDLER_KEY,
+    handlerKey: LEGACY_CAPACITY_HANDLER_KEY,
+    handlerVersion: 1,
+    sourceType,
+    sourceId: externalRunId,
+    idempotencyKey,
+    requestHash: hashValue(requestShape),
+    runAsActorType: "user",
+    runAsSubjectId: principal.userId,
+    resourcePool: input.resourcePool,
+    executorProfile: input.resourcePool === "isolated_execution" ? "isolated_browser" : "in_process_trusted",
+    priority: 0,
+    availableAt: now,
+    deadlineAt: input.deadlineAt,
+    inputSchemaVersion: 1,
+    input: requestShape,
+    inputRefs: [],
+    authorityPolicyVersionAtEnqueue: "legacy-facade-v1",
+    budget,
+    retryPolicy,
+    ...ownership,
+    createdByUserId: principal.userId,
+  }).onConflictDoNothing({ target: [runtimeRuns.accountId, runtimeRuns.kind, runtimeRuns.idempotencyKey] }).returning();
+  const [run] = inserted.length > 0
+    ? inserted
+    : await tx.select().from(runtimeRuns).where(and(
+        eq(runtimeRuns.accountId, principal.accountId),
+        eq(runtimeRuns.kind, LEGACY_CAPACITY_HANDLER_KEY),
+        eq(runtimeRuns.idempotencyKey, idempotencyKey),
+      )).limit(1).for("update");
+  if (!run) throw new Error("Legacy runtime capacity run creation failed");
+  if (run.phase !== "pending" || run.currentAttemptId) {
+    throw Object.assign(new Error("Legacy runtime capacity request is no longer pending"), { code: "legacy_capacity_not_pending" });
+  }
+  return run;
+}
+
+export async function acquireLegacyRuntimeCapacity(
+  principal: Principal,
+  input: LegacyRuntimeCapacityRequestInput,
+): Promise<
+  | { disposition: "acquired"; lease: LegacyRuntimeCapacityLease }
+  | { disposition: "saturated"; reason: RuntimeCapacitySaturationReason; snapshot: RuntimeCapacitySnapshot }
+> {
+  requireUserPrincipal(principal);
+  const { sourceType, workerId } = validateLegacyRuntimeCapacityInput(input);
 
   return runWithPrincipal(principal, () => db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+    const run = await ensureLegacyRuntimeCapacityRun(tx, principal, input);
     await acquireCapacityLocks(tx, input.resourcePool);
+    const now = new Date();
     const { version: policyVersion, policy } = await currentCapacityPolicy(tx);
-    const poolPolicy = policy.pools[input.resourcePool];
-    const snapshot = await readCapacitySnapshot(tx, policyVersion, policy, input.resourcePool, principal.accountId);
+    const poolPolicy = requirePoolCapacity(policy, input.resourcePool);
+    const snapshot = await readCapacitySnapshot(
+      tx,
+      policyVersion,
+      policy,
+      input.resourcePool,
+      principal.accountId,
+    );
     const reason = saturationReason(input.resourcePool, snapshot);
     if (reason) {
       log.debug("runtime.capacity.saturated", {
@@ -429,53 +639,7 @@ export async function acquireLegacyRuntimeCapacity(
       return { disposition: "saturated" as const, reason, snapshot };
     }
 
-    const now = new Date();
     const leaseToken = crypto.randomBytes(32).toString("base64url");
-    const idempotencyKey = `legacy-capacity/${crypto.randomUUID()}`;
-    const budget: RuntimeBudgetV1 = {
-      ...DEFAULT_RUNTIME_BUDGET_V1,
-      maxWallClockMs: Math.max(1, input.deadlineAt.getTime() - now.getTime()),
-      maxAttempts: 1,
-    };
-    const retryPolicy: RuntimeRetryPolicyV1 = {
-      ...DEFAULT_RUNTIME_RETRY_POLICY_V1,
-      maxAttempts: 1,
-      retryableFailureClasses: [],
-    };
-    const requestShape = {
-      compatibility: true,
-      externalRunId,
-      sourceType,
-      activity: input.activity?.slice(0, 120) ?? null,
-      resourcePool: input.resourcePool,
-      idempotencyKey,
-    };
-    const ownership = ownedInsertValues(principal, runScope);
-    const [run] = await tx.insert(runtimeRuns).values({
-      kind: "legacy.capacity",
-      handlerKey: "legacy.capacity",
-      handlerVersion: 1,
-      sourceType,
-      sourceId: externalRunId,
-      idempotencyKey,
-      requestHash: hashValue(requestShape),
-      runAsActorType: "user",
-      runAsSubjectId: principal.userId,
-      resourcePool: input.resourcePool,
-      executorProfile: input.resourcePool === "isolated_execution" ? "isolated_browser" : "in_process_trusted",
-      priority: 0,
-      availableAt: now,
-      deadlineAt: input.deadlineAt,
-      inputSchemaVersion: 1,
-      input: requestShape,
-      inputRefs: [],
-      authorityPolicyVersionAtEnqueue: "legacy-facade-v1",
-      budget,
-      retryPolicy,
-      ...ownership,
-      createdByUserId: principal.userId,
-    }).returning();
-    if (!run) throw new Error("Legacy runtime capacity run creation failed");
 
     const leaseExpiresAt = new Date(now.getTime() + poolPolicy.leaseSeconds * 1000);
     const [attempt] = await tx.insert(runtimeAttempts).values({
@@ -501,8 +665,13 @@ export async function acquireLegacyRuntimeCapacity(
       phase: "running",
       currentAttemptId: attempt.id,
       updatedAt: now,
-    }).where(and(eq(runtimeRuns.id, run.id), eq(runtimeRuns.phase, "pending"), isNull(runtimeRuns.currentAttemptId))).returning();
-    if (!runningRun) throw new Error("Legacy runtime capacity run activation failed");
+    }).where(and(
+      eq(runtimeRuns.id, run.id),
+      eq(runtimeRuns.phase, "pending"),
+      isNull(runtimeRuns.currentAttemptId),
+      isNull(runtimeRuns.cancellationRequestedAt),
+    )).returning();
+    if (!runningRun) throw Object.assign(new Error("Legacy runtime capacity request is no longer pending"), { code: "legacy_capacity_not_pending" });
 
     const fence = {
       accountId: principal.accountId,
@@ -537,6 +706,7 @@ interface AccountHeadRow {
   handler_version: number;
   executor_profile: string;
   active_count: number | string;
+  pool_active_count: number | string;
   last_claim_at: Date | string | null;
 }
 
@@ -548,8 +718,8 @@ export async function claimNextRuntimeRun(
   return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
     await acquireCapacityLocks(tx, resourcePool);
     const { version: policyVersion, policy } = await currentCapacityPolicy(tx);
-    const poolPolicy = policy.pools[resourcePool];
-    if (!poolPolicy || poolPolicy.limit < 1) return null;
+    const poolPolicy = requirePoolCapacity(policy, resourcePool);
+    if (poolPolicy.limit < 1) return null;
 
     await tx.execute(sql`
       WITH expired AS (
@@ -559,6 +729,9 @@ export async function claimNextRuntimeRun(
         WHERE resource_pool = ${resourcePool}
           AND phase IN ('leased', 'running')
           AND lease_expires_at <= CURRENT_TIMESTAMP
+          AND run_id IN (
+            SELECT id FROM runtime_runs WHERE handler_key <> ${LEGACY_CAPACITY_HANDLER_KEY}
+          )
         RETURNING id, run_id
       )
       UPDATE runtime_runs AS run
@@ -573,7 +746,7 @@ export async function claimNextRuntimeRun(
     // Candidate selection below determines the account, but global and pool
     // saturation can be decided now. Non-interactive pools may not consume the
     // still-unused interactive reserve.
-    const globalSnapshot = await readCapacitySnapshot(tx, policyVersion, policy, resourcePool, "__candidate__");
+    const globalSnapshot = await readCapacitySnapshot(tx, policyVersion, policy, resourcePool, "__candidate__", false);
     const globalReason = saturationReason(resourcePool, {
       ...globalSnapshot,
       accountActive: 0,
@@ -597,6 +770,7 @@ export async function claimNextRuntimeRun(
           run.executor_profile, run.deadline_at, run.priority, run.available_at, run.created_at
         FROM runtime_runs AS run
         WHERE run.resource_pool = ${resourcePool}
+          AND run.handler_key <> ${LEGACY_CAPACITY_HANDLER_KEY}
           AND run.phase = 'pending'
           AND run.available_at <= CURRENT_TIMESTAMP
           AND run.deadline_at > CURRENT_TIMESTAMP
@@ -604,6 +778,12 @@ export async function claimNextRuntimeRun(
         ORDER BY run.account_id, run.deadline_at ASC, run.priority DESC, run.available_at ASC, run.id ASC
       ), active_accounts AS (
         SELECT account_id, COUNT(*)::int AS active_count
+        FROM runtime_attempts
+        WHERE phase IN ('leased','running')
+          AND lease_expires_at > CURRENT_TIMESTAMP
+        GROUP BY account_id
+      ), active_pool_accounts AS (
+        SELECT account_id, COUNT(*)::int AS pool_active_count
         FROM runtime_attempts
         WHERE resource_pool = ${resourcePool}
           AND phase IN ('leased','running')
@@ -615,18 +795,31 @@ export async function claimNextRuntimeRun(
         WHERE resource_pool = ${resourcePool}
         GROUP BY account_id
       )
-      SELECT head.*, COALESCE(active.active_count, 0)::int AS active_count, last_claim.last_claim_at
+      SELECT head.*,
+             COALESCE(active.active_count, 0)::int AS active_count,
+             COALESCE(active_pool.pool_active_count, 0)::int AS pool_active_count,
+             last_claim.last_claim_at
       FROM account_heads AS head
       LEFT JOIN active_accounts AS active ON active.account_id = head.account_id
+      LEFT JOIN active_pool_accounts AS active_pool ON active_pool.account_id = head.account_id
       LEFT JOIN last_claim ON last_claim.account_id = head.account_id
-      ORDER BY last_claim.last_claim_at ASC NULLS FIRST, head.deadline_at ASC, head.priority DESC, head.available_at ASC, head.id ASC
+      ORDER BY COALESCE(active.active_count, 0) ASC, last_claim.last_claim_at ASC NULLS FIRST, head.deadline_at ASC, head.priority DESC, head.available_at ASC, head.id ASC
       LIMIT ${headLimit}
     `);
     const candidates = candidatesResult.rows as AccountHeadRow[];
+    const waitingReservedCapacity = policy.version === 2
+      ? await readWaitingReservedCapacity(tx)
+      : 0;
     const selected = candidates.find((candidate) => {
-      const override = policy.accountOverrides[candidate.account_id]?.[resourcePool]?.limit;
-      const accountLimit = override ?? poolPolicy.accountLimit;
-      return Number(candidate.active_count) < accountLimit;
+      const limits = accountCapacityLimits(
+        policy,
+        resourcePool,
+        candidate.account_id,
+        Number(candidate.active_count),
+        waitingReservedCapacity,
+      );
+      return Number(candidate.active_count) < limits.accountLimit
+        && Number(candidate.pool_active_count) < limits.poolAccountLimit;
     });
     if (!selected) {
       if (candidates.length > 0) {
@@ -640,7 +833,11 @@ export async function claimNextRuntimeRun(
       return null;
     }
 
-    const [run] = await tx.select().from(runtimeRuns).where(and(eq(runtimeRuns.id, selected.id), eq(runtimeRuns.phase, "pending"))).limit(1);
+    const [run] = await tx.select().from(runtimeRuns).where(and(
+      eq(runtimeRuns.id, selected.id),
+      eq(runtimeRuns.phase, "pending"),
+      sql`${runtimeRuns.handlerKey} <> ${LEGACY_CAPACITY_HANDLER_KEY}`,
+    )).limit(1);
     if (!run) return null;
     const handler = runtimeHandlerRegistry.get(run.handlerKey, run.handlerVersion);
     if (!handler || handler.executorProfile !== run.executorProfile || handler.resourcePool !== run.resourcePool) {
@@ -822,7 +1019,7 @@ export async function heartbeatRuntimeAttempt(
   return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
     const current = await loadFencedAttempt(tx, fence, ["running"]);
     const { policy } = await currentCapacityPolicy(tx);
-    const leaseSeconds = policy.pools[current.attempt.resourcePool].leaseSeconds;
+    const leaseSeconds = requirePoolCapacity(policy, current.attempt.resourcePool).leaseSeconds;
     const leaseExpiresAt = new Date(Date.now() + leaseSeconds * 1000);
     const usage = { ...(current.attempt.usageSummary ?? {}) } as Record<string, number>;
     for (const [key, value] of Object.entries(usageDelta)) usage[key] = (usage[key] ?? 0) + value;
@@ -849,6 +1046,31 @@ export async function appendRuntimeEvidence(
     const current = await loadFencedAttempt(tx, fence, ["running"]);
     return appendEventInTransaction(tx, current.run, { ...input, attemptId: current.attempt.id });
   }));
+}
+
+export async function cancelLegacyRuntimeCapacityRequest(
+  principal: Principal,
+  admissionRequestId: string,
+  reasonCode: string,
+): Promise<void> {
+  requireUserPrincipal(principal);
+  const boundedRequestId = boundedText(admissionRequestId, "admissionRequestId", 200);
+  const idempotencyKey = `legacy-capacity/${boundedRequestId}`;
+  await runWithPrincipal(principal, () => db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+    const [run] = await tx.select().from(runtimeRuns).where(runWritable(principal, and(
+      eq(runtimeRuns.kind, LEGACY_CAPACITY_HANDLER_KEY),
+      eq(runtimeRuns.idempotencyKey, idempotencyKey),
+    ))).limit(1).for("update");
+    if (!run || run.phase !== "pending") return;
+    const boundedReason = boundedText(reasonCode, "reasonCode", 160);
+    await tx.delete(runtimeRuns).where(and(eq(runtimeRuns.id, run.id), eq(runtimeRuns.phase, "pending")));
+    log.debug("runtime.legacy_capacity.request_cancelled", {
+      externalRunId: run.sourceId,
+      admissionRequestId: boundedRequestId,
+      resourcePool: run.resourcePool,
+      reasonCode: boundedReason,
+    });
+  })));
 }
 
 export async function releaseLegacyRuntimeCapacity(

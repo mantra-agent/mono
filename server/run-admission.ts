@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "async_hooks";
+import crypto from "crypto";
 import type { RuntimeResourcePool } from "@shared/models/runtime";
 import { BOOT_ID } from "./db";
 import { eventBus } from "./event-bus";
@@ -7,6 +8,7 @@ import { getCurrentPrincipal, runWithPrincipal } from "./principal-context";
 import type { Principal } from "./principal";
 import {
   acquireLegacyRuntimeCapacity,
+  cancelLegacyRuntimeCapacityRequest,
   heartbeatRuntimeAttempt,
   releaseLegacyRuntimeCapacity,
   type LegacyRuntimeCapacityLease,
@@ -38,6 +40,7 @@ interface InternalAdmissionSlot extends AdmissionSlot {
 
 interface QueuedRequest {
   runId: string;
+  admissionRequestId: string;
   tier: AdmissionTier;
   resourcePool: RuntimeResourcePool;
   sessionId?: string;
@@ -49,6 +52,7 @@ interface QueuedRequest {
   timer: ReturnType<typeof setTimeout> | null;
   queuedAt: number;
   deadlineAt: Date;
+  cancelled: boolean;
 }
 
 const DEFAULT_IDLE_THRESHOLD_MS = 60 * 1000;
@@ -72,6 +76,7 @@ function requireUserPrincipal(): Principal & { actorType: "user"; userId: string
 }
 
 function poolForTier(tier: AdmissionTier): RuntimeResourcePool {
+  if (tier === "communication") return "realtime_agent";
   return tier === "background" ? "background_agent" : "interactive_agent";
 }
 
@@ -96,6 +101,7 @@ export class RunAdmissionController {
   private queueRetryTimer: ReturnType<typeof setInterval> | null = null;
   private slotAgeTimer: ReturnType<typeof setInterval> | null = null;
   private drainInFlight = false;
+  private drainRequested = false;
   private shuttingDown = false;
   private idleThresholdMs = DEFAULT_IDLE_THRESHOLD_MS;
   private latestCapacitySnapshot: RuntimeCapacitySnapshot | null = null;
@@ -161,13 +167,14 @@ export class RunAdmissionController {
   }
 
   private async tryAcquire(
-    request: Pick<QueuedRequest, "runId" | "tier" | "resourcePool" | "sessionId" | "activity" | "lineageId" | "principal">,
+    request: Pick<QueuedRequest, "runId" | "admissionRequestId" | "tier" | "resourcePool" | "sessionId" | "activity" | "lineageId" | "principal">,
     deadlineAt: Date,
   ): Promise<AdmissionSlot | null> {
     const result = await runWithPrincipal(request.principal, () => acquireLegacyRuntimeCapacity(request.principal, {
       externalRunId: request.runId,
+      admissionRequestId: request.admissionRequestId,
       resourcePool: request.resourcePool,
-      sourceType: request.resourcePool === "interactive_agent" || request.resourcePool === "background_agent"
+      sourceType: request.resourcePool === "realtime_agent" || request.resourcePool === "interactive_agent" || request.resourcePool === "background_agent"
         ? "agent-executor"
         : request.resourcePool === "short_worker" ? "legacy-worker" : "browser-manager",
       activity: request.activity,
@@ -215,38 +222,80 @@ export class RunAdmissionController {
     options?: { sessionId?: string; activity?: string; lineageId?: string; timeout?: number; signal?: AbortSignal },
   ): Promise<AdmissionSlot> {
     if (this.shuttingDown) throw new Error("shutdown");
+    if (options?.signal?.aborted) throw new Error("admission_aborted");
     const principal = requireUserPrincipal();
-    const request = { runId, tier, resourcePool, principal, sessionId: options?.sessionId, activity: options?.activity, lineageId: options?.lineageId };
+    const request = {
+      runId,
+      admissionRequestId: crypto.randomUUID(),
+      tier,
+      resourcePool,
+      principal,
+      sessionId: options?.sessionId,
+      activity: options?.activity,
+      lineageId: options?.lineageId,
+    };
     const timeout = options?.timeout ?? DEFAULT_ADMISSION_TIMEOUT_MS;
     const deadlineAt = new Date(Date.now() + Math.max(1, timeout));
     const acquired = await this.tryAcquire(request, deadlineAt);
-    if (acquired) return acquired;
+    if (acquired) {
+      if (!options?.signal?.aborted) return acquired;
+      await this.releaseSlot(runId, {
+        outcome: "cancelled",
+        reasonCode: "legacy_capacity_admission_aborted_after_acquire",
+      });
+      throw new Error("admission_aborted");
+    }
+    if (options?.signal?.aborted) {
+      await cancelLegacyRuntimeCapacityRequest(principal, request.admissionRequestId, "legacy_capacity_admission_aborted");
+      throw new Error("admission_aborted");
+    }
 
     if (resourcePool === "interactive_agent") this.yieldBackgroundRuns(options?.lineageId);
-    return this.enqueue(request, timeout, options?.signal);
+    const remainingMs = Math.max(0, deadlineAt.getTime() - Date.now());
+    if (remainingMs === 0) {
+      await cancelLegacyRuntimeCapacityRequest(principal, request.admissionRequestId, "legacy_capacity_admission_timeout");
+      throw new Error("admission_timeout");
+    }
+    return this.enqueue(request, remainingMs, options?.signal);
   }
 
   private enqueue(
-    request: Pick<QueuedRequest, "runId" | "tier" | "resourcePool" | "sessionId" | "activity" | "lineageId" | "principal">,
+    request: Pick<QueuedRequest, "runId" | "admissionRequestId" | "tier" | "resourcePool" | "sessionId" | "activity" | "lineageId" | "principal">,
     timeout: number,
     signal?: AbortSignal,
   ): Promise<AdmissionSlot> {
     return new Promise((resolve, reject) => {
-      if (signal?.aborted) return reject(new Error("admission_aborted"));
+      if (signal?.aborted) {
+        void cancelLegacyRuntimeCapacityRequest(
+          request.principal,
+          request.admissionRequestId,
+          "legacy_capacity_admission_aborted",
+        ).catch((error) => {
+          log.warn("runtime.legacy_facade.cancel_failed", {
+            externalRunId: request.runId,
+            resourcePool: request.resourcePool,
+            reasonCode: "legacy_capacity_admission_aborted",
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+        return reject(new Error("admission_aborted"));
+      }
       const queuedAt = Date.now();
       const onAbort = () => {
-        const index = this.queue.findIndex((queued) => queued.runId === request.runId);
+        const index = this.queue.findIndex((queued) => queued.admissionRequestId === request.admissionRequestId);
         if (index < 0) return;
         const [cancelled] = this.queue.splice(index, 1);
         if (cancelled.timer) clearTimeout(cancelled.timer);
+        this.cancelDurableRequest(cancelled, "legacy_capacity_admission_aborted");
         reject(new Error("admission_aborted"));
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       const timer = timeout > 0 ? setTimeout(() => {
-        const index = this.queue.findIndex((queued) => queued.runId === request.runId);
+        const index = this.queue.findIndex((queued) => queued.admissionRequestId === request.admissionRequestId);
         if (index < 0) return;
         const [expired] = this.queue.splice(index, 1);
         signal?.removeEventListener("abort", onAbort);
+        this.cancelDurableRequest(expired, "legacy_capacity_admission_timeout");
         log.warn("runtime.legacy_facade.timeout", {
           externalRunId: request.runId,
           resourcePool: request.resourcePool,
@@ -258,6 +307,7 @@ export class RunAdmissionController {
         ...request,
         queuedAt,
         deadlineAt: new Date(queuedAt + Math.max(1, timeout)),
+        cancelled: false,
         timer,
         resolve: (slot) => { signal?.removeEventListener("abort", onAbort); resolve(slot); },
         reject: (error) => { signal?.removeEventListener("abort", onAbort); reject(error); },
@@ -272,8 +322,24 @@ export class RunAdmissionController {
     });
   }
 
+  private cancelDurableRequest(request: QueuedRequest, reasonCode: string): void {
+    request.cancelled = true;
+    void cancelLegacyRuntimeCapacityRequest(request.principal, request.admissionRequestId, reasonCode).catch((error) => {
+      log.warn("runtime.legacy_facade.cancel_failed", {
+        externalRunId: request.runId,
+        resourcePool: request.resourcePool,
+        reasonCode,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
   private async drainQueue(): Promise<void> {
-    if (this.drainInFlight || this.shuttingDown || this.queue.length === 0) return;
+    if (this.shuttingDown || this.queue.length === 0) return;
+    if (this.drainInFlight) {
+      this.drainRequested = true;
+      return;
+    }
     this.drainInFlight = true;
     try {
       for (let index = 0; index < this.queue.length;) {
@@ -284,8 +350,16 @@ export class RunAdmissionController {
             index++;
             continue;
           }
-          this.queue.splice(index, 1);
+          const queuedIndex = this.queue.indexOf(request);
+          if (queuedIndex >= 0) this.queue.splice(queuedIndex, 1);
           if (request.timer) clearTimeout(request.timer);
+          if (request.cancelled || queuedIndex < 0) {
+            await runWithPrincipal(slot.principal, () => releaseLegacyRuntimeCapacity(slot.principal, slot.lease.fence, {
+              outcome: "cancelled",
+              reasonCode: "legacy_capacity_admission_cancelled_after_acquire",
+            }));
+            continue;
+          }
           log.debug("runtime.legacy_facade.admitted", {
             externalRunId: request.runId,
             runtimeRunId: slot.runtimeRunId,
@@ -294,13 +368,21 @@ export class RunAdmissionController {
           });
           request.resolve(slot);
         } catch (error) {
-          this.queue.splice(index, 1);
+          const queuedIndex = this.queue.indexOf(request);
+          if (queuedIndex >= 0) this.queue.splice(queuedIndex, 1);
           if (request.timer) clearTimeout(request.timer);
-          request.reject(error instanceof Error ? error : new Error(String(error)));
+          if (!request.cancelled) {
+            this.cancelDurableRequest(request, "legacy_capacity_admission_failed");
+            request.reject(error instanceof Error ? error : new Error(String(error)));
+          }
         }
       }
     } finally {
       this.drainInFlight = false;
+      if (this.drainRequested) {
+        this.drainRequested = false;
+        if (!this.shuttingDown && this.queue.length > 0) void this.drainQueue();
+      }
     }
   }
 
@@ -473,6 +555,7 @@ export class RunAdmissionController {
 
   async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.drainRequested = false;
     if (this.cooldownTimer) clearTimeout(this.cooldownTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.queueRetryTimer) clearInterval(this.queueRetryTimer);
@@ -480,9 +563,13 @@ export class RunAdmissionController {
     this.cooldownTimer = this.heartbeatTimer = this.queueRetryTimer = this.slotAgeTimer = null;
     for (const request of this.queue) {
       if (request.timer) clearTimeout(request.timer);
+      this.cancelDurableRequest(request, "legacy_capacity_admission_shutdown");
       request.reject(new Error("shutdown"));
     }
     this.queue = [];
+    while (this.drainInFlight) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     await Promise.allSettled([...this.slots.keys()].map((runId) => this.releaseSlot(runId, {
       outcome: "cancelled",
       reasonCode: "legacy_capacity_shutdown",
