@@ -165,10 +165,13 @@ function mergeResolvedNavigation(
   staticSections: NavSection[],
   composition: ResolvedProductComposition | undefined,
 ): NavSection[] {
-  if (!composition) return staticSections;
+  if (!composition) return staticSections.filter((section) => section.label !== "Build");
 
+  const activeMods = new Set(composition.activeMods.map((mod) => mod.key));
+  const sections = staticSections
+    .filter((section) => section.label !== "Build" || activeMods.has("build"))
+    .map((section) => ({ ...section, items: [...section.items] }));
   const routeById = new Map(composition.routes.map((route) => [route.id, route]));
-  const sections = staticSections.map((section) => ({ ...section, items: [...section.items] }));
 
   for (const contribution of composition.navigation) {
     const route = routeById.get(contribution.routeId);

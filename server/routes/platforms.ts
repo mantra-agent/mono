@@ -17,6 +17,7 @@ import { deleteEnvironmentBuildLifecycleConfigs, disableEnvironmentBuildLifecycl
 import { getEnvironmentVersionDocument } from "../integrations/railway/release-versioning";
 import { getVisibleEnvironment, getWritableEnvironment, visiblePlatform, writablePlatform } from "../platforms/platform-access";
 import { libraryPages } from "@shared/models/info";
+import { requireActiveBuild } from "../mods/build-route-access";
 
 const log = createLogger("PlatformRoutes");
 const providerConnectionScopeColumns = { scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId };
@@ -122,7 +123,7 @@ async function ensureProductWritable(platformId: number, productId: number): Pro
 const ensureEnvironmentWritable = getWritableEnvironment;
 
 export function registerPlatformRoutes(app: Express): void {
-  app.use("/api/platforms", requireAuth);
+  app.use("/api/platforms", requireAuth, requireActiveBuild);
 
   app.get("/api/platforms", async (_req, res) => {
     try {

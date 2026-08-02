@@ -14,6 +14,7 @@ import { randomUUID } from "crypto";
 import { stat, unlink } from "fs/promises";
 import { createReadStream } from "fs";
 import { requireAuth, requireAdmin } from "../auth";
+import { requireActiveBuild } from "../mods/build-route-access";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { createDbSyncImportAuthHeader } from "../lib/db-sync-import-auth";
@@ -949,6 +950,7 @@ async function computeLocalIdentity(): Promise<LocalIdentityResult | { error: st
 }
 
 export function registerDbSyncRoutes(app: Express) {
+  app.use("/api/db-sync", requireAuth, requireActiveBuild);
   app.get("/api/db-sync/status", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     try {
       const state = await loadState();

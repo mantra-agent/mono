@@ -17,6 +17,8 @@ import { getSideEffectTier, type SideEffectTier } from "./autonomy-tiers";
 import { isAgentType } from "@shared/instance-config";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { getCurrentPrincipal } from "./principal-context";
+import { filterBuildToolSchemas } from "./mods/build-tool-access";
+import { hasActiveBuildAccess } from "./mods/build-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
 import type { ChecklistItem } from "@shared/schema";
 
@@ -466,19 +468,22 @@ export function getRegisteredSkillIds(): string[] {
   return Object.keys(SKILL_RUN_CONFIGS);
 }
 
-function getSkillTools(
+async function getSkillTools(
   activity: ActivityId,
   sessionKey: string,
   sessionId: string,
   authoritySkillId?: string,
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation,
-): {
+): Promise<{
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   toolExecutor: (name: string, args: Record<string, unknown>) => Promise<{ result: string; error: boolean }>;
-} {
+}> {
   const { filterToolSchemasForAuthority } = require("./agent-authority") as typeof import("./agent-authority");
   const authority = { origin: "autonomous" as const, trustedDelegation, activity, skillId: authoritySkillId, sessionKey, sessionId };
-  const allToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), authority);
+  const principal = getCurrentPrincipal();
+  if (!principal) throw new Error("Skill tool discovery requires an explicit user principal");
+  const authorityToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), authority);
+  const allToolDefs = await filterBuildToolSchemas(principal, authorityToolDefs);
   const tools = allToolDefs.map((t: AgentToolDefinition) => ({
     name: t.name,
     description: t.description,
@@ -626,6 +631,14 @@ export async function executeAutonomousSkillRun(
     }
   }
   } // end skill-based config resolution
+
+  const buildOwnedSkillNames = new Set(["sentry", "guard", "regression"]);
+  if (!isSkillless && buildOwnedSkillNames.has(config.skillId)) {
+    const principal = getCurrentPrincipal();
+    if (!principal || !(await hasActiveBuildAccess(principal))) {
+      throw new Error(`Build Mod is inactive; Skill ${config.skillId} cannot run`);
+    }
+  }
 
   // Global per-skill dedupe is for top-level autoruns (e.g. cron-triggered
   // skills that should never overlap themselves). Parented child spawns
@@ -1278,7 +1291,7 @@ async function runSkillPipeline(
       sessionKey,
     });
     const trustedDelegation = options.planId ? "plan" : options.workflowRunId ? "workflow" : undefined;
-    const { tools, toolExecutor } = getSkillTools(config.activity, sessionKey, sessionId, authoritySkillId, trustedDelegation);
+    const { tools, toolExecutor } = await getSkillTools(config.activity, sessionKey, sessionId, authoritySkillId, trustedDelegation);
 
     let toolCallCount = 0;
     const toolCallLog: Array<{ name: string; action?: string; error?: boolean; result?: string }> = [];
@@ -1560,7 +1573,7 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
       : conv.spawnerTool === "session.spawn_child.engineering"
         ? "child" as const
         : undefined;
-  const { tools, toolExecutor } = getSkillTools(ACTIVITY_WORK, sessionKey, sessionId, undefined, trustedDelegation);
+  const { tools, toolExecutor } = await getSkillTools(ACTIVITY_WORK, sessionKey, sessionId, undefined, trustedDelegation);
 
   let finalStatus: "succeeded" | "failed" = "succeeded";
   let finalSummary = "Child session response completed";

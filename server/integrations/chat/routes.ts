@@ -1433,10 +1433,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
   async function resolveAuthorityToolDefinitions(sessionId: string): Promise<ToolDefinition[]> {
     const { filterToolSchemasForAuthority } = await import("../../agent-authority");
-    return filterToolSchemasForAuthority(getToolDefinitions(), {
+    const { getCurrentPrincipalOrSystem } = await import("../../principal-context");
+    const { filterBuildToolSchemas } = await import("../../mods/build-tool-access");
+    const authorityTools = filterToolSchemasForAuthority(getToolDefinitions(), {
       origin: "interactive",
       sessionId,
-    }).map((tool) => ({
+    });
+    const buildScopedTools = await filterBuildToolSchemas(getCurrentPrincipalOrSystem(), authorityTools);
+    return buildScopedTools.map((tool) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,

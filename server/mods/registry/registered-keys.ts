@@ -157,6 +157,7 @@ export const REGISTERED_COLLECTOR_KEYS = [
   "news",
   "email",
   "meetings",
+  "build-deployments",
   "state",
 ] as const;
 export type RegisteredCollectorKey = (typeof REGISTERED_COLLECTOR_KEYS)[number];

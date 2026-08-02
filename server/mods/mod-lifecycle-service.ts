@@ -30,20 +30,11 @@ import {
   materializeBuildManagedResources,
 } from "./build-managed-resources";
 import { timerStorage } from "../file-storage/timers";
+import { isModPlatformEnabled } from "./mod-platform-config";
+
+export { isModPlatformEnabled } from "./mod-platform-config";
 
 const log = createLogger("mod-lifecycle");
-
-/**
- * Single rollout flag gating the Mod platform lifecycle service. Default OFF.
- * When disabled every mutating method fails closed so the app behaves
- * identically to a build without the Mod platform.
- */
-export function isModPlatformEnabled(): boolean {
-  // Default ON for the product management path. Rollback is an explicit
-  // env-level disable (`MOD_PLATFORM_ENABLED=false`) so ADMIN → Mods is never a
-  // dead surface behind an unset flag.
-  return process.env.MOD_PLATFORM_ENABLED !== "false";
-}
 
 /** Mods provisioned as active baseline defaults on every account. */
 export const BASELINE_MOD_KEYS = ["planning", "network"] as const satisfies readonly ModKey[];

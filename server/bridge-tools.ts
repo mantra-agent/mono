@@ -16565,6 +16565,20 @@ export async function executeTool(
     });
     return { result: `Tool execution denied by deterministic authority policy: ${authority.reason}`, error: true, sideEffectOnly: true, durationMs };
   }
+  const { getCurrentPrincipal } = await import("./principal-context");
+  const principal = getCurrentPrincipal();
+  if (!principal) {
+    const durationMs = Date.now() - startTime;
+    return { result: "Tool execution denied: missing_principal", error: true, sideEffectOnly: true, durationMs };
+  }
+  try {
+    const { requireBuildToolAccess } = await import("./mods/build-tool-access");
+    await requireBuildToolAccess(principal, resolvedName);
+  } catch {
+    const durationMs = Date.now() - startTime;
+    toolExec.warn(`rejected tool=${toolName} callId=${toolCallId} reason=build_mod_inactive`);
+    return { result: "Tool execution denied: Build Mod is inactive", error: true, sideEffectOnly: true, durationMs };
+  }
   const droppedEmptyKeys = Object.keys(args ?? {}).filter((key) => !(key in normalizedArgs));
   if (droppedEmptyKeys.length > 0) {
     toolExec.verbose(() => `normalized tool=${toolName} callId=${toolCallId} droppedEmptyKeys=${droppedEmptyKeys.join(",")}`);

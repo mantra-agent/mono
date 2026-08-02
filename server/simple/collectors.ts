@@ -32,6 +32,7 @@ import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { queryDistinctInteractionPeopleSeries } from "../interaction-activity";
 import { sensitiveVisiblePredicate } from "../sensitive-scope";
 import { visiblePersonPredicate } from "../person-vault-access";
+import { listBuildDeploymentHomeItems } from "../mods/build-deployment-home";
 
 const log = createLogger("SimpleCollectors");
 
@@ -1399,6 +1400,76 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
   };
 }
 
+// ─── Build deployment Inbox ───
+
+function itemFromBuildDeployment(
+  deployment: Awaited<ReturnType<typeof listBuildDeploymentHomeItems>>[number],
+  index: number,
+): SimpleFeedItem {
+  const environmentHref = `/platforms/environments/${deployment.platformEnvironmentId}`;
+  const sourceRef: SimpleSourceRef = {
+    type: "artifact",
+    id: deployment.observationId,
+    label: `${deployment.platformName} / ${deployment.productName} / ${deployment.environmentName}`,
+    href: environmentHref,
+    observedAt: deployment.observedAt.toISOString(),
+  };
+  const shortCommit = deployment.commitSha?.slice(0, 8) ?? null;
+  const detailParts = [deployment.deploymentState, shortCommit ? `commit ${shortCommit}` : null]
+    .filter((value): value is string => Boolean(value));
+  const title = `${deployment.platformName} / ${deployment.productName} / ${deployment.environmentName} deployed successfully · ${detailParts.join(" · ")}`;
+
+  return {
+    id: `build-deployment-${deployment.projectionId}`,
+    section: "inbox",
+    widgetType: "inbox_item",
+    title,
+    status: "active",
+    priority: 10 + index,
+    sourceRefs: [sourceRef],
+    anchorTime: deployment.deployedAt.toISOString(),
+    actionTime: deployment.deployedAt.toISOString(),
+    completable: true,
+    payload: {
+      kind: "build_deployment",
+      projectionId: deployment.projectionId,
+      observationId: deployment.observationId,
+      reasonKey: deployment.reasonKey,
+      platformEnvironmentId: deployment.platformEnvironmentId,
+      platformName: deployment.platformName,
+      productName: deployment.productName,
+      environmentName: deployment.environmentName,
+      provider: "railway",
+      providerDeploymentId: deployment.providerDeploymentId,
+      deploymentState: deployment.deploymentState,
+      commitSha: deployment.commitSha,
+      commitLabel: shortCommit,
+      deployedAt: deployment.deployedAt.toISOString(),
+      inboxAddedAt: deployment.observedAt.toISOString(),
+    },
+    actions: [
+      {
+        id: `dismiss-build-deployment-${deployment.projectionId}`,
+        label: "Dismiss deployment",
+        type: "complete",
+        sourceRef,
+        payload: {
+          kind: "build_deployment",
+          projectionId: deployment.projectionId,
+          reasonKey: deployment.reasonKey,
+        },
+      },
+      {
+        id: `open-platform-environment-${deployment.platformEnvironmentId}`,
+        label: "Open environment",
+        type: "navigate",
+        href: environmentHref,
+        sourceRef,
+      },
+    ],
+  };
+}
+
 // ─── Main collector ───
 
 export async function collectSimpleContext(): Promise<SimpleContextBundle> {
@@ -1559,6 +1630,20 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`news collection failed: ${message}`);
     errors.push({ source: "news", message });
+  }
+
+  // Build deployment Inbox reads only durable PostgreSQL projections. The
+  // collector's canonical Build-access check removes it immediately on disable.
+  try {
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType === "user") {
+      const deployments = await listBuildDeploymentHomeItems(principal);
+      deployments.forEach((deployment, index) => items.push(itemFromBuildDeployment(deployment, index)));
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error(`Build deployment collection failed: ${message}`);
+    errors.push({ source: "build-deployments", message });
   }
 
   // Shared email→person map (email review sender chips + meeting attendee matching)

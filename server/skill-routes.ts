@@ -9,6 +9,7 @@ import { inArray } from "drizzle-orm";
 import { listSkillPersonaConfiguration, setSkillPersonaPreference } from "./skill-persona-service";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
+import { hasActiveBuildAccess } from "./mods/build-access";
 
 const libraryPageScopeColumns = {
   scope: libraryPages.scope,
@@ -34,6 +35,16 @@ function stripSkillForExport(skill: Skill & { references?: SkillReference[]; tru
   return stripped;
 }
 
+const BUILD_SKILL_NAMES = new Set(["sentry", "guard", "regression"]);
+
+async function filterBuildSkills<T extends { name: string }>(skills: T[]): Promise<T[]> {
+  const principal = getCurrentPrincipalOrSystem();
+  if (principal.actorType !== "user") return skills.filter((skill) => !BUILD_SKILL_NAMES.has(skill.name));
+  return (await hasActiveBuildAccess(principal))
+    ? skills
+    : skills.filter((skill) => !BUILD_SKILL_NAMES.has(skill.name));
+}
+
 function safeItemName(item: unknown): string {
   if (item && typeof item === "object" && "name" in item && typeof (item as Record<string, unknown>).name === "string") {
     return (item as Record<string, unknown>).name as string;
@@ -47,7 +58,7 @@ export function registerSkillRoutes(app: Express): void {
     try {
       const status = req.query.status as string | undefined;
       const skills = await storage.getSkills(status ? { status } : undefined);
-      res.json(skills);
+      res.json(await filterBuildSkills(skills));
     } catch (err: any) {
       log.error("GET /api/skills error:", err.message);
       res.status(500).json({ error: "Failed to fetch skills" });

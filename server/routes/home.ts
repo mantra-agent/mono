@@ -8,8 +8,10 @@ import { logWellnessActivity } from "./wellness";
 import { generateSimpleFeed, invalidateSimpleFeedCache } from "../simple/generate-feed";
 import { goalsService } from "../goals-service";
 import { dismissPeopleSurface, snoozePeopleSurface } from "../simple/people-surface-state";
+import { dismissBuildDeploymentHomeItem } from "../mods/build-deployment-home";
 import type { GoalHorizon, GoalIndexEntry } from "@shared/models/goals";
 import type { Task } from "@shared/models/work";
+import type { Principal } from "../principal";
 
 const log = createLogger("SimpleRoutes");
 
@@ -257,6 +259,26 @@ async function completeTask(payload: Record<string, unknown>) {
   return { ok: true, type: "task", taskId, title: task.title };
 }
 
+async function completeBuildDeployment(
+  principal: Principal,
+  payload: Record<string, unknown>,
+) {
+  const projectionId = stringValue(payload.projectionId);
+  const reasonKey = stringValue(payload.reasonKey);
+  if (!projectionId || !reasonKey) {
+    const err = new Error("projectionId and reasonKey are required");
+    (err as any).statusCode = 400;
+    throw err;
+  }
+  const dismissed = await dismissBuildDeploymentHomeItem(principal, projectionId, reasonKey);
+  if (!dismissed) {
+    const err = new Error("Build deployment item is unavailable");
+    (err as any).statusCode = 404;
+    throw err;
+  }
+  return { ok: true, type: "build_deployment", projectionId };
+}
+
 export function registerHomeRoutes(app: Express) {
   app.get("/api/home/feed", requireAuth, async (req, res) => {
     try {
@@ -372,16 +394,23 @@ export function registerHomeRoutes(app: Express) {
     try {
       const sourceType = stringValue(req.body?.sourceType);
       const payload = (req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : {}) as Record<string, unknown>;
+      const homeItemId = stringValue(req.params.id);
+      const buildProjectionId = stringValue(payload.projectionId);
+      if (payload.kind === "build_deployment" && (!homeItemId || !buildProjectionId || homeItemId !== `build-deployment-${buildProjectionId}`)) {
+        return res.status(400).json({ error: "Home item identity does not match Build deployment projection" });
+      }
       const result = sourceType === "wellness"
         ? await completeWellness(payload)
         : sourceType === "priority" || sourceType === "goal"
           ? await completePriority(payload)
           : sourceType === "task"
             ? await completeTask(payload)
-            : null;
+            : sourceType === "artifact" && payload.kind === "build_deployment" && req.principal
+              ? await completeBuildDeployment(req.principal, payload)
+              : null;
 
-      if (!result) return res.status(400).json({ error: "sourceType must be wellness, priority, goal, or task" });
-      invalidateSimpleFeedCache();
+      if (!result) return res.status(400).json({ error: "Unsupported Home completion source" });
+      invalidateSimpleFeedCache(req.principal?.accountId || undefined);
       res.json(result);
     } catch (err: any) {
       const message = err instanceof Error ? err.message : String(err);
