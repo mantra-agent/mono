@@ -395,7 +395,12 @@ export default function BusinessAdvantagePage() {
     cycle.thematicGoalStatement ||
     "";
 
-  const standingObjectives = cycle.standingOperatingObjectives;
+  const definingObjectives = Array.isArray(cycle.definingObjectives)
+    ? cycle.definingObjectives
+    : [];
+  const standingObjectives = Array.isArray(cycle.standingOperatingObjectives)
+    ? cycle.standingOperatingObjectives
+    : [];
   const isLoading = goalsQuery.isLoading || graphQuery.isLoading;
   const isError = goalsQuery.isError && graphQuery.isError;
 
@@ -482,12 +487,12 @@ export default function BusinessAdvantagePage() {
         <section className="space-y-3" data-testid="advantage-defining-objectives">
           <HierarchySectionHeader>Defining Objectives</HierarchySectionHeader>
           <div className={HIERARCHY_TREE_STACK_CLASS}>
-            {cycle.definingObjectives.map((objective, index) => (
+            {definingObjectives.map((objective, index) => (
               <ObjectiveBranch
                 key={objective.goalId}
                 objective={objective}
                 goal={goalsById.get(objective.goalId)}
-                continues={index < cycle.definingObjectives.length - 1}
+                continues={index < definingObjectives.length - 1}
               />
             ))}
           </div>
