@@ -986,11 +986,15 @@ If the page has already been created but you later decide it should be surfaced,
     category: "engineering",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "2.0",
+    version: "2.1",
     addToMemory: false,
     pinnedToContext: false,
     whenToUse: "Runs automatically after a genuinely new deployed build through the existing Timer scheduler, or manually from Skills when an operator wants to recheck open Issues.",
     outputSpec: "A compact report listing every reviewed Issue under still open, resolved, or blocked on testing, with the evidence used for each classification.",
+    // Hollow orient-only runs fail structural tool_invoked gates and must not
+    // report as clean success. scoreThreshold reconciles timer/skill status
+    // to degraded when the pass rate falls below this floor.
+    scoreThreshold: 0.8,
     checklist: [
       { check: "Loaded every unresolved Issue page through issues.list", weight: 4, kind: "tool_invoked", tool: "issues", action: "list" },
       { check: "Inspected every returned Issue individually through issues.get", weight: 4, kind: "tool_invoked", tool: "issues", action: "get" },

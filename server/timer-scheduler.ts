@@ -3,10 +3,9 @@ import { timerStorage } from "./file-storage";
 import { eventBus } from "./event-bus";
 import type { Timer, Schedule, TimerRun } from "@shared/models/timers";
 import { createLogger } from "./log";
-import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction, withQueryAttributionAsync } from "./db";
+import { BOOT_ID, fnv1a32, withQueryAttributionAsync } from "./db";
 import { systemTimerRegistry } from "./system-timer-registry";
 import { timerHandlerRouter } from "./timer-handler-router";
-import { getSetting, setSetting } from "./system-settings";
 import type { TimerHandlerResult } from "./timer-handlers";
 import { Cron } from "croner";
 import { runWithPrincipal, getCurrentPrincipal } from "./principal-context";
@@ -16,13 +15,18 @@ import { storage } from "./storage";
 
 const log = createLogger("TimerScheduler");
 
-// Single source of truth for build identity across boots. Next-build timers
-// fire only when the running build differs from the build recorded at the
-// previous boot, so crash-restarts of the same build do not re-fire them.
-const LAST_BOOT_BUILD_ID_KEY = "system.lastBootBuildId";
-
+/**
+ * Build/deploy identity for fireOnNextBuild exactly-once claims.
+ * Prefer Railway deployment id (one claim per deploy) and fall back to git
+ * SHA when deployment id is unset. The run row is the claim — there is no
+ * separate settings marker.
+ */
 function getCurrentBuildId(): string | null {
-  return process.env.RAILWAY_GIT_COMMIT_SHA?.trim() || null;
+  return (
+    process.env.RAILWAY_DEPLOYMENT_ID?.trim() ||
+    process.env.RAILWAY_GIT_COMMIT_SHA?.trim() ||
+    null
+  );
 }
 
 interface ScheduledTimer {
@@ -161,6 +165,8 @@ type ScheduledRunSlot = {
   intendedFireAt: string;
   slotStart: string;
   slotEnd: string;
+  /** Present for fireOnNextBuild / fireOnNextBoot slots — the deploy/build identity. */
+  buildId?: string;
 };
 
 class TimerScheduler {
@@ -594,27 +600,20 @@ class TimerScheduler {
       );
       if (bootTimers.length === 0) return;
 
-      // Claim the current build once across replicas only after there is real
-      // next-build work to evaluate. The committed marker prevents a
-      // same-build restart or second replica from launching it again.
+      // Exactly-once is encoded in the run row (deterministic build-scoped
+      // slot + unique index + claim-via-insert). No process-local or settings
+      // marker participates — concurrent boots and same-build restarts all
+      // race the same insert and only the winner executes.
       const currentBuildId = getCurrentBuildId();
-      let isNewBuild = true;
-      if (currentBuildId) {
-        isNewBuild = await db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
-          await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.TIMER_BUILD, LAST_BOOT_BUILD_ID_KEY);
-          const lastBuildId = await getSetting<string>(LAST_BOOT_BUILD_ID_KEY);
-          if (lastBuildId === currentBuildId) return false;
-          await setSetting(LAST_BOOT_BUILD_ID_KEY, currentBuildId);
-          return true;
-        }));
-      } else {
+      if (!currentBuildId) {
         log.warn(
-          "build identity unavailable (RAILWAY_GIT_COMMIT_SHA unset); next-build timers degrade to next-boot behavior",
+          "build identity unavailable (RAILWAY_DEPLOYMENT_ID / RAILWAY_GIT_COMMIT_SHA unset); " +
+            "next-build timers still fire, but slot identity falls back to process boot time",
         );
       }
 
       log.debug(
-        `Evaluating ${bootTimers.length} boot timer(s), isNewBuild=${isNewBuild} build=${currentBuildId?.slice(0, 7) ?? "unknown"}`,
+        `Evaluating ${bootTimers.length} boot/build timer(s) build=${currentBuildId?.slice(0, 12) ?? "unknown"}`,
       );
       for (const timer of bootTimers) {
         const schedules = Array.from(
@@ -625,14 +624,16 @@ class TimerScheduler {
           ).values(),
         );
         for (const schedule of schedules) {
-          if (!schedule.fireOnNextBoot && schedule.fireOnNextBuild && !isNewBuild) {
-            log.debug(
-              `holding next-build timer "${timer.name}" — same build as previous boot`,
-            );
-            continue;
-          }
           try {
-            await this.executeTimer(timer.id, schedule.id, "scheduled");
+            // Pass buildId so computeScheduledRunSlot produces a stable slot
+            // for fireOnNextBuild (and fireOnNextBoot when build id is known).
+            await this.executeTimer(
+              timer.id,
+              schedule.id,
+              "scheduled",
+              undefined,
+              currentBuildId ?? undefined,
+            );
           } catch (err: unknown) {
             log.error(
               `fireBootReminders error for "${timer.name}":`,
@@ -649,11 +650,41 @@ class TimerScheduler {
     }
   }
 
+  /**
+   * Compute the exclusive scheduled slot for a fire.
+   *
+   * Cron/interval schedules use the ordinary previous-run → intended-fire
+   * half-open window.
+   *
+   * fireOnNextBuild uses a *build-scoped* slot: both endpoints are derived
+   * from a stable hash of deploy/build identity so concurrent replicas and
+   * same-build restarts all compute the identical key. Wall-clock Date.now()
+   * must never participate in that key — otherwise every boot gets a unique
+   * slot and triple-fires.
+   *
+   * fireOnNextBoot (without fireOnNextBuild) uses the process BOOT_ID so a
+   * single process start claims once; a true process restart gets a new id.
+   * Multi-replica boots remain independent (one fire per replica process).
+   *
+   * The non-deferred unique index on (timer, schedule, slot) makes the
+   * insert the exclusive claim in all cases.
+   */
   private computeScheduledRunSlot(
     timer: Timer,
     schedule: Timer["schedules"][number],
     intendedFireAt?: number,
+    buildId?: string,
   ): ScheduledRunSlot {
+    if (schedule.fireOnNextBuild) {
+      const identity = (buildId ?? getCurrentBuildId() ?? `boot-${BOOT_ID}`).trim();
+      return this.stableIdentitySlot(`build:${identity}`, identity);
+    }
+
+    if (schedule.fireOnNextBoot) {
+      const identity = `boot:${BOOT_ID}`;
+      return this.stableIdentitySlot(identity, identity);
+    }
+
     const slotEndMs = intendedFireAt ?? Date.now();
     const previousSlotMs = computePreviousRun(
       schedule,
@@ -667,6 +698,21 @@ class TimerScheduler {
       intendedFireAt: new Date(slotEndMs).toISOString(),
       slotStart: new Date(slotStartMs).toISOString(),
       slotEnd: new Date(slotEndMs).toISOString(),
+    };
+  }
+
+  /** Deterministic slot pair from a stable identity string (not wall-clock). */
+  private stableIdentitySlot(identityKey: string, buildId: string): ScheduledRunSlot {
+    const epochMs = 1_000_000_000_000; // 2001-09-09 — stable, far from 0
+    const spanMs = 1_000; // only the pair identity matters
+    const slotStartMs = epochMs + (fnv1a32(`timer-slot:${identityKey}`) % 1_000_000_000);
+    const slotEndMs = slotStartMs + spanMs;
+    const intended = new Date(slotEndMs).toISOString();
+    return {
+      intendedFireAt: intended,
+      slotStart: new Date(slotStartMs).toISOString(),
+      slotEnd: new Date(slotEndMs).toISOString(),
+      buildId,
     };
   }
 
@@ -690,6 +736,7 @@ class TimerScheduler {
     scheduleId: string,
     trigger: "scheduled" | "manual" = "scheduled",
     intendedFireAt?: number,
+    buildId?: string,
   ): Promise<TimerRun | null> {
     const timer = await withQueryAttributionAsync("timer-scheduler", () =>
       timerStorage.getForScheduler(timerId),
@@ -759,9 +806,12 @@ class TimerScheduler {
     const schedule = timer.schedules.find((s) => s.id === scheduleId);
     const scheduledSlot =
       trigger === "scheduled" && schedule
-        ? this.computeScheduledRunSlot(timer, schedule, intendedFireAt)
+        ? this.computeScheduledRunSlot(timer, schedule, intendedFireAt, buildId)
         : null;
 
+    // Best-effort pre-check (reduces noise). The exclusive claim is the
+    // appendRun insert under the non-deferred scheduled-slot unique index —
+    // concurrent losers lose there, not here.
     if (trigger === "scheduled" && scheduledSlot) {
       const recentRuns = await withQueryAttributionAsync(
         "timer-scheduler",
@@ -776,14 +826,21 @@ class TimerScheduler {
       ) {
         log.debug(
           `skipping timer "${timer.name}" — scheduled slot already claimed ` +
-            `scheduleId=${scheduleId} slotStart=${scheduledSlot.slotStart} slotEnd=${scheduledSlot.slotEnd}`,
+            `scheduleId=${scheduleId} slotStart=${scheduledSlot.slotStart} slotEnd=${scheduledSlot.slotEnd}` +
+            (scheduledSlot.buildId ? ` buildId=${scheduledSlot.buildId}` : ""),
         );
         return null;
       }
     }
 
-    const runId = `timer-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Deterministic run id for build/boot fires so run_id uniqueness is a
+    // second claim surface (alongside the slot unique index). Cron/interval
+    // fires keep a random id because their slot pair is already exclusive.
     const now = new Date().toISOString();
+    const runId =
+      trigger === "scheduled" && scheduledSlot?.buildId
+        ? `timer-run-build-${timerId}-${scheduleId}-${scheduledSlot.buildId}`
+        : `timer-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     const run: TimerRun = {
       id: runId,
@@ -809,11 +866,25 @@ class TimerScheduler {
     };
 
     const executionPrincipal = await this.resolveExecutionPrincipal(timer);
-    await runWithPrincipal(executionPrincipal, async () => {
-      await withQueryAttributionAsync("timer-scheduler", () =>
+    // Claim is the insert. Lost races return false and must not run the handler.
+    const claimed = await runWithPrincipal(executionPrincipal, async () =>
+      withQueryAttributionAsync("timer-scheduler", () =>
         timerStorage.appendRun(timer, run),
+      ),
+    );
+    if (!claimed) {
+      log.debug(
+        `skipping timer "${timer.name}" — lost exclusive claim ` +
+          `runId=${runId} scheduleId=${scheduleId}` +
+          (scheduledSlot
+            ? ` slotStart=${scheduledSlot.slotStart} slotEnd=${scheduledSlot.slotEnd}`
+            : "") +
+          (scheduledSlot?.buildId ? ` buildId=${scheduledSlot.buildId}` : ""),
       );
+      return null;
+    }
 
+    await runWithPrincipal(executionPrincipal, async () => {
       eventBus.publish({
         category: "timer",
         event: "timer.run.start",
