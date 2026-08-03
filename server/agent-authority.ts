@@ -283,21 +283,81 @@ const SAFE_SHELL_GIT_SUBCOMMANDS = new Set([
  * structurally — env dumps (`env`/`printenv`), interpreters, and dotfile secret paths (`.env`,
  * `.aws`, `.git-credentials`, …) each retain their own class below.
  */
-const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
-  { pattern: /[\r\n]/, reason: "forbidden:multiline_command" },
-  { pattern: /`|\$\(/, reason: "forbidden:command_substitution" },
-  { pattern: /\$(?:\{|[A-Za-z0-9_?*#@!$-])/, reason: "forbidden:variable_expansion" },
-  { pattern: /\|\|/, reason: "forbidden:or_operator" },
+/**
+ * Quote-masking policy for a forbidden-token class. Quoting a shell metacharacter can
+ * neutralize its dangerous form, but only for classes where that's true for EVERY consuming
+ * command, not just the ones we happened to test:
+ *   - "all": masking both `'...'` and `"..."` spans is safe. True for pure operator syntax
+ *     (`||`, bare `&`, `<`/`>`, `~`) that only functions as an operator when unquoted — inside
+ *     ANY quotes it's inert literal text to every allowlisted command — and for bare command
+ *     names (curl, python, env, …), since no allowlisted command invokes a program named by an
+ *     argument string it receives.
+ *   - "singleQuoteOnly": mask only `'...'` spans. Bash still performs command substitution and
+ *     variable expansion inside `"..."`, so double-quoted `$(...)`/backticks/`$VAR` stay live
+ *     and must keep failing.
+ *   - "none": never mask, even inside quotes. `cat`, `head`, `tail`, `sed`, `stat`, `du`,
+ *     `file`, `find`, `grep`, `rg` all accept a quoted path argument and still open/read that
+ *     path — quoting `/root/.ssh` or `/etc/...` does not stop the read. Masking these would
+ *     turn a quoted absolute/sensitive path into a bypass.
+ */
+type ShellMaskPolicy = "all" | "singleQuoteOnly" | "none";
+
+const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: string; maskPolicy: ShellMaskPolicy }> = [
+  { pattern: /[\r\n]/, reason: "forbidden:multiline_command", maskPolicy: "none" },
+  { pattern: /`|\$\(/, reason: "forbidden:command_substitution", maskPolicy: "singleQuoteOnly" },
+  { pattern: /\$(?:\{|[A-Za-z0-9_?*#@!$-])/, reason: "forbidden:variable_expansion", maskPolicy: "singleQuoteOnly" },
+  { pattern: /\|\|/, reason: "forbidden:or_operator", maskPolicy: "all" },
   // Allow `2>&1` FD dup (pure stream merge). Any other bare `&` stays blocked.
-  { pattern: /(?<!&)\&(?!&|\d)/, reason: "forbidden:background_execution" },
-  { pattern: /[<>]/, reason: "forbidden:redirection" },
-  { pattern: /~/, reason: "forbidden:home_expansion" },
-  { pattern: /\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet)\b/i, reason: "forbidden:network_binary" },
-  { pattern: /\b(?:python|python3|node|deno|bun|perl|ruby|php|lua|eval|source)\b/i, reason: "forbidden:interpreter" },
-  { pattern: /\b(?:env|printenv)\b/i, reason: "forbidden:env_dump" },
-  { pattern: /\/(?:proc|sys|dev|root|home)\//i, reason: "forbidden:sensitive_path" },
-  { pattern: /(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)/i, reason: "forbidden:dotfile_secret" },
+  { pattern: /(?<!&)\&(?!&|\d)/, reason: "forbidden:background_execution", maskPolicy: "all" },
+  { pattern: /[<>]/, reason: "forbidden:redirection", maskPolicy: "all" },
+  { pattern: /~/, reason: "forbidden:home_expansion", maskPolicy: "all" },
+  { pattern: /\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet)\b/i, reason: "forbidden:network_binary", maskPolicy: "all" },
+  { pattern: /\b(?:python|python3|node|deno|bun|perl|ruby|php|lua|eval|source)\b/i, reason: "forbidden:interpreter", maskPolicy: "all" },
+  { pattern: /\b(?:env|printenv)\b/i, reason: "forbidden:env_dump", maskPolicy: "all" },
+  // Path-consuming classes: never masked. See ShellMaskPolicy "none" doc above.
+  { pattern: /\/(?:proc|sys|dev|root|home)\//i, reason: "forbidden:sensitive_path", maskPolicy: "none" },
+  { pattern: /(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)/i, reason: "forbidden:dotfile_secret", maskPolicy: "none" },
 ];
+
+/**
+ * Mask the interior of quoted spans so forbidden-token regexes evaluate real shell syntax
+ * instead of literal data trapped inside a quoted argument — e.g. `grep -E "cli|model|adapter"`
+ * or `grep -F "a||b"` were being rejected as if the `|`/`||` inside the quotes were live
+ * pipe/or operators. `maskDoubleQuoted` controls whether `"..."` spans are masked in addition
+ * to `'...'` spans; see `ShellMaskPolicy` for which classes may use which mode.
+ */
+function maskQuotedSpans(command: string, maskDoubleQuoted: boolean): string {
+  let masked = "";
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    const activeMask = quote === "'" || (quote === '"' && maskDoubleQuoted);
+    if (ch === "\\") {
+      masked += activeMask ? "x" : ch;
+      if (i + 1 < command.length) {
+        masked += activeMask ? "x" : command[i + 1];
+        i++;
+      }
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) {
+        masked += ch;
+        quote = null;
+      } else {
+        masked += activeMask ? "x" : ch;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      masked += ch;
+      continue;
+    }
+    masked += ch;
+  }
+  return masked;
+}
 // File path is optional so pipeline stdin works: `git show HEAD:file | sed -n '10,20p'`.
 // Expression stays strictly `N p` / `N,Mp` — no executable sed scripts.
 const SAFE_SED_READ = /^sed\s+-n\s+(["'])(?:\d+)(?:,\d+)?p\1(?:\s+(?:--\s+)?[^\s]+(?:\s+[^\s]+)*)?$/;
@@ -450,8 +510,14 @@ export function validateShellCommand(command: string): ToolAuthorityDecision {
   // Strip only harmless /dev/null discards and FD merges before forbidden-token checks.
   // Execution still receives the original command; this does not expand write surface.
   const normalized = stripSafeShellRedirectsForValidation(command);
-  for (const { pattern, reason } of FORBIDDEN_SHELL_TOKEN_CLASSES) {
-    if (pattern.test(normalized)) return { allowed: false, reason };
+  // Precompute both masked views once; each forbidden class picks its policy's view instead of
+  // re-walking the quote state per pattern. Path-consuming classes use maskPolicy "none" and
+  // read `normalized` directly — quoting never hides a real path argument from cat/head/etc.
+  const maskedAllQuotes = maskQuotedSpans(normalized, true);
+  const maskedSingleQuoteOnly = maskQuotedSpans(normalized, false);
+  for (const { pattern, reason, maskPolicy } of FORBIDDEN_SHELL_TOKEN_CLASSES) {
+    const target = maskPolicy === "all" ? maskedAllQuotes : maskPolicy === "singleQuoteOnly" ? maskedSingleQuoteOnly : normalized;
+    if (pattern.test(target)) return { allowed: false, reason };
   }
   // Workspace root plus fixed system binary dirs for presence checks (`ls /usr/bin/rg`, `which`).
   // Everything else outside /app stays denied — no /etc, /home, /proc, or host FS walks.
