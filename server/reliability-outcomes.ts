@@ -37,6 +37,8 @@ const WORKFLOW_SCOPE: ScopeColumns = {
 type OutcomeCounts = {
   succeeded: number;
   failed: number;
+  amberFailures: number;
+  unclassifiedErrors: number;
   excluded: number;
 };
 
@@ -82,7 +84,7 @@ const RESULT_SNIPPET_MAX_CHARS = 280;
 const ERROR_MAX_CHARS = 400;
 
 function emptyCounts(): OutcomeCounts {
-  return { succeeded: 0, failed: 0, excluded: 0 };
+  return { succeeded: 0, failed: 0, amberFailures: 0, unclassifiedErrors: 0, excluded: 0 };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -125,6 +127,7 @@ function countToolCalls(
 
     const toolCalls = Array.isArray(message.toolCalls) ? (message.toolCalls as ChatToolCall[]) : [];
     let turnFailed = false;
+    let turnHasUnclassified = false;
     let turnHasTerminalTool = false;
 
     for (const toolCall of toolCalls) {
@@ -136,6 +139,13 @@ function countToolCalls(
       }
       if (toolCall.status === "error") {
         toolExecutions.failed += 1;
+        // Amber = classified/avoidable; red = missing failureKind.
+        if (asFailureKind(toolCall.failureKind)) {
+          toolExecutions.amberFailures += 1;
+        } else {
+          toolExecutions.unclassifiedErrors += 1;
+          turnHasUnclassified = true;
+        }
         turnFailed = true;
         turnHasTerminalTool = true;
         continue;
@@ -148,8 +158,14 @@ function countToolCalls(
       conversationalTurns.excluded += 1;
       continue;
     }
-    if (turnFailed) conversationalTurns.failed += 1;
-    else conversationalTurns.succeeded += 1;
+    if (turnFailed) {
+      conversationalTurns.failed += 1;
+      // Turn is amber only when every failed tool was classified.
+      if (turnHasUnclassified) conversationalTurns.unclassifiedErrors += 1;
+      else conversationalTurns.amberFailures += 1;
+    } else {
+      conversationalTurns.succeeded += 1;
+    }
   }
 
   return { toolExecutions, conversationalTurns };
@@ -379,9 +395,13 @@ export async function getReliabilityOutcomeSummary(
     const counted = countToolCalls(messages, windowStartMs, windowEndMs);
     toolExecutions.succeeded += counted.toolExecutions.succeeded;
     toolExecutions.failed += counted.toolExecutions.failed;
+    toolExecutions.amberFailures += counted.toolExecutions.amberFailures;
+    toolExecutions.unclassifiedErrors += counted.toolExecutions.unclassifiedErrors;
     toolExecutions.excluded += counted.toolExecutions.excluded;
     conversationalTurns.succeeded += counted.conversationalTurns.succeeded;
     conversationalTurns.failed += counted.conversationalTurns.failed;
+    conversationalTurns.amberFailures += counted.conversationalTurns.amberFailures;
+    conversationalTurns.unclassifiedErrors += counted.conversationalTurns.unclassifiedErrors;
     conversationalTurns.excluded += counted.conversationalTurns.excluded;
   }
 
@@ -415,26 +435,37 @@ export async function getReliabilityOutcomeSummary(
       ),
     );
 
+  const planFailed = Number(planRow?.failed ?? 0);
+  const workflowFailed = Number(workflowRow?.failed ?? 0);
+  // Plan/workflow tables do not yet persist failureKind — count as unclassified until they do.
   const domains = {
     toolExecutions: toReliabilityMetrics(
       toolExecutions.succeeded,
       toolExecutions.failed,
       toolExecutions.excluded,
+      toolExecutions.amberFailures,
+      toolExecutions.unclassifiedErrors,
     ),
     conversationalTurns: toReliabilityMetrics(
       conversationalTurns.succeeded,
       conversationalTurns.failed,
       conversationalTurns.excluded,
+      conversationalTurns.amberFailures,
+      conversationalTurns.unclassifiedErrors,
     ),
     planSteps: toReliabilityMetrics(
       Number(planRow?.succeeded ?? 0),
-      Number(planRow?.failed ?? 0),
+      planFailed,
       Number(planRow?.excluded ?? 0),
+      0,
+      planFailed,
     ),
     workflowRuns: toReliabilityMetrics(
       Number(workflowRow?.succeeded ?? 0),
-      Number(workflowRow?.failed ?? 0),
+      workflowFailed,
       Number(workflowRow?.excluded ?? 0),
+      0,
+      workflowFailed,
     ),
   };
 

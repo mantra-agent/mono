@@ -45,8 +45,8 @@ const RELIABILITY_WINDOWS = [
   { hours: 720, label: "30d" },
 ] as const;
 
-function reliabilityHealthStatus(health: ReliabilityHealth | undefined): Status {
-  if (health === "failing") return "red";
+function reliabilityHealthStatus(health: ReliabilityHealth | "no_data" | undefined): Status {
+  if (health === "critical" || health === "failing") return "red";
   if (health === "degraded") return "amber";
   return "ok";
 }
@@ -56,10 +56,13 @@ function formatReliabilityRate(metric: ReliabilityOutcomeMetrics): string {
 }
 
 function reliabilityMetricDetail(metric: ReliabilityOutcomeMetrics): ReactNode {
+  const amberFailures = metric.amberFailures ?? 0;
+  const unclassifiedErrors = metric.unclassifiedErrors ?? Math.max(0, metric.failed - amberFailures);
   return (
     <DetailList
       items={[
         `${metric.succeeded} succeeded · ${metric.failed} failed · ${metric.terminal} terminal`,
+        `${amberFailures} ambers · ${unclassifiedErrors} errors`,
         metric.excluded > 0
           ? `${metric.excluded} nonterminal or excluded`
           : "No nonterminal or excluded outcomes",
@@ -1109,11 +1112,20 @@ function ResourcesView({
             ) : (
               RELIABILITY_DOMAINS.map(({ key, label }) => {
                 const metric = reliability.domains[key];
+                const amberFailures = metric.amberFailures ?? 0;
+                const unclassifiedErrors =
+                  metric.unclassifiedErrors ??
+                  Math.max(0, metric.failed - amberFailures);
+                const rate = formatReliabilityRate(metric);
+                const value =
+                  metric.failed > 0
+                    ? `${rate} · ${amberFailures}a/${unclassifiedErrors}e`
+                    : rate;
                 return (
                   <MetricRow
                     key={key}
                     label={label}
-                    value={formatReliabilityRate(metric)}
+                    value={value}
                     status={reliabilityHealthStatus(metric.health)}
                     detail={reliabilityMetricDetail(metric)}
                     testId={`tile-reliability-${key}`}

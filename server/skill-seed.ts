@@ -941,12 +941,12 @@ export async function migrateDailyBriefCanonicalMeetingPrep(): Promise<void> {
   }
 }
 
-const SENTRY_CHANGESET_GATE_VERSION = "1.9";
+const SENTRY_CHANGESET_GATE_VERSION = "1.10";
 const SENTRY_RUN_EVIDENCE_MARKER = "8. Inspect recent `sentry` skill runs and open system issues/tasks/sessions when useful. Deduplicate by normalized signature + environment + likely subsystem. Update or reference an existing incident instead of creating another.";
 const SENTRY_REPORT_MARKER = "## Canonical report page";
-const SENTRY_RELIABILITY_OUTCOMES_MARKER = "11. Inspect `system.reliability` for bounded recent windows and explicitly evaluate the canonical success/failure outcomes for tool executions, plan steps, workflow runs, and conversational turns. Count only terminal outcomes in rates; treat excluded/nonterminal counts as separate diagnostic evidence, never as successes or failures.";
+const SENTRY_RELIABILITY_OUTCOMES_MARKER = "11. Inspect `system.reliability` for bounded recent windows and explicitly evaluate the canonical success/failure outcomes for tool executions, plan steps, workflow runs, and conversational turns. Split failures into ambers (classified: input|permission|transient|internal) versus errors (unclassified surprises missing failureKind). Count only terminal outcomes in rates; treat excluded/nonterminal counts as separate diagnostic evidence, never as successes or failures. Prefer remediating unclassified errors first; treat high amber volume as avoidable-input/setup signal, not as unexplained instability.";
 const SENTRY_RELIABILITY_CHECKLIST_ITEM = {
-  check: "Inspected system.reliability and evaluated canonical bounded-window outcomes for tools, plans, workflows, and conversational turns",
+  check: "Inspected system.reliability and split ambers (classified) from errors (unclassified) for tools, plans, workflows, and conversational turns",
   weight: 10,
   kind: "tool_invoked",
   tool: "system",

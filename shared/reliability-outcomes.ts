@@ -7,13 +7,31 @@ export const RELIABILITY_TOOL_FAILURE_MAX_LIMIT = 200;
 
 export type ReliabilityHealth = "healthy" | "degraded" | "critical";
 
+export type ReliabilityDomainKey =
+  | "toolExecutions"
+  | "conversationalTurns"
+  | "planSteps"
+  | "workflowRuns";
+
 export type ReliabilityToolFailureKind = "input" | "permission" | "transient" | "internal";
 
+/**
+ * Terminal outcome metrics for one reliability domain.
+ *
+ * Failure split contract:
+ * - amberFailures = classified/avoidable (input|permission|transient|internal)
+ * - unclassifiedErrors = true surprises missing failureKind (red)
+ * - failed = amberFailures + unclassifiedErrors
+ */
 export interface ReliabilityOutcomeMetrics {
   succeeded: number;
   failed: number;
+  amberFailures: number;
+  unclassifiedErrors: number;
   excluded: number;
+  terminal: number;
   successRate: number | null;
+  health: ReliabilityHealth | "no_data";
 }
 
 export interface ReliabilityOutcomeSummary {
@@ -80,22 +98,50 @@ export function normalizeReliabilityToolFailureLimit(limit?: number): number {
   return Math.min(RELIABILITY_TOOL_FAILURE_MAX_LIMIT, Math.max(1, rounded));
 }
 
+function domainHealth(successRate: number | null): ReliabilityHealth | "no_data" {
+  if (successRate === null) return "no_data";
+  if (successRate < 0.9) return "critical";
+  if (successRate < 0.99) return "degraded";
+  return "healthy";
+}
+
 export function emptyReliabilityMetrics(): ReliabilityOutcomeMetrics {
   return {
     succeeded: 0,
     failed: 0,
+    amberFailures: 0,
+    unclassifiedErrors: 0,
     excluded: 0,
+    terminal: 0,
     successRate: null,
+    health: "no_data",
   };
 }
 
-export function toReliabilityMetrics(succeeded: number, failed: number, excluded = 0): ReliabilityOutcomeMetrics {
+export function toReliabilityMetrics(
+  succeeded: number,
+  failed: number,
+  excluded = 0,
+  amberFailures = 0,
+  unclassifiedErrors = 0,
+): ReliabilityOutcomeMetrics {
   const decided = succeeded + failed;
+  // Prefer explicit split when provided; otherwise treat all failures as unclassified.
+  const ambers = Math.max(0, Math.min(failed, amberFailures));
+  const unclass =
+    unclassifiedErrors > 0
+      ? Math.max(0, Math.min(failed - ambers, unclassifiedErrors))
+      : Math.max(0, failed - ambers);
+  const successRate = decided > 0 ? succeeded / decided : null;
   return {
     succeeded,
     failed,
+    amberFailures: ambers,
+    unclassifiedErrors: unclass,
     excluded,
-    successRate: decided > 0 ? succeeded / decided : null,
+    terminal: decided,
+    successRate,
+    health: domainHealth(successRate),
   };
 }
 
@@ -108,4 +154,12 @@ export function deriveReliabilityHealth(domains: ReliabilityOutcomeSummary["doma
   if (rates.some((rate) => rate < 0.9)) return "critical";
   if (rates.some((rate) => rate < 0.99)) return "degraded";
   return "healthy";
+}
+
+/** Compact human label: "12 ambers · 3 errors". */
+export function formatReliabilityFailureSplit(
+  metric: Pick<ReliabilityOutcomeMetrics, "amberFailures" | "unclassifiedErrors" | "failed">,
+): string {
+  if (metric.failed <= 0) return "0 ambers · 0 errors";
+  return `${metric.amberFailures} ambers · ${metric.unclassifiedErrors} errors`;
 }
