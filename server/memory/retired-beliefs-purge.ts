@@ -1,10 +1,12 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
+import { createNamedSystemPrincipal } from "../principal";
 import { tagRegistry } from "../file-storage/tags";
 
 const log = createLogger("RetiredBeliefsPurge");
 const MARKER_KEY = "migration.retired_beliefs.v2.archival_only";
+const MAINTENANCE_PRINCIPAL = createNamedSystemPrincipal("retired-beliefs-purge");
 
 export async function purgeRetiredBeliefs(): Promise<void> {
   // Beliefs are retired product behavior. Do not migrate them into a new
@@ -20,5 +22,5 @@ export async function purgeRetiredBeliefs(): Promise<void> {
     `);
     log.info("complete {\"behavior\":\"beliefs_retired_archival_only\",\"legacyRowsPreserved\":true}");
   }
-  await tagRegistry.removeRetiredEntityTypeUsages("belief");
+  await tagRegistry.removeRetiredEntityTypeUsages("belief", MAINTENANCE_PRINCIPAL);
 }

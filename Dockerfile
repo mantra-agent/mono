@@ -69,9 +69,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python --version \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy built artifacts (tests already removed in builder stage)
+# Copy built artifacts and runtime-read schema migrations (tests already removed in builder stage)
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/shared ./shared
+COPY --from=builder /app/migrations ./migrations
 
 # Copy package files + full node_modules (including devDependencies) from the
 # builder stage. DevDeps are needed at runtime for implement skill sessions.
