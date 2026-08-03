@@ -1058,6 +1058,33 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         }
       } catch { /* subscription account not available */ }
 
+      try {
+        const grokSubAccount = await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), () =>
+          getAccount("grok-subscription-primary")
+        );
+        if (grokSubAccount) {
+          const grokSubModels = modelRegistry.getSubscriptionModels()
+            .filter(({ info }) => info.provider === "grok-subscription");
+          if (grokSubModels.length > 0 && !providers.some(p => p.id === "grok-subscription")) {
+            providers.push({
+              id: "grok-subscription",
+              name: "Grok Subscription",
+              models: grokSubModels.map(({ info }) => ({
+                id: info.id,
+                name: info.name,
+                cost: info.cost,
+                contextWindow: info.contextWindow,
+                maxTokens: info.maxOutputTokens,
+                reasoning: info.reasoning,
+                thinkingLevel: info.thinking.level,
+                thinkingDescription: info.thinking.description,
+                supportsReasoningEffort: info.thinking.selectableEffort === true,
+              })),
+            });
+          }
+        }
+      } catch { /* grok subscription account not available */ }
+
       if (getSecretSync("CLAUDE_CODE_OAUTH_TOKEN")) {
         const cliSubModels = modelRegistry.getSubscriptionModels()
           .filter(({ info }) => info.provider === "claude-cli");
