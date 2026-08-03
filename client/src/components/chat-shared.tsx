@@ -483,12 +483,15 @@ function getToolErrorText(
   return formatToolError(tool.error, tool.result);
 }
 
-/** Permission failures are amber; all other tool errors stay red. */
+/**
+ * Agent-fixable failures (permission denials + bad input/schema) are amber.
+ * Real runtime failures (transient/internal/unknown) stay red.
+ */
 function toolFailureTone(failureKind?: string | null): {
   iconColor: string;
   bgColor: string;
 } {
-  if (failureKind === "permission") {
+  if (failureKind === "permission" || failureKind === "input") {
     return {
       iconColor: "text-warning",
       bgColor: "bg-warning/15",
