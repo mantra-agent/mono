@@ -8,6 +8,14 @@
 import { goalStorage } from "./goal-storage";
 import type { Goal, GoalIndexEntry, GoalListFilters, GoalHorizon, GoalStatus, CreateGoalInput, UpdateGoalInput } from "@shared/schema";
 import type { Priority } from "@shared/models/goals";
+import {
+  goalRelationshipService,
+  type GoalRelationship,
+  type GoalRelationshipTargetType,
+  type ResolvedGoalRelationship,
+} from "./goal-relationship-service";
+import { getCurrentPrincipal } from "./principal-context";
+import { resolveAddressBatch } from "./address-resolver";
 
 import { createLogger } from "./log";
 
@@ -128,7 +136,75 @@ export class GoalsService {
   }
 
   async delete(id: string): Promise<void> {
+    // Retire explicit relationship links before deleting the goal so the ledger
+    // (and any graph projection over it) never references a goal that no longer
+    // exists. Best-effort: a missing user principal or link failure must not
+    // block the delete.
+    const principal = getCurrentPrincipal();
+    if (principal?.actorType === "user" && principal.userId && principal.accountId) {
+      try {
+        await goalRelationshipService.retireAllForGoal(id);
+      } catch (error) {
+        log.warn(`Failed to retire relationships for goal ${id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     return goalStorage.deleteGoal(id);
+  }
+
+  // --- Relationships (Goal↔Person, Goal↔Meeting) ---
+
+  async listRelationships(goalId: string): Promise<GoalRelationship[]> {
+    return goalRelationshipService.listForGoal(goalId);
+  }
+
+  async addRelationship(goalId: string, targetType: GoalRelationshipTargetType, targetId: string): Promise<GoalRelationship> {
+    const goal = await goalStorage.getGoal(goalId);
+    if (!goal) throw Object.assign(new Error(`Goal ${goalId} not found`), { status: 404 });
+    return goalRelationshipService.add(goalId, targetType, targetId);
+  }
+
+  async removeRelationship(goalId: string, linkId: string): Promise<void> {
+    return goalRelationshipService.remove(goalId, linkId);
+  }
+
+  async listGoalsForPerson(personId: string): Promise<GoalRelationship[]> {
+    return goalRelationshipService.listGoalsForTarget("person", personId);
+  }
+
+  async listGoalsForMeeting(meetingId: string): Promise<GoalRelationship[]> {
+    return goalRelationshipService.listGoalsForTarget("meeting", meetingId);
+  }
+
+  /** Relationships enriched with resolved target label/route for UI chips. */
+  async getRelationshipsDetail(goalId: string): Promise<ResolvedGoalRelationship[]> {
+    const links = await goalRelationshipService.listForGoal(goalId);
+    if (links.length === 0) return [];
+    const labels = new Map<string, { label: string; route?: string }>();
+    const principal = getCurrentPrincipal();
+    if (principal?.actorType === "user" && principal.userId && principal.accountId) {
+      // resolveAddressBatch preserves input order; match by index, not string form.
+      const results = await resolveAddressBatch(principal, links.map((link) => link.targetAddress));
+      links.forEach((link, index) => {
+        const resolution = results[index]?.resolution;
+        if (resolution) labels.set(link.targetAddress, { label: resolution.label, ...(resolution.route ? { route: resolution.route } : {}) });
+      });
+    }
+    return links.map((link) => {
+      const meta = labels.get(link.targetAddress);
+      return {
+        ...link,
+        label: meta?.label ?? `${link.targetType}:${link.targetId}`,
+        ...(meta?.route ? { route: meta.route } : {}),
+      };
+    });
+  }
+
+  /** Goal plus its resolved relationship targets. */
+  async getGoalDetail(id: string): Promise<(Goal & { relationships: ResolvedGoalRelationship[] }) | null> {
+    const goal = await goalStorage.getGoal(id);
+    if (!goal) return null;
+    const relationships = await this.getRelationshipsDetail(id);
+    return { ...goal, relationships };
   }
 
   async addNote(id: string, content: string): Promise<Goal> {

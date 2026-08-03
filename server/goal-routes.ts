@@ -121,6 +121,42 @@ export function registerGoalRoutes(app: Express): void {
     }
   });
 
+  app.get("/api/life-goals/:id/relationships", async (req, res) => {
+    try {
+      const goal = await goalsService.get(req.params.id);
+      if (!goal) return res.status(404).json({ error: "Goal not found" });
+      const relationships = await goalsService.getRelationshipsDetail(req.params.id);
+      res.json({ relationships });
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/life-goals/:id/relationships", requireAuth, async (req, res) => {
+    try {
+      const { targetType, targetId } = req.body;
+      if (targetType !== "person" && targetType !== "meeting") {
+        return res.status(400).json({ error: "targetType must be 'person' or 'meeting'" });
+      }
+      if (typeof targetId !== "string" || !targetId.trim()) {
+        return res.status(400).json({ error: "targetId string is required" });
+      }
+      const relationship = await goalsService.addRelationship(req.params.id, targetType, targetId.trim());
+      res.status(201).json(relationship);
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/life-goals/:id/relationships/:linkId", requireAuth, async (req, res) => {
+    try {
+      await goalsService.removeRelationship(req.params.id, req.params.linkId);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
   app.post("/api/life-goals/:id/notes", async (req, res) => {
     try {
       const { content } = req.body;

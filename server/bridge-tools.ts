@@ -5363,6 +5363,33 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           await goalsService.delete(id);
           return { result: `Goal deleted: "${goal.shortName}" [goal:${id}]` };
         }
+        case "list_relationships": {
+          const id = args.id;
+          if (!id) return { result: "Missing goal id", error: true };
+          const goal = await goalsService.get(id);
+          if (!goal) return { result: `Goal ${id} not found`, error: true };
+          const relationships = await goalsService.getRelationshipsDetail(id);
+          if (relationships.length === 0) return { result: `No relationships linked to [goal:${id}]` };
+          const lines = relationships.map(r => `- ${r.label} [@${r.targetType}:${r.targetId}] (link ${r.linkId})`);
+          return { result: `${relationships.length} relationships for [goal:${id}]:\n${lines.join("\n")}` };
+        }
+        case "add_relationship": {
+          const id = args.id;
+          const targetType = args.targetType;
+          const targetId = args.targetId;
+          if (!id) return { result: "Missing goal id", error: true };
+          if (targetType !== "person" && targetType !== "meeting") return { result: "targetType must be 'person' or 'meeting'", error: true };
+          if (!targetId) return { result: "Missing targetId", error: true };
+          const rel = await goalsService.addRelationship(id, targetType, String(targetId));
+          return { result: `Linked @${targetType}:${rel.targetId} to [goal:${id}] (link ${rel.linkId})` };
+        }
+        case "remove_relationship": {
+          const id = args.id;
+          const linkId = args.linkId;
+          if (!id || !linkId) return { result: "Missing goal id or linkId", error: true };
+          await goalsService.removeRelationship(id, String(linkId));
+          return { result: `Relationship ${linkId} removed from [goal:${id}]` };
+        }
         case "set_review":
         case "set_daily_plan":
         case "set_weekly_reflection":
@@ -5375,7 +5402,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         case "get_daily_artifacts":
           return await getDailyArtifacts(args);
         default:
-          return { result: `Unknown goals action: ${action}. Available: list, get, create, update, delete, search, set_parent, unlink_parent, set_review, set_daily_plan, get_daily_artifacts, set_weekly_reflection, set_weekly_plan, set_monthly_plan, set_monthly_reflection, set_quarterly_plan, set_quarterly_reflection`, error: true };
+          return { result: `Unknown goals action: ${action}. Available: list, get, create, update, delete, search, set_parent, unlink_parent, list_relationships, add_relationship, remove_relationship, set_review, set_daily_plan, get_daily_artifacts, set_weekly_reflection, set_weekly_plan, set_monthly_plan, set_monthly_reflection, set_quarterly_plan, set_quarterly_reflection`, error: true };
       }
     } catch (err: any) {
       return { result: `Goals tool error: ${err.message}`, error: true };

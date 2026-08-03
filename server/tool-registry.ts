@@ -359,14 +359,17 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   goals: {
-    description: "Manage life goals — unified system covering all horizons from daily goals (today) to lifetime aspirations. Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime. Short horizons support periodDate for date-scoped queries. This is the canonical tool for all goal and priority operations. Actions: list, get, create, update, delete, search, set_parent, unlink_parent, set_review, set_daily_plan, get_daily_artifacts, set_weekly/monthly/quarterly plan+reflection. Use canonical @goal:id syntax in messages to link to goals. Legacy [goal:id] syntax is accepted during migration.",
+    description: "Manage life goals — unified system covering all horizons from daily goals (today) to lifetime aspirations. Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime. Short horizons support periodDate for date-scoped queries. This is the canonical tool for all goal and priority operations. Actions: list, get, create, update, delete, search, set_parent, unlink_parent, list_relationships, add_relationship, remove_relationship, set_review, set_daily_plan, get_daily_artifacts, set_weekly/monthly/quarterly plan+reflection. add_relationship/remove_relationship/list_relationships manage first-class Goal↔Person and Goal↔Meeting links. Use canonical @goal:id syntax in messages to link to goals. Legacy [goal:id] syntax is accepted during migration.",
     category: "work",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "get", "create", "update", "delete", "search", "set_parent", "unlink_parent", "set_review", "set_daily_plan", "get_daily_artifacts", "set_weekly_reflection", "set_weekly_plan", "set_monthly_plan", "set_monthly_reflection", "set_quarterly_plan", "set_quarterly_reflection"], description: "The action to perform" },
-        id: { type: "string", description: "Goal ID (required for get, update, delete, set_parent, unlink_parent)" },
+        action: { type: "string", enum: ["list", "get", "create", "update", "delete", "search", "set_parent", "unlink_parent", "list_relationships", "add_relationship", "remove_relationship", "set_review", "set_daily_plan", "get_daily_artifacts", "set_weekly_reflection", "set_weekly_plan", "set_monthly_plan", "set_monthly_reflection", "set_quarterly_plan", "set_quarterly_reflection"], description: "The action to perform" },
+        id: { type: "string", description: "Goal ID (required for get, update, delete, set_parent, unlink_parent, list_relationships, add_relationship, remove_relationship)" },
+        targetType: { type: "string", enum: ["person", "meeting"], description: "Relationship target type (for add_relationship)" },
+        targetId: { type: "string", description: "Person or meeting ID to link (for add_relationship)" },
+        linkId: { type: "string", description: "Relationship link ID to remove (for remove_relationship)" },
         shortName: { type: "string", description: "Short goal name (required for create)" },
         description: { type: "string", description: "Full description (for create/update)" },
         domain: { type: "string", enum: ["career", "health", "relationships", "finance", "growth", "creative"], description: "Life domain" },
