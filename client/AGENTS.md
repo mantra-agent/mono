@@ -77,6 +77,10 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 5. On disconnect/reconnect/visibility resume, the client invalidates patch baselines and resubscribes to every cached live session, getting fresh snapshots.
 6. The client cache publishes through a stable keyed external store. Transcript surfaces subscribe only to the focused session and its visible descendant previews; unrelated background deltas stay cached and must not invalidate the focused transcript subtree. Global orb activity is a separate discriminant-only context.
 
+## React Query defaults
+
+`client/src/lib/queryClient.ts` defaults: `staleTime: 30_000`, `refetchOnWindowFocus: false`. Do not override with `staleTime: 0` or `refetchOnMount: "always"` unless the surface is intentionally live and the fan-out cost is understood. Prefer event-carried invalidation over force-refetch on mount.
+
 ## Browser navigation telemetry
 
 `client/src/lib/navigation-trace.ts` is the single in-memory correlation boundary for SPA navigation evidence. History intent, route Suspense/lazy settlement, React Query activity, destination commit, main-thread evidence, and bounded session-stream pressure feed one terminal trace; only that terminal trace enters `browser_performance_telemetry`. Never persist per milestone, query event, frame, or stream delta, and never capture query keys or stream content. The readiness gate tracks only genuine initial loads (`query.state.status === "pending"`); background refetches and interval pollers must not hold a navigation trace open.
