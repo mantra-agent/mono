@@ -42,8 +42,15 @@ function anySecret(...names: string[]): boolean {
   });
 }
 
-/** Secret-backed connectors: ready iff their required app secrets are present. */
-function secretReadiness(connectorKey: string): ConnectorReadiness | undefined {
+/**
+ * Secret-backed connectors: ready iff their required app secrets are present.
+ *
+ * Exported as the single source of truth for cheap, synchronous, global
+ * (non-principal) connector readiness. Returns `undefined` for connectors with
+ * no cheap synchronous secret signal (OAuth/provider-backed), so callers can
+ * distinguish "definitively not configured" from "no cheap signal available".
+ */
+export function secretConnectorReadiness(connectorKey: string): ConnectorReadiness | undefined {
   switch (connectorKey) {
     case "anthropic":
       return allSecrets("ANTHROPIC_API_KEY") ? "ready" : "setup-required";
@@ -126,7 +133,7 @@ export function resolveConnectorReadiness(
       );
       continue;
     }
-    const fromSecret = secretReadiness(connectorKey);
+    const fromSecret = secretConnectorReadiness(connectorKey);
     // Connectors with no cheap synchronous signal (e.g. twitter OAuth1,
     // meta wearables, oura, automation-auth) are conservatively setup-required
     // in shadow mode rather than performing a live provider probe.

@@ -9,6 +9,8 @@ import {
   QUESTION_TOOL_DESCRIPTION,
   RULES_TOOL_DESCRIPTION,
 } from "./personal-rule-policy";
+import { secretConnectorReadiness } from "./mods/composition/connector-readiness";
+import type { RegisteredConnectorKey } from "./mods/registry/registered-keys";
 
 const log = createLogger("ToolRegistry");
 
@@ -39,6 +41,15 @@ export interface ToolMeta {
   parameters?: { type: "object"; properties: Record<string, unknown>; required?: string[] };
   whenToUse?: string;
   example?: string;
+  /**
+   * Integration-backed tools whose usability depends on a configured connector.
+   * When set and that connector is a secret-backed connector that is not
+   * configured, the tool is withheld from the advertised schema set so the model
+   * is never handed a capability it structurally cannot execute. Untagged tools,
+   * and tools whose connector has no cheap synchronous readiness signal
+   * (OAuth/provider-backed), always pass through.
+   */
+  connectorKey?: RegisteredConnectorKey;
 }
 
 export const TOOLS: Record<string, ToolMeta> = {
@@ -234,6 +245,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   sentry: {
     description: "Query Sentry crash reports and error tracking for the mobile app. Uses stored SENTRY_AUTH_TOKEN, SENTRY_ORG, and SENTRY_PROJECT secrets. Actions: status (check connection), issues (list issues with optional query/sort/limit), issue (get issue details by issueId), events (list events for an issue with full stacktraces), latest_event (get the most recent event for an issue), resolve (resolve an issue), unresolve (reopen an issue), ignore (ignore an issue).",
     category: "system",
+    connectorKey: "sentry",
     parameters: {
       type: "object",
       properties: {
@@ -267,6 +279,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   expo: {
     description: "Inspect Expo/EAS projects and builds or launch one exact-source iOS preview build using the stored EXPO_ACCESS_TOKEN integration secret. Actions: status, projects, builds, build, build_logs, start_build, cancel. start_build requires the full expected main commit SHA, never cancels another build, and fails closed if main moved. Use build_logs to fetch Xcode/build log artifacts and extract actual failure lines instead of relying on Expo summary text.",
     category: "system",
+    connectorKey: "expo",
     parameters: {
       type: "object",
       properties: {
@@ -284,6 +297,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   meeting_bot: {
     description: "Send the Mantra Agent meeting bot into a live meeting via Recall.ai. Actions: join (bot joins a Zoom/Google Meet call and streams a live attributed transcript into a meeting session — pass a meeting 'url', or omit it to auto-resolve the current/next calendar event that has a meeting link), status (bot/meeting state for a meeting session), diagnostics (recent inbound Recall webhook delivery outcomes, including rejected signatures), recap (manually prepare/resurface the recap review draft widgets for a meeting session), leave (bot exits the call). The bot is listen-only and appears in the room as 'Mantra Agent'. Requires the Recall.ai integration to be configured in Settings → Integrations (never ask for the API key in chat).",
     category: "calendar",
+    connectorKey: "recall",
     parameters: {
       type: "object",
       properties: {
@@ -1902,16 +1916,63 @@ export function invalidateSchemaCache() {
 }
 
 export function getToolSchemas(): ToolSchema[] {
-  if (cachedSchemas) return cachedSchemas;
-  const schemas = Object.entries(TOOLS).map(([name, meta]) => toolMetaToSchema(name, meta));
-  // Include alias schemas so validation resolves for canonical tool names
-  for (const [alias, target] of Object.entries(TOOL_ALIASES)) {
-    const meta = TOOLS[target];
-    if (meta) schemas.push(toolMetaToSchema(alias, meta));
+  if (!cachedSchemas) {
+    const schemas = Object.entries(TOOLS).map(([name, meta]) => toolMetaToSchema(name, meta));
+    // Include alias schemas so validation resolves for canonical tool names
+    for (const [alias, target] of Object.entries(TOOL_ALIASES)) {
+      const meta = TOOLS[target];
+      if (meta) schemas.push(toolMetaToSchema(alias, meta));
+    }
+    cachedSchemas = schemas;
+    log.debug(`getToolSchemas: total=${cachedSchemas.length} (${Object.keys(TOOL_ALIASES).length} aliases)`);
   }
-  cachedSchemas = schemas;
-  log.debug(`getToolSchemas: total=${cachedSchemas.length} (${Object.keys(TOOL_ALIASES).length} aliases)`);
-  return cachedSchemas;
+  // Readiness gate is applied per-call and never cached: a secret-backed
+  // integration tool whose connector is unconfigured must not be advertised as
+  // callable, and must re-appear the moment it is configured (no restart).
+  return withoutUnreadyIntegrationTools(cachedSchemas);
+}
+
+/** Resolve the connector a tool (or one of its aliases) is backed by, if any. */
+function connectorKeyForTool(name: string): RegisteredConnectorKey | undefined {
+  const direct = TOOLS[name]?.connectorKey;
+  if (direct) return direct;
+  const target = TOOL_ALIASES[name];
+  return target ? TOOLS[target]?.connectorKey : undefined;
+}
+
+/**
+ * Withhold integration tools whose secret-backed connector is not configured.
+ *
+ * This extends the same "advertise a capability only when it is ready"
+ * invariant the mod composition layer already enforces for integration cards
+ * (contribution-resolver requires `state === "ready"`) to the static core tool
+ * registry, which composition never sees. Without this, an unconfigured
+ * integration tool (e.g. sentry with no SENTRY_* secrets) is handed to the
+ * model unconditionally and fails on every call — a phantom capability.
+ *
+ * Only connectors with a cheap, definitive synchronous secret signal are gated.
+ * `secretConnectorReadiness` returns `undefined` for OAuth/provider-backed
+ * connectors (whose readiness needs principal-scoped async lists) and for
+ * untagged tools, so this never hides a tool on uncertainty — it withholds only
+ * on a proven "setup-required". Dispatch is keyed independently of the schema
+ * set, so a deliberately-invoked unconfigured tool still routes to its handler
+ * and returns the truthful "not configured" message.
+ */
+function withoutUnreadyIntegrationTools<T extends { name: string }>(schemas: T[]): T[] {
+  const withheld: string[] = [];
+  const filtered = schemas.filter((schema) => {
+    const connectorKey = connectorKeyForTool(schema.name);
+    if (!connectorKey) return true;
+    if (secretConnectorReadiness(connectorKey) === "setup-required") {
+      withheld.push(schema.name);
+      return false;
+    }
+    return true;
+  });
+  if (withheld.length > 0) {
+    log.debug(`getToolSchemas: withheld ${withheld.length} unconfigured integration tool(s): ${withheld.join(", ")}`);
+  }
+  return filtered;
 }
 
 /**
