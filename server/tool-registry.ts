@@ -9,6 +9,7 @@ import {
   QUESTION_TOOL_DESCRIPTION,
   RULES_TOOL_DESCRIPTION,
 } from "./personal-rule-policy";
+import { getShellToolContractDescription } from "./agent-authority";
 import { secretConnectorReadiness } from "./mods/composition/connector-readiness";
 import type { RegisteredConnectorKey } from "./mods/registry/registered-keys";
 
@@ -105,13 +106,18 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   shell: {
-    description: "Execute a shell command in the workspace directory.",
+    // Description is derived from validateShellCommand policy — never hand-author a parallel contract.
+    description: getShellToolContractDescription(),
     category: "system",
 
     parameters: {
       type: "object",
       properties: {
-        command: { type: "string", description: "Shell command to execute" },
+        command: {
+          type: "string",
+          description:
+            "Read-only shell command. Must start with an allowlisted binary; no `;`, file redirects, or variable expansion. See tool description for the full contract.",
+        },
         timeout: { type: "number", description: "Timeout in ms (default 30000, max 120000)" },
       },
       required: ["command"],

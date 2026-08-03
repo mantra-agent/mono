@@ -246,9 +246,21 @@ export function filterToolSchemasForAuthority<T extends { name: string; descript
 }
 
 const SAFE_SHELL_COMMANDS = new Set([
-  "cd", "pwd", "ls", "find", "cat", "head", "tail", "grep", "sed", "wc", "sort", "uniq",
+  "cd", "pwd", "ls", "find", "cat", "head", "tail", "grep", "rg", "sed", "wc", "sort", "uniq",
   "cut", "tr", "echo", "printf", "test", "[", "basename", "dirname", "stat", "du", "file", "diff", "git", "npm",
 ]);
+
+/** Read-only git subcommands permitted via shell. Writes always go through the git tool. */
+const SAFE_SHELL_GIT_SUBCOMMANDS = new Set([
+  "status",
+  "log",
+  "diff",
+  "show",
+  "branch",
+  "remote",
+  "rev-parse",
+]);
+
 /**
  * Ordered forbidden-token classes. Each carries a precise, actionable reason so a rejected
  * command names exactly which class tripped — a child can then adapt (drop the redirection,
@@ -268,7 +280,8 @@ const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: st
   { pattern: /`|\$\(/, reason: "forbidden:command_substitution" },
   { pattern: /\$(?:\{|[A-Za-z0-9_?*#@!$-])/, reason: "forbidden:variable_expansion" },
   { pattern: /\|\|/, reason: "forbidden:or_operator" },
-  { pattern: /(?<!&)\&(?!&)/, reason: "forbidden:background_execution" },
+  // Allow `2>&1` FD dup (pure stream merge). Any other bare `&` stays blocked.
+  { pattern: /(?<!&)\&(?!&|\d)/, reason: "forbidden:background_execution" },
   { pattern: /[<>]/, reason: "forbidden:redirection" },
   { pattern: /~/, reason: "forbidden:home_expansion" },
   { pattern: /\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet)\b/i, reason: "forbidden:network_binary" },
@@ -278,6 +291,88 @@ const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: st
   { pattern: /(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)/i, reason: "forbidden:dotfile_secret" },
 ];
 const SAFE_SED_READ = /^sed\s+-n\s+(["'])(?:\d+)(?:,\d+)?p\1\s+(?:--\s+)?[^\s]+(?:\s+[^\s]+)*$/;
+
+/**
+ * Strip only harmless stdout/stderr discards and FD merges before forbidden-token checks.
+ * The executed command keeps these redirects; they do not expand write surface.
+ *   - `>/dev/null`, `2>/dev/null`, `N>/dev/null`
+ *   - `2>&1` (and similar FD merges)
+ */
+function stripSafeShellRedirectsForValidation(command: string): string {
+  return command
+    .replace(/(?:^|\s)\d*>\s*\/dev\/null\b/g, " ")
+    .replace(/(?:^|\s)\d*>&\d+\b/g, " ");
+}
+
+function isSafeShellGitSegment(segment: string): boolean {
+  // Skip read-only global options (`-C path`, `--no-pager`, `-c key=value`) before the subcommand.
+  const tokens = segment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+  if (tokens[0] !== "git") return false;
+  let i = 1;
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (t === "-C" || t === "--git-dir" || t === "--work-tree") {
+      i += 2; // option + path
+      continue;
+    }
+    if (t.startsWith("--git-dir=") || t.startsWith("--work-tree=") || t.startsWith("--namespace=")) {
+      i += 1;
+      continue;
+    }
+    if (t === "-c") {
+      i += 2; // -c key=value
+      continue;
+    }
+    if (t.startsWith("-c") && t.includes("=")) {
+      i += 1;
+      continue;
+    }
+    if (t === "--no-pager" || t === "--paginate" || t === "-p" || t === "--no-optional-locks") {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  const sub = tokens[i];
+  if (!sub || !SAFE_SHELL_GIT_SUBCOMMANDS.has(sub)) return false;
+  if (sub === "branch") {
+    // List/inspect only — block create/delete/rename/copy/upstream mutation flags.
+    if (/\s(?:-[dDmM]|--delete|--move|--copy|--set-upstream-to|--unset-upstream|--edit-description)\b/.test(segment)) {
+      return false;
+    }
+    return true;
+  }
+  if (sub === "remote") {
+    // Read-only remote inspection — block add/remove/rename/set-url/prune/update.
+    const remoteAction = tokens[i + 1];
+    if (remoteAction && ["add", "remove", "rename", "set-url", "set-head", "set-branches", "prune", "update"].includes(remoteAction)) {
+      return false;
+    }
+    return true;
+  }
+  return true;
+}
+
+/**
+ * Single source of truth for the shell tool contract shown to the model.
+ * Derived from the same allowlist/forbidden classes validateShellCommand enforces —
+ * never hand-author a parallel description that can drift.
+ */
+export function getShellToolContractDescription(): string {
+  const binaries = [...SAFE_SHELL_COMMANDS].sort().join(", ");
+  const gitSubs = [...SAFE_SHELL_GIT_SUBCOMMANDS].join(", ");
+  return [
+    "Execute a read-only shell command in the workspace directory.",
+    "Admission is a deterministic allowlist: illegal commands fail before execution — do not retry variants of a denied command.",
+    `Allowed binaries: ${binaries}.`,
+    "Pipelines with `|` and `&&` are allowed when every segment starts with an allowlisted binary.",
+    "Never use `;`, newlines, backticks, `$(...)`, bare `&`, `||`, `<`/`>` file redirection, `~`, or variable expansion.",
+    "Safe redirect exceptions only: `>/dev/null`, `N>/dev/null`, and `N>&M` FD merges (e.g. `2>&1`).",
+    `Shell git is inspection-only (${gitSubs}); branch/remote mutation flags are denied. All git writes use the git tool.`,
+    "Shell npm is only `npm run build`. sed only as `sed -n 'N,Mp' file`. find may not use -exec/-delete.",
+    "Prefer scratch.read when the path is already known. Split independent commands into separate tool calls instead of sequencing with `;`.",
+  ].join(" ");
+}
 
 /**
  * Split a shell command into pipeline/sequence segments while honoring single and double
@@ -334,13 +429,16 @@ function splitShellSegments(command: string): string[] {
 
 export function validateShellCommand(command: string): ToolAuthorityDecision {
   if (!command.trim()) return { allowed: false, reason: "empty_command" };
+  // Strip only harmless /dev/null discards and FD merges before forbidden-token checks.
+  // Execution still receives the original command; this does not expand write surface.
+  const normalized = stripSafeShellRedirectsForValidation(command);
   for (const { pattern, reason } of FORBIDDEN_SHELL_TOKEN_CLASSES) {
-    if (pattern.test(command)) return { allowed: false, reason };
+    if (pattern.test(normalized)) return { allowed: false, reason };
   }
-  if (/(?:^|[\s\"'=\\])\/(?!app(?:\/|$))/.test(command)) return { allowed: false, reason: "absolute_path_outside_workspace" };
-  if (/(?:^|[\s/])\.\.(?:[\s/]|$)/.test(command)) return { allowed: false, reason: "path_traversal_blocked" };
+  if (/(?:^|[\s\"'=\\])\/(?!app(?:\/|$))/.test(normalized)) return { allowed: false, reason: "absolute_path_outside_workspace" };
+  if (/(?:^|[\s/])\.\.(?:[\s/]|$)/.test(normalized)) return { allowed: false, reason: "path_traversal_blocked" };
 
-  const segments = splitShellSegments(command);
+  const segments = splitShellSegments(normalized);
   if (segments.length === 0) return { allowed: false, reason: "empty_command" };
   for (const segment of segments) {
     const first = segment.match(/^([A-Za-z[\]]+)/)?.[1];
@@ -350,8 +448,8 @@ export function validateShellCommand(command: string): ToolAuthorityDecision {
     if (first === "sort" && /(?:^|\s)(?:-o(?:\s|$)|--output(?:=|\s)|--compress-program(?:=|\s))/.test(segment)) return { allowed: false, reason: "sort_write_or_program_blocked" };
     if (first === "uniq" && /(?:^|\s)--?output(?:=|\s)/.test(segment)) return { allowed: false, reason: "uniq_output_blocked" };
     if (first === "file" && /(?:^|\s)-(?:[^\s]*z|[^\s]*Z)(?:\s|$)/.test(segment)) return { allowed: false, reason: "file_decompress_blocked" };
-    if (first === "git" && !/^git\s+(?:status|branch\s+--list|rev-parse)(?:\s|$)/.test(segment)) {
-      return { allowed: false, reason: "shell_git_requires_mcp" };
+    if (first === "git" && !isSafeShellGitSegment(segment)) {
+      return { allowed: false, reason: "shell_git_read_only" };
     }
     if (first === "npm" && !/^npm\s+run\s+build\s*$/.test(segment)) return { allowed: false, reason: "npm_command_not_allowlisted" };
   }
