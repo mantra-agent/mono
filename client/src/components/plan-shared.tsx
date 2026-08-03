@@ -50,6 +50,7 @@ export interface PlanStepReview {
   attemptId?: number | null;
   status: "open" | "resolved";
   prompt: string;
+  detail?: string | null;
   decision?: "approve" | "request_changes" | "retry" | "stop" | null;
   decisionReason?: string | null;
   openedAt: string;

@@ -505,6 +505,7 @@ export async function registerProjectsRoutes(app: Express) {
             attemptId: reviewByStep.get(s.id)!.attemptId,
             status: reviewByStep.get(s.id)!.status,
             prompt: reviewByStep.get(s.id)!.prompt,
+            detail: reviewByStep.get(s.id)!.detail ?? null,
             decision: reviewByStep.get(s.id)!.decision,
             decisionReason: reviewByStep.get(s.id)!.decisionReason,
             openedAt: reviewByStep.get(s.id)!.openedAt.toISOString(),

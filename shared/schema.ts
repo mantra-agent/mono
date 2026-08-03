@@ -1724,6 +1724,7 @@ export const planStepReviews = pgTable("plan_step_reviews", {
   accountId: text("account_id").notNull(),
   status: text("status").notNull().default("open"),
   prompt: text("prompt").notNull(),
+  detail: text("detail"),
   decision: text("decision"),
   decisionReason: text("decision_reason"),
   openedBySessionId: text("opened_by_session_id"),
