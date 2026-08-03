@@ -152,6 +152,14 @@ export interface ChildSessionBlockMeta {
 
 export type CrossSessionDirection = "sibling" | "parent" | "child" | "direct";
 
+/**
+ * Single discriminant for act-vs-answer. Computed once when the user approves
+ * execution (or when tools begin under an approved mission) and carried across
+ * compaction AND supersession so replacement runs never re-infer stance from
+ * unstructured transcript. One Discriminant Per Decision.
+ */
+export type ExecutionStance = "answer" | "approved_to_execute";
+
 export interface ContinuationCapsule {
   version: 1;
   initiator?: string;
@@ -163,6 +171,13 @@ export interface ContinuationCapsule {
    * Carried forward across compactions so the freshest steering is never lost.
    */
   latestUserInstruction?: string;
+  /**
+   * Durable act-vs-answer stance. When `approved_to_execute`, the model must
+   * continue the approved mission without re-deriving or re-asking permission.
+   */
+  executionStance?: ExecutionStance;
+  /** Short audit breadcrumb for why stance was set — not a second discriminant. */
+  stanceReason?: string;
   actions: string[];
   systemsTouched: string[];
   decisions: string[];

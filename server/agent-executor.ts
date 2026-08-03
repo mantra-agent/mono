@@ -21,7 +21,7 @@ import { STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_EXTENDED_MS, POST_ABORT_DRA
 import pLimit from "p-limit";
 import { withQueryAttributionAsync } from "./db";
 import { abortTrace } from "./abort-trace";
-import type { ExecutorStreamEvent, ModelProviderFailureInfo, PersonaSnapshot, TerminalDegradationReason } from "@shared/models/chat";
+import type { ContinuationCapsule, ExecutorStreamEvent, ModelProviderFailureInfo, PersonaSnapshot, TerminalDegradationReason } from "@shared/models/chat";
 import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-storage";
 import { ModelProviderError, isModelContextOverflow, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
 import { ContextOperatingBudgetExceededError, estimateToolDefinitionTokens, getContextRequestBudget, type ContextRequestBudget } from "./context-budget";
@@ -29,10 +29,51 @@ import { estimateToolOutputSize } from "./tool-output-artifacts";
 import { CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS, projectImmediateToolResult, projectWorkingSet } from "./working-set-projector";
 import { buildContinuationCapsule, renderContinuationCapsule, type ContinuationCapsuleEntry } from "./continuation-capsule";
 
+/** In-flight run progress used to build supersession handoff capsules. */
+type ActiveRunProgress = {
+  abort: AbortController;
+  createdAt: number;
+  startedAt?: number;
+  lastActivityAt?: number;
+  admitted: boolean;
+  sessionId?: string;
+  model?: string;
+  activity?: string;
+  sessionKey?: string;
+  requestContent?: string;
+  aborted?: boolean;
+  hardCapMs?: number;
+  streamIdleDeadlineAt?: number;
+  /** True once any tool_use begins — durable evidence the run was acting. */
+  hasStartedActing?: boolean;
+  toolNames?: string[];
+  /** Last non-empty assistant text streamed this run (truncated). */
+  lastAssistantText?: string;
+  objectiveHint?: string;
+};
+
+/**
+ * Pending supersession/approval capsules keyed by chat sessionId.
+ * Written when a run is aborted mid-flight (or when approval is detected);
+ * consumed once by the replacement run so stance survives cold restart.
+ */
+type SessionHandoff = {
+  capsule: ContinuationCapsule;
+  priorRequestContent?: string;
+  hadProgress: boolean;
+  createdAt: number;
+};
+
 function normalizeMcpToolName(name: string | undefined): string | undefined {
   if (!name) return name;
   const match = name.match(/^mcp__(.+?)__(.+)$/);
   return match ? match[2] : name;
+}
+
+function trimOpenLoop(loops: string[], item: string, max = 8): string[] {
+  const next = loops.filter((loop) => loop !== item);
+  next.push(item);
+  return next.length > max ? next.slice(-max) : next;
 }
 
 export interface ExecutorMessage {
@@ -868,7 +909,9 @@ export function mergeIterationResults(
 }
 
 export class AgentExecutor extends EventEmitter {
-  private activeRuns = new Map<string, { abort: AbortController; createdAt: number; startedAt?: number; lastActivityAt?: number; admitted: boolean; sessionId?: string; model?: string; activity?: string; sessionKey?: string; requestContent?: string; aborted?: boolean; hardCapMs?: number; streamIdleDeadlineAt?: number }>();
+  private activeRuns = new Map<string, ActiveRunProgress>();
+  /** One pending handoff per session — consumed by the next processChatStream. */
+  private sessionHandoffs = new Map<string, SessionHandoff>();
   private zombieCheckTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -987,6 +1030,158 @@ export class AgentExecutor extends EventEmitter {
     return false;
   }
 
+  /** True if any active run for this session has started tools or streamed assistant text. */
+  sessionRunHasProgress(sessionId: string): boolean {
+    for (const run of this.activeRuns.values()) {
+      if (run.sessionId === sessionId && (run.hasStartedActing || !!run.lastAssistantText)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Record that a run began acting (tool_use) so supersession can set approved stance. */
+  markRunActing(runId: string, toolName?: string): void {
+    const run = this.activeRuns.get(runId);
+    if (!run) return;
+    run.hasStartedActing = true;
+    run.lastActivityAt = Date.now();
+    if (toolName) {
+      const names = run.toolNames ?? [];
+      if (!names.includes(toolName)) names.push(toolName);
+      run.toolNames = names.slice(-12);
+    }
+  }
+
+  /** Keep a rolling slice of assistant text for supersession capsule objective/resume. */
+  noteRunAssistantText(runId: string, text: string): void {
+    const run = this.activeRuns.get(runId);
+    if (!run || !text.trim()) return;
+    const trimmed = text.trim();
+    run.lastAssistantText = (run.lastAssistantText ? `${run.lastAssistantText}\n${trimmed}` : trimmed).slice(-2000);
+    run.lastActivityAt = Date.now();
+  }
+
+  /**
+   * Snapshot a ContinuationCapsule from the dying run so the replacement inherits
+   * objective + executionStance. Only written on supersession (follow-up abort).
+   */
+  private snapshotSupersessionHandoff(sessionId: string, run: ActiveRunProgress): void {
+    const prior = this.sessionHandoffs.get(sessionId)?.capsule;
+    const toolNames = run.toolNames ?? [];
+    const hasProgress = !!(run.hasStartedActing || run.lastAssistantText);
+    const stance: ContinuationCapsule["executionStance"] =
+      run.hasStartedActing || prior?.executionStance === "approved_to_execute"
+        ? "approved_to_execute"
+        : prior?.executionStance;
+    const entries: ContinuationCapsuleEntry[] = [];
+    if (run.requestContent) {
+      entries.push({
+        role: "user",
+        content: run.requestContent.slice(0, 4000),
+        createdAt: new Date(run.createdAt).toISOString(),
+      });
+    }
+    if (run.lastAssistantText) {
+      entries.push({
+        role: "assistant",
+        content: run.lastAssistantText.slice(0, 4000),
+        createdAt: new Date().toISOString(),
+      });
+    }
+    for (const name of toolNames) {
+      entries.push({
+        role: "tool",
+        toolName: name,
+        content: "started",
+        createdAt: new Date().toISOString(),
+      });
+    }
+    const capsule = buildContinuationCapsule(entries, prior, {
+      latestUserInstruction: prior?.latestUserInstruction,
+      executionStance: stance,
+      stanceReason: run.hasStartedActing
+        ? `superseded while executing${toolNames.length ? ` (${toolNames.slice(-4).join(", ")})` : ""}`
+        : hasProgress
+          ? "superseded after assistant progress"
+          : "superseded before first model output — continue prior mission",
+    });
+    if (!capsule.objective && run.objectiveHint) {
+      capsule.objective = run.objectiveHint;
+    }
+    if (!capsule.resumePoint) {
+      capsule.resumePoint = run.hasStartedActing
+        ? "Continue the approved mission from the interrupted tool/work stream. Do not re-ask permission."
+        : "Continue the prior turn's mission; the follow-up aborted a zero-output run.";
+    }
+    if (stance === "approved_to_execute" && !capsule.openLoops.includes("approved execution in progress")) {
+      capsule.openLoops = trimOpenLoop(capsule.openLoops, "approved execution in progress");
+    }
+    this.sessionHandoffs.set(sessionId, {
+      capsule,
+      priorRequestContent: run.requestContent,
+      hadProgress: hasProgress,
+      createdAt: Date.now(),
+    });
+    log.info(
+      `supersession handoff stored sessionId=${sessionId} stance=${capsule.executionStance ?? "none"} hadProgress=${hasProgress} tools=${toolNames.length}`,
+    );
+  }
+
+  /** Peek sticky handoff (does not clear). Approved stance stays until clearSessionHandoff. */
+  peekSessionHandoff(sessionId: string): SessionHandoff | undefined {
+    return this.sessionHandoffs.get(sessionId);
+  }
+
+  /**
+   * Consume handoff for injection into the next run.
+   * Approved-to-execute handoffs remain sticky (peek semantics) so every restart
+   * sees the discriminant until the mission completes or the user redirects.
+   */
+  takeSessionHandoff(sessionId: string): SessionHandoff | undefined {
+    const handoff = this.sessionHandoffs.get(sessionId);
+    if (!handoff) return undefined;
+    if (handoff.capsule.executionStance !== "approved_to_execute") {
+      this.sessionHandoffs.delete(sessionId);
+    }
+    return handoff;
+  }
+
+  /** Set or reinforce session stance from an approval signal outside supersession. */
+  reinforceSessionStance(
+    sessionId: string,
+    input: {
+      latestUserInstruction: string;
+      objective?: string;
+      stanceReason: string;
+    },
+  ): ContinuationCapsule {
+    const prior = this.sessionHandoffs.get(sessionId)?.capsule;
+    const capsule = buildContinuationCapsule([], prior, {
+      latestUserInstruction: input.latestUserInstruction,
+      executionStance: "approved_to_execute",
+      stanceReason: input.stanceReason,
+    });
+    if (input.objective) capsule.objective = input.objective;
+    if (!capsule.resumePoint) {
+      capsule.resumePoint = "Execute the approved instruction. Do not re-derive or re-ask.";
+    }
+    capsule.openLoops = trimOpenLoop(capsule.openLoops, "approved execution in progress");
+    this.sessionHandoffs.set(sessionId, {
+      capsule,
+      priorRequestContent: input.latestUserInstruction,
+      hadProgress: false,
+      createdAt: Date.now(),
+    });
+    return capsule;
+  }
+
+  clearSessionHandoff(sessionId: string, reason: string): void {
+    if (this.sessionHandoffs.delete(sessionId)) {
+      log.info(`session handoff cleared sessionId=${sessionId} reason=${reason}`);
+    }
+  }
+
   // Returns the count of runs aborted (was previously a boolean that early-
   // returned on first match, leaving N-1 runs still consuming admission slots
   // and DB connections — root cause of the 2026-04-23 stop-button wedge).
@@ -994,6 +1189,11 @@ export class AgentExecutor extends EventEmitter {
     let count = 0;
     for (const [runId, run] of this.activeRuns) {
       if (run.sessionId === sessionId) {
+        // Supersession is the cold-restart boundary that previously dropped intent.
+        // Snapshot stance/objective before the abort tears the run down.
+        if (reason === "superseded") {
+          this.snapshotSupersessionHandoff(sessionId, run);
+        }
         this.abortActiveRun(runId, run, reason);
         count++;
       }
@@ -1365,6 +1565,8 @@ export class AgentExecutor extends EventEmitter {
           }
           ctx.chronologyContentBuf += textDelta;
           ctx.publish("delta", { content: textDelta });
+          // Snapshot rolling assistant text for supersession handoff capsules.
+          this.noteRunAssistantText(ctx.runId, textDelta);
         }
 
         ctx.iterationText += raw;
@@ -1373,6 +1575,7 @@ export class AgentExecutor extends EventEmitter {
 
       case "tool_use_start": {
         this.markFirstResponseOutput(ctx, options, "tool");
+        this.markRunActing(ctx.runId, normalizeMcpToolName(event.toolName) || event.toolName);
         if (ctx.thinkingStepActive) {
           ctx.thinkingStepActive = false;
           ctx.publish("system_step", { step: "thinking", status: "done" });
@@ -2218,11 +2421,41 @@ export class AgentExecutor extends EventEmitter {
     const startTime = Date.now();
 
     let requestContent: string | undefined;
+    let objectiveHint: string | undefined;
     try {
-      const msgPreview = options.messages?.slice(-5) || [];
-      requestContent = safeStringify(msgPreview, { maxBytes: 4 * 1024, label: "agent-executor.requestPreview" }).slice(0, 2000);
+      // Prefer the latest user text — used as supersession capsule objective/instruction.
+      for (let i = (options.messages?.length || 0) - 1; i >= 0; i--) {
+        const msg = options.messages![i];
+        if (msg.role !== "user") continue;
+        const text = typeof msg.content === "string"
+          ? msg.content
+          : Array.isArray(msg.content)
+            ? msg.content.map((b: any) => (b && typeof b.text === "string" ? b.text : "")).join("\n")
+            : "";
+        if (text.trim()) {
+          requestContent = text.trim().slice(0, 4000);
+          objectiveHint = text.trim().slice(0, 280);
+          break;
+        }
+      }
+      if (!requestContent) {
+        const msgPreview = options.messages?.slice(-5) || [];
+        requestContent = safeStringify(msgPreview, { maxBytes: 4 * 1024, label: "agent-executor.requestPreview" }).slice(0, 2000);
+      }
     } catch (err) { log.warn("request content serialization failed", err); }
-    this.activeRuns.set(runId, { abort: abortController, createdAt: startTime, admitted: false, sessionId: options.sessionId, model: undefined, activity: options.activity || ACTIVITY_CHAT, sessionKey: options.sessionKey, requestContent });
+    this.activeRuns.set(runId, {
+      abort: abortController,
+      createdAt: startTime,
+      admitted: false,
+      sessionId: options.sessionId,
+      model: undefined,
+      activity: options.activity || ACTIVITY_CHAT,
+      sessionKey: options.sessionKey,
+      requestContent,
+      objectiveHint,
+      hasStartedActing: false,
+      toolNames: [],
+    });
 
     const activityForRouting = options.activity || ACTIVITY_CHAT;
     if (options.model && options.routingDecision) {

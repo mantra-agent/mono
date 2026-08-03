@@ -115,7 +115,11 @@ function trimToRecent(values: string[], limit: number): string[] {
 export function buildContinuationCapsule(
   entries: ContinuationCapsuleEntry[],
   previous?: ContinuationCapsule,
-  options?: { latestUserInstruction?: string },
+  options?: {
+    latestUserInstruction?: string;
+    executionStance?: ContinuationCapsule["executionStance"];
+    stanceReason?: string;
+  },
 ): ContinuationCapsule {
   const actions: string[] = [];
   const systemsTouched: string[] = [];
@@ -197,11 +201,26 @@ export function buildContinuationCapsule(
     || previous?.resumePoint
     || (boundedActions.length > 0 ? `Continue after ${boundedActions.at(-1)}` : undefined);
 
+  // Stance is sticky once approved. Explicit option wins, then previous capsule,
+  // then infer from tool progress in this batch (tools running = already acting).
+  const inferredStance: ContinuationCapsule["executionStance"] | undefined =
+    toolEntries.length > 0 ? "approved_to_execute" : undefined;
+  const executionStance =
+    options?.executionStance || previous?.executionStance || inferredStance;
+  const stanceReason =
+    options?.stanceReason
+    || (options?.executionStance ? undefined : previous?.stanceReason)
+    || (inferredStance === "approved_to_execute" && !previous?.executionStance
+      ? "tools already executing"
+      : undefined);
+
   return {
     version: CAPSULE_VERSION,
     initiator,
     objective,
     latestUserInstruction,
+    executionStance,
+    stanceReason,
     actions: boundedActions,
     systemsTouched: trimToRecent(systemsTouched, MAX_SECTION_ITEMS),
     decisions: trimToRecent(decisions, MAX_SECTION_ITEMS),
@@ -224,6 +243,23 @@ export function renderContinuationCapsule(capsule: ContinuationCapsule): string 
   const lines: string[] = ["[Continuation Capsule]", ""];
   if (capsule.initiator) lines.push("## Initiator", capsule.initiator, "");
   if (capsule.objective) lines.push("## Objective", capsule.objective, "");
+  if (capsule.executionStance === "approved_to_execute") {
+    lines.push(
+      "## Execution stance (authoritative — do not re-derive or re-ask)",
+      "approved_to_execute",
+      "",
+    );
+    if (capsule.stanceReason) {
+      lines.push("## Stance reason", capsule.stanceReason, "");
+    }
+    lines.push(
+      "## Required behavior",
+      "User already approved execution. Continue the approved mission immediately. Do not re-analyze whether to act, do not re-present options, and do not ask permission again.",
+      "",
+    );
+  } else if (capsule.executionStance === "answer") {
+    lines.push("## Execution stance", "answer", "");
+  }
   if (capsule.latestUserInstruction) {
     lines.push(
       "## Latest instruction (authoritative — overrides Resume point)",
