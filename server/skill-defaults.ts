@@ -982,42 +982,84 @@ If the page has already been created but you later decide it should be surfaced,
   {
     name: "regression",
     recommendedPersona: "Engineer",
-    description: "Reviews existing open Issues after a new build and closes only those with clear evidence that the reported problem is resolved.",
+    description:
+      "Burns the open Issue queue after each new build: resolves fixed and non-actionable Issues with evidence, keeps real residual bugs, and prepends a surfaced entry on the Regression Testing Log for Ray review.",
     category: "engineering",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "2.1",
+    version: "2.2",
     addToMemory: false,
     pinnedToContext: false,
-    whenToUse: "Runs automatically after a genuinely new deployed build through the existing Timer scheduler, or manually from Skills when an operator wants to recheck open Issues.",
-    outputSpec: "A compact report listing every reviewed Issue under still open, resolved, or blocked on testing, with the evidence used for each classification.",
+    whenToUse:
+      "Runs automatically after a genuinely new deployed build through the Timer scheduler, or manually from Skills when an operator wants to recheck and dispose open Issues.",
+    outputSpec:
+      "Every run must (1) dispose Issues via issues.resolve where fixed or non-actionable, (2) prepend a dated entry on the account's Regression Testing Log Library page, and (3) re-surface that page. Final chat response is a short summary plus the page reference — never classification-only with a frozen queue.",
     // Hollow orient-only runs fail structural tool_invoked gates and must not
     // report as clean success. scoreThreshold reconciles timer/skill status
     // to degraded when the pass rate falls below this floor.
     scoreThreshold: 0.8,
     checklist: [
-      { check: "Loaded every unresolved Issue page through issues.list", weight: 4, kind: "tool_invoked", tool: "issues", action: "list" },
-      { check: "Inspected every returned Issue individually through issues.get", weight: 4, kind: "tool_invoked", tool: "issues", action: "get" },
-      { check: "Closed only Issues with affirmative evidence that the reported behavior is resolved", weight: 5 },
-      { check: "Classified every reviewed Issue exactly once as still open, resolved, or blocked on testing", weight: 4 },
-      { check: "Reported concise evidence for every classification", weight: 3 },
+      {
+        check: "Loaded every unresolved Issue through issues.list",
+        weight: 4,
+        kind: "tool_invoked",
+        tool: "issues",
+        action: "list",
+      },
+      {
+        check: "Inspected Issues individually through issues.get when body or evidence was present",
+        weight: 3,
+        kind: "tool_invoked",
+        tool: "issues",
+        action: "get",
+      },
+      {
+        check:
+          "Disposed the queue: resolved fixed and non-actionable Issues; did not leave the bulk as blocked_on_testing",
+        weight: 5,
+      },
+      {
+        check: "Prepended a run entry on the Regression Testing Log and re-surfaced that page",
+        weight: 5,
+        kind: "tool_invoked",
+        tool: "library",
+        action: "edit_library_page",
+      },
+      {
+        check: "Reported counts and decisive evidence; final response references the log page",
+        weight: 3,
+      },
     ],
-    process: `Review the current open Issue queue. This is an automated checking pipeline, not a product-definition system.
+    process: `Burn down the open Issue queue after a build. This is a disposition pipeline, not a cautious classifier.
 
-1. Call \`issues(action: "list", excludeStatus: "resolved", limit: 500, offset: 0)\`. Follow \`nextOffset\` until \`hasMore\` is false so every unresolved Issue is included.
-2. Iterate through every returned Issue in order. For each Issue:
-   - call \`issues(action: "get", id: issueId)\`;
-   - inspect the Issue's description, logs, screenshot, page, notes, dependencies, and linked evidence;
-   - use existing read-only automation and diagnostics when they are authorized and can determine the current state, such as authenticated page verification, runtime logs, deployments, Sentry, code inspection, or build state; if a tool is unavailable under the Timer owner's authority, classify the Issue as \`blocked_on_testing\` rather than widening authority;
-   - assign exactly one outcome:
-     - \`still_open\`: affirmative evidence shows the problem still exists;
-     - \`resolved\`: affirmative evidence shows the reported problem no longer exists;
-     - \`blocked_on_testing\`: the available automation cannot decide safely, including cases requiring credentials, destructive actions, unsupported interaction, unavailable environments, or human judgment.
-3. Only for \`resolved\`, call \`issues(action: "resolve", id: issueId, evidence: "<brief affirmative evidence>")\`.
-4. Leave \`still_open\` and \`blocked_on_testing\` Issues open. Do not create replacement Issues, Regression contracts, Plans, product definitions, scenarios, or a second result ledger.
-5. Report three compact sections: Still open, Resolved, Blocked on testing. Include every reviewed Issue exactly once with its ID, title, and decisive evidence. If there are no open Issues, report that and stop.
+Primary artifact every run: prepend to and surface the account's Regression Testing Log Library page (title "Regression Testing Log", filed under Skills). If missing, create it once under the active engineering vault's Skills folder, then reuse that same page forever.
 
-A passing build, merged change, or absence of an error in a narrow log window is not enough by itself to resolve an Issue. When evidence is ambiguous, use \`blocked_on_testing\`.`,
+## Invariants
+- Empty body / no repro steps / title-only noise with no linked evidence = **non-actionable** → resolve. Do not park these as blocked_on_testing.
+- Real residual bugs stay open only when there is enough signal to act.
+- blocked_on_testing is rare: only when the issue has substance but this run truly cannot decide (missing env, auth, destructive proof required).
+- Never invent metrics. Prefer resolving thin Issues over leaving the queue frozen.
+- Do not create replacement Issues, second ledgers, or product-definition docs.
+
+## Steps
+1. Call \`issues(action: "list", excludeStatus: "resolved", limit: 500, offset: 0)\` and page via nextOffset until hasMore is false.
+2. For each Issue, gather enough signal to dispose:
+   - Prefer \`issues(action: "get", id)\` when page/notes/dependencies exist or the list row is non-empty.
+   - Title-only / empty description / no logs / no screenshot / no linked page → classify **non-actionable** immediately.
+   - Use authorized read-only checks (web.test routes, logs, deployments, code, sentry) when the Issue has a concrete claim worth verifying.
+3. Assign exactly one outcome and act:
+   - **resolved_fixed** — affirmative evidence the reported problem no longer exists → \`issues(action: "resolve", id, evidence)\`.
+   - **resolved_non_actionable** — empty/thin/unreproducible/garbage with no path to verification → \`issues(action: "resolve", id, evidence)\` stating why it cannot be actioned.
+   - **still_open** — problem still present with enough signal → leave open; note the smallest next repair cut.
+   - **blocked_on_testing** — substantive Issue, this run cannot decide safely → leave open; say what blocked. Use sparingly.
+4. Prepend a run entry at the top of the Runs section on the Regression Testing Log via \`library(action: "edit_library_page")\`. Include: ISO time, build/deploy id if known, totals (reviewed / resolved_fixed / resolved_non_actionable / still_open / blocked), then compact bullets per Issue (id, title, outcome, one-line evidence). Re-surface the same page: surface true, surfaceDurationHours 48–72, surfaceReason naming this run's headline counts, surfaceSection inbox.
+5. Final chat response: short disposition summary (counts + a few notable still_open) and the page reference. Never end on classification-only with ~all Issues blocked.
+
+## Evidence bar
+- Passing build alone ≠ fixed.
+- Absence of an error in a narrow log slice alone ≠ fixed.
+- Empty Issue body with no linked evidence **is** sufficient to resolve as non-actionable.
+- When ambiguous but the Issue has real content, prefer still_open or blocked_on_testing over a false resolve.`,
   },
   {
     name: "plan",
