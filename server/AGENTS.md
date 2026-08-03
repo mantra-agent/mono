@@ -392,6 +392,8 @@ AgentExecutor stream → publishJournalToUI() → SessionManager.applyEvent()
   → reducer mutates StreamingContent → broadcast delta to WS subscribers
 ```
 
+**Tool failure containment:** `ToolOperationRecovery` is the single per-run recovery ledger. Tool handlers classify only explicit non-retryable input/permission failures; adapters preserve that metadata; `AgentExecutor` stops on quarantine and owns the one `tool_failure_recovered` final publication. Scratch edit conflicts retain the read-current-state then one-retry protocol rather than immediate quarantine.
+
 Generic EventBus events are process-local operational signals. `chat.stream` is delivered synchronously and discarded; other events live in a principal-scoped 2,000-entry memory ring for current-boot history, hook testing, and reconnect replay. EventBus never writes to PostgreSQL. Canonical user state and hook execution records remain durable in their owning stores.
 
 Provider-bound inference payload captures are durable diagnostic evidence, not part of the caller's business mutation. `inference-payload-capture.ts` owns their principal-scoped write, retention, lossless JSONB-safe request envelope, transparent decode, and bounded database error evidence. Capture and retention run on the general lane outside any ambient database transaction so caller rollback cannot erase evidence or turn capture into a nested savepoint.

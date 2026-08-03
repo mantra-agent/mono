@@ -241,7 +241,7 @@ export type TerminationReason =
   | "circuit_breaker"
   | "yield_to_interactive";
 
-export type TerminalDegradationReason = "empty_response_output_limit";
+export type TerminalDegradationReason = "empty_response_output_limit" | "tool_failure_recovered";
 
 export interface ProviderTransportErrorInfo {
   name?: string;
