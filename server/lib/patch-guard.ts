@@ -31,6 +31,9 @@ export interface PatchGuardConfig<T> {
 
   /** Protected collection fields where empty array/object is a valid value. */
   allowEmptyCollectionFields?: Array<keyof T>;
+
+  /** Numeric placeholder fields where zero means "not supplied", never a mutation. */
+  zeroAsAbsentFields?: Array<keyof T>;
 }
 
 export interface PatchInput {
@@ -156,6 +159,7 @@ export function sanitizePatch<T>(
     destructiveFields = [],
     allowEmptyStringFields = [],
     allowEmptyCollectionFields = [],
+    zeroAsAbsentFields = [],
   } = config;
 
   const protectedSet = asKeySet(protectedFields);
@@ -163,6 +167,7 @@ export function sanitizePatch<T>(
   const destructiveSet = asKeySet(destructiveFields);
   const allowEmptyStrSet = asKeySet(allowEmptyStringFields);
   const allowEmptyColSet = asKeySet(allowEmptyCollectionFields);
+  const zeroAsAbsentSet = asKeySet(zeroAsAbsentFields);
 
   // Extract control fields
   const {
@@ -226,6 +231,16 @@ export function sanitizePatch<T>(
         `Cannot both set and clear field "${key}" in the same request.`,
         [key],
       );
+    }
+
+    // Schema-generated numeric placeholders are omission, never a relationship mutation.
+    if (value === 0 && zeroAsAbsentSet.has(key)) {
+      continue;
+    }
+
+    // Protected null values are omission unless the explicit clear contract was used.
+    if (value === null && protectedSet.has(key)) {
+      continue;
     }
 
     // Step 2: Drop empty strings for protected string fields

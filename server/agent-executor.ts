@@ -2,6 +2,7 @@
 import { canonicalSystemStepId } from "./streaming-reducers";
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
+import { isDeterministicToolFailure, operationFailureKey, type ToolFailure } from "./tool-failure";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
 import { getContextWindow } from "./model-registry";
@@ -67,6 +68,7 @@ export type ToolExecutorResult = {
   /** Optional ephemeral result returned only to the provider's current working set. */
   providerResult?: string;
   error?: boolean;
+  failure?: ToolFailure;
   outcome?: ToolOutcome;
   sideEffectOnly?: boolean;
   continuation?: ToolContinuation;
@@ -172,7 +174,7 @@ export interface ExecutorRunResult {
   lastStopReason?: string;
   content: string;
   thinking: string;
-  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; durationMs: number; parentId?: string }>;
+  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; failure?: ToolFailure; durationMs: number; parentId?: string }>;
   model: string;
   provider: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -267,9 +269,15 @@ function formatDispatchDetail(metadata?: Record<string, unknown>): string | unde
   return pieces.length > 0 ? pieces.join(" \u00b7 ") : undefined;
 }
 
-function normalizeToolFailureSignature(call: { name: string; args: Record<string, unknown>; result: string }): string {
-  const args = safeStringify(call.args, { maxBytes: 8 * 1024, label: "agent-executor.repeatedToolFailure.args" });
-  return `${call.name}::${args}::${call.result}`;
+const OPERATION_FAILURE_BUDGET = 1;
+
+interface OperationFailureRecord {
+  key: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  failure: ToolFailure;
+  result: string;
+  count: number;
 }
 
 export function formatAbortDetails(details?: AbortDetails): string | undefined {
@@ -777,8 +785,11 @@ interface RunIterationContext {
   executionMode: "sdk_owned" | "executor_owned";
   lastStreamDiagnostics?: { eventCount: number; elapsedMs: number; lastEventType: string };
   iterationStopReason?: string;
-  lastIterationFailureKey?: string;
-  consecutiveFailureIterations: number;
+  failureLedger: Map<string, OperationFailureRecord>;
+  quarantinedFailures: Set<string>;
+  operationFailureCounts: Map<string, number>;
+  recovery: { state: "running" | "finalize_only" | "synthesized"; trigger?: OperationFailureRecord };
+  terminalDegradationReason?: import("@shared/models/chat").TerminalDegradationReason;
   // Last error string yielded by the model adapter via {type:"error", error:"…"}.
   // Captured here so result.error reflects the real underlying message even when
   // an upstream abort or other path bypasses the run's outer catch block.
@@ -1519,6 +1530,7 @@ export class AgentExecutor extends EventEmitter {
           input: resolvedArgs,
           result: event.result,
           outcome: event.outcome ?? (event.error ? "failed" : "succeeded"),
+          failure: event.failure,
           durationMs: event.durationMs ?? 0,
         });
         if (toolCallId && !ctx.iterationToolCalls.some((call) => call.id === toolCallId)) {
@@ -1573,6 +1585,33 @@ export class AgentExecutor extends EventEmitter {
         }
         throw streamError;
       }
+    }
+  }
+
+  private registerDeterministicToolFailure(
+    ctx: RunIterationContext,
+    toolName: string,
+    input: Record<string, unknown>,
+    result: ToolExecutorResult,
+  ): void {
+    if (!isDeterministicToolFailure(result.failure)) return;
+
+    const key = operationFailureKey(toolName, input, result.failure);
+    const count = (ctx.operationFailureCounts.get(key) ?? 0) + 1;
+    ctx.operationFailureCounts.set(key, count);
+    const record: OperationFailureRecord = {
+      key,
+      toolName,
+      input,
+      failure: result.failure,
+      result: result.result,
+      count,
+    };
+    ctx.failureLedger.set(key, record);
+    if (count >= OPERATION_FAILURE_BUDGET) {
+      ctx.quarantinedFailures.add(key);
+      ctx.recovery = { state: "finalize_only", trigger: record };
+      ctx.terminalDegradationReason = "tool_failure_recovered";
     }
   }
 
@@ -1764,6 +1803,7 @@ export class AgentExecutor extends EventEmitter {
 
     const processResult = async (tc: typeof toolCalls[0], toolResult: ToolExecutorResult, durationMs: number) => {
       const canonicalArgs = toolResult.normalizedArguments ?? tc.input;
+      this.registerDeterministicToolFailure(ctx, tc.name, canonicalArgs, toolResult);
       const immediateProjection = await projectImmediateToolResult({
         toolName: tc.name,
         toolArgs: canonicalArgs,
@@ -1794,6 +1834,7 @@ export class AgentExecutor extends EventEmitter {
         input: canonicalArgs,
         result: toolResult.result,
         outcome: toolResult.outcome ?? (toolResult.error ? "failed" : "succeeded"),
+        failure: toolResult.failure,
         durationMs,
       });
       // Chronology: record tool entry pointing to resolvedToolCalls index
@@ -1866,9 +1907,10 @@ export class AgentExecutor extends EventEmitter {
     input: Record<string, unknown>;
     result: string;
     outcome: ToolOutcome;
+    failure?: ToolFailure;
     durationMs: number;
   }): void {
-    const { ctx, options, id, name, input, result, outcome, durationMs } = args;
+    const { ctx, options, id, name, input, result, outcome, failure, durationMs } = args;
     const error = outcome === "failed" || outcome === "cancelled";
     ctx.resolvedToolCalls.push({
       id,
@@ -1877,6 +1919,7 @@ export class AgentExecutor extends EventEmitter {
       result,
       outcome,
       error: error || undefined,
+      failure,
       durationMs,
       parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}`,
     });
@@ -2010,13 +2053,15 @@ export class AgentExecutor extends EventEmitter {
 
     const lastStopReason = ctx.diagnosticLastModelStopReason;
     const degradationReason: TerminalDegradationReason | undefined =
-      !ctx.aborted &&
-      terminationReason === "complete" &&
-      finalContent.trim().length === 0 &&
-      !ctx.intentionallyAwaitingUser &&
-      lastStopReason === "max_tokens"
-        ? "empty_response_output_limit"
-        : undefined;
+      ctx.terminalDegradationReason ?? (
+        !ctx.aborted &&
+        terminationReason === "complete" &&
+        finalContent.trim().length === 0 &&
+        !ctx.intentionallyAwaitingUser &&
+        lastStopReason === "max_tokens"
+          ? "empty_response_output_limit"
+          : undefined
+      );
     const status: ExecutorRunResult["status"] =
       degradationReason ? "degraded"
       : terminationReason === "yield_to_interactive" ? "yielded"
@@ -2313,7 +2358,10 @@ export class AgentExecutor extends EventEmitter {
       sdkHandledToolIds: new Set(),
       toolCallArgsCache: new Map(),
       executionMode: options.toolExecutor ? "sdk_owned" : "executor_owned",
-      consecutiveFailureIterations: 0,
+      failureLedger: new Map(),
+      quarantinedFailures: new Set(),
+      operationFailureCounts: new Map(),
+      recovery: { state: "running" },
       pendingCostLogs: [],
       backgroundWork: new Set<Promise<void>>(),
       firstTokenEmitted: false,
@@ -2438,8 +2486,17 @@ export class AgentExecutor extends EventEmitter {
     personaSwitchRequested?: boolean;
     toolSchemaRefreshRequested?: { toolCallId: string; toolName: string };
     awaitUserRequested?: boolean;
+    replacesPriorContent?: boolean;
   }> {
     const iterStartTime = Date.now();
+    const finalizingRecovery = ctx.recovery.state === "finalize_only";
+    if (finalizingRecovery) {
+      ctx.responseTextParts.length = 0;
+      ctx.segmentChronology = ctx.segmentChronology.filter((entry) => entry.s !== "content");
+      ctx.chronologyContentIdx = -1;
+      ctx.chronologyContentBuf = "";
+      ctx.chronologyIterationContentPrefix = "";
+    }
     const resolvedToolCallsBeforeIteration = ctx.resolvedToolCalls.length;
     ctx.personaSwitchRequested = undefined;
     ctx.toolSchemaRefreshRequested = undefined;
@@ -2617,8 +2674,20 @@ export class AgentExecutor extends EventEmitter {
       ctx.activeResponsePhase = undefined;
       this.startResponsePhase(ctx, "llm_request_sent");
 
-      const boundedToolExecutor = options.toolExecutor
+      const boundedToolExecutor = options.toolExecutor && !finalizingRecovery
         ? async (name: string, args: Record<string, unknown>, toolContext?: { toolCallId: string; order: number }) => {
+            const quarantined = [...ctx.failureLedger.values()].find((record) =>
+              record.toolName === name &&
+              operationFailureKey(name, args, record.failure) === record.key &&
+              ctx.quarantinedFailures.has(record.key),
+            );
+            if (quarantined) {
+              return {
+                result: `Suppressed repeated deterministic failure for ${name}: ${quarantined.result}`,
+                error: true,
+                failure: quarantined.failure,
+              };
+            }
             const execute = () => options.toolExecutor!(name, args);
             if (toolTransfersExecutionToChild(name, args) && options.capacityOwner?.kind === "runtime") {
               throw new Error("Native Runtime handlers cannot transfer execution into a nested scheduler");
@@ -2628,6 +2697,7 @@ export class AgentExecutor extends EventEmitter {
               : await execute();
             const callId = toolContext?.toolCallId || generateToolCallId();
             const canonicalArgs = result.normalizedArguments ?? args;
+            this.registerDeterministicToolFailure(ctx, name, canonicalArgs, result);
             const immediateProjection = await projectImmediateToolResult({
               toolName: name,
               toolArgs: canonicalArgs,
@@ -2707,7 +2777,7 @@ export class AgentExecutor extends EventEmitter {
         },
         activity: options.activity,
         messages: providerMessages.map(m => ({ role: m.role as StreamMessage["role"], content: m.content, toolCallId: m.toolCallId, name: m.name })),
-        tools: options.tools,
+        tools: finalizingRecovery ? undefined : options.tools,
         toolExecutor: boundedToolExecutor,
         maxTokens,
         temperature: options.temperature,
@@ -2900,6 +2970,16 @@ export class AgentExecutor extends EventEmitter {
       }
     }
 
+    if (!finalizingRecovery && ctx.recovery.state === "finalize_only") {
+      const trigger = ctx.recovery.trigger;
+      messages.push({
+        role: "system",
+        content: `A deterministic ${trigger.failure.kind} failure (${trigger.failure.code}) occurred in ${trigger.toolName}. Do not call tools again. Give one honest final answer preserving completed work and briefly name the failed bookkeeping/action.`,
+      });
+      ctx.publish("tool_use_pause", { content: "" });
+      return { finalContent: "", shouldContinue: true, hasRunStage2, continuationType: "tool_call" };
+    }
+
     if (ctx.awaitUserRequested) {
       const toolCallId = ctx.awaitUserRequested.toolCallId;
       ctx.awaitUserRequested = undefined;
@@ -3038,7 +3118,9 @@ export class AgentExecutor extends EventEmitter {
     // In executor_owned mode, the dedup filter runs as before for safety.
     // The sdkHandledToolIds set remains as a soak-period safety net.
     let unresolvedToolCalls: typeof ctx.pendingToolCalls;
-    if (ctx.executionMode === "sdk_owned") {
+    if (finalizingRecovery) {
+      unresolvedToolCalls = [];
+    } else if (ctx.executionMode === "sdk_owned") {
       if (ctx.pendingToolCalls.length > 0) {
         // Tools remain in pendingToolCalls when the provider doesn't emit tool_call_resolved
         // (e.g. OpenAI Responses API vs CLI SDK adapter which handles Claude).
@@ -3142,46 +3224,16 @@ export class AgentExecutor extends EventEmitter {
         sessionKey: options.sessionKey,
       });
 
-      if (failedCalls.length > 0 && failedCalls.length === unresolvedToolCalls.length) {
-        const iterationFailKey = failedCalls.map(normalizeToolFailureSignature).sort().join("|");
-        if (iterationFailKey === ctx.lastIterationFailureKey) {
-          ctx.consecutiveFailureIterations++;
-        } else {
-          ctx.lastIterationFailureKey = iterationFailKey;
-          ctx.consecutiveFailureIterations = 1;
-        }
-        const CIRCUIT_BREAKER_THRESHOLD = 2;
-        if (ctx.consecutiveFailureIterations >= CIRCUIT_BREAKER_THRESHOLD) {
-          const toolNames = [...new Set(failedCalls.map(fc => fc.name))];
-          const details: RepeatedToolFailureDetails = {
-            type: "repeated_tool_failure",
-            toolNames,
-            consecutiveFailures: ctx.consecutiveFailureIterations,
-            failedCalls: failedCalls.map(fc => ({ name: fc.name, args: fc.args, error: fc.result })),
-          };
-          const summary = formatAbortDetails(details) || `Repeated tool failure: ${toolNames.join(", ")}`;
-          log.error(`Repeated tool failure: tool(s) "${toolNames.join(", ")}" failed identically across ${ctx.consecutiveFailureIterations} consecutive iterations — aborting runId=${ctx.runId} details=${safeStringify(details, { maxBytes: 8 * 1024, label: "agent-executor.repeatedToolFailure.log" })}`);
-          eventBus.publish({
-            category: "agent",
-            event: "agent.repeated_tool_failure",
-            payload: {
-              runId: ctx.runId,
-              toolNames,
-              consecutiveFailures: ctx.consecutiveFailureIterations,
-              failedCalls: details.failedCalls,
-            },
-            runId: ctx.runId,
-            sessionKey: options.sessionKey,
-          });
-          ctx.abortReason = "circuit_breaker";
-          ctx.abortDetails = details;
-          ctx.aborted = true;
-          ctx.publish("error", { error: summary });
-          return { finalContent: cleanText, shouldContinue: false, hasRunStage2, exitCause: "circuit_breaker" };
-        }
-      } else {
-        ctx.lastIterationFailureKey = undefined;
-        ctx.consecutiveFailureIterations = 0;
+      if (ctx.recovery.state === "finalize_only") {
+        const trigger = ctx.recovery.trigger;
+        messages.push({
+          role: "system",
+          content: trigger
+            ? `A deterministic ${trigger.failure.kind} failure (${trigger.failure.code}) occurred in ${trigger.toolName}. Do not call tools again. Give one honest final answer preserving completed work and briefly name the failed bookkeeping/action.`
+            : "A deterministic tool failure occurred. Do not call tools again. Give one honest final answer preserving completed work and briefly name the failed bookkeeping/action.",
+        });
+        ctx.publish("tool_use_pause", { content: "" });
+        return { finalContent: "", shouldContinue: true, hasRunStage2, continuationType: "tool_call" };
       }
 
       if (allSideEffectOnly && cleanText) {
@@ -3201,6 +3253,28 @@ export class AgentExecutor extends EventEmitter {
       return { finalContent: cleanText, shouldContinue: true, hasRunStage2, continuationType: "max_tokens" };
     }
 
+    if (finalizingRecovery) {
+      const trigger = ctx.recovery.trigger;
+      ctx.recovery = { state: "synthesized", trigger };
+      if (!cleanText) {
+        const recoveryText = `I preserved the completed work, but ${trigger.toolName} could not finish because ${trigger.result}. I stopped retrying that deterministic failure.`;
+        ctx.publish("content", { content: recoveryText });
+        return {
+          finalContent: recoveryText,
+          shouldContinue: false,
+          hasRunStage2,
+          exitCause: "natural_stop",
+          replacesPriorContent: true,
+        };
+      }
+      return {
+        finalContent: cleanText,
+        shouldContinue: false,
+        hasRunStage2,
+        exitCause: "natural_stop",
+        replacesPriorContent: true,
+      };
+    }
     return { finalContent: cleanText, shouldContinue: false, hasRunStage2, exitCause: "natural_stop" };
   }
 
@@ -3312,6 +3386,9 @@ export class AgentExecutor extends EventEmitter {
           toolDefinitionTokens,
           hasRunStage2,
         );
+        if (result.replacesPriorContent) {
+          iterationResults.length = 0;
+        }
         if (result.finalContent) {
           iterationResults.push({
             content: result.finalContent,

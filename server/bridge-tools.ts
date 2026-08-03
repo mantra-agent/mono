@@ -1,6 +1,7 @@
 import { readFile, writeFile, readdir, stat, mkdir, realpath } from "fs/promises";
 import { join, resolve, relative, basename, dirname } from "path";
 import type { SQL } from "drizzle-orm";
+import { toolFailureFromError } from "./tool-failure";
 import { recordToolCallStart, recordToolCallEnd } from "./file-storage";
 import { MIME_MAP, TEXT_ARTIFACT_MIME_MAP } from "./lib/mime";
 import { getInstanceName } from "@shared/instance-config";
@@ -90,6 +91,7 @@ export interface BridgeToolContext {
 export interface ToolResult {
   result: string;
   error?: boolean;
+  failure?: import("./tool-failure").ToolFailure;
   sideEffectOnly?: boolean;
   continuation?: import("./agent-executor").ToolContinuation;
   normalizedArguments?: Record<string, unknown>;
@@ -99,12 +101,14 @@ export interface ToolResult {
 export type ToolHandler = (args: Record<string, any>) => Promise<{
   result: string;
   error?: boolean;
+  failure?: import("./tool-failure").ToolFailure;
   continuation?: import("./agent-executor").ToolContinuation;
   normalizedArguments?: Record<string, unknown>;
 }>;
 type ToolHandlerResult = {
   result: string;
   error?: boolean;
+  failure?: import("./tool-failure").ToolFailure;
   data?: Record<string, unknown>;
   continuation?: import("./agent-executor").ToolContinuation;
 };
@@ -5005,7 +5009,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async update_task(args) {
     const { fileTaskStorage } = await import("./file-storage/tasks");
-    const { sanitizePatch, PatchGuardError, logPatchClearAudit } = await import("./lib/patch-guard");
+    const { PatchGuardError } = await import("./lib/patch-guard");
 
     let task: any = null;
     if (args.taskId) {
@@ -5017,7 +5021,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
     if (!task) return { result: `Task not found: ${args.taskId || args.title}`, error: true };
 
-    // Build raw updates from args, then sanitize through patch guard
+    // Translate the tool contract into the storage-owned sparse mutation command.
     const raw: Record<string, unknown> = {};
     if (args.newTitle !== undefined) raw.title = args.newTitle;
     if (args.description !== undefined) raw.description = args.description;
@@ -5038,30 +5042,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (args.destructiveUpdateReason !== undefined) raw.destructiveUpdateReason = args.destructiveUpdateReason;
 
     try {
-      const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(raw, {
-        protectedFields: ['title', 'description', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        clearableFields: ['description', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        destructiveFields: ['description'] as Array<keyof any>,
-      });
-      const assignmentClearCount = clearFields.filter(field => field === 'assigneeSubjectType' || field === 'assigneeSubjectId').length;
-      if (assignmentClearCount === 1) {
-        return { result: "Task assignment clear requires both assigneeSubjectType and assigneeSubjectId", error: true };
-      }
-
-      // Apply explicit clears as null values
-      for (const field of clearFields) {
-        (updates as Record<string, unknown>)[field as string] = null;
-      }
-      logPatchClearAudit(toolExec, {
-        operation: "tasks.update",
-        entityType: "task",
-        entityId: task.id,
-        clearFields,
-        destructiveUpdateReason,
-      });
-
-      if (Object.keys(updates).length === 0) return { result: "No fields to update after sanitization. Empty strings on protected fields are dropped — use clearFields to explicitly clear a field.", error: true };
-
       const sourceSessionId = typeof args._sessionId === "string" && args._sessionId.trim() ? args._sessionId.trim() : null;
       let provenance: { originType: "meeting" | "manual"; originId?: string | null } = { originType: "manual" };
       if (sourceSessionId) {
@@ -5069,14 +5049,22 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const sourceSession = await chatFileStorage.getSession(sourceSessionId).catch(() => undefined);
         if (sourceSession?.type === "meeting") provenance = { originType: "meeting", originId: sourceSessionId };
       }
-      const updated = await fileTaskStorage.updateTask(task.id, updates, provenance);
+      const updated = await fileTaskStorage.updateTask(task.id, raw, provenance);
       if (!updated) return { result: `Failed to update task ${task.id}`, error: true };
-      return { result: `Task updated: "${updated.title}" — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
+      return { result: `Task updated: "${updated.title}"` };
     } catch (err: any) {
       if (err instanceof PatchGuardError) {
-        return { result: `Patch guard rejected update: ${err.message}${err.required ? ` Required: ${JSON.stringify(err.required)}` : ''}`, error: true };
+        return {
+          result: `Patch guard rejected update: ${err.message}${err.required ? ` Required: ${JSON.stringify(err.required)}` : ''}`,
+          error: true,
+          failure: { kind: "input", code: "task_update_patch_rejected", retryable: false },
+        };
       }
-      return { result: `Failed to update task: ${err.message}`, error: true };
+      return {
+        result: `Failed to update task: ${err.message}`,
+        error: true,
+        failure: toolFailureFromError(err),
+      };
     }
   },
 
@@ -16546,7 +16534,13 @@ export async function executeTool(
   if (!handler) {
     const durationMs = Date.now() - startTime;
     toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=unknown_tool`);
-    return { result: `Unknown tool: ${toolName}`, error: true, sideEffectOnly: true, durationMs };
+    return {
+      result: `Unknown tool: ${toolName}`,
+      error: true,
+      failure: { kind: "input", code: "unknown_tool", retryable: false },
+      sideEffectOnly: true,
+      durationMs,
+    };
   }
   const normalizedArgs = normalizeToolArgs(resolvedName, args);
   const { authorizeToolInvocation } = await import("./agent-authority");
@@ -16563,13 +16557,25 @@ export async function executeTool(
       event: "tool:authority_denied",
       payload: { toolName, action: normalizedArgs.action || null, reason: authority.reason, sessionId: context?.sessionId || null },
     });
-    return { result: `Tool execution denied by deterministic authority policy: ${authority.reason}`, error: true, sideEffectOnly: true, durationMs };
+    return {
+      result: `Tool execution denied by deterministic authority policy: ${authority.reason}`,
+      error: true,
+      failure: { kind: "permission", code: "authority_denied", retryable: false },
+      sideEffectOnly: true,
+      durationMs,
+    };
   }
   const { getCurrentPrincipal } = await import("./principal-context");
   const principal = getCurrentPrincipal();
   if (!principal) {
     const durationMs = Date.now() - startTime;
-    return { result: "Tool execution denied: missing_principal", error: true, sideEffectOnly: true, durationMs };
+    return {
+      result: "Tool execution denied: missing_principal",
+      error: true,
+      failure: { kind: "permission", code: "missing_principal", retryable: false },
+      sideEffectOnly: true,
+      durationMs,
+    };
   }
   try {
     const { requireBuildToolAccess } = await import("./mods/build-tool-access");
@@ -16577,7 +16583,13 @@ export async function executeTool(
   } catch {
     const durationMs = Date.now() - startTime;
     toolExec.warn(`rejected tool=${toolName} callId=${toolCallId} reason=build_mod_inactive`);
-    return { result: "Tool execution denied: Build Mod is inactive", error: true, sideEffectOnly: true, durationMs };
+    return {
+      result: "Tool execution denied: Build Mod is inactive",
+      error: true,
+      failure: { kind: "permission", code: "build_mod_inactive", retryable: false },
+      sideEffectOnly: true,
+      durationMs,
+    };
   }
   const droppedEmptyKeys = Object.keys(args ?? {}).filter((key) => !(key in normalizedArgs));
   if (droppedEmptyKeys.length > 0) {
@@ -16588,7 +16600,12 @@ export async function executeTool(
   if (!validation.valid) {
     const durationMs = Date.now() - startTime;
     toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=${validation.error}`);
-    return { result: validation.error!, error: true, durationMs };
+    return {
+      result: validation.error!,
+      error: true,
+      failure: { kind: "input", code: "tool_validation", retryable: false },
+      durationMs,
+    };
   }
 
   toolExec.verbose(() => `dispatch tool=${toolName} callId=${toolCallId} argKeys=${Object.keys(normalizedArgs).join(",")}`);
@@ -16620,7 +16637,12 @@ export async function executeTool(
   } catch (err: any) {
     const durationMs = Date.now() - startTime;
     toolExec.warn(`rejected tool=${toolName} callId=${toolCallId} reason=coding_context_missing error=${err.message}`);
-    return { result: `Engineering preflight blocked tool execution: ${err.message}`, error: true, durationMs };
+    return {
+      result: `Engineering preflight blocked tool execution: ${err.message}`,
+      error: true,
+      failure: { kind: "permission", code: "engineering_preflight", retryable: false },
+      durationMs,
+    };
   }
 
   recordToolCallStart(toolCallId, toolName);
@@ -16658,7 +16680,12 @@ ${outcome.result}`
     recordToolCallEnd(toolCallId, true);
     _wwTrackEnd?.(toolCallId);
     toolExec.error(`complete tool=${toolName} callId=${toolCallId} duration=${durationMs}ms error=true exception=${err.message}`);
-    return { result: `Tool execution error: ${err.message}`, error: true, durationMs };
+    return {
+      result: `Tool execution error: ${err.message}`,
+      error: true,
+      failure: toolFailureFromError(err) ?? { kind: "internal", code: "tool_exception", retryable: true },
+      durationMs,
+    };
   }
 }
 

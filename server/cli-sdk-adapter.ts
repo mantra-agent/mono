@@ -930,6 +930,7 @@ function createMcpTools(
             order: invocationOrder,
             result: errText,
             error: true,
+            failure: { kind: "internal", code: "sdk_tool_failure", retryable: true },
             outcome: "failed",
             durationMs: Date.now() - executionStartedAt,
           });
@@ -958,6 +959,7 @@ function createMcpTools(
             order: invocationOrder,
             result: result.result,
             error: result.error,
+            failure: result.failure,
             continuation: result.continuation,
             outcome: result.outcome ?? (result.error ? "failed" : "succeeded"),
             durationMs: Date.now() - executionStartedAt,
@@ -987,6 +989,7 @@ function createMcpTools(
             order: invocationOrder,
             result: errText,
             error: true,
+            failure: { kind: "internal", code: "sdk_tool_failure", retryable: true },
             outcome: "failed",
             durationMs: Date.now() - executionStartedAt,
           });

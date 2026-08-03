@@ -28,6 +28,7 @@ export interface ToolExecutionContext {
 export interface ToolResult {
   result: string;
   error?: boolean;
+  failure?: import("./tool-failure").ToolFailure;
   sideEffectOnly?: boolean;
   continuation?: import("./agent-executor").ToolContinuation;
   normalizedArguments?: Record<string, unknown>;

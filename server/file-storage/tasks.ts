@@ -2,6 +2,8 @@ import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, type DrizzleTx } 
 import { milestones, projects, tasks } from "@shared/schema";
 import { eq, and, desc, inArray, sql } from "drizzle-orm";
 import type { Task, InsertTask, TaskStatus, AssigneeSubjectType } from "@shared/models/work";
+import { PatchGuardError, logPatchClearAudit, sanitizePatch, type PatchInput } from "../lib/patch-guard";
+import { ToolFailureError } from "../tool-failure";
 import { createLogger } from "../log";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { ownedInsertValues } from "../scoped-storage";
@@ -19,6 +21,84 @@ import { resolveInvitedSubjectReferenceInTransaction } from "../invited-subject-
 import { eventBus } from "../event-bus";
 
 const log = createLogger("StoreTasks");
+
+export type TaskUpdateCommand = Partial<InsertTask> & PatchInput;
+
+const TASK_CLEARABLE_FIELDS: Array<keyof InsertTask> = [
+  "description",
+  "assigneeSubjectType",
+  "assigneeSubjectId",
+  "deadline",
+  "projectId",
+  "milestoneId",
+];
+
+const TASK_DESTRUCTIVE_FIELDS: Array<keyof InsertTask> = ["description"];
+const TASK_ASSIGNMENT_FIELDS = new Set<keyof InsertTask>([
+  "assigneeSubjectType",
+  "assigneeSubjectId",
+]);
+
+function normalizeTaskUpdate(command: TaskUpdateCommand): Partial<InsertTask> {
+  const raw: PatchInput = {
+    title: command.title,
+    description: command.description,
+    status: command.status,
+    priority: command.priority,
+    impact: command.impact,
+    effort: command.effort,
+    owner: command.owner,
+    assigneeSubjectType: command.assigneeSubjectType,
+    assigneeSubjectId: command.assigneeSubjectId,
+    requiresReview: command.requiresReview,
+    projectId: command.projectId,
+    milestoneId: command.milestoneId,
+    deadline: command.deadline,
+    clearFields: command.clearFields,
+    confirmDestructiveUpdate: command.confirmDestructiveUpdate,
+    destructiveUpdateReason: command.destructiveUpdateReason,
+  };
+  const { patch, clearFields, destructiveReason } = sanitizePatch<InsertTask>(raw, {
+    protectedFields: [
+      "title",
+      "description",
+      "status",
+      "priority",
+      "impact",
+      "effort",
+      "owner",
+      "assigneeSubjectType",
+      "assigneeSubjectId",
+      "projectId",
+      "milestoneId",
+      "deadline",
+    ],
+    clearableFields: TASK_CLEARABLE_FIELDS,
+    destructiveFields: TASK_DESTRUCTIVE_FIELDS,
+    zeroAsAbsentFields: ["projectId", "milestoneId"],
+  });
+
+  const clearSet = new Set(clearFields);
+  const assignmentClearRequested = clearFields.some((field) => TASK_ASSIGNMENT_FIELDS.has(field));
+  if (assignmentClearRequested) {
+    clearSet.add("assigneeSubjectType");
+    clearSet.add("assigneeSubjectId");
+  }
+
+  for (const field of clearSet) {
+    (patch as Record<string, unknown>)[String(field)] = null;
+  }
+
+  if (clearSet.size > 0) {
+    logPatchClearAudit(
+      "task",
+      [...clearSet].map(String),
+      destructiveReason,
+    );
+  }
+
+  return patch;
+}
 
 // D4: vault_id is deliberately absent from work scope columns. It anchors
 // placement and inheritance only; vault co-membership never grants work access.
@@ -293,7 +373,13 @@ export class FileTaskStorage {
     const projectRows = await db.select({ id: projects.id, vaultId: projects.vaultId }).from(projects).where(
       combineWithProjectAccess(principal, "read", eq(projects.id, projectId)),
     ).limit(1);
-    if (projectRows.length === 0) throw new Error(`Project ${projectId} not found`);
+    if (projectRows.length === 0) {
+      throw new ToolFailureError(`Project ${projectId} not found`, {
+        kind: "input",
+        code: "task_update_project_not_found",
+        retryable: false,
+      });
+    }
     if (milestoneId == null) return projectRows[0].vaultId;
     const milestoneRows = await db.select({ id: milestones.id }).from(milestones).where(
       combineWithProjectDerivedWorkAccess(
@@ -305,7 +391,11 @@ export class FileTaskStorage {
       ),
     ).limit(1);
     if (milestoneRows.length === 0) {
-      throw new Error(`Milestone ${milestoneId} not found in project ${projectId}`);
+      throw new ToolFailureError(`Milestone ${milestoneId} not found in project ${projectId}`, {
+        kind: "input",
+        code: "task_update_milestone_not_found",
+        retryable: false,
+      });
     }
     return projectRows[0].vaultId;
   }
@@ -356,7 +446,9 @@ export class FileTaskStorage {
     return task;
   }
 
-  async updateTask(id: number, updates: Partial<InsertTask>, provenance?: TaskMutationProvenance): Promise<Task | undefined> {
+  async updateTask(id: number, command: TaskUpdateCommand, provenance?: TaskMutationProvenance): Promise<Task | undefined> {
+    const updates = normalizeTaskUpdate(command);
+    const hasUpdates = Object.keys(updates).length > 0;
     const principal = getCurrentPrincipalOrSystem();
     const required: ObjectGrantCapability = hasAdminOnlyTaskChanges(updates as Record<string, unknown>) ? "admin" : "write";
     const origin = resolveMutationOrigin(provenance);
@@ -373,6 +465,7 @@ export class FileTaskStorage {
       ).limit(1);
       const existing = existingRow ? rowToTask(existingRow) : undefined;
       if (!existing) return undefined;
+      if (!hasUpdates) return existingRow;
 
       let placementVaultId: string | null | undefined;
       if (updates.projectId !== undefined || updates.milestoneId !== undefined) {
@@ -427,6 +520,10 @@ export class FileTaskStorage {
     if (!row) {
       log.log(`updateTask id=${id} not-found`);
       return undefined;
+    }
+    if (!hasUpdates) {
+      log.debug(`updateTask id=${id} no-op after sparse normalization`);
+      return rowToTask(row);
     }
     if (updates.status) log.log(`statusChange to=${updates.status} taskId=${id} title="${row.title}"`);
     log.log(`updateTask id=${id} fields=${Object.keys(updates).join(",")}`);
