@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir, stat, mkdir } from "fs/promises";
+import { readFile, writeFile, readdir, stat, mkdir, realpath } from "fs/promises";
 import { join, resolve, relative, basename, dirname } from "path";
 import type { SQL } from "drizzle-orm";
 import { recordToolCallStart, recordToolCallEnd } from "./file-storage";
@@ -21,8 +21,7 @@ import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors"
 import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
-import { scratchEditFailure, type ToolFailure } from "./tool-failure";
-import { resolveScratchResourcePath, resolveScratchWritePath } from "./scratch-paths";
+import { scratchEditFailure, toolFailureFromError, type ToolFailure } from "./tool-failure";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
@@ -5004,7 +5003,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async update_task(args) {
     const { fileTaskStorage } = await import("./file-storage/tasks");
-    const { sanitizePatch, PatchGuardError, logPatchClearAudit } = await import("./lib/patch-guard");
 
     let task: any = null;
     if (args.taskId) {
@@ -5016,51 +5014,26 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
     if (!task) return { result: `Task not found: ${args.taskId || args.title}`, error: true };
 
-    // Build raw updates from args, then sanitize through patch guard
-    const raw: Record<string, unknown> = {};
-    if (args.newTitle !== undefined) raw.title = args.newTitle;
-    if (args.description !== undefined) raw.description = args.description;
-    if (args.priority !== undefined) raw.priority = args.priority;
-    if (args.status !== undefined) raw.status = args.status;
-    if (args.impact !== undefined) raw.impact = args.impact;
-    if (args.effort !== undefined) raw.effort = args.effort;
-    if (args.owner !== undefined) raw.owner = args.owner;
+    const command: Record<string, unknown> = {};
+    if (args.newTitle !== undefined) command.title = args.newTitle;
+    if (args.description !== undefined) command.description = args.description;
+    if (args.priority !== undefined) command.priority = args.priority;
+    if (args.status !== undefined) command.status = args.status;
+    if (args.impact !== undefined) command.impact = args.impact;
+    if (args.effort !== undefined) command.effort = args.effort;
+    if (args.owner !== undefined) command.owner = args.owner;
     const assignmentInput = taskAssignmentFromToolArgs(args);
     if (assignmentInput.error) return { result: assignmentInput.error, error: true };
-    if (assignmentInput.assignment) Object.assign(raw, assignmentInput.assignment);
-    if (args.requiresReview !== undefined) raw.requiresReview = args.requiresReview;
-    if (args.projectId !== undefined) raw.projectId = args.projectId;
-    if (args.milestoneId !== undefined) raw.milestoneId = args.milestoneId;
-    if (args.deadline !== undefined) raw.deadline = args.deadline;
-    if (args.clearFields !== undefined) raw.clearFields = args.clearFields;
-    if (args.confirmDestructiveUpdate !== undefined) raw.confirmDestructiveUpdate = args.confirmDestructiveUpdate;
-    if (args.destructiveUpdateReason !== undefined) raw.destructiveUpdateReason = args.destructiveUpdateReason;
+    if (assignmentInput.assignment) Object.assign(command, assignmentInput.assignment);
+    if (args.requiresReview !== undefined) command.requiresReview = args.requiresReview;
+    if (args.projectId !== undefined) command.projectId = args.projectId;
+    if (args.milestoneId !== undefined) command.milestoneId = args.milestoneId;
+    if (args.deadline !== undefined) command.deadline = args.deadline;
+    if (args.clearFields !== undefined) command.clearFields = args.clearFields;
+    if (args.confirmDestructiveUpdate !== undefined) command.confirmDestructiveUpdate = args.confirmDestructiveUpdate;
+    if (args.destructiveUpdateReason !== undefined) command.destructiveUpdateReason = args.destructiveUpdateReason;
 
     try {
-      const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(raw, {
-        protectedFields: ['title', 'description', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        clearableFields: ['description', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        destructiveFields: ['description'] as Array<keyof any>,
-      });
-      const assignmentClearCount = clearFields.filter(field => field === 'assigneeSubjectType' || field === 'assigneeSubjectId').length;
-      if (assignmentClearCount === 1) {
-        return { result: "Task assignment clear requires both assigneeSubjectType and assigneeSubjectId", error: true };
-      }
-
-      // Apply explicit clears as null values
-      for (const field of clearFields) {
-        (updates as Record<string, unknown>)[field as string] = null;
-      }
-      logPatchClearAudit(toolExec, {
-        operation: "tasks.update",
-        entityType: "task",
-        entityId: task.id,
-        clearFields,
-        destructiveUpdateReason,
-      });
-
-      if (Object.keys(updates).length === 0) return { result: "No fields to update after sanitization. Empty strings on protected fields are dropped — use clearFields to explicitly clear a field.", error: true };
-
       const sourceSessionId = typeof args._sessionId === "string" && args._sessionId.trim() ? args._sessionId.trim() : null;
       let provenance: { originType: "meeting" | "manual"; originId?: string | null } = { originType: "manual" };
       if (sourceSessionId) {
@@ -5068,12 +5041,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const sourceSession = await chatFileStorage.getSession(sourceSessionId).catch(() => undefined);
         if (sourceSession?.type === "meeting") provenance = { originType: "meeting", originId: sourceSessionId };
       }
-      const updated = await fileTaskStorage.updateTask(task.id, updates, provenance);
+      const updated = await fileTaskStorage.updateTask(task.id, command, provenance);
       if (!updated) return { result: `Failed to update task ${task.id}`, error: true };
-      return { result: `Task updated: "${updated.title}" — ${Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(", ")}` };
+      return { result: `Task updated: "${updated.title}"` };
     } catch (err: any) {
-      if (err instanceof PatchGuardError) {
-        return { result: `Patch guard rejected update: ${err.message}${err.required ? ` Required: ${JSON.stringify(err.required)}` : ''}`, error: true };
+      const failure = toolFailureFromError(err);
+      if (failure) {
+        return { result: `Failed to update task: ${err.message}`, error: true, failure };
       }
       return { result: `Failed to update task: ${err.message}`, error: true };
     }
@@ -12218,12 +12192,38 @@ export async function executeBridgeTool(
   return { result: result.result, error: result.error, data: result.data, failure: result.failure };
 }
 
+async function resolveScratchWritePath(filePath: string, sessionId: unknown): Promise<string | null> {
+  const resolved = resolveWorkspacePath(filePath);
+  if (!resolved) return null;
+
+  const normalized = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  const repositoryDirectory = normalized.match(/^repos\/([^/]+)(?:\/|$)/)?.[1];
+  if (!repositoryDirectory) return resolved;
+  if (typeof sessionId !== "string" || !repositoryDirectory.endsWith(`-${sessionId.slice(0, 8)}`)) return null;
+
+  const repositoryRoot = await realpath(resolve(WORKSPACE_DIR, "repos", repositoryDirectory));
+  const boundary = `${repositoryRoot}/`;
+  let existingAncestor = resolved;
+  while (existingAncestor !== repositoryRoot) {
+    try {
+      const canonicalAncestor = await realpath(existingAncestor);
+      return canonicalAncestor === repositoryRoot || canonicalAncestor.startsWith(boundary) ? resolved : null;
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") return null;
+      const parent = dirname(existingAncestor);
+      if (parent === existingAncestor) return null;
+      existingAncestor = parent;
+    }
+  }
+  return resolved;
+}
+
 const workspaceTools: Record<string, ToolHandler> = {
   async read_scratch(args) {
     const filePath = args.path;
     if (!filePath) return { result: "Missing file path", error: true };
 
-    const resolved = await resolveScratchResourcePath(filePath);
+    const resolved = resolveWorkspacePath(filePath);
     if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true };
     if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true };
 

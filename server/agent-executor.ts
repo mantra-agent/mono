@@ -26,7 +26,7 @@ import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-stora
 import { ModelProviderError, isModelContextOverflow, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
 import { ContextOperatingBudgetExceededError, estimateToolDefinitionTokens, getContextRequestBudget, type ContextRequestBudget } from "./context-budget";
 import { estimateToolOutputSize } from "./tool-output-artifacts";
-import { CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS, MATERIAL_REFRESH_REDUCTION_TOKENS, projectImmediateToolResult, projectWorkingSet } from "./working-set-projector";
+import { CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS, projectImmediateToolResult, projectWorkingSet } from "./working-set-projector";
 import { buildContinuationCapsule, renderContinuationCapsule, type ContinuationCapsuleEntry } from "./continuation-capsule";
 
 function normalizeMcpToolName(name: string | undefined): string | undefined {
@@ -57,7 +57,7 @@ export interface ContentBlock {
 
 import type { ToolDefinition } from "@shared/models/tools";
 import type { ToolFailure } from "./tool-failure";
-import { ToolOperationRecovery } from "./tool-operation-recovery";
+import { ToolOperationRecovery, type ToolRecoveryDecision } from "./tool-operation-recovery";
 export type { ToolDefinition };
 
 export type ToolContinuation = "persona_switch" | "tool_schema_refresh" | "await_user" | "provider_system_tool" | "working_set_refresh";
@@ -71,6 +71,8 @@ export type ToolExecutorResult = {
   error?: boolean;
   /** Structured source classification consumed by run-scoped recovery policy. */
   failure?: ToolFailure;
+  /** One discriminated recovery decision computed by the run-scoped ledger. */
+  recoveryDecision?: ToolRecoveryDecision;
   outcome?: ToolOutcome;
   sideEffectOnly?: boolean;
   continuation?: ToolContinuation;
@@ -176,7 +178,7 @@ export interface ExecutorRunResult {
   lastStopReason?: string;
   content: string;
   thinking: string;
-  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; failure?: ToolFailure; durationMs: number; parentId?: string }>;
+  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; durationMs: number; parentId?: string }>;
   model: string;
   provider: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -271,11 +273,7 @@ function formatDispatchDetail(metadata?: Record<string, unknown>): string | unde
   return pieces.length > 0 ? pieces.join(" \u00b7 ") : undefined;
 }
 
-function normalizeToolFailureSignature(call: { name: string; args: Record<string, unknown>; result: string; failure?: ToolFailure }): string {
-  if (call.failure) {
-    return `${call.failure.operation}::${call.failure.resourceKey}::${call.failure.code}`;
-  }
-
+function normalizeToolFailureSignature(call: { name: string; args: Record<string, unknown>; result: string }): string {
   const args = safeStringify(call.args, { maxBytes: 8 * 1024, label: "agent-executor.repeatedToolFailure.args" });
   return `${call.name}::${args}::${call.result}`;
 }
@@ -623,7 +621,7 @@ function compactStage3(messages: ExecutorMessage[]): { messages: ExecutorMessage
     contentLimit: 100,
     previewLength: 100,
     formatPrefix: () => "[Aggressively compacted]",
-    preserveAfterLastAssistant: true,
+    preserveAfterLastAssistant: false,
     truncateTextBlocks: true,
     textBlockLimit: 200,
     textBlockPreviewLength: 150,
@@ -828,6 +826,7 @@ interface RunIterationContext {
   toolUseReceivedAt: Map<string, number>;
   /** One recovery ledger for the complete run; never reset between model iterations. */
   operationRecovery: ToolOperationRecovery;
+  terminalToolFailure?: { toolName: string; result: string; failure: ToolFailure };
   diagnosticLastStep?: "model_response" | "tool_batch" | "terminal";
   diagnosticLastModelStopReason?: string;
   diagnosticLastAssistantTextLength: number;
@@ -841,8 +840,6 @@ interface RunIterationContext {
   intentionallyAwaitingUser: boolean;
   workingSetRefreshRequested?: { toolCallId: string };
   currentCycleToolResultTokens: number;
-  currentCycleRefreshReductionTokens: number;
-  providerConsumedToolCallIds: Set<string>;
   iterationToolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; order: number }>;
 }
 
@@ -1530,7 +1527,6 @@ export class AgentExecutor extends EventEmitter {
           name: normalizedName || event.toolName,
           input: resolvedArgs,
           result: event.result,
-          failure: event.failure,
           outcome: event.outcome ?? (event.error ? "failed" : "succeeded"),
           durationMs: event.durationMs ?? 0,
         });
@@ -1556,7 +1552,6 @@ export class AgentExecutor extends EventEmitter {
         }
         if (event.continuation === "working_set_refresh" && toolCallId) {
           ctx.workingSetRefreshRequested = { toolCallId };
-          log.debug(`working-set refresh requested toolCallId=${toolCallId} toolName=${normalizedName} cycleToolResultTokens=${ctx.currentCycleToolResultTokens} projectedReductionTokens=${ctx.currentCycleRefreshReductionTokens}`);
         }
         // Chronology: record tool entry pointing to resolvedToolCalls index
         ctx.segmentChronology.push({ s: "tool", i: toolIdx });
@@ -1573,6 +1568,15 @@ export class AgentExecutor extends EventEmitter {
           runId: ctx.runId,
           sessionKey: options.sessionKey,
         });
+        if (event.recoveryDecision === "quarantined" && event.failure) {
+          const toolName = normalizedName || event.toolName;
+          ctx.terminalToolFailure ??= {
+            toolName,
+            result: event.result,
+            failure: event.failure,
+          };
+          log.warn(`[ToolRecovery] sdk failure quarantined runId=${ctx.runId} tool=${toolName} code=${event.failure.code} resource=${event.failure.resourceKey ?? "unknown"}`);
+        }
         break;
       }
 
@@ -1597,9 +1601,16 @@ export class AgentExecutor extends EventEmitter {
     execute: () => Promise<ToolExecutorResult>,
   ): Promise<ToolExecutorResult> {
     const normalizedName = normalizeMcpToolName(name) || name;
-    const result = await ctx.operationRecovery.execute(normalizedName, args, execute);
-    if (result.failure?.code === "scratch_edit_read_required") {
-      log.warn(`[ToolRecovery] blocked runId=${ctx.runId} tool=${name} code=${result.failure.code} resource=${result.failure.resourceKey}`);
+    const result = await ctx.operationRecovery.execute(ctx.runId, normalizedName, args, execute);
+    if (result.recoveryDecision === "quarantined" && result.failure) {
+      ctx.terminalToolFailure ??= {
+        toolName: normalizedName,
+        result: result.result,
+        failure: result.failure,
+      };
+      log.warn(`[ToolRecovery] quarantined runId=${ctx.runId} tool=${normalizedName} code=${result.failure.code} resource=${result.failure.resourceKey ?? "unknown"}`);
+    } else if (result.recoveryDecision === "read_required") {
+      log.warn(`[ToolRecovery] read-required runId=${ctx.runId} tool=${normalizedName} code=${result.failure?.code ?? "unknown"}`);
     }
     return result;
   }
@@ -1805,7 +1816,6 @@ export class AgentExecutor extends EventEmitter {
       const toolIdx = ctx.resolvedToolCalls.length;
       const projectedResultTokens = estimateToolOutputSize(immediateProjection.providerResult).estimatedTokens;
       ctx.currentCycleToolResultTokens += projectedResultTokens;
-      ctx.currentCycleRefreshReductionTokens += immediateProjection.refreshReductionTokens;
       this.emitContextGrowthCanary({
         ctx,
         options,
@@ -1823,7 +1833,6 @@ export class AgentExecutor extends EventEmitter {
         name: tc.name,
         input: canonicalArgs,
         result: toolResult.result,
-        failure: toolResult.failure,
         outcome: toolResult.outcome ?? (toolResult.error ? "failed" : "succeeded"),
         durationMs,
       });
@@ -1896,18 +1905,16 @@ export class AgentExecutor extends EventEmitter {
     name: string;
     input: Record<string, unknown>;
     result: string;
-    failure?: ToolFailure;
     outcome: ToolOutcome;
     durationMs: number;
   }): void {
-    const { ctx, options, id, name, input, result, failure, outcome, durationMs } = args;
+    const { ctx, options, id, name, input, result, outcome, durationMs } = args;
     const error = outcome === "failed" || outcome === "cancelled";
     ctx.resolvedToolCalls.push({
       id,
       name,
       args: input,
       result,
-      failure,
       outcome,
       error: error || undefined,
       durationMs,
@@ -2017,6 +2024,24 @@ export class AgentExecutor extends EventEmitter {
     wrapped.finally(() => ctx.backgroundWork.delete(wrapped));
   }
 
+  private synthesizeToolFailureRecovery(ctx: RunIterationContext): string {
+    const terminal = ctx.terminalToolFailure;
+    if (!terminal) return ctx.allText.join("");
+
+    const completedCount = ctx.resolvedToolCalls.filter((call) => call.outcome === "succeeded").length;
+    const completedSentence = completedCount > 0
+      ? `I preserved the work completed before the failure (${completedCount} successful tool operation${completedCount === 1 ? "" : "s"}).`
+      : "No completed operation was discarded.";
+    const detail = terminal.result.trim().replace(/\s+/g, " ");
+    const boundedDetail = detail.length > 600 ? `${detail.slice(0, 597)}...` : detail;
+
+    return [
+      completedSentence,
+      `I stopped because ${terminal.toolName} returned a non-retryable ${terminal.failure.kind} failure (${terminal.failure.code}).`,
+      boundedDetail ? `Unresolved operation: ${boundedDetail}` : "The unresolved operation requires corrected input or permission before it can continue.",
+    ].join("\n\n");
+  }
+
   private async publishRunResult(
     ctx: RunIterationContext,
     options: ExecutorRunOptions,
@@ -2024,6 +2049,24 @@ export class AgentExecutor extends EventEmitter {
     finalContent: string,
     terminationReason: TerminationReason,
   ): Promise<ExecutorRunResult> {
+    if (ctx.terminalToolFailure) {
+      finalContent = this.synthesizeToolFailureRecovery(ctx);
+      terminationReason = "complete";
+      ctx.aborted = false;
+      ctx.abortReason = undefined;
+      ctx.abortDetails = undefined;
+      ctx.intentionallyAwaitingUser = false;
+      ctx.lastError = undefined;
+      ctx.allText = [finalContent];
+      ctx.iterationText = finalContent;
+      ctx.contentBuf = "";
+      ctx.thinkingBuf = "";
+      ctx.chronologyContentBuf = "";
+      ctx.chronologyThinkingBuf = "";
+      ctx.segmentChronology = [{ s: "content", t: finalContent }];
+      ctx.publish("attempt_reset", {});
+      ctx.publish("text_delta", { content: finalContent });
+    }
     const allThinkingContent = ctx.allThinking.join("\n\n");
 
     // Flush pending chronology buffers
@@ -2043,15 +2086,18 @@ export class AgentExecutor extends EventEmitter {
 
     const lastStopReason = ctx.diagnosticLastModelStopReason;
     const degradationReason: TerminalDegradationReason | undefined =
-      !ctx.aborted &&
-      terminationReason === "complete" &&
-      finalContent.trim().length === 0 &&
-      !ctx.intentionallyAwaitingUser &&
-      lastStopReason === "max_tokens"
-        ? "empty_response_output_limit"
-        : undefined;
+      ctx.terminalToolFailure
+        ? "tool_failure_recovered"
+        : !ctx.aborted &&
+          terminationReason === "complete" &&
+          finalContent.trim().length === 0 &&
+          !ctx.intentionallyAwaitingUser &&
+          lastStopReason === "max_tokens"
+          ? "empty_response_output_limit"
+          : undefined;
     const status: ExecutorRunResult["status"] =
-      degradationReason ? "degraded"
+      ctx.terminalToolFailure ? "degraded"
+      : degradationReason ? "degraded"
       : terminationReason === "yield_to_interactive" ? "yielded"
       : terminationReason === "complete" ? "succeeded"
       : "failed";
@@ -2359,8 +2405,6 @@ export class AgentExecutor extends EventEmitter {
       diagnosticHadToolErrors: false,
       diagnosticFailedToolCount: 0,
       currentCycleToolResultTokens: 0,
-      currentCycleRefreshReductionTokens: 0,
-      providerConsumedToolCallIds: new Set<string>(),
       iterationToolCalls: [],
       intentionallyAwaitingUser: false,
       segmentChronology: [],
@@ -2483,6 +2527,59 @@ export class AgentExecutor extends EventEmitter {
     ctx.workingSetRefreshRequested = undefined;
     ctx.iterationToolCalls = [];
     log.verbose(() => `Iteration ${ctx.iteration + 1} starting, messageCount=${messages.length}, model=${modelString}`);
+
+    const tokensBefore = estimateTotalTokens(messages);
+    const messagesBefore = messages.length;
+    const compactionResult = await runCompaction(
+      messages,
+      contextBudget,
+      toolDefinitionTokens,
+      ctx.publish,
+      hasRunStage2,
+    );
+    if (compactionResult.stage > 0) {
+      messages.splice(0, messages.length, ...compactionResult.messages);
+      const tokensAfter = estimateTotalTokens(messages);
+      log.debug(`Compaction applied (stage ${compactionResult.stage}): ${tokensAfter} tokens, ${messages.length} messages`);
+
+      const compactionElapsed = Date.now() - iterStartTime;
+      const isFirstIterationPreToolCompression = ctx.iteration === 0 && compactionResult.telemetry.preToolRunPressure;
+      const pressureSuffix = isFirstIterationPreToolCompression
+        ? " · pre-run context was oversized; saved conversation needs durable compaction/artifactization"
+        : " · current-run working context only; saved conversation unchanged";
+      ctx.publish("system_step", { step: "working_context_compression", status: "started", detail: `stage=${compactionResult.stage} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
+      ctx.publish("system_step", { step: "working_context_compression", status: "done", elapsedMs: compactionElapsed, detail: `stage=${compactionResult.stage} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
+
+      if (isFirstIterationPreToolCompression) {
+        log.warn(`First-iteration working-context compression indicates missed durable context pressure sessionId=${options.sessionId || "none"} runId=${ctx.runId} tokensBefore=${tokensBefore} tokensAfter=${tokensAfter}`);
+        eventBus.publish({
+          category: "system",
+          event: "context_pressure.pre_run_compression",
+          payload: {
+            sessionId: options.sessionId || null,
+            runId: ctx.runId,
+            tokensBefore,
+            tokensAfter,
+            stage: compactionResult.stage,
+            durableCompactionAttempted: options.contextPressure?.durableCompactionAttempted ?? false,
+            durableCompactionApplied: options.contextPressure?.durableCompactionApplied ?? false,
+          },
+          runId: ctx.runId,
+          sessionKey: options.sessionKey,
+        });
+      }
+
+      if (compactionResult.stage >= 2 && compactionResult.summaryContent) {
+        hasRunStage2 = true;
+        log.debug(`Mid-run compaction applied in-memory: sessionId=${options.sessionId || "none"} stage=${compactionResult.stage} tokensBefore=${tokensBefore} tokensAfter=${tokensAfter} messagesBefore=${messagesBefore} messagesAfter=${messages.length} summaryLen=${compactionResult.summaryContent.length}`);
+        eventBus.publish({ category: "system", event: "compaction.applied", payload: { sessionId: options.sessionId || null, runId: ctx.runId, ...compactionResult.telemetry, tokensBefore, tokensAfter, tokensSaved: tokensBefore - tokensAfter, messagesBefore, messagesAfter: messages.length, summaryLength: compactionResult.summaryContent.length } });
+      }
+    }
+
+    const requestTokens = estimateTotalTokens(messages) + toolDefinitionTokens;
+    if (requestTokens > contextBudget.operatingInputLimit) {
+      throw new ContextOperatingBudgetExceededError(requestTokens, contextBudget);
+    }
 
     ctx.iteration++;
     ctx.iterationThinking = "";
@@ -2623,8 +2720,6 @@ export class AgentExecutor extends EventEmitter {
               runId: ctx.runId,
             });
             ctx.currentCycleToolResultTokens += estimateToolOutputSize(immediateProjection.providerResult).estimatedTokens;
-            ctx.currentCycleRefreshReductionTokens += immediateProjection.refreshReductionTokens;
-            if (toolCallId) ctx.providerConsumedToolCallIds.add(toolCallId);
             this.emitContextGrowthCanary({
               ctx,
               options,
@@ -2637,8 +2732,7 @@ export class AgentExecutor extends EventEmitter {
             });
             const budgetReached = !result.error
               && !result.continuation
-              && ctx.currentCycleToolResultTokens >= CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS
-              && ctx.currentCycleRefreshReductionTokens >= MATERIAL_REFRESH_REDUCTION_TOKENS;
+              && ctx.currentCycleToolResultTokens >= CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS;
             return {
               ...result,
               providerResult: immediateProjection.providerResult,
@@ -2647,62 +2741,24 @@ export class AgentExecutor extends EventEmitter {
           }
         : undefined;
 
-      const consumedToolCallIdsProjected = new Set(ctx.providerConsumedToolCallIds);
       const workingSet = await projectWorkingSet({
         messages,
         runId: ctx.runId,
         sessionId: options.sessionId,
         sessionKey: options.sessionKey,
         source: options.activity || "agent",
-        providerConsumedToolCallIds: consumedToolCallIdsProjected,
       });
-      let providerMessages = workingSet.messages;
-      const tokensBeforeCompaction = estimateTotalTokens(providerMessages);
-      const messagesBeforeCompaction = providerMessages.length;
-      const compactionResult = await runCompaction(
-        providerMessages,
-        contextBudget,
-        toolDefinitionTokens,
-        ctx.publish,
-        hasRunStage2,
-      );
-      if (compactionResult.stage > 0) {
-        providerMessages = compactionResult.messages;
-        const tokensAfterCompaction = estimateTotalTokens(providerMessages);
-        log.debug(`Provider working-set compaction applied stage=${compactionResult.stage} tokens=${tokensBeforeCompaction}→${tokensAfterCompaction} messages=${messagesBeforeCompaction}→${providerMessages.length}`);
-        if (compactionResult.stage >= 2) hasRunStage2 = true;
-        eventBus.publish({
-          category: "system",
-          event: "compaction.applied",
-          payload: {
-            sessionId: options.sessionId || null,
-            runId: ctx.runId,
-            ...compactionResult.telemetry,
-            projectionOnly: true,
-            tokensBefore: tokensBeforeCompaction,
-            tokensAfter: tokensAfterCompaction,
-            tokensSaved: tokensBeforeCompaction - tokensAfterCompaction,
-            messagesBefore: messagesBeforeCompaction,
-            messagesAfter: providerMessages.length,
-          },
-          runId: ctx.runId,
-          sessionKey: options.sessionKey,
-        });
-      }
-      const providerRequestTokens = estimateTotalTokens(providerMessages) + toolDefinitionTokens;
-      if (providerRequestTokens > contextBudget.operatingInputLimit) {
-        throw new ContextOperatingBudgetExceededError(providerRequestTokens, contextBudget);
-      }
+      const providerMessages = workingSet.messages;
       this.emitContextGrowthCanary({
         ctx,
         options,
         boundary: "pre_inference",
-        messageTokens: estimateTotalTokens(providerMessages),
+        messageTokens: workingSet.telemetry.tokensProjected,
         toolResultTokens: ctx.currentCycleToolResultTokens,
         budgetTokens: contextBudget.operatingInputLimit,
       });
       const pendingToolResultMessages = providerMessages.filter(m => m.role === "tool_result").length;
-      log.debug(`agent.loop.model_request runId=${ctx.runId} sessionId=${options.sessionId || "none"} iteration=${ctx.iteration} pendingToolResults=${pendingToolResultMessages} messageCount=${providerMessages.length} workingSetOutcome=${workingSet.telemetry.outcome} receiptProjectedTokens=${workingSet.telemetry.tokensProjected} providerRequestTokens=${providerRequestTokens}`);
+      log.debug(`agent.loop.model_request runId=${ctx.runId} sessionId=${options.sessionId || "none"} iteration=${ctx.iteration} pendingToolResults=${pendingToolResultMessages} messageCount=${providerMessages.length} workingSetOutcome=${workingSet.telemetry.outcome} projectedTokens=${workingSet.telemetry.tokensProjected}`);
       eventBus.publish({
         category: "agent",
         event: "agent.loop.model_request",
@@ -2712,11 +2768,7 @@ export class AgentExecutor extends EventEmitter {
           iteration: ctx.iteration,
           pendingToolResults: pendingToolResultMessages,
           messageCount: providerMessages.length,
-          workingSet: {
-            ...workingSet.telemetry,
-            finalProviderTokens: estimateTotalTokens(providerMessages),
-            compactionStage: compactionResult.stage,
-          },
+          workingSet: workingSet.telemetry,
           source: options.activity || "agent",
         },
         runId: ctx.runId,
@@ -2774,6 +2826,10 @@ export class AgentExecutor extends EventEmitter {
         await this.processStreamEvent(event, ctx, options);
         const runEntry = this.activeRuns.get(ctx.runId);
         if (runEntry) runEntry.lastActivityAt = Date.now();
+        if (ctx.terminalToolFailure) {
+          log.warn(`[ToolRecovery] stopping model stream after quarantined failure runId=${ctx.runId} code=${ctx.terminalToolFailure.failure.code}`);
+          break;
+        }
       }
 
       if (!ctx.aborted && abortController.signal.aborted) {
@@ -2819,9 +2875,6 @@ export class AgentExecutor extends EventEmitter {
         sessionKey: options.sessionKey,
       });
 
-      for (const toolCallId of consumedToolCallIdsProjected) {
-        ctx.providerConsumedToolCallIds.delete(toolCallId);
-      }
       ctx.lastStreamDiagnostics = {
         eventCount: streamEventCount,
         elapsedMs: Date.now() - streamLoopStart,
@@ -3012,10 +3065,8 @@ export class AgentExecutor extends EventEmitter {
       const toolCallId = ctx.workingSetRefreshRequested.toolCallId;
       ctx.workingSetRefreshRequested = undefined;
       ctx.currentCycleToolResultTokens = 0;
-      const projectedReductionTokens = ctx.currentCycleRefreshReductionTokens;
-      ctx.currentCycleRefreshReductionTokens = 0;
       ctx.publish("tool_use_pause", { content: "" });
-      log.log(`working-set refresh boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} toolCallId=${toolCallId} projectedReductionTokens=${projectedReductionTokens}`);
+      log.log(`working-set refresh boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} toolCallId=${toolCallId}`);
       return {
         finalContent: cleanText,
         shouldContinue: true,
@@ -3098,7 +3149,6 @@ export class AgentExecutor extends EventEmitter {
 
     if (unresolvedToolCalls.length > 0 && options.toolExecutor) {
       ctx.currentCycleToolResultTokens = 0;
-      ctx.currentCycleRefreshReductionTokens = 0;
       const { toolResults, allSideEffectOnly, continuation } = await this.executeToolCalls(unresolvedToolCalls, ctx, options, messages, cleanText);
       messages.push({ role: "tool_result", content: toolResults });
       if (continuation === "persona_switch") {
@@ -3177,51 +3227,6 @@ export class AgentExecutor extends EventEmitter {
         runId: ctx.runId,
         sessionKey: options.sessionKey,
       });
-
-      const quarantinedConflict = failedCalls.find((call) => call.failure?.code === "scratch_edit_quarantined");
-      if (quarantinedConflict) {
-        const abortDetails: RepeatedToolFailureDetails = {
-          type: "repeated_tool_failure",
-          toolNames: [quarantinedConflict.name],
-          consecutiveFailures: 2,
-          failedCalls: [{
-            name: quarantinedConflict.name,
-            args: quarantinedConflict.args,
-            error: quarantinedConflict.result,
-          }],
-        };
-        const circuitBreakerMessage = formatAbortDetails(abortDetails)!;
-        ctx.abortDetails = abortDetails;
-        ctx.publish("error", { content: circuitBreakerMessage, error: "scratch_edit_quarantined" });
-        eventBus.publish({
-          category: "agent",
-          event: "agent.run.repeated_tool_failure",
-          payload: {
-            runId: ctx.runId,
-            sessionId: options.sessionId || null,
-            iteration: ctx.iteration,
-            consecutiveFailures: 2,
-            toolNames: [quarantinedConflict.name],
-            failureCode: quarantinedConflict.failure?.code,
-            resourceKey: quarantinedConflict.failure?.resourceKey,
-            source: options.activity || "agent",
-          },
-          runId: ctx.runId,
-          sessionKey: options.sessionKey,
-        });
-        log.error("agent.scratch_edit_quarantined", {
-          runId: ctx.runId,
-          sessionId: options.sessionId,
-          resourceKey: quarantinedConflict.failure?.resourceKey,
-          iteration: ctx.iteration,
-        });
-        return {
-          finalContent: circuitBreakerMessage,
-          shouldContinue: false,
-          hasRunStage2,
-          exitCause: "circuit_breaker",
-        };
-      }
 
       if (failedCalls.length > 0 && failedCalls.length === unresolvedToolCalls.length) {
         const iterationFailKey = failedCalls.map(normalizeToolFailureSignature).sort().join("|");
@@ -3485,6 +3490,10 @@ export class AgentExecutor extends EventEmitter {
           log.log(`persona switch applied runId=${runId} sessionId=${options.sessionId || "none"} persona=${refreshed.persona?.name || "unknown"} model=${previousModel}->${modelString} tier=${routingTier} toolCount=${options.tools.length}`);
         }
 
+        if (ctx.terminalToolFailure) {
+          lastExitCause = "natural_stop";
+          break;
+        }
         if (!result.shouldContinue) {
           lastExitCause = result.exitCause;
           break;

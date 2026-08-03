@@ -959,6 +959,7 @@ function createMcpTools(
             result: result.result,
             error: result.error,
             failure: result.failure,
+            recoveryDecision: result.recoveryDecision,
             continuation: result.continuation,
             outcome: result.outcome ?? (result.error ? "failed" : "succeeded"),
             durationMs: Date.now() - executionStartedAt,
