@@ -5989,8 +5989,13 @@ type TierModelConfig = string | {
   maxTurns?: number;
 };
 interface ModelConnectorDetail {
-  id: number; provider: ModelConnectorProvider; label: string; status: string;
-  config: { kind?: "model" | "openai-models" | "claude-cli-models"; tierMappings: Record<SemanticTier, TierModelConfig> };
+  id: number;
+  provider: ModelConnectorProvider;
+  label: string;
+  status: string;
+  sortOrder?: number;
+  priorityPinned?: boolean;
+  config: { kind?: "model" | "openai-models" | "claude-cli-models" | "grok-models"; tierMappings: Record<SemanticTier, TierModelConfig> };
 }
 interface ModelProviderDetail {
   id: string;
@@ -6045,6 +6050,10 @@ function isOpenAIProvider(provider: ModelConnectorDetail["provider"]): provider 
   return provider === "openai" || provider === "openai-subscription";
 }
 
+function isGrokProvider(provider: ModelConnectorDetail["provider"]): provider is "grok-subscription" {
+  return provider === "grok-subscription";
+}
+
 function supportedOpenAISettings(model?: ModelProviderDetail["models"][number], provider?: ModelConnectorDetail["provider"]) {
   const supportsReasoning = Boolean(model?.reasoning || model?.supportsReasoningEffort);
   const isGpt56 = Boolean(model?.id && /gpt-5\.6/i.test(model.id));
@@ -6092,6 +6101,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
   const { toast } = useToast();
   const isOpenAI = isOpenAIProvider(connector.provider);
   const isClaude = connector.provider === "claude-cli";
+  const isGrok = isGrokProvider(connector.provider);
   const mutation = useMutation({
     mutationFn: async (tierMappings: Record<SemanticTier, Exclude<TierModelConfig, string>>) => (await apiRequest("PATCH", `/api/models/connectors/${connector.id}`, { tierMappings })).json(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
@@ -6109,15 +6119,18 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
       const nextModel = models.find((item) => item.id === nextConfig.model || `${connector.provider}/${item.id}` === nextConfig.model);
       mutation.mutate({ ...mappings, [tier]: sanitizeOpenAITierConfig(connector.provider, nextConfig, nextModel) });
     } else {
+      // Grok/Claude: model + optional maxTokens only. Do not round-trip OpenAI Responses settings.
       mutation.mutate({ ...mappings, [tier]: nextConfig });
     }
   };
-  const isSubscription = connector.provider === "openai-subscription" || isClaude;
-  const sectionLabel = isClaude ? "Subscription connector" : isSubscription ? "Subscription connector" : "API connector";
-  const testIdPrefix = isClaude ? "claude-cli" : `openai-${connector.provider}`;
+  const isSubscription = connector.provider === "openai-subscription" || isClaude || isGrok;
+  const sectionLabel = isSubscription ? "Subscription connector" : "API connector";
+  const testIdPrefix = isClaude ? "claude-cli" : isGrok ? "grok-subscription" : `openai-${connector.provider}`;
   const settingsDescription = isClaude
     ? "Claude subscription tiers. Configure the model, adaptive reasoning effort, thinking mode, and maximum agent turns. Mantra continues to own prompts, tools, permissions, and sessions."
-    : isSubscription
+    : isGrok
+      ? "Grok subscription tiers. Map each semantic tier to a Grok model. Optional max output tokens is honored when set; xAI does not expose OpenAI Responses effort/verbosity/service-tier controls here."
+      : isSubscription
       ? "Subscription connector tiers. Effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, and max output tokens is capped by the selected model."
       : "API connector tiers. Settings follow OpenAI Responses API docs: effort controls reasoning depth, summaries expose reasoning output, verbosity controls response detail, service tier controls latency class, and max output tokens is capped by the selected model.";
 
@@ -6152,13 +6165,26 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                 label="Model"
                 value={config.model}
                 options={models.map((item) => item.id)}
-                description={isClaude ? "Required. Moving aliases follow Claude Code updates; versioned choices stay pinned." : "Required. The model used when routing selects this semantic tier."}
+                description={isClaude
+                  ? "Required. Moving aliases follow Claude Code updates; versioned choices stay pinned."
+                  : isGrok
+                    ? "Required. Map this semantic tier to a Grok model on the connected subscription."
+                    : "Required. The model used when routing selects this semantic tier."}
                 disabled={mutation.isPending || models.length === 0}
                 onChange={(modelId) => {
                   if (isClaude) {
                     const nextModel = models.find((item) => item.id === modelId);
                     const nextSupportsThinking = nextModel?.thinkingLevel !== "none";
                     updateTier(tier, { model: modelId, effort: nextSupportsThinking ? config.effort : undefined, thinkingMode: nextSupportsThinking ? config.thinkingMode : "disabled" });
+                  } else if (isGrok) {
+                    const nextModel = models.find((item) => item.id === modelId);
+                    updateTier(tier, {
+                      model: modelId,
+                      maxOutputTokens: Math.min(
+                        config.maxOutputTokens ?? nextModel?.maxTokens ?? 4096,
+                        nextModel?.maxTokens ?? Number.MAX_SAFE_INTEGER,
+                      ),
+                    });
                   } else {
                     const nextModel = models.find((item) => item.id === modelId);
                     const nextSupported = supportedOpenAISettings(nextModel, connector.provider);
@@ -6183,6 +6209,15 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                 <div className="rounded-md border border-border/60 px-3 py-2">
                   <div className="text-xs font-medium">Context</div>
                   <div className="mt-1 text-xs text-muted-foreground">{formatTokenCount(model?.contextWindow)} · {model?.thinkingDescription ?? "provider default"}</div>
+                </div>
+              </div> : isGrok ? <div className="grid gap-2 @sm:grid-cols-2">
+                <div className="rounded-md border border-border/60 px-3 py-2">
+                  <div className="text-xs font-medium">Subscription</div>
+                  <div className="mt-1 text-xs text-muted-foreground">$0 via connected Grok / xAI plan. Usage is not billed through Mantra API keys.</div>
+                </div>
+                <div className="rounded-md border border-border/60 px-3 py-2">
+                  <div className="text-xs font-medium">Context</div>
+                  <div className="mt-1 text-xs text-muted-foreground">Context {formatTokenCount(model?.contextWindow)} · max output {formatTokenCount(model?.maxTokens)}</div>
                 </div>
               </div> : <div className="grid gap-2 @sm:grid-cols-2">
                 <div className="rounded-md border border-border/60 px-3 py-2">
@@ -6240,13 +6275,14 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
               {supported?.reasoningSummary && <TierSettingSelect label="Reasoning summary" value={config.reasoningSummary ?? "auto"} options={REASONING_SUMMARIES} description="Default: auto. Controls whether OpenAI returns summarized reasoning." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { reasoningSummary: value })} />}
               {supported?.verbosity && <TierSettingSelect label="Verbosity" value={config.verbosity ?? "medium"} options={VERBOSITIES} description="Default: medium. Controls output detail for GPT-5-class text generation." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { verbosity: value })} />}
               {supported?.serviceTier && <TierSettingSelect label="Service tier" value={config.serviceTier ?? "auto"} options={supported.serviceTierOptions} description="Default: auto. Controls API latency/cost class when the account supports it." disabled={mutation.isPending} onChange={(value) => updateTier(tier, { serviceTier: value })} />}
-              {supported?.maxOutputTokens && <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+              {(supported?.maxOutputTokens || isGrok) && <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
                 <div className="min-w-0">
                   <Label className="text-xs text-muted-foreground">Max output</Label>
                   <p className="text-xs text-muted-foreground/80">Positive integer. Must not exceed {formatTokenCount(model?.maxTokens)} for this model.</p>
                 </div>
                 <Input type="number" min={1} max={model?.maxTokens} value={config.maxOutputTokens ?? ""} disabled={mutation.isPending} onChange={(event) => { const value = Number.parseInt(event.target.value, 10); if (Number.isFinite(value) && value > 0) updateTier(tier, { maxOutputTokens: model?.maxTokens ? Math.min(value, model.maxTokens) : value }); }} className="h-8 font-mono text-xs" />
               </div>}
+              {isGrok ? <p className="text-xs text-muted-foreground">Grok subscription exposes model selection and optional max output. OpenAI Responses effort/verbosity/service-tier controls do not apply.</p> : null}
               {isOpenAI && !supported?.reasoningEffort && !supported?.verbosity && !supported?.serviceTier ? <p className="text-xs text-muted-foreground">This model exposes only model selection and max output in the current connector contract.</p> : null}
             </div>}
           >
@@ -6274,7 +6310,9 @@ function ModelConnectorSection({ provider, title = "Model mapping" }: { provider
     <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
     <CardContent><p className="text-sm text-muted-foreground">No connector is configured for this provider.</p></CardContent>
   </Card>;
-  if (isOpenAIProvider(provider) || provider === "claude-cli") return <ConnectorTierTree connector={connector} models={models} title={title} />;
+  if (isOpenAIProvider(provider) || provider === "claude-cli" || isGrokProvider(provider)) {
+    return <ConnectorTierTree connector={connector} models={models} title={title} />;
+  }
   return <Card className="overflow-hidden min-w-0">
     <CardHeader><CardTitle className="text-base font-semibold">{title}</CardTitle></CardHeader>
     <CardContent className="space-y-3">

@@ -1584,7 +1584,9 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS connector_kind TEXT NOT NULL DEFAULT 'integration'`);
     await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS connector_config JSONB NOT NULL DEFAULT '{}'::jsonb`);
     await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE provider_connections ADD COLUMN IF NOT EXISTS priority_pinned BOOLEAN NOT NULL DEFAULT FALSE`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_order ON provider_connections(connector_kind, sort_order)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_provider_connections_kind_pin_order ON provider_connections(connector_kind, priority_pinned DESC, sort_order)`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS semantic_tier TEXT`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS routing_examples JSONB DEFAULT '[]'::jsonb`);
     await pool.query(`ALTER TABLE personas ADD COLUMN IF NOT EXISTS is_system BOOLEAN NOT NULL DEFAULT FALSE`);

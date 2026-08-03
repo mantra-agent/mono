@@ -1,9 +1,9 @@
 import { useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, CheckCircle2, Circle, Route, TriangleAlert } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -17,9 +17,11 @@ interface ModelConnector {
   label: string;
   status: string;
   sortOrder: number;
+  /** Explicit pin: pinned connectors sort ahead of unpinned peers. */
+  priorityPinned?: boolean;
   credentialRef: string | null;
   lastVerifiedAt: string | null;
-  config: { kind: "model" | "openai-models"; tierMappings: Record<SemanticTier, TierModelConfig> };
+  config: { kind: "model" | "openai-models" | "claude-cli-models" | "grok-models"; tierMappings: Record<SemanticTier, TierModelConfig> };
 }
 interface ConnectorsResponse { connectors: ModelConnector[] }
 interface InferenceCall { id: number; timestamp: string; model: string; status?: string; tier?: string; metadata?: { routing?: { connectorId?: number; connectorLabel?: string; connectorProvider?: string; requestedTier?: string; resolvedModel?: string; attempts?: unknown[] } } }
@@ -44,7 +46,11 @@ export default function ModelTab() {
   const connectors = data?.connectors ?? [];
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: number; status: "active" | "inactive" }) => (await apiRequest("PATCH", `/api/models/connectors/${id}`, { status })).json(),
+    mutationFn: async ({ id, status, priorityPinned }: { id: number; status?: "active" | "inactive"; priorityPinned?: boolean }) =>
+      (await apiRequest("PATCH", `/api/models/connectors/${id}`, {
+        ...(status !== undefined ? { status } : {}),
+        ...(priorityPinned !== undefined ? { priorityPinned } : {}),
+      })).json(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
     onError: (error: Error) => toast({ title: "Connector update failed", description: error.message, variant: "destructive" }),
   });
@@ -55,10 +61,14 @@ export default function ModelTab() {
   });
 
   const routedCalls = useMemo(() => (evidence?.calls ?? []).filter((call) => call.metadata?.routing?.connectorId).slice(0, 8), [evidence]);
+  // Moves stay inside the pin cohort so pin remains the hard priority discriminant.
   const move = (index: number, direction: -1 | 1) => {
-    const next = [...connectors];
+    const current = connectors[index];
+    if (!current) return;
     const target = index + direction;
-    if (target < 0 || target >= next.length) return;
+    if (target < 0 || target >= connectors.length) return;
+    if (!!connectors[target]?.priorityPinned !== !!current.priorityPinned) return;
+    const next = [...connectors];
     [next[index], next[target]] = [next[target], next[index]];
     reorderMutation.mutate(next.map((connector) => connector.id));
   };
@@ -67,20 +77,40 @@ export default function ModelTab() {
 
   return <div className="space-y-6 p-4 @sm:p-6 w-full min-w-0">
     <Card className="overflow-hidden min-w-0">
-      <CardHeader><CardTitle className="text-lg">Connector priority</CardTitle></CardHeader>
+      <CardHeader>
+        <CardTitle className="text-lg">Connector priority</CardTitle>
+        <p className="text-sm text-muted-foreground">Pin forces a connector ahead of unpinned peers. Arrows only reorder inside the same pin cohort.</p>
+      </CardHeader>
       <CardContent className="p-0">
         {connectors.length === 0 ? <div className="px-4 py-3 text-sm text-muted-foreground">No model connectors configured.</div> : connectors.map((connector, index) => {
           const ready = connector.status === "active" && !!connector.credentialRef;
+          const pinned = connector.priorityPinned === true;
+          const canRaise = index > 0 && !!connectors[index - 1]?.priorityPinned === pinned;
+          const canLower = index < connectors.length - 1 && !!connectors[index + 1]?.priorityPinned === pinned;
           return <div key={connector.id} className="flex min-h-14 items-center gap-3 border-t border-border/20 px-4 py-2" data-testid={`connector-priority-${connector.id}`}>
             <span className="w-5 shrink-0 text-sm font-medium text-muted-foreground">{index + 1}</span>
             {ready ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : connector.status === "active" ? <TriangleAlert className="h-4 w-4 shrink-0 text-warning" /> : <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />}
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{connector.label}</div>
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="truncate text-sm font-medium">{connector.label}</div>
+                {pinned ? <Badge variant="secondary" className="shrink-0">Pinned</Badge> : null}
+              </div>
               <div className="truncate text-xs text-muted-foreground">{connector.provider} · {connector.credentialRef ? `verified ${timeAgo(connector.lastVerifiedAt)}` : "credential missing"}</div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              <Button variant="ghost" size="icon" className="h-8 w-8" disabled={index === 0 || reorderMutation.isPending} onClick={() => move(index, -1)} aria-label={`Raise ${connector.label}`}><ArrowUp className="h-4 w-4" /></Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8" disabled={index === connectors.length - 1 || reorderMutation.isPending} onClick={() => move(index, 1)} aria-label={`Lower ${connector.label}`}><ArrowDown className="h-4 w-4" /></Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" disabled={!canRaise || reorderMutation.isPending} onClick={() => move(index, -1)} aria-label={`Raise ${connector.label}`}><ArrowUp className="h-4 w-4" /></Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" disabled={!canLower || reorderMutation.isPending} onClick={() => move(index, 1)} aria-label={`Lower ${connector.label}`}><ArrowDown className="h-4 w-4" /></Button>
+              <Button
+                variant={pinned ? "secondary" : "ghost"}
+                size="sm"
+                className="h-8 px-2 text-xs"
+                disabled={updateMutation.isPending}
+                onClick={() => updateMutation.mutate({ id: connector.id, priorityPinned: !pinned })}
+                aria-label={pinned ? `Unpin ${connector.label}` : `Pin ${connector.label}`}
+                data-testid={`connector-pin-${connector.id}`}
+              >
+                {pinned ? "Unpin" : "Pin"}
+              </Button>
               <Switch checked={connector.status === "active"} disabled={updateMutation.isPending} onCheckedChange={(checked) => updateMutation.mutate({ id: connector.id, status: checked ? "active" : "inactive" })} aria-label={`Enable ${connector.label}`} />
             </div>
           </div>;

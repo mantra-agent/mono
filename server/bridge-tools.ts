@@ -8192,19 +8192,41 @@ ${lines.join("\n")}` };
           const page = calls.slice(0, limit);
           const lines = page.map(c => {
             const ts = c.timestamp instanceof Date ? c.timestamp.toISOString() : c.timestamp;
-            const cost = c.costTotal ? "$" + c.costTotal.toFixed(4) : "$0";
-            const duration = c.durationMs ? `${(c.durationMs / 1000).toFixed(1)}s` : "n/a";
+            const settled = typeof c.durationMs === "number"
+              || (c.inputTokens || 0) > 0
+              || (c.outputTokens || 0) > 0
+              || (c.totalTokens || 0) > 0
+              || !!c.stopReason;
+            const cost = settled
+              ? (c.costTotal ? "$" + c.costTotal.toFixed(4) : "$0")
+              : "pending";
+            const tokens = settled
+              ? `in:${c.inputTokens || 0} out:${c.outputTokens || 0}`
+              : "in:pending out:pending";
+            const duration = typeof c.durationMs === "number"
+              ? `${(c.durationMs / 1000).toFixed(1)}s`
+              : (settled ? "n/a" : "in-flight");
             const metadata = c.metadata && typeof c.metadata === "object" ? c.metadata as Record<string, unknown> : {};
+            const routing = metadata.routing && typeof metadata.routing === "object" ? metadata.routing as Record<string, unknown> : null;
             const runId = typeof metadata.runId === "string" ? metadata.runId : null;
             const sessionId = typeof metadata.sessionId === "string" ? metadata.sessionId : null;
             const iteration = typeof metadata.iteration === "number" ? metadata.iteration : null;
+            const connectorLabel = typeof routing?.connectorLabel === "string" ? routing.connectorLabel : null;
+            const connectorProvider = typeof routing?.connectorProvider === "string"
+              ? routing.connectorProvider
+              : (typeof c.provider === "string" ? c.provider : null);
+            const requestedTier = typeof routing?.requestedTier === "string" ? routing.requestedTier : null;
             const correlation = [
+              settled ? null : "status:in-flight",
+              connectorProvider ? `provider:${connectorProvider}` : null,
+              connectorLabel ? `connector:${connectorLabel}` : null,
+              requestedTier ? `tier:${requestedTier}` : null,
               runId ? `run:${runId}` : null,
               sessionId ? `session:${sessionId}` : null,
               iteration != null ? `iteration:${iteration}` : null,
               !sessionId && c.sessionKey ? `sessionKey:${c.sessionKey}` : null,
             ].filter(Boolean).join(" ");
-            return `- [${ts}] id:${c.id} model:${c.model} profile:${c.profile || "unknown"} cost:${cost} in:${c.inputTokens} out:${c.outputTokens} dur:${duration}${correlation ? ` ${correlation}` : ""}`;
+            return `- [${ts}] id:${c.id} model:${c.model} profile:${c.profile || "unknown"} cost:${cost} ${tokens} dur:${duration}${correlation ? ` ${correlation}` : ""}`;
           });
           const more = calls.length > limit ? `\n→ More results available. Use offset=${offset + limit}.` : "";
           return { result: `${page.length} inference calls (offset ${offset}):\n${lines.join("\n")}${more}` };
@@ -8217,14 +8239,28 @@ ${lines.join("\n")}` };
           if (!call) return { result: `Inference call ${id} not found`, error: true };
           const ts = call.timestamp instanceof Date ? call.timestamp.toISOString() : call.timestamp;
           const metadata = call.metadata && typeof call.metadata === "object" ? call.metadata as Record<string, unknown> : {};
+          const settled = typeof call.durationMs === "number"
+            || (call.inputTokens || 0) > 0
+            || (call.outputTokens || 0) > 0
+            || (call.totalTokens || 0) > 0
+            || !!call.stopReason;
+          const routing = metadata.routing && typeof metadata.routing === "object" ? metadata.routing as Record<string, unknown> : null;
           const parts = [
             `**Inference Call #${call.id}**`,
             `Model: ${call.model} | Provider: ${call.provider}`,
             `Profile: ${call.profile || "unknown"}`,
-            `Tokens: ${call.inputTokens} in / ${call.outputTokens} out (${call.totalTokens} total)`,
+            routing
+              ? `Routing: connector=${typeof routing.connectorLabel === "string" ? routing.connectorLabel : "n/a"} (${typeof routing.connectorProvider === "string" ? routing.connectorProvider : "n/a"}#${typeof routing.connectorId === "number" ? routing.connectorId : "n/a"}) tier=${typeof routing.requestedTier === "string" ? routing.requestedTier : "n/a"} resolved=${typeof routing.resolvedModel === "string" ? routing.resolvedModel : call.model}`
+              : "Routing: n/a",
+            settled
+              ? `Tokens: ${call.inputTokens} in / ${call.outputTokens} out (${call.totalTokens} total)`
+              : "Tokens: pending (in-flight; usage settles when the provider attempt completes)",
             `Cache: ${call.cacheReadTokens || 0} read / ${call.cacheWriteTokens || 0} write`,
-            "Cost: $" + (call.costTotal || 0).toFixed(4) + " (input: $" + (call.costInput || 0).toFixed(4) + ", output: $" + (call.costOutput || 0).toFixed(4) + ")",
-            `Duration: ${call.durationMs ? `${(call.durationMs / 1000).toFixed(1)}s` : "n/a"}`,
+            settled
+              ? "Cost: $" + (call.costTotal || 0).toFixed(4) + " (input: $" + (call.costInput || 0).toFixed(4) + ", output: $" + (call.costOutput || 0).toFixed(4) + ")"
+              : "Cost: pending",
+            `Duration: ${call.durationMs ? `${(call.durationMs / 1000).toFixed(1)}s` : (settled ? "n/a" : "in-flight")}`,
+            `Status: ${settled ? "settled" : "in-flight"}`,
             `Timestamp: ${ts}`,
             `Stop Reason: ${call.stopReason || "n/a"}`,
             `Run: ${typeof metadata.runId === "string" ? metadata.runId : "n/a"}`,
