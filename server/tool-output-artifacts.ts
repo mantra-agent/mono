@@ -141,8 +141,28 @@ interface ToolOutputArchiveArgs {
   runId?: string;
   toolCallId?: string;
   result: string;
+  /** Canonical exact-once key. Required at the archive boundary; derived when omitted if toolCallId is present. */
   operationKey?: string;
   maxPreviewChars?: number;
+}
+
+/**
+ * Exact-once discriminant for tool-output archives.
+ * Null-key inserts are unrepresentable at this boundary — callers must supply a key
+ * or enough identity (toolCallId + session/run) to derive one.
+ */
+export function resolveToolOutputOperationKey(args: {
+  operationKey?: string;
+  sessionId?: string;
+  runId?: string;
+  toolCallId?: string;
+}): string | null {
+  const explicit = typeof args.operationKey === "string" ? args.operationKey.trim() : "";
+  if (explicit) return explicit;
+  const toolCallId = typeof args.toolCallId === "string" ? args.toolCallId.trim() : "";
+  if (!toolCallId) return null;
+  const scope = (args.sessionId || args.runId || "").trim() || "unknown";
+  return `tool-output:${scope}:${toolCallId}`;
 }
 
 export function extractToolOutputRef(value: string): { refId: string; formattedRef: string } | null {
@@ -173,6 +193,14 @@ export async function ensureToolOutputArchived(args: ToolOutputArchiveArgs): Pro
     };
   }
 
+  const operationKey = resolveToolOutputOperationKey(args);
+  if (!operationKey) {
+    log.error(
+      `tool_output.archive_missing_operation_key tool=${args.toolName} action=${args.action || ""} toolCallId=${args.toolCallId || ""} sessionId=${args.sessionId || ""} runId=${args.runId || ""} chars=${size.chars}`,
+    );
+    return { outcome: "failed", size };
+  }
+
   const preview = createToolOutputPreview(args.result, size.contentType, args.maxPreviewChars);
   const sourceLabel = [args.toolName, args.action, args.sessionId, args.runId, args.toolCallId].filter(Boolean).join("/") || args.toolName;
 
@@ -182,10 +210,10 @@ export async function ensureToolOutputArchived(args: ToolOutputArchiveArgs): Pro
       content: args.result,
       sourceType: "tool_output",
       sourceLabel,
-      operationKey: args.operationKey,
+      operationKey,
     });
     if (!archived) {
-      log.error(`tool_output.archive_failed tool=${args.toolName} action=${args.action || ""} toolCallId=${args.toolCallId || ""} sessionId=${args.sessionId || ""} runId=${args.runId || ""} chars=${size.chars}`);
+      log.error(`tool_output.archive_failed tool=${args.toolName} action=${args.action || ""} toolCallId=${args.toolCallId || ""} sessionId=${args.sessionId || ""} runId=${args.runId || ""} operationKey=${operationKey} chars=${size.chars}`);
       return { outcome: "failed", size };
     }
 

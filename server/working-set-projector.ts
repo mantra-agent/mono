@@ -139,6 +139,12 @@ export async function projectWorkingSet(args: {
 
       eligibleOutputs++;
       const tool = toolCallId ? metadata.get(toolCallId) : undefined;
+      // Exact-once requires a stable operationKey. Without toolCallId we cannot
+      // form one — fail closed rather than insert an unconstrained null-key row.
+      if (!toolCallId) {
+        archiveFailures++;
+        continue;
+      }
       const archived = await ensureToolOutputArchived({
         toolName: tool?.toolName || "unknown_tool",
         action: tool?.action,
@@ -146,6 +152,11 @@ export async function projectWorkingSet(args: {
         runId: args.runId,
         toolCallId,
         result: block.content,
+        operationKey: archiveOperationKey({
+          sessionId: args.sessionId,
+          runId: args.runId,
+          toolCallId,
+        }),
         maxPreviewChars: block.is_error ? 1_200 : 2_000,
       });
       if (!archived.formattedRef) {
