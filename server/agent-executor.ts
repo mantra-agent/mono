@@ -1865,7 +1865,7 @@ export class AgentExecutor extends EventEmitter {
     options: ExecutorRunOptions,
     messages: ExecutorMessage[],
     cleanText: string,
-  ): Promise<{ toolResults: ContentBlock[]; allSideEffectOnly: boolean; continuation?: ToolExecutorResult["continuation"] }> {
+  ): Promise<{ toolResults: ContentBlock[]; continuation?: ToolExecutorResult["continuation"] }> {
     const assistantContent: ContentBlock[] = [];
     if (ctx.iterationThinking) {
       assistantContent.push({ type: "thinking", thinking: ctx.iterationThinking });
@@ -2043,7 +2043,6 @@ export class AgentExecutor extends EventEmitter {
       return { tc, toolResult, durationMs };
     };
 
-    const sideEffectFlags: boolean[] = [];
     let continuation: ToolExecutorResult["continuation"];
 
     const processResult = async (tc: typeof toolCalls[0], toolResult: ToolExecutorResult, durationMs: number) => {
@@ -2093,7 +2092,6 @@ export class AgentExecutor extends EventEmitter {
       });
       // Chronology: record tool entry pointing to resolvedToolCalls index
       ctx.segmentChronology.push({ s: "tool", i: toolIdx });
-      sideEffectFlags.push(!!toolResult.sideEffectOnly);
       // Cycle-budget overflow and material shrink both force a working_set_refresh boundary.
       // Material shrink means current-cycle exact payloads can drop by >= MATERIAL_REFRESH_REDUCTION_TOKENS
       // once marked provider-consumed; without this gate the multi-MB exact path never receipts.
@@ -2150,9 +2148,7 @@ export class AgentExecutor extends EventEmitter {
       }
     }
 
-    const allSideEffectOnly = sideEffectFlags.length > 0 && sideEffectFlags.every(f => f);
-
-    return { toolResults, allSideEffectOnly, continuation };
+    return { toolResults, continuation };
   }
 
   // Inference recording is handled at the model-client boundary (recordInference)
@@ -3547,7 +3543,7 @@ export class AgentExecutor extends EventEmitter {
 
     if (unresolvedToolCalls.length > 0 && options.toolExecutor) {
       ctx.currentCycleToolResultTokens = 0;
-      const { toolResults, allSideEffectOnly, continuation } = await this.executeToolCalls(unresolvedToolCalls, ctx, options, messages, cleanText);
+      const { toolResults, continuation } = await this.executeToolCalls(unresolvedToolCalls, ctx, options, messages, cleanText);
       messages.push({ role: "tool_result", content: toolResults });
       if (continuation === "persona_switch") {
         ctx.publish("tool_use_pause", { content: "" });
@@ -3680,12 +3676,10 @@ export class AgentExecutor extends EventEmitter {
         ctx.consecutiveFailureIterations = 0;
       }
 
-      if (allSideEffectOnly && cleanText) {
-        log.debug(`All tool results are side-effect-only — skipping continuation runId=${ctx.runId}`);
-        ctx.publish("tool_use_pause", { content: "" });
-        return { finalContent: cleanText, shouldContinue: false, hasRunStage2, exitCause: "natural_stop" };
-      }
-
+      // Always continue after tools unless an explicit handler continuation
+      // (await_user / provider_system_tool) or circuit breaker already returned.
+      // sideEffectOnly is telemetry/classification only — never a loop stop signal.
+      // AGENTS.md: do not emulate continuation boundaries with side-effect-only classification.
       ctx.publish("tool_use_pause", { content: "" });
       return { finalContent: cleanText, shouldContinue: true, hasRunStage2, continuationType: "tool_call" };
     }
