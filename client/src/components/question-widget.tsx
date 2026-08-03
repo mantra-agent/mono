@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, MessageCircleQuestion } from "lucide-react";
+import { ChevronRight, Loader2, MessageCircleQuestion, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { createLogger } from "@/lib/logger";
 import {
@@ -47,43 +48,115 @@ function responseLabels(prompt: QuestionWidgetPrompt, response: QuestionResponse
   return labels;
 }
 
-function OptionRow({
+function ExpandableDetailRow({
   checked,
   disabled,
   label,
-  description,
+  detail,
   testId,
   onSelect,
 }: {
   checked: boolean;
   disabled: boolean;
   label: string;
-  description?: string;
+  detail?: string;
   testId: string;
   onSelect: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const detailText = detail?.trim() || "";
+  const hasDetail = detailText.length > 0;
+
   return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={onSelect}
+    <div
       className={cn(
-        "flex w-full items-start gap-2.5 rounded-sm px-2 py-1.5 text-left transition-colors",
+        "rounded-sm transition-colors",
         checked ? "bg-accent/60" : "hover:bg-accent/40",
-        disabled && "cursor-not-allowed opacity-60",
+        disabled && "opacity-60",
       )}
-      data-testid={testId}
     >
-      <SimpleCheckCircle checked={checked} interactive={false} className="mt-0.5 shrink-0" />
-      <span className="min-w-0">
-        <span className="block text-sm text-foreground">{label}</span>
-        {description ? (
-          <span className="mt-0.5 block text-xs text-muted-foreground line-clamp-2">{description}</span>
-        ) : null}
-      </span>
-    </button>
+      <div className="flex w-full items-start gap-1">
+        {hasDetail ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label={expanded ? `Collapse details for ${label}` : `Expand details for ${label}`}
+            disabled={disabled}
+            onClick={() => setExpanded((value) => !value)}
+            className="mt-1.5 shrink-0 rounded-sm p-0.5 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed"
+            data-testid={`${testId}-expand`}
+          >
+            <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} />
+          </button>
+        ) : (
+          <span className="mt-1.5 w-4 shrink-0" aria-hidden />
+        )}
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={checked}
+          disabled={disabled}
+          onClick={onSelect}
+          className={cn(
+            "flex min-w-0 flex-1 items-start gap-2.5 px-1 py-1.5 pr-2 text-left",
+            disabled && "cursor-not-allowed",
+          )}
+          data-testid={testId}
+        >
+          <SimpleCheckCircle checked={checked} interactive={false} className="mt-0.5 shrink-0" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm text-foreground">{label}</span>
+          </span>
+        </button>
+      </div>
+      {hasDetail && expanded ? (
+        <p className="pb-2 pl-9 pr-2 text-xs text-muted-foreground" data-testid={`${testId}-detail`}>
+          {detailText}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function PrincipleSearchInput({
+  value,
+  onChange,
+  disabled,
+  testId,
+  clearTestId,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+  testId: string;
+  clearTestId: string;
+}) {
+  return (
+    <div className="relative min-w-0">
+      <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      <input
+        type="search"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        aria-label="Search principles"
+        placeholder="Search"
+        className="h-7 w-full rounded-md border border-input bg-background pl-7 pr-7 text-xs text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+        data-testid={testId}
+      />
+      {value ? (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          disabled={disabled}
+          aria-label="Clear search"
+          className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground disabled:cursor-not-allowed"
+          data-testid={clearTestId}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -371,19 +444,19 @@ export function QuestionWidget({
       </div>
       <div className="space-y-0.5 px-2 py-2">
         {prompt.options.map((option) => (
-          <OptionRow
+          <ExpandableDetailRow
             key={option.id}
             checked={selected.includes(option.id)}
             disabled={controlsDisabled}
             label={option.label}
-            description={option.description}
+            detail={option.description}
             testId={`question-option-${prompt.toolCallId}-${option.id}`}
             onSelect={() => selectOption(option.id)}
           />
         ))}
         {prompt.allowOther && (
           <div>
-            <OptionRow
+            <ExpandableDetailRow
               checked={otherSelected}
               disabled={controlsDisabled}
               label="Other"
@@ -405,55 +478,52 @@ export function QuestionWidget({
           </div>
         )}
       </div>
-      <div className="border-t border-border/40 px-2 py-2">
-        <button
-          type="button"
+      <Collapsible
+        open={showProvenance}
+        onOpenChange={setShowProvenance}
+        className="border-t border-border/40"
+      >
+        <CollapsibleTrigger
           disabled={controlsDisabled}
-          onClick={() => setShowProvenance((value) => !value)}
-          className="px-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+          className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-accent/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
           data-testid={`question-provenance-toggle-${prompt.toolCallId}`}
         >
-          {showProvenance ? "Hide context" : "Add context"}
-        </button>
-        {showProvenance && (
-          <div className="mt-1 space-y-2">
-            <div className="space-y-1">
-              <div className="flex items-center justify-between gap-2 px-2">
-                <p className="text-xs text-muted-foreground">Which principles apply?</p>
-                {principlesLoading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                ) : null}
-              </div>
-              <input
-                type="search"
-                value={principleQuery}
-                onChange={(event) => setPrincipleQuery(event.target.value)}
-                disabled={controlsDisabled}
-                placeholder="Search principles"
-                className="w-full rounded-sm border border-border/30 bg-transparent px-2 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
-                data-testid={`question-principle-search-${prompt.toolCallId}`}
-              />
-              <div className="max-h-40 space-y-0.5 overflow-y-auto">
-                {filteredPrinciples.length === 0 ? (
-                  <p className="px-2 py-1 text-xs text-muted-foreground">
-                    {principleCatalog.length === 0
-                      ? "No principles available yet."
-                      : "No principles match that search."}
-                  </p>
-                ) : (
-                  filteredPrinciples.map((principle) => (
-                    <OptionRow
-                      key={principle.revisionId}
-                      checked={selectedPrinciples.includes(principle.revisionId)}
-                      disabled={controlsDisabled}
-                      label={principle.title}
-                      description={principle.layer1 || undefined}
-                      testId={`question-principle-${prompt.toolCallId}-${principle.revisionId}`}
-                      onSelect={() => togglePrinciple(principle.revisionId)}
-                    />
-                  ))
-                )}
-              </div>
+          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showProvenance && "rotate-90")} />
+          <span className="min-w-0 flex-1">Context</span>
+          {principlesLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
+          {selectedPrinciples.length > 0 ? (
+            <span className="text-[10px] font-normal text-muted-foreground/70">{selectedPrinciples.length}</span>
+          ) : null}
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="space-y-2 px-2 pb-2">
+            <PrincipleSearchInput
+              value={principleQuery}
+              onChange={setPrincipleQuery}
+              disabled={controlsDisabled}
+              testId={`question-principle-search-${prompt.toolCallId}`}
+              clearTestId={`question-principle-search-clear-${prompt.toolCallId}`}
+            />
+            <div className="max-h-40 space-y-0.5 overflow-y-auto">
+              {filteredPrinciples.length === 0 ? (
+                <p className="px-2 py-1 text-xs text-muted-foreground">
+                  {principleCatalog.length === 0
+                    ? "No principles available yet."
+                    : "No principles match that search."}
+                </p>
+              ) : (
+                filteredPrinciples.map((principle) => (
+                  <ExpandableDetailRow
+                    key={principle.revisionId}
+                    checked={selectedPrinciples.includes(principle.revisionId)}
+                    disabled={controlsDisabled}
+                    label={principle.title}
+                    detail={principle.layer1 || undefined}
+                    testId={`question-principle-${prompt.toolCallId}-${principle.revisionId}`}
+                    onSelect={() => togglePrinciple(principle.revisionId)}
+                  />
+                ))
+              )}
             </div>
             {prompt.allowResponseReasoning && (
               <textarea
@@ -467,8 +537,8 @@ export function QuestionWidget({
               />
             )}
           </div>
-        )}
-      </div>
+        </CollapsibleContent>
+      </Collapsible>
       <div className="flex items-center justify-between gap-3 border-t border-border/40 px-3 py-2">
         {error ? <p className="text-xs text-error">{error}</p> : <span />}
         <div className="flex items-center gap-2">

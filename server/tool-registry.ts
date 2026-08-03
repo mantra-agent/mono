@@ -420,7 +420,11 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        question: { type: "string", description: "The concise question to present." },
+        question: {
+          type: "string",
+          description:
+            "The concise, plain-language question to present. Must be easy for a human to understand at a glance — no internal codenames, smoke labels, ticket IDs, or system jargon.",
+        },
         options: {
           anyOf: [
             {
