@@ -15,6 +15,7 @@ import { chatFileStorage } from "../chat-file-storage";
 import { pool } from "../db";
 import { getSetting, setSetting } from "../system-settings";
 import { runWithPrincipal } from "../principal-context";
+import { getReliabilityOutcomeSummary } from "../reliability-outcomes";
 import { createNamedSystemPrincipal } from "../principal";
 import { requirePermission } from "../permissions";
 import { requireAuth } from "../auth";
@@ -212,6 +213,18 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
       res.json({ summary, byModel, byDay, byHour, byModelByDay, byModelByHour, byProfile, currentModel: modelPrimary });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/performance/reliability", async (req, res) => {
+    try {
+      const summary = await getReliabilityOutcomeSummary(req.query.hours);
+      res.json(summary);
+    } catch (error) {
+      log.error("Failed to load reliability outcomes", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: "Failed to load reliability outcomes" });
     }
   });
 
