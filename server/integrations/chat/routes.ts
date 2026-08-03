@@ -311,6 +311,11 @@ function buildSystemNotice(result: ExecutorRunResult): SystemNotice {
     errorType = "response_incomplete";
     description = "The response reached the model's output limit before any final text was produced. Earlier completed tool work remains saved.";
     actionHint = "Send another message and I'll continue from the last completed step.";
+  } else if (result.status === "degraded" && result.degradationReason === "empty_response") {
+    severity = "warning";
+    errorType = "response_incomplete";
+    description = "The model finished without returning any visible text. Earlier completed tool work remains saved.";
+    actionHint = "Send another message and I'll continue from the last completed step.";
   } else if (result.status === "degraded" && result.degradationReason === "tool_failure_recovered") {
     // Non-retryable tool failure already synthesized a recovery assistant message.
     // Surface as a warning, not a hard error — work was preserved and the turn ended cleanly.
@@ -2842,7 +2847,16 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         // No message to save, no notice to create, no journal entry.
       }
 
-      if (responseContent.trim() === "" && !isSuperseded) {
+      // Failed and degraded outcomes use the same canonical notice surface.
+      // Superseded runs end quietly because their replacement begins automatically.
+      let systemNotice: SystemNotice | undefined;
+      if ((result.status === "failed" || result.status === "degraded") && result.abortReason !== "superseded") {
+        systemNotice = buildSystemNotice(result);
+      }
+
+      // Only invent plain assistant text when there is no system_notice to own
+      // the empty outcome. Degraded/failed empty turns render the notice widget.
+      if (responseContent.trim() === "" && !isSuperseded && !systemNotice) {
         const parts = ["I wasn't able to generate a response."];
         const errorDetail = result.error
           ? sanitizeErrorForUser(result.error)
@@ -2851,11 +2865,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           result.status === "failed"
             ? describeAbortReasonForUser(result)
             : null;
-        if (result.status === "degraded" && result.degradationReason === "empty_response_output_limit") {
-          parts.push("The response reached the model's output limit before any final text was produced. Earlier completed tool work remains saved.");
-        } else if (result.status === "degraded" && result.degradationReason === "tool_failure_recovered") {
-          parts.push("A tool returned a non-retryable failure. Completed work before the failure was preserved.");
-        } else if (abortDescription) {
+        if (abortDescription) {
           parts.push(abortDescription);
         } else if (result.status === "failed") {
           parts.push(
@@ -2868,18 +2878,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           parts.push(`Cause: ${errorDetail}`);
         }
         parts.push(
-          result.status === "degraded" || result.abortReason
+          result.abortReason
             ? "Send another message and I'll continue from the last completed step."
             : "Try rephrasing your question.",
         );
         responseContent = parts.join(" ");
-      }
-
-      // Failed and degraded outcomes use the same canonical notice surface.
-      // Superseded runs end quietly because their replacement begins automatically.
-      let systemNotice: SystemNotice | undefined;
-      if ((result.status === "failed" || result.status === "degraded") && result.abortReason !== "superseded") {
-        systemNotice = buildSystemNotice(result);
       }
 
       const persistedThinking = result.thinking || undefined;

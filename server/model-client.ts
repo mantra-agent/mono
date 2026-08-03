@@ -2244,6 +2244,8 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
   const requestContent = buildRequestContent(options.messages);
   let responseContent = "";
   let streamUsage: { inputTokens: number; outputTokens: number; totalTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number; visibleOutputTokens?: number } | undefined;
+  let streamStopReason: string | undefined;
+  let streamTermination: Record<string, unknown> | undefined;
   let firstSdkEventAt: number | null = null;
   let firstTextAt: number | null = null;
   let firstThinkingAt: number | null = null;
@@ -2302,6 +2304,22 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       responseContent += event.content;
     } else if (event.type === "usage") {
       streamUsage = event.usage;
+      if (typeof event.stopReason === "string" && event.stopReason.length > 0) {
+        streamStopReason = event.stopReason;
+      }
+      if (event.metadata && typeof event.metadata === "object") {
+        const providerFinishReason =
+          typeof event.metadata.providerFinishReason === "string"
+            ? event.metadata.providerFinishReason
+            : undefined;
+        if (providerFinishReason || event.metadata.refusal) {
+          streamTermination = {
+            ...(streamTermination || {}),
+            ...(providerFinishReason ? { providerFinishReason } : {}),
+            ...(event.metadata.refusal ? { refusal: event.metadata.refusal } : {}),
+          };
+        }
+      }
     } else if (event.type === "error") {
       if (event.providerFailure?.usage) {
         streamUsage = {
@@ -2355,6 +2373,8 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     usage: streamUsage,
     requestContent,
     responseContent,
+    stopReason: streamStopReason,
+    termination: streamTermination,
     latency: {
       providerTtftMs: firstTextAt !== null ? firstTextAt - t0 : null,
       firstSdkEventMs: firstSdkEventAt !== null ? firstSdkEventAt - t0 : null,
@@ -2374,6 +2394,8 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       usage: streamUsage,
       requestContent,
       responseContent,
+      stopReason: streamStopReason,
+      termination: streamTermination,
       error: serializeModelError(err),
       latency: {
         providerTtftMs: firstTextAt !== null ? firstTextAt - t0 : null,
@@ -3276,7 +3298,9 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
     };
 
     let inThinking = false;
-    let stopReason: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" = "end_turn";
+    let stopReason = "end_turn";
+    let providerFinishReason: string | undefined;
+    let refusal: string | undefined;
     const toolCalls: Map<number, { id: string; name: string; argsAccumulator: string }> = new Map();
     let streamUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     let connectedEmitted = false;
@@ -3294,8 +3318,15 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
         };
       }
 
-      const delta = chunk.choices?.[0]?.delta;
-      const finishReason = chunk.choices?.[0]?.finish_reason;
+      const choice = chunk.choices?.[0];
+      const delta = choice?.delta;
+      const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined;
+      if (typeof choice?.delta?.refusal === "string" && choice.delta.refusal.length > 0) {
+        refusal = `${refusal || ""}${choice.delta.refusal}`;
+      }
+      if (typeof choice?.message?.refusal === "string" && choice.message.refusal.length > 0) {
+        refusal = choice.message.refusal;
+      }
 
       if (delta?.tool_calls) {
         for (const tc of delta.tool_calls) {
@@ -3353,12 +3384,19 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
       }
 
       if (finishReason) {
+        providerFinishReason = finishReason;
+        // Preserve unknown provider values (content_filter, refusal, etc.) so
+        // executor diagnostics and inference audit can classify empty turns.
         if (finishReason === "tool_calls") {
           stopReason = "tool_use";
         } else if (finishReason === "length") {
           stopReason = "max_tokens";
-        } else if (finishReason === "stop") {
+        } else if (finishReason === "stop" || finishReason === "end_turn") {
           stopReason = "end_turn";
+        } else if (finishReason === "content_filter") {
+          stopReason = "content_filter";
+        } else {
+          stopReason = finishReason;
         }
       }
     }
@@ -3372,8 +3410,21 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
       yield { type: "tool_use", toolCallId: tc.id, toolName: tc.name, arguments: input };
     }
 
-    log.debug(`openai stream done model=${model} toolCalls=${pendingToolCalls.length} stopReason=${stopReason} prompt=${streamUsage.inputTokens} completion=${streamUsage.outputTokens}`);
-    yield { type: "usage", usage: streamUsage, model, stopReason };
+    log.debug(
+      `openai stream done model=${model} toolCalls=${pendingToolCalls.length} stopReason=${stopReason} ` +
+      `providerFinishReason=${providerFinishReason || "n/a"} refusal=${refusal ? "yes" : "no"} ` +
+      `prompt=${streamUsage.inputTokens} completion=${streamUsage.outputTokens}`,
+    );
+    yield {
+      type: "usage",
+      usage: streamUsage,
+      model,
+      stopReason,
+      metadata: {
+        ...(providerFinishReason ? { providerFinishReason } : {}),
+        ...(refusal ? { refusal } : {}),
+      },
+    };
   } catch (err: unknown) {
     if (isAbortError(err, options.signal)) {
       log.debug(`openai stream aborted model=${model}`);
