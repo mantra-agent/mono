@@ -1,6 +1,7 @@
 import {
   RULES_TOOL_DESCRIPTION,
 } from "./personal-rule-policy";
+import { getShellToolContractDescription } from "./agent-authority";
 
 export interface ToolDetailEntry {
   description: string;
@@ -220,9 +221,11 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: '{ "action": "create", "name": "my-analysis", "process": "...", "description": "Custom analysis" }',
   },
   shell: {
-    description: "Execute a shell command in the workspace directory. Use for system operations, running scripts, or inspecting the environment.",
-    whenToUse: "When you need to run a command-line operation, check system state, or execute a script.",
-    example: '{ "command": "ls -la" }',
+    description: getShellToolContractDescription(),
+    whenToUse:
+      "Read-only inspection already covered by the allowlist: list files, grep/rg search, head/tail/cat known paths, npm run build, and shell git status/log/diff/show/branch/remote/rev-parse. Prefer scratch.read when the path is known. Never invent a command outside the allowlist and never retry a denied command with cosmetic variants.",
+    example:
+      '{ "command": "ls repos/" }\n{ "command": "rg -n \\"validateShellCommand\\" server --type ts" }\n{ "command": "git -C repos/mono-abc123 status" }\n{ "command": "npm run build" }\nDenied patterns (do not call): semicolon chains, 2>/dev/null is allowed but file redirects and bare `;` are not, git write subcommands, non-build npm.',
   },
   notion: {
     description: "Search, read, and browse Notion pages and databases. Actions: status, search, get_page, get_content, list_databases, query_database.",
