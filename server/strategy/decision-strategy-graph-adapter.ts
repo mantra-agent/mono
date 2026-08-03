@@ -144,7 +144,9 @@ export const decisionStrategyGraphAdapter: PersonalGraphAdapter<Principal> = {
           edges.push(edge(`decision:authored:${occurrence.id}`, occurrence.sourceAddress, occurrence.targetAddress, "references", 0.55, "authored", occurrence.observedAt));
         }
         for (const link of explicitLinks) {
-          if (!["relates_to", "governs", "evidence_for", "triggered_by", "produced"].includes(link.predicate)) continue;
+          // Include judgment provenance predicates (governed_by / decided_by) alongside
+          // the broader Decision link vocabulary so the strategy graph can render them.
+          if (!["relates_to", "governs", "guided_by", "governed_by", "decided_by", "evidence_for", "triggered_by", "produced"].includes(link.predicate)) continue;
           edges.push(edge(`decision:explicit:${link.id}`, link.sourceAddress, link.targetAddress, link.predicate, 0.9, "explicit", link.createdAt));
         }
       }

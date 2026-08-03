@@ -26,6 +26,7 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { RichTextEditor } from "@/components/rich-text-editor";
+import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { cn } from "@/lib/utils";
 
 type DecisionStatus = "open" | "closed";
@@ -44,6 +45,12 @@ interface Decision {
   planContent: JSONContent | null;
   planPlainText: string;
   closedAt: string | null;
+  ownerPersonId?: string | null;
+  sourceSessionId?: string | null;
+  sourceToolCallId?: string | null;
+  answerPayload?: Record<string, unknown> | null;
+  reasoning?: string | null;
+  resolvedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -58,9 +65,12 @@ interface DecisionUpdate {
 interface DecisionLink {
   id: string;
   decisionId: string;
-  targetType: "strategy" | "project";
+  targetType: string;
   targetId: string;
+  targetAddress?: string;
+  predicate?: string;
   createdAt: string;
+  source?: string;
 }
 
 interface DecisionFull extends Decision {
@@ -517,6 +527,7 @@ function DecisionInlineEditor({
         testId="editor-decision-plan"
       />
 
+      <DecisionProvenanceSection decision={full} links={full.links} />
       <DecisionLinksSection decisionId={decisionId} links={full.links} />
 
       {isClosed && (
@@ -574,6 +585,90 @@ function DecisionSection({
   );
 }
 
+// ─── Provenance ───
+
+const PROVENANCE_PREDICATES = new Set(["decided_by", "governed_by", "triggered_by", "guided_by"]);
+
+const PREDICATE_LABELS: Record<string, string> = {
+  decided_by: "Decided by",
+  governed_by: "Guided by",
+  triggered_by: "Source",
+  guided_by: "Guided by",
+  relates_to: "Related",
+  governs: "Governs",
+  evidence_for: "Evidence",
+  produced: "Produced",
+};
+
+function DecisionProvenanceSection({
+  decision,
+  links,
+}: {
+  decision: Decision;
+  links: DecisionLink[];
+}) {
+  const provenanceLinks = useMemo(
+    () => links.filter((link) => link.predicate && PROVENANCE_PREDICATES.has(link.predicate)),
+    [links],
+  );
+  const hasReasoning = Boolean(decision.reasoning?.trim());
+  const hasAnswer = Boolean(decision.answerPayload && Object.keys(decision.answerPayload).length > 0);
+  const hasSource = Boolean(decision.sourceSessionId || decision.sourceToolCallId);
+  if (!provenanceLinks.length && !hasReasoning && !hasAnswer && !hasSource) return null;
+
+  const answerSummary = (() => {
+    const payload = decision.answerPayload;
+    if (!payload) return null;
+    if (typeof payload.selectedLabels === "string") return payload.selectedLabels;
+    if (Array.isArray(payload.selectedLabels)) return payload.selectedLabels.join(", ");
+    if (Array.isArray(payload.selectedOptionIds)) return payload.selectedOptionIds.join(", ");
+    if (typeof payload.otherText === "string" && payload.otherText.trim()) return payload.otherText.trim();
+    return null;
+  })();
+
+  return (
+    <div className="space-y-2" data-testid="decision-provenance">
+      <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+        <Scale className="h-3 w-3" /> Provenance
+      </div>
+      {answerSummary && (
+        <div className="text-sm" data-testid="decision-provenance-answer">
+          <span className="text-muted-foreground">Answer: </span>
+          <span>{answerSummary}</span>
+        </div>
+      )}
+      {hasReasoning && (
+        <div className="text-sm whitespace-pre-wrap" data-testid="decision-provenance-reasoning">
+          <span className="text-muted-foreground">Reasoning: </span>
+          {decision.reasoning}
+        </div>
+      )}
+      {provenanceLinks.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {provenanceLinks.map((link) => (
+            <div key={link.id} className="flex items-center gap-2 text-xs" data-testid={`provenance-link-${link.id}`}>
+              <span className="text-muted-foreground min-w-[72px]">
+                {PREDICATE_LABELS[link.predicate ?? ""] ?? link.predicate}
+              </span>
+              {link.targetAddress ? (
+                <InlineReferenceText text={link.targetAddress} />
+              ) : (
+                <span className="capitalize">{link.targetType}:{link.targetId}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {hasSource && !provenanceLinks.some((l) => l.predicate === "triggered_by") && decision.sourceSessionId && (
+        <div className="flex items-center gap-2 text-xs" data-testid="decision-provenance-session">
+          <span className="text-muted-foreground min-w-[72px]">Session</span>
+          <InlineReferenceText text={`@session:${decision.sourceSessionId}`} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Links ───
 
 interface StrategyOption { id: string; title: string }
@@ -581,6 +676,10 @@ interface ProjectOption { id: number; title: string }
 
 function DecisionLinksSection({ decisionId, links }: { decisionId: string; links: DecisionLink[] }) {
   const { toast } = useToast();
+  const manualLinks = useMemo(
+    () => links.filter((link) => !link.predicate || !PROVENANCE_PREDICATES.has(link.predicate)),
+    [links],
+  );
 
   const { data: strategies = [] } = useQuery<StrategyOption[]>({
     queryKey: ["/api/strategy/goals"],
@@ -593,12 +692,12 @@ function DecisionLinksSection({ decisionId, links }: { decisionId: string; links
   const projectById = useMemo(() => new Map(projects.map(p => [String(p.id), p])), [projects]);
 
   const linkedStrategyIds = useMemo(
-    () => new Set(links.filter(l => l.targetType === "strategy").map(l => l.targetId)),
-    [links],
+    () => new Set(manualLinks.filter(l => l.targetType === "strategy").map(l => l.targetId)),
+    [manualLinks],
   );
   const linkedProjectIds = useMemo(
-    () => new Set(links.filter(l => l.targetType === "project").map(l => l.targetId)),
-    [links],
+    () => new Set(manualLinks.filter(l => l.targetType === "project").map(l => l.targetId)),
+    [manualLinks],
   );
 
   const addMutation = useMutation({
@@ -621,7 +720,8 @@ function DecisionLinksSection({ decisionId, links }: { decisionId: string; links
 
   const labelFor = (l: DecisionLink) => {
     if (l.targetType === "strategy") return strategyById.get(l.targetId)?.title || `strategy:${l.targetId}`;
-    return projectById.get(l.targetId)?.title || `project:${l.targetId}`;
+    if (l.targetType === "project") return projectById.get(l.targetId)?.title || `project:${l.targetId}`;
+    return l.targetAddress || `${l.targetType}:${l.targetId}`;
   };
 
   const toggleLink = (
@@ -630,7 +730,7 @@ function DecisionLinksSection({ decisionId, links }: { decisionId: string; links
     currentlyLinked: boolean,
   ) => {
     if (currentlyLinked) {
-      const existing = links.find(l => l.targetType === targetType && l.targetId === targetId);
+      const existing = manualLinks.find(l => l.targetType === targetType && l.targetId === targetId);
       if (existing) removeMutation.mutate(existing.id);
     } else {
       addMutation.mutate({ targetType, targetId });
@@ -662,14 +762,20 @@ function DecisionLinksSection({ decisionId, links }: { decisionId: string; links
           />
         </div>
       </div>
-      {links.length === 0 ? (
+      {manualLinks.length === 0 ? (
         <div className="text-xs text-muted-foreground" data-testid="text-no-links">No links</div>
       ) : (
         <div className="flex flex-wrap gap-1.5">
-          {links.map(l => (
+          {manualLinks.map(l => (
             <span key={l.id} className="inline-flex items-center gap-1 text-xs bg-muted rounded px-2 py-0.5" data-testid={`link-${l.id}`}>
-              <span className="capitalize">{l.targetType}:</span>
-              <span>{labelFor(l)}</span>
+              {l.targetAddress ? (
+                <InlineReferenceText text={l.targetAddress} />
+              ) : (
+                <>
+                  <span className="capitalize">{l.targetType}:</span>
+                  <span>{labelFor(l)}</span>
+                </>
+              )}
               <button
                 onClick={() => removeMutation.mutate(l.id)}
                 className="hover:text-destructive"

@@ -20,7 +20,13 @@ import {
   type ReferenceLocation,
 } from "@shared/life-addressing";
 import { resolveAddressBatch } from "./address-resolver";
-import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "./db";
+import {
+  acquireAdvisoryTransactionLock,
+  ADVISORY_LOCK_NS,
+  db,
+  getAmbientDatabaseTransaction,
+  runWithDatabaseTransaction,
+} from "./db";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -303,7 +309,7 @@ export async function createAddressLink(principal: Principal, input: CreateAddre
   const [canonicalSource, canonicalTarget, canonicalProvenance] = visible;
   if (canonicalSource === canonicalTarget) throw Object.assign(new Error("Address link cannot target itself"), { status: 400 });
 
-  return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+  const writeLink = async (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => {
     await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.ADDRESS_LINK, `${principal.accountId}:${idempotencyKey}`);
     const [existing] = await tx.select().from(addressLinks)
       .where(combineWithWritableScope(principal, linkScope, eq(addressLinks.idempotencyKey, idempotencyKey)))
@@ -332,7 +338,12 @@ export async function createAddressLink(principal: Principal, input: CreateAddre
     if (!created) throw new Error("Address link creation failed");
     log.info(JSON.stringify({ event: "life_addressing.address_link_created", linkId: created.id, predicate }));
     return publicLink(created);
-  }));
+  };
+
+  // Reuse ambient business transaction (e.g. recordJudgment) instead of nesting db.transaction.
+  const ambient = getAmbientDatabaseTransaction();
+  if (ambient) return writeLink(ambient);
+  return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => writeLink(tx)));
 }
 
 export async function retireAddressLink(principal: Principal, id: string): Promise<AddressLink> {

@@ -6271,8 +6271,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       targetAddress?: string;
       targetType?: string;
       targetId?: string | number;
-      predicate?: "relates_to" | "governs" | "evidence_for" | "triggered_by" | "produced";
+      predicate?: "relates_to" | "governs" | "guided_by" | "governed_by" | "decided_by" | "evidence_for" | "triggered_by" | "produced";
       linkId?: string;
+      reasoning?: string;
+      ownerPersonRole?: "self" | "partner";
+      principleRevisionIds?: string[];
+      sourceSessionId?: string;
+      sourceToolCallId?: string;
+      triggeredByAddress?: string;
+      answerPayload?: Record<string, unknown>;
     };
     const a = args as DecisionsArgs;
 
@@ -6317,6 +6324,42 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const row = await decisionsStorage.createDecision(fields as Parameters<typeof decisionsStorage.createDecision>[0]);
           publish("create");
           return { result: `Created decision ${row.id} "${row.title}" (${row.status}).` };
+        }
+        case "record_judgment": {
+          const title = requireString(a.title, "title");
+          const ownerPersonRole = a.ownerPersonRole === "partner" || a.ownerPersonRole === "self"
+            ? a.ownerPersonRole
+            : "self";
+          const principleRevisionIds = Array.isArray(a.principleRevisionIds)
+            ? a.principleRevisionIds.filter((id: unknown): id is string => typeof id === "string" && id.trim().length > 0)
+            : undefined;
+          const answerPayload = a.answerPayload && typeof a.answerPayload === "object" && !Array.isArray(a.answerPayload)
+            ? a.answerPayload as Record<string, unknown>
+            : undefined;
+          const result = await decisionsStorage.recordJudgment({
+            title,
+            description: typeof a.description === "string" ? a.description : undefined,
+            reasoning: typeof a.reasoning === "string" ? a.reasoning : undefined,
+            ownerPersonRole,
+            principleRevisionIds,
+            sourceSessionId: typeof a.sourceSessionId === "string" ? a.sourceSessionId : undefined,
+            sourceToolCallId: typeof a.sourceToolCallId === "string" ? a.sourceToolCallId : undefined,
+            triggeredByAddress: typeof a.triggeredByAddress === "string" ? a.triggeredByAddress : undefined,
+            answerPayload,
+            status: "closed",
+          });
+          publish("record_judgment");
+          const links = await decisionsStorage.listLinks(result.decision.id);
+          return {
+            result: [
+              `${result.outcome === "replayed" ? "Replayed" : "Recorded"} judgment ${result.decision.id} "${result.decision.title}" (${result.decision.status}).`,
+              result.decision.ownerPersonId ? `ownerPerson=${result.decision.ownerPersonId}` : null,
+              result.decision.reasoning ? `reasoning=${result.decision.reasoning}` : null,
+              links.length
+                ? `links:\n${links.map((l) => `  - ${l.predicate} -> ${l.targetAddress}`).join("\n")}`
+                : "links: none",
+            ].filter(Boolean).join("\n"),
+          };
         }
         case "update": {
           const id = requireString(a.id, "id");
