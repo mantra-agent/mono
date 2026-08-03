@@ -484,22 +484,38 @@ function getToolErrorText(
 }
 
 /**
- * Agent-fixable failures (permission denials + bad input/schema) are amber.
- * Real runtime failures (transient/internal/unknown) stay red.
+ * Avoidable / classified failures are amber — input, permission, transient,
+ * and internal are all things proper context, setup, or recovery should cover.
+ * Red is reserved for true surprises: a tool error with no failureKind
+ * (missing file mid-flight, raw tool error code, unclassified runtime fault).
  */
 function toolFailureTone(failureKind?: string | null): {
   iconColor: string;
   bgColor: string;
+  textColor: string;
+  detailBg: string;
+  borderColor: string;
 } {
-  if (failureKind === "permission" || failureKind === "input") {
+  if (
+    failureKind === "permission" ||
+    failureKind === "input" ||
+    failureKind === "transient" ||
+    failureKind === "internal"
+  ) {
     return {
       iconColor: "text-warning",
       bgColor: "bg-warning/15",
+      textColor: "text-warning/80",
+      detailBg: "bg-warning/5",
+      borderColor: "border-warning/40",
     };
   }
   return {
     iconColor: "text-error",
     bgColor: "bg-error/10",
+    textColor: "text-error/80",
+    detailBg: "bg-error/5",
+    borderColor: "border-error/40",
   };
 }
 
@@ -733,7 +749,7 @@ function ToolStepRow({
               )}
               {errorPreview && (
                 <span
-                  className="text-xs text-error/80 break-words whitespace-normal block"
+                  className={`text-xs ${failureTone?.textColor ?? "text-error/80"} break-words whitespace-normal block`}
                   data-testid={`tool-error-${step.id}`}
                 >
                   {errorPreview}
@@ -762,7 +778,7 @@ function ToolStepRow({
               )}
               {!expanded && errorPreview && (
                 <span
-                  className="text-xs text-error/80 break-words whitespace-normal block"
+                  className={`text-xs ${failureTone?.textColor ?? "text-error/80"} break-words whitespace-normal block`}
                   data-testid={`tool-error-${step.id}`}
                 >
                   {errorPreview}
@@ -824,10 +840,14 @@ function ToolStepRow({
           )}
           {isError && errorText && (
             <div>
-              <span className="text-xs text-error/70 font-medium uppercase tracking-wider">
+              <span
+                className={`text-xs ${failureTone?.textColor ?? "text-error/70"} font-medium uppercase tracking-wider`}
+              >
                 Error
               </span>
-              <pre className="mt-0.5 text-xs text-error/70 bg-error/5 rounded-md p-2 overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap break-all font-mono">
+              <pre
+                className={`mt-0.5 text-xs ${failureTone?.textColor ?? "text-error/70"} ${failureTone?.detailBg ?? "bg-error/5"} rounded-md p-2 overflow-x-auto max-h-60 overflow-y-auto whitespace-pre-wrap break-all font-mono`}
+              >
                 {errorText}
               </pre>
             </div>
@@ -1844,15 +1864,16 @@ function isGmailDraftReviewAction(step: ExecutionStep): boolean {
 
 function GmailDraftFailureNotice({ step }: { step: ExecutionStep }) {
   const detail = truncateResult(formatToolError(step.error, step.result), 320);
+  const tone = toolFailureTone(step.failureKind);
   return (
     <div
-      className="my-1 flex items-start gap-2 rounded-md border border-error/40 bg-error/5 px-3 py-2 text-sm text-error"
+      className={`my-1 flex items-start gap-2 rounded-md border ${tone.borderColor} ${tone.detailBg} px-3 py-2 text-sm ${tone.iconColor}`}
       data-testid={`gmail-draft-error-${step.id}`}
     >
       <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <div className="min-w-0">
         <div className="font-medium">Email draft wasn’t created</div>
-        <div className="mt-0.5 break-words text-xs text-error/80">{detail}</div>
+        <div className={`mt-0.5 break-words text-xs ${tone.textColor}`}>{detail}</div>
       </div>
     </div>
   );
