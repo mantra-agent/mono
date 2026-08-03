@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useLocation } from "wouter";
-import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Gauge, Users, Vault, FileText } from "lucide-react";
+import { ScrollText, DollarSign, Loader2, Wrench, ClipboardCheck, Brain, Zap, GitBranch, Cpu, Gauge, Users, FileText } from "lucide-react";
 import { ProcessesCard } from "@/components/processes-card";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useAuth } from "@/hooks/use-auth";
@@ -13,7 +13,6 @@ const PromptsContent = lazyWithRetry(() => import("@/pages/internal-prompts"));
 const LogsContent = lazyWithRetry(() => import("@/pages/logs"));
 const ResourcesContent = lazyWithRetry(() => import("@/pages/resources"));
 const UsersContent = lazyWithRetry(() => import("@/pages/users-admin"));
-const VaultsContent = lazyWithRetry(() => import("@/pages/vaults-admin"));
 
 const InferenceContent = lazyWithRetry(() => import("@/pages/inference"));
 const EventsContent = lazyWithRetry(() => import("@/pages/events"));
@@ -40,11 +39,10 @@ const systemTabs = [
   { value: "hooks", label: "Hooks", icon: <GitBranch className="h-3.5 w-3.5" />, testId: "tab-system-hooks" },
   { value: "process", label: "Process", icon: <Cpu className="h-3.5 w-3.5" />, testId: "tab-system-process" },
   { value: "users", label: "Users", icon: <Users className="h-3.5 w-3.5" />, testId: "tab-system-users" },
-  { value: "vaults", label: "Vaults", icon: <Vault className="h-3.5 w-3.5" />, testId: "tab-system-vaults" },
 ];
 
 export default function SystemPage() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
 
   const { hasUnseenErrors: hasUnseenLogErrors, markSeen: markLogErrorsSeen } = useLogErrors();
   const { hasPermission } = useAuth();
@@ -62,8 +60,14 @@ export default function SystemPage() {
 
   useEffect(() => {
     const p = readUrlParams();
+    // Vaults moved to a first-class /vaults route so all authenticated users
+    // can manage their vaults without system:read.
+    if (p.tab === "vaults") {
+      setLocation("/vaults");
+      return;
+    }
     setActiveTab(p.tab);
-  }, [location, readUrlParams]);
+  }, [location, readUrlParams, setLocation]);
 
   const tabs = useMemo(() =>
     systemTabs
@@ -87,7 +91,7 @@ export default function SystemPage() {
   }, [activeTab, canReadUsers, canReadPrompts]);
 
   usePageHeader({
-    title: activeTab === "hooks" ? "Hooks" : activeTab === "vaults" ? "Vaults" : activeTab === "prompts" ? "Prompts" : "System",
+    title: activeTab === "hooks" ? "Hooks" : activeTab === "prompts" ? "Prompts" : "System",
     tabs,
     activeTab,
     onTabChange: setActiveTab,
@@ -113,7 +117,6 @@ export default function SystemPage() {
         {activeTab === "cost" && <PerformanceContent embedded={true} />}
         {activeTab === "events" && <EventsContent embedded={true} />}
         {activeTab === "hooks" && <HooksContent embedded={true} />}
-        {activeTab === "vaults" && <VaultsContent />}
         {activeTab === "resources" && <ResourcesContent />}
         {activeTab === "process" && (
           <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin p-6">

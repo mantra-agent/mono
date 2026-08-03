@@ -61,6 +61,7 @@ export const coreDefinition: CoreDefinition = {
       clientRoute("core.route.audiences", "/audiences", "audiences", { requiredPermissions: ["system:read"] }),
       clientRoute("core.route.campaigns", "/campaigns", "campaigns", { requiredPermissions: ["system:read"] }),
       clientRoute("core.route.account", "/account", "user-details"),
+      clientRoute("core.route.vaults", "/vaults", "vaults"),
     ],
     navigation: [
       // Tools
@@ -98,7 +99,7 @@ export const coreDefinition: CoreDefinition = {
       nav("core.nav.audiences", "Admin", "Audiences", "Users", "navigation.audiences.open", "core.route.audiences", 1, { requiredPermissions: ["system:read"] }),
       nav("core.nav.campaigns", "Admin", "Campaigns", "Megaphone", "navigation.campaigns.open", "core.route.campaigns", 2, { requiredPermissions: ["system:read"] }),
       nav("core.nav.users", "Admin", "Users", "Users", "navigation.users.open", "core.route.system", 3, { requiredPermissions: ["system:read"] }),
-      nav("core.nav.vaults", "Admin", "Vaults", "Vault", "navigation.vaults.open", "core.route.system", 4),
+      nav("core.nav.vaults", "Admin", "Vaults", "Vault", "navigation.vaults.open", "core.route.vaults", 4),
       nav("core.nav.integrations", "Admin", "Integrations", "Plug", "navigation.integrations.open", "core.route.integrations", 5),
       nav("core.nav.account", "Admin", "Account", "Settings", "navigation.account.open", "core.route.account", 6),
     ],

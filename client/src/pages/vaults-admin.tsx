@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/tooltip";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useVaults, type Vault } from "@/hooks/use-vaults";
+import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
 import { VaultMigrationControls } from "@/components/vault-migration-controls";
@@ -438,6 +439,7 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function VaultsAdminPage() {
+  usePageHeader({ title: "Vaults" });
   const { vaults, isLoading } = useVaults();
   const { data: opportunities = [], isLoading: opportunitiesLoading } = useQuery<OpportunitySummary[]>({
     queryKey: ["/api/exec/opportunities"],
