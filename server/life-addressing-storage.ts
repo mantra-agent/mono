@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { and, asc, eq, gt, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, or } from "drizzle-orm";
 import type { Principal } from "./principal";
 import {
   addressLinks,
@@ -78,6 +78,8 @@ export interface ListOccurrenceInput {
 export interface ListAddressLinkInput {
   sourceAddress?: string;
   targetAddress?: string;
+  /** Restrict to these predicates (validated lowercase snake_case). Enables bounded predicate-scoped scans. */
+  predicates?: readonly string[];
   lifecycle?: "active" | "retired";
   cursor?: string;
   limit?: number;
@@ -363,9 +365,13 @@ export async function listAddressLinks(
   requireUserPrincipal(principal);
   const limit = Math.min(boundedReplayLimit(input.limit), ADDRESS_LINK_BATCH_LIMIT);
   const cursor = parseCursor(input.cursor);
+  const predicateFilter = input.predicates
+    ? input.predicates.map((value) => value.toLowerCase()).filter((value) => PREDICATE_PATTERN.test(value))
+    : undefined;
   const filters = [
     input.sourceAddress ? eq(addressLinks.sourceAddress, normalizeAddress(input.sourceAddress, "sourceAddress")) : undefined,
     input.targetAddress ? eq(addressLinks.targetAddress, normalizeAddress(input.targetAddress, "targetAddress")) : undefined,
+    predicateFilter ? inArray(addressLinks.predicate, predicateFilter) : undefined,
     input.lifecycle ? eq(addressLinks.lifecycle, input.lifecycle) : undefined,
     cursor ? or(gt(addressLinks.createdAt, cursor.observedAt), and(eq(addressLinks.createdAt, cursor.observedAt), gt(addressLinks.id, cursor.id))) : undefined,
   ].filter(Boolean);
