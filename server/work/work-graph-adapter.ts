@@ -11,6 +11,7 @@ import type { Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import { createLogger } from "../log";
 import { goalsService } from "../goals-service";
+import { goalRelationshipService, type GoalRelationship } from "../goal-relationship-service";
 import { fileProjectStorage } from "../file-storage/projects";
 import { fileTaskStorage } from "../file-storage/tasks";
 
@@ -115,6 +116,7 @@ interface WorkProjectionCounts {
   milestones: number;
   tasks: number;
   goalHierarchyEdges: number;
+  goalRelationshipEdges: number;
   projectGoalEdges: number;
   milestoneEdges: number;
   taskEdges: number;
@@ -124,7 +126,7 @@ interface WorkProjectionCounts {
   authoredEdges: number;
 }
 
-function buildProjection(goals: GoalIndexEntry[], projects: Project[], tasks: Task[]): { nodes: GraphNode[]; edges: GraphEdge[]; counts: WorkProjectionCounts } {
+function buildProjection(goals: GoalIndexEntry[], projects: Project[], tasks: Task[], relationships: GoalRelationship[]): { nodes: GraphNode[]; edges: GraphEdge[]; counts: WorkProjectionCounts } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
 
@@ -140,6 +142,7 @@ function buildProjection(goals: GoalIndexEntry[], projects: Project[], tasks: Ta
     milestones: 0,
     tasks: inPlayTasks.length,
     goalHierarchyEdges: 0,
+    goalRelationshipEdges: 0,
     projectGoalEdges: 0,
     milestoneEdges: 0,
     taskEdges: 0,
@@ -157,6 +160,25 @@ function buildProjection(goals: GoalIndexEntry[], projects: Project[], tasks: Ta
       edges.push(edge(`work:goal:${goal.id}:child_of`, address, `@goal:${goal.parentId}`, "child_of", 1, "domain"));
       counts.goalHierarchyEdges++;
     }
+  }
+
+  // --- Explicit goal relationships (Goal↔Person, Goal↔Meeting) from the ledger ---
+  // Durable user assertions, not inferred. Only projected for in-play goals so an
+  // edge never dangles from an unprojected (achieved) goal node. The assembler
+  // still independently resolves and authorizes the target endpoint.
+  for (const rel of relationships) {
+    if (!goalIds.has(rel.goalId)) continue;
+    const predicate = rel.targetType === "person" ? "involves_person" : "references_meeting";
+    edges.push(edge(
+      `work:goal:${rel.goalId}:${predicate}:${rel.targetId}`,
+      `@goal:${rel.goalId}`,
+      rel.targetAddress,
+      predicate,
+      0.85,
+      "domain",
+      rel.createdAt,
+    ));
+    counts.goalRelationshipEdges++;
   }
 
   // --- Projects, milestones, participants, artifacts, authored references ---
@@ -251,11 +273,12 @@ export const workGraphAdapter: PersonalGraphAdapter<Principal> = {
     }
 
     const limit = boundedLimit(input.limit);
-    const [goals, projects, tasks] = await runWithPrincipal(principal, () =>
+    const [goals, projects, tasks, relationships] = await runWithPrincipal(principal, () =>
       Promise.all([
         goalsService.listAll() as Promise<GoalIndexEntry[]>,
         fileProjectStorage.getProjects() as Promise<Project[]>,
         fileTaskStorage.getTasks() as Promise<Task[]>,
+        goalRelationshipService.listActiveForProjection() as Promise<GoalRelationship[]>,
       ]),
     );
 
@@ -263,11 +286,12 @@ export const workGraphAdapter: PersonalGraphAdapter<Principal> = {
       goals.slice(0, limit),
       projects.slice(0, limit),
       tasks.slice(0, limit),
+      relationships,
     );
 
     log.info(
       `[work-graph] goals=${counts.goals} projects=${counts.projects} milestones=${counts.milestones} tasks=${counts.tasks} ` +
-        `goalHierarchy=${counts.goalHierarchyEdges} projectGoal=${counts.projectGoalEdges} milestoneEdges=${counts.milestoneEdges} ` +
+        `goalHierarchy=${counts.goalHierarchyEdges} goalRelationships=${counts.goalRelationshipEdges} projectGoal=${counts.projectGoalEdges} milestoneEdges=${counts.milestoneEdges} ` +
         `taskEdges=${counts.taskEdges} participants=${counts.participantEdges} pageArtifacts=${counts.pageArtifactEdges} ` +
         `fileArtifacts=${counts.fileArtifactEdges} authored=${counts.authoredEdges}`,
     );

@@ -23,6 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { UniversalTagPicker } from "@/components/universal-tag-picker";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
+import { GoalRelationshipsRow } from "@/components/goal-relationships-row";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
@@ -328,6 +329,8 @@ export function GoalInlineDetails({ goalId }: GoalInlineDetailsProps) {
       >
         <span className="text-muted-foreground">{goal.activities.length || "None"}</span>
       </ProfileTreeRow>
+
+      <GoalRelationshipsRow goalId={goalId} />
 
       <ProfileTreeRow
         label="Projects"

@@ -34,9 +34,12 @@ const PREDICATE_BY_TARGET: Record<GoalRelationshipTargetType, string> = {
 };
 
 const GOAL_RELATIONSHIP_PREDICATES = new Set<string>([GOAL_PERSON_PREDICATE, GOAL_MEETING_PREDICATE]);
+const GOAL_RELATIONSHIP_PREDICATE_LIST: readonly string[] = [GOAL_PERSON_PREDICATE, GOAL_MEETING_PREDICATE];
 
 /** Bounded page walk; a single goal or target realistically has far fewer links. */
 const MAX_LINK_PAGES = 20;
+/** Hard cap on relationships materialized for a single graph projection pass. */
+const PROJECTION_RELATIONSHIP_CAP = 2_000;
 
 function goalAddress(goalId: string): string {
   return `@goal:${goalId}`;
@@ -93,7 +96,7 @@ export class GoalRelationshipService {
     const collected: AddressLink[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_LINK_PAGES; page++) {
-      const { items, nextCursor } = await listAddressLinks(principal, { sourceAddress: source, lifecycle: "active", cursor });
+      const { items, nextCursor } = await listAddressLinks(principal, { sourceAddress: source, predicates: GOAL_RELATIONSHIP_PREDICATE_LIST, lifecycle: "active", cursor });
       collected.push(...items);
       if (!nextCursor) break;
       cursor = nextCursor;
@@ -165,7 +168,7 @@ export class GoalRelationshipService {
     const collected: AddressLink[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < MAX_LINK_PAGES; page++) {
-      const { items, nextCursor } = await listAddressLinks(principal, { targetAddress: target, lifecycle: "active", cursor });
+      const { items, nextCursor } = await listAddressLinks(principal, { targetAddress: target, predicates: [predicate], lifecycle: "active", cursor });
       collected.push(...items);
       if (!nextCursor) break;
       cursor = nextCursor;
@@ -174,6 +177,29 @@ export class GoalRelationshipService {
       .filter((link) => link.predicate === predicate)
       .map(toRelationship)
       .filter((rel): rel is GoalRelationship => rel !== null);
+  }
+
+  /**
+   * Bounded scan of every active goal-relationship link for the principal.
+   * Used by the graph projection to emit explicit goal↔person/meeting edges in
+   * a single pass. Predicate-filtered at the DB layer and hard-capped so a large
+   * ledger can never unbound the foreground graph read.
+   */
+  async listActiveForProjection(cap = PROJECTION_RELATIONSHIP_CAP): Promise<GoalRelationship[]> {
+    const principal = requireCurrentUserPrincipal();
+    const collected: GoalRelationship[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_LINK_PAGES; page++) {
+      const { items, nextCursor } = await listAddressLinks(principal, { predicates: GOAL_RELATIONSHIP_PREDICATE_LIST, lifecycle: "active", cursor });
+      for (const link of items) {
+        const rel = toRelationship(link);
+        if (rel) collected.push(rel);
+        if (collected.length >= cap) return collected;
+      }
+      if (!nextCursor) break;
+      cursor = nextCursor;
+    }
+    return collected;
   }
 }
 
