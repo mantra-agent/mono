@@ -4577,10 +4577,13 @@ export async function runSchemaBootstrap(
       CREATE INDEX IF NOT EXISTS idx_compaction_operation_lease
       ON compaction_operations(status, lease_expires_at)
     `);
+    // Upgrade partial unique → full unique. Concurrent archives without a key used
+    // to bypass the partial predicate and insert duplicates; tool-output now requires
+    // operation_key at the archive boundary, and the index must match that invariant.
+    await pool.query(`DROP INDEX IF EXISTS uk_indexed_content_operation`);
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS uk_indexed_content_operation
       ON indexed_content(owner_user_id, principal_account_id, source_type, operation_key)
-      WHERE operation_key IS NOT NULL
     `);
     const { reconcileAbandonedCompactions } = await import(
       "./compaction-operation-storage"

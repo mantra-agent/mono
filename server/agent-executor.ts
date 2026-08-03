@@ -2034,7 +2034,9 @@ export class AgentExecutor extends EventEmitter {
         boundary: "tool_result_reinjection",
         messageTokens: estimateTotalTokens(messages) + ctx.currentCycleToolResultTokens,
         toolResultTokens: ctx.currentCycleToolResultTokens,
-        budgetTokens: getContextRequestBudget(ctx.modelString, options.tools).operatingInputLimit,
+        // getContextRequestBudget expects a numeric context window, not a model id.
+        // Passing modelString coerced through boundedTokenCount and permanently emitted budgetTokens:0.
+        budgetTokens: getContextRequestBudget(getContextWindow(ctx.modelString)).operatingInputLimit,
         toolCallId: tc.id,
         toolName: tc.name,
       });

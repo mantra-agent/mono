@@ -4371,12 +4371,23 @@ export const chatFileStorage: IChatFileStorage = {
           const toolName =
             typeof rawCall.toolName === "string" ? rawCall.toolName : "unknown";
           const action = extractToolAction(toolName, rawCall.arguments);
+          const toolCallId =
+            typeof rawCall.toolCallId === "string" && rawCall.toolCallId.trim()
+              ? rawCall.toolCallId.trim()
+              : typeof rawCall.id === "string" && rawCall.id.trim()
+                ? rawCall.id.trim()
+                : undefined;
           const serialized =
             typeof result === "string" ? result : JSON.stringify(result);
           const repairedResult = await maybeOffloadToolOutput({
             toolName,
             action,
             sessionId,
+            toolCallId,
+            // Exact-once key — same discriminant as live projection paths.
+            operationKey: toolCallId
+              ? `tool-output:${sessionId}:${toolCallId}`
+              : undefined,
             result: serialized,
             error: rawCall.error === true,
             policy: { maxInlineTokens, maxInlineChars: maxInlineTokens * 4 },

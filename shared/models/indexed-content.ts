@@ -21,14 +21,16 @@ export const indexedContent = pgTable("indexed_content", {
   index("idx_indexed_content_owner").on(table.ownerUserId),
   index("idx_indexed_content_principal_account").on(table.principalAccountId),
   index("idx_indexed_content_vault").on(table.vaultId),
-  uniqueIndex("uk_indexed_content_operation")
-    .on(
-      table.ownerUserId,
-      table.principalAccountId,
-      table.sourceType,
-      table.operationKey,
-    )
-    .where(sql`${table.operationKey} IS NOT NULL`),
+  // Full unique (not partial): tool-output archives always carry operation_key at
+  // the ensureToolOutputArchived boundary, so null-key duplicates are unrepresentable
+  // for that path. Other source types that omit the key still allow multiple NULLs
+  // under standard Postgres NULLS DISTINCT semantics.
+  uniqueIndex("uk_indexed_content_operation").on(
+    table.ownerUserId,
+    table.principalAccountId,
+    table.sourceType,
+    table.operationKey,
+  ),
 ]);
 
 export interface IndexSection {
