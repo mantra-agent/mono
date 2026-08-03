@@ -1080,6 +1080,37 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
         }
       }
 
+      // Add Grok Subscription models if account is connected.
+      // Same system-principal visibility path as OpenAI subscription so ownership
+      // predicates do not hide the configured subscription from model setup UI.
+      try {
+        const { getAccount } = await import("../connected-accounts");
+        const grokSubAccount = await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), () =>
+          getAccount("grok-subscription-primary")
+        );
+        if (grokSubAccount) {
+          const grokSubModels = modelRegistry.getSubscriptionModels()
+            .filter(({ info }) => info.provider === "grok-subscription");
+          if (grokSubModels.length > 0 && !providers.some(p => p.id === "grok-subscription")) {
+            providers.push({
+              id: "grok-subscription",
+              name: "Grok Subscription",
+              models: grokSubModels.map(({ info }) => ({
+                id: info.id,
+                name: info.name,
+                cost: info.cost,
+                contextWindow: info.contextWindow,
+                maxTokens: info.maxOutputTokens,
+                reasoning: info.reasoning,
+                thinkingLevel: info.thinking.level,
+                thinkingDescription: info.thinking.description,
+                supportsReasoningEffort: info.thinking.selectableEffort === true,
+              })),
+            });
+          }
+        }
+      } catch { /* grok subscription account not available */ }
+
       const currentModel = config?.agents?.defaults?.model?.primary
         || (typeof config?.agents?.defaults?.model === "string" ? config.agents.defaults.model : null)
         || "unknown";
