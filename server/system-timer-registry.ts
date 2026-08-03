@@ -471,6 +471,22 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     enabled: true,
     timezone: "__USER_TZ__",
   },
+  {
+    legacyMatch: (t) => t.type === "skill" && t.skillId === "goal-manager",
+
+    systemKey: "goal-manager",
+    name: "Goal Manager",
+    description:
+      "Nightly goal-graph stewardship at 4am — repairs high-confidence hierarchy and relationship gaps, prunes dangling links, flags weak or stale goals, and appends a deterministic run log. Runs after the sleep cycle refreshes memory and provenance.",
+    type: "skill",
+    skillId: "goal-manager",
+    prompt: "",
+    schedules: [
+      { id: "sys-skill-goal-manager-1", frequency: "daily", timeOfDay: "04:00" },
+    ],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
 ];
 
 const TIMER_NAME_RENAMES: Record<string, string> = {

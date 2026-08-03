@@ -373,6 +373,17 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
       await dailyBriefSurfacePostRunVerify(sessionId, toolCalls);
     },
   },
+  "goal-manager": {
+    skillId: "goal-manager",
+    label: "Goal Manager",
+    callType: "full",
+    activity: ACTIVITY_WORK,
+    temperature: 0.3,
+    timeoutMs: 15 * 60 * 1000,
+    sessionType: "autonomous",
+    // Nightly graph maintenance is non-urgent and must yield to foreground work.
+    admissionTier: "background",
+  },
 };
 
 export interface AutonomousRunResult {
