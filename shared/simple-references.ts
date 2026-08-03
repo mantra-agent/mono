@@ -12,6 +12,7 @@ export function sourceRefToReferenceRef(sourceRef: SimpleSourceRef): ReferenceRe
     case "decision":
     case "person":
     case "priority":
+    case "build":
       return createReferenceRef({ type: sourceRef.type, id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href } });
     case "calendar":
     case "meeting":

@@ -39,6 +39,7 @@ export const SIMPLE_SOURCE_TYPES = [
   "artifact",
   "email",
   "news",
+  "build",
 ] as const;
 
 export type SimpleSourceType = typeof SIMPLE_SOURCE_TYPES[number];
