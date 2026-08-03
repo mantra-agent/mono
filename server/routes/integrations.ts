@@ -961,7 +961,7 @@ export async function registerIntegrationsRoutes(app: Express) {
   const GROK_SUBSCRIPTION_REDIRECT_URI = "http://127.0.0.1:56121/callback";
   const GROK_SUBSCRIPTION_ACCOUNT_ID = "grok-subscription-primary";
 
-  app.get("/api/grok-subscription/status", async (_req, res) => {
+  app.get("/api/grok-subscription/status", async (req, res) => {
     try {
       // System principal: this is a system-wide integration check, not per-user.
       const result = await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), async () => {
@@ -969,6 +969,26 @@ export async function registerIntegrationsRoutes(app: Express) {
         const account = await getAccount(GROK_SUBSCRIPTION_ACCOUNT_ID);
         if (!account) {
           return { connected: false as const };
+        }
+        // Heal rows created under a system principal (null owner). Routing still
+        // works via system principal, but user-scoped tools cannot see orphans.
+        const owner = req.principal;
+        if (
+          owner?.actorType === "user" &&
+          owner.userId &&
+          !account.ownerUserId
+        ) {
+          const { connectedAccounts } = await import("@shared/schema");
+          const { eq } = await import("drizzle-orm");
+          const { db } = await import("../db");
+          await db
+            .update(connectedAccounts)
+            .set({
+              ownerUserId: owner.userId,
+              principalAccountId: owner.accountId ?? account.principalAccountId,
+              updatedAt: new Date(),
+            })
+            .where(eq(connectedAccounts.accountId, GROK_SUBSCRIPTION_ACCOUNT_ID));
         }
         const tokens = await getAccountTokens(GROK_SUBSCRIPTION_ACCOUNT_ID);
         return {
@@ -1085,8 +1105,15 @@ export async function registerIntegrationsRoutes(app: Express) {
         email,
       };
 
+      // Stamp ownership from the connecting user so user-scoped tools (system.accounts)
+      // and vault-filtered reads can see the row. Routing still uses a system principal
+      // and therefore continues to see the account after this write.
+      const ownerPrincipal = req.principal;
+      if (!ownerPrincipal || ownerPrincipal.actorType !== "user") {
+        return res.status(401).json({ error: "Authenticated user required to connect Grok" });
+      }
       const { createAccount } = await import("../connected-accounts");
-      await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), () => createAccount({
+      await runWithPrincipal(ownerPrincipal, () => createAccount({
         accountId: GROK_SUBSCRIPTION_ACCOUNT_ID,
         provider: "grok-subscription",
         email,
