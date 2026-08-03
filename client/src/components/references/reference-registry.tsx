@@ -31,6 +31,7 @@ import {
   Scale,
   Workflow,
   Target,
+  Tags,
   User,
   type LucideIcon,
 } from "lucide-react";
@@ -73,6 +74,11 @@ const registry: Record<string, RegistryEntry> = {
     Icon: User,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id,
     href: ref => metadataString(ref, "href") || `/people/${encodeURIComponent(ref.id)}`,
+  },
+  tag: {
+    Icon: Tags,
+    fallbackLabel: ref => metadataString(ref, "label") || humanizeSlug(ref.id),
+    href: ref => metadataString(ref, "href") || `/tags/${encodeURIComponent(ref.id)}`,
   },
   interaction: {
     Icon: MessageCircle,

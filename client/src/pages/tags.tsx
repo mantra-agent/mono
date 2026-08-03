@@ -1,323 +1,259 @@
-import { useState, useMemo, useCallback } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Card } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ArrowLeft, Plus, Search, Tags as TagsIcon } from "lucide-react";
+import { useLocation, useRoute } from "wouter";
+import type { TagIndex, TagSearchResult, TagWithUsage } from "@shared/schema";
+import { createReferenceRef, isKnownReferenceType } from "@shared/references";
+import { ReferenceChip } from "@/components/references/reference-chip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useToast } from "@/hooks/use-toast";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Tag, Search, ArrowLeft, Merge, Trash2, Loader2, Link2, ExternalLink } from "lucide-react";
-import type { Tag as TagModel, CoOccurrenceEdge, TagUsageEntry } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
-interface TagsData {
-  tags: TagModel[];
-  coOccurrences: CoOccurrenceEdge[];
+function invalidateTagQueries() {
+  queryClient.invalidateQueries({
+    predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/tags"),
+  });
 }
 
-interface DuplicateCandidate {
-  a: string;
-  b: string;
-  similarity: number;
-  reason: string;
-}
-
-function TagLens({
-  tag,
-  onClose,
-  allTags,
-  coOccurrences,
-}: {
-  tag: TagModel;
-  onClose: () => void;
-  allTags: TagModel[];
-  coOccurrences: CoOccurrenceEdge[];
-}) {
-  const { toast } = useToast();
-
-  const { data: detail } = useQuery<TagModel & { usages: TagUsageEntry[] }>({
-    queryKey: ["/api/tags", tag.slug],
+function TagDetail({ slug, embedded = false, onBack }: { slug: string; embedded?: boolean; onBack: () => void }) {
+  const [, setLocation] = useLocation();
+  const { data: detail, isLoading, isError } = useQuery<TagWithUsage>({
+    queryKey: [`/api/tags/${encodeURIComponent(slug)}`],
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("DELETE", `/api/tags/${tag.slug}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tags"] });
-      toast({ title: "Tag deleted" });
-      onClose();
-    },
-  });
+  useEffect(() => {
+    if (!embedded && detail && detail.slug !== slug) {
+      setLocation(`/tags/${encodeURIComponent(detail.slug)}`, { replace: true });
+    }
+  }, [detail, embedded, setLocation, slug]);
 
-  const related = useMemo(() => {
-    return coOccurrences
-      .filter((e) => e.source === tag.slug || e.target === tag.slug)
-      .map((e) => ({
-        slug: e.source === tag.slug ? e.target : e.source,
-        weight: e.weight,
-      }))
-      .sort((a, b) => b.weight - a.weight)
-      .slice(0, 12);
-  }, [coOccurrences, tag.slug]);
+  if (isLoading) {
+    return <div className="py-16 text-center text-sm text-muted-foreground">Loading tag…</div>;
+  }
 
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  if (isError || !detail) {
+    return (
+      <div className="py-16 text-center">
+        <p className="font-medium">Tag not found</p>
+        <p className="mt-1 text-sm text-muted-foreground">The tag may have been merged or removed.</p>
+        <Button variant="outline" className="mt-4" onClick={onBack}>Back to Tags</Button>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={onClose} data-testid="button-close-lens">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <Tag className="h-4 w-4 text-muted-foreground" />
-        <span className="text-lg font-medium">{tag.label}</span>
-        <Badge variant="outline" className="no-default-hover-elevate text-xs ml-auto">
-          {tag.usageCount} uses
-        </Badge>
+    <div className="space-y-6">
+      <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2 gap-2">
+        <ArrowLeft className="h-4 w-4" />
+        All Tags
+      </Button>
+
+      <div className="flex items-start gap-4">
+        <span className="mt-1 h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: detail.color }} />
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight">{detail.label}</h1>
+          <p className="mt-1 font-mono text-sm text-muted-foreground">@tag:{detail.slug}</p>
+          {detail.description && <p className="mt-3 max-w-2xl text-sm text-muted-foreground">{detail.description}</p>}
+        </div>
       </div>
 
-      {tag.description && (
-        <p className="text-sm text-muted-foreground">{tag.description}</p>
-      )}
-
-      {tag.aliases.length > 0 && (
+      {detail.aliases.length > 0 && (
         <div>
-          <span className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">Aliases</span>
-          <div className="flex flex-wrap gap-1">
-            {tag.aliases.map((a) => (
-              <Badge key={a} variant="outline" className="text-xs no-default-hover-elevate">{a}</Badge>
-            ))}
+          <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Also known as</p>
+          <div className="flex flex-wrap gap-2">
+            {detail.aliases.map((alias) => <Badge key={alias} variant="secondary">{alias}</Badge>)}
           </div>
         </div>
       )}
 
-      {related.length > 0 && (
-        <div>
-          <span className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">Related Tags</span>
-          <div className="flex flex-wrap gap-1">
-            {related.map((r) => {
-              const t = allTags.find((t) => t.slug === r.slug);
+      <Card className="p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="font-medium">Tagged items</h2>
+            <p className="text-sm text-muted-foreground">
+              {detail.usages.length} {detail.usages.length === 1 ? "item uses" : "items use"} this tag
+            </p>
+          </div>
+        </div>
+        {detail.usages.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Nothing uses this tag yet.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {detail.usages.map((usage) => {
+              if (!isKnownReferenceType(usage.entityType)) {
+                return <Badge key={`${usage.entityType}:${usage.entityId}`} variant="outline">{usage.entityTitle}</Badge>;
+              }
               return (
-                <Badge key={r.slug} variant="outline" className="text-xs gap-1" data-testid={`related-${r.slug}`}>
-                  <Link2 className="h-2.5 w-2.5" />
-                  {t?.label ?? r.slug}
-                  <span className="text-xs text-muted-foreground">{r.weight}</span>
-                </Badge>
+                <ReferenceChip
+                  key={`${usage.entityType}:${usage.entityId}`}
+                  refData={createReferenceRef(usage.entityType, usage.entityId, { label: usage.entityTitle })}
+                />
               );
             })}
           </div>
-        </div>
-      )}
-
-      {detail?.usages && detail.usages.length > 0 && (
-        <div>
-          <span className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">Used By</span>
-          <div className="space-y-1">
-            {detail.usages.map((u, i) => (
-              <div key={`${u.entityType}-${u.entityId}-${i}`} className="flex items-center gap-2 text-sm">
-                <Badge variant="outline" className="text-xs no-default-hover-elevate shrink-0">{u.entityType}</Badge>
-                <span className="truncate">{u.entityTitle || u.entityId}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="pt-2 border-t">
-        <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-destructive"
-            onClick={() => setDeleteOpen(true)}
-            data-testid="button-delete-tag"
-          >
-            <Trash2 className="h-3.5 w-3.5 mr-1" />
-            Delete tag
-          </Button>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete tag "{tag.label}"?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This removes the tag from the registry. Existing entities that reference it will keep their tag strings but lose the registry entry.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <Button
-                variant="destructive"
-                onClick={() => deleteMutation.mutate()}
-                disabled={deleteMutation.isPending}
-                data-testid="button-confirm-delete-tag"
-              >
-                {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Delete"}
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </div>
+        )}
+      </Card>
     </div>
   );
 }
 
-function MergeSuggestions({ duplicates, allTags }: { duplicates: DuplicateCandidate[]; allTags: TagModel[] }) {
-  const { toast } = useToast();
+function TagIndexSurface({ embedded = false }: { embedded?: boolean }) {
+  const [, setLocation] = useLocation();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [newTagLabel, setNewTagLabel] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const normalizedSearch = searchQuery.trim();
+  const searchUrl = `/api/tags/search?q=${encodeURIComponent(normalizedSearch)}&limit=50`;
 
-  const mergeMutation = useMutation({
-    mutationFn: async ({ sourceSlug, targetSlug }: { sourceSlug: string; targetSlug: string }) => {
-      const res = await apiRequest("POST", "/api/tags/merge", { sourceSlug, targetSlug });
-      return res.json();
+  const { data: index, isLoading } = useQuery<TagIndex>({ queryKey: ["/api/tags"] });
+  const { data: searchResults = [] } = useQuery<TagSearchResult[]>({
+    queryKey: [searchUrl],
+    enabled: normalizedSearch.length > 0,
+    staleTime: 30_000,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (label: string) => {
+      const response = await apiRequest("POST", "/api/tags", { label });
+      return response.json() as Promise<{ slug: string }>;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tags"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/tags/duplicates"] });
-      toast({ title: "Tags merged" });
+    onSuccess: (tag) => {
+      invalidateTagQueries();
+      setNewTagLabel("");
+      setShowCreate(false);
+      if (!embedded) setLocation(`/tags/${encodeURIComponent(tag.slug)}`);
     },
   });
 
-  if (duplicates.length === 0) return null;
+  const indexTags = useMemo<TagSearchResult[]>(() => {
+    if (!index) return [];
+    return Object.values(index.tags).map((tag) => ({
+      ...tag,
+      usageCount: index.usages[tag.slug]?.length ?? 0,
+    }));
+  }, [index]);
+
+  const tags = normalizedSearch ? searchResults : indexTags;
+  const totalAssignments = index
+    ? Object.values(index.usages).reduce((total, usages) => total + usages.length, 0)
+    : 0;
+
+  const openTag = (slug: string) => setLocation(`/tags/${encodeURIComponent(slug)}`);
+
+  if (isLoading) {
+    return <div className="py-16 text-center text-sm text-muted-foreground">Loading tags…</div>;
+  }
 
   return (
-    <Card className="p-4 border-card-border bg-card shadow-sm">
-      <div className="flex items-center gap-2 mb-3">
-        <Merge className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium">Merge Suggestions</span>
+    <div className="space-y-6">
+      {!embedded && (
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Tags</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Find, reuse, and consolidate the language connecting your work.</p>
+          </div>
+          <Button onClick={() => setShowCreate(true)} className="gap-2">
+            <Plus className="h-4 w-4" /> New Tag
+          </Button>
+        </div>
+      )}
+
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="Search labels, slugs, or aliases…"
+          className="pl-9"
+          data-testid="input-tag-search"
+        />
       </div>
-      <div className="space-y-2">
-        {duplicates.map((d) => {
-          const tagA = allTags.find((t) => t.slug === d.a);
-          const tagB = allTags.find((t) => t.slug === d.b);
-          return (
-            <div key={`${d.a}-${d.b}`} className="flex items-center gap-2 text-sm flex-wrap">
-              <Badge variant="outline" className="text-xs">{tagA?.label ?? d.a}</Badge>
-              <span className="text-muted-foreground text-xs">{d.reason}</span>
-              <Badge variant="outline" className="text-xs">{tagB?.label ?? d.b}</Badge>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto"
-                onClick={() => mergeMutation.mutate({ sourceSlug: d.a, targetSlug: d.b })}
-                disabled={mergeMutation.isPending}
-                data-testid={`button-merge-${d.a}-${d.b}`}
-              >
-                <Merge className="h-3 w-3 mr-1" />
-                Merge
-              </Button>
-            </div>
-          );
-        })}
+
+      {showCreate && (
+        <Card className="flex items-center gap-2 p-4">
+          <Input
+            autoFocus
+            value={newTagLabel}
+            onChange={(event) => setNewTagLabel(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && newTagLabel.trim()) createMutation.mutate(newTagLabel.trim());
+              if (event.key === "Escape") setShowCreate(false);
+            }}
+            placeholder="Tag name"
+            data-testid="input-new-tag"
+          />
+          <Button
+            disabled={!newTagLabel.trim() || createMutation.isPending}
+            onClick={() => createMutation.mutate(newTagLabel.trim())}
+          >
+            Create
+          </Button>
+          <Button variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
+        </Card>
+      )}
+
+      <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+        <span>{indexTags.length} tags</span>
+        <span>·</span>
+        <span>{totalAssignments} assignments</span>
+        {normalizedSearch && <><span>·</span><span>{tags.length} matches</span></>}
       </div>
-    </Card>
+
+      {tags.length === 0 ? (
+        <Card className="py-16 text-center">
+          <TagsIcon className="mx-auto h-8 w-8 text-muted-foreground/50" />
+          <p className="mt-3 font-medium">{normalizedSearch ? "No matching tags" : "No tags yet"}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {normalizedSearch ? "Try a label, slug, or alias." : "Create one to start connecting your work."}
+          </p>
+        </Card>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {tags.map((tag) => (
+            <Card
+              key={tag.slug}
+              className="cursor-pointer p-4 transition-colors hover:bg-muted/40"
+              onClick={() => openTag(tag.slug)}
+              data-testid={`tag-card-${tag.slug}`}
+            >
+              <div className="flex items-start gap-3">
+                <span className="mt-1 h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: tag.color }} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate font-medium">{tag.label}</p>
+                    <Badge variant="secondary">{tag.usageCount}</Badge>
+                  </div>
+                  <p className="mt-1 truncate font-mono text-xs text-muted-foreground">@tag:{tag.slug}</p>
+                  {tag.description && <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{tag.description}</p>}
+                  {tag.aliases.length > 0 && (
+                    <p className="mt-2 truncate text-xs text-muted-foreground">Aliases: {tag.aliases.join(", ")}</p>
+                  )}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+
+    </div>
   );
 }
 
-export default function TagsPage({ embedded }: { embedded?: boolean }) {
-  const [search, setSearch] = useState("");
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
-  const { toast } = useToast();
-
-  const { data, isLoading } = useQuery<TagsData>({
-    queryKey: ["/api/tags"],
-  });
-
-  const { data: dupsData } = useQuery<{ duplicates: DuplicateCandidate[] }>({
-    queryKey: ["/api/tags/duplicates"],
-  });
-
-  const tags = data?.tags ?? [];
-  const coOccurrences = data?.coOccurrences ?? [];
-  const duplicates = dupsData?.duplicates ?? [];
-
-  const filteredTags = useMemo(() => {
-    if (!search.trim()) return tags;
-    const q = search.toLowerCase();
-    return tags.filter(
-      (t) =>
-        t.label.includes(q) ||
-        t.slug.includes(q) ||
-        t.aliases.some((a) => a.includes(q))
-    );
-  }, [tags, search]);
-
-  const selectedTag = tags.find((t) => t.slug === selectedSlug) ?? null;
-
-  if (isLoading) {
-    return (
-      <div className={cn("space-y-3", embedded ? "p-4 bg-background" : "p-4")}>
-        <Skeleton className="h-8 w-64" />
-        <div className="grid grid-cols-2 @sm:grid-cols-3 @md:grid-cols-4 gap-2">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <Skeleton key={i} className="h-8" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (selectedTag) {
-    return (
-      <div className={cn("p-4", embedded ? "max-w-none bg-background" : "max-w-2xl")}>
-        <TagLens
-          tag={selectedTag}
-          onClose={() => setSelectedSlug(null)}
-          allTags={tags}
-          coOccurrences={coOccurrences}
-        />
-      </div>
-    );
-  }
+export default function TagsPage({ embedded = false }: { embedded?: boolean }) {
+  const [, params] = useRoute("/tags/:slug");
+  const [, setLocation] = useLocation();
+  const slug = params?.slug ? decodeURIComponent(params.slug) : null;
 
   return (
-    <div className={cn("flex flex-col h-full overflow-hidden", embedded && "bg-background text-foreground")}>
-      <div className="p-4 space-y-4 overflow-y-auto flex-1">
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search tags..."
-              className="pl-8 text-sm"
-              data-testid="input-tag-search"
-            />
-          </div>
-          <span className="text-xs text-muted-foreground">{tags.length} tags</span>
-        </div>
-
-        <MergeSuggestions duplicates={duplicates} allTags={tags} />
-
-        {filteredTags.length === 0 ? (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground">
-            {searchQuery ? "No matching tags." : "No tags yet."}
-          </div>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {filteredTags.map((tag) => (
-              <Badge
-                key={tag.slug}
-                variant="secondary"
-                className="gap-1.5 cursor-pointer text-xs py-1 px-2.5 border border-card-border bg-card hover:bg-accent hover:text-accent-foreground transition-colors"
-                onClick={() => setSelectedSlug(tag.slug)}
-                data-testid={`tag-item-${tag.slug}`}
-              >
-                <Tag className="h-3 w-3" />
-                {tag.label}
-                <span className="text-xs text-muted-foreground">{tag.usageCount}</span>
-              </Badge>
-            ))}
-          </div>
-        )}
-      </div>
+    <div className={embedded ? "" : "mx-auto w-full max-w-5xl px-6 py-8"} data-testid="tags-page">
+      {slug ? (
+        <TagDetail slug={slug} embedded={embedded} onBack={() => setLocation("/tags")} />
+      ) : (
+        <TagIndexSurface embedded={embedded} />
+      )}
     </div>
   );
 }

@@ -25,6 +25,7 @@ export type ReferenceTrigger = {
 export const REFERENCE_TYPE_LABELS: Record<string, string> = {
   page: "Page",
   person: "Person",
+  tag: "Tag",
   company: "Company",
   goal: "Goal",
   task: "Task",
@@ -70,6 +71,13 @@ interface CompanyResult {
   name?: string;
   industry?: string;
   location?: string;
+}
+
+interface TagResult {
+  slug: string;
+  label: string;
+  description?: string;
+  usageCount: number;
 }
 
 interface GoalResult {
@@ -188,7 +196,7 @@ async function loadReferenceSuggestions(
 
   logger.debug("trigger", { query });
 
-  const [library, people, companies, goals, tasks, projects, wellnessActivities] =
+  const [library, people, tags, companies, goals, tasks, projects, wellnessActivities] =
     await Promise.all([
       query
         ? fetchJson<LibraryPageResult[]>(`/api/info/library?search=${encoded}`, signal)
@@ -196,6 +204,7 @@ async function loadReferenceSuggestions(
       query
         ? fetchJson<{ people?: PersonResult[] }>(`/api/people/search?q=${encoded}`, signal)
         : Promise.resolve(null),
+      fetchJson<TagResult[]>(`/api/tags/search?q=${encoded}&limit=${MAX_RESULTS}`, signal),
       fetchJson<{ companies?: CompanyResult[] }>(`/api/companies${query ? `?q=${encoded}` : ""}`, signal),
       fetchJson<{ goals?: GoalResult[] }>(
         `/api/life-goals${query ? `?search=${encoded}` : ""}`,
@@ -226,6 +235,15 @@ async function loadReferenceSuggestions(
       label: String(person.name || person.id),
       description:
         [person.role, person.company].filter(Boolean).join(" at ") || person.relation || "Person",
+    });
+  }
+
+  for (const tag of tags || []) {
+    suggestions.push({
+      type: "tag",
+      id: tag.slug,
+      label: tag.label,
+      description: tag.description || `Tag · ${tag.usageCount} ${tag.usageCount === 1 ? "usage" : "usages"}`,
     });
   }
 
