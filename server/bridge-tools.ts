@@ -16377,6 +16377,9 @@ function preservesEmptyString(toolName: string, args: Record<string, any>, key: 
     || (toolName === "library" && ["edit", "edit_library_page"].includes(action));
 }
 
+/** Audit-trail only. Models omit this under volume; fill at the boundary so a docs field never blocks execution. */
+const DEFAULT_TOOL_REASONING = "No model reasoning provided.";
+
 function normalizeToolArgs(toolName: string, args: Record<string, any>): Record<string, any> {
   const schemas = getToolSchemas();
   const schema = schemas.find(s => s.name === toolName);
@@ -16393,6 +16396,16 @@ function normalizeToolArgs(toolName: string, args: Record<string, any>): Record<
     }
     normalized[key] = value;
   }
+
+  // Universal reasoning is schema-required for audit, not a load-bearing input.
+  // Encode the invariant here: missing/blank reasoning never rejects the call.
+  if (required.has("reasoning")) {
+    const reasoning = normalized.reasoning;
+    if (typeof reasoning !== "string" || reasoning.trim().length === 0) {
+      normalized.reasoning = DEFAULT_TOOL_REASONING;
+    }
+  }
+
   return normalized;
 }
 
