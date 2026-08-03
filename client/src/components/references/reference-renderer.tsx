@@ -19,12 +19,15 @@ export function ReferenceRenderer({
   className,
   IconOverride,
   iconClassName,
+  wrapLabel = false,
 }: {
   refValue: ReferenceRef;
   surface?: ReferenceSurface;
   className?: string;
   IconOverride?: LucideIcon;
   iconClassName?: string;
+  /** Allow multi-line labels for tree/row titles. */
+  wrapLabel?: boolean;
 }) {
   return (
     <ReferenceChip
@@ -32,6 +35,7 @@ export function ReferenceRenderer({
       className={[SURFACE_CLASSES[surface], className].filter(Boolean).join(" ")}
       IconOverride={IconOverride}
       iconClassName={iconClassName}
+      wrapLabel={wrapLabel}
     />
   );
 }

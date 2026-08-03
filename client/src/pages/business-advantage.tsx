@@ -1,298 +1,570 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  CalendarDays,
   CheckCircle2,
   Circle,
-  Clock3,
   Gauge,
   Loader2,
   RefreshCw,
   ShieldCheck,
   Target,
 } from "lucide-react";
-import { HierarchySectionHeader, HIERARCHY_TREE_STACK_CLASS } from "@/components/hierarchy-section-header";
+import {
+  HierarchySectionHeader,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
+import {
+  PROFILE_DESCRIPTION_FRAME_CLASS,
+  PROFILE_DESCRIPTION_TEXT_CLASS,
+} from "@/components/profile-description-style";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { Button } from "@/components/ui/button";
-import { usePageHeader } from "@/hooks/use-page-header";
-import { MANTRA_Q3_2026_ADVANTAGE_CYCLE } from "@/lib/advantage-dashboard";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { createReferenceRef } from "@shared/references";
+import { apiRequest } from "@/lib/queryClient";
+import {
+  MANTRA_Q3_2026_ADVANTAGE_CYCLE,
+  type AdvantageOperatingCycle,
+} from "@/lib/advantage-dashboard";
+import type { Goal, GoalIndexEntry } from "@shared/schema";
 import type {
   AdvantageGoalProjection,
-  AdvantageHealthDomainDefinition,
-  AdvantageObjectiveDefinition,
   ScorecardMeasureDefinition,
   ScorecardMeasureState,
 } from "@shared/models/advantage-dashboard";
-import type { GoalStatus } from "@shared/models/goals";
+import { createReferenceRef } from "@shared/references";
 
-interface GoalListResponse {
-  goals: AdvantageGoalProjection[];
+function extractGoalRows(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === "object") {
+    const record = payload as { goals?: unknown; nodes?: unknown };
+    if (Array.isArray(record.goals)) return record.goals;
+    if (Array.isArray(record.nodes)) return record.nodes;
+  }
+  return [];
 }
 
-interface ObjectiveTreeRowProps {
-  definition: AdvantageObjectiveDefinition;
-  goal?: AdvantageGoalProjection;
+function asGoalList(payload: unknown): AdvantageGoalProjection[] {
+  return extractGoalRows(payload)
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const row = item as Partial<GoalIndexEntry> & Partial<Goal> & { id?: unknown };
+      if (typeof row.id !== "string" || typeof row.shortName !== "string") return null;
+      return {
+        id: row.id,
+        shortName: row.shortName,
+        description: typeof row.description === "string" ? row.description : undefined,
+        status: typeof row.status === "string" ? row.status : undefined,
+        horizon: typeof row.horizon === "string" ? row.horizon : undefined,
+        owner: typeof row.owner === "string" ? row.owner : undefined,
+        parentId:
+          typeof row.parentId === "string" || row.parentId === null
+            ? row.parentId
+            : undefined,
+      } satisfies AdvantageGoalProjection;
+    })
+    .filter((row): row is AdvantageGoalProjection => Boolean(row));
 }
 
-const goalStatusLabels: Record<GoalStatus, string> = {
-  active: "Active",
-  on_track: "On track",
-  at_risk: "At risk",
-  achieved: "Achieved",
-  blocked: "Blocked",
-  dormant: "Dormant",
-};
-
-const goalStatusClasses: Record<GoalStatus, string> = {
-  active: "text-foreground",
-  on_track: "text-success",
-  at_risk: "text-warning",
-  achieved: "text-success",
-  blocked: "text-error",
-  dormant: "text-muted-foreground",
-};
-
-function daysRemaining(endDate: string): number {
-  const today = new Date();
-  const end = new Date(`${endDate}T23:59:59`);
-  return Math.max(0, Math.ceil((end.getTime() - today.getTime()) / 86_400_000));
+function asFullGoalMap(payload: unknown): Map<string, AdvantageGoalProjection> {
+  const map = new Map<string, AdvantageGoalProjection>();
+  for (const goal of asGoalList(payload)) {
+    map.set(goal.id, goal);
+  }
+  return map;
 }
 
-function goalReference(goal: AdvantageGoalProjection) {
-  return createReferenceRef({
-    type: "goal",
-    id: goal.id,
-    metadata: { label: goal.shortName },
-  });
-}
-
-function sourceReference(pageId: string) {
-  return createReferenceRef({
-    type: "page",
-    id: pageId,
-    metadata: { label: "Operating model" },
-  });
-}
-
-function statusIcon(status: GoalStatus) {
-  if (status === "achieved" || status === "on_track") return CheckCircle2;
-  if (status === "at_risk" || status === "blocked") return AlertTriangle;
-  return Circle;
-}
-
-function MeasureState({ state }: { state: ScorecardMeasureState }) {
+function measureTone(state: ScorecardMeasureState): {
+  label: string;
+  className: string;
+  Icon: typeof CheckCircle2;
+} {
   switch (state.kind) {
-    case "measured":
-      return <span className="font-medium text-foreground">{state.value.toLocaleString()} {state.unit}</span>;
-    case "stale":
-      return <span className="font-medium text-warning">Stale · {state.value.toLocaleString()} {state.unit}</span>;
-    case "unavailable":
-      return <span className="font-medium text-muted-foreground">Unavailable</span>;
-    case "error":
-      return <span className="font-medium text-error">Error</span>;
+    case "on_track":
+      return {
+        label: "On track",
+        className: "text-emerald-300",
+        Icon: CheckCircle2,
+      };
+    case "at_risk":
+      return {
+        label: "At risk",
+        className: "text-amber-300",
+        Icon: AlertTriangle,
+      };
+    case "off_track":
+      return {
+        label: "Off track",
+        className: "text-rose-300",
+        Icon: AlertTriangle,
+      };
+    case "achieved":
+      return {
+        label: "Achieved",
+        className: "text-emerald-300",
+        Icon: ShieldCheck,
+      };
+    case "blocked":
+      return {
+        label: "Blocked",
+        className: "text-rose-300",
+        Icon: AlertTriangle,
+      };
     case "unmeasured":
     default:
-      return <span className="font-medium text-muted-foreground">Unmeasured</span>;
+      return {
+        label: "Unmeasured",
+        className: "text-muted-foreground",
+        Icon: Circle,
+      };
   }
 }
 
-function MeasureTreeRow({ measure, continues }: { measure: ScorecardMeasureDefinition; continues: boolean }) {
-  const owner = "instrumentationOwner" in measure.state ? measure.state.instrumentationOwner : null;
-  const sourceRef = "sourceRef" in measure.state ? measure.state.sourceRef : null;
-  const trend = measure.state.kind === "measured" || measure.state.kind === "stale" ? "Not configured" : "No evidence";
-  const freshness = measure.state.kind === "measured"
-    ? measure.state.observedAt
-    : measure.state.kind === "stale"
-      ? `Stale since ${measure.state.observedAt}`
-      : "Never measured";
+function GoalReferenceTitle({ goalId }: { goalId: string }) {
+  return (
+    <span className="min-w-0 max-w-full whitespace-normal break-words">
+      <ReferenceRenderer
+        refValue={createReferenceRef({ type: "goal", id: goalId })}
+        surface="simple-row"
+        className="mx-0 max-w-full"
+        wrapLabel
+      />
+    </span>
+  );
+}
+
+function MeasureRows({
+  measures,
+  continues,
+}: {
+  measures: ScorecardMeasureDefinition[];
+  continues: boolean;
+}) {
+  if (measures.length === 0) {
+    return (
+      <HierarchyTreeRow continues={continues}>
+        <ProfileTreeRow
+          icon={<Gauge className="h-3.5 w-3.5" />}
+          label="No scorecard measures"
+          hasValue
+          showEmpty
+        >
+          <span className="text-muted-foreground">—</span>
+        </ProfileTreeRow>
+      </HierarchyTreeRow>
+    );
+  }
+
+  return (
+    <>
+      {measures.map((measure, index) => {
+        const tone = measureTone(measure.state);
+        const Icon = tone.Icon;
+        const isLast = index === measures.length - 1;
+        return (
+          <HierarchyTreeRow key={measure.key} continues={continues || !isLast}>
+            <ProfileTreeRow
+              icon={<Target className="h-3.5 w-3.5" />}
+              label={measure.label}
+              hasValue
+              showEmpty
+              defaultOpen={false}
+              expandedContent={
+                <div className="space-y-1.5 text-sm leading-6 text-muted-foreground">
+                  <p>
+                    <span className="font-medium text-foreground/80">Target · </span>
+                    {measure.target}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground/80">Cadence · </span>
+                    {measure.cadence}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground/80">Definition · </span>
+                    {measure.definition}
+                  </p>
+                  {"instrumentationOwner" in measure.state && measure.state.instrumentationOwner ? (
+                    <p>
+                      <span className="font-medium text-foreground/80">Owner · </span>
+                      {measure.state.instrumentationOwner}
+                    </p>
+                  ) : null}
+                  {"evidence" in measure.state && measure.state.evidence ? (
+                    <p>
+                      <span className="font-medium text-foreground/80">Evidence · </span>
+                      {measure.state.evidence}
+                    </p>
+                  ) : null}
+                </div>
+              }
+            >
+              <span className={cn("inline-flex items-center gap-1.5 text-xs", tone.className)}>
+                <Icon className="h-3.5 w-3.5 shrink-0" />
+                <span>{tone.label}</span>
+              </span>
+            </ProfileTreeRow>
+          </HierarchyTreeRow>
+        );
+      })}
+    </>
+  );
+}
+
+function ThematicGoalDetails({
+  goalId,
+  description,
+}: {
+  goalId: string;
+  description: string;
+}) {
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState(description);
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    setDraft(description);
+  }, [goalId, description]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (nextDescription: string) => {
+      const res = await apiRequest("PATCH", `/api/life-goals/${goalId}`, {
+        description: nextDescription,
+      });
+      return res.json() as Promise<Goal>;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["/api/life-goals"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/life-goals/graph"] });
+      setEditing(false);
+    },
+  });
+
+  const save = () => {
+    const next = draft.trim();
+    if (!next) return;
+    if (next === description.trim()) {
+      setEditing(false);
+      setDraft(description);
+      return;
+    }
+    saveMutation.mutate(next);
+  };
+
+  return (
+    <ProfileDetailSection title="Details" defaultOpen testId="advantage-thematic-details">
+      {editing ? (
+        <div className="space-y-2">
+          <Textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={save}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setDraft(description);
+                setEditing(false);
+              }
+            }}
+            disabled={saveMutation.isPending}
+            className={cn(
+              PROFILE_DESCRIPTION_FRAME_CLASS,
+              PROFILE_DESCRIPTION_TEXT_CLASS,
+              "min-h-[96px] resize-y",
+            )}
+            data-testid="advantage-thematic-details-editor"
+            autoFocus
+          />
+          {saveMutation.isError ? (
+            <p className="text-xs text-rose-300">Could not save details. Try again.</p>
+          ) : null}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className={cn(
+            PROFILE_DESCRIPTION_FRAME_CLASS,
+            PROFILE_DESCRIPTION_TEXT_CLASS,
+            "w-full text-left transition-colors hover:border-primary/40",
+          )}
+          data-testid="advantage-thematic-details-display"
+        >
+          {description.trim() || "Add details…"}
+        </button>
+      )}
+    </ProfileDetailSection>
+  );
+}
+
+function ObjectiveBranch({
+  objective,
+  goal,
+  continues,
+}: {
+  objective: AdvantageOperatingCycle["definingObjectives"][number];
+  goal: AdvantageGoalProjection | Goal | undefined;
+  continues: boolean;
+}) {
+  const description =
+    (goal && "description" in goal && typeof goal.description === "string"
+      ? goal.description
+      : "") ||
+    objective.intent ||
+    "";
 
   return (
     <HierarchyTreeRow continues={continues}>
       <ProfileTreeRow
-        label={measure.label}
-        icon={<Gauge className="h-3.5 w-3.5" />}
+        icon={<Target className="h-3.5 w-3.5" />}
+        label={<GoalReferenceTitle goalId={objective.goalId} />}
         hasValue
         showEmpty
-        mobileLayout="inline"
-        expandedContentClassName="border-l border-border ml-2 pl-3 pb-2"
-        expandedContent={(
-          <div className="space-y-2 text-muted-foreground">
-            <p className="text-sm leading-6 text-foreground">{measure.definition}</p>
-            <div className="space-y-1">
-              <span>Target · {measure.target}</span>
-              <span>Refresh · {measure.cadence}</span>
-              {owner ? <span>Instrumentation · {owner}</span> : null}
-              <span>Trend · {trend}</span>
-              <span>Source · {sourceRef ?? "No canonical source"}</span>
-              <span>Freshness · {freshness}</span>
-              {measure.state.kind === "unavailable" ? <span>{measure.state.reason}</span> : null}
-              {measure.state.kind === "error" ? <span className="text-error">{measure.state.message}</span> : null}
+        defaultOpen
+        expandedContentClassName="pt-1"
+        expandedContent={
+          <div className="space-y-3">
+            {description ? (
+              <p className="whitespace-normal text-sm leading-6 text-foreground/90">
+                {description}
+              </p>
+            ) : (
+              <p className="text-sm leading-6 text-muted-foreground">
+                No description on the linked goal yet.
+              </p>
+            )}
+            <div className={HIERARCHY_TREE_STACK_CLASS}>
+              <HierarchyTreeRow continues={objective.measures.length > 0}>
+                <ProfileTreeRow
+                  icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                  label="Owner"
+                  hasValue
+                  showEmpty
+                >
+                  <span className="text-xs text-muted-foreground">{objective.owner}</span>
+                </ProfileTreeRow>
+              </HierarchyTreeRow>
+              <MeasureRows measures={objective.measures} continues={false} />
             </div>
           </div>
-        )}
+        }
       >
-        <MeasureState state={measure.state} />
+        {goal ? (
+          <span className="text-xs text-muted-foreground">{goal.status ?? "active"}</span>
+        ) : (
+          <span className="text-xs text-rose-300">Missing</span>
+        )}
       </ProfileTreeRow>
     </HierarchyTreeRow>
   );
 }
 
-function MeasuresBranch({ measures }: { measures: ScorecardMeasureDefinition[] }) {
-  return (
-    <div className="mt-1">
-      {measures.map((measure, index) => (
-        <MeasureTreeRow key={measure.key} measure={measure} continues={index < measures.length - 1} />
-      ))}
-    </div>
-  );
-}
-
-function ObjectiveTreeRow({ definition, goal }: ObjectiveTreeRowProps) {
-  const status = goal?.status ?? "active";
-  const StatusIcon = statusIcon(status);
-
-  return (
-    <ProfileTreeRow
-      label={goal?.shortName ?? <span className="text-error">Goal unavailable</span>}
-      icon={<StatusIcon className={cn("h-3.5 w-3.5", goal ? goalStatusClasses[status] : "text-error")} />}
-      hasValue
-      showEmpty
-      mobileLayout="inline"
-      expandedContentClassName="px-0 pb-1 pl-0"
-      expandedContent={(
-        <div className="ml-8 border-l border-border py-1 pl-3">
-          <p className="text-sm leading-6 text-muted-foreground">{goal?.description ?? "The canonical child goal could not be loaded."}</p>
-          {goal ? (
-            <ReferenceRenderer refValue={goalReference(goal)} surface="simple-row" className="mx-0 mt-1" />
-          ) : null}
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>Owner · {definition.owner}</span>
-            <span>Next evidence · {definition.nextEvidence}</span>
-          </div>
-          <MeasuresBranch measures={definition.measures} />
-        </div>
-      )}
-    >
-      <span className={cn("truncate", goal ? goalStatusClasses[status] : "text-error")}>{goal ? goalStatusLabels[status] : "Unavailable"}</span>
-    </ProfileTreeRow>
-  );
-}
-
-function HealthDomainTreeRow({ domain }: { domain: AdvantageHealthDomainDefinition }) {
-  const measured = domain.measures.filter((measure) => measure.state.kind === "measured").length;
-  const attention = domain.measures.filter((measure) => ["stale", "error", "unavailable"].includes(measure.state.kind)).length;
-  const stateLabel = attention > 0 ? `${attention} need attention` : measured > 0 ? `${measured} measured` : "Unmeasured";
-
-  return (
-    <ProfileTreeRow
-      label={domain.label}
-      icon={<ShieldCheck className={cn("h-3.5 w-3.5", attention > 0 ? "text-warning" : "text-muted-foreground")} />}
-      hasValue
-      showEmpty
-      mobileLayout="inline"
-      expandedContentClassName="px-0 pb-1 pl-0"
-      expandedContent={(
-        <div className="ml-8 border-l border-border py-1 pl-3">
-          <p className="text-xs text-muted-foreground">Instrumentation · {domain.instrumentationOwner}</p>
-          <MeasuresBranch measures={domain.measures} />
-        </div>
-      )}
-    >
-      <span className={cn("truncate", attention > 0 ? "text-warning" : "text-muted-foreground")}>{stateLabel}</span>
-    </ProfileTreeRow>
-  );
-}
-
 export default function BusinessAdvantagePage() {
-  usePageHeader({ title: "Advantage" });
   const cycle = MANTRA_Q3_2026_ADVANTAGE_CYCLE;
-  const { data, isLoading, error, refetch, isFetching } = useQuery<GoalListResponse>({
-    queryKey: ["/api/life-goals?periodScoped=false&includeDormant=true"],
+
+  const goalsQuery = useQuery<unknown>({
+    queryKey: ["/api/life-goals", { periodScoped: false, includeDormant: false }],
+  });
+  const graphQuery = useQuery<unknown>({
+    queryKey: ["/api/life-goals/graph"],
   });
 
-  const goalsById = useMemo(
-    () => new Map((data?.goals ?? []).map((goal) => [goal.id, goal])),
-    [data?.goals],
-  );
+  const goalsById = useMemo(() => {
+    const map = new Map<string, AdvantageGoalProjection>();
+    for (const goal of asGoalList(goalsQuery.data)) {
+      map.set(goal.id, goal);
+    }
+    // Graph payload includes description on each goal entry.
+    for (const [id, goal] of asFullGoalMap(graphQuery.data)) {
+      const existing = map.get(id);
+      map.set(id, existing ? { ...existing, ...goal } : goal);
+    }
+    return map;
+  }, [goalsQuery.data, graphQuery.data]);
+
   const thematicGoal = goalsById.get(cycle.thematicGoalId);
-  const expectedChildIds = useMemo(() => new Set(cycle.objectives.map((objective) => objective.goalId)), [cycle.objectives]);
-  const canonicalChildren = useMemo(
-    () => (data?.goals ?? []).filter((goal) => goal.parentId === cycle.thematicGoalId && expectedChildIds.has(goal.id)),
-    [cycle.thematicGoalId, data?.goals, expectedChildIds],
-  );
-  const hierarchyComplete = !!thematicGoal && canonicalChildren.length === cycle.objectives.length;
+  const thematicDescription =
+    (thematicGoal &&
+    "description" in thematicGoal &&
+    typeof thematicGoal.description === "string"
+      ? thematicGoal.description
+      : "") ||
+    cycle.thematicGoalStatement ||
+    "";
 
-  if (isLoading) {
-    return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-active" /></div>;
-  }
-
-  if (error) {
-    return (
-      <div className={cn("w-full", HIERARCHY_TREE_STACK_CLASS)}>
-        <HierarchySectionHeader>Operating cycle</HierarchySectionHeader>
-        <div className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-error">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 flex-1">Advantage goals unavailable</span>
-          <Button type="button" variant="ghost" size="sm" disabled={isFetching} onClick={() => void refetch()}>
-            <RefreshCw className={cn("mr-2 h-3.5 w-3.5", isFetching && "animate-spin")} />
-            Try again
-          </Button>
-        </div>
-      </div>
-    );
-  }
+  const standingObjectives = cycle.standingOperatingObjectives;
+  const isLoading = goalsQuery.isLoading || graphQuery.isLoading;
+  const isError = goalsQuery.isError && graphQuery.isError;
 
   return (
-    <div className={cn("w-full", HIERARCHY_TREE_STACK_CLASS)} data-testid="business-advantage-page">
-      <section aria-labelledby="operating-cycle-title">
-        <HierarchySectionHeader id="operating-cycle-title">Operating cycle</HierarchySectionHeader>
-        <ProfileTreeRow
-          label={thematicGoal?.shortName ?? <span className="text-error">Thematic goal unavailable</span>}
-          icon={<Target className={cn("h-3.5 w-3.5", thematicGoal ? "text-foreground" : "text-error")} />}
-          hasValue
-          showEmpty
-          defaultOpen
-          mobileLayout="inline"
-          expandedContentClassName="border-l border-border ml-2 pl-3 pb-2"
-          expandedContent={(
-            <div className="space-y-3">
-              <p className="text-sm leading-6 text-foreground">{cycle.strategicJudgment}</p>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />{cycle.startsOn} – {cycle.endsOn}</span>
-                <span>Confidence · {cycle.confidence}</span>
-                {thematicGoal ? <ReferenceRenderer refValue={goalReference(thematicGoal)} surface="simple-row" className="mx-0" /> : null}
-                <ReferenceRenderer refValue={sourceReference(cycle.sourcePageId)} surface="simple-row" className="mx-0" />
-                <span className={hierarchyComplete ? "text-muted-foreground" : "text-warning"}>{hierarchyComplete ? "Goal hierarchy current" : "Goal hierarchy incomplete"}</span>
-              </div>
-            </div>
-          )}
-        >
-          <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-muted-foreground">
-            <Clock3 className="h-3.5 w-3.5 shrink-0" />
-            {cycle.periodLabel} · {daysRemaining(cycle.endsOn)} days
-          </span>
-        </ProfileTreeRow>
-      </section>
+    <div className="h-full overflow-auto" data-testid="page-business-advantage">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-8">
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Business · Advantage
+            </p>
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              {cycle.label}
+            </h1>
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              Thematic goal, defining objectives, standing operating objectives, and the
+              scorecard that proves whether the quarter is working.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => {
+              void goalsQuery.refetch();
+              void graphQuery.refetch();
+            }}
+            disabled={goalsQuery.isFetching || graphQuery.isFetching}
+            data-testid="button-refresh-advantage"
+          >
+            {goalsQuery.isFetching || graphQuery.isFetching ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            Refresh
+          </Button>
+        </header>
 
-      <section aria-labelledby="defining-objectives-title">
-        <HierarchySectionHeader id="defining-objectives-title" className="justify-between">
-          <span>Defining objectives</span>
-          <span className="normal-case tracking-normal">{canonicalChildren.length} of {cycle.objectives.length} linked</span>
-        </HierarchySectionHeader>
-        {cycle.objectives.map((objective) => (
-          <ObjectiveTreeRow key={objective.goalId} definition={objective} goal={goalsById.get(objective.goalId)} />
-        ))}
-      </section>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading goal hierarchy…
+          </div>
+        ) : null}
 
-      <section aria-labelledby="operating-health-title">
-        <HierarchySectionHeader id="operating-health-title">Operating health</HierarchySectionHeader>
-        {cycle.healthDomains.map((domain) => <HealthDomainTreeRow key={domain.key} domain={domain} />)}
-      </section>
+        {isError ? (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+            Could not load goals for this operating cycle.
+          </div>
+        ) : null}
+
+        <section className="space-y-3" data-testid="advantage-thematic-goal">
+          <HierarchySectionHeader>Thematic Goal</HierarchySectionHeader>
+          <div className={HIERARCHY_TREE_STACK_CLASS}>
+            <HierarchyTreeRow continues={false}>
+              <ProfileTreeRow
+                icon={<Target className="h-3.5 w-3.5" />}
+                label={<GoalReferenceTitle goalId={cycle.thematicGoalId} />}
+                hasValue
+                showEmpty
+                defaultOpen
+                expandedContentClassName="pt-1"
+                expandedContent={
+                  <ThematicGoalDetails
+                    goalId={cycle.thematicGoalId}
+                    description={thematicDescription}
+                  />
+                }
+              >
+                {thematicGoal ? (
+                  <span className="text-xs text-muted-foreground">
+                    {thematicGoal.status ?? "active"}
+                  </span>
+                ) : (
+                  <span className="text-xs text-rose-300">Missing</span>
+                )}
+              </ProfileTreeRow>
+            </HierarchyTreeRow>
+          </div>
+        </section>
+
+        <section className="space-y-3" data-testid="advantage-defining-objectives">
+          <HierarchySectionHeader>Defining Objectives</HierarchySectionHeader>
+          <div className={HIERARCHY_TREE_STACK_CLASS}>
+            {cycle.definingObjectives.map((objective, index) => (
+              <ObjectiveBranch
+                key={objective.goalId}
+                objective={objective}
+                goal={goalsById.get(objective.goalId)}
+                continues={index < cycle.definingObjectives.length - 1}
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="space-y-3" data-testid="advantage-standing-objectives">
+          <HierarchySectionHeader>Standing Operating Objectives</HierarchySectionHeader>
+          <div className={HIERARCHY_TREE_STACK_CLASS}>
+            {standingObjectives.map((item, index) => {
+              const tone = measureTone(item.health);
+              const Icon = tone.Icon;
+              const isLast = index === standingObjectives.length - 1;
+              return (
+                <HierarchyTreeRow key={item.key} continues={!isLast}>
+                  <ProfileTreeRow
+                    icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                    label={item.label}
+                    hasValue
+                    showEmpty
+                    defaultOpen={false}
+                    expandedContent={
+                      <div className="space-y-1.5 text-sm leading-6 text-muted-foreground">
+                        <p>
+                          <span className="font-medium text-foreground/80">Owner · </span>
+                          {item.owner}
+                        </p>
+                        <p>
+                          <span className="font-medium text-foreground/80">Cadence · </span>
+                          {item.cadence}
+                        </p>
+                        <p className="whitespace-normal">{item.definition}</p>
+                        {"evidence" in item.health && item.health.evidence ? (
+                          <p>
+                            <span className="font-medium text-foreground/80">
+                              Evidence ·{" "}
+                            </span>
+                            {item.health.evidence}
+                          </p>
+                        ) : null}
+                      </div>
+                    }
+                  >
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1.5 text-xs",
+                        tone.className,
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <span>{tone.label}</span>
+                    </span>
+                  </ProfileTreeRow>
+                </HierarchyTreeRow>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="space-y-3" data-testid="advantage-source">
+          <HierarchySectionHeader>Source</HierarchySectionHeader>
+          <div className={HIERARCHY_TREE_STACK_CLASS}>
+            <HierarchyTreeRow continues={false}>
+              <ProfileTreeRow
+                icon={<Gauge className="h-3.5 w-3.5" />}
+                label="Operating cycle"
+                hasValue
+                showEmpty
+              >
+                <ReferenceRenderer
+                  refValue={createReferenceRef({ type: "page", id: cycle.sourcePageId })}
+                  surface="simple-row"
+                />
+              </ProfileTreeRow>
+            </HierarchyTreeRow>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
