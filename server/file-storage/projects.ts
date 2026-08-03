@@ -24,8 +24,19 @@ import {
 } from "../project-vault-access";
 import { objectGrantService } from "../object-grant-service";
 import { eventBus } from "../event-bus";
+import { tagRegistry } from "./tags";
 
 const log = createLogger("StoreProjects");
+
+async function syncProjectTags(project: Project): Promise<void> {
+  try {
+    await tagRegistry.syncEntityTags("project", String(project.id), project.title, project.tags || []);
+  } catch (err) {
+    const tagError = err instanceof Error ? err.message : String(err);
+    log.error("project tag sync error", { id: project.id, error: tagError });
+    throw err;
+  }
+}
 
 export interface WorkCreationProvenance {
   originType: "meeting";
@@ -317,6 +328,7 @@ export class FileProjectStorage {
 
     this.invalidateCache();
     const project = rowToProject(created.row, created.milestones, [vaultId], true);
+    await syncProjectTags(project);
     log.debug(`createProject id=${project.id} title="${project.title}" status=${project.status}`);
     return project;
   }
@@ -520,7 +532,11 @@ export class FileProjectStorage {
       fileTaskStorage.invalidateCache();
     }
     log.debug(`updateProject id=${id} fields=${Object.keys(updates).join(",")}`);
-    return this.getProject(id);
+    const project = await this.getProject(id);
+    if (project && updates.tags !== undefined) {
+      await syncProjectTags(project);
+    }
+    return project;
   }
 
   async addMilestone(
@@ -758,6 +774,14 @@ export class FileProjectStorage {
       ).returning({ id: projects.id });
       return rows.length > 0;
     });
+    if (deleted) {
+      try {
+        await tagRegistry.removeEntity("project", String(id));
+      } catch (err) {
+        const tagError = err instanceof Error ? err.message : String(err);
+        log.error("project tag cleanup error", { id, error: tagError });
+      }
+    }
     log.debug(`deleteProject id=${id} success=${deleted}`);
     this.invalidateCache();
     return deleted;

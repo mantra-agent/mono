@@ -810,53 +810,6 @@ function RunHistorySection({ skillName }: { skillName: string }) {
 }
 
 
-function TagInput({ value, onChange, placeholder }: { value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
-  const [input, setInput] = useState("");
-
-  const addTag = () => {
-    const trimmed = input.trim();
-    if (trimmed && !value.includes(trimmed)) {
-      onChange([...value, trimmed]);
-      setInput("");
-    }
-  };
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex gap-1.5">
-        <Input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
-          placeholder={placeholder}
-          className="h-8 text-xs"
-          data-testid="input-tag"
-        />
-        <Button type="button" variant="outline" size="sm" className="h-8 text-xs" onClick={addTag} data-testid="button-add-tag">
-          <Plus className="h-3 w-3" />
-        </Button>
-      </div>
-      {value.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {value.map((tag, i) => (
-            <span key={i} className="inline-flex items-center bg-cat-system/15 text-cat-system-foreground border border-cat-system/30 rounded-sm text-xs font-medium font-mono px-2 py-0.5">
-              {tag}
-              <button
-                type="button"
-                className="ml-1 hover:text-destructive"
-                onClick={() => onChange(value.filter((_, j) => j !== i))}
-                data-testid={`button-remove-tag-${i}`}
-              >
-                <X className="h-2.5 w-2.5" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function SkillEditorDialog({
   open,
   onOpenChange,
