@@ -92,6 +92,30 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+/**
+ * Chat rows store SessionData as a JSON string in document_store_documents.content
+ * (text column via serializeSessionContent). Never cast the raw column as an object.
+ */
+function parseChatDocumentContent(raw: unknown): ChatDocumentContent {
+  if (raw == null) return {};
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return asRecord(parsed) ?? {};
+    } catch {
+      return {};
+    }
+  }
+  return asRecord(raw) ?? {};
+}
+
+function messagesFromChatDocument(raw: unknown): ChatMessage[] {
+  const content = parseChatDocumentContent(raw);
+  return Array.isArray(content.messages) ? (content.messages as ChatMessage[]) : [];
+}
+
 function parseTimestampMs(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     // Accept both epoch ms and epoch seconds.
@@ -390,8 +414,7 @@ export async function getReliabilityOutcomeSummary(
   const conversationalTurns = emptyCounts();
 
   for (const doc of chatDocs) {
-    const content = (doc.content ?? {}) as ChatDocumentContent;
-    const messages = Array.isArray(content.messages) ? (content.messages as ChatMessage[]) : [];
+    const messages = messagesFromChatDocument(doc.content);
     const counted = countToolCalls(messages, windowStartMs, windowEndMs);
     toolExecutions.succeeded += counted.toolExecutions.succeeded;
     toolExecutions.failed += counted.toolExecutions.failed;
@@ -530,8 +553,7 @@ export async function listReliabilityToolFailures(input?: {
       typeof doc.documentId === "string" && doc.documentId.trim()
         ? doc.documentId.trim()
         : "unknown";
-    const content = (doc.content ?? {}) as ChatDocumentContent;
-    const messages = Array.isArray(content.messages) ? (content.messages as ChatMessage[]) : [];
+    const messages = messagesFromChatDocument(doc.content);
     failures.push(
       ...collectToolFailuresFromMessages(sessionId, messages, windowStartMs, windowEndMs, filters),
     );
