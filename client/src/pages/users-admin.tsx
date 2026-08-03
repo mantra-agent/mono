@@ -28,6 +28,7 @@ interface AdminUserRow {
   permissions: string[];
   permissionOverrides: string[];
   presence: ClientPresenceEntry[];
+  identityIncomplete?: boolean;
 }
 
 interface WaitlistApplicationRow {
@@ -362,6 +363,7 @@ export default function UsersAdminPage() {
         <button type="button" onClick={() => { setSelectedUserId(user.id); setSelectedWaitlistId(null); }} className="absolute inset-0" aria-label={`View ${user.email}`} />
         <User className={cn("pointer-events-none h-3.5 w-3.5 shrink-0", selected ? "text-foreground" : "text-muted-foreground")} />
         <span className={cn("pointer-events-none min-w-0 flex-1 truncate pr-6", selected ? "text-foreground" : "text-muted-foreground")}>{user.email}</span>
+        {user.identityIncomplete ? <span className="pointer-events-none shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-500" title="Identity foundation incomplete — this account is missing its personal workspace and cannot fully sign in">Setup incomplete</span> : null}
         {user.presence.length > 0 ? <div className="pointer-events-none"><UserPresence presence={user.presence} /></div> : null}
         {canWrite && currentUser?.id !== user.id ? <DropdownMenu modal={false}><DropdownMenuTrigger asChild><button type="button" className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100" aria-label={`More actions for ${user.email}`} onClick={(event) => event.stopPropagation()}><MoreHorizontal className="h-3.5 w-3.5" /></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleteUser(user)}><Trash2 className="mr-2 h-4 w-4" />Delete user</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}
       </div>
