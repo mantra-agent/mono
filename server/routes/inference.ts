@@ -942,6 +942,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
       const body = z.object({
         status: z.enum(["active", "inactive"]).optional(),
         tierMappings: z.union([modelTierMappingsSchema, openAITierMappingsSchema, claudeCliTierMappingsSchema]).optional(),
+        priorityPinned: z.boolean().optional(),
       }).parse(req.body);
       const connector = await updateModelConnector(id, body);
       if (!connector) return res.status(404).json({ error: "Model connector not found" });

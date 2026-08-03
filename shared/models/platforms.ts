@@ -125,6 +125,8 @@ export const providerConnections = pgTable(
     connectorKind: text("connector_kind").notNull().default("integration"),
     connectorConfig: jsonb("connector_config").notNull().default({}),
     sortOrder: integer("sort_order").notNull().default(0),
+    /** When true, this connector stays ahead of unpinned peers regardless of relative sortOrder. */
+    priorityPinned: boolean("priority_pinned").notNull().default(false),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),

@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
@@ -41,6 +41,8 @@ export interface ModelConnector {
   label: string;
   status: string;
   sortOrder: number;
+  /** Explicit pin: pinned connectors sort ahead of unpinned peers. */
+  priorityPinned: boolean;
   credentialRef: string | null;
   lastVerifiedAt: string | null;
   config: ModelConnectorConfig;
@@ -229,13 +231,18 @@ export async function listModelConnectors(): Promise<ModelConnector[]> {
   const principal = getCurrentPrincipalOrSystem();
   const rows = await db.select().from(providerConnections).where(
     combineWithVisibleScope(principal, scopeColumns, eq(providerConnections.connectorKind, "model")),
-  ).orderBy(asc(providerConnections.sortOrder), asc(providerConnections.id));
+  ).orderBy(
+    desc(providerConnections.priorityPinned),
+    asc(providerConnections.sortOrder),
+    asc(providerConnections.id),
+  );
   return rows.map((row) => ({
     id: row.id,
     provider: modelConnectorProviderSchema.parse(row.provider),
     label: row.label,
     status: row.status,
     sortOrder: row.sortOrder,
+    priorityPinned: row.priorityPinned === true,
     credentialRef: row.credentialRef,
     lastVerifiedAt: row.lastVerifiedAt instanceof Date ? row.lastVerifiedAt.toISOString() : row.lastVerifiedAt ? String(row.lastVerifiedAt) : null,
     config: parseModelConnectorConfig(row.provider, row.connectorConfig),
@@ -244,7 +251,11 @@ export async function listModelConnectors(): Promise<ModelConnector[]> {
 
 export async function updateModelConnector(
   id: number,
-  input: { status?: "active" | "inactive"; tierMappings?: ModelTierMappings | OpenAITierMappings | ClaudeCliTierMappings },
+  input: {
+    status?: "active" | "inactive";
+    tierMappings?: ModelTierMappings | OpenAITierMappings | ClaudeCliTierMappings;
+    priorityPinned?: boolean;
+  },
 ): Promise<ModelConnector | null> {
   const principal = getCurrentPrincipalOrSystem();
   const [existing] = await db.select().from(providerConnections).where(
@@ -264,6 +275,7 @@ export async function updateModelConnector(
 
   const updates: Record<string, unknown> = { updatedAt: sql`CURRENT_TIMESTAMP` };
   if (input.status !== undefined) updates.status = input.status;
+  if (input.priorityPinned !== undefined) updates.priorityPinned = input.priorityPinned;
   if (input.tierMappings !== undefined) {
     const provider = modelConnectorProviderSchema.parse(existing.provider);
     const current = parseModelConnectorConfig(existing.provider, existing.connectorConfig);
@@ -274,6 +286,10 @@ export async function updateModelConnector(
       updates.connectorConfig = legacyMappings.success
         ? validateClaudeCliConnectorConfig(provider, migrateClaudeCliConnectorConfig({ tierMappings: validateMapping(provider, legacyMappings.data), migratedFrom: "manual" }))
         : validateClaudeCliConnectorConfig(provider, { ...current, tierMappings: input.tierMappings as ClaudeCliTierMappings });
+    } else if (current.kind === "grok-models") {
+      if (provider !== "grok-subscription") throw new Error(`Provider '${provider}' does not support Grok connector config`);
+      const tierMappings = validateMapping(provider, input.tierMappings as ModelTierMappings);
+      updates.connectorConfig = { ...current, tierMappings };
     } else {
       const tierMappings = validateMapping(provider, input.tierMappings as ModelTierMappings);
       updates.connectorConfig = { ...current, tierMappings };
@@ -288,9 +304,16 @@ export async function updateModelConnector(
 export async function reorderModelConnectors(ids: number[]): Promise<ModelConnector[]> {
   const principal = getCurrentPrincipalOrSystem();
   const connectors = await listModelConnectors();
+  const byId = new Map(connectors.map((connector) => [connector.id, connector]));
   const visibleIds = new Set(connectors.map((connector) => connector.id));
   if (ids.length !== visibleIds.size || new Set(ids).size !== ids.length || ids.some((id) => !visibleIds.has(id))) {
     throw new Error("Connector order must include every visible model connector exactly once");
+  }
+  // Pin is a hard cohort boundary. Reorder may only permute sortOrder inside the same pin set.
+  const requestedPinned = ids.map((id) => byId.get(id)!.priorityPinned === true);
+  const currentPinned = connectors.map((connector) => connector.priorityPinned === true);
+  if (requestedPinned.some((pinned, index) => pinned !== currentPinned[index])) {
+    throw new Error("Connector reorder cannot move connectors across the pin boundary");
   }
   await db.transaction(async (tx) => {
     for (const [sortOrder, id] of ids.entries()) {
