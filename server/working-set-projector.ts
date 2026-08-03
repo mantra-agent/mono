@@ -1,153 +1,246 @@
 import { safeStringify } from "./utils/safe-stringify";
 import {
+  DEFAULT_TOOL_OUTPUT_POLICY,
   ensureToolOutputArchived,
   estimateToolOutputSize,
 } from "./tool-output-artifacts";
 import type { ExecutorMessage } from "./agent-executor";
 
-const ARCHIVE_LARGE_RESULT_TOKENS = Number(
-  process.env.WORKING_SET_ARCHIVE_SIDECAR_TOKEN_FLOOR
-    || process.env.WORKING_SET_PROJECTED_SAVINGS_FLOOR_TOKENS
-    || 8_000,
+export const CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS = Number(
+  process.env.AGENT_CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS || 30_000,
 );
 
-export const CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS = Number(
-  process.env.WORKING_SET_TOOL_RESULT_CYCLE_BUDGET_TOKENS || 20_000,
+export const MATERIAL_REFRESH_REDUCTION_TOKENS = Number(
+  process.env.AGENT_WORKING_SET_REFRESH_MIN_REDUCTION_TOKENS || 2_000,
 );
 
 export interface WorkingSetProjectionTelemetry {
-  outcome: "skipped" | "projected" | "degraded";
-  reason: string;
-  tokensBefore: number;
-  tokensAfter: number;
+  outcome: "applied" | "skipped";
+  reason: "historical_tool_receipts" | "no_eligible_tool_outputs" | "archive_unavailable";
+  tokensOriginal: number;
   tokensProjected: number;
-  charsProjected: number;
-  pairsProjected: number;
-  unconsumedPairsPreserved: number;
-  archiveRefsCreated: number;
-  archiveRefsReused: number;
-  receiptsRehydratable: number;
+  tokensSaved: number;
+  receiptsApplied: number;
+  archiveFailures: number;
+}
+
+export interface WorkingSetProjectionResult {
+  messages: ExecutorMessage[];
+  telemetry: WorkingSetProjectionTelemetry;
+}
+
+export interface ImmediateToolResultProjection {
+  providerResult: string;
+  historicalProviderResult?: string;
+  archivedRefId?: string;
+  originalTokens: number;
+  historicalTokens: number;
+  refreshReductionTokens: number;
+  canMateriallyShrinkOnRefresh: boolean;
+  outcome: "inline" | "archived_exact_once" | "archive_failed";
+}
+
+function estimateMessagesTokens(messages: ExecutorMessage[]): number {
+  let chars = 0;
+  for (const message of messages) {
+    chars += typeof message.content === "string"
+      ? message.content.length
+      : safeStringify(message.content).length;
+  }
+  return Math.ceil(chars / 4);
 }
 
 function cloneMessages(messages: ExecutorMessage[]): ExecutorMessage[] {
   return messages.map((message) => ({
     ...message,
     content: Array.isArray(message.content)
-      ? message.content.map((block) => ({
-          ...block,
-          input: block.input ? { ...block.input } : undefined,
-          image_url: block.image_url ? { ...block.image_url } : undefined,
-        }))
+      ? message.content.map((block) => ({ ...block }))
       : message.content,
   }));
 }
 
-function estimateMessagesTokens(messages: ExecutorMessage[]): number {
-  return messages.reduce((total, message) => {
-    if (typeof message.content === "string") {
-      return total + Math.ceil(message.content.length / 3.5);
+function toolMetadata(messages: ExecutorMessage[]): Map<string, { toolName: string; action?: string }> {
+  const metadata = new Map<string, { toolName: string; action?: string }>();
+  for (const message of messages) {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (block.type !== "tool_use" || !block.id || !block.name) continue;
+      const input = block.input && typeof block.input === "object"
+        ? block.input as Record<string, unknown>
+        : undefined;
+      metadata.set(block.id, {
+        toolName: block.name,
+        action: typeof input?.action === "string" ? input.action : undefined,
+      });
     }
-
-    return total + message.content.reduce((sum, block) => {
-      const value = block.text
-        || block.thinking
-        || block.content
-        || safeStringify(block.input || {}, {
-          maxBytes: 8_000,
-          label: "working-set-projector.token-estimate",
-        });
-      return sum + Math.ceil(value.length / 3.5);
-    }, 0);
-  }, 0);
+  }
+  return metadata;
 }
 
-function countExactSuccessfulToolResults(messages: ExecutorMessage[]): number {
-  return messages.reduce((count, message) => {
-    if (message.role !== "tool_result" || !Array.isArray(message.content)) {
-      return count;
-    }
-
-    return count + message.content.filter((block) => (
-      block.type === "tool_result"
-      && !block.is_error
-      && block.content != null
-    )).length;
-  }, 0);
+function archiveOperationKey(args: { sessionId?: string; runId: string; toolCallId: string }): string {
+  return `tool-output:${args.sessionId || args.runId}:${args.toolCallId}`;
 }
 
-function archiveOperationKey(args: {
-  sessionId?: string;
-  runId: string;
-  toolCallId: string;
-}): string {
-  return `working-set:${args.sessionId || "no-session"}:${args.runId}:${args.toolCallId}`;
+function historicalEligibility(
+  messageIndex: number,
+  lastAssistantIndex: number,
+  toolCallId: string | undefined,
+  providerConsumedToolCallIds?: ReadonlySet<string>,
+): boolean {
+  if (messageIndex < lastAssistantIndex) return true;
+  return !!toolCallId && !!providerConsumedToolCallIds?.has(toolCallId);
 }
 
-/**
- * Preserve the exact model-facing transcript.
- *
- * A later assistant message proves only that the model observed a tool result in
- * one inference. It does not prove that the result is no longer required by a
- * future stateless inference. Until the runtime has an explicit semantic
- * working-set contract, replacing historical results with receipts is unsafe.
- */
 export async function projectWorkingSet(args: {
   messages: ExecutorMessage[];
   runId: string;
   sessionId?: string;
-  sessionKey: string;
-  source: string;
-}): Promise<{ messages: ExecutorMessage[]; telemetry: WorkingSetProjectionTelemetry }> {
-  const tokens = estimateMessagesTokens(args.messages);
+  sessionKey?: string;
+  source?: string;
+  providerConsumedToolCallIds?: ReadonlySet<string>;
+}): Promise<WorkingSetProjectionResult> {
+  const original = cloneMessages(args.messages);
+  const projected = cloneMessages(args.messages);
+  const tokensOriginal = estimateMessagesTokens(original);
+  const lastAssistantIndex = projected.reduce(
+    (latest, message, index) => message.role === "assistant" ? index : latest,
+    -1,
+  );
+  const metadata = toolMetadata(projected);
+  const providersConsumed = args.providerConsumedToolCallIds
+    ? new Set(args.providerConsumedToolCallIds)
+    : undefined;
+  let receiptsApplied = 0;
+  let archiveFailures = 0;
+  let eligibleOutputs = 0;
+
+  for (let messageIndex = 0; messageIndex < projected.length; messageIndex++) {
+    const message = projected[messageIndex];
+    if (message.role !== "tool_result" || !Array.isArray(message.content)) continue;
+
+    const nextBlocks = [...message.content];
+    let changed = false;
+    for (let blockIndex = 0; blockIndex < nextBlocks.length; blockIndex++) {
+      const block = nextBlocks[blockIndex];
+      if (block.type !== "tool_result" || typeof block.content !== "string") continue;
+      const toolCallId = block.tool_use_id;
+      if (!historicalEligibility(
+        messageIndex,
+        lastAssistantIndex,
+        toolCallId,
+        providersConsumed,
+      )) continue;
+
+      const size = estimateToolOutputSize(block.content);
+      const wasArchivedImmediately = size.estimatedTokens >= DEFAULT_TOOL_OUTPUT_POLICY.alwaysArchiveAboveTokens;
+      const exceedsInlinePolicy = size.estimatedTokens > DEFAULT_TOOL_OUTPUT_POLICY.maxInlineTokens
+        || size.chars > DEFAULT_TOOL_OUTPUT_POLICY.maxInlineChars;
+      if (!wasArchivedImmediately && !exceedsInlinePolicy) continue;
+
+      eligibleOutputs++;
+      const tool = toolCallId ? metadata.get(toolCallId) : undefined;
+      const archived = await ensureToolOutputArchived({
+        toolName: tool?.toolName || "unknown_tool",
+        action: tool?.action,
+        sessionId: args.sessionId,
+        runId: args.runId,
+        toolCallId,
+        result: block.content,
+        maxPreviewChars: block.is_error ? 1_200 : 2_000,
+      });
+      if (!archived.formattedRef) {
+        archiveFailures++;
+        continue;
+      }
+
+      nextBlocks[blockIndex] = { ...block, content: archived.formattedRef };
+      receiptsApplied++;
+      changed = true;
+    }
+
+    if (changed) projected[messageIndex] = { ...message, content: nextBlocks };
+  }
+
+  const tokensProjected = estimateMessagesTokens(projected);
+  const tokensSaved = Math.max(0, tokensOriginal - tokensProjected);
+  const outcome = receiptsApplied > 0 && tokensSaved > 0 ? "applied" : "skipped";
+  const reason = outcome === "applied"
+    ? "historical_tool_receipts"
+    : eligibleOutputs === 0
+      ? "no_eligible_tool_outputs"
+      : "archive_unavailable";
 
   return {
-    messages: cloneMessages(args.messages),
+    messages: projected,
     telemetry: {
-      outcome: "skipped",
-      reason: "lossy_projection_disabled",
-      tokensBefore: tokens,
-      tokensAfter: tokens,
-      tokensProjected: 0,
-      charsProjected: 0,
-      pairsProjected: 0,
-      unconsumedPairsPreserved: countExactSuccessfulToolResults(args.messages),
-      archiveRefsCreated: 0,
-      archiveRefsReused: 0,
-      receiptsRehydratable: 0,
+      outcome,
+      reason,
+      tokensOriginal,
+      tokensProjected,
+      tokensSaved,
+      receiptsApplied,
+      archiveFailures,
     },
   };
 }
 
-/**
- * Archive large results as a sidecar while returning the exact result to the
- * provider. Archival must never change the model-facing evidence.
- */
 export async function projectImmediateToolResult(args: {
   toolName: string;
-  toolArgs: Record<string, unknown>;
+  toolArgs?: Record<string, unknown>;
   toolCallId: string;
   result: string;
   error?: boolean;
-  runId: string;
   sessionId?: string;
-}): Promise<{ providerResult: string; archived: "created" | "reused" | "failed" | "not_needed" }> {
+  runId: string;
+}): Promise<ImmediateToolResultProjection> {
   const size = estimateToolOutputSize(args.result);
-  if (args.error || size.estimatedTokens <= ARCHIVE_LARGE_RESULT_TOKENS) {
-    return { providerResult: args.result, archived: "not_needed" };
+  const action = typeof args.toolArgs?.action === "string" ? args.toolArgs.action : undefined;
+  const shouldArchive = size.estimatedTokens >= DEFAULT_TOOL_OUTPUT_POLICY.alwaysArchiveAboveTokens
+    || size.estimatedTokens > DEFAULT_TOOL_OUTPUT_POLICY.maxInlineTokens
+    || size.chars > DEFAULT_TOOL_OUTPUT_POLICY.maxInlineChars;
+
+  if (!shouldArchive) {
+    return {
+      providerResult: args.result,
+      originalTokens: size.estimatedTokens,
+      historicalTokens: size.estimatedTokens,
+      refreshReductionTokens: 0,
+      canMateriallyShrinkOnRefresh: false,
+      outcome: "inline",
+    };
   }
 
-  const archive = await ensureToolOutputArchived({
+  const archived = await ensureToolOutputArchived({
     toolName: args.toolName,
-    action: typeof args.toolArgs.action === "string" ? args.toolArgs.action : undefined,
+    action,
     sessionId: args.sessionId,
     runId: args.runId,
     toolCallId: args.toolCallId,
     result: args.result,
     operationKey: archiveOperationKey(args),
-    maxPreviewChars: 0,
+    maxPreviewChars: args.error ? 1_200 : 2_000,
   });
+  if (!archived.formattedRef) {
+    return {
+      providerResult: args.result,
+      originalTokens: size.estimatedTokens,
+      historicalTokens: size.estimatedTokens,
+      refreshReductionTokens: 0,
+      canMateriallyShrinkOnRefresh: false,
+      outcome: "archive_failed",
+    };
+  }
 
-  return archive.ref
-    ? { providerResult: args.result, archived: archive.outcome }
-    : { providerResult: args.result, archived: "failed" };
+  const historicalTokens = estimateToolOutputSize(archived.formattedRef).estimatedTokens;
+  const refreshReductionTokens = Math.max(0, size.estimatedTokens - historicalTokens);
+  return {
+    providerResult: args.result,
+    historicalProviderResult: archived.formattedRef,
+    archivedRefId: archived.ref?.refId,
+    originalTokens: size.estimatedTokens,
+    historicalTokens,
+    refreshReductionTokens,
+    canMateriallyShrinkOnRefresh: refreshReductionTokens >= MATERIAL_REFRESH_REDUCTION_TOKENS,
+    outcome: "archived_exact_once",
+  };
 }
