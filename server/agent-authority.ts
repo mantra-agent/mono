@@ -382,6 +382,7 @@ export function getShellToolContractDescription(): string {
     `Shell git is inspection-only (${gitSubs}); branch/remote mutation flags are denied. All git writes use the git tool.`,
     "Shell npm is only `npm run build`. sed only as `sed -n 'N,Mp' [file]` (file optional for pipeline stdin). find may not use -exec/-delete.",
     "Prefer scratch.read when the path is already known. Prefer parallel tool calls for independent work when latency matters; `;` sequencing is also valid for independent allowlisted segments.",
+    "A non-zero process exit (e.g. rg/grep miss, git status 1) is returned as a normal tool result with an exit header — not a tool error. Do not retry solely because exit ≠ 0; read the body. Timeouts, spawn failures, and policy denials remain tool errors.",
   ].join(" ");
 }
 
