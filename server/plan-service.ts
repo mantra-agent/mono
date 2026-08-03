@@ -3,6 +3,7 @@ import type { PlanStepPersona } from "./plan-persona";
 import { and, desc, eq, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { db, runWithDatabaseTransaction } from "./db";
 import { createLogger } from "./log";
+import { eventBus } from "./event-bus";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { planExecutions, planSessionLinks, planStepAttempts, planStepReviews, planSteps, type PlanExecutionRow, type PlanStepAttemptRow, type PlanStepReviewRow, type PlanStepRow } from "@shared/schema";
@@ -10,6 +11,26 @@ import { PLAN_REVIEW_REASON_MAX_LENGTH, PLAN_REVIEW_DETAIL_MAX_LENGTH, type Plan
 import { buildPlanPageContent, isPlanDone, type PlanMeta, type PlanStatus, type PlanStep } from "./lib/plan-utils";
 
 const log = createLogger("PlanService");
+
+function publishPlanReviewSessionsChanged(sessionIds: Array<string | null | undefined>): void {
+  const unique = Array.from(
+    new Set(
+      sessionIds
+        .map((id) => (typeof id === "string" ? id.trim() : ""))
+        .filter((id) => id.length > 0),
+    ),
+  );
+  if (unique.length === 0) return;
+  // Session menu review badges derive from /api/sessions. Mirror email-draft
+  // publish so open review tags clear as soon as the gate resolves.
+  eventBus.publish({
+    event: "data:sessions_changed",
+    data: {
+      reason: "plan_review_resolved",
+      sessionIds: unique,
+    },
+  });
+}
 
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: planSteps.accountId };
@@ -35,7 +56,8 @@ const VALID_STEP_TRANSITIONS: Record<string, readonly string[]> = {
   running: ["completed", "failed", "blocked", "needs_review"],
   failed: ["pending"],
   blocked: ["pending"],
-  needs_review: ["pending"],
+  // Approve completes, stop blocks, request_changes/retry return to pending.
+  needs_review: ["pending", "completed", "blocked"],
   completed: [],
   skipped: [],
 };
@@ -267,6 +289,53 @@ export async function getOpenPlanStepReview(planId: string, stepId: string): Pro
   return rows[0] ?? null;
 }
 
+/**
+ * Ensure a needs_review step has a durable open review the UI can submit.
+ * Orphaned gates (step needs_review, no open review row) make Submit a silent no-op.
+ */
+export async function ensureOpenPlanStepReview(params: {
+  planId: string;
+  stepId: string;
+  prompt?: string | null;
+  detail?: string | null;
+  openedBySessionId?: string | null;
+  attemptId?: number | null;
+}): Promise<PlanStepReviewRow> {
+  const existing = await getOpenPlanStepReview(params.planId, params.stepId);
+  if (existing) return existing;
+
+  const now = new Date();
+  const prompt = (params.prompt?.trim() || "Review required").slice(0, PLAN_REVIEW_REASON_MAX_LENGTH);
+  const detail = params.detail?.trim()
+    ? params.detail.trim().slice(0, PLAN_REVIEW_DETAIL_MAX_LENGTH)
+    : null;
+
+  const [created] = await db.insert(planStepReviews).values({
+    ...ownedInsertValues(getCurrentPrincipalOrSystem(), planReviewScopeColumns),
+    planId: params.planId,
+    stepId: params.stepId,
+    attemptId: params.attemptId ?? null,
+    status: "open",
+    prompt,
+    detail,
+    openedBySessionId: params.openedBySessionId ?? null,
+    openedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  }).returning();
+
+  if (!created) {
+    const raced = await getOpenPlanStepReview(params.planId, params.stepId);
+    if (raced) return raced;
+    throw new Error(`Failed to open plan review for ${params.planId}/${params.stepId}`);
+  }
+
+  log.warn(
+    `[${params.planId}] Healed orphaned needs_review gate on step ${params.stepId} by opening review ${created.id}`,
+  );
+  return created;
+}
+
 export async function reportPlanStepNeedsReview(params: {
   planId: string;
   stepId: string;
@@ -398,6 +467,10 @@ export interface ResolvePlanStepReviewResult {
   decision: PlanReviewDecision;
   planStatus: PlanStatus;
   shouldExecute: boolean;
+  originSessionId?: string | null;
+  openedBySessionId?: string | null;
+  resolvedBySessionId?: string | null;
+  stepSessionId?: string | null;
 }
 
 export async function resolvePlanStepReview(params: {
@@ -484,22 +557,30 @@ export async function resolvePlanStepReview(params: {
       : params.decision === "stop"
         ? "blocked"
         : "pending";
+    // Keep the transition table authoritative even though this path updates
+    // directly; reject illegal target statuses before write.
+    assertPlanStepTransition(params.stepId, step.status, nextStepStatus, "resolvePlanStepReview");
     const stepPatch: Partial<typeof planSteps.$inferInsert> = {
       status: nextStepStatus,
       error: params.decision === "approve" ? null : reason,
       updatedAt: now,
     };
+    if (nextStepStatus === "completed" || nextStepStatus === "blocked") {
+      stepPatch.completedAt = now;
+    }
     if (nextStepStatus === "pending") {
       stepPatch.sessionId = null;
       stepPatch.durationSeconds = null;
       stepPatch.startedAt = null;
       stepPatch.completedAt = null;
     }
+    // Gate identity is the open review row + step needs_review status.
+    // Do not require step.sessionId === openedBySessionId — that desyncs under
+    // recovery/resume and makes Submit fail forever while the card still shows.
     const stepUpdated = await tx.update(planSteps).set(stepPatch).where(writablePlanStep(and(
       eq(planSteps.planId, params.planId),
       eq(planSteps.id, params.stepId),
       eq(planSteps.status, "needs_review"),
-      eq(planSteps.sessionId, review.openedBySessionId ?? ""),
     ))).returning({ id: planSteps.id });
     if (stepUpdated.length === 0) throw new Error("Plan review step is no longer awaiting this decision");
 
@@ -516,7 +597,7 @@ export async function resolvePlanStepReview(params: {
         eq(planExecutions.id, params.planId),
         eq(planExecutions.status, "needs_review"),
       )))
-      .returning({ id: planExecutions.id });
+      .returning({ id: planExecutions.id, originSessionId: planExecutions.originSessionId });
     if (planUpdated.length === 0) throw new Error("Plan is no longer awaiting this review decision");
 
     return {
@@ -525,6 +606,10 @@ export async function resolvePlanStepReview(params: {
       decision: params.decision,
       planStatus,
       shouldExecute: params.decision !== "stop" && planStatus !== "completed",
+      originSessionId: planUpdated[0]?.originSessionId ?? plan.originSessionId ?? null,
+      openedBySessionId: review.openedBySessionId ?? null,
+      resolvedBySessionId: params.resolvedBySessionId ?? null,
+      stepSessionId: step.sessionId ?? null,
     };
   });
 
@@ -533,6 +618,12 @@ export async function resolvePlanStepReview(params: {
       `[${result.planId}] Review decision committed but Plan projection refresh failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   });
+  publishPlanReviewSessionsChanged([
+    result.originSessionId,
+    result.openedBySessionId,
+    result.resolvedBySessionId,
+    result.stepSessionId,
+  ]);
   return result;
 }
 

@@ -42,6 +42,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { emitSessionListChanged } from "@/hooks/use-data-sync";
 import { cn } from "@/lib/utils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatDiagnosticValue } from "@/lib/diagnostic-error";
@@ -456,6 +457,13 @@ export function PlanWidget({
       toast({
         title: result.decision === "approve" ? "Approved" : result.decision === "stop" ? "Plan stopped" : "Review recorded",
       });
+      // Session menu review badges are derived from /api/sessions. Force a
+      // local refresh even if the server data event is delayed or missed.
+      void emitSessionListChanged("plan_review_resolved");
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      if (sessionId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Review failed", description: err.message, variant: "destructive" });

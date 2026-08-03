@@ -13,6 +13,7 @@ import { db } from "../db";
 import { libraryPages } from "@shared/models/info";
 import { planExecutions, planStepAttempts, planStepReviews, planSteps } from "@shared/schema";
 import { isPlanReviewDecision, PLAN_REVIEW_REASON_MAX_LENGTH } from "@shared/plan-review";
+import { ensureOpenPlanStepReview, resolvePlanStepReview } from "../plan-service";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { logPatchClearAudit, sanitizePatch } from "../lib/patch-guard";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
@@ -480,6 +481,29 @@ export async function registerProjectsRoutes(app: Express) {
         for (const review of reviews) {
           if (!reviewByStep.has(review.stepId)) reviewByStep.set(review.stepId, review);
         }
+        // Heal orphaned needs_review steps so the review card always has a
+        // durable reviewId. Without this, Submit is a silent client no-op.
+        for (const step of dbSteps) {
+          if (step.status !== "needs_review" || reviewByStep.has(step.id)) continue;
+          const latestAttempt = (attemptsByStep.get(step.id) ?? []).slice(-1)[0];
+          try {
+            const healed = await ensureOpenPlanStepReview({
+              planId: dbPlan.id,
+              stepId: step.id,
+              prompt: step.outcome || step.title || "Review required",
+              detail: step.error ?? null,
+              openedBySessionId: step.sessionId ?? dbPlan.originSessionId ?? null,
+              attemptId: latestAttempt?.id ?? null,
+            });
+            reviewByStep.set(step.id, healed);
+          } catch (error) {
+            log.warn(
+              `Failed to heal orphaned plan review for ${dbPlan.id}/${step.id}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
         effectiveSteps = dbSteps.map(s => ({
           id: s.id,
           title: s.title,
@@ -783,7 +807,6 @@ export async function registerProjectsRoutes(app: Express) {
         return res.status(409).json({ error: `Plan status is "${dbPlan.status}" — no human review is pending.` });
       }
 
-      const { resolvePlanStepReview } = await import("../plan-service");
       const result = await resolvePlanStepReview({
         planId: dbPlan.id,
         stepId,
