@@ -330,11 +330,17 @@ function alignAssistantChronology(
   sessionId: string,
 ): SegmentChronologyEntry[] | undefined {
   if (!chronology) return undefined;
-  const sanitizedChronology = chronology.map((entry) =>
-    entry.s === "content"
-      ? { ...entry, c: stripRoleMarkers(entry.c, sessionId) }
-      : entry,
-  );
+  const sanitizedChronology = chronology.map((entry) => {
+    if (entry.s !== "content") return entry;
+    // Accept legacy/malformed producers that used `t` instead of `c`.
+    const raw =
+      typeof entry.c === "string"
+        ? entry.c
+        : typeof (entry as { t?: unknown }).t === "string"
+          ? String((entry as { t?: unknown }).t)
+          : "";
+    return { s: "content" as const, c: stripRoleMarkers(raw, sessionId) };
+  });
   const chronologicalContent = sanitizedChronology
     .filter((entry): entry is Extract<SegmentChronologyEntry, { s: "content" }> => entry.s === "content")
     .map((entry) => entry.c)
@@ -602,12 +608,25 @@ function hasRenderableAssistantPayload(input: {
 const ROLE_MARKER_RE = /^\[(User|Assistant|Tool Result)\]/gm;
 
 function stripRoleMarkers(content: string, sessionId: string): string {
+  // Coerce first so a malformed chronology/content producer cannot crash
+  // terminal message persistence with "Cannot read properties of undefined (reading 'replace')".
+  const text =
+    typeof content === "string"
+      ? content
+      : content == null
+        ? ""
+        : String(content);
+  if (typeof content !== "string") {
+    log.warn(
+      `[ChatFileStorage] stripRoleMarkers coerced non-string content sessionId=${sessionId} type=${content === null ? "null" : typeof content}`,
+    );
+  }
   let stripped = false;
-  const cleaned = content.replace(ROLE_MARKER_RE, (match) => {
+  const cleaned = text.replace(ROLE_MARKER_RE, (match) => {
     if (!stripped) {
       log.warn(
         `[ChatFileStorage] Stripped role marker(s) from assistant output, ` +
-          `sessionId=${sessionId} preview="${content.slice(0, 80)}"`,
+          `sessionId=${sessionId} preview="${text.slice(0, 80)}"`,
       );
       stripped = true;
     }
