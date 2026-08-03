@@ -153,14 +153,15 @@ const MAX_LINK_COMPLEXITY = MEMORY_GRAPH_SETTING_DEFINITIONS.find(
 const LARGE_GRAPH_THRESHOLD = 1_000;
 const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
-// Linear inter-post glide. The layout worker posts a full-graph solve at a bounded
-// cadence (~33ms, slower on large graphs). Snapping every node to each post made motion
-// lurch; exponential ease-to-target made it ramp-to-stop-then-jump. Instead, capture each
-// post as a segment endpoint and lerp displayed positions at constant velocity across the
-// measured inter-post interval so motion reads continuous on the render clock.
-const LAYOUT_INTERP_DEFAULT_MS = 33;
-const LAYOUT_INTERP_MIN_MS = 16;
-const LAYOUT_INTERP_MAX_MS = 120;
+// Linear inter-post glide. The layout worker posts full-graph solves on a budgeted
+// ~60 Hz physics clock (slower only when a single tick overruns the frame). Snapping
+// every node to each post made motion lurch; exponential ease-to-target made it
+// ramp-to-stop-then-jump. Instead, capture each post as a segment endpoint and lerp
+// displayed positions at constant velocity across the measured inter-post interval so
+// motion reads continuous on the render clock even when physics briefly dips.
+const LAYOUT_INTERP_DEFAULT_MS = 16;
+const LAYOUT_INTERP_MIN_MS = 8;
+const LAYOUT_INTERP_MAX_MS = 48;
 const MIN_NODE_HIT_RADIUS_PX = 12;
 const NODE_RENDER_ORDER = 0;
 const RESTING_LINK_RENDER_ORDER = 1;
@@ -1822,13 +1823,23 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       }
     }
 
-    // Fail-open fallback: run the force layout on the main thread exactly as before.
+    // Fail-open fallback: same force profile as the worker, on the main thread.
+    // Adaptive Barnes-Hut params match graph-layout-worker so both paths share cost.
     function startMainThreadSimulation() {
       if (simulation) {
         simulation.stop();
         simulation.on("tick", null);
         simulation.on("end", null);
       }
+      const nodeCount = sceneNodes.length;
+      const chargeTheta = nodeCount > 900 ? 1.25
+        : nodeCount > 500 ? 1.1
+        : nodeCount > 250 ? 0.95
+        : 0.85;
+      const chargeDistanceMax = nodeCount > 900 ? 260
+        : nodeCount > 500 ? 320
+        : nodeCount > 250 ? 400
+        : 480;
       const linkForce = forceLink<SceneNode, SceneLink>(simulationLinks)
         .id((node) => node.id)
         .distance((link) => {
@@ -1844,9 +1855,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       simulation = forceSimulation(sceneNodes, 3)
         .force("charge", forceManyBody<SceneNode>()
           .strength((node) => -(135 + Math.sqrt(node.degree) * 9) * activeSettings.nodeRepulsionFactor)
-          .theta(0.76)
+          .theta(chargeTheta)
           .distanceMin(2)
-          .distanceMax(520))
+          .distanceMax(chargeDistanceMax))
         .force("links", linkForce)
         .force("collision", forceCollide<SceneNode>((node) => node.radius + 8).strength(0.88).iterations(1))
         .force("x", forceX<SceneNode>(0).strength(0.0015))
