@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const entityTypeEnum = z.enum(["goal", "task", "project", "principle", "issue", "person"]);
+export const entityTypeEnum = z.enum(["goal", "task", "project", "principle", "issue", "person", "company", "thesis", "page"]);
 export type EntityType = z.infer<typeof entityTypeEnum>;
 
 export interface Tag {

@@ -51,6 +51,7 @@ import { getLibraryPageNeighbors } from "../library-link-graph";
 import { backfillLibraryReferences, getLibraryReferenceNeighborhood, indexLibraryPageReferences } from "../library-reference-index";
 import { projectActiveLibraryReminders } from "../library-reminders";
 import { buildLibrarySurfaceSet } from "../library-save";
+import { syncLibraryPageTags } from "../library-tag-sync";
 
 const log = createLogger("InfoRoutes");
 
@@ -902,6 +903,10 @@ export async function registerLibraryRoutes(app: Express) {
         }
       }
 
+      if (updates.tags !== undefined) {
+        syncLibraryPageTags(updated.id, updated.title, updated.tags);
+      }
+
       upsertLibraryPageMemory(updated).catch((e) =>
         log.warn(`Library memory upsert failed: ${e.message}`),
       );
@@ -1343,6 +1348,8 @@ export async function registerLibraryRoutes(app: Express) {
               })
               .where(eq(libraryPages.id, page.id));
 
+            syncLibraryPageTags(page.id, title || page.title, mergedTags);
+
             backfillState.enriched++;
             log.debug(
               `[backfill] Enriched library page "${page.title}" (${i + 1}/${needsEnrichment.length})`,
@@ -1425,6 +1432,8 @@ export async function registerLibraryRoutes(app: Express) {
           updatedAt: new Date(),
         })
         .where(eq(libraryPages.id, page.id));
+
+      syncLibraryPageTags(page.id, title || page.title, mergedTags);
 
       const [updated] = await db
         .select()
