@@ -247,9 +247,36 @@ export function filterToolSchemasForAuthority<T extends { name: string; descript
 
 const SAFE_SHELL_COMMANDS = new Set([
   "cd", "pwd", "ls", "find", "cat", "head", "tail", "grep", "sed", "wc", "sort", "uniq",
-  "cut", "tr", "printf", "test", "[", "basename", "dirname", "stat", "du", "file", "diff", "git", "npm",
+  "cut", "tr", "echo", "printf", "test", "[", "basename", "dirname", "stat", "du", "file", "diff", "git", "npm",
 ]);
-const FORBIDDEN_SHELL_TOKENS = /(?:\r|\n|;|`|\$\(|\$(?:\{|[A-Za-z0-9_?*#@!$-])|\|\||(?<!&)\&(?!&)|[<>~]|\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet|python|python3|node|deno|bun|perl|ruby|php|lua|env|printenv|eval|source)\b|\/(?:proc|sys|dev|root|home)\/|(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)|credentials?|secrets?)/i;
+/**
+ * Ordered forbidden-token classes. Each carries a precise, actionable reason so a rejected
+ * command names exactly which class tripped — a child can then adapt (drop the redirection,
+ * split a `;` sequence into separate calls) instead of blindly retrying variants until the
+ * watchdog kills it. This replaces one opaque `forbidden_shell_token` reason with the specific
+ * cause and preserves every prior protection except the deliberate removal below.
+ *
+ * The prior bare-word ban on `credentials?|secrets?` was removed: it blocked read-only
+ * inspection like `grep "secret" server/` while the scratch read path can already open any file
+ * in the session clone, so the ban was incoherent theater. Real secret exposure stays blocked
+ * structurally — env dumps (`env`/`printenv`), interpreters, and dotfile secret paths (`.env`,
+ * `.aws`, `.git-credentials`, …) each retain their own class below.
+ */
+const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
+  { pattern: /[\r\n]/, reason: "forbidden:multiline_command" },
+  { pattern: /;/, reason: "forbidden:semicolon_sequencing" },
+  { pattern: /`|\$\(/, reason: "forbidden:command_substitution" },
+  { pattern: /\$(?:\{|[A-Za-z0-9_?*#@!$-])/, reason: "forbidden:variable_expansion" },
+  { pattern: /\|\|/, reason: "forbidden:or_operator" },
+  { pattern: /(?<!&)\&(?!&)/, reason: "forbidden:background_execution" },
+  { pattern: /[<>]/, reason: "forbidden:redirection" },
+  { pattern: /~/, reason: "forbidden:home_expansion" },
+  { pattern: /\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet)\b/i, reason: "forbidden:network_binary" },
+  { pattern: /\b(?:python|python3|node|deno|bun|perl|ruby|php|lua|eval|source)\b/i, reason: "forbidden:interpreter" },
+  { pattern: /\b(?:env|printenv)\b/i, reason: "forbidden:env_dump" },
+  { pattern: /\/(?:proc|sys|dev|root|home)\//i, reason: "forbidden:sensitive_path" },
+  { pattern: /(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)/i, reason: "forbidden:dotfile_secret" },
+];
 const SAFE_SED_READ = /^sed\s+-n\s+(["'])(?:\d+)(?:,\d+)?p\1\s+(?:--\s+)?[^\s]+(?:\s+[^\s]+)*$/;
 
 /**
@@ -307,7 +334,9 @@ function splitShellSegments(command: string): string[] {
 
 export function validateShellCommand(command: string): ToolAuthorityDecision {
   if (!command.trim()) return { allowed: false, reason: "empty_command" };
-  if (FORBIDDEN_SHELL_TOKENS.test(command)) return { allowed: false, reason: "forbidden_shell_token" };
+  for (const { pattern, reason } of FORBIDDEN_SHELL_TOKEN_CLASSES) {
+    if (pattern.test(command)) return { allowed: false, reason };
+  }
   if (/(?:^|[\s\"'=\\])\/(?!app(?:\/|$))/.test(command)) return { allowed: false, reason: "absolute_path_outside_workspace" };
   if (/(?:^|[\s/])\.\.(?:[\s/]|$)/.test(command)) return { allowed: false, reason: "path_traversal_blocked" };
 
