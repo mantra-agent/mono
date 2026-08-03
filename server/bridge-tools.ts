@@ -11426,6 +11426,8 @@ ${refs}` : ""),
       // ── Library page actions ──────────────────────────────────────
       if (action === "list_library_pages" || action === "list") {
         const vaultFilter = typeof args.vaultId === "string" && args.vaultId ? eq(libraryPages.vaultId, args.vaultId) : undefined;
+        const limitRaw = typeof args.limit === "number" && Number.isFinite(args.limit) ? Math.floor(args.limit) : 50;
+        const limit = Math.min(200, Math.max(1, limitRaw));
         const pages = await db.select({
           id: libraryPages.id,
           title: libraryPages.title,
@@ -11435,7 +11437,7 @@ ${refs}` : ""),
           summary: libraryPages.summary,
           vaultId: libraryPages.vaultId,
           updatedAt: libraryPages.updatedAt,
-        }).from(libraryPages).where(visibleLib(vaultFilter)).orderBy(desc(libraryPages.updatedAt)).limit(50);
+        }).from(libraryPages).where(visibleLib(vaultFilter)).orderBy(desc(libraryPages.updatedAt)).limit(limit);
         if (pages.length === 0) return { result: "No library pages found." };
         const bcMap = await buildBreadcrumbMap();
         const vmap = await buildVaultMap();
@@ -11462,6 +11464,8 @@ ${refs}` : ""),
         );
         const whereClause = wordConditions.length === 1 ? wordConditions[0] : and(...wordConditions);
         const vaultFilter = typeof args.vaultId === "string" && args.vaultId ? eq(libraryPages.vaultId, args.vaultId) : undefined;
+        const limitRaw = typeof args.limit === "number" && Number.isFinite(args.limit) ? Math.floor(args.limit) : 20;
+        const limit = Math.min(200, Math.max(1, limitRaw));
         const pages = await db.select({
           id: libraryPages.id,
           title: libraryPages.title,
@@ -11471,7 +11475,7 @@ ${refs}` : ""),
           summary: libraryPages.summary,
           vaultId: libraryPages.vaultId,
           plainTextContent: libraryPages.plainTextContent,
-        }).from(libraryPages).where(visibleLib(vaultFilter ? and(whereClause, vaultFilter) : whereClause)).limit(20);
+        }).from(libraryPages).where(visibleLib(vaultFilter ? and(whereClause, vaultFilter) : whereClause)).limit(limit);
         if (pages.length === 0) return { result: `No library pages matching "${q}".` };
         const bcMap = await buildBreadcrumbMap();
         const vmap = await buildVaultMap();

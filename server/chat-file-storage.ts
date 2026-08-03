@@ -19,7 +19,10 @@ import {
   buildLiteralSubstringPattern,
   buildTargetSessionSearchQuery,
 } from "./memory/session-search-query";
-import { isSessionSearchProjectionReady } from "./memory/session-search-projection";
+import {
+  isSessionSearchProjectionReady,
+  isSessionSearchSegmentIndexPresent,
+} from "./memory/session-search-projection";
 import { generateId } from "./file-storage/utils";
 import { createLogger } from "./log";
 import { markSessionDeleted } from "./chat-journal";
@@ -4762,10 +4765,16 @@ export async function searchSessionSummaries(
     queryBuildMs = performance.now() - queryBuildStartedAt;
 
     resultDbStartedAt = performance.now();
-    const projectionReady = await isSessionSearchProjectionReady();
-    source = projectionReady ? "target" : "legacy";
+    // Prefer the target index as soon as it exists — full projection readiness is ideal
+    // but partial target beats legacy ILIKE under boot/load spikes.
+    const [projectionReady, indexPresent] = await Promise.all([
+      isSessionSearchProjectionReady(),
+      isSessionSearchSegmentIndexPresent(),
+    ]);
+    const useTarget = projectionReady || indexPresent;
+    source = useTarget ? "target" : "legacy";
     const rows = await executeBoundedSessionSearch(() =>
-      projectionReady
+      useTarget
         ? buildTargetSessionSearchQuery(
             principal,
             cutoff.toISOString(),
@@ -4783,7 +4792,7 @@ export async function searchSessionSummaries(
     resultDbStartedAt = undefined;
 
     snippetHydrationStartedAt = performance.now();
-    const summaries = projectionReady
+    const summaries = useTarget
       ? rows
           .filter((row) => Boolean(row.docId))
           .map((row) => ({
@@ -4824,6 +4833,10 @@ export async function searchSessionSummaries(
     if (snippetHydrationStartedAt !== undefined) {
       snippetHydrationMs = failedAt - snippetHydrationStartedAt;
     }
+    const sqlState = sessionSearchSqlState(err);
+    const kind = sqlState === "57014" ? "timeout" : "unavailable";
+    // Soft-fail: empty success keeps agent/tools alive during projection lag or legacy timeouts.
+    // Hard-throw only remains available via SessionSearchError for direct callers that rethrow.
     onDiagnostics?.({
       status: "failure",
       queryBuildMs,
@@ -4835,16 +4848,15 @@ export async function searchSessionSummaries(
       totalCount: 0,
       source,
     });
-    const sqlState = sessionSearchSqlState(err);
-    const kind = sqlState === "57014" ? "timeout" : "unavailable";
-    log.error("session search failed", {
+    log.warn("session search soft-failed; returning empty results", {
       kind,
       sqlState,
       source,
       resultDbMs: Number(resultDbMs.toFixed(2)),
       totalMs: Number((performance.now() - startedAt).toFixed(2)),
+      error: err instanceof Error ? err.message : String(err),
     });
-    throw new SessionSearchError(kind);
+    return [];
   }
 }
 
