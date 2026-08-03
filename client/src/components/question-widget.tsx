@@ -185,9 +185,8 @@ export function QuestionWidget({
   const [principleQuery, setPrincipleQuery] = useState("");
   const [principlesLoading, setPrinciplesLoading] = useState(false);
   const [reasoning, setReasoning] = useState(response?.reasoning ?? "");
-  const [showProvenance, setShowProvenance] = useState(
-    Boolean(response?.selectedPrincipleRevisionIds?.length || response?.reasoning || prompt.reasoning),
-  );
+  // Principles/context stay collapsed by default; reasoning lives outside this panel.
+  const [showContext, setShowContext] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -478,9 +477,27 @@ export function QuestionWidget({
           </div>
         )}
       </div>
+      <div className="space-y-1.5 border-t border-border/40 px-3 py-2">
+        <label
+          htmlFor={`question-reasoning-${prompt.toolCallId}`}
+          className="block text-xs font-medium text-muted-foreground"
+        >
+          Reasoning
+        </label>
+        <textarea
+          id={`question-reasoning-${prompt.toolCallId}`}
+          value={reasoning}
+          onChange={(event) => setReasoning(event.target.value)}
+          disabled={controlsDisabled}
+          rows={2}
+          placeholder="Why this choice (optional)"
+          className="w-full resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
+          data-testid={`question-reasoning-${prompt.toolCallId}`}
+        />
+      </div>
       <Collapsible
-        open={showProvenance}
-        onOpenChange={setShowProvenance}
+        open={showContext}
+        onOpenChange={setShowContext}
         className="border-t border-border/40"
       >
         <CollapsibleTrigger
@@ -488,7 +505,7 @@ export function QuestionWidget({
           className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-accent/30 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
           data-testid={`question-provenance-toggle-${prompt.toolCallId}`}
         >
-          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showProvenance && "rotate-90")} />
+          <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showContext && "rotate-90")} />
           <span className="min-w-0 flex-1">Context</span>
           {principlesLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
           {selectedPrinciples.length > 0 ? (
@@ -525,17 +542,6 @@ export function QuestionWidget({
                 ))
               )}
             </div>
-            {prompt.allowResponseReasoning && (
-              <textarea
-                value={reasoning}
-                onChange={(event) => setReasoning(event.target.value)}
-                disabled={controlsDisabled}
-                rows={2}
-                placeholder="Add your reasoning (optional)"
-                className="w-full resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
-                data-testid={`question-reasoning-${prompt.toolCallId}`}
-              />
-            )}
           </div>
         </CollapsibleContent>
       </Collapsible>
