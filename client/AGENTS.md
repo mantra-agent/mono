@@ -79,7 +79,7 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 
 ## Browser navigation telemetry
 
-`client/src/lib/navigation-trace.ts` is the single in-memory correlation boundary for SPA navigation evidence. History intent, route Suspense/lazy settlement, React Query activity, destination commit, main-thread evidence, and bounded session-stream pressure feed one terminal trace; only that terminal trace enters `browser_performance_telemetry`. Never persist per milestone, query event, frame, or stream delta, and never capture query keys or stream content.
+`client/src/lib/navigation-trace.ts` is the single in-memory correlation boundary for SPA navigation evidence. History intent, route Suspense/lazy settlement, React Query activity, destination commit, main-thread evidence, and bounded session-stream pressure feed one terminal trace; only that terminal trace enters `browser_performance_telemetry`. Never persist per milestone, query event, frame, or stream delta, and never capture query keys or stream content. The readiness gate tracks only genuine initial loads (`query.state.status === "pending"`); background refetches and interval pollers must not hold a navigation trace open.
 
 Route lifecycle is owned by `RouteLoadBoundary`: application chrome may overlay routed content but must never unmount it, each pathname gets an isolated Suspense/error boundary, and every module wait must settle visibly within the named budget. `lazyWithRetry` may retry bounded imports and reject into that boundary; it must never reload internally or install a never-settling promise.
 
