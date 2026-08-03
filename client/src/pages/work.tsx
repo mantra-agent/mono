@@ -99,6 +99,7 @@ import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { UniversalTagPicker } from "@/components/universal-tag-picker";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTimezone, formatDate as tzFormatDate, formatDateTime, formatDateOnly } from "@/hooks/use-timezone";
 import { localDayDiff } from "@/lib/local-date";
@@ -452,140 +453,7 @@ function GoalSelector({ goalId, onChange }: { goalId: string | null; onChange: (
   );
 }
 
-function TagMenuItems({
-  selectedTags,
-  onChange,
-}: {
-  selectedTags: string[];
-  onChange: (tags: string[]) => void;
-}) {
-  const { data: allTags } = useQuery<string[]>({
-    queryKey: ["/api/projects/tags"],
-  });
-  const mergedTags = Array.from(new Set([...(allTags || []), ...selectedTags])).sort();
-  const toggleTag = (tag: string) => {
-    if (selectedTags.includes(tag)) {
-      onChange(selectedTags.filter(t => t !== tag));
-    } else {
-      onChange([...selectedTags, tag]);
-    }
-  };
-  if (mergedTags.length === 0) {
-    return <DropdownMenuItem disabled>No tags yet</DropdownMenuItem>;
-  }
-  return (
-    <>
-      {mergedTags.map(tag => (
-        <DropdownMenuItem key={tag} onClick={(e) => { e.preventDefault(); toggleTag(tag); }}>
-          <Check className={cn("h-3.5 w-3.5 mr-2", selectedTags.includes(tag) ? "opacity-100" : "opacity-0")} />
-          {tag}
-        </DropdownMenuItem>
-      ))}
-    </>
-  );
-}
 
-function TagPicker({
-  selectedTags,
-  onChange,
-  testId,
-}: {
-  selectedTags: string[];
-  onChange: (tags: string[]) => void;
-  testId: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [newTagInput, setNewTagInput] = useState("");
-
-  const { data: allTags } = useQuery<string[]>({
-    queryKey: ["/api/projects/tags"],
-  });
-
-  const availableTags = allTags || [];
-
-  const toggleTag = (tag: string) => {
-    if (selectedTags.includes(tag)) {
-      onChange(selectedTags.filter(t => t !== tag));
-    } else {
-      onChange([...selectedTags, tag]);
-    }
-  };
-
-  const addNewTag = () => {
-    const tag = newTagInput.trim().toLowerCase();
-    if (tag && !selectedTags.includes(tag)) {
-      onChange([...selectedTags, tag]);
-      setNewTagInput("");
-      queryClient.invalidateQueries({ queryKey: ["/api/projects/tags"] });
-    }
-  };
-
-  const mergedTags = Array.from(new Set([...availableTags, ...selectedTags])).sort();
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <div className="flex items-center gap-1 cursor-pointer" data-testid={testId}>
-          {selectedTags.length > 0 ? (
-            selectedTags.slice(0, 2).map(tag => (
-              <Badge key={tag} variant="outline" className="text-xs no-default-hover-elevate no-default-active-elevate">
-                {tag}
-              </Badge>
-            ))
-          ) : (
-            <Button type="button" size="icon" variant="ghost" className="text-muted-foreground/50">
-              <Tag className="h-3.5 w-3.5" />
-            </Button>
-          )}
-        </div>
-      </PopoverTrigger>
-      <PopoverContent className="w-48 p-2" align="start" sideOffset={4}>
-        <div className="flex flex-col gap-1">
-          <form
-            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); addNewTag(); }}
-            className="flex items-center gap-1"
-          >
-            <Input
-              value={newTagInput}
-              onChange={(e) => setNewTagInput(e.target.value)}
-              onKeyDown={(e) => e.stopPropagation()}
-              placeholder="New tag..."
-              className="text-xs flex-1"
-              data-testid={`${testId}-input`}
-            />
-            <Button
-              type="submit"
-              size="icon"
-              variant="ghost"
-              disabled={!newTagInput.trim()}
-              data-testid={`${testId}-add`}
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          </form>
-          {mergedTags.length > 0 && (
-            <div className="flex flex-col gap-0.5 mt-1 max-h-32 overflow-y-auto">
-              {mergedTags.map(tag => (
-                <Button
-                  key={tag}
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="justify-start gap-2 w-full"
-                  onClick={() => toggleTag(tag)}
-                  data-testid={`${testId}-tag-${tag}`}
-                >
-                  <Check className={cn("h-3.5 w-3.5", selectedTags.includes(tag) ? "opacity-100" : "opacity-0")} />
-                  <span className="text-xs">{tag}</span>
-                </Button>
-              ))}
-            </div>
-          )}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 
 interface LibraryPickerPage {
@@ -1976,7 +1844,12 @@ function ProjectTreeNode({
                       Tags
                     </DropdownMenuSubTrigger>
                     <DropdownMenuSubContent className="w-40">
-                      <TagMenuItems selectedTags={project.tags} onChange={(tags) => onUpdateProject({ tags })} />
+                      <UniversalTagPicker
+                        variant="menu"
+                        selected={project.tags || []}
+                        onChange={(tags) => onUpdateProject({ tags })}
+                        testId={`project-tags-menu-${project.id}`}
+                      />
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
                   <DropdownMenuSub>
@@ -2386,7 +2259,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const [priority, setPriority] = useState<PriorityLevel>("mid");
   const [owner, setOwner] = useState<"me" | "agent">("me");
   const [dueDate, setDueDate] = useState("");
-  const [tagsInput, setTagsInput] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
   const titleRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -2409,7 +2282,6 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
-    const tags = tagsInput.split(",").map(t => t.trim()).filter(Boolean);
     createMutation.mutate({
       title: title.trim(),
       priority,
@@ -2461,12 +2333,13 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
           />
         </div>
 
-        <Input
-          placeholder="Tags (comma separated)"
-          value={tagsInput}
-          onChange={e => setTagsInput(e.target.value)}
-          className="h-8 text-xs"
-          data-testid="input-project-tags"
+        <UniversalTagPicker
+          variant="compact"
+          selected={tags}
+          onChange={setTags}
+          placeholder="Add tags…"
+          testId="input-project-tags"
+          className="min-h-8 rounded-md border border-input px-2 py-1"
         />
 
         <div className="flex items-center justify-end gap-2">

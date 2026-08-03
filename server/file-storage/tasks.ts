@@ -19,8 +19,19 @@ import {
 import { objectGrantService } from "../object-grant-service";
 import { resolveInvitedSubjectReferenceInTransaction } from "../invited-subject-service";
 import { eventBus } from "../event-bus";
+import { tagRegistry } from "./tags";
 
 const log = createLogger("StoreTasks");
+
+async function syncTaskTags(task: Task): Promise<void> {
+  try {
+    await tagRegistry.syncEntityTags("task", String(task.id), task.title, task.tags || []);
+  } catch (err) {
+    const tagError = err instanceof Error ? err.message : String(err);
+    log.error("task tag sync error", { id: task.id, error: tagError });
+    throw err;
+  }
+}
 
 export type TaskUpdateCommand = Partial<InsertTask> & PatchInput;
 
@@ -446,6 +457,7 @@ export class FileTaskStorage {
 
     this.invalidateCache();
     const task = rowToTask(row);
+    await syncTaskTags(task);
     log.log(`createTask id=${task.id} title="${task.title}" status=${task.status} priority=${task.priority}`);
     return task;
   }
@@ -532,7 +544,11 @@ export class FileTaskStorage {
     if (updates.status) log.log(`statusChange to=${updates.status} taskId=${id} title="${row.title}"`);
     log.log(`updateTask id=${id} fields=${Object.keys(updates).join(",")}`);
     this.invalidateCache();
-    return rowToTask(row);
+    const task = rowToTask(row);
+    if (updates.tags !== undefined) {
+      await syncTaskTags(task);
+    }
+    return task;
   }
 
   async deleteTask(id: number): Promise<boolean> {
@@ -548,6 +564,14 @@ export class FileTaskStorage {
       ).returning({ id: tasks.id });
       return rows.length > 0;
     });
+    if (deleted) {
+      try {
+        await tagRegistry.removeEntity("task", String(id));
+      } catch (err) {
+        const tagError = err instanceof Error ? err.message : String(err);
+        log.error("task tag cleanup error", { id, error: tagError });
+      }
+    }
     log.log(`deleteTask id=${id} success=${deleted}`);
     this.invalidateCache();
     return deleted;

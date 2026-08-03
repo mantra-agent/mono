@@ -3,6 +3,7 @@ import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ExpandableInteractionRow, type PersonInteraction } from "@/components/people/expandable-interaction-row";
 import { InlineDatePicker } from "@/components/inline-date-picker";
+import { UniversalTagPicker } from "@/components/universal-tag-picker";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
 import { getInstanceName } from "@/lib/instance-config";
@@ -3682,18 +3683,10 @@ function ImportView({ onSelectPerson, selectedEmailOverride, onClearSelection }:
 }
 
 function DetailTagRow({ tags, showEmpty, onChange }: { tags: string[]; showEmpty: boolean; onChange: (tags: string[]) => void }) {
-  const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(tags.length);
   const summaryRef = useRef<HTMLDivElement>(null);
   const measurementRef = useRef<HTMLDivElement>(null);
-  const { data: tagData } = useQuery<{ tags: { slug: string; label: string }[] }>({
-    queryKey: ["/api/tags"],
-  });
-  const allTags = tagData?.tags || [];
-  const suggestions = input.length > 0
-    ? allTags.filter(t => t.label.toLowerCase().includes(input.toLowerCase()) && !tags.includes(t.slug)).slice(0, 5)
-    : [];
 
   useLayoutEffect(() => {
     const summary = summaryRef.current;
@@ -3728,17 +3721,10 @@ function DetailTagRow({ tags, showEmpty, onChange }: { tags: string[]; showEmpty
     return () => observer.disconnect();
   }, [tags]);
 
-  const addTag = (value: string) => {
-    const slug = value.trim().toLowerCase().replace(/\s+/g, "-");
-    if (!slug) return;
-    if (!tags.includes(slug)) onChange([...tags, slug]);
-    setInput("");
-  };
-
   const hasOverflow = visibleCount < tags.length;
 
   return (
-    <Popover open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) setInput(""); }}>
+    <Popover open={open} onOpenChange={setOpen}>
       <ProfileTreeRow
         label={<span data-testid="label-tags">Tags</span>}
         icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
@@ -3771,115 +3757,29 @@ function DetailTagRow({ tags, showEmpty, onChange }: { tags: string[]; showEmpty
           ))}
         </div>
       </ProfileTreeRow>
-      <PopoverContent align="end" className="w-64 space-y-2 p-2" onOpenAutoFocus={(event) => event.preventDefault()} data-testid="popover-detail-tags">
-        <div className="max-h-48 overflow-y-auto">
-          {tags.length > 0 ? tags.map(tag => (
-            <div key={tag} className="flex min-h-8 items-center justify-between gap-2 rounded px-2 text-sm hover:bg-accent">
-              <span className="min-w-0 truncate">{tag}</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 min-h-7 w-7 shrink-0 px-0"
-                onClick={() => onChange(tags.filter(existingTag => existingTag !== tag))}
-                aria-label={`Remove ${tag}`}
-                data-testid={`button-remove-tag-${tag}`}
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          )) : <div className="px-2 py-1.5 text-sm text-muted-foreground">No tags</div>}
-        </div>
-        <div className="relative border-t border-border/20 pt-2">
-          <Input
-            value={input}
-            onChange={event => setInput(event.target.value)}
-            placeholder="Add tag"
-            className="h-8 w-full text-left text-sm"
-            onKeyDown={event => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                addTag(input);
-              }
-              if (event.key === "Escape") setOpen(false);
-            }}
-            data-testid="input-detail-tags"
-          />
-          {suggestions.length > 0 && (
-            <div className="mt-1 overflow-hidden rounded-md border bg-popover shadow-md">
-              {suggestions.map(suggestion => (
-                <button
-                  type="button"
-                  key={suggestion.slug}
-                  className="block min-h-8 w-full px-2 py-1.5 text-left text-sm hover:bg-accent"
-                  onClick={() => addTag(suggestion.slug)}
-                  data-testid={`option-tag-${suggestion.slug}`}
-                >
-                  {suggestion.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      <PopoverContent align="end" className="w-72 p-2" onOpenAutoFocus={(event) => event.preventDefault()} data-testid="popover-detail-tags">
+        <UniversalTagPicker
+          variant="compact"
+          selected={tags}
+          onChange={onChange}
+          placeholder="Add tag"
+          testId="input-detail-tags"
+        />
       </PopoverContent>
     </Popover>
   );
 }
 
 function ImportTagPicker({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
-  const [input, setInput] = useState("");
-  const { data: tagData } = useQuery<{ tags: { slug: string; label: string }[] }>({
-    queryKey: ["/api/tags"],
-  });
-  const allTags = tagData?.tags || [];
-  const suggestions = input.length > 0
-    ? allTags.filter(t => t.label.toLowerCase().includes(input.toLowerCase()) && !tags.includes(t.slug)).slice(0, 5)
-    : [];
-
   return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap gap-1">
-        {tags.map(t => (
-          <Badge key={t} variant="outline" className="text-xs">
-            {t}
-            <button className="ml-1" onClick={() => onChange(tags.filter(x => x !== t))}>
-              <X className="h-2.5 w-2.5" />
-            </button>
-          </Badge>
-        ))}
-      </div>
-      <div className="relative">
-        <Input
-          placeholder="Add tags..."
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === "Enter" && input.trim()) {
-              e.preventDefault();
-              const slug = input.trim().toLowerCase().replace(/\s+/g, "-");
-              if (!tags.includes(slug)) onChange([...tags, slug]);
-              setInput("");
-            }
-          }}
-          data-testid="input-import-tags"
-        />
-        {suggestions.length > 0 && (
-          <div className="absolute top-full left-0 right-0 z-10 border rounded-md bg-popover mt-1 divide-y">
-            {suggestions.map(s => (
-              <div
-                key={s.slug}
-                className="px-2 py-1.5 text-xs cursor-pointer hover-elevate"
-                onClick={() => {
-                  if (!tags.includes(s.slug)) onChange([...tags, s.slug]);
-                  setInput("");
-                }}
-              >
-                {s.label}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    <UniversalTagPicker
+      variant="compact"
+      selected={tags}
+      onChange={onChange}
+      placeholder="Add tags…"
+      testId="input-import-tags"
+      className="min-h-8 rounded-md border border-input px-2 py-1"
+    />
   );
 }
 
