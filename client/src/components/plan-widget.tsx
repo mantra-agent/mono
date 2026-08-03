@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -159,9 +160,19 @@ function PlanReviewCard({
 
   return (
     <div className="mt-1 overflow-hidden rounded-md border border-border/60 bg-muted/20" data-testid={`plan-review-${planId}-${step.id}`}>
-      <div className="flex items-start gap-2 border-b border-border/40 px-3 py-2">
-        <MailOpen className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
-        <p className="min-w-0 text-sm font-medium text-foreground">{review.prompt}</p>
+      <div className="border-b border-border/40 px-3 py-2">
+        <div className="flex items-start gap-2">
+          <MailOpen className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
+          <InlineReferenceText
+            text={review.prompt}
+            className="min-w-0 text-sm font-medium text-foreground"
+          />
+        </div>
+        {review.detail ? (
+          <div className="mt-1.5 whitespace-pre-wrap pl-6 text-sm leading-relaxed text-muted-foreground">
+            <InlineReferenceText text={review.detail} />
+          </div>
+        ) : null}
       </div>
       <div className="space-y-0.5 px-2 py-2">
         {REVIEW_OPTIONS.map((option) => (

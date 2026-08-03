@@ -777,11 +777,15 @@ async function handleUpdateStep(
         : typeof args.error === "string" && args.error.trim()
           ? args.error.trim()
           : "Review the completed step before the Plan continues.";
+      const reviewDetail = typeof args.reviewDetail === "string" && args.reviewDetail.trim()
+        ? args.reviewDetail.trim()
+        : null;
       const review = await reportPlanStepNeedsReview({
         planId: resolvedPlanId,
         stepId,
         childSessionId: callerSessionId,
         prompt: reviewPrompt,
+        detail: reviewDetail,
         outcome: typeof args.outcome === "string" ? args.outcome : null,
       });
       const latestPlan = await db.select().from(planExecutions)

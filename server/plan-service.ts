@@ -6,7 +6,7 @@ import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { planExecutions, planSessionLinks, planStepAttempts, planStepReviews, planSteps, type PlanExecutionRow, type PlanStepAttemptRow, type PlanStepReviewRow, type PlanStepRow } from "@shared/schema";
-import { PLAN_REVIEW_REASON_MAX_LENGTH, type PlanReviewDecision } from "@shared/plan-review";
+import { PLAN_REVIEW_REASON_MAX_LENGTH, PLAN_REVIEW_DETAIL_MAX_LENGTH, type PlanReviewDecision } from "@shared/plan-review";
 import { buildPlanPageContent, isPlanDone, type PlanMeta, type PlanStatus, type PlanStep } from "./lib/plan-utils";
 
 const log = createLogger("PlanService");
@@ -272,6 +272,7 @@ export async function reportPlanStepNeedsReview(params: {
   stepId: string;
   childSessionId: string;
   prompt: string;
+  detail?: string | null;
   outcome?: string | null;
 }): Promise<PlanStepReviewRow> {
   const principal = getCurrentPrincipalOrSystem();
@@ -280,6 +281,7 @@ export async function reportPlanStepNeedsReview(params: {
   }
   const prompt = params.prompt.trim().slice(0, PLAN_REVIEW_REASON_MAX_LENGTH);
   if (!prompt) throw new Error("Review prompt is required");
+  const detail = params.detail?.trim().slice(0, PLAN_REVIEW_DETAIL_MAX_LENGTH) || null;
 
   return db.transaction(async (tx) => {
     const [plan] = await tx.select().from(planExecutions)
@@ -359,6 +361,7 @@ export async function reportPlanStepNeedsReview(params: {
       attemptId: attempt.id,
       status: "open",
       prompt,
+      detail,
       openedBySessionId: params.childSessionId,
       openedAt: now,
       createdAt: now,
