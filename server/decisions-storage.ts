@@ -1,6 +1,8 @@
 // Use createLogger for logging ONLY
 import { db, pool, runWithDatabaseTransaction } from "./db";
 import { eq, and, desc, asc } from "drizzle-orm";
+import { filePrincipleStorage } from "./file-storage/principles";
+import { peopleStorage } from "./people-storage";
 import {
   decisions,
   decisionUpdates,
@@ -56,7 +58,7 @@ export type DecisionUpdatePatch = Partial<Omit<InsertDecision, "trafficLight" | 
   status?: DecisionStatus;
 };
 
-export const DECISION_LINK_PREDICATES = ["relates_to", "governs", "evidence_for", "triggered_by", "produced"] as const;
+export const DECISION_LINK_PREDICATES = ["relates_to", "governs", "guided_by", "governed_by", "decided_by", "evidence_for", "triggered_by", "produced"] as const;
 export type DecisionLinkPredicate = typeof DECISION_LINK_PREDICATES[number];
 
 export interface DecisionAddressLink {
@@ -76,6 +78,25 @@ export interface AddDecisionLinkInput {
   targetType?: string;
   targetId?: string;
   predicate?: DecisionLinkPredicate;
+}
+
+export interface RecordJudgmentInput {
+  title: string;
+  description?: string;
+  answerPayload?: Record<string, unknown>;
+  reasoning?: string;
+  sourceSessionId?: string;
+  sourceToolCallId?: string;
+  ownerPersonRole?: "self" | "partner";
+  principleRevisionIds?: string[];
+  triggeredByAddress?: string;
+  status?: DecisionStatus;
+  resolvedAt?: Date;
+}
+
+export interface RecordJudgmentResult {
+  decision: Decision;
+  outcome: "created" | "replayed";
 }
 
 function decisionLinkCompatibilityEnabled(): boolean {
@@ -143,6 +164,76 @@ export class DecisionsStorage {
         await indexDecision(principal, row);
         log.debug(`createDecision id=${row.id} title="${row.title}"`);
         return row;
+      }));
+    });
+  }
+
+  async recordJudgment(input: RecordJudgmentInput): Promise<RecordJudgmentResult> {
+    return autoHeal(async () => {
+      const principal = getCurrentPrincipalOrSystem();
+      return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
+        if (input.sourceSessionId && input.sourceToolCallId && principal.accountId) {
+          const [existing] = await db.select().from(decisions).where(and(
+            eq(decisions.accountId, principal.accountId),
+            eq(decisions.sourceSessionId, input.sourceSessionId),
+            eq(decisions.sourceToolCallId, input.sourceToolCallId),
+            combineWithVisibleScope(principal, decisionScopeColumns),
+          )).limit(1);
+          if (existing) return { decision: existing, outcome: "replayed" as const };
+        }
+
+        const principles = await filePrincipleStorage.getPrinciples();
+        const selectedRevisionIds = [...new Set(input.principleRevisionIds ?? [])];
+        const selectedPrinciples = selectedRevisionIds.map((revisionId) => {
+          const principle = principles.find((candidate) => candidate.currentRevisionId === revisionId);
+          if (!principle) throw Object.assign(new Error(`Principle revision is not current or visible: ${revisionId}`), { status: 400 });
+          return principle;
+        });
+        const people = input.ownerPersonRole ? await peopleStorage.listPeople() : [];
+        const targetCabinetLevel = input.ownerPersonRole === "self" ? "agent" : "user";
+        const ownerPerson = input.ownerPersonRole
+          ? people.find((person) => person.cabinetLevel === targetCabinetLevel)
+          : undefined;
+        const resolvedAt = input.resolvedAt ?? new Date();
+        const status = input.status ?? "closed";
+        const decision = await this.createDecision({
+          title: input.title.trim(),
+          description: input.description?.trim() ?? "",
+          status,
+          closedAt: status === "closed" ? resolvedAt : null,
+          resolvedAt,
+          ownerPersonId: ownerPerson?.id ?? null,
+          sourceSessionId: input.sourceSessionId ?? null,
+          sourceToolCallId: input.sourceToolCallId ?? null,
+          answerPayload: input.answerPayload ?? null,
+          reasoning: input.reasoning?.trim() || null,
+        });
+
+        if (ownerPerson) {
+          await createAddressLink(principal, {
+            sourceAddress: `@decision:${decision.id}`,
+            targetAddress: `@person:${ownerPerson.id}`,
+            predicate: "decided_by",
+            provenanceAddress: input.sourceSessionId ? `@session:${input.sourceSessionId}` : undefined,
+          });
+        }
+        for (const principle of selectedPrinciples) {
+          await createAddressLink(principal, {
+            sourceAddress: `@decision:${decision.id}`,
+            targetAddress: `@principle:${principle.currentRevisionId}`,
+            predicate: "governed_by",
+            provenanceAddress: `@principle:${principle.id}`,
+          });
+        }
+        if (input.triggeredByAddress) {
+          await createAddressLink(principal, {
+            sourceAddress: `@decision:${decision.id}`,
+            targetAddress: input.triggeredByAddress,
+            predicate: "triggered_by",
+            provenanceAddress: input.sourceSessionId ? `@session:${input.sourceSessionId}` : undefined,
+          });
+        }
+        return { decision, outcome: "created" as const };
       }));
     });
   }

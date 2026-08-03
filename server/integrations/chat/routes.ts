@@ -66,7 +66,7 @@ import {
   type QuestionResponseMeta,
   type QuestionCancellationMeta,
 } from "@shared/models/chat";
-import { getActiveQuestionToolCallId } from "@shared/question-prompt";
+import { getActiveQuestionToolCallId, type QuestionPrompt } from "@shared/question-prompt";
 import { BOOT_ID, db } from "../../db";
 import { and, eq, inArray, isNull, notInArray, sql as drizzleSql, type SQL } from "drizzle-orm";
 import { combineWithVisibleScope } from "../../scoped-storage";
@@ -3220,6 +3220,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           : undefined;
         let acceptedContent = typeof content === "string" ? content : "";
         let acceptedQuestionResponse: QuestionResponseMeta | undefined;
+        let acceptedQuestionPrompt: QuestionPrompt | undefined;
         if (incomingQuestionResponse) {
           if (isGreeting) {
             return res.status(400).json({ error: "Greeting messages cannot answer questions." });
@@ -3234,6 +3235,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
           acceptedContent = resolvedResponse.content;
           acceptedQuestionResponse = resolvedResponse.response;
+          acceptedQuestionPrompt = resolvedResponse.prompt;
         }
         // Answering in chat (a normal message, not a widget response) while an
         // inline question is still awaiting supersedes that question. Stamp a
@@ -3257,6 +3259,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             msgPageContext,
             acceptedQuestionResponse,
             acceptedQuestionCancellation,
+            acceptedQuestionPrompt,
           );
           if (acceptance.outcome === "session_not_found") {
             return res.status(404).json({ error: "Session not found" });

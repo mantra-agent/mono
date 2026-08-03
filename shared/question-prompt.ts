@@ -6,18 +6,29 @@ export interface QuestionOption {
   description?: string;
 }
 
+export interface QuestionPrincipleOption {
+  principleId: string;
+  revisionId: string;
+  title: string;
+  layer1: string;
+}
+
 export interface QuestionPrompt {
   question: string;
   options: QuestionOption[];
   selectionMode: QuestionSelectionMode;
   allowOther: boolean;
   reasoning?: string;
+  principles: QuestionPrincipleOption[];
+  allowResponseReasoning: boolean;
 }
 
 export interface QuestionResponseMeta {
   questionToolCallId: string;
   selectedOptionIds: string[];
   otherText?: string;
+  selectedPrincipleRevisionIds?: string[];
+  reasoning?: string;
 }
 
 export type QuestionValidationResult<T> =
@@ -74,6 +85,9 @@ const MAX_OPTION_ID_LENGTH = 80;
 const MAX_OPTION_LABEL_LENGTH = 200;
 const MAX_OPTION_DESCRIPTION_LENGTH = 400;
 const MAX_OTHER_LENGTH = 1_000;
+const MAX_REASONING_LENGTH = 4_000;
+const MAX_PRINCIPLES = 12;
+const MAX_PRINCIPLE_TEXT_LENGTH = 500;
 
 function nonEmptyString(value: unknown, maxLength: number): string | null {
   if (typeof value !== "string") return null;
@@ -167,6 +181,31 @@ export function normalizeQuestionPrompt(input: unknown): QuestionValidationResul
     return { ok: false, error: `reasoning must be non-empty and at most ${MAX_OPTION_DESCRIPTION_LENGTH} characters.` };
   }
 
+  const rawPrinciples = raw.principles ?? [];
+  if (!Array.isArray(rawPrinciples) || rawPrinciples.length > MAX_PRINCIPLES) {
+    return { ok: false, error: `principles must be an array with at most ${MAX_PRINCIPLES} items.` };
+  }
+  const principles: QuestionPrincipleOption[] = [];
+  const revisionIds = new Set<string>();
+  for (const rawPrinciple of rawPrinciples) {
+    if (!rawPrinciple || typeof rawPrinciple !== "object" || Array.isArray(rawPrinciple)) {
+      return { ok: false, error: "Every principle must include principleId, revisionId, title, and layer1." };
+    }
+    const record = rawPrinciple as Record<string, unknown>;
+    const principleId = nonEmptyString(record.principleId, 200);
+    const revisionId = nonEmptyString(record.revisionId, 200);
+    const title = nonEmptyString(record.title, MAX_PRINCIPLE_TEXT_LENGTH);
+    const layer1 = nonEmptyString(record.layer1, MAX_PRINCIPLE_TEXT_LENGTH);
+    if (!principleId || !revisionId || !title || !layer1) {
+      return { ok: false, error: "Every principle must include principleId, revisionId, title, and layer1." };
+    }
+    if (revisionIds.has(revisionId)) {
+      return { ok: false, error: `Duplicate principle revision id: ${revisionId}` };
+    }
+    revisionIds.add(revisionId);
+    principles.push({ principleId, revisionId, title, layer1 });
+  }
+
   const selectionMode: QuestionSelectionMode = raw.selectionMode === "multiple" ? "multiple" : "single";
   return {
     ok: true,
@@ -176,6 +215,8 @@ export function normalizeQuestionPrompt(input: unknown): QuestionValidationResul
       selectionMode,
       allowOther: raw.allowOther === true,
       ...(reasoning ? { reasoning } : {}),
+      principles,
+      allowResponseReasoning: raw.allowResponseReasoning === true,
     },
   };
 }
@@ -210,12 +251,34 @@ export function normalizeQuestionResponse(input: unknown): QuestionValidationRes
     return { ok: false, error: `otherText must be non-empty and at most ${MAX_OTHER_LENGTH} characters.` };
   }
 
+  const rawRevisionIds = raw.selectedPrincipleRevisionIds ?? [];
+  if (!Array.isArray(rawRevisionIds) || rawRevisionIds.length > MAX_PRINCIPLES) {
+    return { ok: false, error: `selectedPrincipleRevisionIds must contain at most ${MAX_PRINCIPLES} ids.` };
+  }
+  const selectedPrincipleRevisionIds: string[] = [];
+  const seenRevisions = new Set<string>();
+  for (const rawRevisionId of rawRevisionIds) {
+    const revisionId = nonEmptyString(rawRevisionId, 200);
+    if (!revisionId) return { ok: false, error: "selectedPrincipleRevisionIds contains an invalid revision id." };
+    if (!seenRevisions.has(revisionId)) {
+      seenRevisions.add(revisionId);
+      selectedPrincipleRevisionIds.push(revisionId);
+    }
+  }
+
+  const reasoning = raw.reasoning === undefined ? undefined : nonEmptyString(raw.reasoning, MAX_REASONING_LENGTH);
+  if (raw.reasoning !== undefined && !reasoning) {
+    return { ok: false, error: `reasoning must be non-empty and at most ${MAX_REASONING_LENGTH} characters.` };
+  }
+
   return {
     ok: true,
     value: {
       questionToolCallId,
       selectedOptionIds,
       ...(otherText ? { otherText } : {}),
+      ...(selectedPrincipleRevisionIds.length > 0 ? { selectedPrincipleRevisionIds } : {}),
+      ...(reasoning ? { reasoning } : {}),
     },
   };
 }
@@ -229,6 +292,12 @@ export function validateQuestionResponse(
   if (invalidId) return { ok: false, error: `Unknown option id: ${invalidId}` };
   if (response.otherText && !prompt.allowOther) {
     return { ok: false, error: "This question does not allow an Other response." };
+  }
+  const validRevisionIds = new Set(prompt.principles.map((principle) => principle.revisionId));
+  const invalidRevisionId = response.selectedPrincipleRevisionIds?.find((id) => !validRevisionIds.has(id));
+  if (invalidRevisionId) return { ok: false, error: `Unknown principle revision id: ${invalidRevisionId}` };
+  if (response.reasoning && !prompt.allowResponseReasoning) {
+    return { ok: false, error: "This question does not allow response reasoning." };
   }
 
   const selectionCount = response.selectedOptionIds.length + (response.otherText ? 1 : 0);
@@ -247,6 +316,11 @@ export function formatQuestionResponseContent(prompt: QuestionPrompt, response: 
     .filter((option): option is QuestionOption => Boolean(option))
     .map((option) => `- ${option.label} (${option.id})`);
   if (response.otherText) selections.push(`- Other: ${response.otherText}`);
+  const principleByRevisionId = new Map(prompt.principles.map((principle) => [principle.revisionId, principle]));
+  const principleLines = (response.selectedPrincipleRevisionIds ?? [])
+    .map((revisionId) => principleByRevisionId.get(revisionId))
+    .filter((principle): principle is QuestionPrincipleOption => Boolean(principle))
+    .map((principle) => `- ${principle.title} (@principle:${principle.revisionId})`);
 
   return [
     "Question response",
@@ -254,5 +328,7 @@ export function formatQuestionResponseContent(prompt: QuestionPrompt, response: 
     `Question: ${prompt.question}`,
     "Selected answer:",
     ...selections,
+    ...(principleLines.length > 0 ? ["Governing principles:", ...principleLines] : []),
+    ...(response.reasoning ? ["Reasoning:", response.reasoning] : []),
   ].join("\n");
 }

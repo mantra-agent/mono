@@ -53,6 +53,7 @@ import { principalHasPermission } from "./permissions";
 import { goalsService } from "./goals-service";
 import { peopleStorage } from "./people-storage";
 import { chatFileStorage } from "./chat-file-storage";
+import { normalizeQuestionPrompt } from "@shared/question-prompt";
 import { decisionsStorage } from "./decisions-storage";
 import { tagService } from "./tag-service";
 
@@ -249,12 +250,31 @@ const adapters: AddressResolverAdapter[] = [
     return new Map(parsed.flatMap(({ ref }) => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.name, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
   simpleAdapter("principle", async (principal, refs) => {
-    const rows = await db.select({ id: principles.id, title: principleRevisions.title, layer1: principleRevisions.layer1, updatedAt: principles.updatedAt })
+    const requestedIds = refs.map(ref => ref.id);
+    const rows = await db.select({
+      principleId: principles.id,
+      revisionId: principleRevisions.id,
+      title: principleRevisions.title,
+      layer1: principleRevisions.layer1,
+      updatedAt: principles.updatedAt,
+    })
       .from(principles)
       .innerJoin(principleRevisions, and(eq(principleRevisions.id, principles.currentRevisionId), eq(principleRevisions.principleId, principles.id)))
-      .where(combineWithVisibleScope(principal, principleScope, inArray(principles.id, refs.map(ref => ref.id))));
-    const byId = new Map(rows.map(row => [row.id, row]));
-    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title, summary: byId.get(ref.id)!.layer1, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+      .where(combineWithVisibleScope(principal, principleScope, or(inArray(principles.id, requestedIds), inArray(principleRevisions.id, requestedIds))));
+    const byId = new Map<string, typeof rows[number]>();
+    for (const row of rows) {
+      byId.set(row.principleId, row);
+      byId.set(row.revisionId, row);
+    }
+    return new Map(refs.flatMap(ref => {
+      const row = byId.get(ref.id);
+      return row ? [[requestedAddress(ref), resolved(ref, {
+        label: row.title,
+        summary: row.layer1,
+        updatedAt: row.updatedAt,
+        canonicalId: ref.id,
+      })]] : [];
+    }));
   }),
   simpleAdapter("role", async (principal, refs) => {
     if (!principalHasPermission(principal, "system:read")) return resultMap(refs, "unauthorized");
@@ -292,6 +312,43 @@ const adapters: AddressResolverAdapter[] = [
     const sessions = await chatFileStorage.getSessions(refs.map(ref => ref.id));
     const byId = new Map(sessions.map(session => [session.id, session]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title || "Untitled session" })]] : []));
+  }),
+  simpleAdapter("question", async (_principal, refs) => {
+    const resolvedQuestions = new Map<string, AddressResolutionResult>();
+    const bySession = new Map<string, ReferenceRef[]>();
+    for (const ref of refs) {
+      const separator = ref.id.indexOf("~");
+      if (separator <= 0) continue;
+      const sessionId = ref.id.slice(0, separator);
+      const grouped = bySession.get(sessionId) ?? [];
+      grouped.push(ref);
+      bySession.set(sessionId, grouped);
+    }
+    for (const [sessionId, sessionRefs] of bySession) {
+      const session = await chatFileStorage.getSession(sessionId);
+      if (!session) continue;
+      for (const ref of sessionRefs) {
+        const toolCallId = ref.id.slice(sessionId.length + 1);
+        for (const message of session.messages) {
+          if (!Array.isArray(message.toolCalls)) continue;
+          const call = message.toolCalls.find((candidate) => {
+            if (!candidate || typeof candidate !== "object") return false;
+            const record = candidate as Record<string, unknown>;
+            return record.toolName === "question" && record.toolCallId === toolCallId;
+          }) as Record<string, unknown> | undefined;
+          if (!call) continue;
+          const prompt = normalizeQuestionPrompt(call.arguments);
+          if (!prompt.ok) continue;
+          resolvedQuestions.set(requestedAddress(ref), resolved(ref, {
+            label: prompt.value.question,
+            summary: prompt.value.options.map(option => option.label).join(" · "),
+            updatedAt: message.createdAt,
+          }));
+          break;
+        }
+      }
+    }
+    return resolvedQuestions;
   }),
   simpleAdapter("inference_context", async (principal, refs) => {
     const rows = await db.select({ id: inferencePayloadCaptures.id, capturedAt: inferencePayloadCaptures.capturedAt, model: inferencePayloadCaptures.model }).from(inferencePayloadCaptures)

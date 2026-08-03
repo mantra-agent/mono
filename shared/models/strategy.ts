@@ -327,6 +327,12 @@ export const decisions = pgTable("decisions", {
   planContent: jsonb("plan_content"),
   planPlainText: text("plan_plain_text").notNull().default(""),
   closedAt: timestamp("closed_at", { withTimezone: true }),
+  ownerPersonId: text("owner_person_id"),
+  sourceSessionId: text("source_session_id"),
+  sourceToolCallId: text("source_tool_call_id"),
+  answerPayload: jsonb("answer_payload"),
+  reasoning: text("reasoning"),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
@@ -336,6 +342,10 @@ export const decisions = pgTable("decisions", {
   index("idx_decisions_status").on(table.status),
   index("idx_decisions_scope_owner").on(table.scope, table.ownerUserId),
   index("idx_decisions_account").on(table.accountId),
+  index("idx_decisions_owner_person").on(table.ownerPersonId),
+  uniqueIndex("uniq_decisions_question_replay")
+    .on(table.accountId, table.sourceSessionId, table.sourceToolCallId)
+    .where(sql`${table.accountId} IS NOT NULL AND ${table.sourceSessionId} IS NOT NULL AND ${table.sourceToolCallId} IS NOT NULL`),
 ]);
 
 export const decisionUpdates = pgTable("decision_updates", {

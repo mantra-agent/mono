@@ -84,6 +84,9 @@ export function QuestionWidget({
   const [selected, setSelected] = useState<string[]>(response?.selectedOptionIds ?? []);
   const [otherSelected, setOtherSelected] = useState(Boolean(response?.otherText));
   const [otherText, setOtherText] = useState(response?.otherText ?? "");
+  const [selectedPrinciples, setSelectedPrinciples] = useState<string[]>(response?.selectedPrincipleRevisionIds ?? []);
+  const [reasoning, setReasoning] = useState(response?.reasoning ?? "");
+  const [showProvenance, setShowProvenance] = useState(Boolean(response?.selectedPrincipleRevisionIds?.length || response?.reasoning));
   const [submitting, setSubmitting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -150,6 +153,15 @@ export function QuestionWidget({
     });
   };
 
+  const togglePrinciple = (revisionId: string) => {
+    setError(null);
+    setSelectedPrinciples((current) => current.includes(revisionId)
+      ? current.filter((id) => id !== revisionId)
+      : [...current, revisionId]);
+  };
+
+  const hasProvenanceControls = prompt.principles.length > 0 || prompt.allowResponseReasoning;
+
   const submit = async () => {
     const normalizedOther = otherSelected ? otherText.trim() : "";
     if (selected.length === 0 && !normalizedOther) {
@@ -163,10 +175,13 @@ export function QuestionWidget({
 
     setSubmitting(true);
     setError(null);
+    const trimmedReasoning = reasoning.trim();
     const nextResponse: QuestionResponseMeta = {
       questionToolCallId: prompt.toolCallId,
       selectedOptionIds: selected,
       ...(normalizedOther ? { otherText: normalizedOther } : {}),
+      ...(selectedPrinciples.length > 0 ? { selectedPrincipleRevisionIds: selectedPrinciples } : {}),
+      ...(trimmedReasoning ? { reasoning: trimmedReasoning } : {}),
     };
     try {
       const submitted = await onSubmit(nextResponse);
@@ -240,6 +255,49 @@ export function QuestionWidget({
           </div>
         )}
       </div>
+      {hasProvenanceControls && (
+        <div className="border-t border-border/40 px-2 py-2">
+          <button
+            type="button"
+            disabled={controlsDisabled}
+            onClick={() => setShowProvenance((value) => !value)}
+            className="px-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+            data-testid={`question-provenance-toggle-${prompt.toolCallId}`}
+          >
+            {showProvenance ? "Hide context" : "Add context"}
+          </button>
+          {showProvenance && (
+            <div className="mt-1 space-y-2">
+              {prompt.principles.length > 0 && (
+                <div className="space-y-0.5">
+                  <p className="px-2 text-xs text-muted-foreground">Which principles apply?</p>
+                  {prompt.principles.map((principle) => (
+                    <OptionRow
+                      key={principle.revisionId}
+                      checked={selectedPrinciples.includes(principle.revisionId)}
+                      disabled={controlsDisabled}
+                      label={principle.title}
+                      testId={`question-principle-${prompt.toolCallId}-${principle.revisionId}`}
+                      onSelect={() => togglePrinciple(principle.revisionId)}
+                    />
+                  ))}
+                </div>
+              )}
+              {prompt.allowResponseReasoning && (
+                <textarea
+                  value={reasoning}
+                  onChange={(event) => setReasoning(event.target.value)}
+                  disabled={controlsDisabled}
+                  rows={2}
+                  placeholder="Add your reasoning (optional)"
+                  className="w-full resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
+                  data-testid={`question-reasoning-${prompt.toolCallId}`}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3 border-t border-border/40 px-3 py-2">
         {error ? <p className="text-xs text-error">{error}</p> : <span />}
         <div className="flex items-center gap-2">
