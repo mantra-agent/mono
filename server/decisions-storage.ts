@@ -7,6 +7,7 @@ import {
   decisions,
   decisionUpdates,
   decisionLinks,
+  decisionLinkTargetTypes,
   type Decision,
   type InsertDecision,
   type DecisionUpdate,
