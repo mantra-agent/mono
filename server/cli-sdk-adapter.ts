@@ -958,6 +958,7 @@ function createMcpTools(
             order: invocationOrder,
             result: result.result,
             error: result.error,
+            failure: result.failure,
             continuation: result.continuation,
             outcome: result.outcome ?? (result.error ? "failed" : "succeeded"),
             durationMs: Date.now() - executionStartedAt,

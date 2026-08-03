@@ -1,4 +1,4 @@
-import { readFile, writeFile, readdir, stat, mkdir, realpath } from "fs/promises";
+import { readFile, writeFile, readdir, stat, mkdir } from "fs/promises";
 import { join, resolve, relative, basename, dirname } from "path";
 import type { SQL } from "drizzle-orm";
 import { recordToolCallStart, recordToolCallEnd } from "./file-storage";
@@ -22,6 +22,7 @@ import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
 import { scratchEditFailure, type ToolFailure } from "./tool-failure";
+import { resolveScratchResourcePath, resolveScratchWritePath } from "./scratch-paths";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
@@ -12217,38 +12218,12 @@ export async function executeBridgeTool(
   return { result: result.result, error: result.error, data: result.data, failure: result.failure };
 }
 
-async function resolveScratchWritePath(filePath: string, sessionId: unknown): Promise<string | null> {
-  const resolved = resolveWorkspacePath(filePath);
-  if (!resolved) return null;
-
-  const normalized = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
-  const repositoryDirectory = normalized.match(/^repos\/([^/]+)(?:\/|$)/)?.[1];
-  if (!repositoryDirectory) return resolved;
-  if (typeof sessionId !== "string" || !repositoryDirectory.endsWith(`-${sessionId.slice(0, 8)}`)) return null;
-
-  const repositoryRoot = await realpath(resolve(WORKSPACE_DIR, "repos", repositoryDirectory));
-  const boundary = `${repositoryRoot}/`;
-  let existingAncestor = resolved;
-  while (existingAncestor !== repositoryRoot) {
-    try {
-      const canonicalAncestor = await realpath(existingAncestor);
-      return canonicalAncestor === repositoryRoot || canonicalAncestor.startsWith(boundary) ? resolved : null;
-    } catch (error: any) {
-      if (error?.code !== "ENOENT") return null;
-      const parent = dirname(existingAncestor);
-      if (parent === existingAncestor) return null;
-      existingAncestor = parent;
-    }
-  }
-  return resolved;
-}
-
 const workspaceTools: Record<string, ToolHandler> = {
   async read_scratch(args) {
     const filePath = args.path;
     if (!filePath) return { result: "Missing file path", error: true };
 
-    const resolved = resolveWorkspacePath(filePath);
+    const resolved = await resolveScratchResourcePath(filePath);
     if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true };
     if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true };
 

@@ -1,4 +1,4 @@
-import { resolveWorkspacePath } from "./fs-utils";
+import { resolveScratchResourcePath, scratchResourceKey, scratchResourceLabel } from "./scratch-paths";
 import type { ToolFailure } from "./tool-failure";
 
 export interface RecoverableToolResult {
@@ -15,11 +15,7 @@ type ScratchOperation = {
 type RecoveryState = {
   phase: "read_required" | "retry_allowed" | "quarantined";
   conflictCount: number;
-  updatedAt: number;
 };
-
-const RECOVERY_TTL_MS = 2 * 60 * 60 * 1000;
-const MAX_RECOVERY_ENTRIES = 256;
 
 function scratchAction(toolName: string, args: Record<string, unknown>): "read" | "edit" | null {
   if (toolName === "read_scratch") return "read";
@@ -30,75 +26,69 @@ function scratchAction(toolName: string, args: Record<string, unknown>): "read" 
   return action === "read" || action === "edit" ? action : null;
 }
 
-export function resolveScratchOperation(
+export async function resolveScratchOperation(
   toolName: string,
   args: Record<string, unknown>,
-): ScratchOperation | null {
+): Promise<ScratchOperation | null> {
   const kind = scratchAction(toolName, args);
   const path = typeof args.path === "string" ? args.path.trim() : "";
   if (!kind || !path) return null;
 
-  const resolvedPath = resolveWorkspacePath(path);
+  const resolvedPath = await resolveScratchResourcePath(path);
   if (!resolvedPath) return null;
 
-  return {
-    kind,
-    resourceKey: `file:${resolvedPath}`,
-  };
+  return { kind, resourceKey: scratchResourceKey(resolvedPath) };
 }
 
+/**
+ * Run-scoped state machine for deterministic scratch.edit conflicts.
+ * One instance belongs to one AgentExecutor run, so state needs no TTL or LRU:
+ * it is released with the run and must never silently reopen quarantine mid-run.
+ */
 export class ToolOperationRecovery {
   private readonly states = new Map<string, RecoveryState>();
   private readonly operationTails = new Map<string, Promise<void>>();
 
   async execute<T extends RecoverableToolResult>(
-    runId: string,
     toolName: string,
     args: Record<string, unknown>,
     execute: () => Promise<T>,
   ): Promise<T | RecoverableToolResult> {
-    const operation = resolveScratchOperation(toolName, args);
+    const operation = await resolveScratchOperation(toolName, args);
     if (!operation) return execute();
 
-    const operationKey = this.key(runId, operation.resourceKey);
-    const previous = this.operationTails.get(operationKey) ?? Promise.resolve();
+    const previous = this.operationTails.get(operation.resourceKey) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>((resolve) => { release = resolve; });
     const tail = previous.then(() => current);
-    this.operationTails.set(operationKey, tail);
+    this.operationTails.set(operation.resourceKey, tail);
 
     await previous;
     try {
-      const blocked = this.beforeExecution(runId, toolName, args);
+      const blocked = this.beforeExecution(operation);
       if (blocked) return blocked;
 
       const result = await execute();
-      this.afterExecution(runId, toolName, args, result);
+      this.afterExecution(operation, result);
       return result;
     } finally {
       release();
-      if (this.operationTails.get(operationKey) === tail) {
-        this.operationTails.delete(operationKey);
+      if (this.operationTails.get(operation.resourceKey) === tail) {
+        this.operationTails.delete(operation.resourceKey);
       }
     }
   }
 
-  beforeExecution(
-    runId: string,
-    toolName: string,
-    args: Record<string, unknown>,
-  ): RecoverableToolResult | null {
-    this.prune();
-    const operation = resolveScratchOperation(toolName, args);
-    if (!operation || operation.kind !== "edit") return null;
+  private beforeExecution(operation: ScratchOperation): RecoverableToolResult | null {
+    if (operation.kind !== "edit") return null;
 
-    const state = this.states.get(this.key(runId, operation.resourceKey));
+    const state = this.states.get(operation.resourceKey);
     if (!state || state.phase === "retry_allowed") return null;
 
     if (state.phase === "read_required") {
       return {
         result:
-          "scratch.edit is blocked for this file until scratch.read succeeds on the same path. " +
+          `scratch.edit is blocked for ${scratchResourceLabel(operation.resourceKey)} until scratch.read succeeds on the same file. ` +
           "Rebuild the replacement from the current file contents; do not guess another old_string.",
         error: true,
         failure: {
@@ -113,7 +103,7 @@ export class ToolOperationRecovery {
 
     return {
       result:
-        "scratch.edit is quarantined for this file for the remainder of the run after two exact-match conflicts. " +
+        `scratch.edit is quarantined for ${scratchResourceLabel(operation.resourceKey)} for the remainder of the run after two exact-match conflicts. ` +
         "Continue with other work or report the unresolved edit; further edit attempts will not touch disk.",
       error: true,
       failure: {
@@ -126,28 +116,18 @@ export class ToolOperationRecovery {
     };
   }
 
-  afterExecution(
-    runId: string,
-    toolName: string,
-    args: Record<string, unknown>,
-    result: RecoverableToolResult,
-  ): void {
-    const operation = resolveScratchOperation(toolName, args);
-    if (!operation) return;
-
-    const stateKey = this.key(runId, operation.resourceKey);
-    const current = this.states.get(stateKey);
-    const now = Date.now();
+  private afterExecution(operation: ScratchOperation, result: RecoverableToolResult): void {
+    const current = this.states.get(operation.resourceKey);
 
     if (operation.kind === "read") {
       if (!result.error && current?.phase === "read_required") {
-        this.states.set(stateKey, { ...current, phase: "retry_allowed", updatedAt: now });
+        this.states.set(operation.resourceKey, { ...current, phase: "retry_allowed" });
       }
       return;
     }
 
     if (!result.error) {
-      this.states.delete(stateKey);
+      this.states.delete(operation.resourceKey);
       return;
     }
 
@@ -159,28 +139,9 @@ export class ToolOperationRecovery {
     }
 
     const conflictCount = (current?.conflictCount ?? 0) + 1;
-    this.states.set(stateKey, {
+    this.states.set(operation.resourceKey, {
       phase: conflictCount >= 2 ? "quarantined" : "read_required",
       conflictCount,
-      updatedAt: now,
     });
-    this.prune();
-  }
-
-  private key(runId: string, resourceKey: string): string {
-    return `${runId}:${resourceKey}`;
-  }
-
-  private prune(): void {
-    const cutoff = Date.now() - RECOVERY_TTL_MS;
-    for (const [key, state] of this.states) {
-      if (state.updatedAt < cutoff) this.states.delete(key);
-    }
-
-    while (this.states.size > MAX_RECOVERY_ENTRIES) {
-      const oldest = this.states.keys().next().value;
-      if (typeof oldest !== "string") break;
-      this.states.delete(oldest);
-    }
   }
 }

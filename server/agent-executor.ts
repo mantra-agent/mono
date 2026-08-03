@@ -176,7 +176,7 @@ export interface ExecutorRunResult {
   lastStopReason?: string;
   content: string;
   thinking: string;
-  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; durationMs: number; parentId?: string }>;
+  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; failure?: ToolFailure; durationMs: number; parentId?: string }>;
   model: string;
   provider: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -271,7 +271,11 @@ function formatDispatchDetail(metadata?: Record<string, unknown>): string | unde
   return pieces.length > 0 ? pieces.join(" \u00b7 ") : undefined;
 }
 
-function normalizeToolFailureSignature(call: { name: string; args: Record<string, unknown>; result: string }): string {
+function normalizeToolFailureSignature(call: { name: string; args: Record<string, unknown>; result: string; failure?: ToolFailure }): string {
+  if (call.failure) {
+    return `${call.failure.operation}::${call.failure.resourceKey}::${call.failure.code}`;
+  }
+
   const args = safeStringify(call.args, { maxBytes: 8 * 1024, label: "agent-executor.repeatedToolFailure.args" });
   return `${call.name}::${args}::${call.result}`;
 }
@@ -1524,6 +1528,7 @@ export class AgentExecutor extends EventEmitter {
           name: normalizedName || event.toolName,
           input: resolvedArgs,
           result: event.result,
+          failure: event.failure,
           outcome: event.outcome ?? (event.error ? "failed" : "succeeded"),
           durationMs: event.durationMs ?? 0,
         });
@@ -1589,8 +1594,8 @@ export class AgentExecutor extends EventEmitter {
     execute: () => Promise<ToolExecutorResult>,
   ): Promise<ToolExecutorResult> {
     const normalizedName = normalizeMcpToolName(name) || name;
-    const result = await ctx.operationRecovery.execute(ctx.runId, normalizedName, args, execute);
-    if (result.failure?.code === "scratch_edit_read_required" || result.failure?.code === "scratch_edit_quarantined") {
+    const result = await ctx.operationRecovery.execute(normalizedName, args, execute);
+    if (result.failure?.code === "scratch_edit_read_required") {
       log.warn(`[ToolRecovery] blocked runId=${ctx.runId} tool=${name} code=${result.failure.code} resource=${result.failure.resourceKey}`);
     }
     return result;
@@ -1814,6 +1819,7 @@ export class AgentExecutor extends EventEmitter {
         name: tc.name,
         input: canonicalArgs,
         result: toolResult.result,
+        failure: toolResult.failure,
         outcome: toolResult.outcome ?? (toolResult.error ? "failed" : "succeeded"),
         durationMs,
       });
@@ -1886,16 +1892,18 @@ export class AgentExecutor extends EventEmitter {
     name: string;
     input: Record<string, unknown>;
     result: string;
+    failure?: ToolFailure;
     outcome: ToolOutcome;
     durationMs: number;
   }): void {
-    const { ctx, options, id, name, input, result, outcome, durationMs } = args;
+    const { ctx, options, id, name, input, result, failure, outcome, durationMs } = args;
     const error = outcome === "failed" || outcome === "cancelled";
     ctx.resolvedToolCalls.push({
       id,
       name,
       args: input,
       result,
+      failure,
       outcome,
       error: error || undefined,
       durationMs,
@@ -3165,6 +3173,51 @@ export class AgentExecutor extends EventEmitter {
         runId: ctx.runId,
         sessionKey: options.sessionKey,
       });
+
+      const quarantinedConflict = failedCalls.find((call) => call.failure?.code === "scratch_edit_quarantined");
+      if (quarantinedConflict) {
+        const abortDetails: RepeatedToolFailureDetails = {
+          type: "repeated_tool_failure",
+          toolNames: [quarantinedConflict.name],
+          consecutiveFailures: 2,
+          failedCalls: [{
+            name: quarantinedConflict.name,
+            args: quarantinedConflict.args,
+            error: quarantinedConflict.result,
+          }],
+        };
+        const circuitBreakerMessage = formatAbortDetails(abortDetails)!;
+        ctx.abortDetails = abortDetails;
+        ctx.publish("error", { content: circuitBreakerMessage, error: "scratch_edit_quarantined" });
+        eventBus.publish({
+          category: "agent",
+          event: "agent.run.repeated_tool_failure",
+          payload: {
+            runId: ctx.runId,
+            sessionId: options.sessionId || null,
+            iteration: ctx.iteration,
+            consecutiveFailures: 2,
+            toolNames: [quarantinedConflict.name],
+            failureCode: quarantinedConflict.failure?.code,
+            resourceKey: quarantinedConflict.failure?.resourceKey,
+            source: options.activity || "agent",
+          },
+          runId: ctx.runId,
+          sessionKey: options.sessionKey,
+        });
+        log.error("agent.scratch_edit_quarantined", {
+          runId: ctx.runId,
+          sessionId: options.sessionId,
+          resourceKey: quarantinedConflict.failure?.resourceKey,
+          iteration: ctx.iteration,
+        });
+        return {
+          finalContent: circuitBreakerMessage,
+          shouldContinue: false,
+          hasRunStage2,
+          exitCause: "circuit_breaker",
+        };
+      }
 
       if (failedCalls.length > 0 && failedCalls.length === unresolvedToolCalls.length) {
         const iterationFailKey = failedCalls.map(normalizeToolFailureSignature).sort().join("|");

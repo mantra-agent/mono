@@ -465,7 +465,7 @@ async function getSkillTools(
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation,
 ): Promise<{
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
-  toolExecutor: (name: string, args: Record<string, unknown>) => Promise<{ result: string; error: boolean }>;
+  toolExecutor: (name: string, args: Record<string, unknown>) => Promise<import("./agent-executor").ToolExecutorResult>;
 }> {
   const { filterToolSchemasForAuthority } = require("./agent-authority") as typeof import("./agent-authority");
   const authority = { origin: "autonomous" as const, trustedDelegation, activity, skillId: authoritySkillId, sessionKey, sessionId };
@@ -489,7 +489,7 @@ async function getSkillTools(
     return { result: result.result, error: result.error, failure: result.failure, sideEffectOnly: result.sideEffectOnly, continuation: result.continuation };
   };
 
-  return { tools, toolExecutor: toolExecutor as any };
+  return { tools, toolExecutor };
 }
 
 export async function executeAutonomousSkillRun(
