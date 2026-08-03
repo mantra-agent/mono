@@ -946,6 +946,170 @@ export async function registerIntegrationsRoutes(app: Express) {
     }
   });
 
+  // === Grok Subscription OAuth Routes (xAI SuperGrok / X Premium+) ===
+  // Grok speaks the standard OpenAI-compatible surface (api.x.ai/v1). The public
+  // grok-cli OAuth client only accepts a loopback redirect (127.0.0.1:56121), which
+  // a headless prod server can never receive. So the load-bearing remote path is:
+  // authorize in Ray's browser -> copy the code from the address bar -> paste into
+  // /oauth/exchange, which completes the PKCE exchange server-side. We deliberately
+  // do NOT start a loopback callback server here (as openai-subscription does for
+  // local CLI dev) because it could never receive Ray's browser redirect on Railway.
+  const GROK_SUBSCRIPTION_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
+  const GROK_SUBSCRIPTION_AUTH_URL = "https://auth.x.ai/oauth2/authorize";
+  const GROK_SUBSCRIPTION_TOKEN_URL = "https://auth.x.ai/oauth2/token";
+  const GROK_SUBSCRIPTION_SCOPES = "openid profile email offline_access grok-cli:access api:access";
+  const GROK_SUBSCRIPTION_REDIRECT_URI = "http://127.0.0.1:56121/callback";
+  const GROK_SUBSCRIPTION_ACCOUNT_ID = "grok-subscription-primary";
+
+  app.get("/api/grok-subscription/status", async (_req, res) => {
+    try {
+      // System principal: this is a system-wide integration check, not per-user.
+      const result = await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), async () => {
+        const { getAccount, getAccountTokens } = await import("../connected-accounts");
+        const account = await getAccount(GROK_SUBSCRIPTION_ACCOUNT_ID);
+        if (!account) {
+          return { connected: false as const };
+        }
+        const tokens = await getAccountTokens(GROK_SUBSCRIPTION_ACCOUNT_ID);
+        return {
+          connected: true as const,
+          email: account.email,
+          label: account.label,
+          hasTokens: !!tokens,
+        };
+      });
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/grok-subscription/oauth/start", requireAuth, requirePermission("system:write"), async (_req, res) => {
+    try {
+      const { codeVerifier, codeChallenge } = generatePKCE();
+      const state = crypto.randomBytes(16).toString("hex");
+      const nonce = crypto.randomBytes(16).toString("hex");
+      pkceStore.set(state, { codeVerifier, redirectUri: GROK_SUBSCRIPTION_REDIRECT_URI, createdAt: Date.now() });
+
+      // Clean up old entries
+      const now = Date.now();
+      for (const [k, v] of pkceStore.entries()) {
+        if (now - v.createdAt > 10 * 60 * 1000) pkceStore.delete(k);
+      }
+
+      const params = new URLSearchParams({
+        response_type: "code",
+        client_id: GROK_SUBSCRIPTION_CLIENT_ID,
+        redirect_uri: GROK_SUBSCRIPTION_REDIRECT_URI,
+        scope: GROK_SUBSCRIPTION_SCOPES,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
+        state,
+        nonce,
+        plan: "generic",
+      });
+
+      const url = `${GROK_SUBSCRIPTION_AUTH_URL}?${params.toString()}`;
+      res.json({ url, state, redirectUri: GROK_SUBSCRIPTION_REDIRECT_URI });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/grok-subscription/oauth/exchange", requireAuth, requirePermission("system:write"), async (req, res) => {
+    try {
+      let { code, state } = req.body as { code?: string; state?: string };
+      // Ray may paste either the raw authorization code or the full 127.0.0.1
+      // redirect URL from the browser address bar; extract code/state from a URL.
+      if (code && code.includes("://")) {
+        try {
+          const parsed = new URL(code.trim());
+          code = parsed.searchParams.get("code") || code;
+          state = state || parsed.searchParams.get("state") || undefined;
+        } catch { /* not a URL, treat as raw code */ }
+      }
+      code = code?.trim();
+      if (!code || !state) {
+        return res.status(400).json({ error: "Missing code or state" });
+      }
+      const pkce = pkceStore.get(state);
+      if (!pkce) {
+        return res.status(400).json({ error: "Invalid or expired state. Restart the connection." });
+      }
+      pkceStore.delete(state);
+
+      const tokenParams = new URLSearchParams({
+        client_id: GROK_SUBSCRIPTION_CLIENT_ID,
+        code,
+        redirect_uri: pkce.redirectUri,
+        grant_type: "authorization_code",
+        code_verifier: pkce.codeVerifier,
+      });
+
+      const tokenResponse = await fetch(GROK_SUBSCRIPTION_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: tokenParams.toString(),
+      });
+
+      if (!tokenResponse.ok) {
+        const errText = await tokenResponse.text();
+        throw new Error(`Token exchange failed: ${errText}`);
+      }
+
+      const tokens = await tokenResponse.json() as {
+        access_token: string;
+        refresh_token?: string;
+        token_type?: string;
+        expires_in?: number;
+        id_token?: string;
+      };
+
+      // Decode id_token (if present) to get email/name for the account label.
+      let email = "";
+      let name = "";
+      if (tokens.id_token) {
+        try {
+          const payload = JSON.parse(Buffer.from(tokens.id_token.split(".")[1], "base64url").toString());
+          email = payload.email || "";
+          name = payload.name || payload.email || "";
+        } catch { /* ignore */ }
+      }
+
+      const expiryDate = tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : undefined;
+      const storedTokens = {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        token_type: tokens.token_type || "Bearer",
+        expiry_date: expiryDate,
+        email,
+      };
+
+      const { createAccount } = await import("../connected-accounts");
+      await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), () => createAccount({
+        accountId: GROK_SUBSCRIPTION_ACCOUNT_ID,
+        provider: "grok-subscription",
+        email,
+        label: name || email || "Grok Account",
+        tokens: storedTokens,
+      }));
+
+      res.json({ success: true, email });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/grok-subscription/disconnect", requireAuth, requirePermission("system:write"), async (_req, res) => {
+    try {
+      const { deleteAccount } = await import("../connected-accounts");
+      await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), () => deleteAccount(GROK_SUBSCRIPTION_ACCOUNT_ID));
+      res.json({ disconnected: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/claude-cli/status", async (_req, res) => {
     try {
       const token = getSecretSync("CLAUDE_CODE_OAUTH_TOKEN");

@@ -36,8 +36,14 @@ onSecretChange((name) => {
   }
 });
 
-function getOpenAIClient(apiKeyOverride?: string): OpenAI {
-  if (apiKeyOverride) return new OpenAI({ apiKey: apiKeyOverride });
+function getOpenAIClient(apiKeyOverride?: string, baseURLOverride?: string): OpenAI {
+  if (apiKeyOverride) {
+    return new OpenAI(
+      baseURLOverride
+        ? { apiKey: apiKeyOverride, baseURL: baseURLOverride }
+        : { apiKey: apiKeyOverride },
+    );
+  }
   if (!_openaiClient) {
     const apiKey = getSecretSync("OPENAI_API_KEY");
     if (!apiKey) {
@@ -109,6 +115,76 @@ async function getOpenAISubscriptionAccessToken(): Promise<string> {
         }
       } catch (err: any) {
         log.warn(`openai-subscription: token refresh error: ${err.message}`);
+      }
+    }
+
+    return tokens.access_token;
+  });
+}
+
+// ─── Grok Subscription (xAI SuperGrok / X Premium+) ────────────────────────
+// Grok is OpenAI-compatible via api.x.ai/v1, so unlike openai-subscription
+// (which rides the bespoke Codex responses transport) it reuses the standard
+// chat-completions path with a baseURL + bearer override.
+const GROK_SUBSCRIPTION_ACCOUNT_ID = "grok-subscription-primary";
+const GROK_SUBSCRIPTION_API_BASE_URL = "https://api.x.ai/v1";
+const GROK_SUBSCRIPTION_TOKEN_URL = "https://auth.x.ai/oauth2/token";
+const GROK_SUBSCRIPTION_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
+
+interface GrokSubscriptionTokens {
+  access_token: string;
+  refresh_token?: string;
+  token_type?: string;
+  expiry_date?: number;
+  email?: string;
+}
+
+function isGrokSubscriptionTokens(v: unknown): v is GrokSubscriptionTokens {
+  return typeof v === "object" && v !== null && typeof (v as Record<string, unknown>).access_token === "string";
+}
+
+async function getGrokSubscriptionAccessToken(): Promise<string> {
+  return runWithPrincipal(createNamedSystemPrincipal("model-client"), async () => {
+    const { getAccountTokens, updateAccount } = await import("./connected-accounts");
+    const rawTokens = await getAccountTokens(GROK_SUBSCRIPTION_ACCOUNT_ID);
+    if (!isGrokSubscriptionTokens(rawTokens)) {
+      throw new Error("Grok Subscription not connected. Please connect your xAI account in Settings → Connections.");
+    }
+
+    const tokens: GrokSubscriptionTokens = rawTokens;
+
+    // Grok Subscription is a system integration: all users can use it for model
+    // execution, but only system/admin paths may read or rotate its OAuth tokens.
+    const isExpired = typeof tokens.expiry_date === "number" && Date.now() >= tokens.expiry_date - 60_000;
+    if (isExpired && tokens.refresh_token) {
+      log.debug("grok-subscription: refreshing access token");
+      try {
+        const params = new URLSearchParams({
+          client_id: GROK_SUBSCRIPTION_CLIENT_ID,
+          grant_type: "refresh_token",
+          refresh_token: tokens.refresh_token,
+        });
+        const response = await fetch(GROK_SUBSCRIPTION_TOKEN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params.toString(),
+        });
+        if (response.ok) {
+          const newTokens = await response.json() as { access_token: string; refresh_token?: string; expires_in?: number };
+          const updated: GrokSubscriptionTokens = {
+            ...tokens,
+            access_token: newTokens.access_token,
+            refresh_token: newTokens.refresh_token || tokens.refresh_token,
+            expiry_date: newTokens.expires_in ? Date.now() + newTokens.expires_in * 1000 : undefined,
+          };
+          await updateAccount(GROK_SUBSCRIPTION_ACCOUNT_ID, { tokens: updated });
+          log.debug("grok-subscription: token refreshed successfully");
+          return updated.access_token;
+        } else {
+          log.warn("grok-subscription: token refresh failed, using existing token");
+        }
+      } catch (err: any) {
+        log.warn(`grok-subscription: token refresh error: ${err.message}`);
       }
     }
 
@@ -674,7 +750,9 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
         ? await claudeCliCompletion(model, { ...attemptOptions, routingDecision: routing })
         : provider === "openai-subscription"
           ? await openaiSubscriptionCompletion(model, { ...attemptOptions, routingDecision: routing })
-          : await openaiCompletion(model, { ...attemptOptions, routingDecision: routing });
+          : provider === "grok-subscription"
+            ? await grokSubscriptionCompletion(model, { ...attemptOptions, routingDecision: routing })
+            : await openaiCompletion(model, { ...attemptOptions, routingDecision: routing });
 
     result = { ...result, metadata: { ...(result.metadata || {}), routing: auditRouting(routing), trackedAtBoundary: true } };
     const elapsed = Date.now() - start;
@@ -916,7 +994,7 @@ export type ModelProviderFailurePhase = "fetch" | "first_event" | "stream" | "pr
 
 export interface ModelProviderFailure extends ModelProviderFailureInfo {
   kind: ModelProviderFailureKind;
-  provider: "openai-subscription" | "openai";
+  provider: "openai-subscription" | "openai" | "grok-subscription";
   phase: ModelProviderFailurePhase;
 }
 
@@ -1061,7 +1139,7 @@ function providerFailureReference(failure: Pick<ModelProviderFailure, "providerR
 }
 
 function buildProviderUserMessage(failure: Omit<ModelProviderFailure, "userMessage">): string {
-  const providerName = failure.provider === "openai-subscription" ? "OpenAI Codex" : "OpenAI";
+  const providerName = failure.provider === "grok-subscription" ? "Grok" : failure.provider === "openai-subscription" ? "OpenAI Codex" : "OpenAI";
   const reference = providerFailureReference(failure);
   const referenceSuffix = reference ? ` Reference: ${reference}.` : "";
   const providerMessage = sanitizeProviderDiagnostic(failure.providerMessage);
@@ -1603,6 +1681,60 @@ function modelProviderErrorFromAttempt(
   return new ModelProviderError(providerFailure, err.bodySnippet);
 }
 
+// ─── Grok Subscription completions (xAI, OpenAI-compatible via api.x.ai/v1) ───
+// Grok exposes a standard OpenAI-compatible surface, so both the completion and
+// streaming paths reuse the OpenAI request/response shape. The only differences
+// are the subscription OAuth bearer token and the api.x.ai base URL. Streaming
+// delegates to openaiStream through a transport override to avoid duplicating
+// the full SSE handler; the non-streaming path is small enough to stand alone.
+async function grokSubscriptionCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
+  const token = await getGrokSubscriptionAccessToken();
+  const client = getOpenAIClient(token, GROK_SUBSCRIPTION_API_BASE_URL);
+
+  const params: any = {
+    model,
+    messages: options.messages.map(m => ({ role: m.role, content: m.content })),
+  };
+  if (options.maxTokens) params.max_tokens = options.maxTokens;
+  if (options.temperature !== undefined) params.temperature = options.temperature;
+  if (options.jsonMode) params.response_format = { type: "json_object" };
+
+  const clientRequestId = randomUUID();
+  try {
+    await captureProviderDispatch("grok-subscription", model, "grok.chat.completions.create", params, options);
+    const responsePromise = client.chat.completions.create(params, {
+      signal: options.signal,
+      maxRetries: 0,
+      headers: { "X-Client-Request-Id": clientRequestId },
+    });
+    const { data: response } = await responsePromise.withResponse();
+    const content = response.choices[0]?.message?.content || "";
+    return {
+      content,
+      model,
+      provider: "grok-subscription",
+      usage: response.usage ? {
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+        totalTokens: response.usage.total_tokens,
+      } : undefined,
+    };
+  } catch (err: unknown) {
+    if (isAbortError(err, options.signal)) throw err;
+    throw modelProviderErrorFromAttempt(
+      openaiSdkAttemptError(err, clientRequestId),
+      1,
+      { provider: "grok-subscription", model, metadata: options.metadata },
+    );
+  }
+}
+
+async function* grokSubscriptionStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
+  const token = await getGrokSubscriptionAccessToken();
+  const client = getOpenAIClient(token, GROK_SUBSCRIPTION_API_BASE_URL);
+  yield* openaiStream(model, options, { client, providerLabel: "grok-subscription" });
+}
+
 async function openaiSubscriptionCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
   const accessToken = await getOpenAISubscriptionAccessToken();
   const modelInfo = getModel(model);
@@ -2112,6 +2244,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       })();
     }
     if (provider === "openai-subscription") return openaiSubscriptionStream(model, optionsWithResolved);
+    if (provider === "grok-subscription") return grokSubscriptionStream(model, optionsWithResolved);
     return openaiStream(model, optionsWithResolved);
   })();
 
@@ -3038,7 +3171,7 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
   }
 }
 
-async function* openaiStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
+async function* openaiStream(model: string, options: ChatCompletionStreamOptions, transport?: { client?: OpenAI; providerLabel?: string }): AsyncGenerator<StreamEvent> {
   // Effort-capable models (GPT-5.6 family) use the Responses API so the tier
   // thinking config can map onto a reasoning effort.
   const connectorConfig = resolvedOpenAIConfig(options);
@@ -3047,7 +3180,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
     return;
   }
 
-  const client = getOpenAIClient(options.routingDecision?.credential);
+  const client = transport?.client ?? getOpenAIClient(options.routingDecision?.credential);
   const buildStart = Date.now();
   const clientRequestId = randomUUID();
 
@@ -3107,7 +3240,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
 
   try {
     // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
-    await captureProviderDispatch("openai", model, "openai.chat.completions.create stream", params, options);
+    await captureProviderDispatch(transport?.providerLabel ?? "openai", model, "openai.chat.completions.create stream", params, options);
     yield { type: "request_sent", metadata: { buildMs: Date.now() - buildStart } };
     const dispatchAt = Date.now();
     const responsePromise = client.chat.completions.create(params, {

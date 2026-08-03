@@ -135,7 +135,7 @@ function inferUsageSemantics(provider: string, metadata: Record<string, unknown>
     if (providerReportedUsage === "assistant.usage") return "cumulative_provider_session";
     return "unknown";
   }
-  if (provider === "anthropic" || provider === "openai" || provider === "openai-subscription" || provider === "local") return "per_call";
+  if (provider === "anthropic" || provider === "openai" || provider === "openai-subscription" || provider === "grok-subscription" || provider === "local") return "per_call";
   return "unknown";
 }
 

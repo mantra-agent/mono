@@ -147,6 +147,7 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "anthropic", name: "Anthropic", icon: Bot, statusFields: ["anthropic"], route: "anthropic" },
   { id: "openai", name: "OpenAI", icon: Bot, statusFields: ["openai", "openaiSubscription"], route: "openai" },
   { id: "claude-cli", name: "Claude Code CLI", icon: Settings, statusFields: ["claudeCli"], route: "claude-cli" },
+  { id: "grok", name: "Grok", icon: Bot, statusFields: ["grokSubscription"], route: "grok" },
   { id: "twitter", name: "X (Twitter)", icon: ({ className }) => <SiX className={className} />, statusFields: ["twitter"], route: "twitter" },
   { id: "plaid", name: "Plaid", icon: Landmark, statusFields: ["plaid"], route: "plaid" },
   { id: "quickbooks", name: "QuickBooks", icon: Landmark, statusFields: ["quickbooks"], healthField: "quickbooksHealthy", route: "quickbooks" },
@@ -1634,6 +1635,205 @@ function OpenAISubscriptionSection() {
 
         <p className="text-xs text-muted-foreground border-t pt-2">
           Uses OAuth PKCE flow with the official Codex CLI client ID. Your credentials are encrypted and stored locally.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function GrokSubscriptionSection() {
+  const { toast } = useToast();
+  const { hasPermission } = useAuth();
+  const canManageSystemIntegrations = hasPermission("system:write");
+
+  const { data: statusData, isLoading, refetch } = useQuery<{
+    connected: boolean;
+    email?: string;
+    label?: string;
+    hasTokens?: boolean;
+  }>({
+    queryKey: ["/api/grok-subscription/status"],
+    refetchInterval: 30000,
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/grok-subscription/disconnect");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/grok-subscription/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/models/available"] });
+      toast({ title: "Grok account disconnected" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to disconnect", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const [showUrlPaste, setShowUrlPaste] = useState(false);
+  const [pasteUrl, setPasteUrl] = useState("");
+  const [exchangeState, setExchangeState] = useState("");
+  const [isExchanging, setIsExchanging] = useState(false);
+
+  const exchangeCode = async (code: string, state: string) => {
+    setIsExchanging(true);
+    try {
+      const res = await fetch("/api/grok-subscription/oauth/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ code, state }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Exchange failed");
+      toast({ title: "Grok account connected", description: data.email || "Success" });
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/models/available"] });
+      setShowUrlPaste(false);
+      setPasteUrl("");
+    } catch (err: any) {
+      toast({ title: "Failed to connect", description: err.message, variant: "destructive" });
+    } finally {
+      setIsExchanging(false);
+    }
+  };
+
+  const handleConnect = async () => {
+    try {
+      if (!canManageSystemIntegrations) {
+        toast({ title: "Admin only", description: "Only admins can change system model integrations.", variant: "destructive" });
+        return;
+      }
+      const res = await fetch("/api/grok-subscription/oauth/start", { credentials: "include" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to start OAuth");
+      }
+      const { url, state } = await res.json();
+      setExchangeState(state);
+      const popup = window.open(url, "grok-subscription-oauth", "width=600,height=700,scrollbars=yes");
+      if (!popup) {
+        toast({ title: "Popup blocked", description: "Please allow popups and try again.", variant: "destructive" });
+        return;
+      }
+      // xAI redirects to 127.0.0.1:56121, which a remote server can never receive,
+      // so there is nothing to auto-detect — show the paste box immediately.
+      setShowUrlPaste(true);
+    } catch (err: any) {
+      toast({ title: "Failed to start OAuth", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handlePasteSubmit = () => {
+    const raw = pasteUrl.trim();
+    if (!raw) return;
+    try {
+      const url = new URL(raw);
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state") || exchangeState;
+      if (!code) {
+        toast({ title: "Invalid URL", description: "No authorization code found in URL", variant: "destructive" });
+        return;
+      }
+      exchangeCode(code, state);
+    } catch {
+      // Not a URL — treat the pasted value as a raw authorization code.
+      exchangeCode(raw, exchangeState);
+    }
+  };
+
+  const connected = statusData?.connected ?? false;
+
+  return (
+    <Card data-testid="card-grok-subscription">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <Bot className="h-4 w-4" />
+          Grok Subscription
+        </CardTitle>
+        <Badge
+          variant={connected ? "default" : "secondary"}
+          data-testid="badge-grok-subscription-status"
+        >
+          {connected ? "Connected" : "Not Connected"}
+        </Badge>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          Connect your SuperGrok or X Premium+ subscription to use Grok models (Grok 4.5, Grok 4.3) at no per-token cost. When the subscription is unavailable, routing falls back to your other providers.
+        </p>
+
+        {!canManageSystemIntegrations && (
+          <p className="text-xs text-muted-foreground italic">System integration. Visible to all users; admin-only to connect or disconnect.</p>
+        )}
+
+        {isLoading ? (
+          <Skeleton className="h-10 w-full" />
+        ) : connected ? (
+          <div className="flex items-center justify-between gap-3 p-3 rounded-md border border-primary/30 bg-primary/5">
+            <div className="flex items-center gap-2 min-w-0">
+              <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium truncate" data-testid="text-grok-subscription-email">
+                  {statusData?.email || statusData?.label || "Grok Account"}
+                </p>
+                <p className="text-xs text-muted-foreground">Subscription models available in tier selectors</p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => disconnectMutation.mutate()}
+              disabled={disconnectMutation.isPending || !canManageSystemIntegrations}
+              title={canManageSystemIntegrations ? undefined : "Admin only"}
+              data-testid="button-disconnect-grok-subscription"
+            >
+              {disconnectMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+              Disconnect
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <Button
+              variant="outline"
+              onClick={handleConnect}
+              disabled={isExchanging || !canManageSystemIntegrations}
+              title={canManageSystemIntegrations ? undefined : "Admin only"}
+              data-testid="button-connect-grok-subscription"
+            >
+              {isExchanging ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
+              {isExchanging ? "Connecting..." : "Connect Grok Account"}
+            </Button>
+            {showUrlPaste && (
+              <div className="space-y-2 p-3 rounded-md border bg-muted/30">
+                <p className="text-xs text-muted-foreground">
+                  The popup will show a "can't be reached" error at 127.0.0.1 — that's expected. Copy the full URL from the popup's address bar and paste it below:
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    value={pasteUrl}
+                    onChange={(e) => setPasteUrl(e.target.value)}
+                    placeholder="Paste the callback URL here..."
+                    className="text-xs"
+                    data-testid="input-grok-oauth-callback-url"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handlePasteSubmit}
+                    disabled={!pasteUrl.trim() || isExchanging}
+                    data-testid="button-submit-grok-oauth-url"
+                  >
+                    {isExchanging ? <Loader2 className="h-3 w-3 animate-spin" /> : "Submit"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <p className="text-xs text-muted-foreground border-t pt-2">
+          Uses OAuth PKCE flow with xAI's official public client. Your credentials are encrypted and stored locally.
         </p>
       </CardContent>
     </Card>
@@ -6164,6 +6364,13 @@ function IntegrationDetail({ provider }: { provider: string }) {
             </CardContent>
           </Card>
           <ModelConnectorSection provider="claude-cli" />
+        </div>
+      )}
+
+      {provider === "grok" && (
+        <div className="space-y-4">
+          <GrokSubscriptionSection />
+          <ModelConnectorSection provider="grok-subscription" title="Subscription model mapping" />
         </div>
       )}
 
