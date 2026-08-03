@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 
-const MIGRATION_LOCK_KEY = "build-deployment-home-schema-v2";
+const MIGRATION_LOCK_KEY = "build-deployment-home-schema-v3";
 
 /** Additive, replay-safe schema convergence for Build deployment observations. */
 export async function ensureBuildDeploymentSchema(pool: Pool): Promise<void> {
@@ -39,6 +39,11 @@ export async function ensureBuildDeploymentSchema(pool: Pool): Promise<void> {
           commit_sha IS NULL OR char_length(commit_sha) BETWEEN 1 AND 200
         )
       )
+    `);
+    // Migration 0116 left a global unique on (provider, provider_deployment_id).
+    // Drop it so account-scoped observation identity is the only uniqueness rule.
+    await client.query(`
+      DROP INDEX IF EXISTS uk_platform_deployment_observation_provider_deployment
     `);
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS uk_platform_deployment_observation_provider_identity
