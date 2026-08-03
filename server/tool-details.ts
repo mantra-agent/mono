@@ -236,7 +236,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     actions: {
       state: { description: "Get a comprehensive snapshot of system state — memory counts, skill count, capabilities health, and more." },
       logs: { description: "Retrieve recent runtime logs. Filter by level (debug/info/warn/error) and source module.", optionalParams: ["limit", "level", "source"] },
-      frontend_performance: { description: "Read the canonical browser telemetry summary used by the Performance page Frontend Experience section.", optionalParams: ["hours"] },
+      frontend_performance: { description: "Read the canonical browser telemetry summary used by the Performance page Frontend section.", optionalParams: ["hours"] },
       context_health: { description: "Read the system-wide canonical api_calls context-health summary used by the Performance page Context section.", optionalParams: ["hours"] },
     },
   },

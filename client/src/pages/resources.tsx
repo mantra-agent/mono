@@ -813,7 +813,7 @@ function ResourcesView({
 
 
           <PerformanceSection
-            label="Frontend Experience"
+            label="Frontend"
             status={frontendStatus}
             testId="section-frontend-experience"
           >
