@@ -110,26 +110,7 @@ export async function registerProjectsRoutes(app: Express) {
   app.patch("/api/projects/tasks/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);
-      const { patch: updates, clearFields, destructiveUpdateReason } = sanitizePatch(req.body, {
-        protectedFields: ['title', 'description', 'context', 'output', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        clearableFields: ['description', 'context', 'output', 'assigneeSubjectType', 'assigneeSubjectId', 'deadline', 'projectId', 'milestoneId'] as Array<keyof any>,
-        destructiveFields: ['description'] as Array<keyof any>,
-      });
-      const assignmentClearCount = clearFields.filter(field => field === 'assigneeSubjectType' || field === 'assigneeSubjectId').length;
-      if (assignmentClearCount === 1) {
-        return res.status(400).json({ error: "Task assignment clear requires both assigneeSubjectType and assigneeSubjectId", operation: "update_task" });
-      }
-      for (const field of clearFields) {
-        (updates as Record<string, unknown>)[field as string] = null;
-      }
-      logPatchClearAudit(log, {
-        operation: "route.update_task",
-        entityType: "task",
-        entityId: id,
-        clearFields,
-        destructiveUpdateReason,
-      });
-      const task = await fileTaskStorage.updateTask(id, updates);
+      const task = await fileTaskStorage.updateTask(id, req.body);
       if (!task) return res.status(404).json({ error: `Task ${id} not found`, operation: "update_task" });
       res.json(task);
     } catch (error: unknown) {

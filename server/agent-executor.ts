@@ -57,7 +57,7 @@ export interface ContentBlock {
 
 import type { ToolDefinition } from "@shared/models/tools";
 import type { ToolFailure } from "./tool-failure";
-import { ToolOperationRecovery } from "./tool-operation-recovery";
+import { ToolOperationRecovery, type ToolRecoveryDecision } from "./tool-operation-recovery";
 export type { ToolDefinition };
 
 export type ToolContinuation = "persona_switch" | "tool_schema_refresh" | "await_user" | "provider_system_tool" | "working_set_refresh";
@@ -71,6 +71,8 @@ export type ToolExecutorResult = {
   error?: boolean;
   /** Structured source classification consumed by run-scoped recovery policy. */
   failure?: ToolFailure;
+  /** One discriminated recovery decision computed by the run-scoped ledger. */
+  recoveryDecision?: ToolRecoveryDecision;
   outcome?: ToolOutcome;
   sideEffectOnly?: boolean;
   continuation?: ToolContinuation;
@@ -824,6 +826,7 @@ interface RunIterationContext {
   toolUseReceivedAt: Map<string, number>;
   /** One recovery ledger for the complete run; never reset between model iterations. */
   operationRecovery: ToolOperationRecovery;
+  terminalToolFailure?: { toolName: string; result: string; failure: ToolFailure };
   diagnosticLastStep?: "model_response" | "tool_batch" | "terminal";
   diagnosticLastModelStopReason?: string;
   diagnosticLastAssistantTextLength: number;
@@ -1565,6 +1568,15 @@ export class AgentExecutor extends EventEmitter {
           runId: ctx.runId,
           sessionKey: options.sessionKey,
         });
+        if (event.recoveryDecision === "quarantined" && event.failure) {
+          const toolName = normalizedName || event.toolName;
+          ctx.terminalToolFailure ??= {
+            toolName,
+            result: event.result,
+            failure: event.failure,
+          };
+          log.warn(`[ToolRecovery] sdk failure quarantined runId=${ctx.runId} tool=${toolName} code=${event.failure.code} resource=${event.failure.resourceKey ?? "unknown"}`);
+        }
         break;
       }
 
@@ -1590,8 +1602,15 @@ export class AgentExecutor extends EventEmitter {
   ): Promise<ToolExecutorResult> {
     const normalizedName = normalizeMcpToolName(name) || name;
     const result = await ctx.operationRecovery.execute(ctx.runId, normalizedName, args, execute);
-    if (result.failure?.code === "scratch_edit_read_required" || result.failure?.code === "scratch_edit_quarantined") {
-      log.warn(`[ToolRecovery] blocked runId=${ctx.runId} tool=${name} code=${result.failure.code} resource=${result.failure.resourceKey}`);
+    if (result.recoveryDecision === "quarantined" && result.failure) {
+      ctx.terminalToolFailure ??= {
+        toolName: normalizedName,
+        result: result.result,
+        failure: result.failure,
+      };
+      log.warn(`[ToolRecovery] quarantined runId=${ctx.runId} tool=${normalizedName} code=${result.failure.code} resource=${result.failure.resourceKey ?? "unknown"}`);
+    } else if (result.recoveryDecision === "read_required") {
+      log.warn(`[ToolRecovery] read-required runId=${ctx.runId} tool=${normalizedName} code=${result.failure?.code ?? "unknown"}`);
     }
     return result;
   }
@@ -2005,6 +2024,24 @@ export class AgentExecutor extends EventEmitter {
     wrapped.finally(() => ctx.backgroundWork.delete(wrapped));
   }
 
+  private synthesizeToolFailureRecovery(ctx: RunIterationContext): string {
+    const terminal = ctx.terminalToolFailure;
+    if (!terminal) return ctx.allText.join("");
+
+    const completedCount = ctx.resolvedToolCalls.filter((call) => call.outcome === "succeeded").length;
+    const completedSentence = completedCount > 0
+      ? `I preserved the work completed before the failure (${completedCount} successful tool operation${completedCount === 1 ? "" : "s"}).`
+      : "No completed operation was discarded.";
+    const detail = terminal.result.trim().replace(/\s+/g, " ");
+    const boundedDetail = detail.length > 600 ? `${detail.slice(0, 597)}...` : detail;
+
+    return [
+      completedSentence,
+      `I stopped because ${terminal.toolName} returned a non-retryable ${terminal.failure.kind} failure (${terminal.failure.code}).`,
+      boundedDetail ? `Unresolved operation: ${boundedDetail}` : "The unresolved operation requires corrected input or permission before it can continue.",
+    ].join("\n\n");
+  }
+
   private async publishRunResult(
     ctx: RunIterationContext,
     options: ExecutorRunOptions,
@@ -2012,6 +2049,24 @@ export class AgentExecutor extends EventEmitter {
     finalContent: string,
     terminationReason: TerminationReason,
   ): Promise<ExecutorRunResult> {
+    if (ctx.terminalToolFailure) {
+      finalContent = this.synthesizeToolFailureRecovery(ctx);
+      terminationReason = "complete";
+      ctx.aborted = false;
+      ctx.abortReason = undefined;
+      ctx.abortDetails = undefined;
+      ctx.intentionallyAwaitingUser = false;
+      ctx.lastError = undefined;
+      ctx.allText = [finalContent];
+      ctx.iterationText = finalContent;
+      ctx.contentBuf = "";
+      ctx.thinkingBuf = "";
+      ctx.chronologyContentBuf = "";
+      ctx.chronologyThinkingBuf = "";
+      ctx.segmentChronology = [{ s: "content", t: finalContent }];
+      ctx.publish("attempt_reset", {});
+      ctx.publish("text_delta", { content: finalContent });
+    }
     const allThinkingContent = ctx.allThinking.join("\n\n");
 
     // Flush pending chronology buffers
@@ -2031,15 +2086,18 @@ export class AgentExecutor extends EventEmitter {
 
     const lastStopReason = ctx.diagnosticLastModelStopReason;
     const degradationReason: TerminalDegradationReason | undefined =
-      !ctx.aborted &&
-      terminationReason === "complete" &&
-      finalContent.trim().length === 0 &&
-      !ctx.intentionallyAwaitingUser &&
-      lastStopReason === "max_tokens"
-        ? "empty_response_output_limit"
-        : undefined;
+      ctx.terminalToolFailure
+        ? "tool_failure_recovered"
+        : !ctx.aborted &&
+          terminationReason === "complete" &&
+          finalContent.trim().length === 0 &&
+          !ctx.intentionallyAwaitingUser &&
+          lastStopReason === "max_tokens"
+          ? "empty_response_output_limit"
+          : undefined;
     const status: ExecutorRunResult["status"] =
-      degradationReason ? "degraded"
+      ctx.terminalToolFailure ? "degraded"
+      : degradationReason ? "degraded"
       : terminationReason === "yield_to_interactive" ? "yielded"
       : terminationReason === "complete" ? "succeeded"
       : "failed";
@@ -2768,6 +2826,10 @@ export class AgentExecutor extends EventEmitter {
         await this.processStreamEvent(event, ctx, options);
         const runEntry = this.activeRuns.get(ctx.runId);
         if (runEntry) runEntry.lastActivityAt = Date.now();
+        if (ctx.terminalToolFailure) {
+          log.warn(`[ToolRecovery] stopping model stream after quarantined failure runId=${ctx.runId} code=${ctx.terminalToolFailure.failure.code}`);
+          break;
+        }
       }
 
       if (!ctx.aborted && abortController.signal.aborted) {
@@ -3428,6 +3490,10 @@ export class AgentExecutor extends EventEmitter {
           log.log(`persona switch applied runId=${runId} sessionId=${options.sessionId || "none"} persona=${refreshed.persona?.name || "unknown"} model=${previousModel}->${modelString} tier=${routingTier} toolCount=${options.tools.length}`);
         }
 
+        if (ctx.terminalToolFailure) {
+          lastExitCause = "natural_stop";
+          break;
+        }
         if (!result.shouldContinue) {
           lastExitCause = result.exitCause;
           break;
