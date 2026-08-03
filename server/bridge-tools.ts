@@ -10975,10 +10975,17 @@ ${refs}` : ""),
           if (details.whenToUse) detail += `\n\n### When to Use\n${details.whenToUse}`;
           if (details.example) detail += `\n\n### Examples\n${details.example}`;
           if (details.actions) {
+            const schemaRequired = Array.isArray(meta.parameters?.required)
+              ? (meta.parameters.required as string[])
+              : [];
             const actionLines = Object.entries(details.actions).map(([name, info]) => {
+              // Merge live schema-required params (e.g. universal reasoning) so action
+              // docs cannot understate the callable contract when TOOL_DETAILS drifts.
+              const required = Array.from(new Set([...(info.requiredParams ?? []), ...schemaRequired]));
+              const optional = (info.optionalParams ?? []).filter((p) => !required.includes(p));
               let line = `  - **${name}**: ${info.description}`;
-              if (info.requiredParams?.length) line += ` | Required: ${info.requiredParams.join(", ")}`;
-              if (info.optionalParams?.length) line += ` | Optional: ${info.optionalParams.join(", ")}`;
+              if (required.length) line += ` | Required: ${required.join(", ")}`;
+              if (optional.length) line += ` | Optional: ${optional.join(", ")}`;
               return line;
             });
             detail += `\n\n### Actions\n${actionLines.join("\n")}`;
