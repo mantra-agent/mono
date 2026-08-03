@@ -360,7 +360,7 @@ Meeting barge-in is driven by raw per-frame participant RMS energy (`observeMeet
 
 ## Browser performance telemetry
 
-`browser_performance_telemetry` is the principal-scoped canonical store for browser experience samples and correlated SPA navigation traces. `browser-telemetry-storage.ts` owns validation, metadata minimization, retention, and the bounded summary shared by the Performance page and `system.frontend_performance`; do not create a parallel incident or navigation store.
+`browser_performance_telemetry` is the principal-scoped canonical store for browser experience samples and correlated SPA navigation traces. `browser-telemetry-storage.ts` owns validation, metadata minimization, retention, and the bounded summary shared by the Performance page and `system.frontend_performance`; do not create a parallel incident or navigation store. SPA navigation p50/p95 are computed only over `outcome: "completed"` samples; deadline/pagehide/superseded traces increment `incompleteCount` and never enter latency percentiles.
 
 ## Post-build Issue review boundary
 

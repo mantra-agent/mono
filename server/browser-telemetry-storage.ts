@@ -224,6 +224,12 @@ function navigationOutcome(metadata: Record<string, unknown>): NavigationTraceOu
     : "deadline";
 }
 
+/** Percentiles measure completed navigations only. Deadline/pagehide/superseded are incompleteness, not latency. */
+function isCompletedNavigationSample(kind: string, metadata: unknown): boolean {
+  if (kind !== "navigation") return true;
+  return navigationOutcome(metadataRecord(metadata)) === "completed";
+}
+
 export async function getBrowserTelemetrySummary(principal: Principal, windowHours = 24): Promise<BrowserTelemetrySummary> {
   const hours = Math.min(Math.max(Math.floor(windowHours), 1), 168);
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
@@ -262,7 +268,10 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
 
   const metrics = Array.from(groups.values()).map((group) => {
     // Filter rows per-metric according to the visibility policy.
-    const eligible = group.filter((row) => shouldIncludeForPercentile(row.kind, row.visibility));
+    // Navigation percentiles use completed traces only so deadline caps do not right-censor p95.
+    const eligible = group.filter(
+      (row) => shouldIncludeForPercentile(row.kind, row.visibility) && isCompletedNavigationSample(row.kind, row.metadata),
+    );
     const sorted = eligible.map((row) => Number(row.value)).filter(Number.isFinite).sort((a, b) => a - b);
     const pick = (pct: number) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * pct))] : null;
     return {
@@ -276,7 +285,10 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
   }).filter((metric) => metric.count > 0).sort((a, b) => b.count - a.count).slice(0, 50);
 
   const recentDegradations = rows
-    .filter((row) => shouldIncludeForPercentile(row.kind, row.visibility) && exceedsBrowserBudget(row.kind, Number(row.value)))
+    .filter((row) =>
+      shouldIncludeForPercentile(row.kind, row.visibility)
+      && isCompletedNavigationSample(row.kind, row.metadata)
+      && exceedsBrowserBudget(row.kind, Number(row.value)))
     .slice(0, 20)
     .map((row) => ({
       kind: row.kind,
@@ -288,19 +300,18 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
     }));
 
   const navigationRows = rows.filter((row) => row.kind === "navigation" && row.name === "spa_navigation" && shouldIncludeForPercentile(row.kind, row.visibility));
-  const navigationDurations = navigationRows.map((row) => Number(row.value)).filter(Number.isFinite).sort((a, b) => a - b);
+  const completedNavigationRows = navigationRows.filter((row) => isCompletedNavigationSample(row.kind, row.metadata));
+  const navigationDurations = completedNavigationRows.map((row) => Number(row.value)).filter(Number.isFinite).sort((a, b) => a - b);
   const navigationPick = (pct: number) => navigationDurations.length
     ? navigationDurations[Math.min(navigationDurations.length - 1, Math.floor((navigationDurations.length - 1) * pct))]
     : null;
   const diagnosisCounts = Object.fromEntries(NAVIGATION_TRACE_DIAGNOSES.map((diagnosis) => [diagnosis, 0])) as Record<NavigationTraceDiagnosis, number>;
-  let completedCount = 0;
   const navigationIncidents: NavigationTraceIncident[] = [];
   for (const row of navigationRows) {
     const metadata = metadataRecord(row.metadata);
     const diagnosis = navigationDiagnosis(metadata);
     const outcome = navigationOutcome(metadata);
     diagnosisCounts[diagnosis] += 1;
-    if (outcome === "completed") completedCount += 1;
     if (diagnosis === "healthy" && outcome === "completed") continue;
     navigationIncidents.push({
       traceId: metadataString(metadata, "traceId"),
@@ -327,6 +338,7 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
   }
 
   const sampleHealth = rows.length === 0 ? "empty" : rows.length < 20 ? "thin" : "healthy";
+  const completedCount = completedNavigationRows.length;
 
   return {
     generatedAt: Date.now(),

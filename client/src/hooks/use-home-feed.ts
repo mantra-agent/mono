@@ -14,7 +14,5 @@ export function useHomeFeed(options: { refresh?: boolean; model?: boolean } = {}
       const res = await apiRequest("GET", `/api/home/feed${suffix}`);
       return res.json();
     },
-    staleTime: 0,
-    refetchOnMount: "always",
   });
 }

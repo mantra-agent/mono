@@ -89,8 +89,10 @@ export const queryClient = new QueryClient({
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
       refetchInterval: false,
-      refetchOnWindowFocus: true,
-      staleTime: 0,
+      // Default freshness window: avoid mount/focus fan-out storms on every SPA nav.
+      // Routes that need live data should opt into shorter staleTime or explicit invalidation.
+      refetchOnWindowFocus: false,
+      staleTime: 30_000,
       retry: false,
       structuralSharing: preserveCoherentDurableSessionSnapshot,
     },
