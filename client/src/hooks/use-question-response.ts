@@ -6,6 +6,11 @@ import type { useToast } from "@/hooks/use-toast";
 
 const log = createLogger("QuestionResponse");
 
+export type QuestionSubmitResult = {
+  ok: boolean;
+  decisionId?: string;
+};
+
 export function useQuestionResponse({
   sessionId,
   toast,
@@ -13,8 +18,8 @@ export function useQuestionResponse({
   sessionId: string | null;
   toast: ReturnType<typeof useToast>["toast"];
 }) {
-  return useCallback(async (questionResponse: QuestionResponseMeta): Promise<boolean> => {
-    if (!sessionId) return false;
+  return useCallback(async (questionResponse: QuestionResponseMeta): Promise<QuestionSubmitResult> => {
+    if (!sessionId) return { ok: false };
 
     const clientTurnId = `question-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -24,12 +29,17 @@ export function useQuestionResponse({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ clientTurnId, questionResponse }),
       });
+      const body = await response.json().catch(() => null);
       if (!response.ok) {
-        const body = await response.json().catch(() => null);
         throw new Error(body?.error || "Failed to submit answer");
       }
       emitSessionChanged(sessionId, "question-answered");
-      return true;
+      return {
+        ok: true,
+        ...(typeof body?.decisionId === "string" && body.decisionId
+          ? { decisionId: body.decisionId }
+          : {}),
+      };
     } catch (error) {
       log.error("QUESTION_RESPONSE:SUBMIT_FAILED", {
         sessionId,
@@ -41,7 +51,7 @@ export function useQuestionResponse({
         description: error instanceof Error ? error.message : String(error),
         variant: "destructive",
       });
-      return false;
+      return { ok: false };
     }
   }, [sessionId, toast]);
 }

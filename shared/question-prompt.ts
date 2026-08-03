@@ -29,6 +29,8 @@ export interface QuestionResponseMeta {
   otherText?: string;
   selectedPrincipleRevisionIds?: string[];
   reasoning?: string;
+  /** Closed Decision created by the canonical judgment recorder for this answer. */
+  decisionId?: string;
 }
 
 export type QuestionValidationResult<T> =
@@ -271,6 +273,13 @@ export function normalizeQuestionResponse(input: unknown): QuestionValidationRes
     return { ok: false, error: `reasoning must be non-empty and at most ${MAX_REASONING_LENGTH} characters.` };
   }
 
+  const decisionId = raw.decisionId === undefined
+    ? undefined
+    : nonEmptyString(raw.decisionId, 200);
+  if (raw.decisionId !== undefined && !decisionId) {
+    return { ok: false, error: "decisionId must be a non-empty string when provided." };
+  }
+
   return {
     ok: true,
     value: {
@@ -279,6 +288,7 @@ export function normalizeQuestionResponse(input: unknown): QuestionValidationRes
       ...(otherText ? { otherText } : {}),
       ...(selectedPrincipleRevisionIds.length > 0 ? { selectedPrincipleRevisionIds } : {}),
       ...(reasoning ? { reasoning } : {}),
+      ...(decisionId ? { decisionId } : {}),
     },
   };
 }
@@ -293,9 +303,8 @@ export function validateQuestionResponse(
   if (response.otherText && !prompt.allowOther) {
     return { ok: false, error: "This question does not allow an Other response." };
   }
-  const validRevisionIds = new Set(prompt.principles.map((principle) => principle.revisionId));
-  const invalidRevisionId = response.selectedPrincipleRevisionIds?.find((id) => !validRevisionIds.has(id));
-  if (invalidRevisionId) return { ok: false, error: `Unknown principle revision id: ${invalidRevisionId}` };
+  // Principle revisions may come from the prompt shortlist or a searchable picker.
+  // Existence is enforced by recordJudgment when the answer is accepted.
   if (response.reasoning && !prompt.allowResponseReasoning) {
     return { ok: false, error: "This question does not allow response reasoning." };
   }

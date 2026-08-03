@@ -446,10 +446,13 @@ export const TOOLS: Record<string, ToolMeta> = {
         },
         selectionMode: { type: "string", enum: ["single", "multiple"], description: "single by default; multiple allows more than one choice." },
         allowOther: { type: "boolean", description: "Allow a free-text Other answer, default false." },
-        reasoning: { type: "string", description: "Why this clarification is necessary right now." },
+        reasoning: {
+          type: "string",
+          description: "Why I'm asking — short context shown above the options so the user understands the judgment stake.",
+        },
         principles: {
           type: "array",
-          description: "Optional immutable Principle choices relevant to the judgment.",
+          description: "Optional shortlist of immutable Principle revisions relevant to the judgment. User can also search the full Principle set when answering.",
           maxItems: 12,
           items: {
             type: "object",

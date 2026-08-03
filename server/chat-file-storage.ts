@@ -1444,9 +1444,9 @@ export interface IChatFileStorage {
     questionCancellation?: QuestionCancellationMeta,
     questionPrompt?: QuestionPrompt,
   ): Promise<
-    | { outcome: "created"; message: FileMessage }
-    | { outcome: "duplicate"; message: FileMessage }
-    | { outcome: "question_already_answered"; message: FileMessage }
+    | { outcome: "created"; message: FileMessage; decisionId?: string }
+    | { outcome: "duplicate"; message: FileMessage; decisionId?: string }
+    | { outcome: "question_already_answered"; message: FileMessage; decisionId?: string }
     | { outcome: "session_not_found" }
   >;
   recordQuestionCancellation(
@@ -2538,7 +2538,13 @@ export const chatFileStorage: IChatFileStorage = {
       );
       if (existing) {
         log.debug(`[ChatFileStorage] duplicate client turn ignored session=${sessionId} turnId=${clientTurnId}`);
-        return { outcome: "duplicate" as const, message: existing };
+        return {
+          outcome: "duplicate" as const,
+          message: existing,
+          ...(existing.questionResponse?.decisionId
+            ? { decisionId: existing.questionResponse.decisionId }
+            : {}),
+        };
       }
       if (questionResponse) {
         const priorResponse = data.messages.find(
@@ -2546,7 +2552,13 @@ export const chatFileStorage: IChatFileStorage = {
         );
         if (priorResponse) {
           log.warn(`[ChatFileStorage] duplicate question response blocked session=${sessionId} toolCallId=${questionResponse.questionToolCallId}`);
-          return { outcome: "question_already_answered" as const, message: priorResponse };
+          return {
+            outcome: "question_already_answered" as const,
+            message: priorResponse,
+            ...(priorResponse.questionResponse?.decisionId
+              ? { decisionId: priorResponse.questionResponse.decisionId }
+              : {}),
+          };
         }
       }
 
@@ -2575,11 +2587,12 @@ export const chatFileStorage: IChatFileStorage = {
         ...(questionResponse ? { questionResponse } : {}),
         ...(effectiveCancellation ? { questionCancellation: effectiveCancellation } : {}),
       };
+      let decisionId: string | undefined;
       if (questionResponse && questionPrompt) {
         const selectedLabels = questionResponse.selectedOptionIds
           .map((id) => questionPrompt.options.find((option) => option.id === id)?.label)
           .filter((label): label is string => Boolean(label));
-        await decisionsStorage.recordJudgment({
+        const judgment = await decisionsStorage.recordJudgment({
           title: questionPrompt.question,
           description: [...selectedLabels, questionResponse.otherText].filter(Boolean).join("; "),
           answerPayload: {
@@ -2597,12 +2610,21 @@ export const chatFileStorage: IChatFileStorage = {
           status: "closed",
           resolvedAt: new Date(now),
         });
+        decisionId = judgment.decision.id;
+        message.questionResponse = {
+          ...questionResponse,
+          decisionId,
+        };
       }
       data.messages.push(message);
       data.updatedAt = now;
       await writeConv(data);
       invalidateSessionsCache();
-      return { outcome: "created" as const, message };
+      return {
+        outcome: "created" as const,
+        message,
+        ...(decisionId ? { decisionId } : {}),
+      };
     });
   },
 

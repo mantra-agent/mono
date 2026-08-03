@@ -67,7 +67,7 @@ interface MessageListProps {
   liveStreamRenderId?: string | null;
   compactReferences?: boolean;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
-  onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
+  onQuestionSubmit: (response: QuestionResponseMeta) => Promise<import("@/hooks/use-question-response").QuestionSubmitResult | boolean>;
   onQuestionCancel?: () => Promise<boolean>;
   historical?: boolean;
 }
