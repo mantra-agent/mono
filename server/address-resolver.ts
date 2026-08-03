@@ -20,6 +20,7 @@ import {
   milestones,
   planExecutions,
   planStepAttempts,
+  environmentPromotionReleases,
   platformDeploymentObservations,
   platformProductEnvironments,
   platformProducts,
@@ -56,6 +57,7 @@ import { chatFileStorage } from "./chat-file-storage";
 import { normalizeQuestionPrompt } from "@shared/question-prompt";
 import { decisionsStorage } from "./decisions-storage";
 import { tagService } from "./tag-service";
+import { formatBuildDeploymentLabel } from "./mods/build-deployment-home";
 
 import { getEvent, listAllEvents } from "./google-calendar";
 import { objectStorageService } from "./object_storage/objectStorage";
@@ -476,7 +478,7 @@ const adapters: AddressResolverAdapter[] = [
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: `${byId.get(ref.id)!.platformName} / ${byId.get(ref.id)!.productName} / ${byId.get(ref.id)!.name}`, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
   simpleAdapter("build", async (principal, refs) => {
-    if (!hasPermission(principal, "build:read")) return unauthorizedMap(refs);
+    if (!principalHasPermission(principal, "build:read")) return resultMap(refs, "unauthorized");
     const rows = await db.select({
       id: platformDeploymentObservations.id,
       platformEnvironmentId: platformDeploymentObservations.platformEnvironmentId,
@@ -492,15 +494,45 @@ const adapters: AddressResolverAdapter[] = [
         buildObservationScope,
         inArray(platformDeploymentObservations.id, refs.map(ref => ref.id)),
       ));
+    const versionByEnv = new Map<number, string>();
+    const envIds = [...new Set(rows.map((row) => row.platformEnvironmentId))];
+    if (envIds.length > 0) {
+      const releases = await db
+        .select({
+          environmentId: environmentPromotionReleases.environmentId,
+          version: environmentPromotionReleases.version,
+        })
+        .from(environmentPromotionReleases)
+        .where(inArray(environmentPromotionReleases.environmentId, envIds))
+        .orderBy(desc(environmentPromotionReleases.promotedAt));
+      for (const release of releases) {
+        if (!versionByEnv.has(release.environmentId) && release.version?.trim()) {
+          versionByEnv.set(release.environmentId, release.version.trim());
+        }
+      }
+    }
     const byId = new Map(rows.map(row => [row.id, row]));
     return new Map(refs.flatMap(ref => {
       const row = byId.get(ref.id);
       if (!row) return [];
-      const label = `${row.platformName} / ${row.productName} / ${row.environmentName}`;
-      const commit = row.commitSha ? ` at ${row.commitSha.slice(0, 7)}` : "";
+      const version = versionByEnv.get(row.platformEnvironmentId) ?? null;
+      const label = formatBuildDeploymentLabel({
+        platformName: row.platformName,
+        productName: row.productName,
+        environmentName: row.environmentName,
+        version,
+        commitSha: row.commitSha,
+      });
+      const identity = version
+        ? `v${version.replace(/^v/i, "")}`
+        : row.commitSha
+          ? `#${row.commitSha.slice(0, 7)}`
+          : null;
       return [[requestedAddress(ref), resolved(ref, {
         label,
-        summary: `Successful Railway deployment${commit}`,
+        summary: identity
+          ? `Successful Railway deployment ${identity}`
+          : "Successful Railway deployment",
         route: `/platform-environments/${encodeURIComponent(row.platformEnvironmentId)}`,
         updatedAt: row.deployedAt,
         capabilities: ["read"],

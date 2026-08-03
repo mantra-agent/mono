@@ -1,8 +1,7 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
-import { createElement, useEffect } from "react";
-import { createReferenceRef, isKnownReferenceType } from "@shared/references";
-import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import { useEffect } from "react";
+import { createReferenceRef, isKnownReferenceType, serializeReference } from "@shared/references";
 import { queryClient } from "@/lib/queryClient";
 import { toast } from "@/hooks/use-toast";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
@@ -218,9 +217,14 @@ function maybeToastBuildCompletion(payload: Record<string, unknown> | undefined)
       id: rawReference.id,
       metadata: rawReference.metadata,
     });
+    const label = typeof completion.label === "string" ? completion.label.trim() : "";
+    // Toast titles are string-only (React nodes coerce to [object Object]). Prefer the
+    // server identity label so the toast is readable before chip hydration; fall back to
+    // the canonical @build: chip text which now resolves via useReferenceLabel.
     toast({
-      title: "Build completed",
-      description: createElement(ReferenceRenderer, { reference, compact: true }),
+      title: label
+        ? `Build completed — ${label}`
+        : `Build completed — ${serializeReference(reference)}`,
     });
   }
 }

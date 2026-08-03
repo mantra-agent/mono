@@ -1,6 +1,7 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
   buildDeploymentHomeProjections,
+  environmentPromotionReleases,
   platformDeploymentObservations,
 } from "@shared/schema";
 import { createReferenceRef, type ReferenceRef } from "@shared/references";
@@ -65,8 +66,54 @@ export interface BuildDeploymentHomeItemRecord {
   productName: string;
   environmentName: string;
   commitSha: string | null;
+  version: string | null;
+  label: string;
   deployedAt: Date;
   observedAt: Date;
+}
+
+export interface BuildDeploymentLabelParts {
+  platformName: string;
+  productName: string;
+  environmentName: string;
+  version?: string | null;
+  commitSha?: string | null;
+}
+
+/** Identifiable build chip label: version when promoted, else short commit. */
+export function formatBuildDeploymentLabel(parts: BuildDeploymentLabelParts): string {
+  const base = `${parts.platformName} / ${parts.productName} / ${parts.environmentName}`;
+  const version = parts.version?.trim();
+  if (version) {
+    return version.startsWith("v") ? `${base} ${version}` : `${base} v${version}`;
+  }
+  const commit = parts.commitSha?.trim();
+  if (commit) return `${base} #${commit.slice(0, 7)}`;
+  return base;
+}
+
+async function latestReleaseVersionsByEnvironment(
+  environmentIds: number[],
+): Promise<Map<number, string>> {
+  const uniqueIds = [...new Set(environmentIds.filter((id) => Number.isInteger(id) && id > 0))];
+  const versionByEnv = new Map<number, string>();
+  if (uniqueIds.length === 0) return versionByEnv;
+
+  const rows = await db
+    .select({
+      environmentId: environmentPromotionReleases.environmentId,
+      version: environmentPromotionReleases.version,
+    })
+    .from(environmentPromotionReleases)
+    .where(inArray(environmentPromotionReleases.environmentId, uniqueIds))
+    .orderBy(desc(environmentPromotionReleases.promotedAt));
+
+  for (const row of rows) {
+    if (!versionByEnv.has(row.environmentId) && row.version?.trim()) {
+      versionByEnv.set(row.environmentId, row.version.trim());
+    }
+  }
+  return versionByEnv;
 }
 
 function requireOwner(principal: Principal): { userId: string; accountId: string } {
@@ -86,16 +133,23 @@ function deploymentReasonKey(environmentId: number): string {
   return `build:railway-environment:${environmentId}`;
 }
 
-function buildLabel(environment: BuildDeploymentEnvironmentIdentity): string {
-  return `${environment.platformName} / ${environment.productName} / ${environment.environmentName}`;
-}
-
-function buildReference(observationId: string, environment: BuildDeploymentEnvironmentIdentity): ReferenceRef {
+function buildReference(
+  observationId: string,
+  environment: BuildDeploymentEnvironmentIdentity,
+  identity?: { version?: string | null; commitSha?: string | null },
+): ReferenceRef {
+  const label = formatBuildDeploymentLabel({
+    platformName: environment.platformName,
+    productName: environment.productName,
+    environmentName: environment.environmentName,
+    version: identity?.version,
+    commitSha: identity?.commitSha,
+  });
   return createReferenceRef({
     type: "build",
     id: observationId,
     metadata: {
-      label: buildLabel(environment),
+      label,
       href: `/platform-environments/${encodeURIComponent(environment.platformEnvironmentId)}`,
     },
   });
@@ -179,13 +233,13 @@ export async function recordSuccessfulRailwayDeployments(
         .limit(1))[0]?.id;
       if (!observationId) throw new Error("Successful Railway deployment observation did not converge");
       if (insertedObservation) observationsCreated += 1;
-
     }
 
     const [latestObservation] = await tx
       .select({
         id: platformDeploymentObservations.id,
         deployedAt: platformDeploymentObservations.deployedAt,
+        commitSha: platformDeploymentObservations.commitSha,
       })
       .from(platformDeploymentObservations)
       .where(combineWithVisibleScope(
@@ -202,6 +256,14 @@ export async function recordSuccessfulRailwayDeployments(
     if (!latestObservation) {
       return { observationsCreated, projectionsCreated, completions };
     }
+
+    const [latestRelease] = await tx
+      .select({ version: environmentPromotionReleases.version })
+      .from(environmentPromotionReleases)
+      .where(eq(environmentPromotionReleases.environmentId, environment.platformEnvironmentId))
+      .orderBy(desc(environmentPromotionReleases.promotedAt))
+      .limit(1);
+    const version = latestRelease?.version?.trim() || null;
 
     const [currentProjection] = await tx
       .select({
@@ -259,16 +321,25 @@ export async function recordSuccessfulRailwayDeployments(
     }
 
     projectionsCreated = 1;
+    const identity = {
+      ...environment,
+      platformName,
+      productName,
+      environmentName,
+    };
+    const label = formatBuildDeploymentLabel({
+      ...identity,
+      version,
+      commitSha: latestObservation.commitSha,
+    });
     completions.push({
       observationId: latestObservation.id,
       platformEnvironmentId: environment.platformEnvironmentId,
-      reference: buildReference(latestObservation.id, {
-        ...environment,
-        platformName,
-        productName,
-        environmentName,
+      reference: buildReference(latestObservation.id, identity, {
+        version,
+        commitSha: latestObservation.commitSha,
       }),
-      label: buildLabel({ ...environment, platformName, productName, environmentName }),
+      label,
       deployedAt: latestObservation.deployedAt,
     });
 
@@ -311,9 +382,26 @@ export async function listBuildDeploymentHomeItems(
     .orderBy(desc(platformDeploymentObservations.deployedAt))
     .limit(MAX_HOME_DEPLOYMENT_ITEMS);
 
-  return rows.flatMap((row) => row.deploymentState === "SUCCESS"
-    ? [{ ...row, deploymentState: "SUCCESS" as const }]
-    : []);
+  const successRows = rows.filter((row) => row.deploymentState === "SUCCESS");
+  const versionByEnv = await latestReleaseVersionsByEnvironment(
+    successRows.map((row) => row.platformEnvironmentId),
+  );
+
+  return successRows.map((row) => {
+    const version = versionByEnv.get(row.platformEnvironmentId) ?? null;
+    return {
+      ...row,
+      deploymentState: "SUCCESS" as const,
+      version,
+      label: formatBuildDeploymentLabel({
+        platformName: row.platformName,
+        productName: row.productName,
+        environmentName: row.environmentName,
+        version,
+        commitSha: row.commitSha,
+      }),
+    };
+  });
 }
 
 /** Durable dismissal preserves both provider evidence and projection history. */

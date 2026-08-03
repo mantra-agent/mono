@@ -1417,7 +1417,7 @@ function itemFromBuildDeployment(
   timezone: string,
 ): SimpleFeedItem {
   const environmentHref = `/platform-environments/${deployment.platformEnvironmentId}`;
-  const label = `${deployment.platformName} / ${deployment.productName} / ${deployment.environmentName}`;
+  const label = deployment.label;
   const reference = createReferenceRef({
     type: "build",
     id: deployment.observationId,
@@ -1430,10 +1430,8 @@ function itemFromBuildDeployment(
     href: environmentHref,
     observedAt: deployment.observedAt.toISOString(),
   };
-  const shortCommit = deployment.commitSha?.slice(0, 8) ?? null;
-  const detailParts = [deployment.deploymentState, shortCommit ? `commit ${shortCommit}` : null]
-    .filter((value): value is string => Boolean(value));
-  const title = `${deployment.platformName} / ${deployment.productName} / ${deployment.environmentName} deployed successfully · ${detailParts.join(" · ")}`;
+  const shortCommit = deployment.commitSha?.slice(0, 7) ?? null;
+  const title = `${label} deployed successfully`;
 
   return {
     id: `build-deployment-${deployment.projectionId}`,
