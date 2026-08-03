@@ -12,11 +12,14 @@ export function ReferenceChip({
   className,
   IconOverride,
   iconClassName,
+  wrapLabel = false,
 }: {
   resolved: ClientResolvedReference;
   className?: string;
   IconOverride?: LucideIcon;
   iconClassName?: string;
+  /** When true, allow multi-line labels (tree/row titles). Default keeps single-line chips. */
+  wrapLabel?: boolean;
 }) {
   const [, navigate] = useLocation();
   const taskModal = useOptionalTaskModal();
@@ -53,7 +56,8 @@ export function ReferenceChip({
   const content = (
     <span
       className={cn(
-        "mx-1 inline-flex max-w-full align-baseline items-center gap-1 whitespace-nowrap break-normal text-[1em] font-medium leading-[inherit] underline-offset-4 transition-colors",
+        "mx-1 inline-flex max-w-full align-baseline items-center gap-1 text-[1em] font-medium leading-[inherit] underline-offset-4 transition-colors",
+        wrapLabel ? "whitespace-normal break-words" : "whitespace-nowrap break-normal",
         isDegraded
           ? "text-muted-foreground"
           : "text-cta hover:text-active",
@@ -63,7 +67,14 @@ export function ReferenceChip({
       data-testid={`reference-${resolved.ref.type}-${resolved.ref.id}`}
     >
       <Icon className={cn("h-3.5 w-3.5 shrink-0 no-underline", iconClassName)} aria-hidden="true" strokeWidth={2} />
-      <span className="min-w-0 truncate border-b border-current leading-[inherit]">{label}</span>
+      <span
+        className={cn(
+          "min-w-0 border-b border-current leading-[inherit]",
+          wrapLabel ? "whitespace-normal break-words" : "truncate",
+        )}
+      >
+        {label}
+      </span>
     </span>
   );
 
