@@ -60,6 +60,7 @@ function reliabilityMetricDetail(metric: ReliabilityOutcomeMetrics): ReactNode {
     <DetailList
       items={[
         `${metric.succeeded} succeeded · ${metric.failed} failed · ${metric.terminal} terminal`,
+        `${metric.amberFailures} ambers · ${metric.unclassifiedErrors} errors`,
         metric.excluded > 0
           ? `${metric.excluded} nonterminal or excluded`
           : "No nonterminal or excluded outcomes",
@@ -67,6 +68,18 @@ function reliabilityMetricDetail(metric: ReliabilityOutcomeMetrics): ReactNode {
       ]}
     />
   );
+}
+
+function reliabilityFailureStatus(metric: ReliabilityOutcomeMetrics): Status {
+  if (metric.unclassifiedErrors > 0) return "red";
+  if (metric.amberFailures > 0 || metric.health === "degraded") return "amber";
+  if (metric.health === "failing") return "red";
+  return reliabilityHealthStatus(metric.health);
+}
+
+function formatReliabilityFailureSplit(metric: ReliabilityOutcomeMetrics): string {
+  if (metric.failed === 0) return "0 ambers · 0 errors";
+  return `${metric.amberFailures} ambers · ${metric.unclassifiedErrors} errors`;
 }
 
 interface ResourcesResponse {
@@ -1110,14 +1123,30 @@ function ResourcesView({
               RELIABILITY_DOMAINS.map(({ key, label }) => {
                 const metric = reliability.domains[key];
                 return (
-                  <MetricRow
-                    key={key}
-                    label={label}
-                    value={formatReliabilityRate(metric)}
-                    status={reliabilityHealthStatus(metric.health)}
-                    detail={reliabilityMetricDetail(metric)}
-                    testId={`tile-reliability-${key}`}
-                  />
+                  <div key={key} className="space-y-0">
+                    <MetricRow
+                      label={label}
+                      value={formatReliabilityRate(metric)}
+                      status={reliabilityFailureStatus(metric)}
+                      detail={reliabilityMetricDetail(metric)}
+                      testId={`tile-reliability-${key}`}
+                    />
+                    <MetricRow
+                      label={`${label} · failures`}
+                      value={formatReliabilityFailureSplit(metric)}
+                      status={reliabilityFailureStatus(metric)}
+                      detail={
+                        <DetailList
+                          items={[
+                            `${metric.amberFailures} ambers (classified / avoidable)`,
+                            `${metric.unclassifiedErrors} errors (unclassified surprises)`,
+                            "Amber = input|permission|transient|internal. Red = missing/unknown failureKind.",
+                          ]}
+                        />
+                      }
+                      testId={`tile-reliability-${key}-failures`}
+                    />
+                  </div>
                 );
               })
             )}

@@ -2,6 +2,7 @@
 import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
 import { meetingSpeakerDisplayLabel } from "@shared/meeting-speaker-label";
+import { isClassifiedToolFailureKind } from "@shared/tool-failure";
 import {
   formatDiagnosticError,
   formatDiagnosticValue,
@@ -496,12 +497,7 @@ function toolFailureTone(failureKind?: string | null): {
   detailBg: string;
   borderColor: string;
 } {
-  if (
-    failureKind === "permission" ||
-    failureKind === "input" ||
-    failureKind === "transient" ||
-    failureKind === "internal"
-  ) {
+  if (isClassifiedToolFailureKind(failureKind)) {
     return {
       iconColor: "text-warning",
       bgColor: "bg-warning/15",

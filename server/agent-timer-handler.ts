@@ -174,7 +174,13 @@ export class AgentTimerHandler implements TimerHandler {
             if (event.isError) tool.error = String(event.result);
           }
           if (event.toolCallId)
-            recordToolCallEnd(String(event.toolCallId), !!event.isError);
+            recordToolCallEnd(
+              String(event.toolCallId),
+              !!event.isError,
+              typeof (event as { failureKind?: unknown }).failureKind === "string"
+                ? (event as { failureKind?: string }).failureKind
+                : null,
+            );
           break;
         }
       }

@@ -7,6 +7,7 @@ import {
   type ReliabilityOutcomeMetrics,
   type ReliabilityOutcomeSummary,
 } from "@shared/reliability-outcomes";
+import { isClassifiedToolFailureKind } from "@shared/tool-failure";
 import { db } from "./db";
 import { createLogger } from "./log";
 import { requireCurrentUserPrincipal } from "./principal-context";
@@ -33,6 +34,8 @@ const workflowRunScopeColumns = {
 interface OutcomeCounts {
   succeeded: number;
   failed: number;
+  amberFailures: number;
+  unclassifiedErrors: number;
   excluded: number;
 }
 
@@ -52,6 +55,17 @@ interface PersistedToolCall {
   status?: unknown;
   startedAt?: unknown;
   completedAt?: unknown;
+  failureKind?: unknown;
+}
+
+function emptyCounts(): OutcomeCounts {
+  return {
+    succeeded: 0,
+    failed: 0,
+    amberFailures: 0,
+    unclassifiedErrors: 0,
+    excluded: 0,
+  };
 }
 
 function healthForCounts(counts: OutcomeCounts): ReliabilityHealth {
@@ -63,9 +77,20 @@ function healthForCounts(counts: OutcomeCounts): ReliabilityHealth {
 
 function metricsForCounts(counts: OutcomeCounts): ReliabilityOutcomeMetrics {
   const terminal = counts.succeeded + counts.failed;
+  const amberFailures = Math.max(0, counts.amberFailures);
+  const unclassifiedErrors = Math.max(
+    0,
+    counts.unclassifiedErrors > 0
+      ? counts.unclassifiedErrors
+      : Math.max(0, counts.failed - amberFailures),
+  );
   return {
-    ...counts,
+    succeeded: counts.succeeded,
+    failed: counts.failed,
+    amberFailures,
+    unclassifiedErrors,
     terminal,
+    excluded: counts.excluded,
     successRate: terminal === 0 ? null : counts.succeeded / terminal,
     failureRate: terminal === 0 ? null : counts.failed / terminal,
     health: healthForCounts(counts),
@@ -99,8 +124,8 @@ function countChatOutcomes(
   windowStartMs: number,
   windowEndMs: number,
 ): { toolExecutions: OutcomeCounts; conversationalTurns: OutcomeCounts } {
-  const toolExecutions: OutcomeCounts = { succeeded: 0, failed: 0, excluded: 0 };
-  const conversationalTurns: OutcomeCounts = { succeeded: 0, failed: 0, excluded: 0 };
+  const toolExecutions = emptyCounts();
+  const conversationalTurns = emptyCounts();
 
   for (const document of documents) {
     let parsed: ChatDocument;
@@ -123,8 +148,11 @@ function countChatOutcomes(
 
       if (messageIsInWindow && message.role === "assistant") {
         if (message.assistantState === "complete") conversationalTurns.succeeded += 1;
-        else if (message.assistantState === "failed" || message.assistantState === "interrupted") conversationalTurns.failed += 1;
-        else conversationalTurns.excluded += 1;
+        else if (message.assistantState === "failed" || message.assistantState === "interrupted") {
+          conversationalTurns.failed += 1;
+          // Conversational turns have no failureKind taxonomy yet.
+          conversationalTurns.unclassifiedErrors += 1;
+        } else conversationalTurns.excluded += 1;
       }
 
       if (!Array.isArray(message.toolCalls)) continue;
@@ -138,9 +166,20 @@ function countChatOutcomes(
           ?? parseMessageTimestamp(toolCall.startedAt)
           ?? timestamp;
         if (toolObservedAt === null || toolObservedAt < windowStartMs || toolObservedAt > windowEndMs) continue;
-        if (toolCall.status === "done") toolExecutions.succeeded += 1;
-        else if (toolCall.status === "error") toolExecutions.failed += 1;
-        else toolExecutions.excluded += 1;
+        if (toolCall.status === "done") {
+          toolExecutions.succeeded += 1;
+        } else if (toolCall.status === "error") {
+          toolExecutions.failed += 1;
+          if (isClassifiedToolFailureKind(
+            typeof toolCall.failureKind === "string" ? toolCall.failureKind : null,
+          )) {
+            toolExecutions.amberFailures += 1;
+          } else {
+            toolExecutions.unclassifiedErrors += 1;
+          }
+        } else {
+          toolExecutions.excluded += 1;
+        }
       }
     }
   }
@@ -153,9 +192,13 @@ function countsFromAggregate(row: {
   failed: number;
   excluded: number;
 } | undefined): OutcomeCounts {
+  const failed = Number(row?.failed ?? 0);
   return {
     succeeded: Number(row?.succeeded ?? 0),
-    failed: Number(row?.failed ?? 0),
+    failed,
+    amberFailures: 0,
+    // Domains without failureKind taxonomy treat every failure as unclassified.
+    unclassifiedErrors: failed,
     excluded: Number(row?.excluded ?? 0),
   };
 }

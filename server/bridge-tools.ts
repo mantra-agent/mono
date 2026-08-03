@@ -16876,7 +16876,11 @@ export async function executeTool(
   try {
     const outcome = await handler(enrichedArgs);
     const durationMs = Date.now() - startTime;
-    recordToolCallEnd(toolCallId, !!outcome.error);
+    recordToolCallEnd(
+      toolCallId,
+      !!outcome.error,
+      outcome.failure?.kind ?? null,
+    );
     _wwTrackEnd?.(toolCallId);
     const sideEffectOnly = !outcome.error && isSideEffectOnly(resolvedName, normalizedArgs);
     // Preflight equips successful engineering work with AGENTS/CODING context.
@@ -16901,7 +16905,7 @@ ${outcome.result}`
     return { ...outcome, result: resultWithPrelude, sideEffectOnly, durationMs };
   } catch (err: any) {
     const durationMs = Date.now() - startTime;
-    recordToolCallEnd(toolCallId, true);
+    recordToolCallEnd(toolCallId, true, null);
     _wwTrackEnd?.(toolCallId);
     toolExec.error(`complete tool=${toolName} callId=${toolCallId} duration=${durationMs}ms error=true exception=${err.message}`);
     return { result: `Tool execution error: ${err.message}`, error: true, durationMs };

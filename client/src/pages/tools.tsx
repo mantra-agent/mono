@@ -28,6 +28,8 @@ interface ToolInfo {
   discovered: boolean;
   source?: "gateway" | "skill" | "bridge";
   errors?: number;
+  amberFailures?: number;
+  unclassifiedErrors?: number;
   avgDuration?: number | null;
 }
 
@@ -168,6 +170,20 @@ function ToolRow({ tool, iconOverrides }: { tool: ToolInfo; iconOverrides: Recor
         <ToolIcon className="h-3.5 w-3.5 shrink-0" />
         {active && <ActivityIndicator />}
         <span className="flex-1 min-w-0 pr-6 truncate">{tool.name}</span>
+        {((tool.amberFailures ?? 0) > 0 || (tool.unclassifiedErrors ?? 0) > 0) && (
+          <span
+            className="shrink-0 flex items-center gap-1 text-[10px] tabular-nums group-hover:opacity-0 transition-opacity"
+            data-testid={`text-tool-failures-${tool.name}`}
+            title="Ambers = classified/avoidable · Errors = unclassified surprises"
+          >
+            {(tool.amberFailures ?? 0) > 0 && (
+              <span className="text-warning">{tool.amberFailures ?? 0}a</span>
+            )}
+            {(tool.unclassifiedErrors ?? 0) > 0 && (
+              <span className="text-error">{tool.unclassifiedErrors ?? 0}e</span>
+            )}
+          </span>
+        )}
         {tool.usageCount > 0 && (
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70 group-hover:opacity-0 transition-opacity">
             {tool.usageCount}
@@ -176,12 +192,23 @@ function ToolRow({ tool, iconOverrides }: { tool: ToolInfo; iconOverrides: Recor
         <IconPicker toolName={tool.name} currentIconName={currentIconName} />
       </div>
       {expanded && (
-        <p
-          className="px-2 pb-1.5 pl-[30px] text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap"
-          data-testid={`text-tool-desc-${tool.name}`}
-        >
-          {description}
-        </p>
+        <div className="px-2 pb-1.5 pl-[30px] space-y-1" data-testid={`text-tool-desc-${tool.name}`}>
+          <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+            {description}
+          </p>
+          {((tool.errors ?? 0) > 0 || (tool.amberFailures ?? 0) > 0 || (tool.unclassifiedErrors ?? 0) > 0) && (
+            <p className="text-[11px] tabular-nums text-muted-foreground">
+              Failures:{" "}
+              <span className="text-warning">{tool.amberFailures ?? 0} ambers</span>
+              {" · "}
+              <span className="text-error">{tool.unclassifiedErrors ?? 0} errors</span>
+              {(tool.errors ?? 0) > 0
+                && (tool.errors ?? 0) !== (tool.amberFailures ?? 0) + (tool.unclassifiedErrors ?? 0)
+                ? ` · ${tool.errors} total`
+                : ""}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

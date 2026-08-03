@@ -941,12 +941,13 @@ export async function migrateDailyBriefCanonicalMeetingPrep(): Promise<void> {
   }
 }
 
-const SENTRY_CHANGESET_GATE_VERSION = "1.9";
+const SENTRY_CHANGESET_GATE_VERSION = "1.10";
 const SENTRY_RUN_EVIDENCE_MARKER = "8. Inspect recent `sentry` skill runs and open system issues/tasks/sessions when useful. Deduplicate by normalized signature + environment + likely subsystem. Update or reference an existing incident instead of creating another.";
 const SENTRY_REPORT_MARKER = "## Canonical report page";
-const SENTRY_RELIABILITY_OUTCOMES_MARKER = "11. Inspect `system.reliability` for bounded recent windows and explicitly evaluate the canonical success/failure outcomes for tool executions, plan steps, workflow runs, and conversational turns. Count only terminal outcomes in rates; treat excluded/nonterminal counts as separate diagnostic evidence, never as successes or failures.";
+const SENTRY_RELIABILITY_OUTCOMES_MARKER = "11. Inspect `system.reliability` for bounded recent windows and explicitly evaluate the canonical success/failure outcomes for tool executions, plan steps, workflow runs, and conversational turns. Split every domain's failures into ambers (classified/avoidable: input|permission|transient|internal) versus errors (unclassified surprises missing failureKind). Count only terminal outcomes in rates; treat excluded/nonterminal counts as separate diagnostic evidence, never as successes or failures. Prefer amber-volume reduction and unclassified-error elimination as distinct signals — do not collapse them into one failure number.";
+const SENTRY_RELIABILITY_AMBER_MARKER = "Ambers (classified/avoidable: input|permission|transient|internal) versus errors (unclassified surprises missing failureKind)";
 const SENTRY_RELIABILITY_CHECKLIST_ITEM = {
-  check: "Inspected system.reliability and evaluated canonical bounded-window outcomes for tools, plans, workflows, and conversational turns",
+  check: "Inspected system.reliability and evaluated canonical bounded-window outcomes for tools, plans, workflows, and conversational turns, distinguishing ambers from unclassified errors",
   weight: 10,
   kind: "tool_invoked",
   tool: "system",
@@ -1006,9 +1007,24 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
         `${SENTRY_RUN_EVIDENCE_MARKER}\n\n${SENTRY_CHANGESET_GATE}\n${SENTRY_REPORT_MARKER}`,
       );
     if (!process.includes(SENTRY_RELIABILITY_OUTCOMES_MARKER)) {
+      // Replace any prior reliability outcomes step so amber/error split is canonical.
+      if (process.includes("11. Inspect `system.reliability`")) {
+        process = process.replace(
+          /11\. Inspect `system\.reliability`[^\n]*/,
+          SENTRY_RELIABILITY_OUTCOMES_MARKER,
+        );
+      } else {
+        process = process.replace(
+          SENTRY_REPORT_MARKER,
+          `${SENTRY_RELIABILITY_OUTCOMES_MARKER}\n\n${SENTRY_REPORT_MARKER}`,
+        );
+      }
+    }
+    if (!process.includes(SENTRY_RELIABILITY_AMBER_MARKER)) {
+      // Ensure older 1.9 bodies that already contain step 11 still gain the split language.
       process = process.replace(
-        SENTRY_REPORT_MARKER,
-        `${SENTRY_RELIABILITY_OUTCOMES_MARKER}\n\n${SENTRY_REPORT_MARKER}`,
+        /11\. Inspect `system\.reliability`[^\n]*/,
+        SENTRY_RELIABILITY_OUTCOMES_MARKER,
       );
     }
     const description = hasChangesetGate
@@ -1033,6 +1049,13 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
           ...item,
           check: "For an eligible unaddressed bounded software defect, prepares or reuses one protected engineering handoff with complete evidence and canonical coding/stage-verification instructions; never performs code or provider writes directly from the timer run.",
         };
+      }
+      if (
+        item?.kind === "tool_invoked"
+        && item?.tool === "system"
+        && item?.action === "reliability"
+      ) {
+        return { ...item, ...SENTRY_RELIABILITY_CHECKLIST_ITEM };
       }
       return item;
     });
@@ -1065,7 +1088,7 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
       ))
       .returning({ id: skills.id });
     if (updated.length > 0) {
-      log.info(`Migrated Reliability Sentinel ${existing.version} → ${SENTRY_CHANGESET_GATE_VERSION} with recent-changelist remediation gate`);
+      log.info(`Migrated Reliability Sentinel ${existing.version} → ${SENTRY_CHANGESET_GATE_VERSION} with amber vs error reliability split`);
       return;
     }
   }

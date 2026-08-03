@@ -7,6 +7,10 @@ export type ReliabilityHealth = "healthy" | "degraded" | "failing" | "no_data";
 export interface ReliabilityOutcomeMetrics {
   succeeded: number;
   failed: number;
+  /** Known/avoidable failures with classified failureKind (input|permission|transient|internal). */
+  amberFailures: number;
+  /** Failures missing failureKind or with an unknown kind — true surprises. */
+  unclassifiedErrors: number;
   terminal: number;
   excluded: number;
   successRate: number | null;
