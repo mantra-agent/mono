@@ -1129,23 +1129,31 @@ function meetingSection(event: CalendarEvent, today: string, tomorrow: string, w
   return "this_month";
 }
 
+/** Format a time-of-day label, e.g. "3:00 PM", in the given timezone. */
+function formatClockTime(value: Date, timezone: string): string {
+  return value.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true });
+}
+
+/** Stack a formatted time over an "M/D" date, matching the meeting row layout. */
+function stackTimeOverDate(time: string, value: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    day: "numeric",
+    month: "numeric",
+  }).formatToParts(value);
+  const get = (type: string) => parts.find(part => part.type === type)?.value ?? "";
+  return `${time}\n${get("month")}/${get("day")}`;
+}
+
 function formatMeetingTime(event: CalendarEvent, timezone: string, includeDate: boolean): string {
   const start = event.start.dateTime ?? event.start.date;
   if (!start) return "All day";
 
   const date = new Date(event.start.dateTime ?? `${start}T12:00:00Z`);
-  const time = event.start.dateTime
-    ? date.toLocaleTimeString("en-US", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true })
-    : "All day";
+  const time = event.start.dateTime ? formatClockTime(date, timezone) : "All day";
   if (!includeDate) return time;
 
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone,
-    day: "numeric",
-    month: "numeric",
-  }).formatToParts(date);
-  const get = (type: string) => parts.find(part => part.type === type)?.value ?? "";
-  return `${time}\n${get("month")}/${get("day")}`;
+  return stackTimeOverDate(time, date, timezone);
 }
 
 
@@ -1406,6 +1414,7 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
 function itemFromBuildDeployment(
   deployment: Awaited<ReturnType<typeof listBuildDeploymentHomeItems>>[number],
   index: number,
+  timezone: string,
 ): SimpleFeedItem {
   const environmentHref = `/platform-environments/${deployment.platformEnvironmentId}`;
   const label = `${deployment.platformName} / ${deployment.productName} / ${deployment.environmentName}`;
@@ -1436,6 +1445,7 @@ function itemFromBuildDeployment(
     sourceRefs: [sourceRef],
     anchorTime: deployment.deployedAt.toISOString(),
     actionTime: deployment.deployedAt.toISOString(),
+    time: stackTimeOverDate(formatClockTime(deployment.deployedAt, timezone), deployment.deployedAt, timezone),
     completable: true,
     references: [reference],
     payload: {
@@ -1646,7 +1656,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     const principal = getCurrentPrincipalOrSystem();
     if (principal.actorType === "user") {
       const deployments = await listBuildDeploymentHomeItems(principal);
-      deployments.forEach((deployment, index) => items.push(itemFromBuildDeployment(deployment, index)));
+      deployments.forEach((deployment, index) => items.push(itemFromBuildDeployment(deployment, index, timezone)));
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
