@@ -19,6 +19,11 @@ const log = createLogger("BackfillEntityArrayTags");
  *    re-inserts its assignments, so repeated runs converge to the same state.
  *  - Domains whose table does not yet exist (e.g. theses is created lazily on first
  *    write) are skipped and retried on a later boot instead of being marked complete.
+ *
+ * `tagsKind` is the single discriminant for the non-empty predicate:
+ *  - jsonb  → jsonb_array_length(tags) > 0  (companies)
+ *  - text[] → array_length(tags, 1) > 0     (theses)
+ * Mixing those functions is undefined_function 42883 on every boot.
  */
 
 interface EntityTagRow {
@@ -32,12 +37,30 @@ interface DomainSpec {
   table: string;
   entityType: string;
   titleColumn: string;
+  /** Storage type of the domain's tags column — drives the non-empty SQL predicate. */
+  tagsKind: "jsonb" | "text[]";
 }
 
 const DOMAINS: DomainSpec[] = [
-  { migrationKey: "entity-array-tags-company-v1", table: "companies", entityType: "company", titleColumn: "name" },
-  { migrationKey: "entity-array-tags-thesis-v1", table: "theses", entityType: "thesis", titleColumn: "title" },
+  {
+    migrationKey: "entity-array-tags-company-v1",
+    table: "companies",
+    entityType: "company",
+    titleColumn: "name",
+    tagsKind: "jsonb",
+  },
+  {
+    migrationKey: "entity-array-tags-thesis-v1",
+    table: "theses",
+    entityType: "thesis",
+    titleColumn: "title",
+    tagsKind: "text[]",
+  },
 ];
+
+function nonEmptyTagsPredicate(tagsKind: DomainSpec["tagsKind"]): string {
+  return tagsKind === "jsonb" ? "jsonb_array_length(tags) > 0" : "array_length(tags, 1) > 0";
+}
 
 async function tableExists(table: string): Promise<boolean> {
   const result = await pool.query<{ reg: string | null }>(`SELECT to_regclass($1) AS reg`, [`public.${table}`]);
@@ -52,6 +75,13 @@ async function alreadyRun(accountId: string, migrationKey: string): Promise<bool
   return Boolean(result.rowCount);
 }
 
+function normalizeTags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((value) => (typeof value === "string" ? value : String(value ?? "")).trim())
+    .filter((value) => value.length > 0);
+}
+
 async function backfillDomain(
   accountId: string,
   ownerUserId: string,
@@ -61,17 +91,19 @@ async function backfillDomain(
   if (!(await tableExists(domain.table))) return;
   if (await alreadyRun(accountId, domain.migrationKey)) return;
 
-  // Table and column names are hardcoded constants, not user input.
+  // Table/column names and tagsKind predicates are hardcoded constants, not user input.
   const rows = await pool.query<EntityTagRow>(
     `SELECT id, ${domain.titleColumn} AS title, tags
      FROM ${domain.table}
-     WHERE account_id = $1 AND owner_user_id = $2 AND array_length(tags, 1) > 0`,
+     WHERE account_id = $1 AND owner_user_id = $2 AND ${nonEmptyTagsPredicate(domain.tagsKind)}`,
     [accountId, ownerUserId],
   );
 
   let count = 0;
   for (const row of rows.rows) {
-    await tagService.replaceEntityTags(domain.entityType, row.id, row.title || "", row.tags || [], principal);
+    const tags = normalizeTags(row.tags);
+    if (tags.length === 0) continue;
+    await tagService.replaceEntityTags(domain.entityType, row.id, row.title || "", tags, principal);
     count += 1;
   }
 
