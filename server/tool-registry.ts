@@ -638,6 +638,11 @@ export const TOOLS: Record<string, ToolMeta> = {
         old_string: { type: "string", description: "Text to find in page content (for edit_library_page)" },
         new_string: { type: "string", description: "Replacement text (for edit_library_page)" },
         replace_all: { type: "boolean", description: "Replace all occurrences (for edit_library_page, default false)" },
+        limit: {
+          type: "number",
+          description:
+            "Max pages to return for list/search actions (default 50, max 200)",
+        },
       },
       required: ["action"],
     },

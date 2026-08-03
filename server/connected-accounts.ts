@@ -93,7 +93,19 @@ export async function listAccounts(provider?: string): Promise<ConnectedAccount[
 
 export async function getAccount(accountId: string): Promise<ConnectedAccount | null> {
   const principal = getCurrentPrincipalOrSystem();
-  const rows = await db.select().from(connectedAccounts).where(combineWithSensitiveVisible({ ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId }, eq(connectedAccounts.accountId, accountId), principal)).limit(1);
+  // System/boot health probes address accounts by stable accountId across all owners.
+  const where =
+    principal.actorType === "system"
+      ? eq(connectedAccounts.accountId, accountId)
+      : combineWithSensitiveVisible(
+          {
+            ownerUserId: connectedAccounts.ownerUserId,
+            principalAccountId: connectedAccounts.principalAccountId,
+          },
+          eq(connectedAccounts.accountId, accountId),
+          principal,
+        );
+  const rows = await db.select().from(connectedAccounts).where(where).limit(1);
   return rows[0] || null;
 }
 
@@ -161,10 +173,23 @@ export async function updateAccount(
   if (updateFields.tokens !== undefined) {
     updateFields.tokens = updateFields.tokens ? await encryptTokens(updateFields.tokens) : updateFields.tokens;
   }
+  const principal = getCurrentPrincipalOrSystem();
+  // System/boot health probes must mutate by accountId without user-scope false negatives.
+  const where =
+    principal.actorType === "system"
+      ? eq(connectedAccounts.accountId, accountId)
+      : combineWithSensitiveWritable(
+          {
+            ownerUserId: connectedAccounts.ownerUserId,
+            principalAccountId: connectedAccounts.principalAccountId,
+          },
+          eq(connectedAccounts.accountId, accountId),
+          principal,
+        );
   const rows = await db
     .update(connectedAccounts)
     .set(updateFields)
-    .where(combineWithSensitiveWritable({ ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId }, eq(connectedAccounts.accountId, accountId)))
+    .where(where)
     .returning();
   if (rows.length === 0) return null;
   log.debug(`updateAccount accountId=${accountId} fields=${Object.keys(fields).join(",")}`);

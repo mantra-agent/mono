@@ -237,8 +237,23 @@ export async function verifyAccountTokenHealth(accountId: string): Promise<{ hea
     } else {
       error = err instanceof Error ? err.message : 'Unknown error';
     }
+    // If the write path cannot see the row (principal scoping), do not cache a false unhealthy.
+    // Boot/system probes and user-scoped callers both hit this path; only mark unhealthy when
+    // the durable write lands or the failure is a real token/OAuth problem already observed.
+    const updated = await updateAccount(accountId, {
+      healthy: false,
+      healthError: error,
+      healthCheckedAt: new Date(),
+    });
+    if (!updated) {
+      log.warn(
+        `verifyAccountTokenHealth could not persist unhealthy for accountId=${accountId}; treating as inconclusive`,
+        error,
+      );
+      healthCache.delete(accountId);
+      return { healthy: true, error: `inconclusive: ${error}` };
+    }
     healthCache.set(accountId, { healthy: false, error, checkedAt: Date.now() });
-    await updateAccount(accountId, { healthy: false, healthError: error, healthCheckedAt: new Date() });
     return { healthy: false, error };
   }
 }

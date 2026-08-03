@@ -280,6 +280,22 @@ export async function enqueueSessionSearchProjection(
   );
 }
 
+let indexPresenceCache: { present: boolean; expiresAt: number } | null = null;
+
+/** True when the target trigram index exists — enough to prefer target path over legacy ILIKE. */
+export async function isSessionSearchSegmentIndexPresent(): Promise<boolean> {
+  if (indexPresenceCache && indexPresenceCache.expiresAt > Date.now()) {
+    return indexPresenceCache.present;
+  }
+  const result = await db.execute(sql`
+    SELECT to_regclass(${SESSION_SEARCH_SEGMENT_INDEX}) IS NOT NULL AS present
+  `);
+  const row = ((result.rows ?? result) as Array<{ present: boolean }>)[0];
+  const present = row?.present === true;
+  indexPresenceCache = { present, expiresAt: Date.now() + READINESS_CACHE_MS };
+  return present;
+}
+
 export async function isSessionSearchProjectionReady(): Promise<boolean> {
   if (readinessCache && readinessCache.expiresAt > Date.now()) return readinessCache.ready;
   const cutoff = new Date(Date.now() - BACKFILL_LOOKBACK_DAYS * 24 * 60 * 60 * 1_000);
@@ -304,6 +320,9 @@ export async function isSessionSearchProjectionReady(): Promise<boolean> {
   const row = ((result.rows ?? result) as Array<{ ready: boolean }>)[0];
   const ready = row?.ready === true;
   readinessCache = { ready, expiresAt: Date.now() + READINESS_CACHE_MS };
+  if (ready) {
+    indexPresenceCache = { present: true, expiresAt: Date.now() + READINESS_CACHE_MS };
+  }
   return ready;
 }
 

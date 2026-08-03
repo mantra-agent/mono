@@ -20,7 +20,11 @@ import {
   type CalendarEvent,
 } from "../google-calendar";
 import { runWithPrincipal } from "../principal-context";
-import { createUserPrincipalFromUser, resolveUserIdentityFoundation } from "../principal";
+import {
+  createUserPrincipalFromUser,
+  tryResolveUserIdentityFoundation,
+  type UserIdentityFoundation,
+} from "../principal";
 import { storage } from "../storage";
 import { joinMeetingByUrl, MeetingJoinError } from "./join";
 import { meetingUrlForEvent } from "./identity";
@@ -35,8 +39,38 @@ const DISCOVERY_LOOKAHEAD_MS = 15 * 60_000;
 const DISCOVERY_MAX_EVENTS = 50;
 export const TICK_INTERVAL_MS = 60_000;
 const RESCHEDULE_THRESHOLD_MS = 60_000;
+/** Orphan users without personal account/default vault: skip + cooldown instead of ERROR every tick. */
+const MISSING_FOUNDATION_COOLDOWN_MS = 15 * 60 * 1000;
+const missingFoundationCooldownUntil = new Map<string, number>();
 
 let tickInFlight = false;
+
+function isFoundationCooldownActive(userId: string, nowMs: number): boolean {
+  const until = missingFoundationCooldownUntil.get(userId) ?? 0;
+  return until > nowMs;
+}
+
+function markMissingFoundation(userId: string, nowMs: number): void {
+  missingFoundationCooldownUntil.set(userId, nowMs + MISSING_FOUNDATION_COOLDOWN_MS);
+  log.warn("Skipping meeting auto-join; identity foundation missing", {
+    ownerUserId: userId,
+    cooldownMs: MISSING_FOUNDATION_COOLDOWN_MS,
+  });
+}
+
+async function resolveJoinFoundation(
+  userId: string,
+  nowMs: number,
+): Promise<UserIdentityFoundation | null> {
+  if (isFoundationCooldownActive(userId, nowMs)) return null;
+  const foundation = await tryResolveUserIdentityFoundation(userId);
+  if (!foundation) {
+    markMissingFoundation(userId, nowMs);
+    return null;
+  }
+  missingFoundationCooldownUntil.delete(userId);
+  return foundation;
+}
 
 function startAt(event: CalendarEvent): Date | null {
   if (!event.start.dateTime) return null;
@@ -45,7 +79,8 @@ function startAt(event: CalendarEvent): Date | null {
 }
 
 async function discoverUserSchedules(user: Awaited<ReturnType<typeof storage.getUsers>>[number], now: Date): Promise<void> {
-  const foundation = await resolveUserIdentityFoundation(user.id);
+  const foundation = await resolveJoinFoundation(user.id, now.getTime());
+  if (!foundation) return;
   const principal = createUserPrincipalFromUser(user, foundation.accountId);
 
   await runWithPrincipal(principal, async () => {
@@ -123,7 +158,8 @@ async function processUserDueJoins(
   user: Awaited<ReturnType<typeof storage.getUsers>>[number],
   now: Date,
 ): Promise<number> {
-  const foundation = await resolveUserIdentityFoundation(user.id);
+  const foundation = await resolveJoinFoundation(user.id, now.getTime());
+  if (!foundation) return 0;
   const principal = createUserPrincipalFromUser(user, foundation.accountId);
 
   return runWithPrincipal(principal, async () => {

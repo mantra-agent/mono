@@ -186,6 +186,17 @@ export async function createUserSessionPrincipal(user: User): Promise<Principal>
 }
 
 export async function resolveUserIdentityFoundation(userId: string): Promise<UserIdentityFoundation> {
+  const foundation = await tryResolveUserIdentityFoundation(userId);
+  if (!foundation) {
+    throw new Error(`Identity foundation missing for user ${userId}`);
+  }
+  return foundation;
+}
+
+/** Soft resolve for background loops that must skip orphan users without ERROR thrash. */
+export async function tryResolveUserIdentityFoundation(
+  userId: string,
+): Promise<UserIdentityFoundation | null> {
   const [existing] = await db
     .select({
       accountId: accounts.id,
@@ -199,7 +210,7 @@ export async function resolveUserIdentityFoundation(userId: string): Promise<Use
     .where(and(eq(accounts.kind, "personal"), eq(accounts.ownerUserId, userId), eq(memberships.userId, userId)))
     .limit(1);
   if (!existing?.accountId || !existing.activeVaultId) {
-    throw new Error(`Identity foundation missing for user ${userId}`);
+    return null;
   }
   return {
     accountId: existing.accountId,
