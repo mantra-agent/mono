@@ -243,7 +243,7 @@ async function loadReferenceSuggestions(
       type: "tag",
       id: tag.slug,
       label: tag.label,
-      description: tag.description || `Tag · ${tag.usageCount} ${tag.usageCount === 1 ? "usage" : "usages"}`,
+      description: `Tag · ${tag.usageCount} ${tag.usageCount === 1 ? "usage" : "usages"}`,
     });
   }
 

@@ -682,9 +682,9 @@ export async function assemblePersonalGraph(
     for (const { tag, targets } of projectableTags) {
       const tagNodeId = registerNode(`tag:${tag.slug}`, {
         id: nextSyntheticNodeId--,
-        content: tag.description || `Tag connecting ${targets.size} items`,
+        content: `Tag connecting ${targets.size} items`,
         title: tag.label,
-        summary: tag.description || `@tag:${tag.slug}`,
+        summary: `@tag:${tag.slug}`,
         layer: "long",
         source: "tag",
         sourceId: tag.slug,
