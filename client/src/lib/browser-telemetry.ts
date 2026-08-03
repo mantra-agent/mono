@@ -13,20 +13,25 @@ import {
 
 const log = createLogger("BrowserTelemetry");
 
-const FLUSH_INTERVAL_MS = 5_000;
+// Volume cut: fewer continuous samples + longer flush windows so telemetry
+// stops contending with user-path DB work. Decision-grade events (chat latency,
+// SPA navigation traces, hard long tasks) still land; ambient jank is throttled.
+const FLUSH_INTERVAL_MS = 10_000;
 const MAX_PENDING_EVENTS = 250;
-const LONG_TASK_THRESHOLD_MS = 75;
-const EVENT_LOOP_LAG_THRESHOLD_MS = 120;
-const FRAME_CONTENTION_THRESHOLD_MS = 32;
-const FRAME_CONTENTION_MIN_INTERVAL_MS = 5_000;
+const LONG_TASK_THRESHOLD_MS = 150;
+const LONG_TASK_MIN_INTERVAL_MS = 5_000;
+const EVENT_LOOP_LAG_THRESHOLD_MS = 200;
+const FRAME_CONTENTION_THRESHOLD_MS = 50;
+const FRAME_CONTENTION_MIN_INTERVAL_MS = 15_000;
 const NAVIGATION_SAMPLE_RATE = 0.25;
-const RESPONSIVENESS_SAMPLE_RATE = 0.25;
+const RESPONSIVENESS_SAMPLE_RATE = 0.1;
 
 let pendingEvents: BrowserTelemetryEventInput[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let initialized = false;
 let lastFrameContentionAt = 0;
 let lastEventLoopProbeAt = 0;
+let lastLongTaskAt = 0;
 const chatTurns = new Map<string, { sessionId: string | null; submittedAt: number; ackAt?: number; firstTokenAt?: number }>();
 const completedChatTurns = new Set<string>();
 
@@ -248,10 +253,13 @@ function observeLongTasks(): void {
   try {
     const observer = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
-        if (entry.duration >= LONG_TASK_THRESHOLD_MS) {
-          noteNavigationLongTask(entry.duration);
-          recordBrowserTelemetry({ kind: "long_task", name: "main_thread_blocked", value: entry.duration, unit: "ms", bucket: bucketDuration(entry.duration) });
-        }
+        if (entry.duration < LONG_TASK_THRESHOLD_MS) continue;
+        // Always feed the in-flight navigation trace; only DB-bound samples are throttled.
+        noteNavigationLongTask(entry.duration);
+        const now = Date.now();
+        if (now - lastLongTaskAt < LONG_TASK_MIN_INTERVAL_MS) continue;
+        lastLongTaskAt = now;
+        recordBrowserTelemetry({ kind: "long_task", name: "main_thread_blocked", value: entry.duration, unit: "ms", bucket: bucketDuration(entry.duration) });
       }
     });
     observer.observe({ type: "longtask", buffered: true });

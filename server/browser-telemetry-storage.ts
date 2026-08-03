@@ -13,10 +13,11 @@ import {
   type NavigationTraceIncident,
   type NavigationTraceOutcome,
 } from "@shared/browser-telemetry";
-import { db } from "./db";
+import { db, withQueryAttributionAsync } from "./db";
 import type { Principal } from "./principal";
 import { combineWithVisibleScope, ownedInsertValues } from "./scoped-storage";
 import { createLogger } from "./log";
+import { createSerialAsyncDelivery } from "./utils/serial-async-delivery";
 
 const log = createLogger("BrowserTelemetry");
 
@@ -98,10 +99,19 @@ export function parseBrowserTelemetryBatch(body: unknown): BrowserTelemetryEvent
   return parsed.events;
 }
 
-export async function ingestBrowserTelemetry(principal: Principal, events: BrowserTelemetryEventInput[]): Promise<number> {
+type BrowserTelemetryWriteBatch = {
+  principal: Principal;
+  events: BrowserTelemetryEventInput[];
+};
+
+function assertBrowserTelemetryPrincipal(principal: Principal): asserts principal is Principal & { userId: string; accountId: string } {
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
     throw new Error("browser telemetry requires an authenticated user principal");
   }
+}
+
+async function writeBrowserTelemetry(principal: Principal, events: BrowserTelemetryEventInput[]): Promise<number> {
+  assertBrowserTelemetryPrincipal(principal);
   if (events.length === 0) return 0;
   const owner = ownedInsertValues(principal, {
     scope: browserPerformanceTelemetry.scope,
@@ -123,8 +133,40 @@ export async function ingestBrowserTelemetry(principal: Principal, events: Brows
     occurredAt: event.occurredAt ? new Date(event.occurredAt) : new Date(),
     visibility: event.visibility ?? null,
   }));
-  await db.insert(browserPerformanceTelemetry).values(rows);
+  await withQueryAttributionAsync(
+    "log-sink",
+    () => db.insert(browserPerformanceTelemetry).values(rows),
+    "browser-telemetry.ingest",
+  );
   return rows.length;
+}
+
+const browserTelemetryDelivery = createSerialAsyncDelivery<BrowserTelemetryWriteBatch>(
+  async ({ principal, events }) => {
+    await writeBrowserTelemetry(principal, events);
+  },
+  {
+    label: "browser-telemetry",
+    maxPending: 64,
+    onFailure: (error) => {
+      log.warn("async browser telemetry ingest failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  },
+);
+
+/** Enqueue a validated batch for background insert. Returns accepted event count immediately. */
+export function enqueueBrowserTelemetry(principal: Principal, events: BrowserTelemetryEventInput[]): number {
+  assertBrowserTelemetryPrincipal(principal);
+  if (events.length === 0) return 0;
+  browserTelemetryDelivery.enqueue({ principal, events });
+  return events.length;
+}
+
+/** Synchronous write path retained for callers that must await durability. */
+export async function ingestBrowserTelemetry(principal: Principal, events: BrowserTelemetryEventInput[]): Promise<number> {
+  return writeBrowserTelemetry(principal, events);
 }
 
 // ---------------------------------------------------------------------------
