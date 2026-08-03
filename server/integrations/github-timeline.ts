@@ -73,6 +73,7 @@ interface GHCommitRaw {
 interface GHPullRaw {
   number: number;
   title: string;
+  body?: string | null;
   html_url: string;
   merged_at: string | null;
   merge_commit_sha: string | null;
@@ -126,22 +127,47 @@ async function fetchGitHubCommits(ref: RepoRef, limit = 100): Promise<TimelineCo
   }));
 }
 
-async function fetchMergedPRs(ref: RepoRef, limit = 100): Promise<TimelinePR[]> {
+export interface MainMergeSummary {
+  number: number;
+  title: string;
+  body: string | null;
+  author: string | null;
+  htmlUrl: string;
+  mergedAt: string;
+  mergeCommitSha: string | null;
+}
+
+/** Recent PRs merged into main for inbox/build expand fallbacks. */
+export async function listRecentMainMerges(ref: RepoRef, limit = 20): Promise<MainMergeSummary[]> {
   const raw = await gh<GHPullRaw[]>(
     "GET",
-    `/repos/${ref.owner}/${ref.repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=${limit}`
+    `/repos/${ref.owner}/${ref.repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=${Math.max(limit, 1)}`
   );
   return raw
     .filter((pr) => pr.merged_at !== null)
+    .slice(0, limit)
     .map((pr) => ({
       number: pr.number,
       title: pr.title,
+      body: typeof pr.body === "string" && pr.body.trim() ? pr.body.trim() : null,
       author: pr.user?.login ?? null,
       htmlUrl: pr.html_url,
       mergedAt: pr.merged_at!,
       mergeCommitSha: pr.merge_commit_sha,
-      commits: [],
     }));
+}
+
+async function fetchMergedPRs(ref: RepoRef, limit = 100): Promise<TimelinePR[]> {
+  const merges = await listRecentMainMerges(ref, limit);
+  return merges.map((pr) => ({
+    number: pr.number,
+    title: pr.title,
+    author: pr.author,
+    htmlUrl: pr.htmlUrl,
+    mergedAt: pr.mergedAt,
+    mergeCommitSha: pr.mergeCommitSha,
+    commits: [],
+  }));
 }
 
 async function fetchRailwayDeploys(): Promise<RailwayDeployment[]> {

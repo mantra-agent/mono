@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ChevronRight, Loader2, MessageSquare, MoreHorizontal, Plus, Trash2, User } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SimpleAction, SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
 import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import type { MeetingAttendeePromotion } from "@shared/meeting-feed-items";
@@ -21,6 +21,39 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MeetingAgentToggle } from "./widgets/meeting-agent-toggle";
 import { InlineLibraryPageEditor } from "@/components/library/inline-library-page";
 import { useUiInteraction, useUiInteractionResource } from "@/hooks/use-ui-interaction";
+
+type BuildExpandContentResponse = {
+  kind: "version_history" | "main_merges" | "empty";
+  content: string;
+  empty?: string;
+};
+
+function buildEnvironmentId(item: SimpleFeedItem): number | null {
+  if (item.payload?.kind !== "build_deployment") return null;
+  const raw = item.payload?.environmentId;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function BuildExpandFrame({ environmentId, enabled }: { environmentId: number; enabled: boolean }) {
+  const { data, isLoading, isError } = useQuery<BuildExpandContentResponse>({
+    queryKey: ["/api/platforms/environments", environmentId, "build-expand-content"],
+    enabled: enabled && environmentId > 0,
+  });
+
+  return (
+    <SimpleTextFrame
+      content={data?.content}
+      loading={isLoading}
+      error={isError ? "Build details could not be loaded." : null}
+      empty={data?.empty ?? "No version history or merges to main yet."}
+    />
+  );
+}
 
 // ─── Helpers ───
 
@@ -217,8 +250,9 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
   const isAgendaPage = item.payload?.kind === "meeting_artifact" && item.payload?.artifactKind === "agenda";
   const agendaPageId = isAgendaPage && typeof item.payload?.pageId === "string" ? item.payload.pageId : null;
   const agendaPageSlug = isAgendaPage && typeof item.payload?.slug === "string" ? item.payload.slug : null;
+  const buildEnvId = buildEnvironmentId(item);
   const hasChildren = Boolean(item.children?.length);
-  const canExpand = hasChildren || Boolean(inlineExpandedContent) || Boolean(agendaPageId && agendaPageSlug);
+  const canExpand = hasChildren || Boolean(inlineExpandedContent) || Boolean(agendaPageId && agendaPageSlug) || buildEnvId != null;
   const entryKind = wellnessEntryKind(item);
   const entryUi = useMemo(() => entryKind ? entryCopy(entryKind) : null, [entryKind]);
 
@@ -546,6 +580,10 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
       {displayedExpanded && agendaPageId && agendaPageSlug ? (
         <div className="pb-2 pl-0 pr-1.5">
           <InlineLibraryPageEditor page={{ id: agendaPageId, title: item.title, slug: agendaPageSlug }} />
+        </div>
+      ) : displayedExpanded && buildEnvId != null ? (
+        <div className="pb-2 pl-0 pr-1.5">
+          <BuildExpandFrame environmentId={buildEnvId} enabled={displayedExpanded} />
         </div>
       ) : displayedExpanded && inlineExpandedContent ? (
         <div className="pb-2 pl-0 pr-1.5">
