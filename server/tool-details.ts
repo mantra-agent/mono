@@ -12,15 +12,15 @@ export interface ToolDetailEntry {
 
 export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
   scratch: {
-    description: "Manage temporary workspace files (SCRATCH). These files are NOT available in production — use the `files` tool for persistent storage. Actions: read, write, edit, list, search.",
+    description: "Manage temporary workspace files (SCRATCH). These files are NOT available in production — use the `files` tool for persistent storage. Actions: read, write, edit, list, search. Every call requires `reasoning` (one sentence explaining why you are using this tool right now).",
     whenToUse: "When working with temporary files during a session — drafts, analysis, code experiments. For permanent files the user should be able to download or access in production, use the `files` tool instead.",
-    example: 'Read a file: { "action": "read", "path": "notes.md" }\nWrite a file: { "action": "write", "path": "draft.md", "content": "..." }\nEdit a file: { "action": "edit", "path": "draft.md", "old_string": "old text", "new_string": "new text" }',
+    example: 'Read a file: { "action": "read", "path": "notes.md", "reasoning": "Inspect the draft before editing." }\nWrite a file: { "action": "write", "path": "draft.md", "content": "...", "reasoning": "Persist intermediate analysis in scratch." }\nEdit a file: { "action": "edit", "path": "draft.md", "old_string": "old text", "new_string": "new text", "reasoning": "Apply the targeted fix after reading the file." }',
     actions: {
-      read: { description: "Read file from scratch workspace. Supports offset/limit for large files.", requiredParams: ["path"], optionalParams: ["offset", "limit"] },
-      write: { description: "Write file to scratch workspace. Creates parent directories as needed.", requiredParams: ["path", "content"] },
-      edit: { description: "Find and replace text in a scratch file. Use replace_all for multiple occurrences.", requiredParams: ["path", "old_string", "new_string"], optionalParams: ["replace_all"] },
-      list: { description: "List files and directories in the scratch workspace.", optionalParams: ["path"] },
-      search: { description: "Search for files by glob pattern in the scratch workspace.", requiredParams: ["pattern"], optionalParams: ["limit"] },
+      read: { description: "Read file from scratch workspace. Supports offset/limit for large files.", requiredParams: ["path", "reasoning"], optionalParams: ["offset", "limit"] },
+      write: { description: "Write file to scratch workspace. Creates parent directories as needed.", requiredParams: ["path", "content", "reasoning"] },
+      edit: { description: "Find and replace text in a scratch file. Use replace_all for multiple occurrences.", requiredParams: ["path", "old_string", "new_string", "reasoning"], optionalParams: ["replace_all"] },
+      list: { description: "List files and directories in the scratch workspace.", requiredParams: ["reasoning"], optionalParams: ["path"] },
+      search: { description: "Search for files by glob pattern in the scratch workspace.", requiredParams: ["pattern", "reasoning"], optionalParams: ["limit"] },
     },
   },
   files: {
