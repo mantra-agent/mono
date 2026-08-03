@@ -25,6 +25,7 @@ import { closeDatabasePools } from "./db";
 import { admissionController } from "./run-admission";
 import { runtimeDispatcher } from "./runtime/runtime-dispatcher";
 import { registerRuntimeProofPathHandlers } from "./runtime/proof-path-handlers";
+import { registerLegacyCapacityHandler } from "./runtime/legacy-capacity-handler";
 import { timerScheduler } from "./timer-scheduler";
 import { closeBrowser } from "./browser-manager";
 import { stopMemoryWatchdog } from "./memory-watchdog";
@@ -367,6 +368,7 @@ app.use((req, res, next) => {
   const { pool } = await import("./db");
   await ensureRuntimeKernelSchema(pool);
   registerRuntimeProofPathHandlers();
+  registerLegacyCapacityHandler();
   const { ensureLifeAddressingSchema } = await import("./life-addressing-schema");
   await ensureLifeAddressingSchema(pool);
   const { ensureModPlatformSchema } = await import("./mod-schema");
