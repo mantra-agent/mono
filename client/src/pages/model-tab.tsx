@@ -13,7 +13,7 @@ type SemanticTier = "max" | "high" | "balanced" | "fast";
 type TierModelConfig = string | { model: string; reasoningEffort?: string; reasoningMode?: string; reasoningSummary?: string; verbosity?: string; serviceTier?: string; maxOutputTokens?: number };
 interface ModelConnector {
   id: number;
-  provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli";
+  provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli" | "grok-subscription";
   label: string;
   status: string;
   sortOrder: number;

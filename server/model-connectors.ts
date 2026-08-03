@@ -13,6 +13,7 @@ import {
   type ClaudeCliConnectorConfig,
   type ClaudeCliTierMappings,
   type ClaudeCliTierModelConfig,
+  type GrokSubscriptionConnectorConfig,
   type ModelConnectorConfig,
   type ModelConnectorProvider,
   type ModelTierMappings,
@@ -368,4 +369,45 @@ export async function migrateLegacyModelProfiles(): Promise<void> {
     return [...migratedRows, ...connectorValues.map((value) => value.provider)];
   });
   if (insertedProviders.length > 0) log.info(`migrated legacy model connectors providers=${insertedProviders.join(",")}`);
+}
+
+// Grok is a brand-new provider with no legacy model_profiles to migrate from, so
+// ensure exactly one global grok-subscription model connector exists. It is seeded
+// active but is credential-gated in the router (skipped until a Grok account is
+// connected) and placed last in sort order, so it acts as a fallback rather than
+// pre-empting existing providers. Ray can reorder or remap tiers from the UI.
+export async function ensureGrokSubscriptionConnector(): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('model-connectors:grok-seed'))`);
+    const existing = await tx.select({ id: providerConnections.id }).from(providerConnections)
+      .where(and(
+        eq(providerConnections.connectorKind, "model"),
+        eq(providerConnections.provider, "grok-subscription"),
+      )).limit(1);
+    if (existing.length > 0) return;
+    const modelRows = await tx.select({ id: providerConnections.id }).from(providerConnections)
+      .where(eq(providerConnections.connectorKind, "model"));
+    const connectorConfig: GrokSubscriptionConnectorConfig = {
+      kind: "grok-models",
+      version: 1,
+      tierMappings: {
+        max: "grok-subscription/grok-4.5",
+        high: "grok-subscription/grok-4.5",
+        balanced: "grok-subscription/grok-4.3",
+        fast: "grok-subscription/grok-4.3",
+      },
+      migratedFrom: "manual",
+    };
+    await tx.insert(providerConnections).values({
+      provider: "grok-subscription",
+      label: "Grok Subscription",
+      accountType: "subscription",
+      status: "active",
+      connectorKind: "model",
+      connectorConfig,
+      sortOrder: modelRows.length,
+      scope: "global",
+    });
+    log.info("seeded grok-subscription model connector");
+  });
 }

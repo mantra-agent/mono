@@ -53,7 +53,7 @@ export async function registerSetupRoutes(app: Express) {
   });
 
   app.get("/api/setup/secrets-status", async (_req, res) => {
-    const [elevenlabsConnected, gmailReadAccess, gmailHealthResult, openaiSubscriptionConnected, quickbooksStatus] = await Promise.all([
+    const [elevenlabsConnected, gmailReadAccess, gmailHealthResult, openaiSubscriptionConnected, grokSubscriptionConnected, quickbooksStatus] = await Promise.all([
       !!getSecretSync("ELEVENLABS_API_KEY"),
       (async () => {
         try {
@@ -87,6 +87,15 @@ export async function registerSetupRoutes(app: Express) {
           const { createNamedSystemPrincipal } = await import("../principal");
           const { runWithPrincipal } = await import("../principal-context");
           const acct = await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), () => getAccount("openai-subscription-primary"));
+          return !!acct;
+        } catch { return false; }
+      })(),
+      (async () => {
+        try {
+          const { getAccount } = await import("../connected-accounts");
+          const { createNamedSystemPrincipal } = await import("../principal");
+          const { runWithPrincipal } = await import("../principal-context");
+          const acct = await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), () => getAccount("grok-subscription-primary"));
           return !!acct;
         } catch { return false; }
       })(),
@@ -134,6 +143,7 @@ export async function registerSetupRoutes(app: Express) {
         } catch { return !!getSecretSync("GITHUB_TOKEN"); }
       })(),
       openaiSubscription: openaiSubscriptionConnected,
+      grokSubscription: grokSubscriptionConnected,
       claudeCli: !!getSecretSync("CLAUDE_CODE_OAUTH_TOKEN"),
       expo: !!await getSecret("EXPO_ACCESS_TOKEN"),
       recall: !!(await getSecret("RECALL_API_KEY") && await getSecret("RECALL_REGION")),
