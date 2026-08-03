@@ -367,7 +367,11 @@ export class FileTaskStorage {
       throw new Error("milestoneId must be a positive integer");
     }
     if (milestoneId != null && projectId == null) {
-      throw new Error("milestoneId requires projectId");
+      throw new ToolFailureError("milestoneId requires projectId", {
+        kind: "input",
+        code: "task_update_milestone_requires_project",
+        retryable: false,
+      });
     }
     if (projectId == null) return null;
     const projectRows = await db.select({ id: projects.id, vaultId: projects.vaultId }).from(projects).where(
