@@ -11265,7 +11265,9 @@ ${refs}` : ""),
         const { getSlowQueryStats } = await import("./db");
         const s = getSlowQueryStats();
         const last = s.lastSlowDurationMs === null ? "none" : `${s.lastSlowDurationMs}ms`;
-        parts.push(`**Slow Queries:** lastMin=${s.lastMinute}, last10m=${s.lastTenMinutes}, threshold=${s.thresholdMs}ms, lastSlow=${last}`);
+        const fp = s.lastQueryFingerprint ? ` fingerprint=${s.lastQueryFingerprint}` : "";
+        const sql = s.lastSqlSnippet ? ` sql=${JSON.stringify(s.lastSqlSnippet)}` : "";
+        parts.push(`**Slow Queries:** lastMin=${s.lastMinute}, last10m=${s.lastTenMinutes}, threshold=${s.thresholdMs}ms, lastSlow=${last}${fp}${sql}`);
       } catch { parts.push("**Slow Queries:** unavailable"); }
 
       try {

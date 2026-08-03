@@ -22,6 +22,10 @@ export interface LongRunningQueryRow {
   subsystem: string;
   label: string | null;
   ageMs: number;
+  /** Stable normalized SQL fingerprint when the query text is known. */
+  queryFingerprint: string | null;
+  /** Bounded SQL preview for triage; never includes bind values. */
+  sqlSnippet: string | null;
 }
 
 export interface LongRunningQueriesResource {
@@ -35,6 +39,10 @@ export interface SlowQueryResource {
   lastSlowAt: number | null;
   lastSlowDurationMs: number | null;
   thresholdMs: number;
+  /** Fingerprint of the most recent slow query, when SQL text was available. */
+  lastQueryFingerprint: string | null;
+  /** Bounded SQL preview of the most recent slow query. */
+  lastSqlSnippet: string | null;
 }
 
 export interface ExecutorRunRow {

@@ -779,7 +779,19 @@ function ResourcesView({
                     label="Slow queries"
                     value={`${r.slowQueries.lastMinute} / min`}
                     status={slowQueryStatus(r.slowQueries)}
-                    detail={<DetailText>{r.slowQueries.lastTenMinutes} in 10m · last {r.slowQueries.lastSlowDurationMs ? formatMs(r.slowQueries.lastSlowDurationMs) : "—"} {formatRelative(r.slowQueries.lastSlowAt, now)}</DetailText>}
+                    detail={(
+                      <DetailList
+                        items={[
+                          `${r.slowQueries.lastTenMinutes} in 10m · last ${r.slowQueries.lastSlowDurationMs ? formatMs(r.slowQueries.lastSlowDurationMs) : "—"} ${formatRelative(r.slowQueries.lastSlowAt, now)}`,
+                          r.slowQueries.lastQueryFingerprint
+                            ? `fingerprint ${r.slowQueries.lastQueryFingerprint}`
+                            : "fingerprint —",
+                          r.slowQueries.lastSqlSnippet
+                            ? `sql ${r.slowQueries.lastSqlSnippet}`
+                            : "sql —",
+                        ]}
+                      />
+                    )}
                     testId="tile-slow-queries"
                   />
                   <MetricRow
@@ -789,7 +801,11 @@ function ResourcesView({
                     detail={(
                       <DetailList
                         items={r.longRunningQueries.rows.length
-                          ? r.longRunningQueries.rows.map(row => `${row.subsystem} · ${row.label ?? "unlabelled"} · ${formatMs(row.ageMs)}`)
+                          ? r.longRunningQueries.rows.map(row => {
+                              const fp = row.queryFingerprint ? ` · ${row.queryFingerprint}` : "";
+                              const sql = row.sqlSnippet ? ` · ${row.sqlSnippet}` : "";
+                              return `${row.subsystem} · ${row.label ?? "unlabelled"} · ${formatMs(row.ageMs)}${fp}${sql}`;
+                            })
                           : [`No queries over ${formatMs(r.longRunningQueries.thresholdMs)}.`]}
                       />
                     )}
