@@ -579,6 +579,7 @@ export class SystemTimerRegistry {
       principal.permissions = await getUserEffectivePermissions(user.id);
       const { modLifecycleService } = await import("./mods/mod-lifecycle-service");
       await runWithPrincipal(principal, () => modLifecycleService.ensureBuildInstalled(principal));
+      await runWithPrincipal(principal, () => modLifecycleService.ensureWellnessInstalled(principal));
       await this.reconcileUserTimers(principal);
     }
   }

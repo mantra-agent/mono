@@ -6,6 +6,7 @@ import type { HealthMetric, InsertHealthMetric, WellnessActivity, WellnessLog, A
 import { desc, eq, gte, lte, isNull, and, sql, asc, type SQL } from "drizzle-orm";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
+import { requireActiveWellness } from "../mods/wellness-route-access";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "../sensitive-scope";
 import { userDateStr, userDayBounds, userNoon, userPeriodBounds } from "../utils/user-time";
@@ -1095,6 +1096,12 @@ export async function registerWellnessRoutes(app: Express) {
   } catch (err: any) {
     log.error(`[HealthBridge] Failed to seed default activities on startup: ${err.message}`);
   }
+
+  // Server-side Wellness Mod composition gate for the per-user data surface.
+  // Prefix guard mirrors platforms.ts (requireAuth attaches the principal, then
+  // the Mod access check runs). Only /api/wellness/* is gated; the single-tenant
+  // Oura OAuth/webhook infrastructure and /api/health/webhook stay reachable.
+  app.use("/api/wellness", requireAuth, requireActiveWellness);
 
   app.post("/api/health/webhook", async (req, res) => {
     try {
