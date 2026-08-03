@@ -248,6 +248,8 @@ export function filterToolSchemasForAuthority<T extends { name: string; descript
 const SAFE_SHELL_COMMANDS = new Set([
   "cd", "pwd", "ls", "find", "cat", "head", "tail", "grep", "rg", "sed", "wc", "sort", "uniq",
   "cut", "tr", "echo", "printf", "test", "[", "basename", "dirname", "stat", "du", "file", "diff", "git", "npm",
+  // Binary presence checks only — no flags that execute the resolved path.
+  "which",
 ]);
 
 /** Read-only git subcommands permitted via shell. Writes always go through the git tool. */
@@ -296,7 +298,9 @@ const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: st
   { pattern: /\/(?:proc|sys|dev|root|home)\//i, reason: "forbidden:sensitive_path" },
   { pattern: /(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)/i, reason: "forbidden:dotfile_secret" },
 ];
-const SAFE_SED_READ = /^sed\s+-n\s+(["'])(?:\d+)(?:,\d+)?p\1\s+(?:--\s+)?[^\s]+(?:\s+[^\s]+)*$/;
+// File path is optional so pipeline stdin works: `git show HEAD:file | sed -n '10,20p'`.
+// Expression stays strictly `N p` / `N,Mp` — no executable sed scripts.
+const SAFE_SED_READ = /^sed\s+-n\s+(["'])(?:\d+)(?:,\d+)?p\1(?:\s+(?:--\s+)?[^\s]+(?:\s+[^\s]+)*)?$/;
 
 /**
  * Strip only harmless stdout/stderr discards and FD merges before forbidden-token checks.
@@ -374,8 +378,9 @@ export function getShellToolContractDescription(): string {
     "Pipelines and sequences with `|`, `&&`, and `;` are allowed when every segment starts with an allowlisted binary.",
     "Never use newlines, backticks, `$(...)`, bare `&`, `||`, `<`/`>` file redirection, `~`, or variable expansion.",
     "Safe redirect exceptions only: `>/dev/null`, `N>/dev/null`, and `N>&M` FD merges (e.g. `2>&1`).",
+    "Absolute paths must stay under `/app`, or name a system binary under `/bin`, `/usr/bin`, or `/usr/local/bin`.",
     `Shell git is inspection-only (${gitSubs}); branch/remote mutation flags are denied. All git writes use the git tool.`,
-    "Shell npm is only `npm run build`. sed only as `sed -n 'N,Mp' file`. find may not use -exec/-delete.",
+    "Shell npm is only `npm run build`. sed only as `sed -n 'N,Mp' [file]` (file optional for pipeline stdin). find may not use -exec/-delete.",
     "Prefer scratch.read when the path is already known. Prefer parallel tool calls for independent work when latency matters; `;` sequencing is also valid for independent allowlisted segments.",
   ].join(" ");
 }
@@ -447,7 +452,11 @@ export function validateShellCommand(command: string): ToolAuthorityDecision {
   for (const { pattern, reason } of FORBIDDEN_SHELL_TOKEN_CLASSES) {
     if (pattern.test(normalized)) return { allowed: false, reason };
   }
-  if (/(?:^|[\s\"'=\\])\/(?!app(?:\/|$))/.test(normalized)) return { allowed: false, reason: "absolute_path_outside_workspace" };
+  // Workspace root plus fixed system binary dirs for presence checks (`ls /usr/bin/rg`, `which`).
+  // Everything else outside /app stays denied — no /etc, /home, /proc, or host FS walks.
+  if (/(?:^|[\s\"'=\\])\/(?!app(?:\/|$)|bin(?:\/|$)|usr\/bin(?:\/|$)|usr\/local\/bin(?:\/|$))/.test(normalized)) {
+    return { allowed: false, reason: "absolute_path_outside_workspace" };
+  }
   if (/(?:^|[\s/])\.\.(?:[\s/]|$)/.test(normalized)) return { allowed: false, reason: "path_traversal_blocked" };
 
   const segments = splitShellSegments(normalized);
@@ -456,6 +465,9 @@ export function validateShellCommand(command: string): ToolAuthorityDecision {
     const first = segment.match(/^([A-Za-z[\]]+)/)?.[1];
     if (!first || !SAFE_SHELL_COMMANDS.has(first)) return { allowed: false, reason: `command_not_allowlisted:${first || "unknown"}` };
     if (first === "sed" && !SAFE_SED_READ.test(segment)) return { allowed: false, reason: "sed_read_expression_required" };
+    if (first === "which" && !/^which(?:\s+(?:--\s+)?[A-Za-z0-9._+-]+)+$/.test(segment)) {
+      return { allowed: false, reason: "which_binary_name_required" };
+    }
     if (first === "find" && /-(?:exec|execdir|delete|ok|okdir|fprintf|fprint0?|fls)\b/.test(segment)) return { allowed: false, reason: "mutating_find_blocked" };
     if (first === "sort" && /(?:^|\s)(?:-o(?:\s|$)|--output(?:=|\s)|--compress-program(?:=|\s))/.test(segment)) return { allowed: false, reason: "sort_write_or_program_blocked" };
     if (first === "uniq" && /(?:^|\s)--?output(?:=|\s)/.test(segment)) return { allowed: false, reason: "uniq_output_blocked" };

@@ -223,9 +223,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
   shell: {
     description: getShellToolContractDescription(),
     whenToUse:
-      "Read-only inspection already covered by the allowlist: list files, grep/rg search, head/tail/cat known paths, npm run build, and shell git status/log/diff/show/branch/remote/rev-parse/grep. Prefer scratch.read when the path is known. Never invent a command outside the allowlist and never retry a denied command with cosmetic variants.",
+      "Read-only inspection already covered by the allowlist: list files, grep/rg/which search, head/tail/cat known paths, piped sed -n line ranges, npm run build, and shell git status/log/diff/show/branch/remote/rev-parse/grep. Prefer scratch.read when the path is known. Never invent a command outside the allowlist and never retry a denied command with cosmetic variants. Shell cwd is always the workspace root even when instruction context loads from a repos clone.",
     example:
-      '{ "command": "ls repos/" }\n{ "command": "rg -n \\"validateShellCommand\\" server --type ts" }\n{ "command": "pwd; ls; git -C repos/mono-abc123 status" }\n{ "command": "git -C repos/mono-abc123 grep -n validateShellCommand -- server" }\n{ "command": "npm run build" }\nDenied patterns (do not call): file redirects (2>/dev/null is allowed), git write subcommands, non-build npm, command substitution, variable expansion.',
+      '{ "command": "ls repos/" }\n{ "command": "which rg" }\n{ "command": "rg -n \\"validateShellCommand\\" server --type ts" }\n{ "command": "pwd; ls; git -C repos/mono-abc123 status" }\n{ "command": "git -C repos/mono-abc123 grep -n validateShellCommand -- server" }\n{ "command": "git -C repos/mono-abc123 show HEAD:server/agent-authority.ts | sed -n \'270,310p\'" }\n{ "command": "npm run build" }\nDenied patterns (do not call): file redirects (2>/dev/null is allowed), git write subcommands, non-build npm, command substitution, variable expansion, absolute paths outside /app and fixed system binary dirs.',
   },
   notion: {
     description: "Search, read, and browse Notion pages and databases. Actions: status, search, get_page, get_content, list_databases, query_database.",
