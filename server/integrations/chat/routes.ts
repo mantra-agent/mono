@@ -311,6 +311,13 @@ function buildSystemNotice(result: ExecutorRunResult): SystemNotice {
     errorType = "response_incomplete";
     description = "The response reached the model's output limit before any final text was produced. Earlier completed tool work remains saved.";
     actionHint = "Send another message and I'll continue from the last completed step.";
+  } else if (result.status === "degraded" && result.degradationReason === "tool_failure_recovered") {
+    // Non-retryable tool failure already synthesized a recovery assistant message.
+    // Surface as a warning, not a hard error — work was preserved and the turn ended cleanly.
+    severity = "warning";
+    errorType = "processing_stopped";
+    description = "A tool returned a non-retryable failure. Completed work before the failure was preserved.";
+    actionHint = "Send another message with corrected input or permission and I'll continue.";
   } else if (result.abortReason) {
     switch (result.abortReason) {
       case "stream_idle_timeout":
@@ -2842,6 +2849,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             : null;
         if (result.status === "degraded" && result.degradationReason === "empty_response_output_limit") {
           parts.push("The response reached the model's output limit before any final text was produced. Earlier completed tool work remains saved.");
+        } else if (result.status === "degraded" && result.degradationReason === "tool_failure_recovered") {
+          parts.push("A tool returned a non-retryable failure. Completed work before the failure was preserved.");
         } else if (abortDescription) {
           parts.push(abortDescription);
         } else if (result.status === "failed") {
