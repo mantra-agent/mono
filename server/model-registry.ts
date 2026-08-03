@@ -17,7 +17,7 @@ export interface ModelThinking {
 export interface ModelInfo {
   id: string;
   name: string;
-  provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli";
+  provider: "anthropic" | "openai" | "openai-subscription" | "claude-cli" | "grok-subscription";
   cost: ModelCost;
   contextWindow: number;
   maxOutputTokens: number;
@@ -453,6 +453,28 @@ const REGISTRY: Record<string, ModelInfo> = {
     requiresSubscription: true,
     codexModelId: "gpt-5.3-codex-spark",
   },
+  "grok-4.5": {
+    id: "grok-4.5",
+    name: "Grok 4.5 (Subscription)",
+    provider: "grok-subscription",
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 2000000,
+    maxOutputTokens: 128000,
+    reasoning: true,
+    thinking: { level: "basic", description: "xAI Grok 4.5 flagship via SuperGrok subscription" },
+    requiresSubscription: true,
+  },
+  "grok-4.3": {
+    id: "grok-4.3",
+    name: "Grok 4.3 (Subscription)",
+    provider: "grok-subscription",
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1000000,
+    maxOutputTokens: 128000,
+    reasoning: true,
+    thinking: { level: "basic", description: "xAI Grok 4.3 via SuperGrok subscription" },
+    requiresSubscription: true,
+  },
   "claude-sub": {
     id: "claude-sub",
     name: "Claude (Subscription)",
@@ -636,7 +658,7 @@ export function getAllModelsForProvider(providerId: string): ModelInfo[] {
 
 export function getSubscriptionModels(): Array<{ registryKey: string; info: ModelInfo }> {
   return Object.entries(REGISTRY)
-    .filter(([, m]) => m.provider === "openai-subscription" || m.provider === "claude-cli")
+    .filter(([, m]) => m.provider === "openai-subscription" || m.provider === "claude-cli" || m.provider === "grok-subscription")
     .map(([key, info]) => ({ registryKey: key, info }));
 }
 

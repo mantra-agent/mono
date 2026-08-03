@@ -39,6 +39,7 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
   // System-wide integration checks — OpenAI subscription account is
   // a platform-level resource, not per-vault
   "openai-subscription-check",
+  "grok-subscription-check",
 
   // Model routing — model-client uses system principal for internal
   // API routing decisions, not user data access

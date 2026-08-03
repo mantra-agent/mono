@@ -76,6 +76,9 @@ async function connectorCredential(connector: ModelConnector): Promise<string | 
   if (connector.provider === "openai-subscription") {
     return (await runWithPrincipal(createNamedSystemPrincipal("openai-subscription-check"), () => getAccount("openai-subscription-primary"))) ? "connected-account" : null;
   }
+  if (connector.provider === "grok-subscription") {
+    return (await runWithPrincipal(createNamedSystemPrincipal("grok-subscription-check"), () => getAccount("grok-subscription-primary"))) ? "connected-account" : null;
+  }
   return legacyCredential(connector.provider);
 }
 
