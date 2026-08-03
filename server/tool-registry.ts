@@ -33,6 +33,8 @@ export interface ToolDefinition extends Omit<BaseToolDefinition, 'parameters'> {
   usageCount: number;
   lastUsed: string | null;
   errors: number;
+  amberFailures: number;
+  unclassifiedErrors: number;
   avgDuration: number | null;
 }
 
@@ -1862,6 +1864,8 @@ function toolMetaToDefinition(name: string, meta: ToolMeta): ToolDefinition {
     usageCount: 0,
     lastUsed: null,
     errors: 0,
+    amberFailures: 0,
+    unclassifiedErrors: 0,
     avgDuration: null,
   };
 }
@@ -1880,6 +1884,8 @@ async function buildRegistry(): Promise<ToolDefinition[]> {
     const perf = perfMap.get(name);
     if (perf) {
       tool.errors = perf.errors;
+      tool.amberFailures = perf.amberFailures;
+      tool.unclassifiedErrors = perf.unclassifiedErrors;
       tool.avgDuration = perf.avgDuration;
       if (perf.calls > tool.usageCount) {
         tool.usageCount = perf.calls;

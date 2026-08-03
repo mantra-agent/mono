@@ -6,6 +6,7 @@ import {
   formatDiagnosticError,
   formatDiagnosticValue,
 } from "@/lib/diagnostic-error";
+import { isClassifiedToolFailureKind } from "@shared/tool-failure";
 import {
   useState,
   useEffect,
@@ -496,12 +497,8 @@ function toolFailureTone(failureKind?: string | null): {
   detailBg: string;
   borderColor: string;
 } {
-  if (
-    failureKind === "permission" ||
-    failureKind === "input" ||
-    failureKind === "transient" ||
-    failureKind === "internal"
-  ) {
+  // Amber = classified/avoidable; red = true surprise (missing failureKind).
+  if (isClassifiedToolFailureKind(failureKind)) {
     return {
       iconColor: "text-warning",
       bgColor: "bg-warning/15",

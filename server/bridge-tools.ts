@@ -16902,7 +16902,17 @@ export async function executeTool(
   try {
     const outcome = await handler(enrichedArgs);
     const durationMs = Date.now() - startTime;
-    recordToolCallEnd(toolCallId, !!outcome.error);
+    const outcomeFailureKind =
+      outcome && typeof outcome === "object"
+        ? typeof (outcome as { failureKind?: unknown }).failureKind === "string"
+          ? ((outcome as { failureKind: string }).failureKind)
+          : outcome.error &&
+              typeof outcome.error === "object" &&
+              typeof (outcome.error as { failureKind?: unknown }).failureKind === "string"
+            ? ((outcome.error as { failureKind: string }).failureKind)
+            : null
+        : null;
+    recordToolCallEnd(toolCallId, !!outcome.error, outcomeFailureKind);
     _wwTrackEnd?.(toolCallId);
     const sideEffectOnly = !outcome.error && isSideEffectOnly(resolvedName, normalizedArgs);
     // Preflight equips successful engineering work with AGENTS/CODING context.
@@ -16927,10 +16937,19 @@ ${outcome.result}`
     return { ...outcome, result: resultWithPrelude, sideEffectOnly, durationMs };
   } catch (err: any) {
     const durationMs = Date.now() - startTime;
-    recordToolCallEnd(toolCallId, true);
+    const thrownFailureKind =
+      err && typeof err === "object" && typeof err.failureKind === "string"
+        ? err.failureKind
+        : null;
+    recordToolCallEnd(toolCallId, true, thrownFailureKind);
     _wwTrackEnd?.(toolCallId);
     toolExec.error(`complete tool=${toolName} callId=${toolCallId} duration=${durationMs}ms error=true exception=${err.message}`);
-    return { result: `Tool execution error: ${err.message}`, error: true, durationMs };
+    return {
+      result: `Tool execution error: ${err.message}`,
+      error: true,
+      durationMs,
+      ...(thrownFailureKind ? { failureKind: thrownFailureKind } : {}),
+    };
   }
 }
 

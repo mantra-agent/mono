@@ -27,7 +27,12 @@ interface ToolInfo {
   lastUsed: string | null;
   discovered: boolean;
   source?: "gateway" | "skill" | "bridge";
+  /** Total failed calls (ambers + unclassified). */
   errors?: number;
+  /** Classified/avoidable failures (input|permission|transient|internal). */
+  amberFailures?: number;
+  /** True surprises missing failureKind. */
+  unclassifiedErrors?: number;
   avgDuration?: number | null;
 }
 
@@ -154,6 +159,10 @@ function ToolRow({ tool, iconOverrides }: { tool: ToolInfo; iconOverrides: Recor
   const description = tool.detailedDescription || tool.description;
   const ToolIcon = resolveToolIcon(tool.name, iconOverrides);
   const currentIconName = resolveToolIconName(tool.name, iconOverrides);
+  const amberFailures = tool.amberFailures ?? 0;
+  const unclassifiedErrors =
+    tool.unclassifiedErrors ?? Math.max(0, (tool.errors ?? 0) - amberFailures);
+  const hasFailureSplit = amberFailures > 0 || unclassifiedErrors > 0;
 
   return (
     <div className="min-w-0">
@@ -168,6 +177,23 @@ function ToolRow({ tool, iconOverrides }: { tool: ToolInfo; iconOverrides: Recor
         <ToolIcon className="h-3.5 w-3.5 shrink-0" />
         {active && <ActivityIndicator />}
         <span className="flex-1 min-w-0 pr-6 truncate">{tool.name}</span>
+        {hasFailureSplit && (
+          <span
+            className="shrink-0 text-[10px] tabular-nums font-medium group-hover:opacity-0 transition-opacity"
+            data-testid={`text-tool-failures-${tool.name}`}
+            title={`${amberFailures} classified ambers · ${unclassifiedErrors} unclassified errors`}
+          >
+            {amberFailures > 0 && (
+              <span className="text-warning">{amberFailures}a</span>
+            )}
+            {amberFailures > 0 && unclassifiedErrors > 0 && (
+              <span className="text-muted-foreground/50"> · </span>
+            )}
+            {unclassifiedErrors > 0 && (
+              <span className="text-error">{unclassifiedErrors}e</span>
+            )}
+          </span>
+        )}
         {tool.usageCount > 0 && (
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70 group-hover:opacity-0 transition-opacity">
             {tool.usageCount}
@@ -176,12 +202,22 @@ function ToolRow({ tool, iconOverrides }: { tool: ToolInfo; iconOverrides: Recor
         <IconPicker toolName={tool.name} currentIconName={currentIconName} />
       </div>
       {expanded && (
-        <p
-          className="px-2 pb-1.5 pl-[30px] text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap"
-          data-testid={`text-tool-desc-${tool.name}`}
-        >
-          {description}
-        </p>
+        <div className="px-2 pb-1.5 pl-[30px] space-y-1">
+          <p
+            className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap"
+            data-testid={`text-tool-desc-${tool.name}`}
+          >
+            {description}
+          </p>
+          {hasFailureSplit && (
+            <p className="text-[11px] tabular-nums text-muted-foreground">
+              Failures:{" "}
+              <span className="text-warning">{amberFailures} ambers</span>
+              {" · "}
+              <span className="text-error">{unclassifiedErrors} errors</span>
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
