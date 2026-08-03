@@ -12,6 +12,8 @@ import { resolveModelCandidates, type ModelRoutingDecision } from "../../model-r
 import { normalizeSessionModelTierOverride } from "../../session-model-tier-override";
 import { agentExecutor } from "../../agent-executor";
 import { assembleContext } from "../../agent-context";
+import { renderContinuationCapsule } from "../../continuation-capsule";
+import type { ContinuationCapsule } from "@shared/models/chat";
 import { isCommittedContextMessage } from "../../compaction-snapshot";
 import { getToolSchemas as getToolDefinitions } from "../../tool-registry";
 import { executeTool } from "../../bridge-tools";
@@ -1477,6 +1479,40 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     };
   }
 
+  /**
+   * Detect short user turns that approve a prior proposal ("do it", "yes — ship 1 and 2").
+   * Sets the durable approved_to_execute stance so later runs (including this one after
+   * any restart) do not re-derive act-vs-answer from transcript prose.
+   */
+  function detectExecutionApproval(raw: string): { reason: string; objectiveHint?: string } | null {
+    const text = (raw || "").trim();
+    if (!text) return null;
+    // Long messages are usually new instructions, not pure approvals.
+    if (text.length > 400) return null;
+    const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+    const approvalPatterns: Array<{ re: RegExp; reason: string }> = [
+      { re: /^(yes|yep|yeah|yup)\b[.!]?\s*(please)?\s*[.—–-]?\s*(do it|ship it|build it|implement( it)?|go ahead|proceed)?[.!]?$/i, reason: "affirmative approval" },
+      { re: /^(do it|ship it|build it|implement( it)?|go ahead|proceed|execute|just do it)\b[.!]?$/i, reason: "imperative approval" },
+      { re: /^(please )?(continue|keep going|finish( it)?)\b[.!]?$/i, reason: "continue approval" },
+      { re: /^(do|ship|implement|build)\s+(\d+(\s*(and|,|\&)\s*\d+)*)\b/i, reason: "numbered-item approval" },
+      { re: /^(lgtm|approved|ship it|send it)\b[.!]?$/i, reason: "explicit ship approval" },
+    ];
+    for (const { re, reason } of approvalPatterns) {
+      if (re.test(normalized) || re.test(text)) {
+        return { reason, objectiveHint: text.slice(0, 280) };
+      }
+    }
+    // "do 1 and 2" / "please continue" with trailing clarification still counts
+    // when the leading clause is an approval imperative.
+    if (/^(yes[,.]?\s+)?(do|ship|implement|build)\s+\d+/i.test(normalized)) {
+      return { reason: "numbered-item approval with detail", objectiveHint: text.slice(0, 280) };
+    }
+    if (/^(please\s+)?continue\b/i.test(normalized) && text.length < 200) {
+      return { reason: "continue approval with detail", objectiveHint: text.slice(0, 280) };
+    }
+    return null;
+  }
+
   async function buildChatHistory(
     sessionId: string,
     enrichedContent: string,
@@ -1691,6 +1727,69 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     chatLog.log(
       `tools loaded count=${toolDefs.length} authorityCount=${interactiveToolSet.authorityCount} persona=${interactiveToolSet.personaName} bundle=${interactiveToolSet.bundleCount} sessionId=${sessionId}`,
     );
+
+    // --- Supersession / approval handoff ---
+    // Carry executionStance + objective across abort boundaries so the replacement
+    // run does not re-infer act-vs-answer from unstructured transcript.
+    const approvalSignal = detectExecutionApproval(enrichedContent);
+    if (approvalSignal) {
+      agentExecutor.reinforceSessionStance(sessionId, {
+        latestUserInstruction: enrichedContent.trim(),
+        objective: approvalSignal.objectiveHint,
+        stanceReason: approvalSignal.reason,
+      });
+      chatLog.info(
+        `execution stance reinforced sessionId=${sessionId} reason=${approvalSignal.reason}`,
+      );
+    }
+    const handoff = agentExecutor.takeSessionHandoff(sessionId);
+    if (handoff?.capsule) {
+      const capsuleContent = `[Working Context Capsule]\n\n${renderContinuationCapsule(handoff.capsule)}`;
+      // Inject immediately before the newest user turn so the model sees stance
+      // as live working context, not buried history.
+      const lastUserIdx = (() => {
+        for (let i = conversationHistory.length - 1; i >= 0; i--) {
+          if (conversationHistory[i].role === "user") return i;
+        }
+        return conversationHistory.length;
+      })();
+
+      // Zero-progress coalesce: the aborted run never produced output, so fold its
+      // request into this turn rather than treating the follow-up as a cold restart.
+      if (
+        !handoff.hadProgress
+        && handoff.priorRequestContent
+        && conversationHistory[lastUserIdx]?.role === "user"
+      ) {
+        const current = conversationHistory[lastUserIdx].content || "";
+        const prior = handoff.priorRequestContent.trim();
+        if (prior && !current.includes(prior.slice(0, Math.min(80, prior.length)))) {
+          conversationHistory[lastUserIdx] = {
+            ...conversationHistory[lastUserIdx],
+            content: [
+              "[Prior turn — interrupted before any model output; treat as one continuous mission]",
+              prior,
+              "",
+              "[Current follow-up]",
+              current,
+            ].join("\n"),
+          };
+          chatLog.info(
+            `zero-progress coalesce applied sessionId=${sessionId} priorLen=${prior.length} currentLen=${current.length}`,
+          );
+        }
+      }
+
+      conversationHistory.splice(lastUserIdx, 0, {
+        role: "system",
+        content: capsuleContent,
+        model: "compaction-marker",
+        capsule: handoff.capsule,
+      });
+      chatLog.info(
+        `supersession handoff injected sessionId=${sessionId} stance=${handoff.capsule.executionStance ?? "none"} hadProgress=${handoff.hadProgress}`,
+      );
+    }
 
     const contextBuildStart = Date.now();
     chatLog.log(`contextAssembly START sessionId=${sessionId}`);
@@ -2706,6 +2805,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
       let responseContent = result.content || "";
       const isSuperseded = result.abortReason === "superseded";
+      // Mission completed cleanly — drop sticky approved stance so the next
+      // turn starts fresh rather than inheriting a finished mission.
+      if (!isSuperseded && result.status !== "failed" && !result.abortReason) {
+        agentExecutor.clearSessionHandoff(sessionId, "run_completed");
+      }
 
       // Superseded runs: delete the assistant draft and skip the entire save
       // path. The draft was checkpointed with partial streamed content; leaving
