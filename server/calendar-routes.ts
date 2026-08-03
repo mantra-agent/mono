@@ -7,7 +7,7 @@ import {
   listCalendars, listEvents, listAllEvents, getEvent, createEvent, updateEvent, deleteEvent,
   type CalendarEvent
 } from "./google-calendar";
-import { getTimezone, getDateInTimezone } from "./timezone";
+import { getTimezone, getDateInTimezone, getTzOffsetISO } from "./timezone";
 import { PeopleStorage, peopleStorage } from "./people-storage";
 import { createLogger } from "./log";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "./db";
@@ -142,8 +142,9 @@ export function registerCalendarRoutes(app: Express): void {
     try {
       const tz = getTimezone();
       const today = getDateInTimezone(tz);
-      const timeMin = (req.query.timeMin as string) || `${today}T00:00:00`;
-      const timeMax = (req.query.timeMax as string) || `${today}T23:59:59`;
+      const offset = getTzOffsetISO(tz);
+      const timeMin = (req.query.timeMin as string) || `${today}T00:00:00${offset}`;
+      const timeMax = (req.query.timeMax as string) || `${today}T23:59:59${offset}`;
       const calendarId = req.query.calendarId as string | undefined;
       const accountId = req.query.accountId as string | undefined;
       const maxResults = req.query.maxResults ? parseInt(req.query.maxResults as string, 10) : 100;

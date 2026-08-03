@@ -8,6 +8,7 @@ import {
   getOAuth2Client,
 } from './gmail';
 import { getSecretSync } from './secrets-store';
+import { getTimezone, getTzOffsetISO } from './timezone';
 
 // ─── Interfaces ───
 
@@ -120,6 +121,27 @@ export async function listCalendars(accountId: string) {
 
 const MAX_EVENT_LIST_PAGES = 25;
 
+/** Google Calendar rejects floating local datetimes (no Z / ±offset). */
+const RFC3339_TZ_SUFFIX = /(?:[zZ]|[+-]\d{2}:?\d{2})$/;
+
+/**
+ * Normalize a calendar bound to RFC3339 with explicit offset.
+ * Bare `YYYY-MM-DD` / `YYYY-MM-DDTHH:mm:ss` values are treated as wall time
+ * in the account timezone and get that offset attached.
+ */
+export function toRfc3339Bound(value?: string): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (RFC3339_TZ_SUFFIX.test(trimmed)) return trimmed;
+
+  const offset = getTzOffsetISO(getTimezone());
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return `${trimmed}T00:00:00${offset}`;
+  }
+  return `${trimmed}${offset}`;
+}
+
 export async function listEvents(
   accountId: string,
   options: {
@@ -133,6 +155,8 @@ export async function listEvents(
   const tokens = await loadAccountTokens(accountId);
   const accountEmail = tokens?.email || '';
   const calendarId = options.calendarId || 'primary';
+  const timeMin = toRfc3339Bound(options.timeMin);
+  const timeMax = toRfc3339Bound(options.timeMax);
   const resultLimit = Math.min(2500, Math.max(1, options.maxResults || 250));
   const events: CalendarEvent[] = [];
   const seenPageTokens = new Set<string>();
@@ -144,8 +168,8 @@ export async function listEvents(
     const remaining = resultLimit - events.length;
     const res = await calendar.events.list({
       calendarId,
-      timeMin: options.timeMin,
-      timeMax: options.timeMax,
+      timeMin,
+      timeMax,
       maxResults: remaining,
       pageToken,
       singleEvents: true,
