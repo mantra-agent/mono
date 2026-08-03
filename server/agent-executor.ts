@@ -26,7 +26,12 @@ import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-stora
 import { ModelProviderError, isModelContextOverflow, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
 import { ContextOperatingBudgetExceededError, estimateToolDefinitionTokens, getContextRequestBudget, type ContextRequestBudget } from "./context-budget";
 import { estimateToolOutputSize } from "./tool-output-artifacts";
-import { CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS, projectImmediateToolResult, projectWorkingSet } from "./working-set-projector";
+import {
+  CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS,
+  MATERIAL_REFRESH_REDUCTION_TOKENS,
+  projectImmediateToolResult,
+  projectWorkingSet,
+} from "./working-set-projector";
 import { buildContinuationCapsule, renderContinuationCapsule, type ContinuationCapsuleEntry } from "./continuation-capsule";
 
 /** In-flight run progress used to build supersession handoff capsules. */
@@ -109,6 +114,10 @@ export type ToolExecutorResult = {
   result: string;
   /** Optional ephemeral result returned only to the provider's current working set. */
   providerResult?: string;
+  /** Receipt/ref form used after the provider has consumed the exact result once. */
+  historicalProviderResult?: string;
+  canMateriallyShrinkOnRefresh?: boolean;
+  refreshReductionTokens?: number;
   error?: boolean;
   /** Structured source classification consumed by run-scoped recovery policy. */
   failure?: ToolFailure;
@@ -219,7 +228,23 @@ export interface ExecutorRunResult {
   lastStopReason?: string;
   content: string;
   thinking: string;
-  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; failureKind?: import("@shared/tool-failure").ToolFailureKind; durationMs: number; parentId?: string }>;
+  toolCalls: Array<{
+    id?: string;
+    name: string;
+    args: Record<string, unknown>;
+    result: string;
+    /** Ephemeral provider-facing projection for the current cycle (exact until consumed). */
+    providerResult?: string;
+    /** Receipt/ref form used after the provider has consumed the exact result once. */
+    historicalProviderResult?: string;
+    canMateriallyShrinkOnRefresh?: boolean;
+    refreshReductionTokens?: number;
+    outcome: ToolOutcome;
+    error?: boolean;
+    failureKind?: import("@shared/tool-failure").ToolFailureKind;
+    durationMs: number;
+    parentId?: string;
+  }>;
   model: string;
   provider: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -880,7 +905,10 @@ interface RunIterationContext {
   awaitUserRequested?: { toolCallId: string };
   intentionallyAwaitingUser: boolean;
   workingSetRefreshRequested?: { toolCallId: string };
+  /** Tool-call IDs whose exact provider result has already been sent once (or force-receipted on material refresh). */
+  providerConsumedToolCallIds: Set<string>;
   currentCycleToolResultTokens: number;
+  currentCycleRefreshReductionTokens: number;
   iterationToolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; order: number }>;
 }
 
@@ -1730,6 +1758,10 @@ export class AgentExecutor extends EventEmitter {
           name: normalizedName || event.toolName,
           input: resolvedArgs,
           result: event.result,
+          providerResult: event.providerResult,
+          historicalProviderResult: event.historicalProviderResult,
+          canMateriallyShrinkOnRefresh: event.canMateriallyShrinkOnRefresh,
+          refreshReductionTokens: event.refreshReductionTokens,
           outcome: event.outcome ?? (event.error ? "failed" : "succeeded"),
           durationMs: event.durationMs ?? 0,
           failure: event.failure,
@@ -2028,6 +2060,9 @@ export class AgentExecutor extends EventEmitter {
       const toolIdx = ctx.resolvedToolCalls.length;
       const projectedResultTokens = estimateToolOutputSize(immediateProjection.providerResult).estimatedTokens;
       ctx.currentCycleToolResultTokens += projectedResultTokens;
+      if (immediateProjection.canMateriallyShrinkOnRefresh) {
+        ctx.currentCycleRefreshReductionTokens += immediateProjection.refreshReductionTokens;
+      }
       this.emitContextGrowthCanary({
         ctx,
         options,
@@ -2047,6 +2082,10 @@ export class AgentExecutor extends EventEmitter {
         name: tc.name,
         input: canonicalArgs,
         result: toolResult.result,
+        providerResult: immediateProjection.providerResult,
+        historicalProviderResult: immediateProjection.historicalProviderResult,
+        canMateriallyShrinkOnRefresh: immediateProjection.canMateriallyShrinkOnRefresh,
+        refreshReductionTokens: immediateProjection.refreshReductionTokens,
         outcome: toolResult.outcome ?? (toolResult.error ? "failed" : "succeeded"),
         durationMs,
         failure: toolResult.failure,
@@ -2055,7 +2094,20 @@ export class AgentExecutor extends EventEmitter {
       // Chronology: record tool entry pointing to resolvedToolCalls index
       ctx.segmentChronology.push({ s: "tool", i: toolIdx });
       sideEffectFlags.push(!!toolResult.sideEffectOnly);
-      continuation = toolResult.continuation || continuation;
+      // Cycle-budget overflow and material shrink both force a working_set_refresh boundary.
+      // Material shrink means current-cycle exact payloads can drop by >= MATERIAL_REFRESH_REDUCTION_TOKENS
+      // once marked provider-consumed; without this gate the multi-MB exact path never receipts.
+      const budgetReached = !toolResult.error
+        && !toolResult.continuation
+        && ctx.currentCycleToolResultTokens >= CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS;
+      const materialRefreshReached = !toolResult.error
+        && !toolResult.continuation
+        && ctx.currentCycleRefreshReductionTokens >= MATERIAL_REFRESH_REDUCTION_TOKENS;
+      if ((budgetReached || materialRefreshReached) && !continuation) {
+        continuation = "working_set_refresh";
+      } else {
+        continuation = toolResult.continuation || continuation;
+      }
 
       ctx.publish("tool_result", {
         toolCallId: tc.id,
@@ -2128,12 +2180,19 @@ export class AgentExecutor extends EventEmitter {
     name: string;
     input: Record<string, unknown>;
     result: string;
+    providerResult?: string;
+    historicalProviderResult?: string;
+    canMateriallyShrinkOnRefresh?: boolean;
+    refreshReductionTokens?: number;
     outcome: ToolOutcome;
     durationMs: number;
     failure?: ToolFailure;
     recoveryDecision?: ToolRecoveryDecision;
   }): void {
-    const { ctx, options, id, name, input, result, outcome, durationMs, failure, recoveryDecision } = args;
+    const {
+      ctx, options, id, name, input, result, outcome, durationMs, failure, recoveryDecision,
+      providerResult, historicalProviderResult, canMateriallyShrinkOnRefresh, refreshReductionTokens,
+    } = args;
     const error = outcome === "failed" || outcome === "cancelled";
     const failureKind = failure?.kind;
     ctx.resolvedToolCalls.push({
@@ -2141,6 +2200,10 @@ export class AgentExecutor extends EventEmitter {
       name,
       args: input,
       result,
+      ...(providerResult !== undefined ? { providerResult } : {}),
+      ...(historicalProviderResult !== undefined ? { historicalProviderResult } : {}),
+      ...(canMateriallyShrinkOnRefresh !== undefined ? { canMateriallyShrinkOnRefresh } : {}),
+      ...(refreshReductionTokens !== undefined ? { refreshReductionTokens } : {}),
       outcome,
       error: error || undefined,
       ...(failureKind ? { failureKind } : {}),
@@ -2668,7 +2731,9 @@ export class AgentExecutor extends EventEmitter {
       diagnosticLastAssistantTextLength: 0,
       diagnosticHadToolErrors: false,
       diagnosticFailedToolCount: 0,
+      providerConsumedToolCallIds: new Set<string>(),
       currentCycleToolResultTokens: 0,
+      currentCycleRefreshReductionTokens: 0,
       iterationToolCalls: [],
       intentionallyAwaitingUser: false,
       segmentChronology: [],
@@ -2984,6 +3049,9 @@ export class AgentExecutor extends EventEmitter {
               runId: ctx.runId,
             });
             ctx.currentCycleToolResultTokens += estimateToolOutputSize(immediateProjection.providerResult).estimatedTokens;
+            if (immediateProjection.canMateriallyShrinkOnRefresh) {
+              ctx.currentCycleRefreshReductionTokens += immediateProjection.refreshReductionTokens;
+            }
             this.emitContextGrowthCanary({
               ctx,
               options,
@@ -2994,13 +3062,29 @@ export class AgentExecutor extends EventEmitter {
               toolCallId: callId,
               toolName: name,
             });
+            // Prefer historical/receipt form once this toolCallId has been provider-consumed.
+            // Without this, mid-cycle projectWorkingSet keeps re-emitting multi-MB exact payloads
+            // because temporal eligibility alone treats current-cycle results as "exact through first success."
+            const alreadyConsumed = ctx.providerConsumedToolCallIds.has(callId);
+            const providerFacing = alreadyConsumed && immediateProjection.historicalProviderResult
+              ? immediateProjection.historicalProviderResult
+              : immediateProjection.providerResult;
             const budgetReached = !result.error
               && !result.continuation
               && ctx.currentCycleToolResultTokens >= CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS;
+            const materialRefreshReached = !result.error
+              && !result.continuation
+              && ctx.currentCycleRefreshReductionTokens >= MATERIAL_REFRESH_REDUCTION_TOKENS;
             return {
               ...result,
-              providerResult: immediateProjection.providerResult,
-              continuation: budgetReached ? "working_set_refresh" as const : result.continuation,
+              providerResult: providerFacing,
+              // Stash receipt fields on the returned object so the stream path can persist them.
+              historicalProviderResult: immediateProjection.historicalProviderResult,
+              canMateriallyShrinkOnRefresh: immediateProjection.canMateriallyShrinkOnRefresh,
+              refreshReductionTokens: immediateProjection.refreshReductionTokens,
+              continuation: (budgetReached || materialRefreshReached)
+                ? "working_set_refresh" as const
+                : result.continuation,
             };
           }
         : undefined;
@@ -3011,6 +3095,7 @@ export class AgentExecutor extends EventEmitter {
         sessionId: options.sessionId,
         sessionKey: options.sessionKey,
         source: options.activity || "agent",
+        providerConsumedToolCallIds: ctx.providerConsumedToolCallIds,
       });
       const providerMessages = workingSet.messages;
       this.emitContextGrowthCanary({
@@ -3147,6 +3232,40 @@ export class AgentExecutor extends EventEmitter {
       log.debug(`Stream loop ended iteration=${ctx.iteration} events=${streamEventCount} elapsed=${ctx.lastStreamDiagnostics.elapsedMs}ms aborted=${ctx.aborted} abortReason=${ctx.abortReason ?? "none"} runId=${ctx.runId}`);
       ctx.diagnosticLastStep = "model_response";
       ctx.diagnosticLastModelStopReason = ctx.iterationStopReason || "end_turn";
+
+      // Exact-through-first-success: once the provider has seen tool results, mark them
+      // consumed so the next projectWorkingSet emits receipt/ref form. Without this ledger
+      // current-cycle results stay "exact" forever (they sit after lastAssistantIndex).
+      //
+      // SDK path: tools resolve mid-stream and the adapter already sent providerResult to
+      // the provider — those IDs live on resolvedToolCalls this iteration, not yet in
+      // messages. Executor-owned path: tool results are already in messages from the
+      // previous continuation. Cover both.
+      if (responseStatus === "done" && !ctx.aborted) {
+        let newlyConsumed = 0;
+        const mark = (id: string | undefined) => {
+          if (!id || ctx.providerConsumedToolCallIds.has(id)) return;
+          ctx.providerConsumedToolCallIds.add(id);
+          newlyConsumed++;
+        };
+        for (const message of messages) {
+          if (message.role !== "tool_result" || !Array.isArray(message.content)) continue;
+          for (const block of message.content) {
+            if (block.type === "tool_result") mark(block.tool_use_id);
+          }
+        }
+        for (const call of ctx.resolvedToolCalls.slice(resolvedToolCallsBeforeIteration)) {
+          mark(call.id);
+        }
+        if (newlyConsumed > 0) {
+          ctx.currentCycleToolResultTokens = 0;
+          ctx.currentCycleRefreshReductionTokens = 0;
+          log.debug(
+            `provider-consumed ledger updated runId=${ctx.runId} newlyConsumed=${newlyConsumed} ` +
+            `totalConsumed=${ctx.providerConsumedToolCallIds.size}`,
+          );
+        }
+      }
       ctx.diagnosticLastAssistantTextLength = ctx.iterationText.length;
       log.debug(`agent.loop.model_response runId=${ctx.runId} sessionId=${options.sessionId || "none"} iteration=${ctx.iteration} stopReason=${ctx.diagnosticLastModelStopReason} toolCallCount=${ctx.pendingToolCalls.length} assistantTextLength=${ctx.iterationText.length} streamEvents=${streamEventCount}`);
       eventBus.publish({
@@ -3308,12 +3427,21 @@ export class AgentExecutor extends EventEmitter {
       const orderedCalls = ctx.iterationToolCalls
         .filter((call) => resultsById.has(call.id))
         .sort((a, b) => a.order - b.order);
+      // Material refresh = force-receipt current-cycle tool results before the next inference.
+      // Without marking them provider-consumed, projectWorkingSet keeps treating them as
+      // "exact through first successful inference" and the multi-MB path never shrinks.
+      for (const call of orderedCalls) {
+        if (call.id) ctx.providerConsumedToolCallIds.add(call.id);
+      }
       const assistantContent: ContentBlock[] = [];
       if (cleanText) assistantContent.push({ type: "text", text: cleanText });
       for (const call of orderedCalls) {
         assistantContent.push({ type: "tool_use", id: call.id, name: call.name, input: call.args });
       }
       messages.push({ role: "assistant", content: assistantContent });
+      // Durable messages keep exact results. Receipt swap is the disposable
+      // projectWorkingSet projection on the next pre-inference boundary, driven by
+      // providerConsumedToolCallIds (force-marked above).
       messages.push({
         role: "tool_result",
         content: orderedCalls.map((call) => {
@@ -3328,9 +3456,15 @@ export class AgentExecutor extends EventEmitter {
       });
       const toolCallId = ctx.workingSetRefreshRequested.toolCallId;
       ctx.workingSetRefreshRequested = undefined;
+      // Reset cycle accounting for the next window. Receipt eligibility is durable on
+      // providerConsumedToolCallIds; counters only measure the fresh cycle's exact load.
       ctx.currentCycleToolResultTokens = 0;
+      ctx.currentCycleRefreshReductionTokens = 0;
       ctx.publish("tool_use_pause", { content: "" });
-      log.log(`working-set refresh boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} toolCallId=${toolCallId}`);
+      log.log(
+        `working-set refresh boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} ` +
+        `toolCallId=${toolCallId} forceReceipted=${orderedCalls.length}`,
+      );
       return {
         finalContent: cleanText,
         shouldContinue: true,
@@ -3458,8 +3592,20 @@ export class AgentExecutor extends EventEmitter {
         };
       }
       if (continuation === "working_set_refresh") {
+        // Force-receipt every tool result just appended so the next projectWorkingSet
+        // emits historical/receipt form instead of re-sending multi-MB exact payloads.
+        for (const block of toolResults) {
+          if (block.type === "tool_result" && block.tool_use_id) {
+            ctx.providerConsumedToolCallIds.add(block.tool_use_id);
+          }
+        }
         ctx.currentCycleToolResultTokens = 0;
+        ctx.currentCycleRefreshReductionTokens = 0;
         ctx.publish("tool_use_pause", { content: "" });
+        log.log(
+          `working-set refresh boundary (executor_owned) runId=${ctx.runId} ` +
+          `sessionId=${options.sessionId || "none"} forceReceipted=${toolResults.length}`,
+        );
         return {
           finalContent: cleanText,
           shouldContinue: true,
