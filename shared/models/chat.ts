@@ -439,6 +439,7 @@ export type ChatStreamEvent =
       arguments?: Record<string, unknown>;
       result?: unknown;
       error?: string;
+      failureKind?: import("../tool-failure").ToolFailureKind;
     })
   | (ChatStreamEventBase & { type: "tool_use_pause"; content?: string })
   | (ChatStreamEventBase & { type: "run_start"; runId: string })
@@ -1068,5 +1069,7 @@ export interface ToolCallInfo {
   toolCallId?: string;
   result?: unknown;
   error?: string | Record<string, unknown>;
+  /** Structured failure kind for UI tone (permission vs actual error). */
+  failureKind?: import("../tool-failure").ToolFailureKind;
   parentId?: string;
 }

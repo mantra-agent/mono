@@ -156,6 +156,7 @@ export function resolveToolResult(
   toolName?: string,
   ts?: number,
   args?: Record<string, unknown>,
+  failureKind?: import("@shared/tool-failure").ToolFailureKind,
 ): StreamingContent {
   let foundMatch = false;
   const segments = state.segments.map(seg => {
@@ -174,6 +175,7 @@ export function resolveToolResult(
         ...(args ? { arguments: args } : {}),
         result,
         error,
+        ...(failureKind ? { failureKind } : {}),
         status: error ? "error" as const : "done" as const,
         endedAt,
         startedAt: s.timestamp,

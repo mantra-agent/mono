@@ -44,6 +44,7 @@ export interface JournalEntry {
   narrative?: string;
   result?: unknown;
   error?: string;
+  failureKind?: import("@shared/tool-failure").ToolFailureKind;
   providerFailure?: ModelProviderFailureInfo;
   runId?: string;
   messageId?: string;
@@ -392,6 +393,7 @@ export function publishJournalToUI(entry: JournalEntry, category: EventCategory 
       payload.toolName = entry.toolName;
       payload.result = entry.result;
       payload.error = entry.error;
+      if (entry.failureKind) payload.failureKind = entry.failureKind;
       break;
     case "tool_use_pause":
       payload.content = entry.content;

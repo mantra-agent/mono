@@ -483,6 +483,23 @@ function getToolErrorText(
   return formatToolError(tool.error, tool.result);
 }
 
+/** Permission failures are amber; all other tool errors stay red. */
+function toolFailureTone(failureKind?: string | null): {
+  iconColor: string;
+  bgColor: string;
+} {
+  if (failureKind === "permission") {
+    return {
+      iconColor: "text-warning",
+      bgColor: "bg-warning/15",
+    };
+  }
+  return {
+    iconColor: "text-error",
+    bgColor: "bg-error/10",
+  };
+}
+
 function extractToolComment(
   toolName: string,
   args?: Record<string, any>,
@@ -643,15 +660,16 @@ function ToolStepRow({
   const toolLabel = effectiveLayer <= 3 && comment ? comment : rawToolName;
   const isDetailLayer = effectiveLayer === 2;
 
+  const failureTone = isError ? toolFailureTone(step.failureKind) : null;
   const iconColor = isError
-    ? "text-error"
+    ? failureTone!.iconColor
     : isDone
       ? "text-success"
       : isActive
         ? "text-active"
         : "text-info";
   const bgColor = isError
-    ? "bg-error/10"
+    ? failureTone!.bgColor
     : isDone
       ? "bg-success/10"
       : isActive
@@ -1421,15 +1439,16 @@ function ToolIconStrip({
         const isActive = step.status === "active";
         const isDone = step.status === "done";
         const isError = step.status === "error";
+        const failureTone = isError ? toolFailureTone(step.failureKind) : null;
         const iconColor = isError
-          ? "text-error"
+          ? failureTone!.iconColor
           : isDone
             ? "text-success"
             : isActive
               ? "text-active"
               : "text-info";
         const bgColor = isError
-          ? "bg-error/10"
+          ? failureTone!.bgColor
           : isDone
             ? "bg-success/10"
             : isActive
@@ -1749,6 +1768,7 @@ export function stepsFromSavedMessage(message: ChatMessage): ExecutionStep[] {
         arguments: tool.arguments,
         result: tool.result,
         error: errorStr,
+        ...(tool.failureKind ? { failureKind: tool.failureKind } : {}),
         status: isError ? "error" : "done",
       });
     });
@@ -1986,6 +2006,7 @@ function segmentsFromChronology(message: ChatMessage): MessageSegment[] {
             arguments: tool.arguments,
             result: tool.result,
             error: errorStr,
+            ...(tool.failureKind ? { failureKind: tool.failureKind } : {}),
             status: isError ? "error" : "done",
             parentId: tool.parentId,
           });

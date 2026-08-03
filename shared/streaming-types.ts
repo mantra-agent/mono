@@ -22,6 +22,8 @@ export interface ExecutionStep {
   arguments?: Record<string, unknown>;
   result?: unknown;
   error?: string;
+  /** Structured failure kind for UI tone (permission vs actual error). */
+  failureKind?: import("./tool-failure").ToolFailureKind;
   status?: "active" | "done" | "error";
   narrative?: string;
   systemStepName?: string;
