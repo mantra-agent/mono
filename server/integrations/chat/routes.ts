@@ -3355,6 +3355,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             };
           }
         }
+        let acceptedDecisionId: string | undefined;
         if (!isGreeting && clientTurnId) {
           const acceptance = await chatStorage.createUserMessageOnce(
             sessionId,
@@ -3369,7 +3370,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             return res.status(404).json({ error: "Session not found" });
           }
           if (acceptance.outcome === "question_already_answered") {
-            return res.status(409).json({ error: "This question has already been answered." });
+            return res.status(409).json({
+              error: "This question has already been answered.",
+              ...(acceptance.decisionId ? { decisionId: acceptance.decisionId } : {}),
+            });
           }
           if (acceptance.outcome === "duplicate") {
             chatLog.warn(`duplicate message replay ignored sessionId=${sessionId} clientTurnId=${clientTurnId}`);
@@ -3379,8 +3383,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               sessionId,
               status: session.status,
               queued: session.status === "streaming",
+              ...(acceptance.decisionId ? { decisionId: acceptance.decisionId } : {}),
             });
           }
+          acceptedDecisionId = acceptance.decisionId;
         }
 
         const wasInFlight =
@@ -3484,6 +3490,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           queued: wasInFlight,
           interrupted: abortCount,
           streamStartedAt,
+          ...(acceptedDecisionId ? { decisionId: acceptedDecisionId } : {}),
         });
 
         processChatStream(

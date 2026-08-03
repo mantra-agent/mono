@@ -2596,7 +2596,7 @@ export const ChatTurn = memo(function ChatTurn({
   suppressedEmailDraftIds?: string;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
   activeQuestionToolCallId: string | null;
-  onQuestionSubmit: (response: QuestionResponseMeta) => Promise<boolean>;
+  onQuestionSubmit: (response: QuestionResponseMeta) => Promise<import("@/hooks/use-question-response").QuestionSubmitResult | boolean>;
   onQuestionCancel?: () => Promise<boolean>;
   planOwnedChildBlocks?: Map<string, ChildSessionBlockMeta>;
   sessionTitleById?: Record<string, string>;
