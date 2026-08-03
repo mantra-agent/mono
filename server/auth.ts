@@ -328,6 +328,7 @@ async function completeUserAuth(
   const principal = await attachUserPrincipal(req, user);
   const { modLifecycleService } = await import("./mods/mod-lifecycle-service");
   await runWithPrincipal(principal, () => modLifecycleService.ensureBuildInstalled(principal));
+  await runWithPrincipal(principal, () => modLifecycleService.ensureWellnessInstalled(principal));
   const { systemTimerRegistry } = await import("./system-timer-registry");
   await runWithPrincipal(principal, () => systemTimerRegistry.reconcileUserTimers(principal));
   const { timerScheduler } = await import("./timer-scheduler");

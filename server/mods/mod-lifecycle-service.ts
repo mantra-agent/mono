@@ -591,6 +591,27 @@ export class ModLifecycleService {
   }
 
   /**
+   * Universally install Wellness for accounts that have never made an explicit
+   * Wellness lifecycle choice, mirroring ensureBuildInstalled. Wellness is a
+   * gated default product (its /api/wellness surface is server-enforced), so —
+   * like Build — it needs a guaranteed install on login rather than
+   * baseline-only provisioning. Existing disabled rows remain disabled so a
+   * later owner disable is durable and never silently re-enabled.
+   */
+  async ensureWellnessInstalled(principal: Principal): Promise<void> {
+    this.assertEnabled();
+    this.requireAccountContext(principal);
+    if (!principalHasPermission(principal, "mods:manage")) return;
+    const [existing] = await db.select({ id: modInstallations.id, status: modInstallations.status })
+      .from(modInstallations)
+      .where(combineWithWritableScope(principal, installationScope, eq(modInstallations.modKey, "wellness")))
+      .limit(1);
+    if (existing?.status === "disabled" || existing?.status === "disabling") return;
+    await this.grantBaselineEntitlement(principal, "wellness");
+    await this.install(principal, { modKey: "wellness" });
+  }
+
+  /**
    * Idempotently provision the baseline (Planning + Network) as active
    * installations. A default is a bootstrap, not a lock: a Mod that already has
    * ANY installation row (including an explicit `disabled`) is left untouched,
