@@ -6,8 +6,6 @@ export type EntityType = z.infer<typeof entityTypeEnum>;
 export interface Tag {
   slug: string;
   label: string;
-  aliases: string[];
-  description: string;
   color: string | null;
   usageCount: number;
   createdAt: string;
@@ -43,17 +41,15 @@ export interface TagIndex {
 
 export const createTagSchema = z.object({
   label: z.string().min(1).max(80),
-  description: z.string().default(""),
+  /** Optional identity override used by ensureTag; defaults from label. */
+  slug: z.string().min(1).max(80).optional(),
   color: z.string().nullable().default(null),
-  aliases: z.array(z.string()).default([]),
 });
 export type CreateTagInput = z.infer<typeof createTagSchema>;
 
 export const updateTagSchema = z.object({
   label: z.string().min(1).max(80).optional(),
-  description: z.string().optional(),
   color: z.string().nullable().optional(),
-  aliases: z.array(z.string()).optional(),
 });
 export type UpdateTagInput = z.infer<typeof updateTagSchema>;
 

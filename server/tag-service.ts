@@ -29,12 +29,10 @@ interface TagRow extends QueryResultRow {
   id: string;
   slug: string;
   label: string;
-  description: string;
   color: string | null;
   created_at: Date | string;
   updated_at: Date | string;
   usage_count: string | number;
-  aliases: string[] | null;
 }
 
 interface AssignmentRow extends QueryResultRow {
@@ -76,9 +74,7 @@ function rowToTag(row: TagRow): Tag {
   return {
     slug: row.slug,
     label: row.label,
-    description: row.description,
     color: row.color,
-    aliases: row.aliases || [],
     usageCount: Number(row.usage_count || 0),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
@@ -169,12 +165,8 @@ export class TagService {
         const slug = normalizeTagSlug(legacyTag.slug || legacySlug);
         if (!slug) continue;
         const label = normalizeTagLabel(legacyTag.label || slug);
-        const tagId = await this.upsertTagRow(client, scoped, slug, label, {
-          description: legacyTag.description || "",
-          color: legacyTag.color,
-        });
+        const tagId = await this.upsertTagRow(client, scoped, slug, label, legacyTag.color ?? null);
         tagCount += 1;
-        await this.replaceAliases(client, scoped, tagId, slug, legacyTag.aliases || []);
         for (const usage of legacy.usages?.[legacySlug] || legacy.usages?.[slug] || []) {
           await this.insertAssignment(client, scoped, tagId, usage.entityType, usage.entityId, usage.entityTitle, "legacy_registry");
           assignmentCount += 1;
@@ -208,18 +200,13 @@ export class TagService {
     let slugClause = "";
     if (slug) {
       params.push(normalizeTagSlug(slug));
-      slugClause = `AND (t.slug = $3 OR EXISTS (
-        SELECT 1 FROM tag_aliases lookup
-        WHERE lookup.tag_id = t.id AND lookup.account_id = t.account_id AND lookup.normalized_alias = $3
-      ))`;
+      slugClause = `AND t.slug = $3`;
     }
     const result = await pool.query<TagRow>(
-      `SELECT t.id, t.slug, t.label, t.description, t.color, t.created_at, t.updated_at,
-              COUNT(DISTINCT a.id)::int AS usage_count,
-              COALESCE(array_agg(DISTINCT al.alias) FILTER (WHERE al.id IS NOT NULL), '{}') AS aliases
+      `SELECT t.id, t.slug, t.label, t.color, t.created_at, t.updated_at,
+              COUNT(DISTINCT a.id)::int AS usage_count
        FROM tags t
        LEFT JOIN tag_assignments a ON a.tag_id = t.id AND a.account_id = t.account_id
-       LEFT JOIN tag_aliases al ON al.tag_id = t.id AND al.account_id = t.account_id
        WHERE t.account_id = $1 AND t.owner_user_id = $2 ${slugClause}
        GROUP BY t.id
        ORDER BY t.label ASC`,
@@ -266,11 +253,9 @@ export class TagService {
     const pattern = `%${normalizedQuery}%`;
     const prefix = `${normalizedQuery}%`;
     const result = await pool.query<TagRow & { usage_count: string }>(
-      `SELECT t.id, t.slug, t.label, t.color, t.description, t.created_at, t.updated_at,
-              COALESCE(array_remove(array_agg(DISTINCT al.alias), NULL), '{}') AS aliases,
+      `SELECT t.id, t.slug, t.label, t.color, t.created_at, t.updated_at,
               COUNT(DISTINCT ta.id)::text AS usage_count
        FROM tags t
-       LEFT JOIN tag_aliases al ON al.tag_id = t.id AND al.account_id = t.account_id
        LEFT JOIN tag_assignments ta ON ta.tag_id = t.id AND ta.account_id = t.account_id
        WHERE t.account_id = $1
          AND t.owner_user_id = $2
@@ -278,26 +263,14 @@ export class TagService {
            $3 = ''
            OR lower(t.slug) LIKE $4
            OR lower(t.label) LIKE $4
-           OR EXISTS (
-             SELECT 1 FROM tag_aliases matched_alias
-             WHERE matched_alias.tag_id = t.id
-               AND matched_alias.account_id = t.account_id
-               AND matched_alias.alias LIKE $4
-           )
          )
        GROUP BY t.id
        ORDER BY
          CASE
-           WHEN $3 = '' THEN 4
+           WHEN $3 = '' THEN 3
            WHEN lower(t.slug) = $3 OR lower(t.label) = $3 THEN 0
            WHEN lower(t.slug) LIKE $5 OR lower(t.label) LIKE $5 THEN 1
-           WHEN EXISTS (
-             SELECT 1 FROM tag_aliases ranked_alias
-             WHERE ranked_alias.tag_id = t.id
-               AND ranked_alias.account_id = t.account_id
-               AND ranked_alias.alias LIKE $5
-           ) THEN 2
-           ELSE 3
+           ELSE 2
          END,
          COUNT(DISTINCT ta.id) DESC,
          t.label ASC
@@ -314,8 +287,7 @@ export class TagService {
       const label = normalizeTagLabel(input.label);
       if (!slug || !label) throw new Error("Tag name must contain letters or numbers");
       await this.assertIdentityAvailable(client, identity.accountId, slug);
-      const tagId = await this.upsertTagRow(client, identity, slug, label, input, false);
-      await this.replaceAliases(client, identity, tagId, slug, input.aliases || []);
+      const tagId = await this.upsertTagRow(client, identity, slug, label, input.color ?? null, false);
       const row = await this.fetchTagRow(client, identity, tagId);
       return rowToTag(row);
     });
@@ -329,26 +301,31 @@ export class TagService {
       const updates: string[] = [];
       const params: unknown[] = [];
       if (input.label !== undefined) {
-        params.push(normalizeTagLabel(input.label));
-        updates.push(`label = $${params.length}`);
-      }
-      if (input.description !== undefined) {
-        params.push(input.description);
-        updates.push(`description = $${params.length}`);
+        const label = normalizeTagLabel(input.label);
+        const candidateSlug = normalizeTagSlug(label);
+        if (!label || !candidateSlug) throw new Error("Tag name must contain letters or numbers");
+        params.push(label);
+        updates.push("label = $" + String(params.length));
+        if (candidateSlug !== tag.slug) {
+          await this.assertIdentityAvailable(client, identity.accountId, candidateSlug, tag.id);
+          params.push(candidateSlug);
+          updates.push("slug = $" + String(params.length));
+        }
       }
       if (input.color !== undefined) {
         params.push(input.color || null);
-        updates.push(`color = $${params.length}`);
+        updates.push("color = $" + String(params.length));
       }
       if (updates.length) {
         params.push(tag.id, identity.accountId, identity.userId);
+        const idIdx = params.length - 2;
+        const accountIdx = params.length - 1;
+        const ownerIdx = params.length;
         await client.query(
-          `UPDATE tags SET ${updates.join(", ")}, updated_at = NOW()
-           WHERE id = $${params.length - 2} AND account_id = $${params.length - 1} AND owner_user_id = $${params.length}`,
+          "UPDATE tags SET " + updates.join(", ") + ", updated_at = NOW() WHERE id = $" + String(idIdx) + " AND account_id = $" + String(accountIdx) + " AND owner_user_id = $" + String(ownerIdx),
           params,
         );
       }
-      if (input.aliases !== undefined) await this.replaceAliases(client, identity, tag.id, tag.slug, input.aliases);
       return rowToTag(await this.fetchTagRow(client, identity, tag.id));
     });
   }
@@ -400,7 +377,7 @@ export class TagService {
       if (!tag) {
         const slug = normalizeTagSlug(tagSlug);
         if (!slug) throw new Error("Tag must contain letters or numbers");
-        const id = await this.upsertTagRow(client, identity, slug, normalizeTagLabel(tagSlug), {});
+        const id = await this.upsertTagRow(client, identity, slug, normalizeTagLabel(tagSlug), null);
         tag = { id, slug };
       }
       await this.insertAssignment(client, identity, tag.id, entityType, entityId, entityTitle, source);
@@ -474,7 +451,7 @@ export class TagService {
         if (!slug || slugs.includes(slug)) continue;
         let tag = await this.resolveTag(client, identity, slug);
         if (!tag) {
-          const id = await this.upsertTagRow(client, identity, slug, normalizeTagLabel(input), {});
+          const id = await this.upsertTagRow(client, identity, slug, normalizeTagLabel(input), null);
           tag = { id, slug };
         }
         await this.insertAssignment(client, identity, tag.id, entityType, entityId, entityTitle, "legacy_array");
@@ -502,12 +479,6 @@ export class TagService {
          DO UPDATE SET object_title = EXCLUDED.object_title, updated_at = NOW()`,
         [target.id, source.id, identity.accountId, identity.userId],
       );
-      const sourceAliases = await client.query<{ alias: string }>(
-        `SELECT alias FROM tag_aliases WHERE tag_id = $1 AND account_id = $2`,
-        [source.id, identity.accountId],
-      );
-      const aliases = [source.slug, ...sourceAliases.rows.map(row => row.alias)];
-      for (const alias of aliases) await this.insertAlias(client, identity, target.id, target.slug, alias);
       await client.query(`DELETE FROM tags WHERE id = $1 AND account_id = $2 AND owner_user_id = $3`, [
         source.id,
         identity.accountId,
@@ -561,8 +532,6 @@ export class TagService {
   private async assertIdentityAvailable(client: PoolClient, accountId: string, slug: string, tagId?: string): Promise<void> {
     const collision = await client.query(
       `SELECT 1 FROM tags WHERE account_id = $1 AND slug = $2 AND ($3::uuid IS NULL OR id <> $3::uuid)
-       UNION ALL
-       SELECT 1 FROM tag_aliases WHERE account_id = $1 AND normalized_alias = $2 AND ($3::uuid IS NULL OR tag_id <> $3::uuid)
        LIMIT 1`,
       [accountId, slug, tagId || null],
     );
@@ -574,7 +543,7 @@ export class TagService {
     identity: ScopedIdentity,
     slug: string,
     label: string,
-    input: Pick<CreateTagInput, "description" | "color">,
+    color: string | null = null,
     allowExisting = true,
   ): Promise<string> {
     if (allowExisting) {
@@ -583,9 +552,9 @@ export class TagService {
     }
     const result = await client.query<{ id: string }>(
       `INSERT INTO tags(account_id, owner_user_id, created_by_user_id, scope, slug, label, description, color)
-       VALUES ($1, $2, $2, 'user', $3, $4, $5, $6)
+       VALUES ($1, $2, $2, 'user', $3, $4, '', $5)
        RETURNING id`,
-      [identity.accountId, identity.userId, slug, label, input.description || "", input.color || null],
+      [identity.accountId, identity.userId, slug, label, color || null],
     );
     return result.rows[0].id;
   }
@@ -599,48 +568,11 @@ export class TagService {
     if (!normalized) return null;
     const result = await client.query<{ id: string; slug: string }>(
       `SELECT t.id, t.slug FROM tags t
-       WHERE t.account_id = $1 AND t.owner_user_id = $2
-         AND (t.slug = $3 OR EXISTS (
-           SELECT 1 FROM tag_aliases a
-           WHERE a.tag_id = t.id AND a.account_id = t.account_id AND a.normalized_alias = $3
-         ))
+       WHERE t.account_id = $1 AND t.owner_user_id = $2 AND t.slug = $3
        LIMIT 1`,
       [identity.accountId, identity.userId, normalized],
     );
     return result.rows[0] || null;
-  }
-
-  private async replaceAliases(
-    client: PoolClient,
-    identity: ScopedIdentity,
-    tagId: string,
-    tagSlug: string,
-    aliases: string[],
-  ): Promise<void> {
-    await client.query(`DELETE FROM tag_aliases WHERE tag_id = $1 AND account_id = $2 AND owner_user_id = $3`, [
-      tagId,
-      identity.accountId,
-      identity.userId,
-    ]);
-    for (const alias of aliases) await this.insertAlias(client, identity, tagId, tagSlug, alias);
-  }
-
-  private async insertAlias(
-    client: PoolClient,
-    identity: ScopedIdentity,
-    tagId: string,
-    tagSlug: string,
-    alias: string,
-  ): Promise<void> {
-    const normalized = normalizeTagSlug(alias);
-    if (!normalized || normalized === tagSlug) return;
-    await this.assertIdentityAvailable(client, identity.accountId, normalized, tagId);
-    await client.query(
-      `INSERT INTO tag_aliases(tag_id, account_id, owner_user_id, created_by_user_id, scope, alias, normalized_alias)
-       VALUES ($1, $2, $3, $3, 'user', $4, $5)
-       ON CONFLICT (account_id, normalized_alias) DO UPDATE SET alias = EXCLUDED.alias`,
-      [tagId, identity.accountId, identity.userId, normalizeTagLabel(alias), normalized],
-    );
   }
 
   private async insertAssignment(
@@ -665,12 +597,10 @@ export class TagService {
 
   private async fetchTagRow(client: PoolClient, identity: ScopedIdentity, tagId: string): Promise<TagRow> {
     const result = await client.query<TagRow>(
-      `SELECT t.id, t.slug, t.label, t.description, t.color, t.created_at, t.updated_at,
-              COUNT(DISTINCT a.id)::int AS usage_count,
-              COALESCE(array_agg(DISTINCT al.alias) FILTER (WHERE al.id IS NOT NULL), '{}') AS aliases
+      `SELECT t.id, t.slug, t.label, t.color, t.created_at, t.updated_at,
+              COUNT(DISTINCT a.id)::int AS usage_count
        FROM tags t
        LEFT JOIN tag_assignments a ON a.tag_id = t.id AND a.account_id = t.account_id
-       LEFT JOIN tag_aliases al ON al.tag_id = t.id AND al.account_id = t.account_id
        WHERE t.id = $1 AND t.account_id = $2 AND t.owner_user_id = $3
        GROUP BY t.id`,
       [tagId, identity.accountId, identity.userId],

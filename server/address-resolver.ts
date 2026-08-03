@@ -184,7 +184,7 @@ const adapters: AddressResolverAdapter[] = [
       if (!tag) return null;
       return [requestedAddress(ref), resolved(ref, {
         label: tag.label,
-        summary: tag.description || `${tag.usages.length} ${tag.usages.length === 1 ? "usage" : "usages"}`,
+        summary: `${tag.usages.length} ${tag.usages.length === 1 ? "usage" : "usages"}`,
         route: `/tags/${encodeURIComponent(tag.slug)}`,
         updatedAt: tag.updatedAt,
         canonicalId: tag.slug,
