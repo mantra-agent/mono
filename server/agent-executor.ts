@@ -56,6 +56,8 @@ export interface ContentBlock {
 }
 
 import type { ToolDefinition } from "@shared/models/tools";
+import type { ToolFailure } from "./tool-failure";
+import { ToolOperationRecovery } from "./tool-operation-recovery";
 export type { ToolDefinition };
 
 export type ToolContinuation = "persona_switch" | "tool_schema_refresh" | "await_user" | "provider_system_tool" | "working_set_refresh";
@@ -67,6 +69,8 @@ export type ToolExecutorResult = {
   /** Optional ephemeral result returned only to the provider's current working set. */
   providerResult?: string;
   error?: boolean;
+  /** Structured source classification consumed by run-scoped recovery policy. */
+  failure?: ToolFailure;
   outcome?: ToolOutcome;
   sideEffectOnly?: boolean;
   continuation?: ToolContinuation;
@@ -818,6 +822,8 @@ interface RunIterationContext {
   // between stream-end and tool dispatch). Edge-triggered; one warn line
   // per call when delta > DISPATCH_GAP_WARN_MS. No polling, no interval.
   toolUseReceivedAt: Map<string, number>;
+  /** One recovery ledger for the complete run; never reset between model iterations. */
+  operationRecovery: ToolOperationRecovery;
   diagnosticLastStep?: "model_response" | "tool_batch" | "terminal";
   diagnosticLastModelStopReason?: string;
   diagnosticLastAssistantTextLength: number;
@@ -1576,6 +1582,20 @@ export class AgentExecutor extends EventEmitter {
     }
   }
 
+  private async executeToolWithRecovery(
+    ctx: RunIterationContext,
+    name: string,
+    args: Record<string, unknown>,
+    execute: () => Promise<ToolExecutorResult>,
+  ): Promise<ToolExecutorResult> {
+    const normalizedName = normalizeMcpToolName(name) || name;
+    const result = await ctx.operationRecovery.execute(ctx.runId, normalizedName, args, execute);
+    if (result.failure?.code === "scratch_edit_read_required" || result.failure?.code === "scratch_edit_quarantined") {
+      log.warn(`[ToolRecovery] blocked runId=${ctx.runId} tool=${name} code=${result.failure.code} resource=${result.failure.resourceKey}`);
+    }
+    return result;
+  }
+
   private async executeToolCalls(
     toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }>,
     ctx: RunIterationContext,
@@ -1733,15 +1753,16 @@ export class AgentExecutor extends EventEmitter {
       log.verbose(() => `Tool "${tc.name}" starting id=${tc.id} inputKeys=${Object.keys(tc.input).join(",") || "none"} runId=${ctx.runId}`);
       let toolResult: ToolExecutorResult;
       try {
-        if (toolTransfersExecutionToChild(tc.name, tc.input)) {
-          if (options.capacityOwner?.kind === "runtime") {
-            throw new Error("Native Runtime handlers cannot transfer execution into a nested scheduler");
+        toolResult = await this.executeToolWithRecovery(ctx, tc.name, tc.input, async () => {
+          if (toolTransfersExecutionToChild(tc.name, tc.input)) {
+            if (options.capacityOwner?.kind === "runtime") {
+              throw new Error("Native Runtime handlers cannot transfer execution into a nested scheduler");
+            }
+            const { admissionController } = await import("./run-admission");
+            return admissionController.withSuspendedSlot(ctx.runId, () => options.toolExecutor!(tc.name, tc.input));
           }
-          const { admissionController } = await import("./run-admission");
-          toolResult = await admissionController.withSuspendedSlot(ctx.runId, () => options.toolExecutor!(tc.name, tc.input));
-        } else {
-          toolResult = await options.toolExecutor!(tc.name, tc.input);
-        }
+          return options.toolExecutor!(tc.name, tc.input);
+        });
       } catch (err: unknown) {
         toolResult = {
           result: `Tool execution error: ${err instanceof Error ? err.message : String(err)}`,
@@ -2321,6 +2342,7 @@ export class AgentExecutor extends EventEmitter {
       activeToolUseSteps: new Map(),
       activeSystemSpans: new Map(),
       toolUseReceivedAt: new Map(),
+      operationRecovery: new ToolOperationRecovery(),
       diagnosticLastAssistantTextLength: 0,
       diagnosticHadToolErrors: false,
       diagnosticFailedToolCount: 0,
@@ -2623,9 +2645,11 @@ export class AgentExecutor extends EventEmitter {
             if (toolTransfersExecutionToChild(name, args) && options.capacityOwner?.kind === "runtime") {
               throw new Error("Native Runtime handlers cannot transfer execution into a nested scheduler");
             }
-            const result = toolTransfersExecutionToChild(name, args)
-              ? await (await import("./run-admission")).admissionController.withSuspendedSlot(ctx.runId, execute)
-              : await execute();
+            const result = await this.executeToolWithRecovery(ctx, name, args, async () => (
+              toolTransfersExecutionToChild(name, args)
+                ? (await import("./run-admission")).admissionController.withSuspendedSlot(ctx.runId, execute)
+                : execute()
+            ));
             const callId = toolContext?.toolCallId || generateToolCallId();
             const canonicalArgs = result.normalizedArguments ?? args;
             const immediateProjection = await projectImmediateToolResult({

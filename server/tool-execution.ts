@@ -9,6 +9,7 @@
  * calls return cached results with a log warning.
  */
 import { createLogger } from "./log";
+import type { ToolExecutorResult } from "./agent-executor";
 
 const log = createLogger("ToolExec");
 
@@ -25,13 +26,7 @@ export interface ToolExecutionContext {
   uiNarrationState?: import("@shared/ui-interaction").UiInteractionNarrationState;
 }
 
-export interface ToolResult {
-  result: string;
-  error?: boolean;
-  sideEffectOnly?: boolean;
-  continuation?: import("./agent-executor").ToolContinuation;
-  normalizedArguments?: Record<string, unknown>;
-}
+export type ToolResult = ToolExecutorResult;
 
 export type ToolMiddleware = (
   name: string,
@@ -53,7 +48,7 @@ export function createToolExecutor(
   middlewares: ToolMiddleware[],
   ctx: ToolExecutionContext,
 ): (name: string, args: Record<string, unknown>) => Promise<ToolResult> {
-  // Idempotency cache scoped to this executor instance (run lifetime)
+  // Idempotency state is scoped to this executor instance.
   const idempotencyCache = new Map<string, ToolResult>();
 
   return async (name: string, args: Record<string, unknown>): Promise<ToolResult> => {
@@ -65,7 +60,7 @@ export function createToolExecutor(
     const frozenArgs = Object.freeze({ ...args });
     args = frozenArgs;
 
-    // Idempotency check (if we have a call ID)
+    // A repeated call ID must always observe its original outcome.
     if (callId) {
       const cacheKey = `${ctx.runId}:${callId}`;
       const cached = idempotencyCache.get(cacheKey);
