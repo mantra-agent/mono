@@ -999,6 +999,20 @@ export const googleOAuthTransactions = pgTable("google_oauth_transactions", {
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [index("idx_google_oauth_transactions_expires").on(table.expiresAt)]);
 
+/** Durable PKCE state for OpenAI/Grok subscription OAuth (multi-instance safe). */
+export const subscriptionOAuthTransactions = pgTable("subscription_oauth_transactions", {
+  stateHash: text("state_hash").primaryKey(),
+  provider: text("provider").notNull(),
+  codeVerifier: text("code_verifier").notNull(),
+  redirectUri: text("redirect_uri").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_subscription_oauth_transactions_expires").on(table.expiresAt),
+  index("idx_subscription_oauth_transactions_provider").on(table.provider),
+]);
+
 export const insertConnectedAccountSchema = createInsertSchema(connectedAccounts).omit({
   id: true,
   updatedAt: true,

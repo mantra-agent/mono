@@ -48,7 +48,8 @@ export async function listVisibleConnectedAccounts(provider?: string): Promise<C
     predicates.push(inArray(connectedAccounts.vaultId, principal.visibleVaultIds));
   }
   const domain = predicates.filter(Boolean) as ReturnType<typeof eq>[];
-  return db.select().from(connectedAccounts).where(combineWithSensitiveVisible({ ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId }, domain.length ? and(...domain) : undefined, principal));
+  const rows = await db.select().from(connectedAccounts).where(combineWithSensitiveVisible({ ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId }, domain.length ? and(...domain) : undefined, principal));
+  return rows.filter((row) => !isSystemSubscriptionAccount(row.accountId));
 }
 
 export async function getVisibleConnectedAccount(accountId: string): Promise<ConnectedAccount | null> {
@@ -71,10 +72,23 @@ export async function createConnectedAccountInVault(data: Parameters<typeof crea
   return createAccount({ ...data, vaultId });
 }
 
+/** System-owned subscription connectors — not user-facing connected accounts. */
+const SYSTEM_SUBSCRIPTION_ACCOUNT_IDS = new Set([
+  "openai-subscription-primary",
+  "grok-subscription-primary",
+]);
+
+export function isSystemSubscriptionAccount(accountId: string): boolean {
+  return SYSTEM_SUBSCRIPTION_ACCOUNT_IDS.has(accountId);
+}
+
 export async function listAccounts(provider?: string): Promise<ConnectedAccount[]> {
   const principal = getCurrentPrincipalOrSystem();
   const predicate = combineWithSensitiveVisible({ ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId }, provider ? eq(connectedAccounts.provider, provider) : undefined, principal);
-  return db.select().from(connectedAccounts).where(predicate);
+  const rows = await db.select().from(connectedAccounts).where(predicate);
+  // Hide system subscription principals from user-facing account lists.
+  // Routing still reaches them via getAccount(accountId) under a named system principal.
+  return rows.filter((row) => !isSystemSubscriptionAccount(row.accountId));
 }
 
 export async function getAccount(accountId: string): Promise<ConnectedAccount | null> {
