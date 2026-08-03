@@ -3,6 +3,7 @@ import { and, asc, count, eq, gt, inArray, like, or, sql } from "drizzle-orm";
 import { extractPositionedReferences } from "@shared/reference-parser";
 import { normalizeProtocolAddress, REFERENCE_OCCURRENCE_SOURCE_LIMIT } from "@shared/life-addressing";
 import { libraryPageLinks, libraryPages, type LibraryPage } from "@shared/models/info";
+import { isValidReferenceIdentifier } from "@shared/references";
 import { referenceOccurrences, referenceOccurrenceSources } from "@shared/schema";
 import { db } from "./db";
 import { replaceReferenceOccurrences } from "./life-addressing-storage";
@@ -41,6 +42,8 @@ export const LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT = 5_000;
 const LIBRARY_REFERENCE_BACKGROUND_BATCH_LIMIT = 25;
 const LIBRARY_REFERENCE_BACKGROUND_COOLDOWN_MS = 60_000;
 const LIBRARY_REFERENCE_BACKGROUND_STATE_TTL_MS = 10 * 60_000;
+/** Mirrors shared/references.ts page UUID identifierPattern for SQL-side filtering. */
+const LIBRARY_PAGE_ADDRESSABLE_ID_SQL = "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
 
 const backgroundReplayByPrincipal = new Map<string, { running: boolean; lastScheduledAt: number; cursor?: string }>();
 
@@ -56,6 +59,19 @@ function requireUserPrincipal(principal: Principal): asserts principal is Princi
 
 function pageAddress(pageId: string): string {
   return `@page:${pageId}`;
+}
+
+/** Only UUID page IDs can be `@page` protocol sources. Deterministic meeting anchors use non-UUID IDs. */
+function isAddressableLibraryPageId(pageId: string): boolean {
+  return isValidReferenceIdentifier("page", pageId);
+}
+
+function libraryPageIsAddressableSource() {
+  return sql`${libraryPages.id} ~* ${LIBRARY_PAGE_ADDRESSABLE_ID_SQL}`;
+}
+
+function liveAddressableLibraryPages() {
+  return and(libraryPageIsLive(), libraryPageIsAddressableSource());
 }
 
 function revisionForContent(content: string): string {
@@ -95,6 +111,16 @@ export async function indexLibraryPageReferences(
   page: Pick<LibraryPage, "id" | "plainTextContent" | "updatedAt">,
 ): Promise<LibraryReferenceIndexResult> {
   requireUserPrincipal(principal);
+  if (!isAddressableLibraryPageId(page.id)) {
+    log.debug("Skipped non-addressable Library page source", { pageId: page.id });
+    return {
+      pageId: page.id,
+      outcome: "unchanged",
+      occurrenceCount: 0,
+      unresolvedCount: 0,
+      compatibilitySynced: false,
+    };
+  }
   const positioned = extractPositionedReferences(page.plainTextContent, { includeUnknownTypes: true });
   if (positioned.length > REFERENCE_OCCURRENCE_SOURCE_LIMIT) {
     throw Object.assign(new Error(`Library page contains too many references (max ${REFERENCE_OCCURRENCE_SOURCE_LIMIT})`), { status: 400 });
@@ -270,7 +296,7 @@ export async function getLibraryCorpusOccurrenceEdges(
       .where(combineWithVisibleScope(
         principal,
         pageScope,
-        and(libraryPageIsLive(), unprojectedPagePredicate(principal)),
+        and(liveAddressableLibraryPages(), unprojectedPagePredicate(principal)),
       )),
   ]);
   const aggregated = new Map<string, LibraryCorpusOccurrenceEdge>();
@@ -428,7 +454,7 @@ async function replayUnprojectedLibraryReferences(
 ): Promise<LibraryReferenceBackfillResult> {
   requireUserPrincipal(principal);
   const missingPredicate = and(
-    libraryPageIsLive(),
+    liveAddressableLibraryPages(),
     unprojectedPagePredicate(principal),
     cursor ? gt(libraryPages.id, cursor) : undefined,
   );
@@ -448,7 +474,7 @@ async function replayUnprojectedLibraryReferences(
       plainTextContent: libraryPages.plainTextContent,
       updatedAt: libraryPages.updatedAt,
     }).from(libraryPages)
-      .where(combineWithVisibleScope(principal, pageScope, and(libraryPageIsLive(), unprojectedPagePredicate(principal))))
+      .where(combineWithVisibleScope(principal, pageScope, and(liveAddressableLibraryPages(), unprojectedPagePredicate(principal))))
       .orderBy(asc(libraryPages.id))
       .limit(LIBRARY_REFERENCE_BACKGROUND_BATCH_LIMIT);
   }
@@ -469,7 +495,7 @@ async function replayUnprojectedLibraryReferences(
   }
   const [totals, projected] = await Promise.all([
     db.select({ value: count() }).from(libraryPages)
-      .where(combineWithVisibleScope(principal, pageScope, libraryPageIsLive())),
+      .where(combineWithVisibleScope(principal, pageScope, liveAddressableLibraryPages())),
     db.select({ value: count() }).from(referenceOccurrenceSources)
       .where(combineWithVisibleScope(principal, occurrenceSourceScope, like(referenceOccurrenceSources.sourceAddress, "@page:%"))),
   ]);
@@ -547,7 +573,7 @@ export async function backfillLibraryReferences(
 ): Promise<LibraryReferenceBackfillResult> {
   requireUserPrincipal(principal);
   const limit = Math.min(Math.max(Math.trunc(input.limit ?? LIBRARY_REFERENCE_BACKFILL_LIMIT), 1), LIBRARY_REFERENCE_BACKFILL_LIMIT);
-  const pagePredicate = and(libraryPageIsLive(), input.cursor ? gt(libraryPages.id, input.cursor) : undefined);
+  const pagePredicate = and(liveAddressableLibraryPages(), input.cursor ? gt(libraryPages.id, input.cursor) : undefined);
   const pages = await db.select({ id: libraryPages.id, plainTextContent: libraryPages.plainTextContent, updatedAt: libraryPages.updatedAt })
     .from(libraryPages)
     .where(combineWithVisibleScope(principal, pageScope, pagePredicate))
@@ -570,7 +596,7 @@ export async function backfillLibraryReferences(
   }
 
   const [totals, projected, comparison] = await Promise.all([
-    db.select({ value: count() }).from(libraryPages).where(combineWithVisibleScope(principal, pageScope, libraryPageIsLive())),
+    db.select({ value: count() }).from(libraryPages).where(combineWithVisibleScope(principal, pageScope, liveAddressableLibraryPages())),
     db.select({ value: count() }).from(referenceOccurrenceSources).where(combineWithVisibleScope(principal, occurrenceSourceScope, like(referenceOccurrenceSources.sourceAddress, "@page:%"))),
     getLibraryReferenceNeighborhood(principal, batch.map(page => page.id)),
   ]);
