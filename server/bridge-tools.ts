@@ -29,6 +29,7 @@ import {
   permissionFailure,
   type ToolFailure,
 } from "./tool-failure";
+import { extractToolFailureKind } from "@shared/tool-failure";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
@@ -16902,16 +16903,8 @@ export async function executeTool(
   try {
     const outcome = await handler(enrichedArgs);
     const durationMs = Date.now() - startTime;
-    const outcomeFailureKind =
-      outcome && typeof outcome === "object"
-        ? typeof (outcome as { failureKind?: unknown }).failureKind === "string"
-          ? ((outcome as { failureKind: string }).failureKind)
-          : outcome.error &&
-              typeof outcome.error === "object" &&
-              typeof (outcome.error as { failureKind?: unknown }).failureKind === "string"
-            ? ((outcome.error as { failureKind: string }).failureKind)
-            : null
-        : null;
+    // Handlers emit ToolFailure on `failure.kind`; accept flattened failureKind too.
+    const outcomeFailureKind = extractToolFailureKind(outcome);
     recordToolCallEnd(toolCallId, !!outcome.error, outcomeFailureKind);
     _wwTrackEnd?.(toolCallId);
     const sideEffectOnly = !outcome.error && isSideEffectOnly(resolvedName, normalizedArgs);
@@ -16937,10 +16930,9 @@ ${outcome.result}`
     return { ...outcome, result: resultWithPrelude, sideEffectOnly, durationMs };
   } catch (err: any) {
     const durationMs = Date.now() - startTime;
+    const thrownFailure = toolFailureFromError(err);
     const thrownFailureKind =
-      err && typeof err === "object" && typeof err.failureKind === "string"
-        ? err.failureKind
-        : null;
+      thrownFailure?.kind ?? extractToolFailureKind(err);
     recordToolCallEnd(toolCallId, true, thrownFailureKind);
     _wwTrackEnd?.(toolCallId);
     toolExec.error(`complete tool=${toolName} callId=${toolCallId} duration=${durationMs}ms error=true exception=${err.message}`);
@@ -16948,6 +16940,7 @@ ${outcome.result}`
       result: `Tool execution error: ${err.message}`,
       error: true,
       durationMs,
+      ...(thrownFailure ? { failure: thrownFailure } : {}),
       ...(thrownFailureKind ? { failureKind: thrownFailureKind } : {}),
     };
   }
