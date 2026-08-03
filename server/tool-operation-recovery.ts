@@ -72,7 +72,7 @@ function blockedRepeatMessage(toolName: string, failure: ToolFailure): string {
   return `The ${toolName} operation was not retried because the same non-retryable ${failure.kind} failure (${failure.code}) is already quarantined for this run.`;
 }
 
-function isScratchConflict(failure: ToolFailure | undefined): failure is ToolFailure {
+function isScratchConflict(failure: ToolFailure | null | undefined): failure is ToolFailure {
   return failure?.code === "scratch_edit_not_found" || failure?.code === "scratch_edit_ambiguous";
 }
 
@@ -113,23 +113,7 @@ export class ToolOperationRecovery {
       }
 
       const result = await execute();
-      if (!result.error || !isDeterministicToolFailure(result.failure)) {
-        return { ...result, recoveryDecision: "none" };
-      }
-
-      const fingerprint = operationFingerprint(toolName, args, result.failure);
-      const existing = this.quarantinedOperations.get(fingerprint);
-      if (existing) {
-        return {
-          result: blockedRepeatMessage(toolName, existing),
-          error: true,
-          failure: existing,
-          recoveryDecision: "quarantined",
-        };
-      }
-
-      this.setBounded(this.quarantinedOperations, fingerprint, result.failure);
-      return { ...result, recoveryDecision: "quarantined" };
+      return this.classifyDeterministicFailure(toolName, args, result);
     });
   }
 
@@ -141,12 +125,7 @@ export class ToolOperationRecovery {
     const target = scratchTargetIdentity(args);
     const result = await execute();
     if (!target || !result.error || !isScratchConflict(result.failure)) {
-      if (result.error && isDeterministicToolFailure(result.failure)) {
-        const fingerprint = operationFingerprint("scratch", args, result.failure);
-        this.setBounded(this.quarantinedOperations, fingerprint, result.failure);
-        return { ...result, recoveryDecision: "quarantined" };
-      }
-      return { ...result, recoveryDecision: "none" };
+      return this.classifyDeterministicFailure("scratch", args, result);
     }
 
     const key = `${runId}:${target}`;
@@ -193,6 +172,45 @@ export class ToolOperationRecovery {
       failure: result.failure,
       recoveryDecision: "quarantined",
     };
+  }
+
+  /**
+   * First-hit vs exact-repeat classification for deterministic tool failures.
+   *
+   * - Exact repeat of a remembered fingerprint → quarantine (circuit breaker).
+   * - First observation of a permission failure → quarantine immediately
+   *   (rewriting args cannot restore authority inside this run).
+   * - First observation of an input failure → surface as a normal tool error
+   *   and remember the fingerprint so an identical retry quarantines.
+   *
+   * This is the over-correction fix: shell allowlist denials, missing IDs, and
+   * similar correctable input mistakes must not stop the whole run on first hit.
+   */
+  private classifyDeterministicFailure(
+    toolName: string,
+    args: Record<string, unknown>,
+    result: RecoverableToolResult,
+  ): RecoverableToolResult {
+    if (!result.error || !isDeterministicToolFailure(result.failure) || !result.failure) {
+      return { ...result, recoveryDecision: "none" };
+    }
+
+    const fingerprint = operationFingerprint(toolName, args, result.failure);
+    const existing = this.quarantinedOperations.get(fingerprint);
+    if (existing) {
+      return {
+        result: blockedRepeatMessage(toolName, existing),
+        error: true,
+        failure: existing,
+        recoveryDecision: "quarantined",
+      };
+    }
+
+    this.setBounded(this.quarantinedOperations, fingerprint, result.failure);
+    if (result.failure.kind === "permission") {
+      return { ...result, recoveryDecision: "quarantined" };
+    }
+    return { ...result, recoveryDecision: "none" };
   }
 
   private recordScratchRead(runId: string, args: Record<string, unknown>): void {

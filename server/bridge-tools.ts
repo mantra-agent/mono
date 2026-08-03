@@ -13079,7 +13079,7 @@ const systemTools: Record<string, ToolHandler> = {
       return {
         result: `Shell command blocked by deterministic allowlist: ${shellPolicy.reason}`,
         error: true,
-        failure: permissionFailure("shell_policy_denied", shellPolicy.reason),
+        failure: inputFailure("shell_policy_denied", shellPolicy.reason),
       };
     }
 
@@ -13093,7 +13093,7 @@ const systemTools: Record<string, ToolHandler> = {
       return {
         result: `Shell command blocked: matches destructive-command denylist. Command requires explicit human confirmation before execution.`,
         error: true,
-        failure: permissionFailure("shell_policy_denied", "destructive_pattern"),
+        failure: inputFailure("shell_policy_denied", "destructive_pattern"),
       };
     }
 
@@ -13109,7 +13109,7 @@ const systemTools: Record<string, ToolHandler> = {
       return {
         result: "Shell git write commands are blocked. Use the git MCP tool for write operations (clone, add, commit, push, create_pr, merge_pr) — it handles authentication and directory isolation. Shell git is allowed for read operations: status, log, diff, show, branch, remote, rev-parse, grep.",
         error: true,
-        failure: permissionFailure("shell_policy_denied", "git_write_blocked"),
+        failure: inputFailure("shell_policy_denied", "git_write_blocked"),
       };
     }
 
@@ -16797,15 +16797,19 @@ export async function executeTool(
     recordToolCallEnd(toolCallId, !!outcome.error);
     _wwTrackEnd?.(toolCallId);
     const sideEffectOnly = !outcome.error && isSideEffectOnly(resolvedName, normalizedArgs);
-    const resultWithPrelude = codingContextPrelude
-      ? `${codingContextPrelude}
+    // Preflight equips successful engineering work with AGENTS/CODING context.
+    // Never bury a tool error under thousands of instruction tokens — that
+    // hides the failure the model must correct and drives over-correction.
+    const resultWithPrelude =
+      codingContextPrelude && !outcome.error
+        ? `${codingContextPrelude}
 
 ---
 
 # Tool Result
 
 ${outcome.result}`
-      : outcome.result;
+        : outcome.result;
     // Fast non-error completions are verbose; slow (>=5s) or errored are info
     if (!outcome.error && durationMs < 5000) {
       toolExec.verbose(() => `complete tool=${toolName} callId=${toolCallId} duration=${durationMs}ms sideEffectOnly=${sideEffectOnly} resultLen=${resultWithPrelude?.length}`);
