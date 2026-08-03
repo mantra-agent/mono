@@ -527,9 +527,23 @@ export async function migrateDecisionsSchema(): Promise<void> {
     `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'user'`,
     `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS owner_user_id text`,
     `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS account_id text`,
+    // Judgment provenance (mirrors migrations/0119_judgment_provenance.sql; this repo has no
+    // SQL migration runner, so these columns must self-heal here on boot).
+    `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS owner_person_id text`,
+    `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS source_session_id text`,
+    `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS source_tool_call_id text`,
+    `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS answer_payload jsonb`,
+    `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS reasoning text`,
+    `ALTER TABLE decisions ADD COLUMN IF NOT EXISTS resolved_at timestamp with time zone`,
     `CREATE INDEX IF NOT EXISTS idx_decisions_status ON decisions(status)`,
     `CREATE INDEX IF NOT EXISTS idx_decisions_scope_owner ON decisions(scope, owner_user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_decisions_account ON decisions(account_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_decisions_owner_person ON decisions(owner_person_id)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uniq_decisions_question_replay
+       ON decisions(account_id, source_session_id, source_tool_call_id)
+       WHERE account_id IS NOT NULL
+         AND source_session_id IS NOT NULL
+         AND source_tool_call_id IS NOT NULL`,
     `CREATE TABLE IF NOT EXISTS decision_updates (
        id text PRIMARY KEY DEFAULT gen_random_uuid(),
        decision_id text NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
