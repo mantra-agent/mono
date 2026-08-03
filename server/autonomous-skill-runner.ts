@@ -486,7 +486,7 @@ async function getSkillTools(
       sessionId,
       authority,
     });
-    return { result: result.result, error: result.error, sideEffectOnly: result.sideEffectOnly, continuation: result.continuation };
+    return { result: result.result, error: result.error, failure: result.failure, sideEffectOnly: result.sideEffectOnly, continuation: result.continuation };
   };
 
   return { tools, toolExecutor: toolExecutor as any };

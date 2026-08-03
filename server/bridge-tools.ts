@@ -21,6 +21,7 @@ import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors"
 import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
+import { scratchEditFailure, type ToolFailure } from "./tool-failure";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
@@ -87,24 +88,21 @@ export interface BridgeToolContext {
   authority?: import("./agent-authority").AgentAuthorityContext;
 }
 
-export interface ToolResult {
-  result: string;
-  error?: boolean;
-  sideEffectOnly?: boolean;
-  continuation?: import("./agent-executor").ToolContinuation;
-  normalizedArguments?: Record<string, unknown>;
+export interface ToolResult extends import("./agent-executor").ToolExecutorResult {
   durationMs: number;
 }
 
 export type ToolHandler = (args: Record<string, any>) => Promise<{
   result: string;
   error?: boolean;
+  failure?: ToolFailure;
   continuation?: import("./agent-executor").ToolContinuation;
   normalizedArguments?: Record<string, unknown>;
 }>;
 type ToolHandlerResult = {
   result: string;
   error?: boolean;
+  failure?: ToolFailure;
   data?: Record<string, unknown>;
   continuation?: import("./agent-executor").ToolContinuation;
 };
@@ -12211,12 +12209,12 @@ export async function executeBridgeTool(
   toolCallId: string,
   args: Record<string, any>,
   context?: BridgeToolContext,
-): Promise<{ result: string; error?: boolean; data?: Record<string, unknown> }> {
+): Promise<{ result: string; error?: boolean; data?: Record<string, unknown>; failure?: ToolFailure }> {
   const result = await executeTool(toolName, toolCallId, args, context);
   // Propagate the optional structured `data` payload (e.g. park_idea
   // returns { parked: true, id }) so consumers of executeBridgeTool can
   // do machine-readable handling instead of parsing the result string.
-  return { result: result.result, error: result.error, data: result.data };
+  return { result: result.result, error: result.error, data: result.data, failure: result.failure };
 }
 
 async function resolveScratchWritePath(filePath: string, sessionId: unknown): Promise<string | null> {
@@ -12313,12 +12311,20 @@ const workspaceTools: Record<string, ToolHandler> = {
       const occurrences = content.split(oldString).length - 1;
 
       if (occurrences === 0) {
-        return { result: `old_string not found in ${filePath}`, error: true };
+        return {
+          result: `old_string not found in ${filePath}`,
+          error: true,
+          failure: scratchEditFailure("scratch_edit_not_found", resolved),
+        };
       }
 
       const replaceAll = args.replace_all === true;
       if (occurrences > 1 && !replaceAll) {
-        return { result: `old_string found ${occurrences} times in ${filePath}. Use replace_all: true to replace all, or provide more context to make it unique.`, error: true };
+        return {
+          result: `old_string found ${occurrences} times in ${filePath}. Use replace_all: true to replace all, or provide more context to make it unique.`,
+          error: true,
+          failure: scratchEditFailure("scratch_edit_ambiguous", resolved),
+        };
       }
 
       const updated = replaceAll ? content.split(oldString).join(newString) : content.replace(oldString, newString);

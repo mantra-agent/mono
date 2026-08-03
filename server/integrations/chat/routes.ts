@@ -1975,6 +1975,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       return {
         result: toolResult.result,
         error: toolResult.error,
+        failure: toolResult.failure,
         sideEffectOnly: toolResult.sideEffectOnly,
         continuation: personaChanged ? "persona_switch" as const : toolResult.continuation,
       };
