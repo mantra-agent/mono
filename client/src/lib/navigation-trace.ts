@@ -201,6 +201,16 @@ function shouldTrackQuery(query: Query): boolean {
   return !firstKey.startsWith("/api/browser-telemetry");
 }
 
+/**
+ * True when this fetch is a genuine first load that should gate navigation
+ * readiness. Background refetches and interval pollers keep status "success"
+ * (or "error") while fetchStatus cycles through "fetching"; those must not
+ * hold the SPA navigation trace open until the 15s deadline.
+ */
+function isInitialLoadFetch(query: Query): boolean {
+  return query.state.status === "pending";
+}
+
 function observeQueries(): () => void {
   return queryClient.getQueryCache().subscribe((event) => {
     const trace = activeTrace;
@@ -208,7 +218,12 @@ function observeQueries(): () => void {
     if (!trace || !query || !shouldTrackQuery(query)) return;
     const queryHash = query.queryHash;
     if (query.state.fetchStatus === "fetching") {
-      if (!trace.trackedQueries.has(queryHash)) {
+      // Only genuine initial loads (no settled data yet) gate readiness.
+      // App-wide pollers (executor status, env activity, wellness, comms, …)
+      // refetch forever; tracking them made trackedQueries.size === 0 rare,
+      // forced outcome=deadline, and mis-attributed unrelated long tasks /
+      // slow frames as main_thread_contention while inflating peakQueries.
+      if (isInitialLoadFetch(query) && !trace.trackedQueries.has(queryHash)) {
         trace.trackedQueries.set(queryHash, now());
         trace.queryStartedCount += 1;
         trace.peakQueries = Math.max(trace.peakQueries, trace.trackedQueries.size);
