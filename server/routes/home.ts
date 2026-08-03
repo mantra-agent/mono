@@ -399,14 +399,18 @@ export function registerHomeRoutes(app: Express) {
       if (payload.kind === "build_deployment" && (!homeItemId || !buildProjectionId || homeItemId !== `build-deployment-${buildProjectionId}`)) {
         return res.status(400).json({ error: "Home item identity does not match Build deployment projection" });
       }
+      const isBuildDeploymentComplete =
+        (sourceType === "build" || sourceType === "artifact")
+        && payload.kind === "build_deployment"
+        && Boolean(req.principal);
       const result = sourceType === "wellness"
         ? await completeWellness(payload)
         : sourceType === "priority" || sourceType === "goal"
           ? await completePriority(payload)
           : sourceType === "task"
             ? await completeTask(payload)
-            : sourceType === "artifact" && payload.kind === "build_deployment" && req.principal
-              ? await completeBuildDeployment(req.principal, payload)
+            : isBuildDeploymentComplete
+              ? await completeBuildDeployment(req.principal!, payload)
               : null;
 
       if (!result) return res.status(400).json({ error: "Unsupported Home completion source" });
