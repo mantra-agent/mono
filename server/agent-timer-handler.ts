@@ -21,6 +21,7 @@ export class AgentTimerHandler implements TimerHandler {
     const { writeJournal } = await import("./chat-journal");
     const { recordToolCallStart, recordToolCallEnd } =
       await import("./file-storage/tool-stats");
+    const { extractToolFailureKind } = await import("@shared/tool-failure");
     type ExecutorMessageType = import("./agent-executor").ExecutorMessage;
     type StreamEventType = import("./agent-executor").StreamEvent;
 
@@ -177,9 +178,7 @@ export class AgentTimerHandler implements TimerHandler {
             recordToolCallEnd(
               String(event.toolCallId),
               !!event.isError,
-              typeof (event as any).failureKind === "string"
-                ? (event as any).failureKind
-                : null,
+              extractToolFailureKind(event),
             );
           break;
         }
