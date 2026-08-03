@@ -1,5 +1,6 @@
 // Use createLogger for logging ONLY
 import { Pool, Client, types as pgTypes } from "pg";
+import { createHash } from "crypto";
 
 // Treat `timestamp without time zone` (OID 1114) as UTC.
 // PostgreSQL stores UTC values but node-postgres interprets them as local time,
@@ -35,16 +36,72 @@ const SLOW_QUERY_THRESHOLD_MS = 1000;
 const HIGH_IN_FLIGHT_THRESHOLD = 10;
 const LONG_RUNNING_THRESHOLD_MS = 500;
 const LONG_RUNNING_MAX_ROWS = 20;
+const SLOW_QUERY_SQL_SNIPPET_CHARS = 220;
 
 const SLOW_QUERY_WINDOW_MS = 10 * 60 * 1000;
 const _slowQueryTimestamps: number[] = [];
 let _lastSlowQueryAt: number | null = null;
 let _lastSlowQueryDurationMs: number | null = null;
+let _lastSlowQueryFingerprint: string | null = null;
+let _lastSlowQuerySqlSnippet: string | null = null;
 
-function recordSlowQuery(durationMs: number): void {
+/** Extract SQL text from node-pg Pool.query argument shapes without touching bind values. */
+function extractQueryText(args: unknown[]): string | null {
+  const first = args[0];
+  if (typeof first === "string") return first;
+  if (first && typeof first === "object" && typeof (first as { text?: unknown }).text === "string") {
+    return (first as { text: string }).text;
+  }
+  return null;
+}
+
+/**
+ * Normalize SQL for grouping: drop comments/literals/params and collapse whitespace.
+ * Bind values are never included because node-pg keeps them separate from `text`.
+ */
+function normalizeSqlForFingerprint(sqlText: string): string {
+  return sqlText
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n\r]*/g, " ")
+    .replace(/'(?:''|[^'])*'/g, "?")
+    .replace(/\$\d+/g, "?")
+    .replace(/\b\d+(?:\.\d+)?\b/g, "?")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function fingerprintSql(sqlText: string): string {
+  const normalized = normalizeSqlForFingerprint(sqlText);
+  return createHash("sha256").update(normalized).digest("hex").slice(0, 12);
+}
+
+function sqlSnippetFromText(sqlText: string): string {
+  const compact = sqlText.replace(/\s+/g, " ").trim();
+  return safeTruncate(compact, SLOW_QUERY_SQL_SNIPPET_CHARS, "db.slowQuery.sql");
+}
+
+function describeQuerySql(args: unknown[]): {
+  queryFingerprint: string | null;
+  sqlSnippet: string | null;
+} {
+  const text = extractQueryText(args);
+  if (!text) return { queryFingerprint: null, sqlSnippet: null };
+  return {
+    queryFingerprint: fingerprintSql(text),
+    sqlSnippet: sqlSnippetFromText(text),
+  };
+}
+
+function recordSlowQuery(
+  durationMs: number,
+  meta?: { queryFingerprint?: string | null; sqlSnippet?: string | null },
+): void {
   const now = Date.now();
   _lastSlowQueryAt = now;
   _lastSlowQueryDurationMs = durationMs;
+  _lastSlowQueryFingerprint = meta?.queryFingerprint ?? null;
+  _lastSlowQuerySqlSnippet = meta?.sqlSnippet ?? null;
   _slowQueryTimestamps.push(now);
   const cutoff = now - SLOW_QUERY_WINDOW_MS;
   while (_slowQueryTimestamps.length > 0 && _slowQueryTimestamps[0] < cutoff) {
@@ -58,6 +115,8 @@ export function getSlowQueryStats(): {
   lastSlowAt: number | null;
   lastSlowDurationMs: number | null;
   thresholdMs: number;
+  lastQueryFingerprint: string | null;
+  lastSqlSnippet: string | null;
 } {
   const now = Date.now();
   const cutoff = now - SLOW_QUERY_WINDOW_MS;
@@ -76,6 +135,8 @@ export function getSlowQueryStats(): {
     lastSlowAt: _lastSlowQueryAt,
     lastSlowDurationMs: _lastSlowQueryDurationMs,
     thresholdMs: SLOW_QUERY_THRESHOLD_MS,
+    lastQueryFingerprint: _lastSlowQueryFingerprint,
+    lastSqlSnippet: _lastSlowQuerySqlSnippet,
   };
 }
 
@@ -511,6 +572,8 @@ interface InFlightEntry {
   subsystem: string;
   label: string | null;
   startedAt: number;
+  queryFingerprint: string | null;
+  sqlSnippet: string | null;
 }
 const _inFlightEntries = new Map<number, InFlightEntry>();
 let _inFlightSeq = 0;
@@ -647,14 +710,32 @@ export function getInFlightStats(): {
 
 export function getLongRunningQueries(thresholdMs = LONG_RUNNING_THRESHOLD_MS): {
   thresholdMs: number;
-  rows: Array<{ subsystem: string; label: string | null; ageMs: number }>;
+  rows: Array<{
+    subsystem: string;
+    label: string | null;
+    ageMs: number;
+    queryFingerprint: string | null;
+    sqlSnippet: string | null;
+  }>;
 } {
   const now = Date.now();
-  const rows: Array<{ subsystem: string; label: string | null; ageMs: number }> = [];
+  const rows: Array<{
+    subsystem: string;
+    label: string | null;
+    ageMs: number;
+    queryFingerprint: string | null;
+    sqlSnippet: string | null;
+  }> = [];
   for (const e of _inFlightEntries.values()) {
     const ageMs = now - e.startedAt;
     if (ageMs >= thresholdMs) {
-      rows.push({ subsystem: e.subsystem, label: e.label, ageMs });
+      rows.push({
+        subsystem: e.subsystem,
+        label: e.label,
+        ageMs,
+        queryFingerprint: e.queryFingerprint,
+        sqlSnippet: e.sqlSnippet,
+      });
     }
   }
   rows.sort((a, b) => b.ageMs - a.ageMs);
@@ -696,10 +777,22 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       else if (args[0] && typeof args[0].text === "string") args[0] = { ...args[0], text: `${tag} ${args[0].text}` };
     }
 
+    const { queryFingerprint, sqlSnippet } = describeQuerySql(args);
+    const sqlDiag =
+      (queryFingerprint ? ` fingerprint=${queryFingerprint}` : "") +
+      (sqlSnippet ? ` sql=${JSON.stringify(sqlSnippet)}` : "");
+
     inFlightQueries++;
     inFlightBySubsystem[subsystem] = (inFlightBySubsystem[subsystem] || 0) + 1;
     const entryId = ++_inFlightSeq;
-    _inFlightEntries.set(entryId, { id: entryId, subsystem, label: label ? `${lane}:${label}` : lane, startedAt: Date.now() });
+    _inFlightEntries.set(entryId, {
+      id: entryId,
+      subsystem,
+      label: label ? `${lane}:${label}` : lane,
+      startedAt: Date.now(),
+      queryFingerprint,
+      sqlSnippet,
+    });
     const start = Date.now();
 
     let result: any;
@@ -713,7 +806,7 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       const pgCode = getPostgresErrorCode(err);
       const errorType = err instanceof Error ? "Error" : typeof err;
       log.error(
-        `query contract failed after ${Date.now() - start}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts} errorType=${errorType}${pgCode ? ` code=${pgCode}` : ""}`,
+        `query contract failed after ${Date.now() - start}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}${sqlDiag} errorType=${errorType}${pgCode ? ` code=${pgCode}` : ""}`,
       );
       throw err;
     }
@@ -724,9 +817,11 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       _inFlightEntries.delete(entryId);
       const elapsed = Date.now() - start;
       if (elapsed > SLOW_QUERY_THRESHOLD_MS || failed) {
-        if (elapsed > SLOW_QUERY_THRESHOLD_MS) recordSlowQuery(elapsed);
+        if (elapsed > SLOW_QUERY_THRESHOLD_MS) {
+          recordSlowQuery(elapsed, { queryFingerprint, sqlSnippet });
+        }
         const counts = `${targetPool.totalCount}/${targetPool.idleCount}/${targetPool.waitingCount}`;
-        let message = `${failed ? "query contract failed" : "SLOW query"} after ${elapsed}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}`;
+        let message = `${failed ? "query contract failed" : "SLOW query"} after ${elapsed}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}${sqlDiag}`;
         if (failed && err !== undefined) {
           const pgCode = getPostgresErrorCode(err);
           const errorType = err instanceof Error ? "Error" : typeof err;
