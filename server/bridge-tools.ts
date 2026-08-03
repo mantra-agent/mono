@@ -16756,7 +16756,12 @@ export async function executeTool(
   if (!validation.valid) {
     const durationMs = Date.now() - startTime;
     toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=${validation.error}`);
-    return { result: validation.error!, error: true, durationMs };
+    return {
+      result: validation.error!,
+      error: true,
+      durationMs,
+      failure: inputFailure("tool_schema_invalid", validation.error),
+    };
   }
 
   toolExec.verbose(() => `dispatch tool=${toolName} callId=${toolCallId} argKeys=${Object.keys(normalizedArgs).join(",")}`);
