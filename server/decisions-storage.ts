@@ -196,7 +196,8 @@ export class DecisionsStorage {
           : undefined;
         const resolvedAt = input.resolvedAt ?? new Date();
         const status = input.status ?? "closed";
-        const decision = await this.createDecision({
+        // Insert in the ambient transaction — do not call createDecision (nested autoHeal/tx).
+        const [decision] = await tx.insert(decisions).values({
           title: input.title.trim(),
           description: input.description?.trim() ?? "",
           status,
@@ -207,30 +208,53 @@ export class DecisionsStorage {
           sourceToolCallId: input.sourceToolCallId ?? null,
           answerPayload: input.answerPayload ?? null,
           reasoning: input.reasoning?.trim() || null,
-        });
+          ...ownedInsertValues(principal, decisionScopeColumns),
+        }).returning();
+        await indexDecision(principal, decision);
+        log.info(JSON.stringify({
+          event: "decision.judgment.created",
+          decisionId: decision.id,
+          sourceSessionId: input.sourceSessionId ?? null,
+          sourceToolCallId: input.sourceToolCallId ?? null,
+          ownerPersonId: ownerPerson?.id ?? null,
+          principleCount: selectedPrinciples.length,
+          hasTriggeredBy: Boolean(input.triggeredByAddress),
+        }));
+
+        const sourceAddress = `@decision:${decision.id}`;
+        const sessionProvenance = input.sourceSessionId ? `@session:${input.sourceSessionId}` : undefined;
 
         if (ownerPerson) {
+          const targetAddress = `@person:${ownerPerson.id}`;
           await createAddressLink(principal, {
-            sourceAddress: `@decision:${decision.id}`,
-            targetAddress: `@person:${ownerPerson.id}`,
+            sourceAddress,
+            targetAddress,
             predicate: "decided_by",
-            provenanceAddress: input.sourceSessionId ? `@session:${input.sourceSessionId}` : undefined,
+            provenanceAddress: sessionProvenance,
+            createdBy: "decision.judgment",
+            idempotencyKey: `decision:${decision.id}:decided_by:${targetAddress}`,
           });
         }
         for (const principle of selectedPrinciples) {
+          // Address the governing revision directly; principle adapter resolves revision IDs.
+          const targetAddress = `@principle:${principle.currentRevisionId}`;
           await createAddressLink(principal, {
-            sourceAddress: `@decision:${decision.id}`,
-            targetAddress: `@principle:${principle.currentRevisionId}`,
+            sourceAddress,
+            targetAddress,
             predicate: "governed_by",
             provenanceAddress: `@principle:${principle.id}`,
+            createdBy: "decision.judgment",
+            idempotencyKey: `decision:${decision.id}:governed_by:${targetAddress}`,
           });
         }
         if (input.triggeredByAddress) {
           await createAddressLink(principal, {
-            sourceAddress: `@decision:${decision.id}`,
+            sourceAddress,
             targetAddress: input.triggeredByAddress,
             predicate: "triggered_by",
-            provenanceAddress: input.sourceSessionId ? `@session:${input.sourceSessionId}` : undefined,
+            provenanceAddress: sessionProvenance,
+            createdBy: "decision.judgment",
+            idempotencyKey: `decision:${decision.id}:triggered_by:${input.triggeredByAddress}`,
           });
         }
         return { decision, outcome: "created" as const };
