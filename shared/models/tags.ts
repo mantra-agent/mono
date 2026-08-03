@@ -24,6 +24,10 @@ export interface TagWithUsage extends Tag {
   usages: TagUsageEntry[];
 }
 
+export interface TagSearchResult extends Tag {
+  usageCount: number;
+}
+
 export interface CoOccurrenceEdge {
   source: string;
   target: string;

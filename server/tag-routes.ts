@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { tagRegistry } from "./file-storage";
+import { tagService } from "./tag-service";
 import {
   createTagSchema,
   mergeTagsSchema,
@@ -14,6 +15,17 @@ export function registerTagRoutes(app: Express) {
       res.json(await tagRegistry.listTags(req.principal));
     } catch (error: unknown) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to list tags" });
+    }
+  });
+
+  app.get("/api/tags/search", async (req, res) => {
+    try {
+      const query = typeof req.query.q === "string" ? req.query.q : "";
+      const rawLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : 20;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 20;
+      res.json(await tagService.searchTags(query, limit, req.principal));
+    } catch (error: unknown) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to search tags" });
     }
   });
 

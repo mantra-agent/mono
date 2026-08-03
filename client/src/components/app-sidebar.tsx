@@ -42,6 +42,7 @@ import {
   Share2,
   SlidersHorizontal,
   Swords,
+  Tags,
   Target,
   User,
   Users,
@@ -145,6 +146,7 @@ const MOD_NAV_ICONS = {
   Share2,
   SlidersHorizontal,
   Swords,
+  Tags,
   Target,
   User,
   Users,
@@ -229,6 +231,7 @@ const navSections: NavSection[] = [
       navItem("Goals", "navigation.goals.open", Target, "muted"),
       navItem("Decisions", "navigation.decisions.open", Scale),
       navItem("Strategy", "navigation.strategy.open", Swords),
+      navItem("Tags", "navigation.tags.open", Tags),
     ],
   },
   {

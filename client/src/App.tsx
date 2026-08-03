@@ -79,6 +79,7 @@ const CalendarPage = lazyWithRetry(() => import("@/pages/calendar"));
 const TimersPage = lazyWithRetry(() => import("@/pages/timers"));
 const MemoryPageFull = lazyWithRetry(() => import("@/pages/memory-page"));
 const StrategyPage = lazyWithRetry(() => import("@/pages/strategy"));
+const TagsPage = lazyWithRetry(() => import("@/pages/tags"));
 const DecisionsPage = lazyWithRetry(() => import("@/pages/decisions"));
 const StrategyDetailPage = lazyWithRetry(() => import("@/pages/strategy-detail"));
 
@@ -277,6 +278,8 @@ function Router() {
         <Route path="/vision" component={VisionPage} />
         <Route path="/strategy/:id" component={StrategyDetailPage} />
         <Route path="/strategy" component={StrategyPage} />
+        <Route path="/tags/:slug" component={TagsPage} />
+        <Route path="/tags" component={TagsPage} />
         <Route path="/decisions" component={DecisionsPage} />
         <Route path="/schedule/:eventId" component={CalendarPage} />
         <Route path="/schedule" component={CalendarPage} />

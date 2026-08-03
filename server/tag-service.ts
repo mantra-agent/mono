@@ -5,6 +5,7 @@ import type {
   EntityType,
   Tag,
   TagIndex,
+  TagSearchResult,
   TagUsageEntry,
   TagWithUsage,
   UpdateTagInput,
@@ -255,6 +256,55 @@ export class TagService {
     if (!row) return null;
     const tag = rowToTag(row);
     return { ...tag, usages: await this.getUsage(tag.slug, principal) };
+  }
+
+  async searchTags(query: string, limit = 20, principal = this.principal()): Promise<TagSearchResult[]> {
+    await this.ensureLegacyAdopted(principal);
+    const identity = requireUserIdentity(principal);
+    const boundedLimit = Math.min(Math.max(limit, 1), 50);
+    const normalizedQuery = query.trim().toLowerCase();
+    const pattern = `%${normalizedQuery}%`;
+    const prefix = `${normalizedQuery}%`;
+    const result = await pool.query<TagRow & { usage_count: string }>(
+      `SELECT t.id, t.slug, t.label, t.color, t.description, t.created_at, t.updated_at,
+              COALESCE(array_remove(array_agg(DISTINCT al.alias), NULL), '{}') AS aliases,
+              COUNT(DISTINCT ta.id)::text AS usage_count
+       FROM tags t
+       LEFT JOIN tag_aliases al ON al.tag_id = t.id AND al.account_id = t.account_id
+       LEFT JOIN tag_assignments ta ON ta.tag_id = t.id AND ta.account_id = t.account_id
+       WHERE t.account_id = $1
+         AND t.owner_user_id = $2
+         AND (
+           $3 = ''
+           OR lower(t.slug) LIKE $4
+           OR lower(t.label) LIKE $4
+           OR EXISTS (
+             SELECT 1 FROM tag_aliases matched_alias
+             WHERE matched_alias.tag_id = t.id
+               AND matched_alias.account_id = t.account_id
+               AND matched_alias.alias LIKE $4
+           )
+         )
+       GROUP BY t.id
+       ORDER BY
+         CASE
+           WHEN $3 = '' THEN 4
+           WHEN lower(t.slug) = $3 OR lower(t.label) = $3 THEN 0
+           WHEN lower(t.slug) LIKE $5 OR lower(t.label) LIKE $5 THEN 1
+           WHEN EXISTS (
+             SELECT 1 FROM tag_aliases ranked_alias
+             WHERE ranked_alias.tag_id = t.id
+               AND ranked_alias.account_id = t.account_id
+               AND ranked_alias.alias LIKE $5
+           ) THEN 2
+           ELSE 3
+         END,
+         COUNT(DISTINCT ta.id) DESC,
+         t.label ASC
+       LIMIT $6`,
+      [identity.accountId, identity.userId, normalizedQuery, pattern, prefix, boundedLimit],
+    );
+    return result.rows.map(row => ({ ...rowToTag(row), usageCount: Number(row.usage_count) || 0 }));
   }
 
   async createTag(input: CreateTagInput, principal = this.principal()): Promise<Tag> {

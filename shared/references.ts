@@ -1,6 +1,7 @@
 export const REFERENCE_TYPES = [
   "page",
   "person",
+  "tag",
   "company",
   "interaction",
   "goal",
@@ -51,6 +52,7 @@ export type ReferenceType = KnownReferenceType | string;
 
 export type ReferenceIdentifierKind =
   | "uuid"
+  | "slug"
   | "integer"
   | "opaque"
   | "url"
@@ -69,6 +71,7 @@ export interface ReferenceTypeDefinition {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const INTEGER_PATTERN = /^[1-9]\d*$/;
 const OPAQUE_PATTERN = /^[^\s\]<>]+$/;
 const URL_PATTERN = /^https?:\/\/[^\s\]<>]+$/i;
@@ -97,6 +100,10 @@ function definition(
 export const REFERENCE_REGISTRY: Readonly<Record<KnownReferenceType, ReferenceTypeDefinition>> = {
   page: definition("page", "uuid", UUID_PATTERN, { aliases: ["spec"], route: id => `/info#library?page=${encodeURIComponent(id)}` }),
   person: definition("person", "opaque", OPAQUE_PATTERN, { route: id => `/people/${encodeURIComponent(id)}` }),
+  tag: definition("tag", "slug", SLUG_PATTERN, {
+    route: id => `/tags/${encodeURIComponent(id)}`,
+    capabilities: ["open", "discuss", "link"],
+  }),
   company: definition("company", "opaque", OPAQUE_PATTERN, { route: id => `/companies/${encodeURIComponent(id)}` }),
   interaction: definition("interaction", "composite", COMPOSITE_PATTERN, { route: id => {
     const [personId, interactionId] = id.split("~").map(decodeURIComponent);

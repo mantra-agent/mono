@@ -54,6 +54,7 @@ import { goalsService } from "./goals-service";
 import { peopleStorage } from "./people-storage";
 import { chatFileStorage } from "./chat-file-storage";
 import { decisionsStorage } from "./decisions-storage";
+import { tagService } from "./tag-service";
 
 import { getEvent, listAllEvents } from "./google-calendar";
 import { objectStorageService } from "./object_storage/objectStorage";
@@ -174,6 +175,20 @@ function simpleAdapter(
 }
 
 const adapters: AddressResolverAdapter[] = [
+  simpleAdapter("tag", async (principal, refs) => {
+    const entries = await Promise.all(refs.map(async ref => {
+      const tag = await tagService.getTag(ref.id, principal);
+      if (!tag) return null;
+      return [requestedAddress(ref), resolved(ref, {
+        label: tag.label,
+        summary: tag.description || `${tag.usages.length} ${tag.usages.length === 1 ? "usage" : "usages"}`,
+        route: `/tags/${encodeURIComponent(tag.slug)}`,
+        updatedAt: tag.updatedAt,
+        canonicalId: tag.slug,
+      })] as const;
+    }));
+    return new Map(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
+  }),
   simpleAdapter("page", async (principal, refs) => {
     const ids = refs.map(ref => ref.id);
     const rows = await db.select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, summary: libraryPages.summary, oneLiner: libraryPages.oneLiner, updatedAt: libraryPages.updatedAt })

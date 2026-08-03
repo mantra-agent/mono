@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { X, Tag, Plus } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { Tag as TagModel } from "@shared/schema";
+import type { Tag, TagIndex, TagSearchResult } from "@shared/schema";
 
 interface UniversalTagPickerProps {
   tags: string[];
@@ -30,34 +30,34 @@ export function UniversalTagPicker({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const { data: tagData } = useQuery<{ tags: TagModel[] }>({
-    queryKey: ["/api/tags"],
+  const normalizedInput = input.trim();
+  const searchUrl = `/api/tags/search?q=${encodeURIComponent(normalizedInput)}&limit=8`;
+  const { data: searchResults = [] } = useQuery<TagSearchResult[]>({
+    queryKey: [searchUrl],
+    enabled: normalizedInput.length > 0 && showSuggestions,
+    staleTime: 30_000,
   });
+  const { data: tagIndex } = useQuery<TagIndex>({
+    queryKey: ["/api/tags"],
+    staleTime: 60_000,
+  });
+  const allRegistryTags = Object.values(tagIndex?.tags ?? {});
 
   const createTagMutation = useMutation({
     mutationFn: async (label: string) => {
       const res = await apiRequest("POST", "/api/tags", { label });
-      return res.json();
+      return res.json() as Promise<Tag>;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tags"] });
+      queryClient.invalidateQueries({
+        predicate: (query) => String(query.queryKey[0] ?? "").startsWith("/api/tags"),
+      });
     },
   });
 
-  const allRegistryTags = tagData?.tags ?? [];
-
-  const suggestions = input.trim()
-    ? allRegistryTags
-        .filter(
-          (t) =>
-            !tags.includes(t.slug) &&
-            !autoTags.includes(t.slug) &&
-            (t.label.includes(input.toLowerCase()) ||
-              t.slug.includes(input.toLowerCase()) ||
-              t.aliases.some((a) => a.includes(input.toLowerCase())))
-        )
-        .slice(0, 8)
-    : [];
+  const suggestions = searchResults.filter(
+    (tag) => !tags.includes(tag.slug) && !autoTags.includes(tag.slug),
+  );
 
   const inputNormalized = input
     .trim()
@@ -67,20 +67,21 @@ export function UniversalTagPicker({
   const isNewTag =
     input.trim().length > 0 &&
     !allRegistryTags.some(
-      (t) =>
-        t.slug === inputNormalized ||
-        t.label === input.trim().toLowerCase()
+      (tag) =>
+        tag.slug === inputNormalized ||
+        tag.label.toLowerCase() === input.trim().toLowerCase() ||
+        tag.aliases.some((alias) => alias.toLowerCase() === input.trim().toLowerCase())
     ) &&
     !tags.includes(inputNormalized);
 
   const addTag = useCallback(
     async (slug: string, label?: string) => {
       if (tags.includes(slug) || autoTags.includes(slug)) return;
-      const exists = allRegistryTags.some((t) => t.slug === slug);
-      if (!exists && label) {
-        await createTagMutation.mutateAsync(label);
+      const existing = allRegistryTags.find((tag) => tag.slug === slug || tag.aliases.includes(slug));
+      const canonicalSlug = existing?.slug ?? (label ? (await createTagMutation.mutateAsync(label)).slug : slug);
+      if (!tags.includes(canonicalSlug) && !autoTags.includes(canonicalSlug)) {
+        onChange([...tags, canonicalSlug]);
       }
-      onChange([...tags, slug]);
       setInput("");
       setShowSuggestions(false);
     },
