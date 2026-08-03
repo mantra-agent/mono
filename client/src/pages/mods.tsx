@@ -84,7 +84,9 @@ function ModRow({
         <StatusIcon status={mod.status} />
         <span className="min-w-0 flex-1 truncate font-medium text-foreground">{mod.name}</span>
         {mod.isBaseline && <span className="shrink-0 text-2xs uppercase tracking-wider text-muted-foreground">Default</span>}
-        <span className="shrink-0 text-xs text-muted-foreground">{mod.status === "enabled" ? "Enabled" : mod.status === "error" ? "Error" : "Available"}</span>
+        {mod.status === "error" && (
+          <span className="shrink-0 text-xs text-error">Error</span>
+        )}
       </button>
 
       {expanded && (
@@ -180,7 +182,7 @@ export default function ModsPage() {
   );
 
   return (
-    <div className="w-full p-4 md:w-1/3">
+    <div className="w-full p-4">
       <div className="relative mb-3">
         <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search Mods" className="pl-8" data-testid="mods-search" />
