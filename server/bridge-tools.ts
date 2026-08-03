@@ -21,7 +21,7 @@ import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors"
 import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
-import { scratchEditFailure, toolFailureFromError, type ToolFailure } from "./tool-failure";
+import { scratchEditFailure, authorityDenialFailure, toolFailureFromError, type ToolFailure } from "./tool-failure";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
@@ -16580,7 +16580,7 @@ export async function executeTool(
       event: "tool:authority_denied",
       payload: { toolName, action: normalizedArgs.action || null, reason: authority.reason, sessionId: context?.sessionId || null },
     });
-    return { result: `Tool execution denied by deterministic authority policy: ${authority.reason}`, error: true, sideEffectOnly: true, durationMs };
+    return { result: `Tool execution denied by deterministic authority policy: ${authority.reason}`, error: true, sideEffectOnly: true, durationMs, failure: authorityDenialFailure("tool_authority_denied", { resourceKey: resolvedName }) };
   }
   const { getCurrentPrincipal } = await import("./principal-context");
   const principal = getCurrentPrincipal();
@@ -16594,7 +16594,7 @@ export async function executeTool(
   } catch {
     const durationMs = Date.now() - startTime;
     toolExec.warn(`rejected tool=${toolName} callId=${toolCallId} reason=build_mod_inactive`);
-    return { result: "Tool execution denied: Build Mod is inactive", error: true, sideEffectOnly: true, durationMs };
+    return { result: "Tool execution denied: Build Mod is inactive", error: true, sideEffectOnly: true, durationMs, failure: authorityDenialFailure("build_mod_inactive", { resourceKey: resolvedName }) };
   }
   const droppedEmptyKeys = Object.keys(args ?? {}).filter((key) => !(key in normalizedArgs));
   if (droppedEmptyKeys.length > 0) {
