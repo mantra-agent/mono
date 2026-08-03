@@ -156,6 +156,13 @@ export interface ContinuationCapsule {
   version: 1;
   initiator?: string;
   objective?: string;
+  /**
+   * The user's most recent explicit instruction, preserved verbatim and
+   * treated as authoritative. It overrides any stale resumePoint or open loop
+   * so compaction can never replay a superseded plan after the user redirects.
+   * Carried forward across compactions so the freshest steering is never lost.
+   */
+  latestUserInstruction?: string;
   actions: string[];
   systemsTouched: string[];
   decisions: string[];

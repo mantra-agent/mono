@@ -357,7 +357,22 @@ export async function runBetweenTurnCompaction(
       return entries;
     });
     const previousCapsule = removed.find((m) => m.compaction?.capsule)?.compaction?.capsule;
-    const capsule = buildContinuationCapsule(capsuleEntries, previousCapsule);
+    // The newest user message stays live in the kept tail (never archived), so
+    // it is absent from the compacted batch above. Surface it explicitly as the
+    // capsule's authoritative latest instruction so the summary reinforces the
+    // user's freshest steering instead of a stale resume point.
+    const keptTailForInstruction = docMessages.slice(boundaryIndex);
+    let liveLatestUserInstruction: string | undefined;
+    for (let i = keptTailForInstruction.length - 1; i >= 0; i -= 1) {
+      const candidate = keptTailForInstruction[i]?.content;
+      if (keptTailForInstruction[i]?.role === "user" && candidate && candidate.trim()) {
+        liveLatestUserInstruction = candidate;
+        break;
+      }
+    }
+    const capsule = buildContinuationCapsule(capsuleEntries, previousCapsule, {
+      latestUserInstruction: liveLatestUserInstruction,
+    });
     const capsuleContent = renderContinuationCapsule(capsule);
 
     // Narrative summary is the primary artifact for both agent context and UI.
@@ -418,7 +433,16 @@ export async function runBetweenTurnCompaction(
     const archiveNote = `
 
 [Full original messages archived — ref:${archiveRef.id} — use indexed_content tool to retrieve]`;
-    const summaryContent = `[Session Compaction] ${summaryBody}${archiveNote}`;
+    // Deterministically surface the user's freshest instruction at the top of
+    // the compaction marker so it is provably part of the summary and visible
+    // in the UI, independent of whether the narrative summarizer echoed it. The
+    // instruction also remains live in the kept tail; this banner guarantees the
+    // summary reinforces it rather than contradicting it with a stale resume point.
+    const activeInstruction = capsule.latestUserInstruction;
+    const instructionBanner = activeInstruction
+      ? `**Still active — latest user instruction (authoritative):** ${activeInstruction}\n\n`
+      : "";
+    const summaryContent = `[Session Compaction] ${instructionBanner}${summaryBody}${archiveNote}`;
 
     let tokensAfter = estimateTokens(summaryContent);
     for (const m of docMessages.slice(boundaryIndex)) {
