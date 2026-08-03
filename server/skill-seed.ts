@@ -941,9 +941,17 @@ export async function migrateDailyBriefCanonicalMeetingPrep(): Promise<void> {
   }
 }
 
-const SENTRY_CHANGESET_GATE_VERSION = "1.8";
+const SENTRY_CHANGESET_GATE_VERSION = "1.9";
 const SENTRY_RUN_EVIDENCE_MARKER = "8. Inspect recent `sentry` skill runs and open system issues/tasks/sessions when useful. Deduplicate by normalized signature + environment + likely subsystem. Update or reference an existing incident instead of creating another.";
 const SENTRY_REPORT_MARKER = "## Canonical report page";
+const SENTRY_RELIABILITY_OUTCOMES_MARKER = "11. Inspect `system.reliability` for bounded recent windows and explicitly evaluate the canonical success/failure outcomes for tool executions, plan steps, workflow runs, and conversational turns. Count only terminal outcomes in rates; treat excluded/nonterminal counts as separate diagnostic evidence, never as successes or failures.";
+const SENTRY_RELIABILITY_CHECKLIST_ITEM = {
+  check: "Inspected system.reliability and evaluated canonical bounded-window outcomes for tools, plans, workflows, and conversational turns",
+  weight: 10,
+  kind: "tool_invoked",
+  tool: "system",
+  action: "reliability",
+} as const;
 const SENTRY_CHANGESET_GATE = `## Recent changelist remediation gate
 Before creating or reusing a task, repair handoff, conversation, or attention flag, compare every new or worsening software-defect candidate against recent Mantra Web changelists. Use bounded read-only evidence already available from \`platforms.get_build_status\`, \`platforms.get_environment_status\`, and recent \`railway.deployments\` for environment 11 and 12. Inspect up to 20 stage/main deployments from the last 24 hours, including builds still in progress, so a later deployment does not hide the relevant merged PR or commit.
 
@@ -985,24 +993,34 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
     if (
       !existing.process.includes(SENTRY_RUN_EVIDENCE_MARKER)
       || !existing.process.includes(SENTRY_REPORT_MARKER)
-      || existing.process.includes("## Recent changelist remediation gate")
     ) {
-      log.warn(`Skipped sentry changelist-gate migration from ${existing.version}: expected v1.7 contract was not found`);
+      log.warn(`Skipped sentry reliability migration from ${existing.version}: expected managed markers were not found`);
       return;
     }
 
-    const process = existing.process.replace(
-      `${SENTRY_RUN_EVIDENCE_MARKER}\n\n${SENTRY_REPORT_MARKER}`,
-      `${SENTRY_RUN_EVIDENCE_MARKER}\n\n${SENTRY_CHANGESET_GATE}\n${SENTRY_REPORT_MARKER}`,
-    );
-    const description = `${existing.description.replace(/\s+$/, "")} Checks recent merged and staged changelists before creating user attention or repair work.`;
+    const hasChangesetGate = existing.process.includes("## Recent changelist remediation gate");
+    let process = hasChangesetGate
+      ? existing.process
+      : existing.process.replace(
+        `${SENTRY_RUN_EVIDENCE_MARKER}\n\n${SENTRY_REPORT_MARKER}`,
+        `${SENTRY_RUN_EVIDENCE_MARKER}\n\n${SENTRY_CHANGESET_GATE}\n${SENTRY_REPORT_MARKER}`,
+      );
+    if (!process.includes(SENTRY_RELIABILITY_OUTCOMES_MARKER)) {
+      process = process.replace(
+        SENTRY_REPORT_MARKER,
+        `${SENTRY_RELIABILITY_OUTCOMES_MARKER}\n\n${SENTRY_REPORT_MARKER}`,
+      );
+    }
+    const description = hasChangesetGate
+      ? existing.description
+      : `${existing.description.replace(/\s+$/, "")} Checks recent merged and staged changelists before creating user attention or repair work.`;
     const outputSpec = existing.outputSpec.includes("remediationDisposition")
       ? existing.outputSpec
       : existing.outputSpec.replace(
         "`repairHandoff` (none|prepared|active|blocked plus task/plan/workflow/PR references)",
         "`remediationDisposition` (unaddressed|repair_active|addressed_pending_live_promotion|live_verified|uncertain plus PR/SHA/deployment evidence), `repairHandoff` (none|prepared|active|blocked plus task/plan/workflow/PR references)",
       );
-    const checklist = (existing.checklist ?? []).map((item: any) => {
+    const mappedChecklist = (existing.checklist ?? []).map((item: any) => {
       if (typeof item?.check !== "string") return item;
       if (item.check.startsWith("Deduplicates incidents and does not create repeated issues")) {
         return {
@@ -1018,6 +1036,16 @@ export async function migrateSentryRecentChangelistGate(): Promise<void> {
       }
       return item;
     });
+    const checklist = mappedChecklist.some(
+      (item: any) => item?.kind === "tool_invoked"
+        && item?.tool === "system"
+        && item?.action === "reliability",
+    )
+      ? mappedChecklist
+      : [
+        ...mappedChecklist,
+        SENTRY_RELIABILITY_CHECKLIST_ITEM,
+      ];
 
     const updated = await db
       .update(skills)

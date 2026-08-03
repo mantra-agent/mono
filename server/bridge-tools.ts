@@ -14667,6 +14667,15 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to list accounts: ${msg}`, error: true };
       }
     }
+    if (action === "reliability") {
+      try {
+        const { getReliabilityOutcomeSummary } = await import("./reliability-outcomes");
+        const summary = await getReliabilityOutcomeSummary(args.hours);
+        return { result: JSON.stringify(summary, null, 2) };
+      } catch (e) {
+        return { result: `Failed to load reliability outcomes: ${e instanceof Error ? e.message : String(e)}`, error: true };
+      }
+    }
     if (action === "tool_stats") {
       try {
         const { getToolStats } = await import("./file-storage/tool-stats");
@@ -14677,7 +14686,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to get tool stats: ${msg}`, error: true };
       }
     }
-    return { result: `Unknown system action: ${action}. Available: state, logs, log_files, budget, frontend_performance, context_health, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
+    return { result: `Unknown system action: ${action}. Available: state, logs, log_files, budget, frontend_performance, context_health, reliability, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
   },
   async timers(args) {
     const action = args.action as string;
