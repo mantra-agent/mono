@@ -1,5 +1,10 @@
 export * from "./runtime-handler";
 export { registerRuntimeProofPathHandlers } from "./proof-path-handlers";
+export {
+  LEGACY_CAPACITY_HANDLER_KEY,
+  parseLegacyCapacityInput,
+  registerLegacyCapacityHandler,
+} from "./legacy-capacity-handler";
 export { runtimeDispatcher } from "./runtime-dispatcher";
 export {
   DEFAULT_RUNTIME_BUDGET_V1,

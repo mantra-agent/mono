@@ -40,6 +40,7 @@ import {
   type RuntimeFence,
   type RuntimeHandler,
 } from "./runtime-handler";
+import { LEGACY_CAPACITY_HANDLER_KEY } from "./legacy-capacity-handler";
 
 const log = createLogger("RuntimeKernel");
 const MAX_INPUT_BYTES = 64 * 1024;
@@ -50,7 +51,6 @@ const MAX_RECEIPT_BYTES = 64 * 1024;
 const MAX_OUTPUT_REFERENCES = 100;
 const DEFAULT_ACCOUNT_HEAD_LIMIT = 50;
 export const DEFAULT_PROTECTED_ACCOUNT_SHARE = 2;
-const LEGACY_CAPACITY_HANDLER_KEY = "legacy.capacity";
 
 const runScope = { scope: runtimeRuns.scope, ownerUserId: runtimeRuns.ownerUserId, accountId: runtimeRuns.accountId };
 const attemptScope = { scope: runtimeAttempts.scope, ownerUserId: runtimeAttempts.ownerUserId, accountId: runtimeAttempts.accountId };
