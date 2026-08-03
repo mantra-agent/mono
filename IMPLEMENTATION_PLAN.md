@@ -1,55 +1,28 @@
-# Implementation plan: deterministic scratch.edit recovery
+# Implementation plan: cure deterministic scratch.edit recovery
 
 ## Goal
 
-A stale or ambiguous `scratch.edit` target may consume at most one evidence-backed retry. The system must require a successful reread of the same canonical file before that retry, then quarantine further edits to that file for the remainder of the run if the rebuilt patch still conflicts.
+A stale or ambiguous `scratch.edit` may consume at most one evidence-backed retry, then the run must stop replanning that conflict. Producer classification, resource identity, and executor policy must each have one owner.
 
-## Forces
+## Engineering-principles audit
 
-- `scratch.edit` alone knows whether an exact replacement failed because the target was absent or ambiguous.
-- The model may alter `old_string` after each failure, so retry identity cannot depend on complete arguments or error prose.
-- Reads must remain available after a conflict; unrelated tools and edits to other files must continue.
-- Chat, voice, timers, autonomous skills, SDK-owned execution, and executor fallback must obey one policy, so containment belongs in the run-owned AgentExecutor dispatch boundary rather than a route adapter or the source classifier.
-- Recovery state must be bounded and run-scoped.
+The merged containment established the right boundary, but review found four violations:
 
-## Design
+1. **Single Source of Truth / DRY:** `bridge-tools.ts` and `tool-operation-recovery.ts` independently resolved scratch paths and constructed resource keys. Alias or symlink behavior could split one file into two ledgers.
+2. **One Discriminant Per Decision:** structured `failure` existed at tool dispatch, then the executor flattened outcomes to text and reconstructed repeated-failure identity from error strings and mutable arguments.
+3. **Bounded execution / Fail Loudly:** quarantine blocked disk access but returned another ordinary tool error, so the model could continue replanning until a generic breaker fired.
+4. **Interfaces Before Implementation / Explicit Over Implicit:** the autonomous executor narrowed the result type, returned extra fields, and erased the mismatch with `as any`.
 
-1. Add one discriminated `ToolFailure` envelope and one canonical scratch-operation resolver in `server/tool-operation-recovery.ts`.
-2. Have the `scratch.edit` producer emit `scratch_edit_not_found` or `scratch_edit_ambiguous` with the canonical file resource key. Keep human-readable result text for the model/UI.
-3. Preserve the envelope through `ToolResult`; do not parse result strings in the executor.
-4. Put the recovery state machine in AgentExecutor’s run-owned dispatch boundary and preserve the source envelope through each bridge adapter:
-   - serialize recovery transitions per run and canonical file so concurrent calls cannot bypass policy;
-   - first source conflict → `read_required`;
-   - successful `scratch.read` of the same canonical file → `retry_allowed`;
-   - successful rebuilt edit → clear state;
-   - second source conflict → `quarantined`;
-   - edit attempted during `read_required` or `quarantined` → refuse before bridge dispatch and do not touch disk.
-5. Bound retained state by run-relative TTL and a maximum entry count.
+## Cure
 
-## Engineering-principle check
+- Extract canonical scratch path/resource identity helpers and reuse them in both the producer and recovery ledger.
+- Preserve `ToolFailure` on recorded tool outcomes and use its stable `resourceKey + code` as the failure signature.
+- Treat `scratch_edit_quarantined` as an immediate deterministic circuit-breaker outcome through the existing run termination contract.
+- Replace the autonomous `as any` cast with the canonical `ToolExecutorResult` interface.
+- Keep `scratch.edit` strict and keep recovery policy in `AgentExecutor`; do not add fallback mutation paths.
 
-- **Single Source of Truth:** one source-owned failure discriminant; one execution-boundary recovery ledger.
-- **Canonical Mutation Path:** containment wraps the unified tool executor, so both direct and SDK-owned tool calls cross it.
-- **One Discriminant Per Decision:** policy switches on `failure.code`, never prose.
-- **Encode Invariants in Structure:** the state machine makes blind retry and post-quarantine mutation unavailable.
-- **Fail Loudly, Degrade Gracefully:** blocked attempts explicitly say what evidence is required; quarantine preserves unrelated work.
-- **Minimum Viable Protocol:** only scratch exact-edit conflicts enter this policy; no generic retry framework or executor-wide abort is added.
-- **Bounded Operations:** recovery state is TTL-pruned and size-capped.
+## Impact and verification
 
-## Scope
+Affected boundary: scratch read/edit producer, run-scoped recovery state machine, executor result recording/circuit breaker, SDK event propagation, and autonomous adapter typing. No schema, ownership, UI, or external API changes.
 
-- `server/agent-executor.ts`
-- `server/agent-timer-handler.ts`
-- `server/autonomous-skill-runner.ts`
-- `server/integrations/chat/routes.ts`
-- `server/tool-execution.ts`
-- `server/bridge-tools.ts`
-- `server/tool-failure.ts`
-- `server/tool-operation-recovery.ts`
-- `IMPLEMENTATION_PLAN.md`
-
-No UI, persistence schema, authorization, or generic retry framework changes.
-
-## Verification
-
-Run `npm run build`, then inspect the final diff and change scope. Per repository policy, add or run no tests or standalone typechecks.
+Verification: production build only (`npm run build`), then diff/status review and merge to `main`.
