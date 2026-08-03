@@ -139,7 +139,7 @@ export async function recordSuccessfulRailwayDeployments(
       `${owner.accountId}:build`,
     );
     if (!(await hasActiveBuildAccess(principal))) {
-      return { observationsCreated: 0, projectionsCreated: 0 };
+      return { observationsCreated: 0, projectionsCreated: 0, completions: [] };
     }
 
     let observationsCreated = 0;
@@ -220,22 +220,28 @@ export async function recordSuccessfulRailwayDeployments(
     }
 
     const now = new Date();
+    let projected = false;
     if (currentProjection) {
-      await tx
+      const updated = await tx
         .update(buildDeploymentHomeProjections)
         .set({
           observationId: latestObservation.id,
           reasonKey: deploymentReasonKey(environment.platformEnvironmentId),
+          // Clear both dismissal fields together; the check constraint rejects
+          // dismissedAt=null with a leftover dismissedByUserId.
           dismissedAt: null,
+          dismissedByUserId: null,
           updatedAt: now,
         })
         .where(combineWithWritableScope(
           principal,
           projectionScope,
           eq(buildDeploymentHomeProjections.id, currentProjection.id),
-        ));
+        ))
+        .returning({ id: buildDeploymentHomeProjections.id });
+      projected = updated.length > 0;
     } else {
-      await tx
+      const inserted = await tx
         .insert(buildDeploymentHomeProjections)
         .values({
           observationId: latestObservation.id,
@@ -243,8 +249,15 @@ export async function recordSuccessfulRailwayDeployments(
           reasonKey: deploymentReasonKey(environment.platformEnvironmentId),
           ...ownedInsertValues(principal, projectionScope),
           createdByUserId: owner.userId,
-        });
+        })
+        .onConflictDoNothing()
+        .returning({ id: buildDeploymentHomeProjections.id });
+      projected = inserted.length > 0;
     }
+    if (!projected) {
+      return { observationsCreated, projectionsCreated, completions };
+    }
+
     projectionsCreated = 1;
     completions.push({
       observationId: latestObservation.id,

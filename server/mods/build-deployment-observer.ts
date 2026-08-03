@@ -48,12 +48,26 @@ const providerScope: ScopeColumns = {
   accountId: providerConnections.accountId,
 };
 
-interface VisibleRailwayEnvironment extends BuildDeploymentEnvironmentIdentity {
-  connectionId: number;
-}
+type VisibleRailwayEnvironment = BuildDeploymentEnvironmentIdentity;
 
 let observerRunning = false;
 let observerStarted = false;
+
+function serializeObservationError(error: unknown): {
+  errorName: string;
+  errorMessage: string | null;
+} {
+  if (error instanceof Error) {
+    return {
+      errorName: error.name,
+      errorMessage: error.message.slice(0, 500),
+    };
+  }
+  return {
+    errorName: typeof error,
+    errorMessage: typeof error === "string" ? error.slice(0, 500) : null,
+  };
+}
 
 async function discoverActiveBuildOwners() {
   return runWithPrincipal(OBSERVER_PRINCIPAL, () => db
@@ -69,13 +83,16 @@ async function discoverActiveBuildOwners() {
 }
 
 async function listVisibleRailwayEnvironments(principal: Principal): Promise<VisibleRailwayEnvironment[]> {
-  return db
+  // Discovery only. resolveRailwayEnvironmentControl owns the canonical hosting
+  // binding; joining every binding row here used to emit duplicate environments
+  // and a false "binding changed" hard-fail when join order disagreed.
+  const rows = await db
     .select({
       platformEnvironmentId: platformProductEnvironments.id,
       environmentName: platformProductEnvironments.name,
       productName: platformProducts.name,
       platformName: platforms.name,
-      connectionId: providerConnections.id,
+      hostingBindingId: environmentHostingBindings.id,
     })
     .from(platformProductEnvironments)
     .innerJoin(platformProducts, eq(platformProducts.id, platformProductEnvironments.productId))
@@ -94,21 +111,37 @@ async function listVisibleRailwayEnvironments(principal: Principal): Promise<Vis
       eq(environmentHostingBindings.provider, "railway"),
       eq(providerConnections.provider, "railway"),
     ))
-    .orderBy(asc(platformProductEnvironments.id))
+    .orderBy(asc(platformProductEnvironments.id), asc(environmentHostingBindings.id))
     .limit(ENVIRONMENT_LIMIT);
+
+  const deduped = new Map<number, VisibleRailwayEnvironment>();
+  for (const row of rows) {
+    if (deduped.has(row.platformEnvironmentId)) continue;
+    deduped.set(row.platformEnvironmentId, {
+      platformEnvironmentId: row.platformEnvironmentId,
+      environmentName: row.environmentName,
+      productName: row.productName,
+      platformName: row.platformName,
+    });
+  }
+  return Array.from(deduped.values());
 }
 
 async function observeEnvironment(
   principal: Principal,
   environment: VisibleRailwayEnvironment,
-): Promise<{ observationsCreated: number; projectionsCreated: number }> {
-  if (!(await hasActiveBuildAccess(principal))) return { observationsCreated: 0, projectionsCreated: 0 };
-
-  const control = await resolveRailwayEnvironmentControl(environment.platformEnvironmentId);
-  if (control.environment.connectionId !== environment.connectionId) {
-    throw new Error("Railway environment binding changed during observation");
+): Promise<{
+  observationsCreated: number;
+  projectionsCreated: number;
+  completions: Awaited<ReturnType<typeof recordSuccessfulRailwayDeployments>>["completions"];
+}> {
+  if (!(await hasActiveBuildAccess(principal))) {
+    return { observationsCreated: 0, projectionsCreated: 0, completions: [] };
   }
 
+  // Canonical Railway binding + credential come from the shared resolver, not
+  // the discovery join. That keeps observer I/O aligned with platforms status.
+  const control = await resolveRailwayEnvironmentControl(environment.platformEnvironmentId);
   const deployments = await fetchEnvironmentDeployments(control, DEPLOYMENT_LIMIT);
   const successful = deployments.flatMap((deployment) => {
     if (deployment.status !== "SUCCESS") return [];
@@ -116,10 +149,11 @@ async function observeEnvironment(
     const deployedAt = deployedAtValue ? new Date(deployedAtValue) : null;
     if (!deployment.id?.trim() || !deployedAt || Number.isNaN(deployedAt.getTime())) return [];
     const meta = extractDeploymentMeta(deployment.meta);
+    const commitSha = meta.commitHash?.trim() || null;
     return [{
-      providerDeploymentId: deployment.id,
+      providerDeploymentId: deployment.id.trim(),
       deployedAt,
-      commitSha: meta.commitHash ?? null,
+      commitSha,
     }];
   });
 
@@ -150,7 +184,7 @@ async function observeOwner(user: DiscoveredBuildOwner["user"]) {
         errors += 1;
         log.warn("Railway deployment observation degraded", {
           platformEnvironmentId: environment.platformEnvironmentId,
-          errorName: error instanceof Error ? error.name : typeof error,
+          ...serializeObservationError(error),
         });
       }
     }
@@ -196,7 +230,8 @@ export async function runBuildDeploymentObservationSweep(): Promise<void> {
       } catch (error) {
         errors += 1;
         log.warn("Build deployment owner observation degraded", {
-          errorName: error instanceof Error ? error.name : typeof error,
+          userId: user.id,
+          ...serializeObservationError(error),
         });
       }
     }
@@ -209,7 +244,7 @@ export async function runBuildDeploymentObservationSweep(): Promise<void> {
     });
   } catch (error) {
     log.error("Build deployment observation sweep failed", {
-      errorName: error instanceof Error ? error.name : typeof error,
+      ...serializeObservationError(error),
       durationMs: Date.now() - startedAt,
     });
   } finally {
