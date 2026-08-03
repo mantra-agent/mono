@@ -534,9 +534,13 @@ export const responsibilityRuns = pgTable("responsibility_runs", {
     OR (${table.scope} IN ('system', 'quarantine') AND ${table.ownerUserId} IS NULL AND ${table.accountId} IS NULL)
   `),
   uniqueIndex("idx_responsibility_runs_run_id_unique").on(table.runId),
-  uniqueIndex("idx_responsibility_runs_successful_scheduled_slot_unique")
+  // Exactly-once scheduled execution: the insert is the claim. Any non-deferred
+  // status occupies the slot so concurrent replicas cannot each insert a run
+  // for the same (timer, schedule, slot). Deferred is excluded so soft-deferral
+  // retries can re-occupy the same logical slot after claimDeferredRunForRetry.
+  uniqueIndex("idx_responsibility_runs_scheduled_slot_unique")
     .on(table.responsibilityId, table.scheduleId, table.scheduledSlotStart, table.scheduledSlotEnd)
-    .where(sql`${table.trigger} = 'scheduled' AND ${table.status} = 'success' AND ${table.scheduledSlotStart} IS NOT NULL AND ${table.scheduledSlotEnd} IS NOT NULL`),
+    .where(sql`${table.trigger} = 'scheduled' AND ${table.status} <> 'deferred' AND ${table.scheduledSlotStart} IS NOT NULL AND ${table.scheduledSlotEnd} IS NOT NULL`),
 ]);
 
 export const insertResponsibilityRunSchema = createInsertSchema(responsibilityRuns).omit({

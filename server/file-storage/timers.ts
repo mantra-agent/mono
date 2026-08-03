@@ -15,8 +15,14 @@ import { generateId } from "./utils";
 import { createLogger } from "../log";
 import { requireCurrentUserPrincipal } from "../principal-context";
 import type { Principal } from "../principal";
+import { getPostgresErrorCode } from "../postgres-errors";
 
 const log = createLogger("StoreTimers");
+
+/** True when Postgres rejected an insert for a unique/exclusion constraint. */
+function isUniqueViolation(error: unknown): boolean {
+  return getPostgresErrorCode(error) === "23505";
+}
 
 function rowToTimer(row: typeof timers.$inferSelect): Timer {
   const scope = (timerScopes as readonly string[]).includes(row.scope)
@@ -353,16 +359,46 @@ export class FileTimerStorage {
     };
   }
 
-  async appendRun(timer: Timer, run: TimerRun): Promise<void> {
-    await db.insert(responsibilityRuns).values(this.runValues(timer, run));
+  /**
+   * Insert a timer run. Returns false when another writer already claimed the
+   * same logical identity — either the same `runId` or the same scheduled slot
+   * under the non-deferred unique index. Callers treat false as a lost race
+   * and must not execute the handler.
+   */
+  async appendRun(timer: Timer, run: TimerRun): Promise<boolean> {
+    try {
+      await db.insert(responsibilityRuns).values(this.runValues(timer, run));
+      return true;
+    } catch (error: unknown) {
+      if (isUniqueViolation(error)) {
+        log.debug(
+          `appendRun lost claim timerId=${timer.id} runId=${run.id} scheduleId=${run.scheduleId} ` +
+            `slotStart=${run.scheduledSlotStart ?? "n/a"} slotEnd=${run.scheduledSlotEnd ?? "n/a"}`,
+        );
+        return false;
+      }
+      throw error;
+    }
   }
 
+  /**
+   * Transactional insert used by acceptance-enqueue and other writers that
+   * already hold a tx. Collisions on `run_id` or the scheduled-slot unique
+   * index both return false (lost claim) rather than throwing.
+   */
   async appendRunInTransaction(tx: DrizzleTx, timer: Timer, run: TimerRun): Promise<boolean> {
-    const [inserted] = await tx.insert(responsibilityRuns)
-      .values(this.runValues(timer, run))
-      .onConflictDoNothing({ target: responsibilityRuns.runId })
-      .returning({ runId: responsibilityRuns.runId });
-    return Boolean(inserted);
+    try {
+      const [inserted] = await tx.insert(responsibilityRuns)
+        .values(this.runValues(timer, run))
+        .onConflictDoNothing({ target: responsibilityRuns.runId })
+        .returning({ runId: responsibilityRuns.runId });
+      return Boolean(inserted);
+    } catch (error: unknown) {
+      // Slot uniqueness is a partial index — drizzle onConflictDoNothing only
+      // targets run_id, so slot races surface as 23505 here.
+      if (isUniqueViolation(error)) return false;
+      throw error;
+    }
   }
 
   async updateRun(timer: Timer, runId: string, updates: Partial<TimerRun>): Promise<void> {

@@ -5035,13 +5035,15 @@ export async function runSchemaBootstrap(
         AND (metadata->>'slotStart') IS NOT NULL
         AND (metadata->>'slotEnd') IS NOT NULL
     `);
+    // Keep the newest non-deferred claim per slot so the exclusive unique
+    // index can be created over historical concurrent-fire residue.
     await pool.query(`
       DELETE FROM responsibility_runs a
       USING responsibility_runs b
       WHERE a.trigger = 'scheduled'
         AND b.trigger = 'scheduled'
-        AND a.status = 'success'
-        AND b.status = 'success'
+        AND a.status <> 'deferred'
+        AND b.status <> 'deferred'
         AND a.scheduled_slot_start IS NOT NULL
         AND a.scheduled_slot_end IS NOT NULL
         AND a.responsibility_id = b.responsibility_id
@@ -5055,10 +5057,17 @@ export async function runSchemaBootstrap(
       CREATE UNIQUE INDEX IF NOT EXISTS idx_responsibility_runs_run_id_unique
       ON responsibility_runs(run_id)
     `);
+    // Drop the success-only unique index. It allowed concurrent non-success
+    // claims for the same slot (triple-fire: three replicas each insert, all
+    // execute, only later success rows collide). The replacement treats the
+    // insert itself as the exclusive claim for any non-deferred status.
     await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_responsibility_runs_successful_scheduled_slot_unique
+      DROP INDEX IF EXISTS idx_responsibility_runs_successful_scheduled_slot_unique
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_responsibility_runs_scheduled_slot_unique
       ON responsibility_runs(responsibility_id, schedule_id, scheduled_slot_start, scheduled_slot_end)
-      WHERE trigger = 'scheduled' AND status = 'success' AND scheduled_slot_start IS NOT NULL AND scheduled_slot_end IS NOT NULL
+      WHERE trigger = 'scheduled' AND status <> 'deferred' AND scheduled_slot_start IS NOT NULL AND scheduled_slot_end IS NOT NULL
     `);
     log("auto-heal: ensured timer run scheduled slot columns", "migration");
   });
