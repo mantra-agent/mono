@@ -1159,7 +1159,18 @@ export function setupAuth(app: Express) {
           getWaitlistApplications(),
         ]);
         const rows = await Promise.all(allUsers.map(async (u) => {
-          const identity = await resolveUserIdentityFoundation(u.id);
+          let identityAccountId: string | null = null;
+          let identityIncomplete = false;
+          try {
+            identityAccountId = (await resolveUserIdentityFoundation(u.id)).accountId;
+          } catch (err) {
+            identityIncomplete = true;
+            log.warn("admin users list: identity foundation missing, returning degraded row", {
+              userId: u.id,
+              email: u.email,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
           return {
             id: u.id,
             email: u.email,
@@ -1169,11 +1180,16 @@ export function setupAuth(app: Express) {
             hasPendingInvite: !!u.inviteToken,
             permissionOverrides: await listUserPermissionOverrides(u.id),
             permissions: await getUserEffectivePermissions(u.id),
-            presence: getClientPresenceSnapshot(identity.accountId).clients,
+            presence: identityAccountId ? getClientPresenceSnapshot(identityAccountId).clients : [],
+            identityIncomplete,
           };
         }));
         res.json({ users: rows, waitlist, availablePermissions: PERMISSIONS });
-      } catch {
+      } catch (err) {
+        log.error("Failed to fetch users for admin list", {
+          error: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
         res.status(500).json({ error: "Failed to fetch users" });
       }
     },
