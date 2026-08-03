@@ -287,13 +287,16 @@ export function ConversationItem({
   const isAwaitingPlanReview = !!conv.reviewKinds?.includes("plan_review");
   const isAwaitingEmailReview = !!conv.reviewKinds?.some((kind) => !["question", "plan_review"].includes(kind));
   const isAwaitingReview = !!conv.awaitingReview || isAwaitingQuestion;
-  // Vault tint preserves the read-state hierarchy: full strength when unread,
-  // shared muted treatment when read.
+  // In-progress / attention states own the title: full vault color, then the
+  // active pulse modulates opacity. Read-state muting only applies once the
+  // session is idle — never multiply muted alpha into an active title.
+  const isInProgressTitle =
+    isLive || isAwaitingReview || !!conv.hasActiveDescendant || !!conv.hasActivePlan;
   const sessionTitleColor = vaultTitleColor(
     conv.vaultId ? [conv.vaultId] : undefined,
     vaultById,
     activeVaultId,
-    hasUnreadResult ? 1 : MUTED_TITLE_ALPHA,
+    hasUnreadResult || isInProgressTitle ? 1 : MUTED_TITLE_ALPHA,
   );
   const statusTextClass = conv.errorSeverity === "error" && !isLive
     ? "text-error"
