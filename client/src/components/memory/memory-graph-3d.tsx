@@ -153,6 +153,14 @@ const MAX_LINK_COMPLEXITY = MEMORY_GRAPH_SETTING_DEFINITIONS.find(
 const LARGE_GRAPH_THRESHOLD = 1_000;
 const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
+// Render-side physics interpolation. The layout worker posts a full-graph solve at a
+// bounded cadence (~30fps, slower on large graphs); snapping every node to each post made
+// motion lurch at that cadence while the render loop held a smooth 60fps. Treat each post
+// as a target and glide displayed positions toward it on the render clock instead. The
+// half-life is tuned near the large-graph post interval so the field stays continuous
+// without visibly trailing the solve.
+const LAYOUT_INTERP_HALF_LIFE_MS = 75;
+const LAYOUT_INTERP_EPSILON = 0.05;
 const MIN_NODE_HIT_RADIUS_PX = 12;
 const NODE_RENDER_ORDER = 0;
 const RESTING_LINK_RENDER_ORDER = 1;
@@ -767,6 +775,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let renderFrame = 0;
     let pointerFrame = 0;
     let activityFrame = 0;
+    let layoutFrame = 0;
+    let layoutTargets: Float32Array | null = null;
+    let layoutInterpolating = false;
+    let lastLayoutInterpAt = 0;
     let activityTimer: ReturnType<typeof setTimeout> | null = null;
     let activityIsEnabled = activityEnabledRef.current;
     let simulationTick = 0;
@@ -1699,23 +1711,84 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let layoutWorker: Worker | null = null;
     let layoutRestartTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // Apply a batch of worker-computed positions, then run the same per-tick sync the
-    // in-process simulation used. Bounded: one O(nodes) pass plus a coalesced render.
-    function applyLayoutPositions(positions: Float32Array) {
+    // The layout worker streams each full-graph solve as a *target*, not a final position.
+    // Store the latest solve and let the render-clock loop glide displayed positions toward
+    // it, so physics motion is driven by the 60fps render clock rather than the worker's
+    // bounded post cadence.
+    function setLayoutTargets(positions: Float32Array) {
       const count = Math.min(sceneNodes.length, Math.floor(positions.length / 3));
+      if (count === 0) return;
+      if (!layoutTargets || layoutTargets.length < count * 3) {
+        layoutTargets = new Float32Array(count * 3);
+      }
+      layoutTargets.set(positions.subarray(0, count * 3));
+      layoutInterpolating = true;
+      if (layoutFrame === 0) layoutFrame = requestAnimationFrame(animateLayout);
+    }
+
+    // Ease each displayed node toward the latest solved target. Exponential smoothing keyed
+    // off elapsed time keeps the glide identical regardless of render FPS. In-frustum nodes
+    // ease every frame; off-screen nodes snap, since no one is watching them settle. Returns
+    // whether any position changed this frame so the caller re-syncs downstream state.
+    function advanceLayoutInterpolation(now: number): boolean {
+      const targets = layoutTargets;
+      if (!targets || !layoutInterpolating) return false;
+      const elapsedMs = lastLayoutInterpAt === 0 ? 16 : Math.min(80, now - lastLayoutInterpAt);
+      lastLayoutInterpAt = now;
+      const smoothing = 1 - Math.pow(0.5, elapsedMs / LAYOUT_INTERP_HALF_LIFE_MS);
+      const epsilonSq = LAYOUT_INTERP_EPSILON * LAYOUT_INTERP_EPSILON;
+      const count = Math.min(sceneNodes.length, Math.floor(targets.length / 3));
+      let maxResidualSq = 0;
       for (let index = 0; index < count; index += 1) {
         const node = sceneNodes[index];
-        node.x = positions[index * 3];
-        node.y = positions[index * 3 + 1];
-        node.z = positions[index * 3 + 2];
+        const targetX = targets[index * 3];
+        const targetY = targets[index * 3 + 1];
+        const targetZ = targets[index * 3 + 2];
+        if (!isNodeVisible(index)) {
+          node.x = targetX;
+          node.y = targetY;
+          node.z = targetZ;
+          continue;
+        }
+        const deltaX = targetX - node.x;
+        const deltaY = targetY - node.y;
+        const deltaZ = targetZ - node.z;
+        const residualSq = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+        if (residualSq <= epsilonSq) {
+          node.x = targetX;
+          node.y = targetY;
+          node.z = targetZ;
+          continue;
+        }
+        node.x += deltaX * smoothing;
+        node.y += deltaY * smoothing;
+        node.z += deltaZ * smoothing;
+        if (residualSq > maxResidualSq) maxResidualSq = residualSq;
       }
-      simulationTick += 1;
-      sortNodeInstancesByDepth();
-      syncLinkPositions();
-      syncLinkVisibility();
-      syncActivityRunState();
-      if (simulationTick % LABEL_POSITION_TICKS === 0) syncLabels();
-      renderer.render(scene, camera);
+      if (maxResidualSq <= epsilonSq) {
+        layoutInterpolating = false;
+        lastLayoutInterpAt = 0;
+      }
+      return true;
+    }
+
+    // Continuous render-clock loop that drives physics interpolation, then stops once the
+    // layout has settled. Runs the same per-post sync the snapped path used, so downstream
+    // depth ordering, link geometry, activity eligibility, and labels stay consistent.
+    function animateLayout(now: number) {
+      layoutFrame = 0;
+      if (advanceLayoutInterpolation(now)) {
+        simulationTick += 1;
+        sortNodeInstancesByDepth();
+        syncLinkPositions();
+        syncLinkVisibility();
+        syncActivityRunState();
+        if (simulationTick % LABEL_POSITION_TICKS === 0) syncLabels();
+        renderer.render(scene, camera);
+      }
+      if (layoutInterpolating) {
+        layoutFrame = requestAnimationFrame(animateLayout);
+      }
     }
 
     // Fail-open fallback: run the force layout on the main thread exactly as before.
@@ -1816,9 +1889,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         const data = event.data as { type?: string; revision?: number; positions?: Float32Array };
         if (data.revision !== layoutRevision) return;
         if (data.type === "positions" && data.positions) {
-          applyLayoutPositions(data.positions);
+          setLayoutTargets(data.positions);
         } else if (data.type === "end") {
-          if (data.positions) applyLayoutPositions(data.positions);
+          if (data.positions) setLayoutTargets(data.positions);
           recordBrowserTelemetry({
             kind: "graph",
             name: "layout_settled",
@@ -2006,6 +2079,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       if (renderFrame !== 0) cancelAnimationFrame(renderFrame);
       if (pointerFrame !== 0) cancelAnimationFrame(pointerFrame);
       if (activityFrame !== 0) cancelAnimationFrame(activityFrame);
+      if (layoutFrame !== 0) cancelAnimationFrame(layoutFrame);
+      layoutTargets = null;
       if (activityTimer !== null) clearTimeout(activityTimer);
       if (layoutRestartTimer !== null) clearTimeout(layoutRestartTimer);
       runtimeRef.current = null;
