@@ -535,6 +535,29 @@ export class TagService {
     });
   }
 
+  /**
+   * Owner-agnostic Tag-assignment cleanup for entities that have been
+   * PERMANENTLY destroyed. Safe only for globally-unique object ids that no
+   * longer exist for any owner (e.g. hard-deleted Library pages): the target
+   * row is gone for everyone, so any assignment pointing at it is definitively
+   * orphaned. This intentionally bypasses per-principal scoping so that a system
+   * auto-purge can clean the owning user's orphaned assignments, mirroring the
+   * owner-agnostic destruction pattern in removeRetiredEntityTypeUsages.
+   */
+  async removeDestroyedEntities(entityType: EntityType | string, entityIds: string[]): Promise<void> {
+    const ids = [...new Set(entityIds)].filter(Boolean);
+    if (ids.length === 0) return;
+    const result = await pool.query(
+      `DELETE FROM tag_assignments WHERE object_type = $1 AND object_id = ANY($2::text[])`,
+      [entityType, ids],
+    );
+    log.info("destroyed-entity Tag assignments removed", {
+      entityType,
+      requested: ids.length,
+      affectedRows: result.rowCount || 0,
+    });
+  }
+
   private async assertIdentityAvailable(client: PoolClient, accountId: string, slug: string, tagId?: string): Promise<void> {
     const collision = await client.query(
       `SELECT 1 FROM tags WHERE account_id = $1 AND slug = $2 AND ($3::uuid IS NULL OR id <> $3::uuid)

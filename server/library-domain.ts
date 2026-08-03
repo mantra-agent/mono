@@ -790,6 +790,19 @@ export async function hardDeleteLibraryPages(
     );
   }
 
+  // Canonical Tag-assignment cleanup for the permanently destroyed pages.
+  // Owner-agnostic by design: the page rows are gone for every owner, so any
+  // assignment pointing at these ids is definitively orphaned. This runs under
+  // both the user Empty Trash principal and the system auto-purge principal.
+  try {
+    const { tagService } = await import("./tag-service");
+    await tagService.removeDestroyedEntities("page", deletedIds);
+  } catch (err) {
+    log.warn(
+      `[hardDelete] canonical tag cleanup failed for ${deletedIds.length} pages: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   log.info("Hard-deleted Library pages", {
     requested: uniqueIds.length,
     deletedCount: deletedIds.length,

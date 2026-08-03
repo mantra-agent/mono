@@ -10,6 +10,7 @@ import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { indexLibraryPageReferences } from "./library-reference-index";
+import { syncLibraryPageTags } from "./library-tag-sync";
 import { syncContentFields } from "@shared/markdown-tiptap";
 import {
   assertWritableVault,
@@ -327,6 +328,8 @@ export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput)
     const message = error instanceof Error ? error.message : String(error);
     log.warn(`[ingest] error source=library sourceId=${page.id} reason=filed_create_sync_failed error=${message}`);
   }
+
+  syncLibraryPageTags(page.id, page.title, page.tags);
 
   publishLibraryChanged(page.surface ? "surfaced" : "created", page);
   return { ...page, filingResolution };
