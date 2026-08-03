@@ -15,15 +15,59 @@ import {
 import type { SystemResourcesData } from "@shared/system-resources";
 import type { BrowserTelemetrySummary } from "@shared/browser-telemetry";
 import type { ContextHealthSummary } from "@shared/context-health";
+import type {
+  ReliabilityDomainKey,
+  ReliabilityHealth,
+  ReliabilityOutcomeMetrics,
+  ReliabilityOutcomeSummary,
+} from "@shared/reliability-outcomes";
 import {
   RESOURCES_REFRESH_INTERVAL_MS as REFRESH_INTERVAL_MS,
   FRONTEND_EXPERIENCE_REFRESH_INTERVAL_MS,
   CONTEXT_HEALTH_REFRESH_INTERVAL_MS,
+  RELIABILITY_OUTCOMES_REFRESH_INTERVAL_MS,
   RESOURCES_STALE_AFTER_MS as STALE_AFTER_MS,
   RESOURCES_THRESHOLDS as THRESHOLDS,
 } from "./resources-thresholds";
 
 type Status = "ok" | "amber" | "red";
+
+const RELIABILITY_DOMAINS: Array<{ key: ReliabilityDomainKey; label: string }> = [
+  { key: "toolExecutions", label: "Tool executions" },
+  { key: "planSteps", label: "Plan steps" },
+  { key: "workflowRuns", label: "Workflow runs" },
+  { key: "conversationalTurns", label: "Conversational turns" },
+];
+
+const RELIABILITY_WINDOWS = [
+  { hours: 24, label: "24h" },
+  { hours: 168, label: "7d" },
+  { hours: 720, label: "30d" },
+] as const;
+
+function reliabilityHealthStatus(health: ReliabilityHealth | undefined): Status {
+  if (health === "failing") return "red";
+  if (health === "degraded") return "amber";
+  return "ok";
+}
+
+function formatReliabilityRate(metric: ReliabilityOutcomeMetrics): string {
+  return metric.successRate === null ? "No terminal data" : `${(metric.successRate * 100).toFixed(1)}%`;
+}
+
+function reliabilityMetricDetail(metric: ReliabilityOutcomeMetrics): ReactNode {
+  return (
+    <DetailList
+      items={[
+        `${metric.succeeded} succeeded · ${metric.failed} failed · ${metric.terminal} terminal`,
+        metric.excluded > 0
+          ? `${metric.excluded} nonterminal or excluded`
+          : "No nonterminal or excluded outcomes",
+        `Health: ${metric.health === "no_data" ? "no data" : metric.health}`,
+      ]}
+    />
+  );
+}
 
 interface ResourcesResponse {
   processes: unknown[];
@@ -387,6 +431,7 @@ function DetailList({ items }: { items: string[] }) {
 
 export default function ResourcesPage() {
   usePageHeader({ title: "Performance" });
+  const [reliabilityHours, setReliabilityHours] = useState(24);
   const { data, isLoading, isError, error, dataUpdatedAt } = useQuery<ResourcesResponse>({
     queryKey: ["/api/gateway/processes", "resources"],
     retry: false,
@@ -419,6 +464,23 @@ export default function ResourcesPage() {
       return res.json();
     },
     refetchInterval: CONTEXT_HEALTH_REFRESH_INTERVAL_MS,
+    refetchIntervalInBackground: false,
+  });
+
+  const {
+    data: reliability,
+    isLoading: reliabilityLoading,
+    isError: reliabilityError,
+  } = useQuery<ReliabilityOutcomeSummary>({
+    queryKey: ["/api/performance/reliability", reliabilityHours],
+    queryFn: async () => {
+      const res = await fetch(`/api/performance/reliability?hours=${reliabilityHours}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    refetchInterval: RELIABILITY_OUTCOMES_REFRESH_INTERVAL_MS,
     refetchIntervalInBackground: false,
   });
 
@@ -463,6 +525,11 @@ export default function ResourcesPage() {
       resources={data.resources}
       frontendExperience={feData?.frontendExperience ?? null}
       contextHealth={contextData?.contextHealth ?? null}
+      reliability={reliability ?? null}
+      reliabilityHours={reliabilityHours}
+      onReliabilityHoursChange={setReliabilityHours}
+      reliabilityLoading={reliabilityLoading}
+      reliabilityError={reliabilityError}
       failures={data.failures}
       now={now}
       isStale={dataUpdatedAt > 0 && now - dataUpdatedAt > STALE_AFTER_MS}
@@ -474,6 +541,11 @@ function ResourcesView({
   resources: r,
   frontendExperience,
   contextHealth,
+  reliability,
+  reliabilityHours,
+  onReliabilityHoursChange,
+  reliabilityLoading,
+  reliabilityError,
   failures,
   now,
   isStale,
@@ -481,6 +553,11 @@ function ResourcesView({
   resources: SystemResourcesData;
   frontendExperience: BrowserTelemetrySummary | null;
   contextHealth: ContextHealthSummary | null;
+  reliability: ReliabilityOutcomeSummary | null;
+  reliabilityHours: number;
+  onReliabilityHoursChange: (hours: number) => void;
+  reliabilityLoading: boolean;
+  reliabilityError: boolean;
   failures?: string[];
   now: number;
   isStale: boolean;
@@ -542,6 +619,9 @@ function ResourcesView({
   const realtimeBranchStatus = highestStatus([transportStatus, browserStatus]);
   const frontendStatus = frontendExperienceStatus(frontendExperience);
   const contextStatus = contextHealthStatus(contextHealth);
+  const reliabilityStatus: Status = reliabilityError
+    ? "red"
+    : reliabilityHealthStatus(reliability?.health);
 
   const memoryPercent = r.memory.maxMemoryBytes
     ? r.memory.rssUsedPct ?? Math.round((r.memory.rss / r.memory.maxMemoryBytes) * 1000) / 10
@@ -983,6 +1063,64 @@ function ResourcesView({
                     )}
                     testId="card-client-websocket"
                   />
+          </PerformanceSection>
+
+          <PerformanceSection
+            label="Reliability"
+            status={reliabilityStatus}
+            testId="section-reliability"
+          >
+            <div className="mb-1 flex flex-wrap items-center gap-1 px-2">
+              {RELIABILITY_WINDOWS.map(({ hours, label }) => {
+                const selected = reliabilityHours === hours;
+                return (
+                  <button
+                    key={hours}
+                    type="button"
+                    className={cn(
+                      "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                      selected
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover-elevate",
+                    )}
+                    onClick={() => onReliabilityHoursChange(hours)}
+                    data-testid={`button-reliability-window-${hours}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {reliabilityLoading ? (
+              <MetricRow
+                label="Reliability outcomes"
+                value="Loading"
+                detail={<DetailText>Fetching terminal success and failure rates.</DetailText>}
+                testId="tile-reliability-loading"
+              />
+            ) : reliabilityError || !reliability ? (
+              <MetricRow
+                label="Reliability outcomes"
+                value="Unavailable"
+                status="red"
+                detail={<DetailText>Reliability outcomes are temporarily unavailable.</DetailText>}
+                testId="tile-reliability-error"
+              />
+            ) : (
+              RELIABILITY_DOMAINS.map(({ key, label }) => {
+                const metric = reliability.domains[key];
+                return (
+                  <MetricRow
+                    key={key}
+                    label={label}
+                    value={formatReliabilityRate(metric)}
+                    status={reliabilityHealthStatus(metric.health)}
+                    detail={reliabilityMetricDetail(metric)}
+                    testId={`tile-reliability-${key}`}
+                  />
+                );
+              })
+            )}
           </PerformanceSection>
         </div>
       </div>

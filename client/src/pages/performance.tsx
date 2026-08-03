@@ -52,11 +52,6 @@ import {
 import { useTimezone } from "@/hooks/use-timezone";
 import { getApiCallErrorText, shouldShowApiCallResponse } from "@/lib/api-call-diagnostics";
 import { usePageHeader } from "@/hooks/use-page-header";
-import type {
-  ReliabilityDomainKey,
-  ReliabilityOutcomeMetrics,
-  ReliabilityOutcomeSummary,
-} from "@shared/reliability-outcomes";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { createReferenceRef } from "@shared/references";
 
@@ -532,44 +527,17 @@ function HierarchyBreakdown({ data }: { data?: HierarchyResponse }) {
   );
 }
 
-const RELIABILITY_DOMAINS: Array<{ key: ReliabilityDomainKey; label: string }> = [
-  { key: "toolExecutions", label: "Tool executions" },
-  { key: "planSteps", label: "Plan steps" },
-  { key: "workflowRuns", label: "Workflow runs" },
-  { key: "conversationalTurns", label: "Conversational turns" },
-];
-
-function formatReliabilityRate(metric: ReliabilityOutcomeMetrics): string {
-  return metric.successRate === null ? "No terminal data" : `${(metric.successRate * 100).toFixed(1)}%`;
-}
-
 export default function Performance({ embedded }: { embedded?: boolean }) {
   usePageHeader({ title: "Performance", skip: !!embedded });
   const { timezone } = useTimezone();
   const queryClient = useQueryClient();
   const [period, setPeriod] = useState("today");
-  const [reliabilityHours, setReliabilityHours] = useState(24);
   const [groupBy, setGroupBy] = useState<GroupBy>("hierarchy");
   const [chartMetric, setChartMetric] = useState<ChartMetric>("tokens");
   const [page, setPage] = useState(0);
   const [selectedCall, setSelectedCall] = useState<ApiCallRow | null>(null);
   const [callLogOpen, setCallLogOpen] = useState(false);
   const pageSize = 20;
-
-  const {
-    data: reliability,
-    isLoading: reliabilityLoading,
-    isError: reliabilityError,
-  } = useQuery<ReliabilityOutcomeSummary>({
-    queryKey: ["/api/performance/reliability", reliabilityHours],
-    queryFn: async () => {
-      const response = await fetch(`/api/performance/reliability?hours=${reliabilityHours}`, {
-        credentials: "include",
-      });
-      if (!response.ok) throw new Error("Failed to load reliability outcomes");
-      return response.json();
-    },
-  });
 
   const { data: inferenceDebug } = useQuery<{ enabled: boolean }>({
     queryKey: ["/api/settings/inference-debug"],
@@ -738,66 +706,6 @@ export default function Performance({ embedded }: { embedded?: boolean }) {
           </Select>
         </div>
       </div>
-
-      <Card>
-        <CardHeader className="space-y-4 pb-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <CardTitle className="text-base">Reliability outcomes</CardTitle>
-              <CardDescription>
-                Terminal success and failure only. Excluded work is reported separately.
-              </CardDescription>
-            </div>
-            <Tabs
-              value={String(reliabilityHours)}
-              onValueChange={(value) => setReliabilityHours(Number(value))}
-              className="w-full sm:w-auto"
-            >
-              <TabsList className="grid w-full grid-cols-3 sm:w-auto">
-                <TabsTrigger value="24">24h</TabsTrigger>
-                <TabsTrigger value="168">7d</TabsTrigger>
-                <TabsTrigger value="720">30d</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {reliabilityLoading ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {RELIABILITY_DOMAINS.map(({ key }) => (
-                <Skeleton key={key} className="h-28 rounded-lg" />
-              ))}
-            </div>
-          ) : reliabilityError || !reliability ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-              Reliability outcomes are temporarily unavailable.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {RELIABILITY_DOMAINS.map(({ key, label }) => {
-                const metric = reliability.domains[key];
-                return (
-                  <div key={key} className="rounded-lg border bg-card p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-medium text-muted-foreground">{label}</p>
-                      <Badge variant={metric.health === "healthy" ? "secondary" : "outline"} className="font-normal">
-                        {metric.health === "no_data" ? "No data" : metric.health}
-                      </Badge>
-                    </div>
-                    <p className="mt-3 text-2xl font-semibold tabular-nums">{formatReliabilityRate(metric)}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {metric.succeeded} succeeded · {metric.failed} failed · {metric.terminal} terminal
-                    </p>
-                    {metric.excluded > 0 && (
-                      <p className="mt-2 text-xs text-muted-foreground">{metric.excluded} nonterminal or excluded</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       <div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-4">
         <Card>
