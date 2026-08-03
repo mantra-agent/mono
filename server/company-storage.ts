@@ -5,7 +5,10 @@ import { db } from "./db";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { visiblePersonPredicate, writablePersonPredicate } from "./person-vault-access";
+import { createLogger } from "./log";
+import { tagService } from "./tag-service";
 
+const log = createLogger("CompanyStorage");
 const companyScope = { scope: companies.scope, ownerUserId: companies.ownerUserId, accountId: companies.accountId };
 const companyIdentityScope = {
   scope: companyIdentityKeys.scope,
@@ -272,6 +275,9 @@ export class CompanyStorage {
       }
       throw error;
     }
+    tagService.replaceEntityTags("company", id, name, input.tags || []).catch((err) =>
+      log.warn("company tag sync failed", { id, error: err instanceof Error ? err.message : String(err) }),
+    );
     return (await this.get(id))!;
   }
 
@@ -342,6 +348,11 @@ export class CompanyStorage {
       }
       throw error;
     }
+    if (updates.tags !== undefined) {
+      tagService.replaceEntityTags("company", id, nextName, updates.tags).catch((err) =>
+        log.warn("company tag sync failed", { id, error: err instanceof Error ? err.message : String(err) }),
+      );
+    }
     return (await this.get(id))!;
   }
 
@@ -354,6 +365,9 @@ export class CompanyStorage {
         .where(combineWithWritableScope(principal, opportunityScope, eq(opportunities.companyId, id)));
       await tx.delete(companies).where(combineWithWritableScope(principal, companyScope, eq(companies.id, id)));
     });
+    tagService.removeEntity("company", id).catch((err) =>
+      log.warn("company tag cleanup failed", { id, error: err instanceof Error ? err.message : String(err) }),
+    );
   }
 
   async listPeople(id: string) {
