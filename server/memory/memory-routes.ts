@@ -30,7 +30,6 @@ import { runVnextLifecycle } from "./vnext-lifecycle";
 import { listVisibleSources } from "./vnext-source-queue";
 import { peopleStorage } from "../people-storage";
 import { companyStorage } from "../company-storage";
-import { tagService } from "../tag-service";
 import { goalsService } from "../goals-service";
 import { fileProjectStorage } from "../file-storage/projects";
 import { libraryPages } from "@shared/models/info";
@@ -46,16 +45,6 @@ import {
 
 const log = createLogger("MemoryRoutes");
 const MEMORY_GRAPH_SETTINGS_KEY = "memory_graph_settings";
-
-/**
- * Bounded Tag layer on the personal memory graph. Default OFF: the canonical Tag
- * store is now the single source of truth for tags, but projecting every tag as
- * a graph node risks visual noise, so the layer ships dark and is enabled per
- * deployment with MEMORY_GRAPH_TAG_LAYER_ENABLED=true.
- */
-function memoryGraphTagLayerEnabled(): boolean {
-  return process.env.MEMORY_GRAPH_TAG_LAYER_ENABLED === "true";
-}
 
 function memoryGraphSettingsKey(userId: string): string {
   return `user:${userId}:${MEMORY_GRAPH_SETTINGS_KEY}`;
@@ -931,86 +920,7 @@ async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<
       referenceLinkCount++;
     }
 
-    // Bounded, default-off Tag layer. Projects canonical Tag identities as graph
-    // nodes and `tagged_with` edges to already-projected entities, turning the
-    // shared tag vocabulary into visible connective tissue. Thresholded so only
-    // tags that connect >= MIN_TAG_EDGES distinct projected nodes appear — a
-    // single-use tag would add a node and one dangling-looking edge with no
-    // connective value — and capped to bound payload. Assignments whose entity is
-    // not projected as a node are skipped, matching the structural-edge rule.
-    // Best-effort: a tag-layer failure degrades to the graph without tags rather
-    // than a failed graph read.
-    let tagNodeCount = 0;
-    let tagLinkCount = 0;
-    if (memoryGraphTagLayerEnabled()) {
-      try {
-        const MIN_TAG_EDGES = 2;
-        const MAX_TAG_NODES = 200;
-        const resolveTaggedNodeId = (entityType: string, entityId: string): number | undefined => {
-          const direct = entityNodeIds.get(`${entityType}:${entityId}`);
-          if (direct !== undefined) return direct;
-          if (entityType === "page") return sourceNodeIds.get(`page:${entityId}`);
-          if (entityType === "meeting") return meetingNodeIds.get(`meeting:${entityId}`);
-          return undefined;
-        };
-        const tagIndex = await tagService.getIndex(principal);
-        let nextTagLinkId = -5_000_000;
-        const projectable = Object.values(tagIndex.tags)
-          .map((tag) => {
-            const targets = new Set<number>();
-            for (const usage of tagIndex.usages[tag.slug] ?? []) {
-              const nodeId = resolveTaggedNodeId(usage.entityType, usage.entityId);
-              if (nodeId !== undefined) targets.add(nodeId);
-            }
-            return { tag, targets };
-          })
-          .filter((candidate) => candidate.targets.size >= MIN_TAG_EDGES)
-          .sort((a, b) => b.targets.size - a.targets.size)
-          .slice(0, MAX_TAG_NODES);
-
-        for (const { tag, targets } of projectable) {
-          const tagNodeId = nextSyntheticNodeId--;
-          entries.push({
-            id: tagNodeId,
-            content: tag.description || `Tag connecting ${targets.size} items`,
-            title: tag.label,
-            summary: tag.description || `@tag:${tag.slug}`,
-            layer: "long",
-            source: "tag",
-            sourceId: tag.slug,
-            tags: ["tag"],
-            graphed: true,
-            metadata: {
-              graphStorage: "vnext",
-              nodeKind: "tag",
-              slug: tag.slug,
-              color: tag.color,
-              reference: `@tag:${tag.slug}`,
-            },
-            createdAt: serializeDate(tag.createdAt),
-            updatedAt: serializeDate(tag.updatedAt),
-            recency: computeNodeRecency(tag.createdAt, tag.updatedAt),
-          });
-          tagNodeCount++;
-          for (const toId of targets) {
-            links.push({
-              id: nextTagLinkId--,
-              fromId: tagNodeId,
-              toId,
-              relationship: "tagged_with",
-              strength: 0.4,
-              createdAt: serializeDate(tag.updatedAt),
-              relationshipType: "tagged_with",
-            });
-            tagLinkCount++;
-          }
-        }
-      } catch (error: unknown) {
-        log.warn(`[vnext] tag layer skipped: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-
-    log.debug(`[vnext] graph claims=${claims.length} goals=${currentGoals.length} projects=${currentProjectRows.length} meetings=${meetingRecords.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} structuralLinks=${structuralLinkCount} pageReferenceLinks=${referenceLinkCount} tagNodes=${tagNodeCount} tagLinks=${tagLinkCount} nodes=${entries.length} links=${links.length}`);
+    log.debug(`[vnext] graph claims=${claims.length} goals=${currentGoals.length} projects=${currentProjectRows.length} meetings=${meetingRecords.length} claimLinks=${claimLinks.length} entityLinks=${entityLinks.length} sourceRefs=${sourceRefs.length} structuralLinks=${structuralLinkCount} pageReferenceLinks=${referenceLinkCount} nodes=${entries.length} links=${links.length}`);
     res.json({ storage: "memory_vnext", entries, links, linkSource: "claim_links", semantics: "personal-intelligence" });
   } catch (error: unknown) {
     log.error(`[vnext] graph failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);

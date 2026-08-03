@@ -27,6 +27,7 @@ import { workGraphAdapter } from "../work/work-graph-adapter";
 import { relationshipGraphAdapter } from "../relationships/relationship-graph-adapter";
 import { decisionStrategyGraphAdapter } from "../strategy/decision-strategy-graph-adapter";
 import { executionProvenanceGraphAdapter } from "../execution-provenance-graph-adapter";
+import { tagService } from "../tag-service";
 
 const log = createLogger("PersonalGraphProjection");
 
@@ -88,6 +89,8 @@ export interface PersonalGraphMetrics {
   executionProvenanceEdgeCount: number;
   resolvedTargetCount: number;
   adapterQueryCount: number;
+  tagNodeCount: number;
+  tagEdgeCount: number;
   payloadBytes: number;
 }
 
@@ -648,6 +651,75 @@ export async function assemblePersonalGraph(
     }
   }
 
+  // ---- Bounded Tag layer (default-hidden semantic overlay) ----
+  // Canonical Tag identities become graph nodes; each assignment to an
+  // already-projected entity becomes a `tagged_with` edge, turning the shared
+  // tag vocabulary into visible connective tissue. Thresholded so only tags that
+  // link >= TAG_MIN_ENTITIES distinct projected nodes appear (a single-use tag
+  // would add a node and one dangling edge with no connective value) and capped
+  // to bound payload. Assignments whose entity is not a projected node are
+  // skipped — an edge never grants visibility. Best-effort: a tag-layer failure
+  // degrades to a graph without tags rather than a failed read.
+  let tagNodeCount = 0;
+  let tagEdgeCount = 0;
+  try {
+    const TAG_MIN_ENTITIES = 2;
+    const TAG_NODE_LIMIT = 200;
+    const tagIndex = await tagService.getIndex(principal);
+    const projectableTags = Object.values(tagIndex.tags)
+      .map((tag) => {
+        const targets = new Set<number>();
+        for (const usage of tagIndex.usages[tag.slug] ?? []) {
+          const targetId = nodeIdByAddress.get(`${usage.entityType}:${usage.entityId}`);
+          if (targetId !== undefined) targets.add(targetId);
+        }
+        return { tag, targets };
+      })
+      .filter((candidate) => candidate.targets.size >= TAG_MIN_ENTITIES)
+      .sort((left, right) => right.targets.size - left.targets.size)
+      .slice(0, TAG_NODE_LIMIT);
+
+    for (const { tag, targets } of projectableTags) {
+      const tagNodeId = registerNode(`tag:${tag.slug}`, {
+        id: nextSyntheticNodeId--,
+        content: tag.description || `Tag connecting ${targets.size} items`,
+        title: tag.label,
+        summary: tag.description || `@tag:${tag.slug}`,
+        layer: "long",
+        source: "tag",
+        sourceId: tag.slug,
+        tags: [],
+        graphed: true,
+        metadata: {
+          graphStorage: "vnext",
+          nodeKind: "tag",
+          slug: tag.slug,
+          color: tag.color,
+          connectionCount: targets.size,
+          reference: `@tag:${tag.slug}`,
+        },
+        createdAt: serializeDate(tag.createdAt),
+        updatedAt: serializeDate(tag.updatedAt),
+        recency: computeNodeRecency(tag.createdAt, tag.updatedAt),
+      });
+      tagNodeCount++;
+      for (const entityNodeId of targets) {
+        links.push({
+          id: nextSyntheticLinkId--,
+          fromId: entityNodeId,
+          toId: tagNodeId,
+          relationship: "tagged_with",
+          strength: 0.4,
+          createdAt: serializeDate(tag.updatedAt),
+          relationshipType: "tag_layer",
+        });
+        tagEdgeCount++;
+      }
+    }
+  } catch (error) {
+    log.warn(`[personal-graph] tag layer skipped: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   const projection: PersonalGraphMetrics = {
     libraryFirst,
     assemblyMs: Date.now() - startedAt,
@@ -667,6 +739,8 @@ export async function assemblePersonalGraph(
     executionProvenanceEdgeCount,
     resolvedTargetCount: resolvedByAddress.size,
     adapterQueryCount,
+    tagNodeCount,
+    tagEdgeCount,
     payloadBytes: 0,
   };
   const response: PersonalGraphProjection = {
@@ -682,7 +756,7 @@ export async function assemblePersonalGraph(
   log.info(
     `[personal-graph] libraryFirst=${libraryFirst} pages=${projection.pageCount} claims=${projection.claimCount} ` +
       `nodes=${projection.nodeCount} edges=${projection.edgeCount} occurrenceEdges=${occurrenceEdgeCount} canonicalOccurrenceEdges=${projection.canonicalOccurrenceEdgeCount} compatibilityOccurrenceEdges=${projection.compatibilityOccurrenceEdgeCount} compatibilitySources=${projection.compatibilityOccurrenceSourceCount} unprojectedPages=${projection.unprojectedLibraryPageCount} ` +
-      `meetingEdges=${projection.meetingEdgeCount} workEdges=${projection.workEdgeCount} relationshipEdges=${projection.relationshipEdgeCount} decisionStrategyEdges=${projection.decisionStrategyEdgeCount} executionProvenanceEdges=${projection.executionProvenanceEdgeCount} structural=${structuralLinkCount} resolvedTargets=${projection.resolvedTargetCount} ` +
+      `meetingEdges=${projection.meetingEdgeCount} workEdges=${projection.workEdgeCount} relationshipEdges=${projection.relationshipEdgeCount} decisionStrategyEdges=${projection.decisionStrategyEdgeCount} executionProvenanceEdges=${projection.executionProvenanceEdgeCount} structural=${structuralLinkCount} tagNodes=${projection.tagNodeCount} tagEdges=${projection.tagEdgeCount} resolvedTargets=${projection.resolvedTargetCount} ` +
       `adapterQueries=${projection.adapterQueryCount} payloadKB=${(projection.payloadBytes / 1024).toFixed(1)} assemblyMs=${projection.assemblyMs}`,
   );
   eventBus.publish({
@@ -706,6 +780,8 @@ export async function assemblePersonalGraph(
       relationshipEdgeCount: projection.relationshipEdgeCount,
       decisionStrategyEdgeCount: projection.decisionStrategyEdgeCount,
       executionProvenanceEdgeCount: projection.executionProvenanceEdgeCount,
+      tagNodeCount: projection.tagNodeCount,
+      tagEdgeCount: projection.tagEdgeCount,
       level: projection.assemblyMs > 750 ? "warn" : "info",
     },
   });
