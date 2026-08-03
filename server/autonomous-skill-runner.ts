@@ -820,13 +820,24 @@ export async function executeAutonomousSkillRun(
 
   if (!isSkillless) {
     try {
+      // parentSessionId + parentToolCallId are audit lineage for any spawner
+      // (interactive chat or skill composition). parentSkillRunId is only set
+      // when the parent session is itself a SkillRun — that is the sole
+      // discriminant for true skill→skill composition / child_skill_invoked.
+      // Interactive skills.run from chat has a parent session/tool-call but no
+      // parent skill_runs row; keep the session/tool lineage and leave
+      // parentSkillRunId null instead of failing closed.
       let parentSkillRunId: number | undefined;
       if (options.parentSessionId && options.parentToolCallId) {
         const parentRun = await storage.getSkillRunBySessionId(options.parentSessionId);
-        if (!parentRun) {
-          throw new Error(`Parent SkillRun is missing for composed child session ${sessionId}`);
+        if (parentRun) {
+          parentSkillRunId = parentRun.id;
+        } else {
+          logger.log(
+            `[SkillChat] [${sessionId}] Non-skill parent session ${options.parentSessionId} — ` +
+              `launching without parentSkillRunId (interactive or non-skill spawner)`,
+          );
         }
-        parentSkillRunId = parentRun.id;
       }
       const persistedSkillRun = await storage.insertSkillRun({
         skillName: config.skillId,
