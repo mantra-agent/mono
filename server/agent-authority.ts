@@ -246,7 +246,7 @@ export function filterToolSchemasForAuthority<T extends { name: string; descript
 }
 
 const SAFE_SHELL_COMMANDS = new Set([
-  "cd", "pwd", "ls", "find", "cat", "head", "tail", "grep", "sed", "wc", "sort", "uniq",
+  "cd", "pwd", "ls", "find", "cat", "head", "tail", "grep", "rg", "sed", "wc", "sort", "uniq",
   "cut", "tr", "echo", "printf", "test", "[", "basename", "dirname", "stat", "du", "file", "diff", "git", "npm",
 ]);
 /**

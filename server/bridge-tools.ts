@@ -12945,7 +12945,13 @@ const systemTools: Record<string, ToolHandler> = {
     const shellPolicy = validateShellCommand(command);
     if (!shellPolicy.allowed) {
       eventBus.publish({ category: "agent", event: "tool:shell_denied", payload: { reason: shellPolicy.reason } });
-      return { result: `Shell command blocked by deterministic allowlist: ${shellPolicy.reason}`, error: true };
+      return {
+        result: `Shell command blocked by deterministic allowlist: ${shellPolicy.reason}`,
+        error: true,
+        failure: authorityDenialFailure("shell_policy_denied", {
+          resourceKey: `shell:${shellPolicy.reason || "denied"}`,
+        }),
+      };
     }
 
     const deniedPattern = SHELL_DENYLIST.find(pat => pat.test(command));
@@ -12955,7 +12961,13 @@ const systemTools: Record<string, ToolHandler> = {
         event: "tool:shell_denied",
         payload: { command, reason: "destructive_pattern", pattern: deniedPattern.toString() },
       });
-      return { result: `Shell command blocked: matches destructive-command denylist. Command requires explicit human confirmation before execution.`, error: true };
+      return {
+        result: `Shell command blocked: matches destructive-command denylist. Command requires explicit human confirmation before execution.`,
+        error: true,
+        failure: authorityDenialFailure("shell_policy_denied", {
+          resourceKey: "shell:destructive_pattern",
+        }),
+      };
     }
 
     // Block shell-based git WRITE commands — read-only git via shell is allowed.
@@ -12967,7 +12979,13 @@ const systemTools: Record<string, ToolHandler> = {
         event: "tool:shell_denied",
         payload: { command, reason: "git_write_blocked" },
       });
-      return { result: "Shell git write commands are blocked. Use the git MCP tool for write operations (clone, add, commit, push, create_pr, merge_pr) — it handles authentication and directory isolation. Shell git is allowed for read operations: status, log, diff, show, branch.", error: true };
+      return {
+        result: "Shell git write commands are blocked. Use the git MCP tool for write operations (clone, add, commit, push, create_pr, merge_pr) — it handles authentication and directory isolation. Shell git is allowed for read operations: status, log, diff, show, branch.",
+        error: true,
+        failure: authorityDenialFailure("shell_policy_denied", {
+          resourceKey: "shell:git_write_blocked",
+        }),
+      };
     }
 
     eventBus.publish({

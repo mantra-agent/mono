@@ -9,7 +9,8 @@ export type ToolFailureCode =
   | "task_update_milestone_id_invalid"
   | "task_update_patch_rejected"
   | "tool_authority_denied"
-  | "build_mod_inactive";
+  | "build_mod_inactive"
+  | "shell_policy_denied";
 
 export interface ToolFailure {
   kind: ToolFailureKind;
@@ -49,14 +50,14 @@ export function scratchEditFailure(
 
 /**
  * Categorical authority/entitlement denial — a wall no argument variant can satisfy in-run
- * (dispatch-time authority denied, Build Mod inactive). Modeled as a non-retryable `permission`
- * failure so it flows through `isDeterministicToolFailure` into the run-scoped recovery ledger,
- * which quarantines it and ends the turn cleanly instead of letting the model retry the wall
- * until the watchdog kills it. Fixable shell-policy slips are deliberately NOT routed here —
- * they return an actionable reason and stay recoverable within the run.
+ * (dispatch-time authority denied, Build Mod inactive, shell allowlist/denylist). Modeled as a
+ * non-retryable `permission` failure so it flows through `isDeterministicToolFailure` into the
+ * run-scoped recovery ledger, which quarantines it and ends the turn cleanly instead of letting
+ * the model thrash variants of the same wall until the watchdog kills it. The denial reason stays
+ * in the tool result text so the next turn can adapt; within the run, retry is futile.
  */
 export function authorityDenialFailure(
-  code: "tool_authority_denied" | "build_mod_inactive",
+  code: "tool_authority_denied" | "build_mod_inactive" | "shell_policy_denied",
   extra: Partial<ToolFailure> = {},
 ): ToolFailure {
   return {
