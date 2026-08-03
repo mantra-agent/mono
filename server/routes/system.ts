@@ -1,7 +1,7 @@
 // Use createLogger for logging ONLY
 import type { Express } from "express";
 import { requireAuth } from "../auth";
-import { claimBrowserTelemetryBudget, getBrowserTelemetrySummary, ingestBrowserTelemetry, logBrowserTelemetryIngestFailure, parseBrowserTelemetryBatch, pruneExpiredBrowserTelemetry } from "../browser-telemetry-storage";
+import { claimBrowserTelemetryBudget, enqueueBrowserTelemetry, getBrowserTelemetrySummary, logBrowserTelemetryIngestFailure, parseBrowserTelemetryBatch, pruneExpiredBrowserTelemetry } from "../browser-telemetry-storage";
 import { requirePermission } from "../permissions";
 import { executorManager } from "../executor-manager";
 import { eventBus } from "../event-bus";
@@ -146,7 +146,9 @@ export async function registerSystemRoutes(app: Express, serverStartTime: Date) 
       if (!claimBrowserTelemetryBudget(budgetKey, events.length)) {
         return res.status(429).json({ error: "browser telemetry rate limit exceeded" });
       }
-      const accepted = await ingestBrowserTelemetry(req.principal!, events);
+      // Accept immediately; durable insert runs on the serial log-sink lane so
+      // continuous browser samples never hold request workers or foreground pool.
+      const accepted = enqueueBrowserTelemetry(req.principal!, events);
       if (Math.random() < 0.01) void pruneExpiredBrowserTelemetry().catch(logBrowserTelemetryIngestFailure);
       res.status(202).json({ accepted });
     } catch (error: any) {
