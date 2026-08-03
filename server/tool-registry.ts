@@ -701,14 +701,14 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   system: {
-    description: "System operations — get system state snapshot, retrieve runtime logs, check budget, inspect principal-scoped reliability outcomes, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. Actions: state, logs, log_files, budget, frontend_performance, context_health, reliability, events, active_runs, clear_active_run, accounts, tool_stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename.",
+    description: "System operations — get system state snapshot, retrieve runtime logs, check budget, inspect principal-scoped reliability outcomes, list recent tool failures for pattern diagnosis, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. Actions: state, logs, log_files, budget, frontend_performance, context_health, reliability, events, active_runs, clear_active_run, accounts, tool_stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename. For reliability, omit detail for the aggregate health summary; set detail='tool_failures' to list individual failed tool calls in the window (filterable by failureKind/tool/code).",
     category: "system",
 
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["state", "logs", "log_files", "budget", "frontend_performance", "context_health", "reliability", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action to perform. Use log_files to list available log files; use logs to read a specific log file." },
-        limit: { type: "number", description: "Max entries to return (for logs/events, default 100)" },
+        limit: { type: "number", description: "Max entries to return (for logs/events default 100; for reliability detail=tool_failures default 50, max 200)" },
         level: { type: "string", description: "Filter by log level: debug, info, warn, error (for logs)" },
         source: { type: "string", description: "Filter by source module name (for logs)" },
         file: { type: "string", description: "Log filename to read (for logs). Use log_files action to list available files. If omitted, reads the current session log." },
@@ -718,6 +718,10 @@ export const TOOLS: Record<string, ToolMeta> = {
         reason: { type: "string", description: "Reason for clearing an active run (for clear_active_run)" },
         provider: { type: "string", description: "Filter accounts by provider (for accounts)" },
         hours: { type: "number", description: "Summary window in hours for frontend_performance/context_health/reliability (default 24; reliability max 720)" },
+        detail: { type: "string", enum: ["summary", "tool_failures"], description: "Reliability detail mode (for reliability). Omit or 'summary' for aggregate health; 'tool_failures' lists individual failed tool calls in the window." },
+        failureKind: { type: "string", enum: ["input", "permission", "transient", "internal"], description: "Filter reliability tool_failures by structured failure kind (amber classes: permission/input/transient; internal is usually red)." },
+        tool: { type: "string", description: "Filter reliability tool_failures by exact tool name (e.g. shell, git, scratch)." },
+        code: { type: "string", description: "Filter reliability tool_failures by failure code when present (e.g. shell_policy_denied, scratch_edit_not_found)." },
       },
       required: ["action"],
     },
