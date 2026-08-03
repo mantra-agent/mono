@@ -48,6 +48,8 @@ import type {
   QuestionCancellationMeta,
   SystemStepRecord,
 } from "@shared/models/chat";
+import type { QuestionPrompt } from "@shared/question-prompt";
+import { decisionsStorage } from "./decisions-storage";
 
 const log = createLogger("ChatStorage");
 const treeLog = createLogger("SessionTree");
@@ -1440,6 +1442,7 @@ export interface IChatFileStorage {
     pageContext?: PageContext,
     questionResponse?: QuestionResponseMeta,
     questionCancellation?: QuestionCancellationMeta,
+    questionPrompt?: QuestionPrompt,
   ): Promise<
     | { outcome: "created"; message: FileMessage }
     | { outcome: "duplicate"; message: FileMessage }
@@ -2524,6 +2527,7 @@ export const chatFileStorage: IChatFileStorage = {
     pageContext?: PageContext,
     questionResponse?: QuestionResponseMeta,
     questionCancellation?: QuestionCancellationMeta,
+    questionPrompt?: QuestionPrompt,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -2571,6 +2575,29 @@ export const chatFileStorage: IChatFileStorage = {
         ...(questionResponse ? { questionResponse } : {}),
         ...(effectiveCancellation ? { questionCancellation: effectiveCancellation } : {}),
       };
+      if (questionResponse && questionPrompt) {
+        const selectedLabels = questionResponse.selectedOptionIds
+          .map((id) => questionPrompt.options.find((option) => option.id === id)?.label)
+          .filter((label): label is string => Boolean(label));
+        await decisionsStorage.recordJudgment({
+          title: questionPrompt.question,
+          description: [...selectedLabels, questionResponse.otherText].filter(Boolean).join("; "),
+          answerPayload: {
+            selectedOptionIds: questionResponse.selectedOptionIds,
+            selectedLabels,
+            ...(questionResponse.otherText ? { otherText: questionResponse.otherText } : {}),
+            principleRevisionIds: questionResponse.selectedPrincipleRevisionIds ?? [],
+          },
+          reasoning: questionResponse.reasoning,
+          sourceSessionId: sessionId,
+          sourceToolCallId: questionResponse.questionToolCallId,
+          ownerPersonRole: "partner",
+          principleRevisionIds: questionResponse.selectedPrincipleRevisionIds,
+          triggeredByAddress: `@question:${sessionId}~${questionResponse.questionToolCallId}`,
+          status: "closed",
+          resolvedAt: new Date(now),
+        });
+      }
       data.messages.push(message);
       data.updatedAt = now;
       await writeConv(data);

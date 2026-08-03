@@ -424,6 +424,22 @@ export const TOOLS: Record<string, ToolMeta> = {
         selectionMode: { type: "string", enum: ["single", "multiple"], description: "single by default; multiple allows more than one choice." },
         allowOther: { type: "boolean", description: "Allow a free-text Other answer, default false." },
         reasoning: { type: "string", description: "Why this clarification is necessary right now." },
+        principles: {
+          type: "array",
+          description: "Optional immutable Principle choices relevant to the judgment.",
+          maxItems: 12,
+          items: {
+            type: "object",
+            properties: {
+              principleId: { type: "string" },
+              revisionId: { type: "string" },
+              title: { type: "string" },
+              layer1: { type: "string" },
+            },
+            required: ["principleId", "revisionId", "title", "layer1"],
+          },
+        },
+        allowResponseReasoning: { type: "boolean", description: "Allow the user to attach freeform reasoning, default false." },
       },
       required: ["question", "options"],
     },

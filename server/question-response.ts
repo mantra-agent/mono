@@ -65,6 +65,7 @@ export function resolveQuestionResponse(
 
   return {
     ok: true,
+    prompt: normalizedPrompt.value,
     response: validated.value,
     content: formatQuestionResponseContent(normalizedPrompt.value, validated.value),
   };

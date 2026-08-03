@@ -577,7 +577,7 @@ async function resolveSelfPrinciples(): Promise<string> {
   try {
     const all = await filePrincipleStorage.getAllLayer1();
     if (all.length === 0) return "No principles defined yet.";
-    const lines = all.map(p => `- **${p.title}** (@principle:${p.id}, current revision: ${p.currentRevisionId}): ${p.layer1}`);
+    const lines = all.map(p => `- **${p.title}** (@principle:${p.currentRevisionId}; principle id: ${p.id}): ${p.layer1}`);
     return `These are guiding principles. Reference them when relevant — especially when helping with decisions, priorities, or reflection.\n\n${lines.join("\n")}`;
   } catch {
     return "No principles available.";
