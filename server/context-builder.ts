@@ -1998,7 +1998,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   skills: "Manage the Agent's skill library. Actions: list, get, create, update, delete, search.",
   strategy: "Strategic modeling — strategies, actors, move trees, simulations, assumptions, artifacts.",
   system: "System operations — state snapshot, runtime logs, frontend performance, and context health. Actions: state, logs, frontend_performance, context_health.",
-  issues: "Track product issues — create a new issue or fetch one by ID. Actions: create, get.",
+  issues: "Track product Issues — create, page unresolved Issues, fetch one by ID, or resolve one with affirmative evidence. Actions: create, list, get, resolve.",
   tasks: "Create, complete, delete, and update tasks. Actions: create, complete, delete, update.",
   observe: "Record an observation about your own cognition. Not what you thought, but what you notice about how you thought. What pattern fired? What gap appeared? What changed? What connection formed? What's now possible? 1-3 short sentences MAX. If it doesn't pass \"would this change how I act next time?\", don't record it.",
   orient: "Unified session orientation — set title, topics, and persona in a single call. All parameters optional for partial updates.",

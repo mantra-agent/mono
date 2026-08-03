@@ -244,12 +244,14 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   issues: {
-    description: "Track product issues — create a new issue or fetch one by ID. Part of the Build product area. Actions: create, get.",
-    whenToUse: "When creating a bug or improvement issue, or fetching an existing issue by numeric ID.",
-    example: 'Create: { "action": "create", "title": "Login bug", "description": "..." }\nGet: { "action": "get", "id": "123" }',
+    description: "Track product Issues — create, page unresolved Issues, fetch one by ID, or resolve one with affirmative evidence. Part of the Build product area. Actions: create, list, get, resolve.",
+    whenToUse: "When creating a bug or improvement issue, paging unresolved issues, fetching an existing issue by numeric ID, or resolving one with affirmative evidence.",
+    example: 'Create: { "action": "create", "title": "Login bug", "description": "..." }\nList: { "action": "list", "status": "open" }\nGet: { "action": "get", "id": "123" }\nResolve: { "action": "resolve", "id": "123", "evidence": "Reproduced in stage; fix confirmed via @pr:repo/456 merge and a passing screenshot." }',
     actions: {
       create: { description: "Create a new issue to track a bug or improvement.", requiredParams: ["title"], optionalParams: ["description"] },
+      list: { description: "Page unresolved (or filtered) Issues.", optionalParams: ["status", "excludeStatus", "offset", "limit"] },
       get: { description: "Fetch a single issue by numeric ID.", requiredParams: ["id"] },
+      resolve: { description: "Resolve an issue with a concise affirmative evidence note (1-2000 characters).", requiredParams: ["id", "evidence"] },
     },
   },
   meetings: {
