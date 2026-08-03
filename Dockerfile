@@ -61,6 +61,7 @@ RUN groupadd --system mantra && useradd --system --gid mantra --home-dir /home/m
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     git \
+    ripgrep \
     ca-certificates \
     chromium \
     python3 \

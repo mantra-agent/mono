@@ -259,6 +259,8 @@ const SAFE_SHELL_GIT_SUBCOMMANDS = new Set([
   "branch",
   "remote",
   "rev-parse",
+  // Content search over the index/worktree — pure read, common when rg is unavailable.
+  "grep",
 ]);
 
 /**

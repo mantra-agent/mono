@@ -223,9 +223,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
   shell: {
     description: getShellToolContractDescription(),
     whenToUse:
-      "Read-only inspection already covered by the allowlist: list files, grep/rg search, head/tail/cat known paths, npm run build, and shell git status/log/diff/show/branch/remote/rev-parse. Prefer scratch.read when the path is known. Never invent a command outside the allowlist and never retry a denied command with cosmetic variants.",
+      "Read-only inspection already covered by the allowlist: list files, grep/rg search, head/tail/cat known paths, npm run build, and shell git status/log/diff/show/branch/remote/rev-parse/grep. Prefer scratch.read when the path is known. Never invent a command outside the allowlist and never retry a denied command with cosmetic variants.",
     example:
-      '{ "command": "ls repos/" }\n{ "command": "rg -n \\"validateShellCommand\\" server --type ts" }\n{ "command": "git -C repos/mono-abc123 status" }\n{ "command": "npm run build" }\nDenied patterns (do not call): semicolon chains, 2>/dev/null is allowed but file redirects and bare `;` are not, git write subcommands, non-build npm.',
+      '{ "command": "ls repos/" }\n{ "command": "rg -n \\"validateShellCommand\\" server --type ts" }\n{ "command": "git -C repos/mono-abc123 grep -n validateShellCommand -- server" }\n{ "command": "git -C repos/mono-abc123 status" }\n{ "command": "npm run build" }\nDenied patterns (do not call): semicolon chains, 2>/dev/null is allowed but file redirects and bare `;` are not, git write subcommands, non-build npm.',
   },
   notion: {
     description: "Search, read, and browse Notion pages and databases. Actions: status, search, get_page, get_content, list_databases, query_database.",
