@@ -746,51 +746,11 @@ class PersonaStorageClass {
     }
 
     if (target.source === "seed" || (target as any).scope === "global") {
-      const [existingCopy] = await db
-        .select()
-        .from(personas)
-        .where(
-          combineWithWritableScope(
-            principal,
-            personaScopeColumns,
-            eq(personas.templatePersonaId, target.id),
-          ),
-        )
-        .limit(1);
-
-      if (existingCopy) {
-        const [activated] = await db
-          .update(personas)
-          .set({
-            isActive: true,
-            updatedAt: new Date(),
-            updatedByUserId: principal.userId ?? undefined,
-          })
-          .where(
-            combineWithWritableScope(
-              principal,
-              personaScopeColumns,
-              eq(personas.id, existingCopy.id),
-            ),
-          )
-          .returning();
-        this.invalidateCache();
-        log.log(
-          "activate template id=" +
-            id +
-            " reused=" +
-            existingCopy.id +
-            " name=" +
-            target.name,
-        );
-        return activated ? rowToEntry(activated) : null;
-      }
-
       const copy = await this.insertOwnedCopy(target, { isActive: true });
       log.log(
         "activate template id=" +
           id +
-          " copied=" +
+          " owned=" +
           copy.id +
           " name=" +
           target.name,
@@ -847,49 +807,153 @@ class PersonaStorageClass {
   }
 
   /**
+   * Find this principal's writable owned copy of a template.
+   * Prefers template lineage; falls back to same-name user copy so legacy
+   * orphans and concurrent forks both resolve to one row.
+   */
+  private async findOwnedCopy(
+    principal: ReturnType<typeof getCurrentPrincipalOrSystem>,
+    template: PersonaEntry,
+  ): Promise<typeof personas.$inferSelect | null> {
+    const [byLineage] = await db
+      .select()
+      .from(personas)
+      .where(
+        combineWithWritableScope(
+          principal,
+          personaScopeColumns,
+          and(
+            eq(personas.source, "user"),
+            eq(personas.templatePersonaId, template.id),
+          ),
+        ),
+      )
+      .limit(1);
+    if (byLineage) return byLineage;
+
+    const [byName] = await db
+      .select()
+      .from(personas)
+      .where(
+        combineWithWritableScope(
+          principal,
+          personaScopeColumns,
+          and(
+            eq(personas.source, "user"),
+            sql`LOWER(${personas.name}) = LOWER(${template.name})`,
+          ),
+        ),
+      )
+      .limit(1);
+    return byName ?? null;
+  }
+
+  /**
+   * Reuse an owned copy for activate/customize: heal missing template lineage,
+   * optionally mark active, and return the canonical entry.
+   */
+  private async reuseOwnedCopy(
+    existing: typeof personas.$inferSelect,
+    template: PersonaEntry,
+    opts: { isActive: boolean },
+  ): Promise<PersonaEntry> {
+    const principal = getCurrentPrincipalOrSystem();
+    const patch: Record<string, unknown> = {};
+    // Heal legacy orphans that share the template name but lost lineage.
+    if (existing.templatePersonaId == null) {
+      patch.templatePersonaId = template.id;
+    }
+    // Activate path only — never clear isActive from ensureOwnedCopy.
+    if (opts.isActive && !existing.isActive) {
+      patch.isActive = true;
+    }
+    if (Object.keys(patch).length === 0) {
+      return rowToEntry(existing);
+    }
+    patch.updatedAt = new Date();
+    patch.updatedByUserId = principal.userId ?? undefined;
+    const [updated] = await db
+      .update(personas)
+      .set(patch)
+      .where(
+        combineWithWritableScope(
+          principal,
+          personaScopeColumns,
+          eq(personas.id, existing.id),
+        ),
+      )
+      .returning();
+    this.invalidateCache();
+    return rowToEntry(updated ?? existing);
+  }
+
+  /**
    * Insert a user-owned copy of a seed/global template for the current principal.
    * Shared by activation and customization so the copy shape lives in exactly one
    * place. Callers decide whether the copy starts active.
+   *
+   * Concurrent forks race on personas_owner_name_unique (owner_user_id, LOWER(name)).
+   * On that unique violation, recover the winner's row instead of failing closed —
+   * the owned copy is the source of truth, not the insert attempt.
    */
   private async insertOwnedCopy(
     target: PersonaEntry,
     opts: { isActive: boolean },
   ): Promise<PersonaEntry> {
     const principal = getCurrentPrincipalOrSystem();
+    const existing = await this.findOwnedCopy(principal, target);
+    if (existing) {
+      return this.reuseOwnedCopy(existing, target, opts);
+    }
+
     const maxSort = (await this.list()).reduce(
       (max, p) => Math.max(max, p.sortOrder),
       0,
     );
-    const copy = await this.withPersonaIdCollisionRetry(
-      "insertOwnedCopy",
-      async () => {
-        const [created] = await db
-          .insert(personas)
-          .values({
-            name: target.name,
-            description: target.description,
-            icon: target.icon,
-            promptOverlay: target.promptOverlay,
-            expressionTags: target.expressionTags,
-            cognitiveOverrides: target.cognitiveOverrides,
-            semanticTier: target.semanticTier,
-            contextSections: target.contextSections,
-            toolBundle: target.toolBundle,
-            isDefault: false,
-            isActive: opts.isActive,
-            sortOrder: maxSort + 1,
-            source: "user",
-            templatePersonaId: target.id,
-            ...ownedInsertValues(principal, personaScopeColumns),
-            createdByUserId: principal.userId ?? undefined,
-            updatedByUserId: principal.userId ?? undefined,
-          })
-          .returning();
-        return created;
-      },
-    );
-    this.invalidateCache();
-    return rowToEntry(copy);
+
+    try {
+      const copy = await this.withPersonaIdCollisionRetry(
+        "insertOwnedCopy",
+        async () => {
+          const [created] = await db
+            .insert(personas)
+            .values({
+              name: target.name,
+              description: target.description,
+              icon: target.icon,
+              promptOverlay: target.promptOverlay,
+              expressionTags: target.expressionTags,
+              cognitiveOverrides: target.cognitiveOverrides,
+              semanticTier: target.semanticTier,
+              contextSections: target.contextSections,
+              toolBundle: target.toolBundle,
+              isDefault: false,
+              isActive: opts.isActive,
+              sortOrder: maxSort + 1,
+              source: "user",
+              templatePersonaId: target.id,
+              ...ownedInsertValues(principal, personaScopeColumns),
+              createdByUserId: principal.userId ?? undefined,
+              updatedByUserId: principal.userId ?? undefined,
+            })
+            .returning();
+          return created;
+        },
+      );
+      this.invalidateCache();
+      return rowToEntry(copy);
+    } catch (error) {
+      if (!isUniqueViolationError(error)) throw error;
+
+      // Name (or residual id) race: another concurrent fork won. Recover it.
+      const winner = await this.findOwnedCopy(principal, target);
+      if (!winner) throw error;
+
+      log.warn(
+        `insertOwnedCopy: unique race on name=${target.name} templateId=${target.id}; reusing owned copy id=${winner.id}`,
+      );
+      return this.reuseOwnedCopy(winner, target, opts);
+    }
   }
 
   /**
@@ -933,19 +997,6 @@ class PersonaStorageClass {
       template = row ? rowToEntry(row) : null;
     }
     if (!template) return visible;
-
-    const [existingCopy] = await db
-      .select()
-      .from(personas)
-      .where(
-        combineWithWritableScope(
-          principal,
-          personaScopeColumns,
-          eq(personas.templatePersonaId, template.id),
-        ),
-      )
-      .limit(1);
-    if (existingCopy) return rowToEntry(existingCopy);
 
     const copy = await this.insertOwnedCopy(template, { isActive: false });
     log.log(
