@@ -30,11 +30,13 @@ type BuildExpandContentResponse = {
 
 function buildEnvironmentId(item: SimpleFeedItem): number | null {
   if (item.payload?.kind !== "build_deployment") return null;
-  const raw = item.payload?.environmentId;
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+  // Collectors emit platformEnvironmentId; accept environmentId as alias so the
+  // expander gate cannot silently miss the id when one side renames the field.
+  const raw = item.payload?.platformEnvironmentId ?? item.payload?.environmentId;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.trunc(raw);
   if (typeof raw === "string" && raw.trim()) {
     const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    if (Number.isFinite(parsed) && parsed > 0) return Math.trunc(parsed);
   }
   return null;
 }
