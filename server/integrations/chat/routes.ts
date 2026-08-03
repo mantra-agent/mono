@@ -1876,6 +1876,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             if (tc.error && !existing.error) {
               existing.error = tc.error;
             }
+            if (tc.failureKind && !existing.failureKind) {
+              existing.failureKind = tc.failureKind;
+            }
             chatLog.warn(
               `merged duplicate toolCallId=${tc.toolCallId} name=${tc.toolName} fromMsgId=${msgId} sessionId=${sessionId}`,
             );
@@ -1886,6 +1889,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               arguments: tc.arguments,
               result: tc.result,
               error: tc.error,
+              ...(tc.failureKind ? { failureKind: tc.failureKind } : {}),
             });
           }
         }
@@ -2903,6 +2907,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             tc.error && typeof tc.error !== "boolean"
               ? String(tc.error)
               : undefined,
+          ...(tc.failureKind ? { failureKind: tc.failureKind } : {}),
           status: tc.error ? "error" : "done",
           outcome: tc.outcome,
           parentId: tc.parentId,

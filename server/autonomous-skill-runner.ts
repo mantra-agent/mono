@@ -124,6 +124,7 @@ async function persistExecutorResult(
       arguments: tc.args,
       result: tc.result,
       error: tc.error && typeof tc.error !== "boolean" ? String(tc.error) : undefined,
+      ...(tc.failureKind ? { failureKind: tc.failureKind } : {}),
       status: tc.error ? "error" : "done",
       outcome: tc.outcome,
     }));

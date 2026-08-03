@@ -1,4 +1,5 @@
-export type ToolFailureKind = "input" | "permission" | "transient" | "internal";
+import type { ToolFailureKind } from "@shared/tool-failure";
+export type { ToolFailureKind } from "@shared/tool-failure";
 
 export type ToolFailureCode =
   | "scratch_edit_not_found"

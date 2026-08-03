@@ -219,7 +219,7 @@ export interface ExecutorRunResult {
   lastStopReason?: string;
   content: string;
   thinking: string;
-  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; durationMs: number; parentId?: string }>;
+  toolCalls: Array<{ id?: string; name: string; args: Record<string, unknown>; result: string; outcome: ToolOutcome; error?: boolean; failureKind?: import("@shared/tool-failure").ToolFailureKind; durationMs: number; parentId?: string }>;
   model: string;
   provider: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -1732,6 +1732,7 @@ export class AgentExecutor extends EventEmitter {
           result: event.result,
           outcome: event.outcome ?? (event.error ? "failed" : "succeeded"),
           durationMs: event.durationMs ?? 0,
+          failureKind: event.failure?.kind,
         });
         if (toolCallId && !ctx.iterationToolCalls.some((call) => call.id === toolCallId)) {
           ctx.iterationToolCalls.push({
@@ -1758,7 +1759,14 @@ export class AgentExecutor extends EventEmitter {
         }
         // Chronology: record tool entry pointing to resolvedToolCalls index
         ctx.segmentChronology.push({ s: "tool", i: toolIdx });
-        ctx.publish("tool_result", { toolCallId, toolName: normalizedName, arguments: resolvedArgs, result: event.result, error: event.error ? event.result : undefined });
+        ctx.publish("tool_result", {
+          toolCallId,
+          toolName: normalizedName,
+          arguments: resolvedArgs,
+          result: event.result,
+          error: event.error ? event.result : undefined,
+          failureKind: event.failure?.kind,
+        });
         const toolStepStartResolved = ctx.activeToolUseSteps.get(toolCallId || "");
         if (toolStepStartResolved && toolCallId) {
           ctx.activeToolUseSteps.delete(toolCallId);
@@ -2038,13 +2046,21 @@ export class AgentExecutor extends EventEmitter {
         result: toolResult.result,
         outcome: toolResult.outcome ?? (toolResult.error ? "failed" : "succeeded"),
         durationMs,
+        failureKind: toolResult.failure?.kind,
       });
       // Chronology: record tool entry pointing to resolvedToolCalls index
       ctx.segmentChronology.push({ s: "tool", i: toolIdx });
       sideEffectFlags.push(!!toolResult.sideEffectOnly);
       continuation = toolResult.continuation || continuation;
 
-      ctx.publish("tool_result", { toolCallId: tc.id, toolName: tc.name, arguments: canonicalArgs, result: toolResult.result, error: toolResult.error ? toolResult.result : undefined });
+      ctx.publish("tool_result", {
+        toolCallId: tc.id,
+        toolName: tc.name,
+        arguments: canonicalArgs,
+        result: toolResult.result,
+        error: toolResult.error ? toolResult.result : undefined,
+        failureKind: toolResult.failure?.kind,
+      });
       const toolStepStart = ctx.activeToolUseSteps.get(tc.id);
       if (toolStepStart) {
         ctx.activeToolUseSteps.delete(tc.id);
@@ -2110,8 +2126,9 @@ export class AgentExecutor extends EventEmitter {
     result: string;
     outcome: ToolOutcome;
     durationMs: number;
+    failureKind?: import("@shared/tool-failure").ToolFailureKind;
   }): void {
-    const { ctx, options, id, name, input, result, outcome, durationMs } = args;
+    const { ctx, options, id, name, input, result, outcome, durationMs, failureKind } = args;
     const error = outcome === "failed" || outcome === "cancelled";
     ctx.resolvedToolCalls.push({
       id,
@@ -2120,6 +2137,7 @@ export class AgentExecutor extends EventEmitter {
       result,
       outcome,
       error: error || undefined,
+      ...(failureKind ? { failureKind } : {}),
       durationMs,
       parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}`,
     });
