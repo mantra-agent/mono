@@ -182,7 +182,7 @@ export async function getReliabilityOutcomeSummary(
         principal,
         documentScopeColumns,
         and(
-          eq(documentStoreDocuments.documentType, "chat_session"),
+          eq(documentStoreDocuments.documentType, "chat"),
           gte(documentStoreDocuments.updatedAt, start),
         ),
       )),
