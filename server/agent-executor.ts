@@ -1732,7 +1732,8 @@ export class AgentExecutor extends EventEmitter {
           result: event.result,
           outcome: event.outcome ?? (event.error ? "failed" : "succeeded"),
           durationMs: event.durationMs ?? 0,
-          failureKind: event.failure?.kind,
+          failure: event.failure,
+          recoveryDecision: event.recoveryDecision,
         });
         if (toolCallId && !ctx.iterationToolCalls.some((call) => call.id === toolCallId)) {
           ctx.iterationToolCalls.push({
@@ -2046,7 +2047,8 @@ export class AgentExecutor extends EventEmitter {
         result: toolResult.result,
         outcome: toolResult.outcome ?? (toolResult.error ? "failed" : "succeeded"),
         durationMs,
-        failureKind: toolResult.failure?.kind,
+        failure: toolResult.failure,
+        recoveryDecision: toolResult.recoveryDecision,
       });
       // Chronology: record tool entry pointing to resolvedToolCalls index
       ctx.segmentChronology.push({ s: "tool", i: toolIdx });
@@ -2126,10 +2128,12 @@ export class AgentExecutor extends EventEmitter {
     result: string;
     outcome: ToolOutcome;
     durationMs: number;
-    failureKind?: import("@shared/tool-failure").ToolFailureKind;
+    failure?: ToolFailure;
+    recoveryDecision?: ToolRecoveryDecision;
   }): void {
-    const { ctx, options, id, name, input, result, outcome, durationMs, failureKind } = args;
+    const { ctx, options, id, name, input, result, outcome, durationMs, failure, recoveryDecision } = args;
     const error = outcome === "failed" || outcome === "cancelled";
+    const failureKind = failure?.kind;
     ctx.resolvedToolCalls.push({
       id,
       name,
@@ -2142,7 +2146,9 @@ export class AgentExecutor extends EventEmitter {
       parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}`,
     });
 
-    const metadata = {
+    // One discriminant per decision: surface ToolFailure fields on the outcome log so
+    // deterministic denials (shell policy, scratch edit) are diagnosable without re-running.
+    const metadata: Record<string, unknown> = {
       runId: ctx.runId,
       sessionId: options.sessionId,
       toolCallId: id,
@@ -2152,6 +2158,11 @@ export class AgentExecutor extends EventEmitter {
       iteration: ctx.iteration,
       executionMode: ctx.executionMode,
     };
+    if (failureKind) metadata.failureKind = failureKind;
+    if (failure?.code) metadata.failureCode = failure.code;
+    if (failure?.detail) metadata.failureDetail = failure.detail;
+    if (failure?.resourceKey) metadata.resourceKey = failure.resourceKey;
+    if (recoveryDecision) metadata.recoveryDecision = recoveryDecision;
     if (outcome === "failed" || outcome === "cancelled") {
       log.error("agent.tool_outcome", metadata);
     } else if (outcome === "degraded") {
