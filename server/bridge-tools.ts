@@ -13202,10 +13202,11 @@ const systemTools: Record<string, ToolHandler> = {
         toolExec.log(`[Shell] exit callId=${callId} pid=${pid} exitCode=${exitCode} signal=${signal ?? "null"} stdoutBytes=${stdoutBytes} stderrBytes=${stderrBytes} elapsedMs=${elapsedMs}${timedOut ? " timedOut=true" : ""}`);
 
         try {
-          // Failure path: timeout or non-zero exit. Mirror the previous
-          // contract — return a concatenated stdout+stderr with a
-          // header. For these we read both files (failure paths are
-          // typically small) and unlink at the end.
+          // Infrastructure failure: timeout, signal kill, or missing exit
+          // code (spawn/error path). These are tool failures.
+          // Clean non-zero exits are NOT — rg/grep miss, git status 1, etc.
+          // are process status the model must read, not is_error/reliability
+          // failures. Keep the exit header + stdout/stderr body either way.
           if (timedOut) {
             const [stdoutText, stderrText] = await Promise.all([
               fsp.readFile(stdoutPath, "utf-8").catch(() => ""),
@@ -13215,13 +13216,32 @@ const systemTools: Record<string, ToolHandler> = {
             resolveResult({ result: `Command timed out after ${timeoutMs}ms\n${output}`.trim(), error: true });
             return;
           }
+          if (signal || typeof exitCode !== "number") {
+            const [stdoutText, stderrText] = await Promise.all([
+              fsp.readFile(stdoutPath, "utf-8").catch(() => ""),
+              fsp.readFile(stderrPath, "utf-8").catch(() => ""),
+            ]);
+            const output = [stdoutText.trim(), stderrText.trim()].filter(Boolean).join("\n");
+            const header = signal
+              ? `Command terminated by signal ${signal}`
+              : `Command failed (exit ${exitCode ?? "?"})`;
+            resolveResult({
+              result: `${header}\n${output || ""}`.trim() || header,
+              error: true,
+            });
+            return;
+          }
           if (exitCode !== 0) {
             const [stdoutText, stderrText] = await Promise.all([
               fsp.readFile(stdoutPath, "utf-8").catch(() => ""),
               fsp.readFile(stderrPath, "utf-8").catch(() => ""),
             ]);
             const output = [stdoutText.trim(), stderrText.trim()].filter(Boolean).join("\n");
-            resolveResult({ result: `Command failed (exit ${exitCode ?? "?"})\n${output || ""}`.trim() || `Command failed (exit ${exitCode ?? "?"})`, error: true });
+            // Tool contract fulfilled: process ran to completion. Exit status
+            // is payload for the model — do not set error/is_error.
+            resolveResult({
+              result: `Command failed (exit ${exitCode})\n${output || ""}`.trim() || `Command failed (exit ${exitCode})`,
+            });
             return;
           }
 
