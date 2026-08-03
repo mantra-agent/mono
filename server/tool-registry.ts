@@ -2028,6 +2028,7 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "memory",
   "goals",
   "tasks",
+  "plan",
   "people",
   "library",
   "session",
