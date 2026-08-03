@@ -126,7 +126,7 @@ import {
 } from "@/components/memory/memory-source-icon";
 
 const MEMORY_GRAPH_ACTIVITY_STORAGE_KEY = "memory-graph-activity-enabled";
-const DEFAULT_HIDDEN_GRAPH_NODE_TYPES = new Set(["plans", "interactions"]);
+const DEFAULT_HIDDEN_GRAPH_NODE_TYPES = new Set(["plans", "interactions", "tags"]);
 
 const SOURCE_REF_TYPE_MAP: Record<string, string> = {
   chat_journal: "session",

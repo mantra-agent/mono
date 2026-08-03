@@ -11,6 +11,7 @@ import {
   MessageSquare,
   Mic,
   Pencil,
+  Tag,
   Video,
   Target,
   User,
@@ -36,6 +37,7 @@ const MEMORY_GRAPH_NODE_TYPE_ORDER = [
   "goals",
   "projects",
   "plans",
+  "tags",
 ];
 
 const MEMORY_GRAPH_NODE_TYPE_BY_SOURCE: Record<string, MemoryGraphNodeTypeConfig> = {
@@ -54,6 +56,7 @@ const MEMORY_GRAPH_NODE_TYPE_BY_SOURCE: Record<string, MemoryGraphNodeTypeConfig
   goal: { id: "goals", label: "Goals", iconSource: "goal" },
   project: { id: "projects", label: "Projects", iconSource: "project" },
   plan: { id: "plans", label: "Plans", iconSource: "plan" },
+  tag: { id: "tags", label: "Tags", iconSource: "tag" },
 };
 
 function humanizeNodeType(source: string): string {
@@ -138,6 +141,8 @@ export function getMemorySourceIcon(source: string): LucideIcon {
       return Activity;
     case "state":
       return CircleDot;
+    case "tag":
+      return Tag;
     default:
       return FileText;
   }
