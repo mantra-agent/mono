@@ -21,7 +21,14 @@ import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors"
 import { formatTaskForBridge } from "./lib/task-format";
 import { WORKSPACE_DIR } from "./paths";
 import { pathExists, resolveWorkspacePath } from "./fs-utils";
-import { scratchEditFailure, authorityDenialFailure, toolFailureFromError, type ToolFailure } from "./tool-failure";
+import {
+  scratchEditFailure,
+  authorityDenialFailure,
+  toolFailureFromError,
+  inputFailure,
+  permissionFailure,
+  type ToolFailure,
+} from "./tool-failure";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
@@ -4321,7 +4328,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async orient(args) {
     const sessionId = args._sessionId;
-    if (!sessionId) return { result: "No active session — orient tool requires an active conversation context.", error: true };
+    if (!sessionId) {
+      return {
+        result: "No active session — orient tool requires an active conversation context.",
+        error: true,
+        failure: inputFailure("orient_no_session"),
+      };
+    }
 
     const hasTitle = args.title !== undefined;
     const hasTopics = args.topics !== undefined;
@@ -4337,7 +4350,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const { hasRealSessionTitle } = await import("./session-orientation");
       const conv = await chatFileStorage.getSession(sessionId);
       if (!hasRealSessionTitle(conv?.title)) {
-        return { result: "First-turn orientation requires `persona`. Include the `persona` parameter (name or id) alongside title and topics on the initial orient call.", error: true };
+        return {
+          result: "First-turn orientation requires `persona`. Include the `persona` parameter (name or id) alongside title and topics on the initial orient call.",
+          error: true,
+          failure: inputFailure("orient_persona_required"),
+        };
       }
     }
 
@@ -4890,18 +4907,44 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const { fileTaskStorage } = await import("./file-storage/tasks");
     const { chatFileStorage } = await import("./chat-file-storage");
 
-    const title = args.title;
-    if (!title) return { result: "Missing task title", error: true };
-    const description = args.description?.trim();
-    if (!description) return { result: "Missing task description", error: true };
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    if (!title) {
+      return {
+        result: "Missing task title",
+        error: true,
+        failure: inputFailure("task_missing_title"),
+      };
+    }
+    // Schema and storage both treat description as optional (default "").
+    // Hard-requiring it here was a validation thrash wall against the advertised contract.
+    const description = typeof args.description === "string" ? args.description.trim() : "";
 
     const owner = args.owner === "xyz" ? "agent" : (args.owner || "me");
-    const milestoneId = typeof args.milestoneId === "number" ? args.milestoneId : Number(args.milestoneId);
-    if (!Number.isInteger(milestoneId) || milestoneId <= 0) {
-      return {
-        result: "Missing milestoneId. Every new task must be assigned to a real milestone. If the right milestone is unclear, ask Ray which milestone it belongs under before creating the task.",
-        error: true,
-      };
+    // milestoneId is optional in the tool schema and storage. Only coerce when provided.
+    let milestoneId: number | null = null;
+    if (args.milestoneId !== undefined && args.milestoneId !== null && args.milestoneId !== "") {
+      const parsed = typeof args.milestoneId === "number" ? args.milestoneId : Number(args.milestoneId);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        return {
+          result: `Invalid milestoneId: ${args.milestoneId}. Pass a positive integer milestone id, or omit milestoneId.`,
+          error: true,
+          failure: inputFailure("task_update_milestone_not_found", String(args.milestoneId)),
+        };
+      }
+      milestoneId = parsed;
+    }
+
+    let projectId: number | null = null;
+    if (args.projectId !== undefined && args.projectId !== null && args.projectId !== "") {
+      const parsed = typeof args.projectId === "number" ? args.projectId : Number(args.projectId);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        return {
+          result: `Invalid projectId: ${args.projectId}. Pass a positive integer project id, or omit projectId.`,
+          error: true,
+          failure: inputFailure("task_update_project_not_found", String(args.projectId)),
+        };
+      }
+      projectId = parsed;
     }
 
     const sourceSessionId = typeof args._sessionId === "string" && args._sessionId.trim() ? args._sessionId.trim() : null;
@@ -4932,7 +4975,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         priority: args.priority || "mid",
         owner,
         ...assignmentInput.assignment,
-        projectId: args.projectId ?? null,
+        projectId,
         status: args.status || "ready",
         requiresReview: args.requiresReview ?? false,
         impact: args.impact ?? null,
@@ -4951,8 +4994,20 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const assignee = task.assigneeSubjectType && task.assigneeSubjectId
         ? `, assignee: ${task.assigneeSubjectType}:${task.assigneeSubjectId}`
         : "";
-      return { result: `Task created: "${task.title}" (ID: ${task.id}, priority: ${task.priority}, owner: ${task.owner}${assignee}, milestone: ${task.milestoneId})${sourceSessionId ? `, source: @session:${sourceSessionId}` : ""}` };
+      return { result: `Task created: "${task.title}" (ID: ${task.id}, priority: ${task.priority}, owner: ${task.owner}${assignee}${task.milestoneId ? `, milestone: ${task.milestoneId}` : ""})${sourceSessionId ? `, source: @session:${sourceSessionId}` : ""}` };
     } catch (err: any) {
+      const failure = toolFailureFromError(err);
+      if (failure) {
+        return { result: err instanceof Error ? err.message : String(err), error: true, failure };
+      }
+      // milestoneId without projectId is a deterministic input wall from storage.
+      if (typeof err?.message === "string" && /milestoneId requires projectId/i.test(err.message)) {
+        return {
+          result: err.message,
+          error: true,
+          failure: inputFailure("task_update_milestone_requires_project"),
+        };
+      }
       return { result: `Failed to create task: ${err.message}`, error: true };
     }
   },
@@ -5048,6 +5103,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const failure = toolFailureFromError(err);
       if (failure) {
         return { result: `Failed to update task: ${err.message}`, error: true, failure };
+      }
+      if (typeof err?.message === "string" && /milestoneId requires projectId/i.test(err.message)) {
+        return {
+          result: `Failed to update task: ${err.message}`,
+          error: true,
+          failure: inputFailure("task_update_milestone_requires_project"),
+        };
       }
       return { result: `Failed to update task: ${err.message}`, error: true };
     }
@@ -10440,9 +10502,11 @@ ${refs}` : ""),
       if (!cfg.hasToken) missing.push("SENTRY_AUTH_TOKEN");
       if (!cfg.org) missing.push("SENTRY_ORG");
       if (!cfg.project) missing.push("SENTRY_PROJECT");
+      const detail = missing.join(", ");
       return {
-        result: `Sentry not configured. Missing: ${missing.join(", ")}. Add them via the Integrations page.`,
+        result: `Sentry not configured. Missing: ${detail}. Add them via the Integrations page.`,
         error: true,
+        failure: permissionFailure("integration_not_configured", detail),
       };
     }
 
@@ -10524,7 +10588,12 @@ ${refs}` : ""),
       return { result: `Unhandled sentry action: ${action}`, error: true };
     } catch (err: unknown) {
       if (err instanceof SentryApiError) {
-        return { result: `Sentry ${action} failed: ${err.message} (status=${err.status})${err.details ? ` — ${JSON.stringify(err.details)}` : ""}`, error: true };
+        const failure = toolFailureFromError(err);
+        return {
+          result: `Sentry ${action} failed: ${err.message} (status=${err.status})${err.details ? ` — ${JSON.stringify(err.details)}` : ""}`,
+          error: true,
+          ...(failure ? { failure } : {}),
+        };
       }
       const msg = err instanceof Error ? err.message : String(err);
       return { result: `Sentry ${action} failed: ${msg}`, error: true };
@@ -12196,7 +12265,19 @@ ${refs}` : ""),
 
       return { result: `Unknown hooks action: ${action}. Available: list, get, create, update, delete, test`, error: true };
     } catch (err: any) {
-      return { result: `Hooks tool error: ${err.message}`, error: true };
+      const failure = toolFailureFromError(err);
+      if (failure?.code === "hook_name_conflict") {
+        return {
+          result: `Hook name already exists. Choose a different name or update the existing hook. (${err.message})`,
+          error: true,
+          failure,
+        };
+      }
+      return {
+        result: `Hooks tool error: ${err.message}`,
+        error: true,
+        ...(failure ? { failure } : {}),
+      };
     }
   },
 
