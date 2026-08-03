@@ -1,11 +1,40 @@
 // Use createLogger for logging ONLY
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import { z } from "zod";
 import { semanticTierSchema } from "@shared/model-connectors";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
+import { isUniqueViolationError } from "../postgres-errors";
 
 const log = createLogger("CognitionRoutes");
+
+function sendRouteError(
+  res: Response,
+  error: unknown,
+  context: string,
+  reservedNameError: new (...args: never[]) => Error & { statusCode: number },
+): void {
+  const err = error as Error & { statusCode?: number };
+  const message = err?.message || String(error);
+  log.error(`${context} error:`, message);
+
+  if (error instanceof reservedNameError) {
+    res.status(err.statusCode ?? 409).json({ error: message });
+    return;
+  }
+  if (isUniqueViolationError(error)) {
+    res.status(409).json({
+      error: "Could not save persona due to a temporary ID conflict. Please try again.",
+    });
+    return;
+  }
+  // Never leak raw Drizzle/Postgres SQL ("Failed query: insert into ...") to the client.
+  if (/^Failed query:/i.test(message) || /unique constraint/i.test(message)) {
+    res.status(500).json({ error: "Could not save persona. Please try again." });
+    return;
+  }
+  res.status(500).json({ error: "Internal server error" });
+}
 
 export async function registerCognitionRoutes(app: Express) {
   app.use(["/api/personas", "/api/emotion", "/api/cognition"], requireAuth);
@@ -17,9 +46,8 @@ export async function registerCognitionRoutes(app: Express) {
     log.debug("GET /api/personas");
     try {
       res.json(await personaStorage.list());
-    } catch (error: any) {
-      log.error("GET /api/personas error:", error?.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      sendRouteError(res, error, "GET /api/personas", PersonaReservedNameError);
     }
   });
 
@@ -27,9 +55,8 @@ export async function registerCognitionRoutes(app: Express) {
     log.debug("GET /api/personas/management");
     try {
       res.json(await personaStorage.listForManagement());
-    } catch (error: any) {
-      log.error("GET /api/personas/management error:", error?.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      sendRouteError(res, error, "GET /api/personas/management", PersonaReservedNameError);
     }
   });
 
@@ -38,9 +65,8 @@ export async function registerCognitionRoutes(app: Express) {
     try {
       const active = await personaStorage.getActive();
       res.json(active);
-    } catch (error: any) {
-      log.error("GET /api/personas/active error:", error?.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      sendRouteError(res, error, "GET /api/personas/active", PersonaReservedNameError);
     }
   });
 
@@ -51,9 +77,8 @@ export async function registerCognitionRoutes(app: Express) {
     try {
       const { getContextSectionCatalog } = await import("../context-builder");
       res.json(getContextSectionCatalog());
-    } catch (error: any) {
-      log.error("GET /api/personas/section-catalog error:", error?.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      sendRouteError(res, error, "GET /api/personas/section-catalog", PersonaReservedNameError);
     }
   });
 
@@ -64,9 +89,8 @@ export async function registerCognitionRoutes(app: Express) {
     try {
       const { getToolCatalog } = await import("../tool-registry");
       res.json(getToolCatalog());
-    } catch (error: any) {
-      log.error("GET /api/personas/tool-catalog error:", error?.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      sendRouteError(res, error, "GET /api/personas/tool-catalog", PersonaReservedNameError);
     }
   });
 
@@ -93,10 +117,8 @@ export async function registerCognitionRoutes(app: Express) {
       }
       const persona = await personaStorage.create(parsed.data);
       res.status(201).json(persona);
-    } catch (error: any) {
-      log.error("POST /api/personas error:", error?.message);
-      const status = error instanceof PersonaReservedNameError ? error.statusCode : 500;
-      res.status(status).json({ error: error.message });
+    } catch (error: unknown) {
+      sendRouteError(res, error, "POST /api/personas", PersonaReservedNameError);
     }
   });
 
@@ -131,9 +153,8 @@ export async function registerCognitionRoutes(app: Express) {
       const updated = await personaStorage.update(owned.id, parsed.data);
       if (!updated) return res.status(403).json({ error: "Persona is read-only or not found" });
       res.json(updated);
-    } catch (error: any) {
-      log.error("PUT /api/personas/:id error:", error?.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      sendRouteError(res, error, "PUT /api/personas/:id", PersonaReservedNameError);
     }
   });
 
@@ -151,11 +172,12 @@ export async function registerCognitionRoutes(app: Express) {
         category: "agent",
         event: "cognition.persona.switched",
         payload: { personaId: activated.id, personaName: activated.name },
+        sessionId: null,
+        userId: null,
       });
       res.json(activated);
-    } catch (error: any) {
-      log.error("POST /api/personas/:id/activate error:", error?.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      sendRouteError(res, error, "POST /api/personas/:id/activate", PersonaReservedNameError);
     }
   });
 
@@ -170,9 +192,8 @@ export async function registerCognitionRoutes(app: Express) {
         return res.status(400).json({ error: result.error });
       }
       res.json({ message: "Persona deleted" });
-    } catch (error: any) {
-      log.error("DELETE /api/personas/:id error:", error?.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      sendRouteError(res, error, "DELETE /api/personas/:id", PersonaReservedNameError);
     }
   });
 }

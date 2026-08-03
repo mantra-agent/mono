@@ -4,6 +4,7 @@ import { semanticTierSchema, type SemanticTier } from "@shared/model-connectors"
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
+import { isUniqueViolationError } from "../postgres-errors";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 import {
   combineWithVisibleScope,
@@ -608,30 +609,31 @@ class PersonaStorageClass {
       (max, p) => Math.max(max, p.sortOrder),
       0,
     );
-    const [row] = await db
-      .insert(personas)
-      .values({
-        name: input.name,
-        description: input.description || "",
-        icon: input.icon || "Bot",
-        promptOverlay: input.promptOverlay || null,
-        expressionTags: input.expressionTags || [],
-        cognitiveOverrides: input.cognitiveOverrides || {},
-        semanticTier: input.semanticTier ?? "balanced",
-        contextSections: input.contextSections ?? {},
-        toolBundle: input.toolBundle ?? [],
-        isDefault: false,
-        isActive: false,
-        sortOrder: maxSort + 1,
-        source: "user",
-        ...ownedInsertValues(
-          getCurrentPrincipalOrSystem(),
-          personaScopeColumns,
-        ),
-        createdByUserId: getCurrentPrincipalOrSystem().userId ?? undefined,
-        updatedByUserId: getCurrentPrincipalOrSystem().userId ?? undefined,
-      })
-      .returning();
+    const principal = getCurrentPrincipalOrSystem();
+    const row = await this.withPersonaIdCollisionRetry("create", async () => {
+      const [created] = await db
+        .insert(personas)
+        .values({
+          name: input.name,
+          description: input.description || "",
+          icon: input.icon || "Bot",
+          promptOverlay: input.promptOverlay || null,
+          expressionTags: input.expressionTags || [],
+          cognitiveOverrides: input.cognitiveOverrides || {},
+          semanticTier: input.semanticTier ?? "balanced",
+          contextSections: input.contextSections ?? {},
+          toolBundle: input.toolBundle ?? [],
+          isDefault: false,
+          isActive: false,
+          sortOrder: maxSort + 1,
+          source: "user",
+          ...ownedInsertValues(principal, personaScopeColumns),
+          createdByUserId: principal.userId ?? undefined,
+          updatedByUserId: principal.userId ?? undefined,
+        })
+        .returning();
+      return created;
+    });
     this.invalidateCache();
     log.log("create name=" + input.name);
     return rowToEntry(row);
@@ -815,6 +817,36 @@ class PersonaStorageClass {
   }
 
   /**
+   * Keep personas_id_seq ahead of MAX(id). Serial nextval is non-transactional
+   * and can lag after restores, explicit-id inserts, or legacy seed paths —
+   * which surfaces as 23505 on copy-on-write forks and user creates.
+   */
+  private async syncIdSequence(): Promise<void> {
+    await db.execute(sql`
+      SELECT setval(
+        pg_get_serial_sequence('personas', 'id'),
+        GREATEST(COALESCE((SELECT MAX(id) FROM personas), 1), 1)
+      )
+    `);
+  }
+
+  private async withPersonaIdCollisionRetry<T>(
+    label: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (!isUniqueViolationError(error)) throw error;
+      log.warn(
+        `${label}: personas id unique violation; repairing id sequence and retrying once`,
+      );
+      await this.syncIdSequence();
+      return await run();
+    }
+  }
+
+  /**
    * Insert a user-owned copy of a seed/global template for the current principal.
    * Shared by activation and customization so the copy shape lives in exactly one
    * place. Callers decide whether the copy starts active.
@@ -828,28 +860,34 @@ class PersonaStorageClass {
       (max, p) => Math.max(max, p.sortOrder),
       0,
     );
-    const [copy] = await db
-      .insert(personas)
-      .values({
-        name: target.name,
-        description: target.description,
-        icon: target.icon,
-        promptOverlay: target.promptOverlay,
-        expressionTags: target.expressionTags,
-        cognitiveOverrides: target.cognitiveOverrides,
-        semanticTier: target.semanticTier,
-        contextSections: target.contextSections,
-        toolBundle: target.toolBundle,
-        isDefault: false,
-        isActive: opts.isActive,
-        sortOrder: maxSort + 1,
-        source: "user",
-        templatePersonaId: target.id,
-        ...ownedInsertValues(principal, personaScopeColumns),
-        createdByUserId: principal.userId ?? undefined,
-        updatedByUserId: principal.userId ?? undefined,
-      })
-      .returning();
+    const copy = await this.withPersonaIdCollisionRetry(
+      "insertOwnedCopy",
+      async () => {
+        const [created] = await db
+          .insert(personas)
+          .values({
+            name: target.name,
+            description: target.description,
+            icon: target.icon,
+            promptOverlay: target.promptOverlay,
+            expressionTags: target.expressionTags,
+            cognitiveOverrides: target.cognitiveOverrides,
+            semanticTier: target.semanticTier,
+            contextSections: target.contextSections,
+            toolBundle: target.toolBundle,
+            isDefault: false,
+            isActive: opts.isActive,
+            sortOrder: maxSort + 1,
+            source: "user",
+            templatePersonaId: target.id,
+            ...ownedInsertValues(principal, personaScopeColumns),
+            createdByUserId: principal.userId ?? undefined,
+            updatedByUserId: principal.userId ?? undefined,
+          })
+          .returning();
+        return created;
+      },
+    );
     this.invalidateCache();
     return rowToEntry(copy);
   }
@@ -969,6 +1007,9 @@ class PersonaStorageClass {
         })
         .onConflictDoNothing();
     }
+    // onConflictDoNothing still advances the serial sequence on failed attempts
+    // in some paths and legacy restores can leave nextval behind MAX(id).
+    await this.syncIdSequence();
     const removedLegacyRows = await this.reconcileLegacySeedRows();
     this.invalidateCache();
     await this.updateSeedOverlays();
@@ -1026,7 +1067,11 @@ class PersonaStorageClass {
     return row ? rowToEntry(row) : null;
   }
 
-  /** Update canonical global seed personas with the production definitions. */
+  /**
+   * Reconcile functional seed fields from production definitions.
+   * Icons are intentionally excluded — they are a cosmetic user-facing field
+   * and must not be rewritten on every boot (that was the sudden icon flip).
+   */
   private async updateSeedOverlays(): Promise<void> {
     let updated = 0;
     for (const seed of SEED_PERSONAS) {
@@ -1036,7 +1081,6 @@ class PersonaStorageClass {
         seed.promptOverlay &&
         (!existing.promptOverlay ||
           existing.promptOverlay !== seed.promptOverlay);
-      const needsIconUpdate = existing.icon !== seed.icon;
       const expectedTier = semanticTierForPersona(seed.name);
       const needsTierUpdate = existing.semanticTier !== expectedTier;
       const needsRoutingUpdate =
@@ -1044,7 +1088,12 @@ class PersonaStorageClass {
         routingExamplesForPersona(seed.name).length > 0;
       const expectedIsSystem = (seed as { isSystem?: boolean }).isSystem ?? false;
       const needsSystemUpdate = existing.isSystem !== expectedIsSystem;
-      if (needsOverlayUpdate || needsIconUpdate || needsTierUpdate || needsRoutingUpdate || needsSystemUpdate) {
+      if (
+        needsOverlayUpdate ||
+        needsTierUpdate ||
+        needsRoutingUpdate ||
+        needsSystemUpdate
+      ) {
         const updates: Record<string, unknown> = { updatedAt: new Date() };
         if (needsOverlayUpdate) {
           updates.promptOverlay = seed.promptOverlay;
@@ -1052,11 +1101,10 @@ class PersonaStorageClass {
           updates.expressionTags = seed.expressionTags;
           updates.cognitiveOverrides = seed.cognitiveOverrides;
         }
-        if (needsIconUpdate) {
-          updates.icon = seed.icon;
+        if (needsTierUpdate) updates.semanticTier = expectedTier;
+        if (needsRoutingUpdate) {
+          updates.routingExamples = routingExamplesForPersona(seed.name);
         }
-        if (needsTierUpdate) updates.semanticTier = semanticTierForPersona(seed.name);
-        if (needsRoutingUpdate) updates.routingExamples = routingExamplesForPersona(seed.name);
         if (needsSystemUpdate) updates.isSystem = expectedIsSystem;
         await db
           .update(personas)
@@ -1076,7 +1124,7 @@ class PersonaStorageClass {
       log.log(
         "updateSeedOverlays: updated " +
           updated +
-          " seed personas with production overlays/icons",
+          " seed personas with production overlays",
       );
     }
   }

@@ -47,3 +47,8 @@ export function getPostgresErrorDetails(error: unknown): PostgresErrorDetails {
 export function getPostgresErrorCode(error: unknown): string {
   return getPostgresErrorDetails(error).code;
 }
+
+/** Postgres unique_violation — primary key or unique index conflict. */
+export function isUniqueViolationError(error: unknown): boolean {
+  return getPostgresErrorCode(error) === "23505";
+}
