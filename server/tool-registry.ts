@@ -116,7 +116,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         command: {
           type: "string",
           description:
-            "Read-only shell command. Must start with an allowlisted binary; no `;`, file redirects, or variable expansion. See tool description for the full contract.",
+            "Read-only shell command. Must start with an allowlisted binary; `|`, `&&`, and `;` may sequence allowlisted segments. No file redirects or variable expansion. See tool description for the full contract.",
         },
         timeout: { type: "number", description: "Timeout in ms (default 30000, max 120000)" },
       },

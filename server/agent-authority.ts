@@ -266,9 +266,14 @@ const SAFE_SHELL_GIT_SUBCOMMANDS = new Set([
 /**
  * Ordered forbidden-token classes. Each carries a precise, actionable reason so a rejected
  * command names exactly which class tripped — a child can then adapt (drop the redirection,
- * split a `;` sequence into separate calls) instead of blindly retrying variants until the
- * watchdog kills it. This replaces one opaque `forbidden_shell_token` reason with the specific
- * cause and preserves every prior protection except the deliberate removal below.
+ * drop substitution, split on a still-blocked operator) instead of blindly retrying variants
+ * until the watchdog kills it. This replaces one opaque `forbidden_shell_token` reason with
+ * the specific cause and preserves every prior protection except the deliberate removals below.
+ *
+ * Unquoted `;` is NOT forbidden here: `splitShellSegments` treats it as a sequence separator
+ * and every resulting segment still passes the binary/subcommand allowlist — same structural
+ * gate as `|` and `&&`. Banning `;` while allowing those operators only taught the model to
+ * thrash into parallel tool calls for independent read-only inspections.
  *
  * The prior bare-word ban on `credentials?|secrets?` was removed: it blocked read-only
  * inspection like `grep "secret" server/` while the scratch read path can already open any file
@@ -278,7 +283,6 @@ const SAFE_SHELL_GIT_SUBCOMMANDS = new Set([
  */
 const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
   { pattern: /[\r\n]/, reason: "forbidden:multiline_command" },
-  { pattern: /;/, reason: "forbidden:semicolon_sequencing" },
   { pattern: /`|\$\(/, reason: "forbidden:command_substitution" },
   { pattern: /\$(?:\{|[A-Za-z0-9_?*#@!$-])/, reason: "forbidden:variable_expansion" },
   { pattern: /\|\|/, reason: "forbidden:or_operator" },
@@ -367,23 +371,23 @@ export function getShellToolContractDescription(): string {
     "Execute a read-only shell command in the workspace directory.",
     "Admission is a deterministic allowlist: illegal commands fail before execution — do not retry variants of a denied command.",
     `Allowed binaries: ${binaries}.`,
-    "Pipelines with `|` and `&&` are allowed when every segment starts with an allowlisted binary.",
-    "Never use `;`, newlines, backticks, `$(...)`, bare `&`, `||`, `<`/`>` file redirection, `~`, or variable expansion.",
+    "Pipelines and sequences with `|`, `&&`, and `;` are allowed when every segment starts with an allowlisted binary.",
+    "Never use newlines, backticks, `$(...)`, bare `&`, `||`, `<`/`>` file redirection, `~`, or variable expansion.",
     "Safe redirect exceptions only: `>/dev/null`, `N>/dev/null`, and `N>&M` FD merges (e.g. `2>&1`).",
     `Shell git is inspection-only (${gitSubs}); branch/remote mutation flags are denied. All git writes use the git tool.`,
     "Shell npm is only `npm run build`. sed only as `sed -n 'N,Mp' file`. find may not use -exec/-delete.",
-    "Prefer scratch.read when the path is already known. Split independent commands into separate tool calls instead of sequencing with `;`.",
+    "Prefer scratch.read when the path is already known. Prefer parallel tool calls for independent work when latency matters; `;` sequencing is also valid for independent allowlisted segments.",
   ].join(" ");
 }
 
 /**
  * Split a shell command into pipeline/sequence segments while honoring single and double
- * quotes. Only UNQUOTED `|` and `&&` separate segments, so shell metacharacters inside a
- * quoted argument — e.g. the alternation in `grep -iE "cli|model|adapter"` — are treated as
- * literal data rather than being shredded into fake segments whose contents ("model",
- * "adapter", …) then fail the command allowlist as if they were command names. Quoted content
- * is never a command name. This keeps read-only inspection (grep with alternation is the most
- * common idiom) working without loosening any destructive/forbidden-token protection.
+ * quotes. Only UNQUOTED `|`, `&&`, and `;` separate segments, so shell metacharacters inside a
+ * quoted argument — e.g. the alternation in `grep -iE "cli|model|adapter"` or a literal
+ * semicolon in `grep -F "a;b"` — are treated as literal data rather than being shredded into
+ * fake segments whose contents then fail the command allowlist as if they were command names.
+ * Quoted content is never a command name. This keeps read-only inspection working without
+ * loosening any destructive/forbidden-token protection.
  */
 function splitShellSegments(command: string): string[] {
   const segments: string[] = [];
@@ -421,6 +425,12 @@ function splitShellSegments(command: string): string[] {
       segments.push(current);
       current = "";
       i++;
+      continue;
+    }
+    if (ch === ";") {
+      // Unquoted semicolon sequences independent commands; each segment is still allowlisted.
+      segments.push(current);
+      current = "";
       continue;
     }
     current += ch;
