@@ -433,8 +433,8 @@ Provider-bound inference payload captures are durable diagnostic evidence, not p
 ### Architecture
 - **DISPATCH_MAP** merges `localHandlers` + `bridgeHandlers` (126 named async handlers)
 - **Umbrella pattern:** Most LLM-facing tools take an `action` parameter and route internally (e.g., `memory`, `gmail`, `people`)
-- **Every tool gets a `reasoning` parameter** injected automatically for audit trail
-- **Argument validation:** Checks required params + rejects unknown keys. No type/range validation
+- **Every tool gets a `reasoning` parameter** injected automatically for audit trail. Schema still marks it required so models are prompted to supply it, but `normalizeToolArgs` autofills a deterministic placeholder when omitted/blank — missing reasoning must never reject execution or pollute `agent.tool_outcome`. It is audit metadata, not a load-bearing input.
+- **Argument validation:** Checks required params + rejects unknown keys. No type/range validation. Universal `reasoning` is filled before validation (see above).
 - **Side-effect classification:** Tools classified as `sideEffectOnly` when result doesn't need LLM display (orient, observe, write operations)
 - **Write-ordering** in `AgentExecutor`: reads batched concurrently (`pLimit(4)`), writes serialized, reads on mutated resources serialized
 - **Tool stats:** Cumulative call counts, error counts, duration. Persisted to `system_settings`
