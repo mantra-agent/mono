@@ -2378,15 +2378,21 @@ export class AgentExecutor extends EventEmitter {
     const turnApiCallCount = ctx.iteration || 1;
 
     const lastStopReason = ctx.diagnosticLastModelStopReason;
+    // Empty final text on a completed turn is never a clean success unless the
+    // executor intentionally stopped to await the user (e.g. question widget).
+    // Classify at the producer so consumers can key off one discriminant.
+    const emptyCompletedResponse =
+      !ctx.aborted &&
+      terminationReason === "complete" &&
+      finalContent.trim().length === 0 &&
+      !ctx.intentionallyAwaitingUser;
     const degradationReason: TerminalDegradationReason | undefined =
       ctx.terminalToolFailure
         ? "tool_failure_recovered"
-        : !ctx.aborted &&
-          terminationReason === "complete" &&
-          finalContent.trim().length === 0 &&
-          !ctx.intentionallyAwaitingUser &&
-          lastStopReason === "max_tokens"
-          ? "empty_response_output_limit"
+        : emptyCompletedResponse
+          ? lastStopReason === "max_tokens"
+            ? "empty_response_output_limit"
+            : "empty_response"
           : undefined;
     const status: ExecutorRunResult["status"] =
       ctx.terminalToolFailure ? "degraded"
