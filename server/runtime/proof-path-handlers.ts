@@ -1,3 +1,4 @@
+import type { SkillRun } from "@shared/models/skills";
 import type { Timer, TimerRun, TimerRunStatus } from "@shared/models/timers";
 import { responsibilityRuns, type MemoryVnextSourceQueueRow } from "@shared/schema";
 import { and, eq, sql } from "drizzle-orm";
@@ -195,7 +196,7 @@ async function authorizeTimerSkill(principal: Principal, input: TimerSkillInput)
   return { allowed, reasonCode: allowed ? "timer_skill_authorized" : "timer_skill_authority_revoked" };
 }
 
-function terminalSkillRunResult(skillId: string, skillRun: Awaited<ReturnType<typeof storage.getSkillRunByRuntimeRunId>>): RuntimeAttemptDecision | null {
+function terminalSkillRunResult(skillId: string, skillRun: SkillRun | null): RuntimeAttemptDecision | null {
   if (!skillRun || !["succeeded", "degraded", "failed", "yielded"].includes(skillRun.status)) return null;
   const outputRefs = skillRun.sessionId ? [`@session:${skillRun.sessionId}`] : [];
   const outcome = skillRun.status === "succeeded"
@@ -219,6 +220,7 @@ async function executeTimerSkill(
   context: Parameters<RuntimeHandler<TimerSkillInput>["execute"]>[0],
   input: TimerSkillInput,
 ): Promise<RuntimeAttemptDecision> {
+  const { storage } = await import("../storage");
   const existing = terminalSkillRunResult(input.skillId, await storage.getSkillRunByRuntimeRunId(context.fence.runId));
   if (existing) return existing;
 
