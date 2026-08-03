@@ -44,6 +44,7 @@ import {
   resolveSpeechRecognitionHints,
   type SpeechRecognitionHints,
 } from "../speech-recognition-hints";
+import { getSecretSync } from "../secrets-store";
 
 const log = createLogger("MeetingSTT");
 const MAX_PARTICIPANT_STREAMS = 16;
@@ -133,14 +134,16 @@ export interface MeetingRecognitionCapabilities {
 export function meetingRecognitionCapabilities(): MeetingRecognitionCapabilities {
   const scribe = new ScribeRealtimeSTTProvider();
   const deepgram = new DeepgramDiarizingSTTProvider();
+  // Same secret store as resolveLegacySpeechRecognitionBinding / STT adapters.
+  // process.env alone misses managed secrets and falsely reports "not configured."
   return {
     participantStreams: {
-      available: Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
+      available: Boolean(getSecretSync("ELEVENLABS_API_KEY")?.trim()),
       provider: scribe.provider,
       model: scribe.model,
     },
     sharedRoom: {
-      available: Boolean(process.env.DEEPGRAM_API_KEY?.trim()),
+      available: Boolean(getSecretSync("DEEPGRAM_API_KEY")?.trim()),
       provider: deepgram.provider,
       model: deepgram.model,
     },
