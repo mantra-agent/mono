@@ -15,6 +15,7 @@ import { encrypt, getEncryptionKey } from "../encryption";
 import { getCloudflarePagesProjectTruth, triggerCloudflarePagesProductionDeployment, retryCloudflarePagesDeployment, cancelCloudflarePagesDeployment, repairCloudflarePagesProject, type CloudflareProjectRepair } from "../platforms/cloudflare-pages-service";
 import { deleteEnvironmentBuildLifecycleConfigs, disableEnvironmentBuildLifecycleConfig, getEnvironmentBuildLifecycleConfig, getEnvironmentBuildStatus, listEnvironmentBuildWorkflows, setEnvironmentBuildLifecycleConfig, startEnvironmentBuildWorkflow } from "../platforms/build-lifecycle-service";
 import { getEnvironmentVersionDocument } from "../integrations/railway/release-versioning";
+import { getBuildExpandContent } from "../integrations/railway/build-expand-content";
 import { getVisibleEnvironment, getWritableEnvironment, visiblePlatform, writablePlatform } from "../platforms/platform-access";
 import { libraryPages } from "@shared/models/info";
 import { requireActiveBuild } from "../mods/build-route-access";
@@ -317,6 +318,20 @@ export function registerPlatformRoutes(app: Express): void {
       res.json(await getEnvironmentVersionDocument(environmentId));
     } catch (error: unknown) {
       const err = routeError(error, "get_environment_version_document");
+      res.status(500).json({ error: err.message, operation: err.operation });
+    }
+  });
+
+  app.get("/api/platforms/environments/:environmentId/build-expand-content", async (req, res) => {
+    try {
+      const environmentId = platformIdParam(req.params.environmentId);
+      const env = await getVisibleEnvironment(environmentId);
+      if (!env) {
+        return res.status(404).json({ error: `Environment ${environmentId} not found`, operation: "get_build_expand_content" });
+      }
+      res.json(await getBuildExpandContent(environmentId));
+    } catch (error: unknown) {
+      const err = routeError(error, "get_build_expand_content");
       res.status(500).json({ error: err.message, operation: err.operation });
     }
   });
