@@ -2266,7 +2266,7 @@ export class AgentExecutor extends EventEmitter {
       ctx.thinkingBuf = "";
       ctx.chronologyContentBuf = "";
       ctx.chronologyThinkingBuf = "";
-      ctx.segmentChronology = [{ s: "content", t: finalContent }];
+      ctx.segmentChronology = [{ s: "content", c: finalContent }];
       ctx.publish("attempt_reset", {});
       ctx.publish("text_delta", { content: finalContent });
     }
