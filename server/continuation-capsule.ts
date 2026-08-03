@@ -115,6 +115,7 @@ function trimToRecent(values: string[], limit: number): string[] {
 export function buildContinuationCapsule(
   entries: ContinuationCapsuleEntry[],
   previous?: ContinuationCapsule,
+  options?: { latestUserInstruction?: string },
 ): ContinuationCapsule {
   const actions: string[] = [];
   const systemsTouched: string[] = [];
@@ -178,9 +179,21 @@ export function buildContinuationCapsule(
 
   const boundedActions = trimToRecent(actions, MAX_ACTIONS);
   const boundedOpenLoops = trimToRecent(openLoops, MAX_SECTION_ITEMS);
-  const resumePoint = boundedOpenLoops.at(-1)
+  // The freshest user instruction — an explicit live override from the kept
+  // tail when provided, otherwise the newest user message in this batch. A
+  // fresh instruction is authoritative: it outranks stale open loops and the
+  // agent's own prior reasoning so compaction never replays a superseded plan
+  // after the user redirects. It is carried forward (never lost) for the
+  // rendered field, but only a *fresh* instruction wins the resume point so
+  // agent-directed multi-turn work is not frozen on an old instruction.
+  const overrideUserInstruction = options?.latestUserInstruction
+    ? excerpt(withoutTimestamp(options.latestUserInstruction), "continuation-capsule.latest-user-override", 700)
+    : undefined;
+  const freshUserInstruction = overrideUserInstruction || latestUser;
+  const latestUserInstruction = freshUserInstruction || previous?.latestUserInstruction;
+  const resumePoint = freshUserInstruction
+    || boundedOpenLoops.at(-1)
     || latestAssistant
-    || latestUser
     || previous?.resumePoint
     || (boundedActions.length > 0 ? `Continue after ${boundedActions.at(-1)}` : undefined);
 
@@ -188,6 +201,7 @@ export function buildContinuationCapsule(
     version: CAPSULE_VERSION,
     initiator,
     objective,
+    latestUserInstruction,
     actions: boundedActions,
     systemsTouched: trimToRecent(systemsTouched, MAX_SECTION_ITEMS),
     decisions: trimToRecent(decisions, MAX_SECTION_ITEMS),
@@ -210,6 +224,13 @@ export function renderContinuationCapsule(capsule: ContinuationCapsule): string 
   const lines: string[] = ["[Continuation Capsule]", ""];
   if (capsule.initiator) lines.push("## Initiator", capsule.initiator, "");
   if (capsule.objective) lines.push("## Objective", capsule.objective, "");
+  if (capsule.latestUserInstruction) {
+    lines.push(
+      "## Latest instruction (authoritative — overrides Resume point)",
+      capsule.latestUserInstruction,
+      "",
+    );
+  }
   lines.push(...markdownList("Actions completed", capsule.actions));
   lines.push(...markdownList("Systems touched", capsule.systemsTouched));
   lines.push(...markdownList("Decisions", capsule.decisions));
