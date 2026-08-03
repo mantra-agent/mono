@@ -13100,7 +13100,7 @@ const systemTools: Record<string, ToolHandler> = {
         payload: { command, reason: "git_write_blocked" },
       });
       return {
-        result: "Shell git write commands are blocked. Use the git MCP tool for write operations (clone, add, commit, push, create_pr, merge_pr) — it handles authentication and directory isolation. Shell git is allowed for read operations: status, log, diff, show, branch.",
+        result: "Shell git write commands are blocked. Use the git MCP tool for write operations (clone, add, commit, push, create_pr, merge_pr) — it handles authentication and directory isolation. Shell git is allowed for read operations: status, log, diff, show, branch, remote, rev-parse, grep.",
         error: true,
         failure: permissionFailure("shell_policy_denied", "git_write_blocked"),
       };

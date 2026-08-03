@@ -61,7 +61,7 @@ The no-test policy below remains unchanged. Approved read-only scanners, depende
 - The workspace `.git` is depth-1 (Railway deploy clone). Use the GitHub API for history, blame, and diffs on the main repo
 - Full clones for code work go in `repos/` via the git MCP tool. Each session gets an isolated clone at `repos/{name}-{sessionId[:8]}` (enforced by the tool, not by convention)
 - Never guess repository URLs. Use the authenticated workspace remote or an explicit URL from Ray; repo access is credential-bound.
-- Shell git is allowed only for read-only inspection: status, log, diff, show, branch list, remote, rev-parse
+- Shell git is allowed only for read-only inspection: status, log, diff, show, branch list, remote, rev-parse, grep
 - Git MCP is the exclusive credentialed path for clone, branch/checkout writes, add, commit, push, PR, merge, and branch deletion
 - **Interactive-session credential verification (2026-07-21):** Git MCP authenticated the stage-bound `mantra-agent/mono` path through clone, branch creation, commit, push, PR creation, and merge to `main`; the merged history of this line is the durable verification artifact.
 
