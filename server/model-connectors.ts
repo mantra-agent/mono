@@ -217,6 +217,10 @@ export function parseModelConnectorConfig(provider: string, value: unknown): Mod
     return legacy;
   }
   if (parsed.kind === "claude-cli-models") return validateClaudeCliConnectorConfig(parsedProvider, parsed);
+  if (parsed.kind === "grok-models") {
+    if (parsedProvider !== "grok-subscription") throw new Error(`Provider '${parsedProvider}' does not support Grok connector config`);
+    return { ...parsed, tierMappings: validateMapping(parsedProvider, parsed.tierMappings) };
+  }
   return validateOpenAIConnectorConfig(parsedProvider, parsed);
 }
 

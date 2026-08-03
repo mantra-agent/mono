@@ -4,7 +4,7 @@ export const semanticTierSchema = z.enum(["max", "high", "balanced", "fast"]);
 export type SemanticTier = z.infer<typeof semanticTierSchema>;
 export const SEMANTIC_TIERS: readonly SemanticTier[] = semanticTierSchema.options;
 
-export const modelConnectorProviderSchema = z.enum(["anthropic", "openai", "openai-subscription", "claude-cli"]);
+export const modelConnectorProviderSchema = z.enum(["anthropic", "openai", "openai-subscription", "claude-cli", "grok-subscription"]);
 export type ModelConnectorProvider = z.infer<typeof modelConnectorProviderSchema>;
 
 export const modelTierMappingsSchema = z.object({
@@ -100,10 +100,22 @@ export const claudeCliConnectorConfigSchema = z.object({
 }).strict();
 export type ClaudeCliConnectorConfig = z.infer<typeof claudeCliConnectorConfigSchema>;
 
+// Grok subscription connector. Grok models are OpenAI-compatible chat models
+// addressed by plain name (no reasoning-effort/service-tier params), so tier
+// mappings are simple model strings resolved via getConnectorTierModelConfig.
+export const grokSubscriptionConnectorConfigSchema = z.object({
+  kind: z.literal("grok-models"),
+  version: z.literal(1),
+  tierMappings: modelTierMappingsSchema,
+  migratedFrom: z.enum(["model_profiles", "manual", "model_connector_v1"]).optional(),
+}).strict();
+export type GrokSubscriptionConnectorConfig = z.infer<typeof grokSubscriptionConnectorConfigSchema>;
+
 export const modelConnectorConfigSchema = z.union([
   legacyModelConnectorConfigSchema,
   openAIConnectorConfigSchema,
   claudeCliConnectorConfigSchema,
+  grokSubscriptionConnectorConfigSchema,
 ]);
 export type ModelConnectorConfig = z.infer<typeof modelConnectorConfigSchema>;
 
