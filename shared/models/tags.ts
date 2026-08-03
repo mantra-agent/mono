@@ -59,6 +59,19 @@ export const mergeTagsSchema = z.object({
 });
 export type MergeTagsInput = z.infer<typeof mergeTagsSchema>;
 
+export const tagAssignmentSchema = z.object({
+  entityType: entityTypeEnum,
+  entityId: z.string().trim().min(1).max(512),
+  entityTitle: z.string().trim().max(500).default(""),
+});
+
+export const replaceEntityTagsSchema = tagAssignmentSchema.extend({
+  tags: z.array(z.string().trim().min(1).max(80)).max(100),
+});
+
+export type TagAssignmentInput = z.infer<typeof tagAssignmentSchema>;
+export type ReplaceEntityTagsInput = z.infer<typeof replaceEntityTagsSchema>;
+
 export function normalizeTagSlug(raw: string): string {
   return raw
     .toLowerCase()

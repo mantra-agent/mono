@@ -1,6 +1,7 @@
 // Use createLogger for logging ONLY
 import { PeopleStorage } from "./people-storage";
 import { ensureFinanceSensitiveSchema } from "./finance-scope";
+import { ensureCanonicalTagSchema } from "./tag-schema";
 import { DEFAULT_WELLNESS_ACTIVITIES } from "../shared/models/health";
 import { createLogger } from "./log";
 import { sql } from "drizzle-orm";
@@ -6564,6 +6565,8 @@ export async function runSchemaBootstrap(
       END $meeting_recap_distribution$;
     `);
   });
+
+  await heal("canonical Tag schema", ensureCanonicalTagSchema);
 
   log(`schema bootstrap complete (reason=${reason})`, "migration");
 }
