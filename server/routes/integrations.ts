@@ -14,6 +14,10 @@ import { requirePermission } from "../permissions";
 import { runWithPrincipal } from "../principal-context";
 import { createNamedSystemPrincipal } from "../principal";
 import { getSetting, setSetting } from "../system-settings";
+import {
+  storeSubscriptionPkce,
+  consumeSubscriptionPkce,
+} from "../subscription-oauth-transactions";
 
 const log = createLogger("IntegrationsRoutes");
 
@@ -676,8 +680,6 @@ export async function registerIntegrationsRoutes(app: Express) {
   const OPENAI_SUBSCRIPTION_SCOPES = "openid profile email offline_access";
   const OPENAI_SUBSCRIPTION_ACCOUNT_ID = "openai-subscription-primary";
 
-  const pkceStore = new Map<string, { codeVerifier: string; redirectUri: string; createdAt: number }>();
-
   function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
     const codeVerifier = crypto.randomBytes(32).toString("base64url");
     const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
@@ -715,13 +717,12 @@ export async function registerIntegrationsRoutes(app: Express) {
     try {
       const { codeVerifier, codeChallenge } = generatePKCE();
       const state = crypto.randomBytes(16).toString("hex");
-      pkceStore.set(state, { codeVerifier, redirectUri: OPENAI_SUBSCRIPTION_REDIRECT_URI, createdAt: Date.now() });
-
-      // Clean up old entries
-      const now = Date.now();
-      for (const [k, v] of pkceStore.entries()) {
-        if (now - v.createdAt > 10 * 60 * 1000) pkceStore.delete(k);
-      }
+      await storeSubscriptionPkce({
+        state,
+        codeVerifier,
+        redirectUri: OPENAI_SUBSCRIPTION_REDIRECT_URI,
+        provider: "openai-subscription",
+      });
 
       const params = new URLSearchParams({
         response_type: "code",
@@ -758,17 +759,16 @@ export async function registerIntegrationsRoutes(app: Express) {
         return res.status(400).send("Missing authorization code or state");
       }
 
-      const pkce = pkceStore.get(state);
+      const pkce = await consumeSubscriptionPkce(String(state), "openai-subscription");
       if (!pkce) {
         return res.status(400).send("Invalid or expired state");
       }
-      pkceStore.delete(state);
 
       const redirectUri = pkce.redirectUri;
 
       const tokenParams = new URLSearchParams({
         client_id: OPENAI_SUBSCRIPTION_CLIENT_ID,
-        code,
+        code: String(code),
         redirect_uri: redirectUri,
         grant_type: "authorization_code",
         code_verifier: pkce.codeVerifier,
@@ -869,15 +869,14 @@ export async function registerIntegrationsRoutes(app: Express) {
       if (!code || !state) {
         return res.status(400).json({ error: "Missing code or state" });
       }
-      const pkce = pkceStore.get(state);
+      const pkce = await consumeSubscriptionPkce(String(state), "openai-subscription");
       if (!pkce) {
         return res.status(400).json({ error: "Invalid or expired state" });
       }
-      pkceStore.delete(state);
 
       const tokenParams = new URLSearchParams({
         client_id: OPENAI_SUBSCRIPTION_CLIENT_ID,
-        code,
+        code: String(code),
         redirect_uri: pkce.redirectUri,
         grant_type: "authorization_code",
         code_verifier: pkce.codeVerifier,
@@ -1009,13 +1008,12 @@ export async function registerIntegrationsRoutes(app: Express) {
       const { codeVerifier, codeChallenge } = generatePKCE();
       const state = crypto.randomBytes(16).toString("hex");
       const nonce = crypto.randomBytes(16).toString("hex");
-      pkceStore.set(state, { codeVerifier, redirectUri: GROK_SUBSCRIPTION_REDIRECT_URI, createdAt: Date.now() });
-
-      // Clean up old entries
-      const now = Date.now();
-      for (const [k, v] of pkceStore.entries()) {
-        if (now - v.createdAt > 10 * 60 * 1000) pkceStore.delete(k);
-      }
+      await storeSubscriptionPkce({
+        state,
+        codeVerifier,
+        redirectUri: GROK_SUBSCRIPTION_REDIRECT_URI,
+        provider: "grok-subscription",
+      });
 
       const params = new URLSearchParams({
         response_type: "code",
@@ -1052,11 +1050,10 @@ export async function registerIntegrationsRoutes(app: Express) {
       if (!code || !state) {
         return res.status(400).json({ error: "Missing code or state" });
       }
-      const pkce = pkceStore.get(state);
+      const pkce = await consumeSubscriptionPkce(String(state), "grok-subscription");
       if (!pkce) {
         return res.status(400).json({ error: "Invalid or expired state. Restart the connection." });
       }
-      pkceStore.delete(state);
 
       const tokenParams = new URLSearchParams({
         client_id: GROK_SUBSCRIPTION_CLIENT_ID,
