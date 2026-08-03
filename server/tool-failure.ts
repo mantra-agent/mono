@@ -16,7 +16,8 @@ export type ToolFailureCode =
   | "integration_not_configured"
   | "integration_auth_failed"
   | "orient_persona_required"
-  | "orient_no_session";
+  | "orient_no_session"
+  | "shell_policy_denied";
 
 export interface ToolFailure {
   kind: ToolFailureKind;
