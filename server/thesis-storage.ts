@@ -17,6 +17,7 @@ import {
 import { createLogger } from "./log";
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
+import { tagService } from "./tag-service";
 
 const log = createLogger("ThesisStorage");
 const thesisScopeColumns = { scope: theses.scope, ownerUserId: theses.ownerUserId, accountId: theses.accountId, vaultId: theses.vaultId };
@@ -78,6 +79,9 @@ export class ThesisStorage {
     return autoHeal(async () => {
       const [row] = await db.insert(theses).values({ ...data, ...ownedInsertValues(getCurrentPrincipalOrSystem(), thesisScopeColumns) }).returning();
       log.debug(`create id=${row.id} title="${row.title}"`);
+      tagService.replaceEntityTags("thesis", row.id, row.title, row.tags || []).catch((err) =>
+        log.warn("thesis tag sync failed", { id: row.id, error: err instanceof Error ? err.message : String(err) }),
+      );
       return row;
     });
   }
@@ -87,6 +91,11 @@ export class ThesisStorage {
       const patch: Record<string, unknown> = { ...updates, updatedAt: new Date() };
       const [row] = await db.update(theses).set(patch).where(writableThesis(eq(theses.id, id))).returning();
       log.debug(`update id=${id} found=${!!row} fields=${Object.keys(updates).join(",")}`);
+      if (row && updates.tags !== undefined) {
+        tagService.replaceEntityTags("thesis", row.id, row.title, row.tags || []).catch((err) =>
+          log.warn("thesis tag sync failed", { id: row.id, error: err instanceof Error ? err.message : String(err) }),
+        );
+      }
       return row;
     });
   }
@@ -95,6 +104,11 @@ export class ThesisStorage {
     return autoHeal(async () => {
       const result = await db.delete(theses).where(writableThesis(eq(theses.id, id))).returning();
       log.debug(`delete id=${id} deleted=${result.length > 0}`);
+      if (result.length > 0) {
+        tagService.removeEntity("thesis", id).catch((err) =>
+          log.warn("thesis tag cleanup failed", { id, error: err instanceof Error ? err.message : String(err) }),
+        );
+      }
       return result.length > 0;
     });
   }

@@ -404,6 +404,8 @@ app.use((req, res, next) => {
   await ensurePermissionSchema();
   const { retireRegressionDomainSchema } = await import("./migrations/retire-regression-domain");
   await retireRegressionDomainSchema();
+  const { backfillEntityArrayTags } = await import("./migrations/backfill-entity-array-tags");
+  await backfillEntityArrayTags();
   const { ensureMeetingAudioRetentionSchema } = await import("./meeting/audio-retention-schema");
   await ensureMeetingAudioRetentionSchema();
   const migrateMs = Date.now() - tMigrate0;
