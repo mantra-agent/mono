@@ -459,7 +459,7 @@ Potentially unbounded read tools must be bounded at their producer/storage query
 
 Engineering preflight instructions remain complete model-visible evidence. `bridge-tools.ts` serializes missing-reference loads by Session and effective repository root; one caller may return each missing instruction set while concurrent followers wait and recompute against the same loaded-reference cache. Do not weaken or summarize repository instructions, and do not let parallel engineering tools append duplicate copies.
 
-`working-set-projector.ts` is AgentExecutor's model-facing tool-evidence boundary. It must preserve exact in-run tool results: a later assistant message proves observation in one inference, not semantic consumption by future stateless inferences. Large results may be archived as exact sidecars for recovery and diagnostics, but archival must not replace provider-visible evidence with a receipt until an explicit semantic working-set contract can prove that evidence was superseded, deliberately released, or preserved in an adequate synthesis. Never persist a provider receipt in place of exact tool evidence, mutate saved history to relieve provider pressure, or add a second archive/retrieval system.
+`working-set-projector.ts` is AgentExecutor's single model-facing tool-evidence boundary. Durable transcript state and `indexed_content` preserve exact evidence; the provider request is a disposable bounded projection. An executor-owned tool result remains exact through the first successful post-tool inference. SDK-owned results are eligible only after the provider continuation boundary confirms that inference consumed them. Oversized historical result content is then replaced provider-side with the replay-safe typed receipt from `tool-output-artifacts.ts`; errors follow the same archive path with a bounded diagnostic preview. Never persist a provider receipt in place of exact transcript evidence, mutate saved history to relieve provider pressure, break assistant/tool protocol pairs, or add a second archive/retrieval system. If receipts remain over budget, compact only oldest completed cycle spans into continuation capsules on the provider projection. `working_set_refresh` is valid only when measured projected tokens are lower than exact tokens by a material amount.
 
 Environment knobs:
 - `TOOL_OUTPUT_ARTIFACTS_ENABLED=false` disables legacy inline offload for rollback.
@@ -467,8 +467,8 @@ Environment knobs:
 - `TOOL_OUTPUT_MAX_INLINE_CHARS` default `32000`.
 - `TOOL_OUTPUT_PREVIEW_CHAR_BUDGET` default `4000`.
 - `TOOL_OUTPUT_FORCE_ARTIFACT_TOKEN_BUDGET` default `20000`.
-- `WORKING_SET_ARCHIVE_SIDECAR_TOKEN_FLOOR` default `8000`; legacy `WORKING_SET_PROJECTED_SAVINGS_FLOOR_TOKENS` remains a compatibility fallback.
-- `WORKING_SET_TOOL_RESULT_CYCLE_BUDGET_TOKENS` default `20000`.
+- `AGENT_CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS` default `30000` requests a refresh only when archived receipts can actually shrink the consumed cycle.
+- `AGENT_WORKING_SET_REFRESH_MIN_REDUCTION_TOKENS` default `2000` defines a material refresh reduction.
 
 ### Delegated Engineering Children
 
