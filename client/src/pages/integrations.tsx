@@ -1673,6 +1673,7 @@ function GrokSubscriptionSection() {
 
   const [showUrlPaste, setShowUrlPaste] = useState(false);
   const [pasteUrl, setPasteUrl] = useState("");
+  const [authUrl, setAuthUrl] = useState("");
   const [exchangeState, setExchangeState] = useState("");
   const [isExchanging, setIsExchanging] = useState(false);
 
@@ -1712,14 +1713,15 @@ function GrokSubscriptionSection() {
       }
       const { url, state } = await res.json();
       setExchangeState(state);
+      setAuthUrl(url);
+      // xAI shows the authorization code on-page (its 127.0.0.1 redirect can never
+      // reach a remote server), so there is nothing to auto-detect — always reveal
+      // the paste box and a manual auth link. A blocked popup must never hide them.
+      setShowUrlPaste(true);
       const popup = window.open(url, "grok-subscription-oauth", "width=600,height=700,scrollbars=yes");
       if (!popup) {
-        toast({ title: "Popup blocked", description: "Please allow popups and try again.", variant: "destructive" });
-        return;
+        toast({ title: "Popup blocked", description: "Use the “Open the xAI authorization page” link below, approve access, then paste the code.", variant: "default" });
       }
-      // xAI redirects to 127.0.0.1:56121, which a remote server can never receive,
-      // so there is nothing to auto-detect — show the paste box immediately.
-      setShowUrlPaste(true);
     } catch (err: any) {
       toast({ title: "Failed to start OAuth", description: err.message, variant: "destructive" });
     }
@@ -1807,14 +1809,29 @@ function GrokSubscriptionSection() {
             </Button>
             {showUrlPaste && (
               <div className="space-y-2 p-3 rounded-md border bg-muted/30">
+                {authUrl && (
+                  <p className="text-xs text-muted-foreground">
+                    If the popup didn't open,{" "}
+                    <a
+                      href={authUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline font-medium text-foreground"
+                      data-testid="link-grok-oauth-authorize"
+                    >
+                      open the xAI authorization page
+                    </a>
+                    .
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground">
-                  The popup will show a "can't be reached" error at 127.0.0.1 — that's expected. Copy the full URL from the popup's address bar and paste it below:
+                  After you approve access, xAI shows an authorization code — paste it below. (If your browser instead lands on a 127.0.0.1 "can't be reached" page, paste that full URL; either works.)
                 </p>
                 <div className="flex gap-2">
                   <Input
                     value={pasteUrl}
                     onChange={(e) => setPasteUrl(e.target.value)}
-                    placeholder="Paste the callback URL here..."
+                    placeholder="Paste the authorization code..."
                     className="text-xs"
                     data-testid="input-grok-oauth-callback-url"
                   />
