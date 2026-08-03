@@ -3143,16 +3143,23 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           "unknown error";
         const isOverloaded = rawError.includes("overloaded_error");
 
-        // Persist any partial assistant content if available (system steps, chronology)
+        // Persist any partial assistant content if available (system steps, chronology).
+        // Draft content/thinking live on the session snapshot — never as free variables
+        // in this catch scope (assistantDraftContent/Thinking were unbound and crashed
+        // the error-save path on every executor failure).
         const crashSystemSteps = preSteps.length > 0 ? preSteps : undefined;
         const crashChronology =
           preChronology.length > 0 ? preChronology : undefined;
+        const crashSnapshot = sessionManager.getSnapshot(sessionId);
+        const crashProjection = crashSnapshot
+          ? projectAssistantDraft(crashSnapshot.streamingContent)
+          : null;
         if (typeof assistantDraft !== "undefined" && assistantDraft) {
           await chatStorage.updateAssistantDraft(sessionId, assistantDraft.id, {
             content:
-              assistantDraftContent ||
+              crashProjection?.content ||
               "Response interrupted by an error before completion.",
-            thinking: assistantDraftThinking || undefined,
+            thinking: crashProjection?.thinking || undefined,
             model: chatModel,
             systemSteps: crashSystemSteps,
             segmentChronology: crashChronology,

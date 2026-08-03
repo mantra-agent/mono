@@ -1180,16 +1180,21 @@ async function terminalizeInTransaction(
     return { run, receipt: existing };
   }
   const receipt = await buildReceipt(tx, run, attempt, decision);
-  const handler = runtimeHandlerRegistry.require(run.handlerKey, run.handlerVersion);
-  const parsedInput = handler.inputSchema.parse(run.input);
-  if (handler.projectTerminal) {
-    await handler.projectTerminal({
-      tx,
-      principal,
-      run,
-      input: parsedInput,
-      receipt,
-    });
+  // Legacy capacity leases are pure admission handles — no registered RuntimeHandler,
+  // no input projection, no side effects beyond the terminal receipt itself. Requiring
+  // a handler here turns every release/expire/reclaim into release_failed and leaks slots.
+  if (run.handlerKey !== LEGACY_CAPACITY_HANDLER_KEY) {
+    const handler = runtimeHandlerRegistry.require(run.handlerKey, run.handlerVersion);
+    const parsedInput = handler.inputSchema.parse(run.input);
+    if (handler.projectTerminal) {
+      await handler.projectTerminal({
+        tx,
+        principal,
+        run,
+        input: parsedInput,
+        receipt,
+      });
+    }
   }
   const receiptEventId = crypto.randomUUID();
   await tx.insert(runtimeRunEvents).values({
