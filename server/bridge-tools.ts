@@ -16601,8 +16601,16 @@ async function loadMissingCodingContext(
   const parts: string[] = [
     "# Engineering Context Preflight",
     `The runtime loaded the required coding context before executing this engineering tool.`,
-    `Effective root: ${contextRoot.root} (${contextRoot.reason}).`,
+    `Instruction root: ${contextRoot.root} (${contextRoot.reason}).`,
   ];
+  // Shell always spawns with cwd=WORKSPACE_DIR. Instruction root may point at a repos/*
+  // clone for AGENTS.md loading, but that is not the process cwd — relative paths and
+  // `git -C` must still be rooted at the workspace, or the command fails after admission.
+  if (toolName === "shell") {
+    parts.push(
+      `Shell cwd is always ${WORKSPACE_DIR} (not the instruction root). Use workspace-relative paths or git -C repos/<clone>; do not assume the process started inside the clone.`,
+    );
+  }
 
   // AGENTS.md is advisory: load if present, note if absent, never block
   if (missing.includes("root_agents")) {
