@@ -750,7 +750,9 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
         ? await claudeCliCompletion(model, { ...attemptOptions, routingDecision: routing })
         : provider === "openai-subscription"
           ? await openaiSubscriptionCompletion(model, { ...attemptOptions, routingDecision: routing })
-          : await openaiCompletion(model, { ...attemptOptions, routingDecision: routing });
+          : provider === "grok-subscription"
+            ? await grokSubscriptionCompletion(model, { ...attemptOptions, routingDecision: routing })
+            : await openaiCompletion(model, { ...attemptOptions, routingDecision: routing });
 
     result = { ...result, metadata: { ...(result.metadata || {}), routing: auditRouting(routing), trackedAtBoundary: true } };
     const elapsed = Date.now() - start;
@@ -992,7 +994,7 @@ export type ModelProviderFailurePhase = "fetch" | "first_event" | "stream" | "pr
 
 export interface ModelProviderFailure extends ModelProviderFailureInfo {
   kind: ModelProviderFailureKind;
-  provider: "openai-subscription" | "openai";
+  provider: "openai-subscription" | "openai" | "grok-subscription";
   phase: ModelProviderFailurePhase;
 }
 
@@ -1137,7 +1139,7 @@ function providerFailureReference(failure: Pick<ModelProviderFailure, "providerR
 }
 
 function buildProviderUserMessage(failure: Omit<ModelProviderFailure, "userMessage">): string {
-  const providerName = failure.provider === "openai-subscription" ? "OpenAI Codex" : "OpenAI";
+  const providerName = failure.provider === "grok-subscription" ? "Grok" : failure.provider === "openai-subscription" ? "OpenAI Codex" : "OpenAI";
   const reference = providerFailureReference(failure);
   const referenceSuffix = reference ? ` Reference: ${reference}.` : "";
   const providerMessage = sanitizeProviderDiagnostic(failure.providerMessage);
@@ -1679,6 +1681,60 @@ function modelProviderErrorFromAttempt(
   return new ModelProviderError(providerFailure, err.bodySnippet);
 }
 
+// ─── Grok Subscription completions (xAI, OpenAI-compatible via api.x.ai/v1) ───
+// Grok exposes a standard OpenAI-compatible surface, so both the completion and
+// streaming paths reuse the OpenAI request/response shape. The only differences
+// are the subscription OAuth bearer token and the api.x.ai base URL. Streaming
+// delegates to openaiStream through a transport override to avoid duplicating
+// the full SSE handler; the non-streaming path is small enough to stand alone.
+async function grokSubscriptionCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
+  const token = await getGrokSubscriptionAccessToken();
+  const client = getOpenAIClient(token, GROK_SUBSCRIPTION_API_BASE_URL);
+
+  const params: any = {
+    model,
+    messages: options.messages.map(m => ({ role: m.role, content: m.content })),
+  };
+  if (options.maxTokens) params.max_tokens = options.maxTokens;
+  if (options.temperature !== undefined) params.temperature = options.temperature;
+  if (options.jsonMode) params.response_format = { type: "json_object" };
+
+  const clientRequestId = randomUUID();
+  try {
+    await captureProviderDispatch("grok-subscription", model, "grok.chat.completions.create", params, options);
+    const responsePromise = client.chat.completions.create(params, {
+      signal: options.signal,
+      maxRetries: 0,
+      headers: { "X-Client-Request-Id": clientRequestId },
+    });
+    const { data: response } = await responsePromise.withResponse();
+    const content = response.choices[0]?.message?.content || "";
+    return {
+      content,
+      model,
+      provider: "grok-subscription",
+      usage: response.usage ? {
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+        totalTokens: response.usage.total_tokens,
+      } : undefined,
+    };
+  } catch (err: unknown) {
+    if (isAbortError(err, options.signal)) throw err;
+    throw modelProviderErrorFromAttempt(
+      openaiSdkAttemptError(err, clientRequestId),
+      1,
+      { provider: "grok-subscription", model, metadata: options.metadata },
+    );
+  }
+}
+
+async function* grokSubscriptionStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
+  const token = await getGrokSubscriptionAccessToken();
+  const client = getOpenAIClient(token, GROK_SUBSCRIPTION_API_BASE_URL);
+  yield* openaiStream(model, options, { client, providerLabel: "grok-subscription" });
+}
+
 async function openaiSubscriptionCompletion(model: string, options: ChatCompletionOptions): Promise<ChatCompletionResult> {
   const accessToken = await getOpenAISubscriptionAccessToken();
   const modelInfo = getModel(model);
@@ -2188,6 +2244,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       })();
     }
     if (provider === "openai-subscription") return openaiSubscriptionStream(model, optionsWithResolved);
+    if (provider === "grok-subscription") return grokSubscriptionStream(model, optionsWithResolved);
     return openaiStream(model, optionsWithResolved);
   })();
 
@@ -3114,7 +3171,7 @@ async function* openaiResponsesStream(model: string, options: ChatCompletionStre
   }
 }
 
-async function* openaiStream(model: string, options: ChatCompletionStreamOptions): AsyncGenerator<StreamEvent> {
+async function* openaiStream(model: string, options: ChatCompletionStreamOptions, transport?: { client?: OpenAI; providerLabel?: string }): AsyncGenerator<StreamEvent> {
   // Effort-capable models (GPT-5.6 family) use the Responses API so the tier
   // thinking config can map onto a reasoning effort.
   const connectorConfig = resolvedOpenAIConfig(options);
@@ -3123,7 +3180,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
     return;
   }
 
-  const client = getOpenAIClient(options.routingDecision?.credential);
+  const client = transport?.client ?? getOpenAIClient(options.routingDecision?.credential);
   const buildStart = Date.now();
   const clientRequestId = randomUUID();
 
@@ -3183,7 +3240,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
 
   try {
     // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
-    await captureProviderDispatch("openai", model, "openai.chat.completions.create stream", params, options);
+    await captureProviderDispatch(transport?.providerLabel ?? "openai", model, "openai.chat.completions.create stream", params, options);
     yield { type: "request_sent", metadata: { buildMs: Date.now() - buildStart } };
     const dispatchAt = Date.now();
     const responsePromise = client.chat.completions.create(params, {
