@@ -33,8 +33,33 @@ import {
   readFinalAssistantOutput,
   truncateOutput,
 } from "./child-session-monitor";
+import { extractSuccessfulToolInvocations } from "./skill-scoring";
 
 const log = createLogger("PlanExecutor");
+
+/**
+ * Session status `saved` is lifecycle evidence only. Step completion requires
+ * ship evidence: at least one successful tool invocation in the child transcript.
+ * Mirrors the skill runner's structural tool_invoked gate so hollow children
+ * cannot false-green a plan step.
+ */
+async function assessChildWorkEvidence(sessionId: string): Promise<
+  | { ok: true; toolCount: number }
+  | { ok: false; message: string }
+> {
+  const { chatFileStorage } = await import("./chat-file-storage");
+  const messages = await chatFileStorage.getMessagesBySession(sessionId);
+  const invoked = extractSuccessfulToolInvocations(messages);
+  if (invoked.size === 0) {
+    return {
+      ok: false,
+      message:
+        `Child session ${sessionId} ended saved with no successful tool invocations. ` +
+        "Session end is not ship evidence; step completion requires at least one done tool call.",
+    };
+  }
+  return { ok: true, toolCount: invoked.size };
+}
 
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: planSteps.accountId };
@@ -503,6 +528,22 @@ planId,
             };
           }
 
+          // Lifecycle complete ≠ work complete. Gate on successful tool calls
+          // before any completePlanStepAttempt write (canonical completion path).
+          const evidence = await assessChildWorkEvidence(childSessionId);
+          if (!evidence.ok) {
+            log.warn(`[${planId}] Step ${stepIndex + 1} hollow_completion: ${evidence.message}`);
+            return await failStepFinal(
+              planId,
+              step,
+              stepIndex,
+              lastDuration,
+              childSessionId,
+              evidence.message,
+              attemptCount,
+            );
+          }
+
           const outcome = truncateOutcome(result.output || "Completed successfully");
           const completion = await completePlanStepAttempt({
             planId,
@@ -525,7 +566,10 @@ planId,
             planId, stepId: step.id, stepTitle: step.title,
             stepIndex, outcome, duration: lastDuration, sessionId: childSessionId,
           });
-          log.log(`[${planId}] Step ${stepIndex + 1} completed in ${lastDuration}s (attempt ${attempt})`);
+          log.log(
+            `[${planId}] Step ${stepIndex + 1} completed in ${lastDuration}s ` +
+            `(attempt ${attempt}, tools=${evidence.toolCount})`,
+          );
           return { status: "completed", duration: lastDuration, outcome };
         }
 
@@ -983,6 +1027,32 @@ async function recoverInterruptedPlan(
           const sessionStatus = (session as { status?: string } | null)?.status;
 
           if (sessionStatus === "saved" && attempt) {
+            const evidence = await assessChildWorkEvidence(step.sessionId);
+            if (!evidence.ok) {
+              const hollowError = evidence.message;
+              const hollowResult = await failInterruptedPlanStep({
+                planId: plan.id,
+                stepId: step.id,
+                attemptNumber: attempt.attemptNumber,
+                childSessionId: step.sessionId,
+                error: hollowError,
+                durationSeconds,
+                completedAt,
+              });
+              if (hollowResult.outcome === "transitioned") {
+                await closeAbandonedChildSessionBlock(
+                  plan.originSessionId,
+                  step.sessionId,
+                  hollowError,
+                  durationSeconds,
+                );
+                log.warn(
+                  `[recovery] Plan ${plan.id} step ${step.id} — hollow saved child rejected: ${hollowError}`,
+                );
+              }
+              continue;
+            }
+
             const output = await readFinalAssistantOutput(step.sessionId);
             await completePlanStepAttempt({
               planId: plan.id,
@@ -993,7 +1063,10 @@ async function recoverInterruptedPlan(
               durationSeconds: durationSeconds ?? 0,
               completedAt,
             });
-            log.log(`[recovery] Plan ${plan.id} step ${step.id} — recovered as completed`);
+            log.log(
+              `[recovery] Plan ${plan.id} step ${step.id} — recovered as completed ` +
+              `(tools=${evidence.toolCount})`,
+            );
             continue;
           }
         }
