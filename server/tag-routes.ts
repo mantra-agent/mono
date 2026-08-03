@@ -12,7 +12,10 @@ import {
 export function registerTagRoutes(app: Express) {
   app.get("/api/tags", async (req, res) => {
     try {
-      res.json(await tagRegistry.listTags(req.principal));
+      // Client consumes the full TagIndex shape ({ tags, usages, coOccurrences }),
+      // not a flat TagWithUsage[]. Returning listTags() left index.tags undefined
+      // and crashed the tags page on load. getIndex is the matching contract.
+      res.json(await tagService.getIndex(req.principal));
     } catch (error: unknown) {
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to list tags" });
     }
