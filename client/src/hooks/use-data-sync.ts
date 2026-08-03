@@ -30,6 +30,12 @@ const INVALIDATION_MAP: Record<string, string[][]> = {
 
 const suppressedEvents = new Map<string, number>();
 
+// Dedup guard for build-completion toasts: a single build can emit repeated
+// data:home_changed events, so we suppress duplicate toasts for the same
+// observation within a short window.
+const recentNotifications = new Set<string>();
+const NOTIFICATION_DEDUP_WINDOW_MS = 60_000;
+
 export function suppressDataSyncEvent(eventName: string, durationMs = 3000) {
   suppressedEvents.set(eventName, Date.now() + durationMs);
 }
