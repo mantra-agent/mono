@@ -89,6 +89,8 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   childStream,
   hierarchyStepCompleted,
   hierarchyLabel,
+  hideHeader = false,
+  defaultExpanded = false,
 }: {
   meta: ChildSessionBlockMeta;
   sessionKey?: string | null;
@@ -97,12 +99,14 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
   childStream?: SessionStreamState;
   hierarchyStepCompleted?: boolean;
   hierarchyLabel?: string;
+  hideHeader?: boolean;
+  defaultExpanded?: boolean;
 }) {
   const stepCompleted = hierarchyStepCompleted;
   const insideHierarchy = stepCompleted !== undefined;
   const { layer } = useVisibilityLayer();
   const { toast } = useToast();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(hideHeader ? true : defaultExpanded);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleted, setDeleted] = useState(false);
   const turnsRef = useRef<HTMLDivElement | null>(null);
@@ -242,6 +246,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
       onClick={!expanded ? toggleExpanded : undefined}
       data-testid={`child-session-block-${meta.childSessionId}`}
     >
+      {!hideHeader && (
       <div
         className={cn("flex items-center gap-2", insideHierarchy ? "px-2 py-1.5" : "px-3 py-2")}
         data-testid={`button-toggle-child-${meta.childSessionId}`}
@@ -349,6 +354,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
           )}
         </div>
       </div>
+      )}
 
       {meta.error && (
         <div className="px-3 pb-2 text-xs text-destructive" data-testid={`text-child-error-${meta.childSessionId}`}>
@@ -370,7 +376,7 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
           className={cn(
             "max-h-32 overflow-y-auto scrollbar-thin px-3 py-2",
             insideHierarchy
-              ? "ml-6 mt-1 rounded-md border border-border/60 bg-muted/20"
+              ? cn("mt-1 rounded-md border border-border/60 bg-muted/20", !hideHeader && "ml-6")
               : "border-t border-border/40",
           )}
           data-testid={`child-turns-${meta.childSessionId}`}
