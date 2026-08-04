@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { milestones, objectGrants, privilegedAccessAudit, projects, tasks } from "@shared/schema";
+import { vaults } from "@shared/models/vaults";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, type DrizzleTx } from "./db";
 import { createLogger } from "./log";
 import { combineWithWorkObjectAccess, workObjectKey, type ObjectGrantCapability, type WorkObjectType } from "./object-grant-access";
@@ -15,8 +16,8 @@ const MAX_MEETING_DEFAULT_GRANT_SUBJECTS = 500;
 export type ObjectGrantSubjectType = "user" | "invited_subject" | "team";
 export type ObjectGrantOriginType = "meeting" | "manual";
 
-/** Every object the canonical grant service can share. Library pages key on their text id. */
-export type GrantableObjectType = WorkObjectType | "library_page";
+/** Every object the canonical grant service can share. Library pages and vaults key on their text id. */
+export type GrantableObjectType = WorkObjectType | "library_page" | "vault";
 
 export interface ObjectGrantTarget {
   objectType: GrantableObjectType;
@@ -64,9 +65,9 @@ function lockKey(objectType: GrantableObjectType, objectId: string): string {
 
 /** Resolve the grant `object_id` key for any grantable object. Library pages key on their text id. */
 function grantObjectKey(objectType: GrantableObjectType, objectId: number | string, projectId?: number): string {
-  if (objectType === "library_page") {
+  if (objectType === "library_page" || objectType === "vault") {
     const id = String(objectId).trim();
-    if (!id) throw new Error("library_page grant requires a page id");
+    if (!id) throw new Error(`${objectType} grant requires an id`);
     return id;
   }
   return workObjectKey(objectType, Number(objectId), projectId);
@@ -77,12 +78,14 @@ const projectGrantColumns = {
   scope: projects.scope,
   ownerUserId: projects.ownerUserId,
   accountId: projects.accountId,
+  vaultId: projects.vaultId,
 };
 const taskGrantColumns = {
   objectId: tasks.id,
   scope: tasks.scope,
   ownerUserId: tasks.ownerUserId,
   accountId: tasks.accountId,
+  vaultId: tasks.vaultId,
 };
 const milestoneGrantColumns = {
   objectId: milestones.id,
@@ -90,12 +93,14 @@ const milestoneGrantColumns = {
   scope: milestones.scope,
   ownerUserId: milestones.ownerUserId,
   accountId: milestones.accountId,
+  vaultId: milestones.vaultId,
 };
 const libraryPageGrantColumns = {
   objectId: libraryPages.id,
   scope: libraryPages.scope,
   ownerUserId: libraryPages.ownerUserId,
   accountId: libraryPages.accountId,
+  vaultId: libraryPages.vaultId,
 };
 
 async function assertTargetAdmin(
@@ -122,6 +127,12 @@ async function assertTargetAdmin(
   } else if (target.objectType === "task") {
     found = (await tx.select({ id: tasks.id }).from(tasks).where(
       combineWithWorkObjectAccess(principal, taskGrantColumns, "task", "admin", eq(tasks.id, target.objectId)),
+    ).limit(1)).length > 0;
+  } else if (target.objectType === "vault") {
+    // A vault is admin-able only by the account that owns it. Vault membership does not grant
+    // sharing rights — ownership does. This is the root of the vault trust boundary.
+    found = (await tx.select({ id: vaults.id }).from(vaults).where(
+      and(eq(vaults.id, String(target.objectId)), eq(vaults.accountId, principal.accountId!)),
     ).limit(1)).length > 0;
   } else {
     if (!Number.isInteger(target.projectId) || (target.projectId ?? 0) <= 0) throw new Error("Milestone grants require projectId");

@@ -28,7 +28,7 @@ export type ObjectRole = "read" | "write" | "admin";
  * Objects the grant primitive can protect. Ships with user subjects only; the object_type set is
  * the single source shared with `objectGrantObjectTypes` in shared/schema.ts.
  */
-export type AuthorizableObjectType = "project" | "milestone" | "task" | "library_page";
+export type AuthorizableObjectType = "project" | "milestone" | "task" | "library_page" | "vault";
 
 export interface ObjectGrantIdentity {
   objectType: AuthorizableObjectType;
@@ -39,6 +39,11 @@ export interface OwnedObjectColumns extends ScopeColumns {
   objectId: AnyColumn;
   /** Required only for project-local ids (milestones), whose grant key is `${projectId}:${id}`. */
   projectId?: AnyColumn;
+  /**
+   * The object's vault. When present, a live grant on this vault (`('vault', vaultId)`) also
+   * authorizes the object — the "vault gate": sharing a vault reaches everything inside it.
+   */
+  vaultId?: AnyColumn;
 }
 
 /** Roles that satisfy a required minimum. Higher privilege implies every lower one. */
@@ -96,6 +101,25 @@ export function liveObjectGrantPredicate(
   )`;
 }
 
+/**
+ * The vault gate: does the principal hold a live grant on the object's vault at >= the required role?
+ * A vault grant is stored as `('vault', vaultId)`; granting a vault therefore reaches every object
+ * carrying that vault_id without per-object grants. Revoking the vault grant revokes them all at once.
+ */
+export function liveVaultGatePredicate(principal: Principal, vaultIdColumn: AnyColumn, required: ObjectRole): SQL {
+  if (principal.actorType === "system") return sql`TRUE`;
+  if (principal.actorType !== "user" || !principal.userId) return sql`FALSE`;
+  return sql`EXISTS (
+    SELECT 1
+    FROM ${objectGrants}
+    WHERE ${subjectMatchPredicate(principal)}
+      AND ${objectGrants.objectType} = 'vault'
+      AND ${objectGrants.objectId} = ${vaultIdColumn}::text
+      AND ${objectGrants.revokedAt} IS NULL
+      AND ${inArray(objectGrants.capability, acceptedRoles(required))}
+  )`;
+}
+
 /** Default owned-scope predicate for objects whose vault gate is the scope columns themselves. */
 export function ownedScopePredicate(principal: Principal, columns: OwnedObjectColumns, required: ObjectRole): SQL {
   return required === "read"
@@ -118,7 +142,10 @@ export function authorizedScopePredicate(
   required: ObjectRole,
 ): SQL {
   const grant = liveObjectGrantPredicate(principal, objectGrantIdentity(objectType, columns), required);
-  return or(ownedPredicate, grant)!;
+  // Vault gate: when the object carries a vault_id, a live grant on that vault also authorizes it.
+  const parts = [ownedPredicate, grant];
+  if (columns.vaultId) parts.push(liveVaultGatePredicate(principal, columns.vaultId, required));
+  return or(...parts)!;
 }
 
 /** Convenience combiner: AND an extra predicate onto the canonical authorization predicate. */

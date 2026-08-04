@@ -42,7 +42,7 @@ export async function ensureObjectGrantSchema(pool: ConnectionPool): Promise<voi
         -- Converge object_type domain: widening the allowed set never invalidates existing rows,
         -- so drop-and-recreate unconditionally to migrate a pre-existing 3-value constraint.
         ALTER TABLE object_grants DROP CONSTRAINT IF EXISTS object_grants_object_type_check;
-        ALTER TABLE object_grants ADD CONSTRAINT object_grants_object_type_check CHECK (object_type IN ('project', 'milestone', 'task', 'library_page'));
+        ALTER TABLE object_grants ADD CONSTRAINT object_grants_object_type_check CHECK (object_type IN ('project', 'milestone', 'task', 'library_page', 'vault'));
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'object_grants_capability_check') THEN
           ALTER TABLE object_grants ADD CONSTRAINT object_grants_capability_check CHECK (capability IN ('read', 'write', 'admin'));
         END IF;

@@ -14,13 +14,13 @@ import { teamService } from "./team-service";
 
 const log = createLogger("ObjectGrantRoutes");
 
-const GRANTABLE_OBJECT_TYPES: GrantableObjectType[] = ["project", "milestone", "task", "library_page"];
+const GRANTABLE_OBJECT_TYPES: GrantableObjectType[] = ["project", "milestone", "task", "library_page", "vault"];
 const CAPABILITIES: ObjectGrantCapability[] = ["read", "write", "admin"];
 const SUBJECT_TYPES: ObjectGrantSubjectType[] = ["user", "invited_subject", "team"];
 
 /** Library pages key on a text uuid; work objects key on an integer id. */
 function normalizeObjectId(objectType: GrantableObjectType, raw: string): number | string {
-  if (objectType === "library_page") return raw;
+  if (objectType === "library_page" || objectType === "vault") return raw;
   const id = Number.parseInt(raw, 10);
   if (!Number.isInteger(id) || id <= 0) throw Object.assign(new Error("Invalid object id"), { status: 400 });
   return id;
