@@ -743,7 +743,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   issues: {
-    description: "Track product Issues — create, page unresolved Issues, fetch one by ID, or resolve one with affirmative evidence. Actions: create, list, get, resolve.",
+    description: "Track product Issues — create, page unresolved Issues, fetch one by ID, or resolve one with affirmative evidence. Create requires explicit reproSteps; platformEnvironmentId and buildId attach automatically from runtime identity when omitted. Actions: create, list, get, resolve.",
     category: "system",
 
     parameters: {
@@ -758,6 +758,9 @@ export const TOOLS: Record<string, ToolMeta> = {
         evidence: { type: "string", description: "Concise affirmative evidence note, 1-2000 characters (for resolve)" },
         title: { type: "string", description: "Issue title (for create)" },
         description: { type: "string", description: "Issue description (for create)" },
+        reproSteps: { type: "string", description: "Explicit reproduction steps — required for create; title-only shells are rejected" },
+        platformEnvironmentId: { type: "number", description: "Platforms Environment ID (for create; defaults from runtime identity when omitted)" },
+        buildId: { type: "string", description: "Provider deployment/build ID (for create; defaults from runtime identity when omitted)" },
       },
       required: ["action"],
     },

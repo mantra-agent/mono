@@ -462,7 +462,28 @@ function IssueDetail({ issue, allIssues }: { issue: Issue; allIssues: Issue[] })
             {issue.page && <span className="ml-2 font-mono">on {issue.page}</span>}
           </p>
         )}
+        {(issue.platformEnvironmentId != null || issue.buildId) && (
+          <p className="text-xs text-muted-foreground font-mono" data-testid="text-issue-env-build">
+            {issue.platformEnvironmentId != null && <span>env:{issue.platformEnvironmentId}</span>}
+            {issue.platformEnvironmentId != null && issue.buildId && <span className="mx-1.5">·</span>}
+            {issue.buildId && <span>build:{issue.buildId}</span>}
+          </p>
+        )}
       </div>
+
+      {issue.reproSteps && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
+              <FileText className="h-3.5 w-3.5" />
+              Repro Steps
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm whitespace-pre-wrap" data-testid="text-issue-repro">{issue.reproSteps}</p>
+          </CardContent>
+        </Card>
+      )}
 
       {issue.description && (
         <Card>
