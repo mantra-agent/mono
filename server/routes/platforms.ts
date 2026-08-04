@@ -16,7 +16,17 @@ import { getCloudflarePagesProjectTruth, triggerCloudflarePagesProductionDeploym
 import { deleteEnvironmentBuildLifecycleConfigs, disableEnvironmentBuildLifecycleConfig, getEnvironmentBuildLifecycleConfig, getEnvironmentBuildStatus, listEnvironmentBuildWorkflows, setEnvironmentBuildLifecycleConfig, startEnvironmentBuildWorkflow } from "../platforms/build-lifecycle-service";
 import { getEnvironmentVersionDocument } from "../integrations/railway/release-versioning";
 import { getBuildExpandContent } from "../integrations/railway/build-expand-content";
-import { getVisibleEnvironment, getWritableEnvironment, visiblePlatform, writablePlatform } from "../platforms/platform-access";
+import {
+  canManagePlatformVaults,
+  getVisibleEnvironment,
+  getWritableEnvironment,
+  loadVaultIdsByPlatformIds,
+  replacePlatformVaultMemberships,
+  resolveCreationVaultId,
+  seedPlatformVaultMembership,
+  visiblePlatform,
+  writablePlatform,
+} from "../platforms/platform-access";
 import { libraryPages } from "@shared/models/info";
 import { requireActiveBuild } from "../mods/build-route-access";
 
@@ -128,7 +138,12 @@ export function registerPlatformRoutes(app: Express): void {
 
   app.get("/api/platforms", async (_req, res) => {
     try {
+      const principal = requireCurrentPrincipal();
       const rows = await db.select().from(platforms).where(visiblePlatform()).orderBy(desc(platforms.updatedAt));
+      const vaultIdsByPlatform = await loadVaultIdsByPlatformIds(
+        principal,
+        rows.map((platform) => platform.id),
+      );
       const products = await db
         .select()
         .from(platformProducts)
@@ -154,7 +169,17 @@ export function registerPlatformRoutes(app: Express): void {
         list.push({ ...row.platform_products, environments: environmentsByProduct.get(row.platform_products.id) || [] });
         productsByPlatform.set(row.platform_products.platformId, list);
       }
-      res.json(rows.map(platform => ({ ...platform, products: productsByPlatform.get(platform.id) || [] })));
+      res.json(
+        rows.map((platform) => {
+          const vaultIds = vaultIdsByPlatform.get(platform.id) || [];
+          return {
+            ...platform,
+            vaultIds,
+            canManageVaults: canManagePlatformVaults(principal, { ...platform, vaultIds }),
+            products: productsByPlatform.get(platform.id) || [],
+          };
+        }),
+      );
     } catch (error: unknown) {
       const err = routeError(error, "list_platforms");
       res.status(500).json({ error: err.message, operation: err.operation });
@@ -697,8 +722,28 @@ export function registerPlatformRoutes(app: Express): void {
     try {
       const parsed = insertPlatformSchema.parse(req.body);
       const principal = requireCurrentPrincipal();
-      const [created] = await db.insert(platforms).values({ ...parsed, ...ownedInsertValues(principal, platformScopeColumns) }).returning();
-      res.status(201).json({ ...created, products: [] });
+      const { vaultId: requestedVaultId, ...platformValues } = parsed;
+      const vaultId = resolveCreationVaultId(requestedVaultId);
+      const [created] = await db
+        .insert(platforms)
+        .values({
+          ...platformValues,
+          vaultId,
+          ...ownedInsertValues(principal, platformScopeColumns),
+        })
+        .returning();
+      await seedPlatformVaultMembership({
+        platformId: created.id,
+        vaultId,
+        principal,
+      });
+      const vaultIds = [vaultId];
+      res.status(201).json({
+        ...created,
+        vaultIds,
+        canManageVaults: canManagePlatformVaults(principal, { ...created, vaultIds }),
+        products: [],
+      });
     } catch (error: unknown) {
       const err = routeError(error, "create_platform");
       res.status(400).json({ error: err.message, operation: err.operation });
@@ -709,12 +754,49 @@ export function registerPlatformRoutes(app: Express): void {
     try {
       const id = platformIdParam(req.params.id);
       const parsed = insertPlatformSchema.partial().parse(req.body);
-      const [updated] = await db.update(platforms).set({ ...parsed, updatedAt: sql`CURRENT_TIMESTAMP` }).where(writablePlatform(eq(platforms.id, id))).returning();
+      const { vaultId: _ignoredVaultId, ...platformValues } = parsed;
+      const [updated] = await db
+        .update(platforms)
+        .set({ ...platformValues, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(writablePlatform(eq(platforms.id, id)))
+        .returning();
       if (!updated) return res.status(404).json({ error: `Platform ${id} not found`, operation: "update_platform" });
-      res.json(updated);
+      const principal = requireCurrentPrincipal();
+      const vaultIdsByPlatform = await loadVaultIdsByPlatformIds(principal, [updated.id]);
+      const vaultIds = vaultIdsByPlatform.get(updated.id) || [];
+      res.json({
+        ...updated,
+        vaultIds,
+        canManageVaults: canManagePlatformVaults(principal, { ...updated, vaultIds }),
+      });
     } catch (error: unknown) {
       const err = routeError(error, "update_platform");
       res.status(400).json({ error: err.message, operation: err.operation });
+    }
+  });
+
+  app.patch("/api/platforms/:id/vaults", async (req, res) => {
+    try {
+      const id = platformIdParam(req.params.id);
+      const vaultIds = Array.isArray(req.body?.vaultIds) ? req.body.vaultIds : null;
+      if (!vaultIds || !vaultIds.every((value: unknown) => typeof value === "string")) {
+        return res.status(400).json({
+          error: "vaultIds must be an array of Vault IDs",
+          operation: "replace_platform_vaults",
+        });
+      }
+      const platform = await replacePlatformVaultMemberships(id, vaultIds);
+      res.json(platform);
+    } catch (error: unknown) {
+      const err = routeError(error, "replace_platform_vaults");
+      const message = err.message || "Failed to update platform vaults";
+      const status =
+        message.includes("not found") || message.includes("not administrable")
+          ? 404
+          : message.includes("not manageable") || message.includes("must belong") || message.includes("must be")
+            ? 400
+            : 400;
+      res.status(status).json({ error: message, operation: err.operation });
     }
   });
 

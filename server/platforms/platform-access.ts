@@ -1,21 +1,30 @@
 import { and, eq, type SQL } from "drizzle-orm";
 import { db } from "../db";
-import { requireCurrentPrincipal } from "../principal-context";
-import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
-import { platformProductEnvironments, platformProducts, platforms } from "@shared/models/platforms";
+import {
+  platformProductEnvironments,
+  platformProducts,
+  platforms,
+} from "@shared/models/platforms";
+import {
+  visiblePlatform as visiblePlatformByVault,
+  writablePlatform as writablePlatformByOwner,
+} from "../platform-vault-access";
 
-const platformScopeColumns = {
-  scope: platforms.scope,
-  ownerUserId: platforms.ownerUserId,
-  accountId: platforms.accountId,
-};
+export {
+  canManagePlatformVaults,
+  ensurePlatformVaultMembershipSchema,
+  loadVaultIdsByPlatformIds,
+  replacePlatformVaultMemberships,
+  resolveCreationVaultId,
+  seedPlatformVaultMembership,
+} from "../platform-vault-access";
 
 export function visiblePlatform(predicate?: SQL): SQL {
-  return combineWithVisibleScope(requireCurrentPrincipal(), platformScopeColumns, predicate);
+  return visiblePlatformByVault(predicate);
 }
 
 export function writablePlatform(predicate?: SQL): SQL {
-  return combineWithWritableScope(requireCurrentPrincipal(), platformScopeColumns, predicate);
+  return writablePlatformByOwner(predicate);
 }
 
 export async function getVisibleProduct(productId: number) {

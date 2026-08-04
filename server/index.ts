@@ -515,6 +515,8 @@ app.use((req, res, next) => {
   await ensureWorkVaultSchema(workVaultPool);
   const { ensureProjectVaultMembershipSchema } = await import("./project-vault-access");
   await ensureProjectVaultMembershipSchema();
+  const { ensurePlatformVaultMembershipSchema } = await import("./platform-vault-access");
+  await ensurePlatformVaultMembershipSchema();
   await migrateProjectNotesSpecToLibrary();
   const { ensureObjectGrantSchema } = await import("./object-grant-schema");
   await ensureObjectGrantSchema(workVaultPool);

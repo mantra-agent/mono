@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { vaults } from "./vaults";
 
 export const platformStatusEnum = z.enum(["active", "paused", "archived"]);
 export type PlatformStatus = z.infer<typeof platformStatusEnum>;
@@ -13,6 +14,8 @@ export const platforms = pgTable(
     name: text("name").notNull(),
     description: text("description").notNull().default(""),
     status: text("status").notNull().default("active"),
+    /** Migration-compatible primary/default Vault. platform_vault_memberships owns Platform visibility. */
+    vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "restrict" }),
     scope: text("scope").notNull().default("user"),
     ownerUserId: text("owner_user_id"),
     accountId: text("account_id"),
@@ -22,9 +25,37 @@ export const platforms = pgTable(
   (table) => [
     index("idx_platforms_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_platforms_account").on(table.accountId),
+    index("idx_platforms_vault").on(table.vaultId),
     index("idx_platforms_updated").on(table.updatedAt),
   ],
 );
+
+/** Canonical many-to-many Platform-to-Vault membership controlling owner visibility. */
+export const platformVaultMemberships = pgTable(
+  "platform_vault_memberships",
+  {
+    id: serial("id").primaryKey(),
+    platformId: integer("platform_id")
+      .notNull()
+      .references(() => platforms.id, { onDelete: "cascade" }),
+    vaultId: text("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "restrict" }),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id"),
+    accountId: text("account_id"),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    uniqueIndex("platform_vault_memberships_platform_vault_unique").on(table.platformId, table.vaultId),
+    index("idx_platform_vault_memberships_platform").on(table.platformId),
+    index("idx_platform_vault_memberships_vault_platform").on(table.vaultId, table.platformId),
+    index("idx_platform_vault_memberships_scope_owner").on(table.scope, table.ownerUserId, table.accountId),
+  ],
+);
+
+export type PlatformVaultMembership = typeof platformVaultMemberships.$inferSelect;
 
 export const platformProducts = pgTable(
   "platform_products",
@@ -208,11 +239,20 @@ export const environmentRuntimeVariables = pgTable(
 );
 
 export const insertPlatformSchema = createInsertSchema(platforms)
-  .omit({ id: true, scope: true, ownerUserId: true, accountId: true, createdAt: true, updatedAt: true })
+  .omit({
+    id: true,
+    vaultId: true,
+    scope: true,
+    ownerUserId: true,
+    accountId: true,
+    createdAt: true,
+    updatedAt: true,
+  })
   .extend({
     name: z.string().trim().min(1, "Platform name is required"),
     description: z.string().optional().default(""),
     status: platformStatusEnum.optional().default("active"),
+    vaultId: z.string().trim().min(1).optional(),
   });
 
 export const insertPlatformProductSchema = createInsertSchema(platformProducts)
