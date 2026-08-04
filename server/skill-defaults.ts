@@ -987,16 +987,18 @@ If the page has already been created but you later decide it should be surfaced,
     category: "engineering",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "2.2",
+    version: "2.3",
     addToMemory: false,
     pinnedToContext: false,
     whenToUse:
       "Runs automatically after a genuinely new deployed build through the Timer scheduler, or manually from Skills when an operator wants to recheck and dispose open Issues.",
     outputSpec:
-      "Every run must (1) dispose Issues via issues.resolve where fixed or non-actionable, (2) prepend a dated entry on the account's Regression Testing Log Library page, and (3) re-surface that page. Final chat response is a short summary plus the page reference — never classification-only with a frozen queue.",
+      "Every run must (1) dispose Issues via issues.resolve where fixed or non-actionable, (2) prepend a dated entry on the account's Regression Testing Log Library page, and (3) re-surface that page. Final chat response is a short summary plus the page reference — never classification-only with a frozen queue. An empty open queue is a valid success: list, log the no-op, surface, and stop — do not force issues.get or issues.resolve.",
     // Hollow orient-only runs fail structural tool_invoked gates and must not
     // report as clean success. scoreThreshold reconciles timer/skill status
     // to degraded when the pass rate falls below this floor.
+    // issues.get is judgment (not tool_invoked): process makes it conditional on
+    // body/evidence, and empty-queue no-ops must not fail structural requirements.
     scoreThreshold: 0.8,
     checklist: [
       {
@@ -1007,15 +1009,13 @@ If the page has already been created but you later decide it should be surfaced,
         action: "list",
       },
       {
-        check: "Inspected Issues individually through issues.get when body or evidence was present",
+        check:
+          "Inspected Issues individually through issues.get when body or evidence was present; skipped get on empty-queue or title-only shells",
         weight: 3,
-        kind: "tool_invoked",
-        tool: "issues",
-        action: "get",
       },
       {
         check:
-          "Disposed the queue: resolved fixed and non-actionable Issues; did not leave the bulk as blocked_on_testing",
+          "Disposed the queue: resolved fixed and non-actionable Issues when present; empty open queue is a valid no-op success; did not leave a bulk queue as blocked_on_testing",
         weight: 5,
       },
       {
