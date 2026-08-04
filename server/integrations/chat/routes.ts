@@ -1989,7 +1989,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const maxTokens = (await import("../../model-registry")).getMaxOutputTokens(bareModel);
     const requestBudget = getContextRequestBudget(contextWindow, maxTokens);
     const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
-    const executorStage1Threshold = Math.floor(requestBudget.operatingInputLimit * 0.65);
+    const executorStage1Threshold = Math.floor(requestBudget.compactionTarget * 0.65);
     const fullPreExecutorTokens = estimateExecutorMessagesTokens(messages) + toolDefinitionTokens;
     const toolResultCount = messages.reduce((sum, msg) => {
       if (!Array.isArray(msg.content)) return sum;
@@ -2006,7 +2006,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
 
     chatLog.log(
-      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} threshold=${executorStage1Threshold} operating=${requestBudget.operatingInputLimit} hard=${requestBudget.hardInputLimit} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
+      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} threshold=${executorStage1Threshold} target=${requestBudget.compactionTarget} operating=${requestBudget.operatingInputLimit} hard=${requestBudget.hardInputLimit} reserve=${requestBudget.outputReserve} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
     );
     return {
       messages,
