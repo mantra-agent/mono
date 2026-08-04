@@ -122,6 +122,8 @@ function VaultSectionHeader({
 interface VaultTreeSectionProps {
   vault: Vault;
   rootNodes: TreeNode[];
+  /** Active title search; federates the Drive branch (title-only) with the native page filter. */
+  searchQuery: string;
   selectedId: string | null;
   expandedIds: Set<string>;
   onSelect: (id: string, slug?: string) => void;
@@ -151,7 +153,7 @@ interface VaultTreeSectionProps {
  * remain an explicit Move-dialog action with a named destination vault.
  */
 function VaultTreeSection({
-  vault, rootNodes, selectedId, expandedIds,
+  vault, rootNodes, searchQuery, selectedId, expandedIds,
   onSelect, onCreateChild, onSetEmoji, onDelete, onDownload, onEnrich, onMove, onTogglePin, onDiscuss, discussingPageId, onReorder, toggleExpand,
   unreadIds, hasUnreadDescendantIds, resolveTitleColor,
   open, onOpenChange, onAddPage,
@@ -197,7 +199,7 @@ function VaultTreeSection({
             resolveTitleColor={resolveTitleColor}
           />
         )}
-        <DriveBranch vaultId={vault.id} />
+        <DriveBranch vaultId={vault.id} searchQuery={searchQuery} />
       </CollapsibleContent>
     </Collapsible>
   );
@@ -707,6 +709,7 @@ export function LibraryTab({ initialSpecSlug, initialPageSlug }: { initialSpecSl
                       key={section.vault.id}
                       vault={section.vault}
                       rootNodes={section.rootNodes}
+                      searchQuery={searchQuery}
                       selectedId={selectedId}
                       expandedIds={expandedIds}
                       onSelect={selectPage}
