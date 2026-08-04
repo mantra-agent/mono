@@ -19,7 +19,23 @@ export type ToolFailureCode =
   | "orient_persona_required"
   | "orient_no_session"
   | "shell_policy_denied"
-  | "tool_schema_invalid";
+  | "tool_schema_invalid"
+  // Git contract rejects (caller input / wrong target — amber)
+  | "git_missing_url"
+  | "git_invalid_url"
+  | "git_directory_required"
+  | "git_directory_not_found"
+  | "git_session_ownership"
+  | "git_workspace_root_forbidden"
+  | "git_invalid_action"
+  // Railway contract rejects
+  | "railway_missing_action"
+  | "railway_missing_platform_environment"
+  | "railway_action_not_allowed"
+  // Code / GitNexus contract rejects
+  | "code_missing_action"
+  | "code_unknown_action"
+  | "code_missing_query";
 
 export interface ToolFailure {
   kind: ToolFailureKind;

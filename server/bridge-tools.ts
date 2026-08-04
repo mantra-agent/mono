@@ -28,6 +28,7 @@ import {
   inputFailure,
   permissionFailure,
   type ToolFailure,
+  type ToolFailureCode,
 } from "./tool-failure";
 import { extractToolFailureKind } from "@shared/tool-failure";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
@@ -114,6 +115,11 @@ type ToolHandlerResult = {
   data?: Record<string, unknown>;
   continuation?: import("./agent-executor").ToolContinuation;
 };
+
+/** Contract reject → amber input failure (same discriminant path as shell_policy_denied). */
+function contractReject(result: string, code: ToolFailureCode, detail?: string): ToolHandlerResult {
+  return { result, error: true, failure: inputFailure(code, detail) };
+}
 
 const PEOPLE_AGENDA_SURFACE_LIMIT = 3;
 
@@ -7293,10 +7299,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       switch (action) {
         case "clone": {
           const url = args.url;
-          if (!url) return { result: "Missing url parameter for clone", error: true };
+          if (!url) return contractReject("Missing url parameter for clone", "git_missing_url");
 
           try { new URL(url); } catch {
-            return { result: "Invalid repository URL", error: true };
+            return contractReject("Invalid repository URL", "git_invalid_url");
           }
 
           if (!await dirExists(REPOS_DIR)) await mkdirAsync(REPOS_DIR, { recursive: true });
@@ -7304,11 +7310,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           // Session isolation: always append -{sessionId[:8]} to the directory name.
           // This ensures each session gets its own working tree. No shared mutable state.
           const baseName = args.directory || basename(url.replace(/\.git$/, "")).replace(/[^a-zA-Z0-9._-]/g, "-");
-          if (SELF_DIR_ALIASES.has(baseName)) return { result: "Cannot clone into the workspace root. Clones always go into repos/.", error: true };
+          if (SELF_DIR_ALIASES.has(baseName)) {
+            return contractReject(
+              "Cannot clone into the workspace root. Clones always go into repos/.",
+              "git_workspace_root_forbidden",
+            );
+          }
 
           const dirName = sessionSuffix ? `${baseName}-${sessionSuffix}` : baseName;
           const targetDir = resolveRepoDir(dirName);
-          if (!targetDir) return { result: "Invalid directory name", error: true };
+          if (!targetDir) return contractReject("Invalid directory name", "git_directory_required");
 
           // Idempotent: if this session already cloned here, return the existing clone.
           if (await dirExists(targetDir)) {
@@ -7421,11 +7432,21 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
 
         case "pull": {
-          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return { result: "Cannot pull into the workspace root. Pull only works on cloned repos in repos/.", error: true };
+          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) {
+            return contractReject(
+              "Cannot pull into the workspace root. Pull only works on cloned repos in repos/.",
+              "git_workspace_root_forbidden",
+            );
+          }
           const ownershipErr = requireWriteOwnership(args.directory);
-          if (ownershipErr) return { result: ownershipErr, error: true };
+          if (ownershipErr) return contractReject(ownershipErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Specify the directory name inside repos/.", error: true };
+          if (!dir || !await dirExists(dir)) {
+            return contractReject(
+              "Repository directory not found. Specify the directory name inside repos/.",
+              "git_directory_not_found",
+            );
+          }
 
           const remoteUrl = await getRemoteUrl(dir);
           const authEnv = await getAuthEnv(remoteUrl);
@@ -7442,7 +7463,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         case "status": {
           const dir = await resolveReadOnlyRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
 
           const currentBranch = await git(["branch", "--show-current"], dir);
           const status = await git(["status", "--short"], dir);
@@ -7454,7 +7475,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         case "log": {
           const dir = await resolveReadOnlyRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
 
           // If workspace root is shallow, warn the caller
           if (SELF_DIR_ALIASES.has(args.directory || ".") || !args.directory) {
@@ -7477,7 +7498,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         case "diff": {
           const dir = await resolveReadOnlyRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
 
           const diffArgs = ["diff"];
           const r1 = sanitizeRef(args.ref1);
@@ -7494,15 +7515,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const subAction = args.branchAction || "list";
           if (subAction === "list") {
             const dir = await resolveReadOnlyRepoDir(args.directory);
-            if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", error: true };
+            if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
             const output = await git(["branch", "-a"], dir);
             return { result: output };
           }
-          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return { result: "Branch create/switch only works on cloned repos in repos/, not the workspace root.", error: true };
+          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return contractReject("Branch create/switch only works on cloned repos in repos/, not the workspace root.", "git_workspace_root_forbidden");
           const branchOwnerErr = requireWriteOwnership(args.directory);
-          if (branchOwnerErr) return { result: branchOwnerErr, error: true };
+          if (branchOwnerErr) return contractReject(branchOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Branch create/switch only works on cloned repos in repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Branch create/switch only works on cloned repos in repos/.", "git_directory_not_found");
           switch (subAction) {
             case "create": {
               const name = sanitizeBranch(args.name);
@@ -7517,19 +7538,19 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               return { result: `Switched to branch: ${name}` };
             }
             default:
-              return { result: `Unknown branch action: ${subAction}. Use list, create, or switch.`, error: true };
+              return contractReject(`Unknown branch action: ${subAction}. Use list, create, or switch.`, "git_invalid_action");
           }
         }
 
         case "checkout": {
-          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return { result: "Checkout only works on cloned repos in repos/, not the workspace root.", error: true };
+          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return contractReject("Checkout only works on cloned repos in repos/, not the workspace root.", "git_workspace_root_forbidden");
           const checkoutOwnerErr = requireWriteOwnership(args.directory);
-          if (checkoutOwnerErr) return { result: checkoutOwnerErr, error: true };
+          if (checkoutOwnerErr) return contractReject(checkoutOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Checkout only works on cloned repos in repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Checkout only works on cloned repos in repos/.", "git_directory_not_found");
 
           const ref = sanitizeRef(args.ref);
-          if (!ref) return { result: "Missing or invalid ref/branch to checkout", error: true };
+          if (!ref) return contractReject("Missing or invalid ref/branch to checkout", "git_invalid_action");
 
           const checkoutArgs = ["checkout", ref];
           if (args.file) checkoutArgs.push("--", String(args.file));
@@ -7542,7 +7563,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         case "show": {
           const dir = await resolveReadOnlyRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
 
           const ref = sanitizeRef(args.ref) || "HEAD";
           const output = await git(["show", "--stat", "--format=Commit: %H%nAuthor: %an <%ae>%nDate: %ci%n%n%s%n%n%b", ref], dir);
@@ -7550,11 +7571,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
 
         case "add": {
-          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return { result: "git add only works on cloned repos in repos/, not the workspace root.", error: true };
+          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return contractReject("git add only works on cloned repos in repos/, not the workspace root.", "git_workspace_root_forbidden");
           const addOwnerErr = requireWriteOwnership(args.directory);
-          if (addOwnerErr) return { result: addOwnerErr, error: true };
+          if (addOwnerErr) return contractReject(addOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Specify the directory name inside repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
 
           const files: string[] = Array.isArray(args.files) && args.files.length > 0
             ? args.files.map((f: string) => String(f))
@@ -7565,14 +7586,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
 
         case "commit": {
-          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return { result: "git commit only works on cloned repos in repos/, not the workspace root.", error: true };
+          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return contractReject("git commit only works on cloned repos in repos/, not the workspace root.", "git_workspace_root_forbidden");
           const commitOwnerErr = requireWriteOwnership(args.directory);
-          if (commitOwnerErr) return { result: commitOwnerErr, error: true };
+          if (commitOwnerErr) return contractReject(commitOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Specify the directory name inside repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
 
           const message = args.message;
-          if (!message || typeof message !== "string" || !message.trim()) return { result: "Missing commit message", error: true };
+          if (!message || typeof message !== "string" || !message.trim()) {
+            return contractReject("Missing commit message", "git_invalid_action");
+          }
 
           const currentName = await git(["config", "--get", "user.name"], dir).catch(() => "");
           const currentEmail = await git(["config", "--get", "user.email"], dir).catch(() => "");
@@ -7585,11 +7608,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
 
         case "push": {
-          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return { result: "git push only works on cloned repos in repos/, not the workspace root.", error: true };
+          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return contractReject("git push only works on cloned repos in repos/, not the workspace root.", "git_workspace_root_forbidden");
           const pushOwnerErr = requireWriteOwnership(args.directory);
-          if (pushOwnerErr) return { result: pushOwnerErr, error: true };
+          if (pushOwnerErr) return contractReject(pushOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Specify the directory name inside repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
 
           const pushRemoteUrl = await getRemoteUrl(dir);
           const authEnv = await getAuthEnv(pushRemoteUrl);
@@ -7619,14 +7642,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
 
         case "create_pr": {
-          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return { result: "create_pr only works on cloned repos in repos/, not the workspace root.", error: true };
+          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return contractReject("create_pr only works on cloned repos in repos/, not the workspace root.", "git_workspace_root_forbidden");
           const prOwnerErr = requireWriteOwnership(args.directory);
-          if (prOwnerErr) return { result: prOwnerErr, error: true };
+          if (prOwnerErr) return contractReject(prOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Specify the directory name inside repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
 
           const title = args.title;
-          if (!title || typeof title !== "string" || !title.trim()) return { result: "Missing PR title", error: true };
+          if (!title || typeof title !== "string" || !title.trim()) {
+            return contractReject("Missing PR title", "git_invalid_action");
+          }
 
           const remoteUrl = await git(["config", "--get", "remote.origin.url"], dir);
           const match = remoteUrl.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?$/);
@@ -7668,14 +7693,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           return { result: `PR #${pr.number} created: ${pr.html_url}\nTitle: ${pr.title}` };
         }
         case "merge_pr": {
-          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return { result: "merge_pr only works on cloned repos in repos/, not the workspace root.", error: true };
+          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return contractReject("merge_pr only works on cloned repos in repos/, not the workspace root.", "git_workspace_root_forbidden");
           const mergeOwnerErr = requireWriteOwnership(args.directory);
-          if (mergeOwnerErr) return { result: mergeOwnerErr, error: true };
+          if (mergeOwnerErr) return contractReject(mergeOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Specify the directory name inside repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
 
           const prNumber = args.pr_number;
-          if (!prNumber) return { result: "Missing pr_number parameter", error: true };
+          if (!prNumber) return contractReject("Missing pr_number parameter", "git_invalid_action");
 
           const remoteUrl = await git(["config", "--get", "remote.origin.url"], dir);
           const match = remoteUrl.match(/github\.com[:/]([^\/]+)\/(.+?)(?:\.git)?$/);
@@ -7735,11 +7760,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
 
         case "delete_branch": {
-          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return { result: "delete_branch only works on cloned repos in repos/, not the workspace root.", error: true };
+          if (!args.directory || SELF_DIR_ALIASES.has(args.directory)) return contractReject("delete_branch only works on cloned repos in repos/, not the workspace root.", "git_workspace_root_forbidden");
           const delBranchOwnerErr = requireWriteOwnership(args.directory);
-          if (delBranchOwnerErr) return { result: delBranchOwnerErr, error: true };
+          if (delBranchOwnerErr) return contractReject(delBranchOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return { result: "Repository directory not found. Specify the directory name inside repos/.", error: true };
+          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
 
           const branchName = sanitizeBranch(args.branch);
           if (!branchName) return { result: "Missing or invalid branch name", error: true };
@@ -7770,7 +7795,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
 
         default:
-          return { result: `Unknown git action: ${action}. Available: clone, pull, status, log, diff, branch, checkout, show, add, commit, push, create_pr, merge_pr, delete_branch`, error: true };
+          return contractReject(`Unknown git action: ${action}. Available: clone, pull, status, log, diff, branch, checkout, show, add, commit, push, create_pr, merge_pr, delete_branch`, "git_invalid_action");
       }
     } catch (err: any) {
       const msg = err.stderr?.toString?.() || err.stdout?.toString?.() || err.message || String(err);
@@ -9815,22 +9840,22 @@ ${refs}` : ""),
       && args.platformEnvironmentId > 0
       ? args.platformEnvironmentId
       : undefined;
-    if (!action) return { result: "Missing 'action' parameter", error: true };
+    if (!action) return contractReject("Missing 'action' parameter", "railway_missing_action");
 
     const allowed = new Set(["status", "deployments", "logs", "build_logs", "list_variables", "redeploy", "restart"]);
     if (!allowed.has(action)) {
-      return {
-        result: `Unknown railway action: ${action}. Allowed: ${[...allowed].join(", ")}. Destructive actions are intentionally not exposed.`,
-        error: true,
-      };
+      return contractReject(
+        `Unknown railway action: ${action}. Allowed: ${[...allowed].join(", ")}. Destructive actions are intentionally not exposed.`,
+        "railway_action_not_allowed",
+      );
     }
 
     const selfInspectionActions = new Set(["status", "logs", "build_logs"]);
     if (platformEnvironmentId === undefined && !selfInspectionActions.has(action)) {
-      return {
-        result: `platformEnvironmentId is required for Railway ${action}; omission is permitted only for current-runtime status, logs, and build_logs.`,
-        error: true,
-      };
+      return contractReject(
+        `platformEnvironmentId is required for Railway ${action}; omission is permitted only for current-runtime status, logs, and build_logs.`,
+        "railway_missing_platform_environment",
+      );
     }
 
     const {
@@ -14075,7 +14100,7 @@ async function gitnexusBridgeCall<T>(fn: () => Promise<T>): Promise<{ ok: boolea
 const codeIntelTools: Record<string, ToolHandler> = {
   async code_query(args) {
     const query = args.query;
-    if (!query) return { result: "Missing query", error: true };
+    if (!query) return contractReject("Missing query", "code_missing_query");
 
     const { searchCodebase } = await import("./gitnexus-bridge");
     const res = await gitnexusBridgeCall(() => searchCodebase(query));
@@ -14721,7 +14746,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
   },
   async code(args) {
     const action = args.action;
-    if (!action) return { result: "Missing action parameter", error: true };
+    if (!action) return contractReject("Missing action parameter", "code_missing_action");
     const sub: Record<string, ToolHandler> = {
       query: codeIntelTools.code_query,
       context: codeIntelTools.code_context,
@@ -14735,7 +14760,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       cypher: codeIntelTools.code_cypher,
     };
     const handler = sub[action];
-    if (!handler) return { result: `Unknown code action: ${action}`, error: true };
+    if (!handler) return contractReject(`Unknown code action: ${action}`, "code_unknown_action");
     return handler(args);
   },
   async docx(args) {
