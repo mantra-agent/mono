@@ -5841,6 +5841,9 @@ export async function runSchemaBootstrap(
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_plan_executions_archived_at ON plan_executions(archived_at)`,
     );
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_plan_executions_origin_session_id ON plan_executions(origin_session_id)`,
+    );
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_plan_executions_lease ON plan_executions(execution_lease_expires_at)`);
   });
 

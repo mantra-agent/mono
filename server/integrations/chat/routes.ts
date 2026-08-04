@@ -161,83 +161,64 @@ function logOrphanCountIfChanged(orphanCount: number): void {
 
 const PLAN_SESSION_QUERY_CHUNK_SIZE = 250;
 
-async function getPlanSessionIdsForSessions(sessionIds: string[]): Promise<Set<string>> {
+/**
+ * One chunked round-trip pair for /api/sessions plan badges.
+ * Library pages supply hasPlan; plan_executions supply hasActivePlan + plan_review.
+ * Sessions with an in-flight plan must stay active between child steps.
+ */
+async function getPlanBadgeSessionIds(sessionIds: string[]): Promise<{
+  planSessionIds: Set<string>;
+  executingPlanSessionIds: Set<string>;
+  reviewPlanSessionIds: Set<string>;
+}> {
   const uniqueSessionIds = Array.from(new Set(sessionIds.filter(Boolean)));
   const planSessionIds = new Set<string>();
-  if (uniqueSessionIds.length === 0) return planSessionIds;
+  const executingPlanSessionIds = new Set<string>();
+  const reviewPlanSessionIds = new Set<string>();
+  if (uniqueSessionIds.length === 0) {
+    return { planSessionIds, executingPlanSessionIds, reviewPlanSessionIds };
+  }
 
   for (let i = 0; i < uniqueSessionIds.length; i += PLAN_SESSION_QUERY_CHUNK_SIZE) {
     const chunk = uniqueSessionIds.slice(i, i + PLAN_SESSION_QUERY_CHUNK_SIZE);
-    const pages = await db
-      .select({ sessionId: libraryPages.createdBySessionId })
-      .from(libraryPages)
-      .where(
-        and(
-          inArray(libraryPages.createdBySessionId, chunk),
-          drizzleSql`${libraryPages.tags} @> ARRAY['plan']::text[]`,
+    const [pages, planRows] = await Promise.all([
+      db
+        .select({ sessionId: libraryPages.createdBySessionId })
+        .from(libraryPages)
+        .where(
+          and(
+            inArray(libraryPages.createdBySessionId, chunk),
+            drizzleSql`${libraryPages.tags} @> ARRAY['plan']::text[]`,
+          ),
         ),
-      );
+      db
+        .select({
+          sessionId: planExecutions.originSessionId,
+          status: planExecutions.status,
+        })
+        .from(planExecutions)
+        .where(
+          visiblePlan(
+            and(
+              inArray(planExecutions.originSessionId, chunk),
+              inArray(planExecutions.status, ["executing", "needs_review"]),
+              isNull(planExecutions.archivedAt),
+            ),
+          ),
+        ),
+    ]);
 
     for (const page of pages) {
       if (page.sessionId) planSessionIds.add(page.sessionId);
     }
-  }
-
-  return planSessionIds;
-}
-
-/**
- * Sessions with a plan currently executing. A session with an in-flight plan
- * must render as active even in the gap between plan steps, when no child
- * session is streaming yet.
- */
-async function getReviewPlanSessionIdsForSessions(sessionIds: string[]): Promise<Set<string>> {
-  const uniqueSessionIds = Array.from(new Set(sessionIds.filter(Boolean)));
-  const reviewSessionIds = new Set<string>();
-  if (uniqueSessionIds.length === 0) return reviewSessionIds;
-
-  for (let i = 0; i < uniqueSessionIds.length; i += PLAN_SESSION_QUERY_CHUNK_SIZE) {
-    const chunk = uniqueSessionIds.slice(i, i + PLAN_SESSION_QUERY_CHUNK_SIZE);
-    const rows = await db
-      .select({ sessionId: planExecutions.originSessionId })
-      .from(planExecutions)
-      .where(visiblePlan(and(
-        inArray(planExecutions.originSessionId, chunk),
-        eq(planExecutions.status, "needs_review"),
-        isNull(planExecutions.archivedAt),
-      )));
-    for (const row of rows) {
-      if (row.sessionId) reviewSessionIds.add(row.sessionId);
+    for (const row of planRows) {
+      if (!row.sessionId) continue;
+      if (row.status === "executing") executingPlanSessionIds.add(row.sessionId);
+      else if (row.status === "needs_review") reviewPlanSessionIds.add(row.sessionId);
     }
   }
 
-  return reviewSessionIds;
-}
-
-async function getExecutingPlanSessionIdsForSessions(sessionIds: string[]): Promise<Set<string>> {
-  const uniqueSessionIds = Array.from(new Set(sessionIds.filter(Boolean)));
-  const executingSessionIds = new Set<string>();
-  if (uniqueSessionIds.length === 0) return executingSessionIds;
-
-  for (let i = 0; i < uniqueSessionIds.length; i += PLAN_SESSION_QUERY_CHUNK_SIZE) {
-    const chunk = uniqueSessionIds.slice(i, i + PLAN_SESSION_QUERY_CHUNK_SIZE);
-    const rows = await db
-      .select({ sessionId: planExecutions.originSessionId })
-      .from(planExecutions)
-      .where(
-        and(
-          inArray(planExecutions.originSessionId, chunk),
-          eq(planExecutions.status, "executing"),
-          isNull(planExecutions.archivedAt),
-        ),
-      );
-
-    for (const row of rows) {
-      if (row.sessionId) executingSessionIds.add(row.sessionId);
-    }
-  }
-
-  return executingSessionIds;
+  return { planSessionIds, executingPlanSessionIds, reviewPlanSessionIds };
 }
 
 const SENSITIVE_PATTERNS = [
@@ -525,11 +506,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // implementation scanned every plan-tagged Library page on each sidebar
       // poll, which saturated the DB pool after the session-management deploy.
       const filteredIds = filtered.map((s) => s.id);
-      const [planSessionIds, executingPlanSessionIds, reviewPlanSessionIds] = await Promise.all([
-        getPlanSessionIdsForSessions(filteredIds),
-        getExecutingPlanSessionIdsForSessions(filteredIds),
-        getReviewPlanSessionIdsForSessions(filteredIds),
-      ]);
+      const { planSessionIds, executingPlanSessionIds, reviewPlanSessionIds } =
+        await getPlanBadgeSessionIds(filteredIds);
 
       // Compute which sessions have active (streaming) descendants
       // Walk the tree bottom-up: if a session is streaming, mark all ancestors

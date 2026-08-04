@@ -1629,6 +1629,7 @@ export const planExecutions = pgTable("plan_executions", {
 }, (table) => [
   index("idx_plan_executions_status").on(table.status),
   index("idx_plan_executions_archived_at").on(table.archivedAt),
+  index("idx_plan_executions_origin_session_id").on(table.originSessionId),
   index("idx_plan_executions_owner").on(table.ownerUserId),
   index("idx_plan_executions_account").on(table.accountId),
   index("idx_plan_executions_lease").on(table.executionLeaseExpiresAt),
