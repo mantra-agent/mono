@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { persons, simplePeopleSurfaceState } from "@shared/schema";
 import { visiblePersonPredicate } from "../person-vault-access";
@@ -24,7 +24,7 @@ const peopleSurfaceScopeColumns = {
 async function filterVisiblePersonIds(personIds: string[]): Promise<Set<string>> {
   const uniqueIds = [...new Set(personIds.filter(Boolean))];
   if (uniqueIds.length === 0) return new Set();
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const rows = await db
     .select({ id: persons.id })
     .from(persons)
@@ -130,7 +130,7 @@ export async function ensurePeopleSurfaceStates(lookups: PeopleSurfaceStateLooku
   const visibleIds = await filterVisiblePersonIds(prefiltered.map(item => item.personId));
   const normalized = prefiltered.filter(item => visibleIds.has(item.personId));
   if (normalized.length === 0) return;
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const ownerValues = ownedInsertValues(principal, peopleSurfaceScopeColumns);
   const now = new Date();
   const seen = new Set<string>();
@@ -166,7 +166,7 @@ export async function listPeopleSurfaceStates(lookups: PeopleSurfaceStateLookup[
   const uniqueIds = [...new Set(normalized.map(item => item.personId))];
   const wantedKeys = new Set(normalized.map(item => stateKey(item.personId, item.reasonKey)));
   if (uniqueIds.length === 0) return new Map();
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const predicate = combineWithVisibleScope(
     principal,
     peopleSurfaceScopeColumns,
@@ -185,7 +185,7 @@ export async function dismissPeopleSurface(personId: string, reasonKey: string):
   await ensurePeopleSurfaceStateTable();
   const visible = await filterVisiblePersonIds([personId]);
   if (!visible.has(personId)) throw new Error(`Person ${personId} is not visible to the current principal`);
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const ownerValues = ownedInsertValues(principal, peopleSurfaceScopeColumns);
   const now = new Date();
   const [row] = await db
@@ -223,7 +223,7 @@ export async function snoozePeopleSurface(personId: string, reasonKey: string, s
   await ensurePeopleSurfaceStateTable();
   const snoozeVisible = await filterVisiblePersonIds([personId]);
   if (!snoozeVisible.has(personId)) throw new Error(`Person ${personId} is not visible to the current principal`);
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const ownerValues = ownedInsertValues(principal, peopleSurfaceScopeColumns);
   const now = new Date();
   const [row] = await db
@@ -259,7 +259,7 @@ export async function snoozePeopleSurface(personId: string, reasonKey: string, s
 
 export async function clearPeopleSurfaceState(personId: string, reasonKey: string): Promise<void> {
   await ensurePeopleSurfaceStateTable();
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   await db
     .delete(simplePeopleSurfaceState)
     .where(combineWithWritableScope(

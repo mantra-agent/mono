@@ -13,7 +13,7 @@
 import { db } from "./db";
 import { and, eq, type SQL } from "drizzle-orm";
 import { accounts, planExecutions, planSteps, users } from "@shared/schema";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "./principal-context";
+import { requireCurrentPrincipal, runWithPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { PLAN_EXECUTION_LEASE_MS, claimPlanExecution, completePlanStepAttempt, createPlanStepAttempt, failInterruptedPlanStep, getLatestPlanStepAttempt, releasePlanExecution, renewPlanExecution, renderPlanProjection, transitionPlanStepStatus, updatePlanStatus as persistPlanStatus, updatePlanStepAttempt, updatePlanStepFields } from "./plan-service";
 import { createNamedSystemPrincipal, createUserPrincipalFromUser } from "./principal";
@@ -64,8 +64,8 @@ async function assessChildWorkEvidence(sessionId: string): Promise<
 
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
 const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: planSteps.accountId };
-function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
-function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
+function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planScopeColumns, predicate); }
+function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planStepScopeColumns, predicate); }
 
 
 // ─── Constants ───────────────────────────────────────────────────────

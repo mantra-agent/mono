@@ -1,6 +1,6 @@
 import { and, eq, type SQL } from "drizzle-orm";
 import { db } from "../db";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 import { platformProductEnvironments, platformProducts, platforms } from "@shared/models/platforms";
 
@@ -11,11 +11,11 @@ const platformScopeColumns = {
 };
 
 export function visiblePlatform(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), platformScopeColumns, predicate);
+  return combineWithVisibleScope(requireCurrentPrincipal(), platformScopeColumns, predicate);
 }
 
 export function writablePlatform(predicate?: SQL): SQL {
-  return combineWithWritableScope(getCurrentPrincipalOrSystem(), platformScopeColumns, predicate);
+  return combineWithWritableScope(requireCurrentPrincipal(), platformScopeColumns, predicate);
 }
 
 export async function getVisibleProduct(productId: number) {

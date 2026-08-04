@@ -22,7 +22,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -118,7 +118,7 @@ function validateRelationshipInput(input: ClaimRelationshipInput): void {
 
 export async function upsertClaimRelationship(input: ClaimRelationshipInput): Promise<MemoryVnextClaimLink> {
   validateRelationshipInput(input);
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Claim relationship mutation requires a user principal");
   const evidenceIds = [...new Set(input.evidenceSourceRefIds.filter((id) => Number.isInteger(id) && id > 0))].slice(0, 20);
   if (evidenceIds.length === 0) throw new Error("Canonical claim relationships require valid source evidence IDs");
@@ -220,12 +220,12 @@ export async function listClaimLinkEvidence(linkIds: number[]): Promise<MemoryVn
   const ids = [...new Set(linkIds.filter((id) => Number.isInteger(id) && id > 0))].slice(0, 500);
   if (ids.length === 0) return [];
   return db.select().from(memoryVnextClaimLinkEvidence)
-    .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), linkEvidenceScope, inArray(memoryVnextClaimLinkEvidence.claimLinkId, ids)))
+    .where(combineWithVisibleScope(requireCurrentUserPrincipal(), linkEvidenceScope, inArray(memoryVnextClaimLinkEvidence.claimLinkId, ids)))
     .orderBy(asc(memoryVnextClaimLinkEvidence.claimLinkId), asc(memoryVnextClaimLinkEvidence.id));
 }
 
 export async function recomputeTransitionPaths(limit = MAX_RECOMPUTE_CLAIMS): Promise<{ scannedClaims: number; scannedEdges: number; paths: number; causalHypotheses: number; staleRemoved: number }> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Transition recompute requires a user principal");
   const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), MAX_RECOMPUTE_CLAIMS);
   const claims = await db.select().from(memoryVnextClaims)
@@ -368,7 +368,7 @@ export async function recomputeTransitionPaths(limit = MAX_RECOMPUTE_CLAIMS): Pr
 }
 
 export async function inspectTransitionPaths(input: { claimId?: number; pathId?: number; limit?: number } = {}): Promise<VnextTransitionPathDetail[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const limit = Math.min(Math.max(Math.floor(input.limit ?? 25), 1), MAX_INSPECT_PATHS);
   let pathIds: number[] | null = null;
   if (input.claimId) {

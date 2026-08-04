@@ -19,7 +19,7 @@ import { createLogger } from "../log";
 import { ObjectStorageService, deleteObjectAclPolicy, storageBackend } from "../object_storage";
 import { getVisibleEnvironment } from "../platforms/platform-access";
 import { createNamedSystemPrincipal, type Principal } from "../principal";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
+import { requireCurrentPrincipal, requireCurrentUserPrincipal, runWithPrincipal } from "../principal-context";
 import {
   createSerializedRecognitionSink,
   getSpeechRecognitionAdapter,
@@ -37,8 +37,8 @@ const REPLAY_WRITE_DEADLINE_MS = 5_000;
 const MAX_EVALUATION_UTTERANCES = 10_000;
 const EXPIRY_BATCH_SIZE = 25;
 
-function requireUserPrincipal(principal: Principal = getCurrentPrincipalOrSystem()): Principal & { userId: string; accountId: string } {
-  if (principal.actorType !== "user" || !principal.userId || !principal.accountId || !principal.activeVaultId) {
+function requireUserPrincipal(principal: Principal = requireCurrentUserPrincipal()): Principal & { userId: string; accountId: string } {
+  if (!principal.activeVaultId) {
     throw Object.assign(new Error("A user principal with an active Vault is required"), { status: 401 });
   }
   return principal as Principal & { userId: string; accountId: string };

@@ -9,7 +9,7 @@ import { getLinkedArtifactsByMetadataIds, listMetadataByEvents, makeMetaKey } fr
 import { db } from "../db";
 import { buildEmailPersonContextMap, meetingInteractionContext, meetingPersonSummary, resolveMeetingArtifactContext } from "../meeting-context";
 import { peopleStorage, type Person } from "../people-storage";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { visibleScopePredicate } from "../scoped-storage";
 import { createLogger } from "../log";
 import { stripPrivateAgendaFromRecap } from "../meeting/recap-content";
@@ -403,7 +403,7 @@ async function artifactMapForSessions(sessions: FileSession[]): Promise<Map<stri
     .from(libraryPages)
     .where(and(
       inArray(libraryPages.id, directPageIds),
-      visibleScopePredicate(getCurrentPrincipalOrSystem(), {
+      visibleScopePredicate(requireCurrentPrincipal(), {
         scope: libraryPages.scope,
         ownerUserId: libraryPages.ownerUserId,
         accountId: libraryPages.accountId,

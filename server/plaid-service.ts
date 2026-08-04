@@ -12,7 +12,7 @@ import { createAccount, listAccounts, updateAccount, getAccount, getAccountToken
 import { getSecretSync, onSecretChange } from "./secrets-store";
 import { createLogger } from "./log";
 import { sensitiveOwnershipValues } from "./sensitive-scope";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { visibleFinanceForCurrentPrincipal } from "./finance-scope";
 import { calculateNetWorthComponents } from "./forecast-helpers";
 import crypto from "crypto";
@@ -321,7 +321,7 @@ export async function syncAccounts(itemId: string, accessToken: string): Promise
     if (rows.length > 0) {
       await db
         .insert(plaidAccounts)
-        .values(rows.map(row => ({ ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()), ...row })))
+        .values(rows.map(row => ({ ...sensitiveOwnershipValues(requireCurrentUserPrincipal()), ...row })))
         .onConflictDoUpdate({
           target: plaidAccounts.accountId,
           set: {
@@ -410,7 +410,7 @@ async function persistSyncPage(
     if (rows.length > 0) {
       await db
         .insert(plaidTransactions)
-        .values(rows.map(row => ({ ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()), ...row })))
+        .values(rows.map(row => ({ ...sensitiveOwnershipValues(requireCurrentUserPrincipal()), ...row })))
         .onConflictDoUpdate({
           target: plaidTransactions.transactionId,
           set: TRANSACTION_CONFLICT_SET,
@@ -425,7 +425,7 @@ async function persistSyncPage(
     if (rows.length > 0) {
       await db
         .insert(plaidTransactions)
-        .values(rows.map(row => ({ ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()), ...row })))
+        .values(rows.map(row => ({ ...sensitiveOwnershipValues(requireCurrentUserPrincipal()), ...row })))
         .onConflictDoUpdate({
           target: plaidTransactions.transactionId,
           set: TRANSACTION_CONFLICT_SET,
@@ -524,7 +524,7 @@ export async function syncTransactions(itemId: string, _callerHoldsLock = false)
 
     await db
       .insert(plaidSyncCursors)
-      .values({ ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()), itemId, cursor: cursor || null, lastSynced: new Date(), syncStatus: "syncing", pagesCompleted: 0, totalAdded: 0, syncError: null, syncStartedAt: new Date(), lastSyncAttempt: new Date(), needsInvestigation: false })
+      .values({ ...sensitiveOwnershipValues(requireCurrentUserPrincipal()), itemId, cursor: cursor || null, lastSynced: new Date(), syncStatus: "syncing", pagesCompleted: 0, totalAdded: 0, syncError: null, syncStartedAt: new Date(), lastSyncAttempt: new Date(), needsInvestigation: false })
       .onConflictDoUpdate({
         target: plaidSyncCursors.itemId,
         set: { syncStatus: "syncing", pagesCompleted: 0, totalAdded: 0, syncError: null, syncStartedAt: new Date(), lastSyncAttempt: new Date() },
@@ -704,7 +704,7 @@ export async function fetchHoldings(itemId: string): Promise<number> {
   for (let i = 0; i < holdingRows.length; i += BATCH_SIZE) {
     const batch = holdingRows.slice(i, i + BATCH_SIZE);
     if (batch.length > 0) {
-      await db.insert(plaidHoldings).values(batch.map(row => ({ ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()), ...row })));
+      await db.insert(plaidHoldings).values(batch.map(row => ({ ...sensitiveOwnershipValues(requireCurrentUserPrincipal()), ...row })));
     }
   }
 
@@ -808,7 +808,7 @@ export async function fetchLiabilities(itemId: string): Promise<number> {
   }
 
   if (rows.length > 0) {
-    await db.insert(plaidLiabilities).values(rows.map(row => ({ ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()), ...row })));
+    await db.insert(plaidLiabilities).values(rows.map(row => ({ ...sensitiveOwnershipValues(requireCurrentUserPrincipal()), ...row })));
   }
 
   const backfillCount = await createLiabilitiesFromAccounts(itemId);
@@ -847,7 +847,7 @@ async function createLiabilitiesFromAccounts(itemId: string): Promise<number> {
     });
   }
   if (newRows.length > 0) {
-    await db.insert(plaidLiabilities).values(newRows.map(row => ({ ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()), ...row })));
+    await db.insert(plaidLiabilities).values(newRows.map(row => ({ ...sensitiveOwnershipValues(requireCurrentUserPrincipal()), ...row })));
     log.log(`Created ${newRows.length} fallback liabilities from account balances for item ${itemId}`);
   }
   return newRows.length;

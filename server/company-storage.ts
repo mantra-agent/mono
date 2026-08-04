@@ -2,7 +2,7 @@ import { randomBytes } from "crypto";
 import { and, eq, ilike, inArray, isNull } from "drizzle-orm";
 import { companies, companyIdentityKeys, persons, opportunities } from "@shared/schema";
 import { db } from "./db";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { visiblePersonPredicate, writablePersonPredicate } from "./person-vault-access";
 import { createLogger } from "./log";
@@ -125,7 +125,7 @@ export class CompanyStorage {
   private async activeAliasesByCompany(companyIds: string[]): Promise<Map<string, string[]>> {
     const aliasesByCompany = new Map<string, string[]>();
     if (companyIds.length === 0) return aliasesByCompany;
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const rows = await db.select({
       companyId: companyIdentityKeys.companyId,
       value: companyIdentityKeys.value,
@@ -148,7 +148,7 @@ export class CompanyStorage {
   }
 
   async list(query?: string): Promise<Company[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const identityCompanyIds = !query?.trim() ? [] : (await db.select({ companyId: companyIdentityKeys.companyId })
       .from(companyIdentityKeys)
       .where(combineWithVisibleScope(principal, companyIdentityScope, and(
@@ -186,7 +186,7 @@ export class CompanyStorage {
 
   async get(id: string): Promise<Company | null> {
     const rows = await db.select().from(companies)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), companyScope, eq(companies.id, id)))
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), companyScope, eq(companies.id, id)))
       .limit(1);
     if (!rows[0]) return null;
     const [aliasesByCompany, members, linkedOpportunities] = await Promise.all([
@@ -200,7 +200,7 @@ export class CompanyStorage {
   async resolveIdentity(value: string): Promise<CompanyIdentityResolution> {
     const normalizedInput = normalizeCompanyIdentity(value);
     if (!normalizedInput) return { status: "unresolved", normalizedInput };
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const matches = await db.select({
       company: companies,
       kind: companyIdentityKeys.kind,
@@ -241,7 +241,7 @@ export class CompanyStorage {
     const name = normalizeDisplayValue(input.name);
     if (!name) throw new Error("Company name is required");
     const identities = desiredIdentities(name, input.aliases);
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const ownership = ownedInsertValues(principal, companyScope);
     const namespace = identityNamespace(ownership);
     const now = new Date();
@@ -289,7 +289,7 @@ export class CompanyStorage {
     const nextAliases = updates.aliases === undefined ? current.aliases : updates.aliases;
     const identities = desiredIdentities(nextName, nextAliases, current.name);
     const desiredByNormalized = new Map(identities.map((identity) => [identity.normalizedValue, identity]));
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const now = new Date();
 
     try {
@@ -357,7 +357,7 @@ export class CompanyStorage {
   }
 
   async delete(id: string): Promise<void> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     await db.transaction(async (tx) => {
       await tx.update(persons).set({ companyId: null, company: null, updatedAt: new Date() })
         .where(combineWithWritableScope(principal, personScope, eq(persons.companyId, id)));
@@ -373,40 +373,40 @@ export class CompanyStorage {
   async listPeople(id: string) {
     return db.select({ id: persons.id, name: persons.name, role: persons.role, company: persons.company })
       .from(persons)
-      .where(visiblePersonPredicate(getCurrentPrincipalOrSystem(), eq(persons.companyId, id)));
+      .where(visiblePersonPredicate(requireCurrentUserPrincipal(), eq(persons.companyId, id)));
   }
 
   async listOpportunities(id: string) {
     const { opportunityStorage } = await import("./opportunity-storage");
-    return opportunityStorage.listForCompany(id, getCurrentPrincipalOrSystem());
+    return opportunityStorage.listForCompany(id, requireCurrentUserPrincipal());
   }
 
   async addOpportunity(companyIdValue: string, opportunityId: number): Promise<void> {
     const company = await this.get(companyIdValue);
     if (!company) throw new Error("Company not found");
     const { opportunityStorage } = await import("./opportunity-storage");
-    const row = await opportunityStorage.setCompany(opportunityId, company.id, getCurrentPrincipalOrSystem());
+    const row = await opportunityStorage.setCompany(opportunityId, company.id, requireCurrentUserPrincipal());
     if (!row) throw new Error("Opportunity not found or not writable");
   }
 
   async removeOpportunity(companyIdValue: string, opportunityId: number): Promise<void> {
     const { opportunityStorage } = await import("./opportunity-storage");
-    const current = await opportunityStorage.get(opportunityId, getCurrentPrincipalOrSystem());
+    const current = await opportunityStorage.get(opportunityId, requireCurrentUserPrincipal());
     if (!current || current.companyId !== companyIdValue) throw new Error("Opportunity is not linked to this company");
-    await opportunityStorage.setCompany(opportunityId, null, getCurrentPrincipalOrSystem());
+    await opportunityStorage.setCompany(opportunityId, null, requireCurrentUserPrincipal());
   }
 
   async addPerson(companyIdValue: string, personId: string): Promise<void> {
     const company = await this.get(companyIdValue);
     if (!company) throw new Error("Company not found");
     const rows = await db.update(persons).set({ companyId: company.id, company: company.name, updatedAt: new Date() })
-      .where(writablePersonPredicate(getCurrentPrincipalOrSystem(), eq(persons.id, personId))).returning({ id: persons.id });
+      .where(writablePersonPredicate(requireCurrentUserPrincipal(), eq(persons.id, personId))).returning({ id: persons.id });
     if (!rows[0]) throw new Error("Person not found or not writable");
   }
 
   async removePerson(companyIdValue: string, personId: string): Promise<void> {
     const rows = await db.update(persons).set({ companyId: null, company: null, updatedAt: new Date() })
-      .where(writablePersonPredicate(getCurrentPrincipalOrSystem(), and(eq(persons.id, personId), eq(persons.companyId, companyIdValue))))
+      .where(writablePersonPredicate(requireCurrentUserPrincipal(), and(eq(persons.id, personId), eq(persons.companyId, companyIdValue))))
       .returning({ id: persons.id });
     if (!rows[0]) throw new Error("Person is not linked to this company");
   }

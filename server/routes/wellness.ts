@@ -7,7 +7,7 @@ import { desc, eq, gte, lte, isNull, and, sql, asc, type SQL } from "drizzle-orm
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { requireActiveWellness } from "../mods/wellness-route-access";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "../sensitive-scope";
 import { userDateStr, userDayBounds, userNoon, userPeriodBounds } from "../utils/user-time";
 import { isUsingDefaultTimezone, getTimezone } from "../timezone";
@@ -406,7 +406,7 @@ export async function createWellnessActivity(data: {
   if (!windowValidation.valid) throw new Error(windowValidation.error!);
   const [activity] = await db.insert(wellnessActivities).values({
     name: data.name,
-    ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()),
+    ...sensitiveOwnershipValues(requireCurrentPrincipal()),
     benefit: data.benefit ?? null,
     risk: data.risk ?? null,
     estimatedMinutes: data.estimatedMinutes ?? null,
@@ -512,7 +512,7 @@ export async function logWellnessActivity(activityId: number, opts?: { notes?: s
       activityId,
       notes,
       completedAt,
-      ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()),
+      ...sensitiveOwnershipValues(requireCurrentPrincipal()),
     }).returning();
     return entry;
   }
@@ -538,7 +538,7 @@ export async function logWellnessActivity(activityId: number, opts?: { notes?: s
     activityId,
     notes,
     completedAt: new Date(),
-    ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()),
+    ...sensitiveOwnershipValues(requireCurrentPrincipal()),
   }).returning();
   return entry;
 }
@@ -683,7 +683,7 @@ export async function upsertHealthMetricsAndProcessCompletions(
 
   for (const row of rows) {
     try {
-      await db.insert(healthMetrics).values({ ...row, ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()) }).onConflictDoNothing();
+      await db.insert(healthMetrics).values({ ...row, ...sensitiveOwnershipValues(requireCurrentPrincipal()) }).onConflictDoNothing();
       // Preserve webhook behavior: this counts accepted insert attempts, including
       // conflict-noop duplicates, because callers historically observed this value.
       inserted++;
@@ -885,7 +885,7 @@ export async function upsertGratitudeEntry(content: string, date?: string): Prom
   } else {
     const [inserted] = await db
       .insert(gratitudeEntries)
-      .values({ content, date: dateStr, ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()) })
+      .values({ content, date: dateStr, ...sensitiveOwnershipValues(requireCurrentPrincipal()) })
       .returning();
     entry = inserted;
   }
@@ -955,7 +955,7 @@ export async function upsertLearningEntry(content: string, date?: string): Promi
   } else {
     const [inserted] = await db
       .insert(learningEntries)
-      .values({ content, date: dateStr, ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()) })
+      .values({ content, date: dateStr, ...sensitiveOwnershipValues(requireCurrentPrincipal()) })
       .returning();
     entry = inserted;
   }
@@ -1025,7 +1025,7 @@ export async function upsertReflectionEntry(content: string, date?: string): Pro
   } else {
     const [inserted] = await db
       .insert(reflectionEntries)
-      .values({ content, date: dateStr, ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()) })
+      .values({ content, date: dateStr, ...sensitiveOwnershipValues(requireCurrentPrincipal()) })
       .returning();
     entry = inserted;
   }

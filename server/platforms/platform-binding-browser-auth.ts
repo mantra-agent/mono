@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { providerConnections } from "@shared/models/platforms";
 import { db } from "../db";
 import { getProviderCredential } from "../provider-credential-store";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { combineWithVisibleScope } from "../scoped-storage";
 
 const providerConnectionScope = {
@@ -30,7 +30,7 @@ export async function resolvePlatformBindingSessionSecret(snapshot: unknown): Pr
 
   const [connection] = await db.select().from(providerConnections).where(
     combineWithVisibleScope(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentPrincipal(),
       providerConnectionScope,
       eq(providerConnections.id, connectionId),
     ),

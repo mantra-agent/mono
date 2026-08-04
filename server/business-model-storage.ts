@@ -15,7 +15,7 @@ import {
   type FinancialModel,
 } from "@shared/models/business-model";
 import { db } from "./db";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { createLogger } from "./log";
 
 const log = createLogger("BusinessModelStorage");
@@ -46,7 +46,7 @@ function needsNormalization(row: typeof financialModels.$inferSelect, normalized
 
 export class BusinessModelStorage {
   private async firstVisible() {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const rows = await db
       .select()
       .from(financialModels)
@@ -65,7 +65,7 @@ export class BusinessModelStorage {
   async getOrCreate(): Promise<FinancialModel> {
     const existing = await this.firstVisible();
     if (existing) {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       const normalized = normalizeAssumptions(existing.assumptions);
       if (needsNormalization(existing, normalized)) {
         const rows = await db
@@ -82,7 +82,7 @@ export class BusinessModelStorage {
       return mapModel(existing, normalized);
     }
 
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const now = new Date();
     const row = {
       id: newModelId(),
@@ -105,7 +105,7 @@ export class BusinessModelStorage {
 
   /** Apply a partial assumptions patch (omitted fields unchanged) and persist the normalized result. */
   async updateAssumptions(patch: AssumptionsPatch): Promise<FinancialModel> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const current = await this.getOrCreate();
     const nextAssumptions = mergeAssumptions(current.assumptions, patch);
     const rows = await db

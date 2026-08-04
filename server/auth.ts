@@ -635,7 +635,7 @@ export function setupAuth(app: Express) {
       .then((resolution) => {
         if ("principal" in resolution && resolution.principal) {
           // Wrap downstream handlers in principal context so
-          // getCurrentPrincipalOrSystem() returns the real user principal
+          // requireCurrentPrincipal() returns the real user principal
           // instead of falling back to system (which bypasses all scoping).
           runWithPrincipal(resolution.principal, () => next());
         } else {

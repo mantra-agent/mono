@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "../db";
-import { getCurrentPrincipal, getCurrentPrincipalOrSystem } from "../principal-context";
+import { getCurrentPrincipal, requireCurrentPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { createLogger, getRecentLogs } from "../log";
 import {
@@ -104,9 +104,9 @@ type AcceptanceEvidencePacket = {
   failurePacket?: Record<string, unknown>;
 };
 
-function visible<T>(columns: T, predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), columns as any, predicate); }
-function writable<T>(columns: T, predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), columns as any, predicate); }
-function owner<T>(columns: T) { return ownedInsertValues(getCurrentPrincipalOrSystem(), columns as any); }
+function visible<T>(columns: T, predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), columns as any, predicate); }
+function writable<T>(columns: T, predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), columns as any, predicate); }
+function owner<T>(columns: T) { return ownedInsertValues(requireCurrentPrincipal(), columns as any); }
 
 function environmentKind(name: string): "development" | "staging" | "production" | "custom" {
   const normalized = name.trim().toLowerCase();
@@ -2217,7 +2217,7 @@ export async function renderWorkflowRunPage(runId: string): Promise<void> {
     const { syncContentFields } = await import("@shared/markdown-tiptap");
     const content = buildWorkflowRunPageContent(detail);
     const synced = syncContentFields({ markdown: content });
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
       const [page] = await tx.update(libraryPages).set({ content: synced.content, plainTextContent: synced.plainTextContent, updatedAt: sql`CURRENT_TIMESTAMP` }).where(writable({ scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId }, eq(libraryPages.id, detail.run.linkedLibraryPageId))).returning();
       if (!page) return;

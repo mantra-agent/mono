@@ -42,7 +42,7 @@ import { detectSessionType, BLEND_WEIGHTS, modulateWeights } from "./memory/vnex
 import { getSkillDefinitionsForContext, getToolSchemas } from "./tool-registry";
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal } from "./principal-context";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { eventBus } from "./event-bus";
 import { combineWithVisibleScope } from "./scoped-storage";
@@ -79,7 +79,7 @@ const _sectionInFlight = new Map<string, Promise<string>>();
 
 /** Cache keys must include the user principal to prevent cross-user data leakage. */
 function contextPrincipalKey(): string {
-  const p = getCurrentPrincipalOrSystem();
+  const p = requireCurrentPrincipal();
   return `${p.actorType}:${p.accountId || "no-account"}:${p.userId || "no-user"}`;
 }
 
@@ -809,7 +809,7 @@ async function resolveRuleLinkedPages(ruleTexts: string[]): Promise<string> {
   const { pageIds, overflow } = getRuleLinkedPageIds(ruleTexts);
   if (pageIds.length === 0) return "";
 
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   // Reference-only: verify visibility and resolve titles, but do NOT inline the
   // page bodies. Inlining the full Voice Standard body (~3-4k tokens) into every
   // system prompt violated Progressive Disclosure — the body is only needed when
@@ -1904,7 +1904,7 @@ async function resolveTemporalLog(): Promise<string> {
   try {
     const now = Date.now();
     const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const recentEvents = eventBus.getRecentEvents(500, { startTimestamp: sevenDaysAgo }, principal);
     const summaryMap: Record<string, number> = {};
     for (const event of recentEvents) {

@@ -28,7 +28,7 @@ import { createLogger } from "./log";
 import { markSessionDeleted } from "./chat-journal";
 import { eventBus } from "./event-bus";
 import { TTLCache } from "./utils/ttl-cache";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "./principal-context";
+import { requireCurrentPrincipal, runWithPrincipal } from "./principal-context";
 import { createNamedSystemPrincipal, createUserPrincipalFromUser, resolveUserIdentityFoundation } from "./principal";
 import { storage } from "./storage";
 import { normalizeSessionModelTierOverride } from "./session-model-tier-override";
@@ -84,7 +84,7 @@ function isOwnedByPriorBootOnThisInstance(owner: string | null | undefined): boo
 }
 
 function principalCacheKey(): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
 }
 
@@ -862,7 +862,7 @@ function buildConvDocumentMetadata(data: SessionData): Record<string, unknown> {
 }
 
 async function resolveSessionWriteVaultId(data: SessionData): Promise<string> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
     throw new Error(`Session writes require an explicit user and account owner: chat/${data.id}`);
   }
@@ -891,7 +891,7 @@ async function enqueueSearchProjectionAfterCanonicalWrite(
 ): Promise<void> {
   if (!shouldProjectSessionSearch(data)) return;
   const transaction = getAmbientDatabaseTransaction();
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (!transaction || principal.actorType !== "user" || !principal.userId || !principal.accountId) {
     throw new Error(`Session search projection enqueue requires the canonical user transaction: chat/${data.id}`);
   }
@@ -906,7 +906,7 @@ async function writeConvInAmbientTransaction(data: SessionData): Promise<number>
   const vaultId = await resolveSessionWriteVaultId(data);
   data.vaultId = vaultId;
   data.durableRevision = normalizeDurableRevision(data.durableRevision) + 1;
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const writePrincipal = principal.activeVaultId === vaultId
     ? principal
     : { ...principal, activeVaultId: vaultId };
@@ -925,7 +925,7 @@ async function writeConvInAmbientTransaction(data: SessionData): Promise<number>
     && data.sessionType !== "meeting"
     && !data.messages.some(message => message.assistantState === "streaming")
   ) {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (principal.actorType === "user") {
       const { indexSettledSessionReferences } = await import("./session-reference-index");
       await indexSettledSessionReferences(principal, data);
@@ -987,7 +987,7 @@ const planAttemptScopeColumns = {
 };
 
 async function deleteSessionSubtree(rootSessionId: string): Promise<SessionDeletionResult> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const sessions = await chatFileStorage.getAllSessions();
   const root = sessions.find((session) => session.id === rootSessionId);
   if (!root) throw new Error(`Session not found: ${rootSessionId}`);
@@ -1117,7 +1117,7 @@ async function syncVnextSessionSourceIfReady(data: SessionData, context: string)
     return;
   }
 
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const { markSourceChanged } = await import("./memory/vnext-source-queue");
   await markSourceChanged("session", data.id, principal);
   memoryMirrorLog.info(
@@ -1884,7 +1884,7 @@ export const chatFileStorage: IChatFileStorage = {
   ) {
     const normalizedSessionKey = sessionKey.trim();
     if (!normalizedSessionKey) throw new Error("Replay-safe session creation requires a session key");
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (!principal.userId || !principal.accountId || principal.actorType !== "user") {
       throw new Error("Replay-safe user session creation requires a user principal");
     }
@@ -2702,7 +2702,7 @@ export const chatFileStorage: IChatFileStorage = {
       .select({ documentId: documentStoreDocuments.documentId })
       .from(documentStoreDocuments)
       .where(combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
+        requireCurrentPrincipal(),
         targetChatDocumentScopeColumns,
         and(
           eq(documentStoreDocuments.documentType, "chat"),
@@ -2732,7 +2732,7 @@ export const chatFileStorage: IChatFileStorage = {
       .select({ documentId: documentStoreDocuments.documentId })
       .from(documentStoreDocuments)
       .where(combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
+        requireCurrentPrincipal(),
         targetChatDocumentScopeColumns,
         and(
           eq(documentStoreDocuments.documentType, "chat"),
@@ -2762,7 +2762,7 @@ export const chatFileStorage: IChatFileStorage = {
     const now = new Date().toISOString();
     // Capture the owning user structurally so webhook-driven finalization
     // (which has no user principal) can reconstruct it later.
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const vaultId = meeting.vaultId ?? principal.activeVaultId ?? undefined;
     const meetingPrincipal = vaultId
       ? {
@@ -2829,7 +2829,7 @@ export const chatFileStorage: IChatFileStorage = {
   ) {
     const normalizedSessionKey = sessionKey.trim();
     if (!normalizedSessionKey) throw new Error("Replay-safe Meeting creation requires a session key");
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (!principal.userId || !principal.accountId || principal.actorType !== "user") {
       throw new Error("Replay-safe Meeting creation requires a user principal");
     }
@@ -2911,7 +2911,7 @@ export const chatFileStorage: IChatFileStorage = {
           { status: 409 },
         );
       }
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
         throw Object.assign(new Error("A user principal is required to move a session"), { status: 401 });
       }
@@ -2953,7 +2953,7 @@ export const chatFileStorage: IChatFileStorage = {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
       if (!data?.meeting || data.type !== "meeting") return null;
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       if (!principal.userId || !principal.accountId) {
         throw new Error("A user principal is required to move a meeting session");
       }
@@ -3146,7 +3146,7 @@ export const chatFileStorage: IChatFileStorage = {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
       if (!data?.meeting || data.type !== "meeting") return null;
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       if (
         principal.actorType !== "user" ||
         !principal.userId ||
@@ -3182,7 +3182,7 @@ export const chatFileStorage: IChatFileStorage = {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
       if (!data?.meeting || data.type !== "meeting") return { outcome: "not_found" };
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       if (
         principal.actorType !== "user" ||
         !principal.userId ||
@@ -3229,7 +3229,7 @@ export const chatFileStorage: IChatFileStorage = {
       const data = await readConv(sessionId);
       if (!data?.meeting || data.type !== "meeting") return { outcome: "not_found" };
 
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       if (
         principal.actorType !== "user" ||
         !principal.userId ||
@@ -3735,7 +3735,7 @@ export const chatFileStorage: IChatFileStorage = {
             vaultId: doc.vaultId,
           },
           () => withConvLock(id, async () => {
-            const principal = getCurrentPrincipalOrSystem();
+            const principal = requireCurrentPrincipal();
             const tx = db;
             await tx.execute(sql`SET LOCAL lock_timeout = '5s'`);
             await tx.execute(sql`SET LOCAL statement_timeout = '15s'`);
@@ -4503,7 +4503,7 @@ export const chatFileStorage: IChatFileStorage = {
       data.updatedAt = compactionMarker.createdAt;
       await writeConv(data);
       if (meta?.operationId) {
-        const principal = getCurrentPrincipalOrSystem();
+        const principal = requireCurrentPrincipal();
         if (!principal.userId || !principal.accountId) {
           throw new Error("Compaction commit requires explicit operation ownership");
         }
@@ -4761,7 +4761,7 @@ export async function searchSessionSummaries(
     const queryBuildStartedAt = performance.now();
     const cutoff = new Date(Date.now() - sinceHours * 60 * 60 * 1000);
     buildLiteralSubstringPattern(trimmed);
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     queryBuildMs = performance.now() - queryBuildStartedAt;
 
     resultDbStartedAt = performance.now();

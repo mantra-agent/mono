@@ -2,7 +2,7 @@ import { db } from "./db";
 import { systemHooks, systemHookExecutions } from "@shared/schema";
 import type { SystemHook, SystemHookExecution } from "@shared/schema";
 import { and, eq, desc, sql, type SQL } from "drizzle-orm";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal, requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
 const hookScopeColumns = {
@@ -12,10 +12,10 @@ const hookScopeColumns = {
 };
 
 function visible(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), hookScopeColumns, predicate);
+  return combineWithVisibleScope(requireCurrentUserPrincipal(), hookScopeColumns, predicate);
 }
 function writable(predicate?: SQL): SQL {
-  return combineWithWritableScope(getCurrentPrincipalOrSystem(), hookScopeColumns, predicate);
+  return combineWithWritableScope(requireCurrentUserPrincipal(), hookScopeColumns, predicate);
 }
 
 export async function listHooks(): Promise<SystemHook[]> {
@@ -24,7 +24,7 @@ export async function listHooks(): Promise<SystemHook[]> {
 
 /** Scheduler-only global enumeration. Caller must be a named system principal. */
 export async function listHooksForScheduler(): Promise<SystemHook[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (principal.actorType !== "system" || !principal.jobName) throw new Error("Named system principal required for hook scheduler enumeration");
   return db.select().from(systemHooks).orderBy(desc(systemHooks.createdAt));
 }
@@ -62,7 +62,7 @@ export async function createHook(data: {
     enabled: data.enabled ?? true,
     maxFirings: data.maxFirings ?? null,
     createdBy: data.createdBy || "user",
-    ...ownedInsertValues(getCurrentPrincipalOrSystem(), hookScopeColumns),
+    ...ownedInsertValues(requireCurrentUserPrincipal(), hookScopeColumns),
   }).returning();
   return rows[0];
 }

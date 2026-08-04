@@ -3,7 +3,7 @@ import { and, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { storeProviderCredential, getProviderCredential, deleteProviderCredential } from "../provider-credential-store";
 import { providerConnections, environmentSourceBindings, environmentHostingBindings, environmentCapabilityBindings, insertProviderConnectionSchema } from "@shared/models/platforms";
@@ -18,11 +18,11 @@ const scopeColumns = {
 };
 
 function visibleConnection(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), scopeColumns, predicate);
+  return combineWithVisibleScope(requireCurrentPrincipal(), scopeColumns, predicate);
 }
 
 function writableConnection(predicate?: SQL): SQL {
-  return combineWithWritableScope(getCurrentPrincipalOrSystem(), scopeColumns, predicate);
+  return combineWithWritableScope(requireCurrentPrincipal(), scopeColumns, predicate);
 }
 
 function routeError(error: unknown, operation: string): { message: string; operation: string } {
@@ -93,7 +93,7 @@ export function registerProviderConnectionRoutes(app: Express): void {
     try {
       const { credential, ...rest } = req.body as Record<string, unknown>;
       const parsed = insertProviderConnectionSchema.parse(rest);
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
 
       // Insert the connection first to get the ID
       const [created] = await db
@@ -141,7 +141,7 @@ export function registerProviderConnectionRoutes(app: Express): void {
       if (rest.status && typeof rest.status === "string") updates.status = rest.status;
 
       // Re-encrypt credential if provided
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       if (credential && typeof credential === "string" && credential.trim()) {
         const ref = await storeProviderCredential(id, credential, principal.userId ?? null);
         updates.credentialRef = ref;

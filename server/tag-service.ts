@@ -11,7 +11,7 @@ import type {
   UpdateTagInput,
 } from "@shared/schema";
 import type { Principal } from "./principal";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { pool } from "./db";
 import { createLogger } from "./log";
 import { getSetting } from "./system-settings";
@@ -83,7 +83,7 @@ function rowToTag(row: TagRow): Tag {
 
 export class TagService {
   private principal(explicit?: Principal): Principal {
-    return explicit || getCurrentPrincipalOrSystem();
+    return explicit || requireCurrentUserPrincipal();
   }
 
   private async withMutation<T>(

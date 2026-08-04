@@ -71,7 +71,7 @@ export const VAULT_CROSS_ACCESS_ALLOWLIST = new Set<string>([
 ]);
 
 // Throttle anonymous-system warnings to avoid log spam from hot paths
-// that legitimately fall back to system principal via getCurrentPrincipalOrSystem().
+// that still enter vault-scoped code with an unnamed system principal.
 let lastAnonWarning = 0;
 const ANON_WARNING_INTERVAL_MS = 60_000;
 
@@ -91,7 +91,7 @@ export function assertSystemVaultAccess(
 
   if (!jobName) {
     // Anonymous system principal hitting vault-scoped data.
-    // This is the getCurrentPrincipalOrSystem() fallback path.
+    // Missing ALS now fails closed; remaining unnamed system principals still warn here.
     // Log a throttled warning to help find remaining unresolved paths.
     const now = Date.now();
     if (now - lastAnonWarning > ANON_WARNING_INTERVAL_MS) {

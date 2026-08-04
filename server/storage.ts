@@ -25,7 +25,7 @@ import {
 import { eq, ne, desc, gte, count, sql, inArray, or, lte, and, type SQL } from "drizzle-orm";
 import { fileIssueStorage, fileApiCallStorage } from "./file-storage";
 import { peopleStorage } from "./people-storage";
-import { getCurrentPrincipal, getCurrentPrincipalOrSystem } from "./principal-context";
+import { getCurrentPrincipal, requireCurrentPrincipal } from "./principal-context";
 import { principalHasPermission } from "./permissions";
 import type { Principal } from "./principal";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
@@ -362,7 +362,7 @@ export class HybridStorage implements IStorage {
   }
 
   private skillVisible(predicate?: SQL): SQL {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const scoped = combineWithVisibleScope(principal, skillScopeColumns, predicate);
     if (principal.actorType === "system") return scoped;
     if (!principal.userId || !principal.accountId) return sql`FALSE`;
@@ -377,7 +377,7 @@ export class HybridStorage implements IStorage {
   }
 
   private skillWritable(predicate?: SQL): SQL {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (principal.actorType === "system") return predicate ?? sql`TRUE`;
     if (!principal.userId || !principal.accountId) return sql`FALSE`;
     return and(
@@ -389,11 +389,11 @@ export class HybridStorage implements IStorage {
   }
 
   private promptModuleVisible(predicate?: SQL): SQL {
-    return combineWithVisibleScope(getCurrentPrincipalOrSystem(), promptModuleScopeColumns, predicate);
+    return combineWithVisibleScope(requireCurrentPrincipal(), promptModuleScopeColumns, predicate);
   }
 
   private promptModuleWritable(predicate?: SQL): SQL {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (principalHasPermission(principal, "build:write") || principalHasPermission(principal, "system:write")) {
       return predicate ?? sql`TRUE`;
     }
@@ -401,7 +401,7 @@ export class HybridStorage implements IStorage {
   }
 
   private runVisible(predicate?: SQL): SQL {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const scoped = combineWithVisibleScope(principal, skillRunScopeColumns, predicate);
     if (principal.actorType === "system") return scoped;
     if (!principal.userId || !principal.accountId) return sql`FALSE`;
@@ -413,7 +413,7 @@ export class HybridStorage implements IStorage {
   }
 
   private runWritable(predicate?: SQL): SQL {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const scoped = combineWithWritableScope(principal, skillRunScopeColumns, predicate);
     if (principal.actorType === "system") return scoped;
     if (!principal.userId || !principal.accountId) return sql`FALSE`;
@@ -425,7 +425,7 @@ export class HybridStorage implements IStorage {
   }
 
   private dismissalVisible(predicate?: SQL): SQL {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const scoped = combineWithVisibleScope(principal, skillDismissalScopeColumns, predicate);
     if (principal.actorType === "system") return scoped;
     if (!principal.userId || !principal.accountId) return sql`FALSE`;
@@ -484,7 +484,7 @@ export class HybridStorage implements IStorage {
 
   async createPromptModule(data: InsertPromptModule): Promise<PromptModule> {
     const [created] = await db.insert(promptModules).values({
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), promptModuleScopeColumns),
+      ...ownedInsertValues(requireCurrentPrincipal(), promptModuleScopeColumns),
       ...data,
     }).returning();
     await db.insert(promptModuleVersions).values(this.promptModuleSnapshotValues(created, "created"));
@@ -547,7 +547,7 @@ export class HybridStorage implements IStorage {
 
     const predicate = conditions.length > 0 ? and(...conditions) : undefined;
     const rows = await db.select().from(skills).where(this.skillVisible(predicate)).orderBy(desc(skills.updatedAt));
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const effectiveRows = principal.actorType === "user"
       ? [...rows]
           .sort((left, right) => {
@@ -567,7 +567,7 @@ export class HybridStorage implements IStorage {
   }
 
   async getSkillByName(name: string): Promise<SkillWithReferences | undefined> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const namespaceOrder = principal.actorType === "user" && principal.userId && principal.accountId
       ? sql`CASE
           WHEN ${skills.scope} = 'user'
@@ -757,7 +757,7 @@ export class HybridStorage implements IStorage {
     const allSkills = await db.select({ name: skills.name }).from(skills).where(this.skillVisible());
     const validSkillNames = new Set(allSkills.map(s => s.name));
 
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (principal.actorType !== "system" && (!principal.userId || !principal.accountId)) return [];
     const runOwnerClause = principal.actorType === "system"
       ? sql`TRUE`
@@ -853,7 +853,7 @@ export class HybridStorage implements IStorage {
       parentSkillRunId: data.parentSkillRunId ?? null,
       parentToolCallId: data.parentToolCallId ?? null,
       runtimeRunId: data.runtimeRunId ?? null,
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), skillRunScopeColumns),
+      ...ownedInsertValues(requireCurrentPrincipal(), skillRunScopeColumns),
     }).onConflictDoNothing({ target: skillRuns.sessionId }).returning();
     if (inserted) return inserted;
     const [existing] = await db.select().from(skillRuns)

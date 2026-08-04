@@ -26,7 +26,7 @@ import {
 import { syncContentFields } from "@shared/markdown-tiptap";
 import { recordSessionArtifact } from "../session-artifacts";
 import { peopleStorage } from "../people-storage";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { runWithMeetingOwnerPrincipal } from "./owner-principal";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
 import { formatInTimezone, getDateInTimezone } from "../timezone";
@@ -142,7 +142,7 @@ async function generateRecap(
   const markdown = buildRecapMarkdown(recap, meeting);
 
   const ownership = await import("./vault-ownership");
-  const vaultId = meeting.vaultId ?? getCurrentPrincipalOrSystem().activeVaultId ?? undefined;
+  const vaultId = meeting.vaultId ?? requireCurrentPrincipal().activeVaultId ?? undefined;
   if (!vaultId) throw new Error("Meeting Vault ownership is incomplete");
   const node = meeting.libraryNodePageId
     ? { id: meeting.libraryNodePageId }
@@ -238,7 +238,7 @@ async function findExistingRecapPage(sessionId: string) {
     .from(libraryPages)
     .where(
       combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
+        requireCurrentPrincipal(),
         libraryScopeColumns,
         and(
           eq(libraryPages.createdBySessionId, sessionId),
@@ -254,7 +254,7 @@ export async function sanitizeStoredMeetingRecapPage(
   sessionId: string,
   pageId: string,
 ): Promise<"updated" | "already_clean" | "not_found"> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const [page] = await db
     .select({
       id: libraryPages.id,
@@ -285,7 +285,7 @@ export async function sanitizeStoredMeetingRecapPage(
 }
 
 async function refreshRecapPage(pageId: string, title: string, markdown: string) {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const synced = syncContentFields({ markdown });
   const page = await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
     const [updated] = await tx
@@ -455,7 +455,7 @@ export async function reconcileMeetingRecapParticipants(
   const pageId = meeting.recap?.status === "ready" ? meeting.recap.pageId : undefined;
   if (!pageId) return;
 
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const [page] = await db
     .select({
       id: libraryPages.id,

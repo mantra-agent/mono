@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { getSetting } from "./system-settings";
 import { providerConnections } from "@shared/models/platforms";
@@ -228,7 +228,7 @@ export function parseModelConnectorConfig(provider: string, value: unknown): Mod
 }
 
 export async function listModelConnectors(): Promise<ModelConnector[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const rows = await db.select().from(providerConnections).where(
     combineWithVisibleScope(principal, scopeColumns, eq(providerConnections.connectorKind, "model")),
   ).orderBy(
@@ -257,7 +257,7 @@ export async function updateModelConnector(
     priorityPinned?: boolean;
   },
 ): Promise<ModelConnector | null> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const [existing] = await db.select().from(providerConnections).where(
     combineWithVisibleScope(principal, scopeColumns, and(
       eq(providerConnections.id, id),
@@ -302,7 +302,7 @@ export async function updateModelConnector(
 }
 
 export async function reorderModelConnectors(ids: number[]): Promise<ModelConnector[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const connectors = await listModelConnectors();
   const byId = new Map(connectors.map((connector) => [connector.id, connector]));
   const visibleIds = new Set(connectors.map((connector) => connector.id));

@@ -7,7 +7,7 @@ import { ensureMantraLibraryVault } from "./library-domain";
 import { libraryPageIsLive } from "./library-trash";
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
 const log = createLogger("LibraryLinkGraph");
@@ -67,7 +67,7 @@ async function resolveVisiblePageIds(idsOrSlugs: string[], principal: Principal)
   return resolved;
 }
 
-export async function syncEmbeddedLibraryPageLinks(pageId: string, principal: Principal = getCurrentPrincipalOrSystem()): Promise<{ pageId: string; refsFound: number; linksInserted: number; linksRemoved: number; brokenRefs: string[] }> {
+export async function syncEmbeddedLibraryPageLinks(pageId: string, principal: Principal = requireCurrentUserPrincipal()): Promise<{ pageId: string; refsFound: number; linksInserted: number; linksRemoved: number; brokenRefs: string[] }> {
   const [page] = await db.select({ id: libraryPages.id, plainTextContent: libraryPages.plainTextContent })
     .from(libraryPages)
     .where(visible(principal, eq(libraryPages.id, pageId)))
@@ -122,7 +122,7 @@ export interface LibraryLinkNeighbor {
   direction: "inbound" | "outbound";
 }
 
-export async function getLibraryPageNeighbors(pageIds: string[], principal: Principal = getCurrentPrincipalOrSystem(), limit = 20): Promise<LibraryLinkNeighbor[]> {
+export async function getLibraryPageNeighbors(pageIds: string[], principal: Principal = requireCurrentUserPrincipal(), limit = 20): Promise<LibraryLinkNeighbor[]> {
   const ids = Array.from(new Set(pageIds.filter(Boolean))).slice(0, 50);
   if (!ids.length) return [];
   const outbound = await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug, summary: libraryPages.summary, structuralRole: libraryPages.structuralRole })
@@ -194,7 +194,7 @@ function pathFor(pageId: string | null, byId: Map<string, { id: string; title: s
   return path;
 }
 
-export async function runLibraryLint(input: { repair?: boolean; surfaceReport?: boolean } = {}, principal: Principal = getCurrentPrincipalOrSystem()): Promise<LibraryLintReport & { reportPageId?: string }> {
+export async function runLibraryLint(input: { repair?: boolean; surfaceReport?: boolean } = {}, principal: Principal = requireCurrentUserPrincipal()): Promise<LibraryLintReport & { reportPageId?: string }> {
   const vault = await ensureMantraLibraryVault(principal);
   const pages = await db.select({
     id: libraryPages.id,

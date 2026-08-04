@@ -5,7 +5,8 @@ import { eq, and, inArray, sql } from "drizzle-orm";
 import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
 import { isUniqueViolationError } from "../postgres-errors";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
+import type { Principal } from "../principal";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -456,7 +457,7 @@ class PersonaStorageClass {
       .from(personas)
       .where(
         combineWithVisibleScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           personaScopeColumns,
         ),
       )
@@ -518,7 +519,7 @@ class PersonaStorageClass {
 
   /** Complete visible inventory for the Brain management surface. */
   async listForManagement(): Promise<PersonaEntry[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const cacheKey = `all:${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
     return this._cache.getOrFetch(cacheKey, () => this.fetchAll());
   }
@@ -557,7 +558,7 @@ class PersonaStorageClass {
     if (!templateRow) return null;
     const template = rowToEntry(templateRow);
 
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType === "system") return template;
 
     const visible = await this.list();
@@ -609,7 +610,7 @@ class PersonaStorageClass {
       (max, p) => Math.max(max, p.sortOrder),
       0,
     );
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const row = await this.withPersonaIdCollisionRetry("create", async () => {
       const [created] = await db
         .insert(personas)
@@ -676,11 +677,11 @@ class PersonaStorageClass {
       .update(personas)
       .set({
         ...updates,
-        updatedByUserId: getCurrentPrincipalOrSystem().userId ?? undefined,
+        updatedByUserId: requireCurrentUserPrincipal().userId ?? undefined,
       })
       .where(
         combineWithWritableScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           personaScopeColumns,
           eq(personas.id, id),
         ),
@@ -698,11 +699,11 @@ class PersonaStorageClass {
       .set({
         isActive: false,
         updatedAt: new Date(),
-        updatedByUserId: getCurrentPrincipalOrSystem().userId ?? undefined,
+        updatedByUserId: requireCurrentUserPrincipal().userId ?? undefined,
       })
       .where(
         combineWithWritableScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           personaScopeColumns,
           eq(personas.isActive, true),
         ),
@@ -715,7 +716,7 @@ class PersonaStorageClass {
     const target = await this.get(id);
     if (!target) return null;
     // Deactivate all, then activate target
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     await db
       .update(personas)
       .set({
@@ -812,7 +813,7 @@ class PersonaStorageClass {
    * orphans and concurrent forks both resolve to one row.
    */
   private async findOwnedCopy(
-    principal: ReturnType<typeof getCurrentPrincipalOrSystem>,
+    principal: Principal,
     template: PersonaEntry,
   ): Promise<typeof personas.$inferSelect | null> {
     const [byLineage] = await db
@@ -857,7 +858,7 @@ class PersonaStorageClass {
     template: PersonaEntry,
     opts: { isActive: boolean },
   ): Promise<PersonaEntry> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const patch: Record<string, unknown> = {};
     // Heal legacy orphans that share the template name but lost lineage.
     if (existing.templatePersonaId == null) {
@@ -900,7 +901,7 @@ class PersonaStorageClass {
     target: PersonaEntry,
     opts: { isActive: boolean },
   ): Promise<PersonaEntry> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const existing = await this.findOwnedCopy(principal, target);
     if (existing) {
       return this.reuseOwnedCopy(existing, target, opts);
@@ -972,7 +973,7 @@ class PersonaStorageClass {
    */
   async ensureOwnedCopy(id: number): Promise<PersonaEntry | null> {
     const visible = await this.get(id);
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
 
     if (visible && visible.source === "user") return visible;
     if (visible && (principal.actorType === "system" || visible.isSystem)) return visible;
@@ -1021,7 +1022,7 @@ class PersonaStorageClass {
       .delete(personas)
       .where(
         combineWithWritableScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           personaScopeColumns,
           eq(personas.id, id),
         ),
@@ -1162,7 +1163,7 @@ class PersonaStorageClass {
           .set(updates)
           .where(
             combineWithWritableScope(
-              getCurrentPrincipalOrSystem(),
+              requireCurrentUserPrincipal(),
               personaScopeColumns,
               eq(personas.id, existing.id),
             ),

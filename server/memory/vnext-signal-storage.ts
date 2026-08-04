@@ -8,7 +8,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import {
   combineWithWritableScope,
   ownedInsertValues,
@@ -65,11 +65,7 @@ export interface RecordVnextStrengthEventResult {
 }
 
 function requireUserPrincipal() {
-  const principal = getCurrentPrincipalOrSystem();
-  if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
-    throw new Error("vNext signal mutation requires an owning user principal");
-  }
-  return principal;
+  return requireCurrentUserPrincipal();
 }
 
 function normalizeIdentifier(value: string, label: string, maxLength: number): string {

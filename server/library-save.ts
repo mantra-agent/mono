@@ -6,7 +6,7 @@ import { createLogger } from "./log";
 import type { LibrarySemanticPlacementResult } from "./library-placement";
 import { markSourceChanged } from "./memory/vnext-source-queue";
 import type { Principal } from "./principal";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import { indexLibraryPageReferences } from "./library-reference-index";
@@ -203,7 +203,7 @@ export function publishLibraryChanged(action: string, page?: { id?: string | nul
 async function resolveStandardLibraryPlacement(
   input: CreateFiledLibraryPageInput,
 ): Promise<LibrarySemanticPlacementResult> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const structuralRole = normalizeLibraryStructuralRole(
     input.structuralRole,
     "artifact",
@@ -293,7 +293,7 @@ async function resolveStandardLibraryPlacement(
 }
 
 export async function createFiledLibraryPage(input: CreateFiledLibraryPageInput): Promise<CreatedFiledLibraryPage> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const filingResolution = await resolveStandardLibraryPlacement(input);
   const synced = syncContentFields({ markdown: input.markdown });
   const slugBase = slugifyLibraryTitle(input.title, "page");

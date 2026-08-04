@@ -2,13 +2,13 @@ import { documentStorage } from "../memory/document-storage";
 import { tagRegistry } from "./tags";
 import { generateId } from "./utils";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import type { DocType } from "@shared/models/memory";
 
 type Logger = ReturnType<typeof createLogger>;
 
 export function principalCacheKey(label: string): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   return [
     label,
     principal.actorType,

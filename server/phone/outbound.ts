@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { createLogger } from "../log";
 import { peopleStorage, type Person } from "../people-storage";
 import { chatStorage } from "../integrations/chat";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
+import { requireCurrentPrincipal, runWithPrincipal } from "../principal-context";
 import type { Principal } from "../principal";
 import { getRuntimePublicBaseUrl } from "../runtime-identity";
 import { createTwilioCall, type TwilioCallStatus } from "../integrations/twilio/client";
@@ -51,7 +51,7 @@ async function resolvePerson(query: string): Promise<Person> {
 }
 
 function requireUserPrincipal(): Principal {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (principal.actorType !== "user" || !principal.userId) throw new Error("Outbound calls require an authenticated user");
   return principal;
 }

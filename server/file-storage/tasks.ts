@@ -5,7 +5,7 @@ import type { Task, InsertTask, TaskStatus, AssigneeSubjectType } from "@shared/
 import { PatchGuardError, logPatchClearAudit, sanitizePatch, type PatchInput } from "../lib/patch-guard";
 import { ToolFailureError } from "../tool-failure";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import { ownedInsertValues } from "../scoped-storage";
 import {
   hasAdminOnlyTaskChanges,
@@ -201,7 +201,7 @@ function resolveMutationOrigin(provenance?: TaskMutationProvenance): TaskMutatio
 }
 
 function resolveCreationVaultId(explicitVaultId?: string): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
     throw new Error("Task creation requires an explicit user principal");
   }
@@ -261,7 +261,7 @@ export class FileTaskStorage {
     const offset = Math.max(0, Math.min(options.offset ?? 0, 10_000));
     const predicate = this.taskReadPredicate(options);
     const scoped = combineWithTaskAccess(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentUserPrincipal(),
       taskScopeColumns,
       "read",
       predicate,
@@ -285,7 +285,7 @@ export class FileTaskStorage {
 
   async getTaskStatusCounts(projectId: number): Promise<TaskStatusCounts> {
     const scoped = combineWithTaskAccess(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentUserPrincipal(),
       taskScopeColumns,
       "read",
       eq(tasks.projectId, projectId),
@@ -307,7 +307,7 @@ export class FileTaskStorage {
     const uniqueIds = [...new Set(projectIds.filter(id => Number.isInteger(id) && id > 0))];
     if (uniqueIds.length === 0) return new Map();
     const scoped = combineWithTaskAccess(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentUserPrincipal(),
       taskScopeColumns,
       "read",
       inArray(tasks.projectId, uniqueIds),
@@ -328,7 +328,7 @@ export class FileTaskStorage {
       status: normalizedStatus as TaskStatus | undefined,
     });
     const rows = await db.select().from(tasks).where(
-      combineWithTaskAccess(getCurrentPrincipalOrSystem(), taskScopeColumns, "read", predicate),
+      combineWithTaskAccess(requireCurrentUserPrincipal(), taskScopeColumns, "read", predicate),
     );
 
     const result = rows.map(rowToTask);
@@ -350,7 +350,7 @@ export class FileTaskStorage {
       sql`${tasks.status} IN ('ready', 'active')`,
     );
     const rows = await db.select().from(tasks).where(
-      combineWithTaskAccess(getCurrentPrincipalOrSystem(), taskScopeColumns, "read", predicate),
+      combineWithTaskAccess(requireCurrentUserPrincipal(), taskScopeColumns, "read", predicate),
     );
     const todos = rows.map(rowToTask);
     log.log(`getTodoTasks count=${todos.length}`);
@@ -359,7 +359,7 @@ export class FileTaskStorage {
 
   async getTask(id: number): Promise<Task | undefined> {
     const rows = await db.select().from(tasks).where(
-      combineWithTaskAccess(getCurrentPrincipalOrSystem(), taskScopeColumns, "read", eq(tasks.id, id)),
+      combineWithTaskAccess(requireCurrentUserPrincipal(), taskScopeColumns, "read", eq(tasks.id, id)),
     ).limit(1);
     if (rows.length === 0) {
       log.log(`getTask id=${id} not-found`);
@@ -370,7 +370,7 @@ export class FileTaskStorage {
   }
 
   private async assertWorkPlacement(projectId: number | null | undefined, milestoneId: number | null | undefined): Promise<string | null> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (projectId != null && (!Number.isInteger(projectId) || projectId <= 0)) {
       throw new Error("projectId must be a positive integer");
     }
@@ -447,7 +447,7 @@ export class FileTaskStorage {
         completedAt: (input.status || "ready") === "done" ? now : null,
         createdAt: now,
         updatedAt: now,
-        ...ownedInsertValues(getCurrentPrincipalOrSystem(), taskScopeColumns),
+        ...ownedInsertValues(requireCurrentUserPrincipal(), taskScopeColumns),
       }).returning();
       if (assignee) {
         await objectGrantService.setTaskAssignmentInTransaction(tx, created.id, null, assignee, origin);
@@ -465,7 +465,7 @@ export class FileTaskStorage {
   async updateTask(id: number, command: TaskUpdateCommand, provenance?: TaskMutationProvenance): Promise<Task | undefined> {
     const updates = normalizeTaskUpdate(command);
     const hasUpdates = Object.keys(updates).length > 0;
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const required: ObjectGrantCapability = hasAdminOnlyTaskChanges(updates as Record<string, unknown>) ? "admin" : "write";
     const origin = resolveMutationOrigin(provenance);
     const row = await db.transaction(async tx => {
@@ -552,7 +552,7 @@ export class FileTaskStorage {
   }
 
   async deleteTask(id: number): Promise<boolean> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const deleted = await db.transaction(async tx => {
       const [task] = await tx.select({ id: tasks.id }).from(tasks).where(
         combineWithTaskAccess(principal, taskScopeColumns, "admin", eq(tasks.id, id)),

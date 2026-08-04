@@ -5,7 +5,7 @@ import {
   type DocType,
 } from "@shared/schema";
 import { eq, and, like, desc, inArray, sql, type SQL } from "drizzle-orm";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal, requireCurrentUserPrincipal } from "../principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -97,7 +97,7 @@ export class DocumentStorage {
     noReturn = false,
   ): Promise<WorkspaceDocCompat> {
     const now = new Date();
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const ownerValues = ownedInsertValues(principal, documentScopeColumns);
     if (!ownerValues.ownerUserId || !ownerValues.accountId) {
       throw new Error(
@@ -183,7 +183,7 @@ export class DocumentStorage {
       .from(documentStoreDocuments)
       .where(
         combineWithVisibleScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           documentScopeColumns,
           and(
             eq(documentStoreDocuments.documentType, docType),
@@ -199,7 +199,7 @@ export class DocumentStorage {
   async getDocuments(docType: DocType, documentIds: string[]): Promise<WorkspaceDocCompat[]> {
     const batches = chunkDocumentIds(documentIds);
     if (batches.length === 0) return [];
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const documents: WorkspaceDocCompat[] = [];
     for (const batch of batches) {
       const rows = await db
@@ -239,7 +239,7 @@ export class DocumentStorage {
       .from(documentStoreDocuments)
       .where(
         combineWithVisibleScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           documentScopeColumns,
           and(...conditions),
         ),
@@ -255,7 +255,7 @@ export class DocumentStorage {
       .from(documentStoreDocuments)
       .where(
         combineWithVisibleScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           documentScopeColumns,
           eq(documentStoreDocuments.path, path),
         ),
@@ -273,7 +273,7 @@ export class DocumentStorage {
       .from(documentStoreDocuments)
       .where(
         combineWithVisibleScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           documentScopeColumns,
           prefix ? like(documentStoreDocuments.path, `${prefix}%`) : sql`TRUE`,
         ),
@@ -306,7 +306,7 @@ export class DocumentStorage {
       .from(documentStoreDocuments)
       .where(
         combineWithVisibleScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           documentScopeColumns,
           and(...conditions),
         ),
@@ -330,7 +330,7 @@ export class DocumentStorage {
       .delete(documentStoreDocuments)
       .where(
         combineWithWritableScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           documentScopeColumns,
           and(
             eq(documentStoreDocuments.documentType, docType),
@@ -348,7 +348,7 @@ export class DocumentStorage {
     docId: string,
     metadataPatch: Record<string, unknown>,
   ): Promise<WorkspaceDocCompat | null> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const metadataJson = JSON.stringify(metadataPatch);
     const rows = await db
       .update(documentStoreDocuments)
@@ -380,7 +380,7 @@ export class DocumentStorage {
     docId: string,
     updates: Partial<Pick<WorkspaceDocCompat, "title" | "content" | "metadata" | "path">>,
   ): Promise<WorkspaceDocCompat | null> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const setData: Record<string, unknown> = {
       updatedAt: new Date(),
       updatedByUserId: principal.userId ?? undefined,
@@ -414,7 +414,7 @@ export class DocumentStorage {
     const rows = await db.execute(sql`
       SELECT COALESCE(MAX((metadata->>'id')::int), 0)::int AS max_id
       FROM document_store_documents
-      WHERE ${combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`)}
+      WHERE ${combineWithVisibleScope(requireCurrentUserPrincipal(), documentScopeColumns, sql`TRUE`)}
         AND document_type = ${docType}
         AND metadata->>'id' IS NOT NULL
     `);
@@ -436,7 +436,7 @@ export class DocumentStorage {
     const rows = await db.execute(sql`
       SELECT COUNT(*)::int AS ${sql.raw(countAlias)}, ${sql.join(sumExpressions, sql`, `)}
       FROM document_store_documents
-      WHERE ${combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`)}
+      WHERE ${combineWithVisibleScope(requireCurrentUserPrincipal(), documentScopeColumns, sql`TRUE`)}
         AND document_type = ${docType}
         AND metadata->>'timestamp' LIKE ${dateStr + "%"}
     `);
@@ -453,7 +453,7 @@ export class DocumentStorage {
     destinationVaultId: string,
     patch: DocumentVaultMovePatch = {},
   ): Promise<WorkspaceDocCompat> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (!principal.userId || !principal.accountId) {
       throw new Error(`Document Vault moves require an explicit user and account owner: ${docType}/${docId}`);
     }
@@ -485,7 +485,7 @@ export class DocumentStorage {
   async countByType(docType: DocType, sinceTimestamp?: string): Promise<number> {
     const conditions = [
       sql`document_type = ${docType}`,
-      combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`),
+      combineWithVisibleScope(requireCurrentUserPrincipal(), documentScopeColumns, sql`TRUE`),
     ];
     if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
     const rows = await db.execute(sql`
@@ -499,7 +499,7 @@ export class DocumentStorage {
   async discoverInterruptedChatRecoveryCandidates(
     limit = 100,
   ): Promise<InterruptedChatRecoveryCandidate[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (principal.actorType !== "system" || principal.jobName !== "chat-recovery") {
       throw Object.assign(
         new Error("Interrupted chat recovery discovery requires the named chat-recovery system principal"),
@@ -559,7 +559,7 @@ export class DocumentStorage {
   }>> {
     const conditions = [
       sql`document_type = ${docType}`,
-      combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`),
+      combineWithVisibleScope(requireCurrentUserPrincipal(), documentScopeColumns, sql`TRUE`),
     ];
     if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
     const boundedLimit = limit === undefined ? null : Math.min(Math.max(Math.floor(limit), 1), 5_000);
@@ -607,7 +607,7 @@ export class DocumentStorage {
     sumFields.forEach(assertSafeFieldName);
     const conditions = [
       sql`document_type = ${docType}`,
-      combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`),
+      combineWithVisibleScope(requireCurrentUserPrincipal(), documentScopeColumns, sql`TRUE`),
     ];
     if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
     const sumExpressions = sumFields.map(
@@ -638,7 +638,7 @@ export class DocumentStorage {
     sumFields.forEach(assertSafeFieldName);
     const conditions = [
       sql`document_type = ${docType}`,
-      combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`),
+      combineWithVisibleScope(requireCurrentUserPrincipal(), documentScopeColumns, sql`TRUE`),
     ];
     if (sinceTimestamp) conditions.push(sql`metadata->>'timestamp' >= ${sinceTimestamp}`);
     const sumExpressions = sumFields.map(
@@ -661,7 +661,7 @@ export class DocumentStorage {
     const rows = await db.execute(sql`
       SELECT document_type AS doc_type, COUNT(*)::int AS count
       FROM document_store_documents
-      WHERE ${combineWithVisibleScope(getCurrentPrincipalOrSystem(), documentScopeColumns, sql`TRUE`)}
+      WHERE ${combineWithVisibleScope(requireCurrentUserPrincipal(), documentScopeColumns, sql`TRUE`)}
       GROUP BY document_type
       ORDER BY document_type
     `);

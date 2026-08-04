@@ -7,7 +7,7 @@ import { db } from "./db";
 import { libraryPages } from "@shared/models/info";
 import { inArray } from "drizzle-orm";
 import { listSkillPersonaConfiguration, setSkillPersonaPreference } from "./skill-persona-service";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { hasActiveBuildAccess } from "./mods/build-access";
 import { BUILD_OWNED_SKILL_NAME_SET } from "./skill-identities";
@@ -41,7 +41,7 @@ const BUILD_SKILL_NAMES = BUILD_OWNED_SKILL_NAME_SET;
 const WELLNESS_SKILL_NAMES = new Set(["reflect", "affirmations", "coach"]);
 
 async function filterModOwnedSkills<T extends { name: string }>(skills: T[]): Promise<T[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   let next = skills;
   if (principal.actorType !== "user") {
     return next.filter(
@@ -358,7 +358,7 @@ export function registerSkillRoutes(app: Express): void {
         slug: libraryPages.slug,
         createdBySessionId: libraryPages.createdBySessionId,
       }).from(libraryPages).where(combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
+        requireCurrentPrincipal(),
         libraryPageScopeColumns,
         inArray(libraryPages.createdBySessionId, bounded),
       ));
