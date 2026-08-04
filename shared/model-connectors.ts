@@ -74,7 +74,31 @@ export const claudeCliTierMappingsSchema = z.object({
   fast: claudeCliTierModelConfigSchema,
 }).strict();
 export type ClaudeCliTierMappings = z.infer<typeof claudeCliTierMappingsSchema>;
-export type ConnectorTierModelConfig = OpenAITierModelConfig | ClaudeCliTierModelConfig;
+
+// Grok subscription reasoning effort. Only grok-4.5 accepts reasoning_effort on
+// the chat.completions surface; values map directly to xAI's low/medium/high
+// (default high, reasoning cannot be disabled).
+export const grokReasoningEffortSchema = z.enum(["low", "medium", "high"]);
+export type GrokReasoningEffort = z.infer<typeof grokReasoningEffortSchema>;
+
+export const grokSubscriptionTierModelConfigSchema = z.preprocess(
+  (value) => (typeof value === "string" ? { model: value } : value),
+  z.object({
+    model: z.string().trim().min(1),
+    reasoningEffort: grokReasoningEffortSchema.optional(),
+  }).strict(),
+);
+export type GrokSubscriptionTierModelConfig = z.infer<typeof grokSubscriptionTierModelConfigSchema>;
+
+export const grokSubscriptionTierMappingsSchema = z.object({
+  max: grokSubscriptionTierModelConfigSchema,
+  high: grokSubscriptionTierModelConfigSchema,
+  balanced: grokSubscriptionTierModelConfigSchema,
+  fast: grokSubscriptionTierModelConfigSchema,
+}).strict();
+export type GrokSubscriptionTierMappings = z.infer<typeof grokSubscriptionTierMappingsSchema>;
+
+export type ConnectorTierModelConfig = OpenAITierModelConfig | ClaudeCliTierModelConfig | GrokSubscriptionTierModelConfig;
 
 export const legacyModelConnectorConfigSchema = z.object({
   kind: z.literal("model"),
@@ -101,12 +125,13 @@ export const claudeCliConnectorConfigSchema = z.object({
 export type ClaudeCliConnectorConfig = z.infer<typeof claudeCliConnectorConfigSchema>;
 
 // Grok subscription connector. Grok models are OpenAI-compatible chat models
-// addressed by plain name (no reasoning-effort/service-tier params), so tier
-// mappings are simple model strings resolved via getConnectorTierModelConfig.
+// addressed by plain name. grok-4.5 additionally accepts a reasoning_effort
+// param, so tier mappings carry an optional per-tier reasoningEffort. Legacy
+// plain-string mappings are still accepted and normalized to { model }.
 export const grokSubscriptionConnectorConfigSchema = z.object({
   kind: z.literal("grok-models"),
   version: z.literal(1),
-  tierMappings: modelTierMappingsSchema,
+  tierMappings: grokSubscriptionTierMappingsSchema,
   migratedFrom: z.enum(["model_profiles", "manual", "model_connector_v1"]).optional(),
 }).strict();
 export type GrokSubscriptionConnectorConfig = z.infer<typeof grokSubscriptionConnectorConfigSchema>;

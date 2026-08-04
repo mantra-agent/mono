@@ -7,6 +7,7 @@ import { getSetting } from "./system-settings";
 import { providerConnections } from "@shared/models/platforms";
 import {
   claudeCliTierMappingsSchema,
+  grokSubscriptionTierMappingsSchema,
   modelConnectorConfigSchema,
   modelConnectorProviderSchema,
   modelTierMappingsSchema,
@@ -14,6 +15,8 @@ import {
   type ClaudeCliTierMappings,
   type ClaudeCliTierModelConfig,
   type GrokSubscriptionConnectorConfig,
+  type GrokSubscriptionTierMappings,
+  type GrokSubscriptionTierModelConfig,
   type ModelConnectorConfig,
   type ModelConnectorProvider,
   type ModelTierMappings,
@@ -22,7 +25,7 @@ import {
   type OpenAITierModelConfig,
   type OpenAITierMappings,
 } from "@shared/model-connectors";
-import { getModel, type ModelInfo } from "./model-registry";
+import { getModel, supportsGrokReasoningEffort, type ModelInfo } from "./model-registry";
 
 const log = createLogger("ModelConnectors");
 const LEGACY_PROFILE_KEY = "model_profiles";
@@ -147,6 +150,30 @@ function validateClaudeCliConnectorConfig(provider: ModelConnectorProvider, conf
   };
 }
 
+function validateGrokTierConfig(config: GrokSubscriptionTierModelConfig): GrokSubscriptionTierModelConfig {
+  const model = validateModelBelongsToProvider("grok-subscription", config.model);
+  const normalized: GrokSubscriptionTierModelConfig = { model: model.id };
+  if (config.reasoningEffort !== undefined) {
+    if (!supportsGrokReasoningEffort(model.id)) throw new Error(`Model '${config.model}' does not support reasoning effort`);
+    normalized.reasoningEffort = config.reasoningEffort;
+  }
+  return normalized;
+}
+
+function validateGrokConnectorConfig(provider: ModelConnectorProvider, config: GrokSubscriptionConnectorConfig): GrokSubscriptionConnectorConfig {
+  if (provider !== "grok-subscription") throw new Error(`Provider '${provider}' does not support Grok connector config`);
+  const tierMappings = grokSubscriptionTierMappingsSchema.parse(config.tierMappings);
+  return {
+    ...config,
+    tierMappings: {
+      max: validateGrokTierConfig(tierMappings.max),
+      high: validateGrokTierConfig(tierMappings.high),
+      balanced: validateGrokTierConfig(tierMappings.balanced),
+      fast: validateGrokTierConfig(tierMappings.fast),
+    },
+  };
+}
+
 function migrateOpenAIConnectorConfig(provider: ModelConnectorProvider, legacy: { tierMappings: ModelTierMappings; migratedFrom?: "model_profiles" | "manual" }): OpenAIConnectorConfig {
   const surface: OpenAIConnectorSurface = provider === "openai-subscription" ? "subscription" : "api";
   return {
@@ -220,10 +247,7 @@ export function parseModelConnectorConfig(provider: string, value: unknown): Mod
     return legacy;
   }
   if (parsed.kind === "claude-cli-models") return validateClaudeCliConnectorConfig(parsedProvider, parsed);
-  if (parsed.kind === "grok-models") {
-    if (parsedProvider !== "grok-subscription") throw new Error(`Provider '${parsedProvider}' does not support Grok connector config`);
-    return { ...parsed, tierMappings: validateMapping(parsedProvider, parsed.tierMappings) };
-  }
+  if (parsed.kind === "grok-models") return validateGrokConnectorConfig(parsedProvider, parsed);
   return validateOpenAIConnectorConfig(parsedProvider, parsed);
 }
 
@@ -253,7 +277,7 @@ export async function updateModelConnector(
   id: number,
   input: {
     status?: "active" | "inactive";
-    tierMappings?: ModelTierMappings | OpenAITierMappings | ClaudeCliTierMappings;
+    tierMappings?: ModelTierMappings | OpenAITierMappings | ClaudeCliTierMappings | GrokSubscriptionTierMappings;
     priorityPinned?: boolean;
   },
 ): Promise<ModelConnector | null> {
@@ -287,9 +311,8 @@ export async function updateModelConnector(
         ? validateClaudeCliConnectorConfig(provider, migrateClaudeCliConnectorConfig({ tierMappings: validateMapping(provider, legacyMappings.data), migratedFrom: "manual" }))
         : validateClaudeCliConnectorConfig(provider, { ...current, tierMappings: input.tierMappings as ClaudeCliTierMappings });
     } else if (current.kind === "grok-models") {
-      if (provider !== "grok-subscription") throw new Error(`Provider '${provider}' does not support Grok connector config`);
-      const tierMappings = validateMapping(provider, input.tierMappings as ModelTierMappings);
-      updates.connectorConfig = { ...current, tierMappings };
+      const tierMappings = grokSubscriptionTierMappingsSchema.parse(input.tierMappings);
+      updates.connectorConfig = validateGrokConnectorConfig(provider, { ...current, tierMappings });
     } else {
       const tierMappings = validateMapping(provider, input.tierMappings as ModelTierMappings);
       updates.connectorConfig = { ...current, tierMappings };
