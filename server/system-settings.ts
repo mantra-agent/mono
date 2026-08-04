@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { db } from "./db";
 import { systemSettings } from "@shared/schema";
 import { eq, inArray } from "drizzle-orm";
@@ -13,6 +14,13 @@ export async function getSetting<T = unknown>(key: string): Promise<T | null> {
 }
 
 export async function setSetting(key: string, value: unknown): Promise<void> {
+  // Same-value writes thrash the single-row hot path under load. Skip when
+  // the persisted JSON already matches — no write, no updatedAt churn.
+  const existing = await getSetting(key);
+  if (existing !== null && isDeepStrictEqual(existing, value)) {
+    return;
+  }
+
   const updated = await db
     .update(systemSettings)
     .set({ value, updatedAt: new Date() })
