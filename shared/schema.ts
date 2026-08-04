@@ -568,7 +568,7 @@ export type TimerRunRow = ResponsibilityRunRow;
 export type InsertTimerRun = InsertResponsibilityRun;
 
 export const objectGrantSubjectTypes = ["user", "invited_subject"] as const;
-export const objectGrantObjectTypes = ["project", "milestone", "task"] as const;
+export const objectGrantObjectTypes = ["project", "milestone", "task", "library_page"] as const;
 export const objectGrantCapabilities = ["read", "write", "admin"] as const;
 export const objectGrantOriginTypes = ["meeting", "manual"] as const;
 
@@ -714,7 +714,7 @@ export const objectGrants = pgTable("object_grants", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (table) => [
   check("object_grants_subject_type_check", sql`${table.subjectType} IN ('user', 'invited_subject')`),
-  check("object_grants_object_type_check", sql`${table.objectType} IN ('project', 'milestone', 'task')`),
+  check("object_grants_object_type_check", sql`${table.objectType} IN ('project', 'milestone', 'task', 'library_page')`),
   check("object_grants_capability_check", sql`${table.capability} IN ('read', 'write', 'admin')`),
   check("object_grants_origin_type_check", sql`${table.originType} IN ('meeting', 'manual')`),
   uniqueIndex("idx_object_grants_one_live_subject_object")
