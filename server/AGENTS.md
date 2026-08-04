@@ -190,6 +190,8 @@ Access control is server-owned and permission-based. Future code must plug into 
 - External file reads go only through `filesApi` (`server/files-api.ts`). Never call Google/Box provider clients from feature code or agent tools.
 - `drive_resource` is a vault-scoped bind pointer. Folder bind = recursive whitelist of the bound tree only. Resolve target, then authorize; fail closed on moved/trashed/unlisted children — never ambient crawl.
 - Drive access path: vault gate → bind or live `drive_resource`/`vault` grant → whitelist coverage → owner connector token server-side. Owner OAuth tokens never leave the server.
+- Vault-scoped list reads (`driveResourceService.list`, `filesApi.listBound`) authorize the vault, then return every bind in that vault — never filter binds by the caller's `accountId` (that hid shared-vault grantees).
+- Address resolution for `page` uses `combineWithAuthorizedScope` so live `library_page` / vault grants resolve the same as library list/get.
 - Named permissions are the authorization contract. Current vocabulary: `users:read`, `users:write`, `build:read`, `build:write`, `system:read`, `system:write`.
 - `role=admin` only contributes base permissions inside `permissions.ts`. Do not use role checks as route authorization.
 - User-specific grants live in `user_permissions`; do not duplicate permission state in settings, client state, or feature flags. Override updates are replace-set operations: omitted permissions are revoked, not inherited implicitly.

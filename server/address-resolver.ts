@@ -47,6 +47,7 @@ import { signalItems } from "@shared/models/signal";
 import { wellnessActivities } from "@shared/models/health";
 import { db } from "./db";
 import { combineWithVisibleScope } from "./scoped-storage";
+import { combineWithAuthorizedScope } from "./authorize";
 import { combineWithProjectAccess, combineWithProjectDerivedWorkAccess, combineWithTaskAccess } from "./project-vault-access";
 import { libraryPageIsLive } from "./library-trash";
 import { visiblePlatform } from "./platforms/platform-access";
@@ -103,6 +104,12 @@ interface ResolutionFields {
 }
 
 const pageScope = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
+const pageOwnedColumns = {
+  objectId: libraryPages.id,
+  ownerUserId: libraryPages.ownerUserId,
+  accountId: libraryPages.accountId,
+  vaultId: libraryPages.vaultId,
+};
 const buildObservationScope = {
   scope: platformDeploymentObservations.scope,
   ownerUserId: platformDeploymentObservations.ownerUserId,
@@ -194,9 +201,19 @@ const adapters: AddressResolverAdapter[] = [
   }),
   simpleAdapter("page", async (principal, refs) => {
     const ids = refs.map(ref => ref.id);
+    // Owned/visible scope OR live library_page grant OR live vault grant — same path as library reads.
     const rows = await db.select({ id: libraryPages.id, slug: libraryPages.slug, title: libraryPages.title, summary: libraryPages.summary, oneLiner: libraryPages.oneLiner, updatedAt: libraryPages.updatedAt })
       .from(libraryPages)
-      .where(combineWithVisibleScope(principal, pageScope, and(or(inArray(libraryPages.id, ids), inArray(libraryPages.slug, ids)), libraryPageIsLive())));
+      .where(
+        combineWithAuthorizedScope(
+          principal,
+          combineWithVisibleScope(principal, pageScope),
+          "library_page",
+          pageOwnedColumns,
+          "read",
+          and(or(inArray(libraryPages.id, ids), inArray(libraryPages.slug, ids)), libraryPageIsLive()),
+        ),
+      );
     const byId = new Map(rows.flatMap(row => [[row.id, row], [row.slug, row]] as const));
     return new Map(refs.flatMap(ref => {
       const row = byId.get(ref.id);
