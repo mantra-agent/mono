@@ -153,15 +153,18 @@ const MAX_LINK_COMPLEXITY = MEMORY_GRAPH_SETTING_DEFINITIONS.find(
 const LARGE_GRAPH_THRESHOLD = 1_000;
 const LABEL_POSITION_TICKS = 4;
 const INITIAL_LAYOUT_SCALE = 20;
-// Linear inter-post glide. The layout worker posts full-graph solves on a budgeted
-// ~60 Hz physics clock (slower only when a single tick overruns the frame). Snapping
-// every node to each post made motion lurch; exponential ease-to-target made it
-// ramp-to-stop-then-jump. Instead, capture each post as a segment endpoint and lerp
-// displayed positions at constant velocity across the measured inter-post interval so
-// motion reads continuous on the render clock even when physics briefly dips.
+// Linear inter-post glide while the solver is streaming. The layout worker posts
+// full-graph solves on a budgeted ~60 Hz physics clock (slower only when a single
+// tick overruns the frame). Snapping every node to each post made motion lurch;
+// exponential ease-to-target made it ramp-to-stop-then-jump. Instead, capture each
+// post as a segment endpoint and lerp displayed positions at constant velocity
+// across the measured inter-post interval so motion reads continuous on the render
+// clock even when physics briefly dips. The final `end` segment eases out so the
+// graph settles instead of slamming into the last solve.
 const LAYOUT_INTERP_DEFAULT_MS = 16;
 const LAYOUT_INTERP_MIN_MS = 8;
 const LAYOUT_INTERP_MAX_MS = 48;
+const LAYOUT_FINAL_SEGMENT_MS = 280;
 const MIN_NODE_HIT_RADIUS_PX = 12;
 const NODE_RENDER_ORDER = 0;
 const RESTING_LINK_RENDER_ORDER = 1;
@@ -781,6 +784,10 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     let layoutTo: Float32Array | null = null;
     let layoutInterpolating = false;
     let layoutFinalSegment = false;
+    // Visual admission: nodes stay invisible until the worker's first post after the
+    // silent prestabilize burst. Labels stay closed until the layout rests (`end`).
+    let layoutAdmitted = false;
+    let layoutRested = false;
     let layoutSegmentStart = 0;
     let layoutSegmentDuration = LAYOUT_INTERP_DEFAULT_MS;
     let lastLayoutPostAt = 0;
@@ -822,6 +829,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     });
 
     function isNodeVisible(index: number): boolean {
+      // Hide the cold random cloud until the worker's first prestabilized post arrives.
+      if (!layoutAdmitted) return false;
       return activeVisibleNodeIds.has(sceneNodes[index].id);
     }
 
@@ -1337,10 +1346,22 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const width = host.clientWidth;
       const height = host.clientHeight;
       const projectedLabels: ProjectedLabel[] = [];
+      // Labels stay closed until the layout rests, then only the focused neighborhood
+      // (hover/selection + neighbors) and the persistent selection may open. Ambient
+      // labels on every node fight the rest-gate and dominate large graphs.
+      const focusIndex = hoveredIndex ?? selectedIndex;
+      const labelsOpen = layoutRested && layoutAdmitted;
       labelRefs.current.forEach((element, nodeId) => {
         const node = sceneNodeById.get(nodeId);
-        if (!node || !activeVisibleNodeIds.has(node.id)) {
+        if (!labelsOpen || !node || !activeVisibleNodeIds.has(node.id)) {
           if (element) element.style.display = "none";
+          return;
+        }
+        const sceneIndex = nodeIndex.get(node.id);
+        const focused = sceneIndex != null && (focusIndex === sceneIndex || focusNeighborIndices.has(sceneIndex));
+        const selected = selectedNodeIdRef.current === node.id;
+        if (!focused && !selected) {
+          element.style.display = "none";
           return;
         }
         projected.set(node.x, node.y, node.z).project(camera);
@@ -1357,7 +1378,6 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         projectedLabels.push({ node, x, y, distance: Math.sqrt(dx * dx + dy * dy + dz * dz) });
       });
 
-      const focusIndex = hoveredIndex ?? selectedIndex;
       projectedLabels
         .sort((left, right) => {
           const leftIndex = nodeIndex.get(left.node.id);
@@ -1375,7 +1395,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           const selected = selectedNodeIdRef.current === node.id;
           element.style.display = "flex";
           element.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -12px)`;
-          element.style.opacity = focused || selected ? "1" : String(THREE.MathUtils.clamp(1.18 - distance / 520, focusIndex == null ? 0.66 : 0.4, 0.94));
+          element.style.opacity = focused || selected ? "1" : "0.85";
           element.style.zIndex = String(focused ? 2_000 : selected ? 1_500 : Math.max(1, Math.round(1_000 - distance)));
         });
       syncDetail();
@@ -1737,9 +1757,21 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         layoutFrom[index * 3 + 2] = node.z;
       }
       layoutTo.set(positions.subarray(0, count * 3));
-      // Measure the real inter-post gap so segment duration tracks the worker's actual
-      // cadence (slower on large graphs) instead of a fixed half-life that eases to a stop.
-      if (lastLayoutPostAt > 0) {
+      // First post after the silent prestabilize burst admits the graph. Nodes stay
+      // hidden until this call so the cold random cloud never paints.
+      if (!layoutAdmitted) {
+        layoutAdmitted = true;
+        nodeDepthOrderDirty = true;
+        syncFocusNeighborhood();
+        sortNodeInstancesByDepth();
+        syncLinkVisibility();
+        syncActivityRunState();
+      }
+      // Streaming posts track the real inter-post gap. The final `end` segment uses a
+      // longer ease-out so the graph settles instead of slamming into the last solve.
+      if (layoutFinalSegment) {
+        layoutSegmentDuration = LAYOUT_FINAL_SEGMENT_MS;
+      } else if (lastLayoutPostAt > 0) {
         const measured = now - lastLayoutPostAt;
         layoutSegmentDuration = Math.min(
           LAYOUT_INTERP_MAX_MS,
@@ -1763,14 +1795,19 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const to = layoutTo;
       if (!from || !to || !layoutInterpolating) return null;
       const elapsed = now - layoutSegmentStart;
-      const t = Math.min(1, Math.max(0, elapsed / layoutSegmentDuration));
+      const linearT = Math.min(1, Math.max(0, elapsed / layoutSegmentDuration));
+      // Streaming segments stay linear so motion matches the worker cadence. The final
+      // settle eases out (smoothstep) so the graph arrives rather than slamming home.
+      const t = layoutFinalSegment
+        ? linearT * linearT * (3 - 2 * linearT)
+        : linearT;
       const count = Math.min(sceneNodes.length, Math.floor(to.length / 3));
       for (let index = 0; index < count; index += 1) {
         const node = sceneNodes[index];
         const toX = to[index * 3];
         const toY = to[index * 3 + 1];
         const toZ = to[index * 3 + 2];
-        if (!isNodeVisible(index) || t >= 1) {
+        if (!isNodeVisible(index) || linearT >= 1) {
           node.x = toX;
           node.y = toY;
           node.z = toZ;
@@ -1786,7 +1823,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       // Hold at the endpoint (t=1) until the next worker post opens a new segment.
       // Do not clear layoutInterpolating here — that would drop the rAF loop between posts
       // and reintroduce the discrete jump. The end message (or cleanup) stops the loop.
-      return t;
+      return linearT;
     }
 
     // Continuous render-clock loop that drives physics interpolation for as long as the
@@ -1883,7 +1920,12 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       layoutRevision += 1;
       // Drop any in-flight segment and forget the prior post clock so the first post of
       // the new solve opens a fresh DEFAULT_MS segment instead of stretching across the gap.
+      // Hide the graph again until the worker finishes its silent prestabilize burst and
+      // posts the first admitted positions; labels stay closed until the layout rests.
       stopLayoutInterpolation();
+      layoutAdmitted = false;
+      layoutRested = false;
+      layoutFinalSegment = false;
       if (layoutWorker) {
         if (simulation) {
           simulation.stop();
@@ -1937,12 +1979,15 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           layoutFinalSegment = false;
           setLayoutTargets(data.positions);
         } else if (data.type === "end") {
+          // Rest signal: open focus-only labels after the final ease-to-stop segment.
+          layoutRested = true;
           if (data.positions) {
             layoutFinalSegment = true;
             setLayoutTargets(data.positions);
           } else {
             stopLayoutInterpolation();
           }
+          syncLabels();
           recordBrowserTelemetry({
             kind: "graph",
             name: "layout_settled",

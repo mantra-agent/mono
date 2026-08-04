@@ -6,6 +6,11 @@
 // [x, y, z] positions as fast as the solve budget allows. The main thread glides
 // between posts on the render clock. Cadence is budgeted, not fixed: a slow solve
 // schedules the next step immediately instead of stacking a dead wait on top of it.
+//
+// Visual admission contract: the first post is delayed until a silent prestabilize
+// burst finishes, so the main thread never admits a cold random cloud. Streaming
+// posts then continue at ~60 Hz until alpha settles; the final `end` post is the
+// rest signal the renderer uses to admit nodes and open labels.
 
 import {
   forceCollide,
@@ -63,6 +68,15 @@ const ctx = self as unknown as {
 // as the CPU allows instead of adding a fixed post-interval on top of the overrun.
 const TARGET_FRAME_MS = 1000 / 60;
 
+// Silent multi-tick burst before the first post. Large graphs need more free ticks to
+// leave the random cloud; small graphs settle enough in fewer. Cap wall time so the
+// first paint never waits on a pathological solve.
+const PRESTABILIZE_TICKS_SMALL = 36;
+const PRESTABILIZE_TICKS_MEDIUM = 56;
+const PRESTABILIZE_TICKS_LARGE = 80;
+const PRESTABILIZE_TICKS_XLARGE = 110;
+const PRESTABILIZE_BUDGET_MS = 48;
+
 let simulation: Simulation<LayoutNode> | null = null;
 let nodes: LayoutNode[] = [];
 let tickTimer: ReturnType<typeof setTimeout> | null = null;
@@ -87,6 +101,13 @@ function chargeParams(nodeCount: number): { theta: number; distanceMax: number }
   return { theta: 0.85, distanceMax: 480 };
 }
 
+function prestabilizeTicks(nodeCount: number): number {
+  if (nodeCount > 900) return PRESTABILIZE_TICKS_XLARGE;
+  if (nodeCount > 500) return PRESTABILIZE_TICKS_LARGE;
+  if (nodeCount > 250) return PRESTABILIZE_TICKS_MEDIUM;
+  return PRESTABILIZE_TICKS_SMALL;
+}
+
 function postPositions(final: boolean) {
   const positions = new Float32Array(nodes.length * 3);
   for (let index = 0; index < nodes.length; index += 1) {
@@ -108,9 +129,9 @@ function step() {
   if (!sim) return;
 
   const startedAt = performance.now();
-  // One integration step per frame. Doubling ticks per post was buying convergence rate
-  // by spending the whole frame budget twice — on large graphs that dropped the post
-  // cadence into the teens and produced visible stutter-steps between solves.
+  // One integration step per frame after prestabilize. Doubling ticks per post was
+  // buying convergence by spending the whole frame budget twice — on large graphs
+  // that dropped the post cadence into the teens and produced visible stutter.
   sim.tick(1);
 
   const settled = sim.alpha() <= sim.alphaMin();
@@ -124,6 +145,16 @@ function step() {
   // render-side linear segments stay short enough that motion reads continuous.
   postPositions(false);
   scheduleNext(performance.now() - startedAt);
+}
+
+function prestabilize(sim: Simulation<LayoutNode>, nodeCount: number) {
+  const ticks = prestabilizeTicks(nodeCount);
+  const startedAt = performance.now();
+  for (let index = 0; index < ticks; index += 1) {
+    if (sim.alpha() <= sim.alphaMin()) break;
+    sim.tick(1);
+    if (performance.now() - startedAt >= PRESTABILIZE_BUDGET_MS) break;
+  }
 }
 
 function start(message: InitMessage) {
@@ -166,6 +197,15 @@ function start(message: InitMessage) {
     .alphaDecay(1 - Math.pow(0.002, 1 / 520))
     .velocityDecay(0.3)
     .stop();
+
+  // Silent burst: leave the random cloud before the main thread ever paints nodes.
+  prestabilize(simulation, nodes.length);
+
+  if (simulation.alpha() <= simulation.alphaMin()) {
+    postPositions(true);
+    stop();
+    return;
+  }
 
   postPositions(false);
   scheduleNext(0);
