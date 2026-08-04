@@ -1,6 +1,6 @@
 import { Response } from "express";
 import type { Principal } from "../principal";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { randomUUID } from "crypto";
 import { createLogger } from "../log";
 import {
@@ -156,7 +156,7 @@ export class ObjectStorageService {
     const filename = `${objectId}${suffix}`;
 
     // Resolve vault-prefixed key from principal
-    const principal = opts.principal ?? getCurrentPrincipalOrSystem();
+    const principal = opts.principal ?? requireCurrentPrincipal();
     const key = vaultObjectKeyFromPrincipal(principal, category, filename);
 
     if (opts.owner || opts.ownerUserId || opts.accountId) {
@@ -187,7 +187,7 @@ export class ObjectStorageService {
       principal?: Principal | null;
     } = {},
   ): Promise<{ objectPath: string; objectKey: string; size: number }> {
-    const principal = opts.principal ?? getCurrentPrincipalOrSystem();
+    const principal = opts.principal ?? requireCurrentPrincipal();
     const suffix = opts.extension
       ? opts.extension.startsWith(".")
         ? opts.extension
@@ -247,7 +247,7 @@ export class ObjectStorageService {
     // Resolve principal for vault-aware lookup. Active vault first (fast path),
     // then every vault the reader can see; system/no-principal callers contribute
     // no vaults and fall straight to the legacy key.
-    const resolvedPrincipal = principal ?? getCurrentPrincipalOrSystem();
+    const resolvedPrincipal = principal ?? requireCurrentPrincipal();
     const candidateVaults = [
       resolvedPrincipal?.activeVaultId,
       ...(resolvedPrincipal?.visibleVaultIds ?? []),

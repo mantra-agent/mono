@@ -2,13 +2,13 @@ import { db } from "./db";
 import { contentQueue, type ContentQueue, type InsertContent } from "@shared/schema";
 import { eq, desc, sql, and, lte, type SQL } from "drizzle-orm";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
 const log = createLogger("ContentStorage");
 const contentScopeColumns = { scope: contentQueue.scope, ownerUserId: contentQueue.ownerUserId, accountId: contentQueue.accountId };
-function visibleContent(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), contentScopeColumns, predicate); }
-function writableContent(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), contentScopeColumns, predicate); }
+function visibleContent(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentUserPrincipal(), contentScopeColumns, predicate); }
+function writableContent(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentUserPrincipal(), contentScopeColumns, predicate); }
 
 export async function listContent(filters?: {
   status?: string;
@@ -41,7 +41,7 @@ export async function createContent(data: InsertContent): Promise<ContentQueue> 
     ...data,
     status: data.status ?? "draft",
     platform: data.platform ?? "x",
-    ...ownedInsertValues(getCurrentPrincipalOrSystem(), contentScopeColumns),
+    ...ownedInsertValues(requireCurrentUserPrincipal(), contentScopeColumns),
   }).returning();
   return row;
 }

@@ -18,7 +18,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -146,7 +146,7 @@ function addAbstention(target: Partial<Record<AbstentionReason, number>>, reason
 }
 
 async function loadCandidateGraph(): Promise<CandidateGraph> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const claims = await db.select().from(memoryVnextClaims)
     .where(combineWithWritableScope(principal, claimScope, sql`${memoryVnextClaims.lifecycleStage} <> 'retired'`))
     .orderBy(desc(memoryVnextClaims.id)).limit(MAX_CLAIMS);
@@ -274,7 +274,7 @@ function findGenerationCandidate(
 }
 
 async function createPrediction(candidate: GenerationCandidate, generatedAt: Date): Promise<{ prediction: MemoryVnextPrediction; created: boolean }> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Shadow prediction creation requires a user principal");
   const replayKey = hashKey([
     PREDICTION_DERIVATION_METHOD,
@@ -342,7 +342,7 @@ function properScores(probability: number, actual: 0 | 1): { brierScore: number;
 }
 
 async function listUnresolvedPredictions(limit: number): Promise<MemoryVnextPrediction[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   return db.select().from(memoryVnextPredictions)
     .where(combineWithWritableScope(principal, predictionScope, sql`NOT EXISTS (
       SELECT 1 FROM memory_vnext_prediction_resolutions resolution
@@ -361,7 +361,7 @@ async function findOutcomeEvidence(prediction: MemoryVnextPrediction): Promise<{
   relationship: MemoryVnextClaimLink;
 } | null> {
   if (!prediction.predictedOutcomeClaimId) return null;
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const candidateSources = await db.select().from(memoryVnextSourceRefs)
     .where(combineWithWritableScope(principal, sourceScope, gt(memoryVnextSourceRefs.createdAt, prediction.generatedAt)))
     .orderBy(asc(memoryVnextSourceRefs.createdAt)).limit(MAX_CLAIMS);
@@ -417,7 +417,7 @@ async function resolvePrediction(
   prediction: MemoryVnextPrediction,
   now: Date,
 ): Promise<{ resolved: boolean; scored: boolean; certaintyUpdates: number }> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Prediction resolution requires a user principal");
   const evidence = await findOutcomeEvidence(prediction);
   if (!evidence && now < prediction.expectedAt) return { resolved: false, scored: false, certaintyUpdates: 0 };
@@ -523,7 +523,7 @@ async function resolvePrediction(
 }
 
 export async function runShadowPredictionLoop(input: { trigger?: string; limit?: number; runKey?: string } = {}): Promise<ShadowPredictionRunResult> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Shadow prediction orchestration requires a user principal");
   const startedAt = new Date();
   const trigger = (input.trigger?.trim() || "manual").slice(0, 120);
@@ -609,7 +609,7 @@ export async function runShadowPredictionLoop(input: { trigger?: string; limit?:
 }
 
 export async function inspectPredictionLedger(input: { predictionId?: number; limit?: number } = {}): Promise<PredictionLedgerDetail[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const limit = Math.min(Math.max(Math.floor(input.limit ?? 25), 1), MAX_INSPECT);
   const predicate = input.predictionId ? eq(memoryVnextPredictions.id, input.predictionId) : sql`TRUE`;
   const predictions = await db.select().from(memoryVnextPredictions)
@@ -633,7 +633,7 @@ export async function inspectPredictionLedger(input: { predictionId?: number; li
 }
 
 export async function inspectPredictionRuns(limit = 25): Promise<MemoryVnextPredictionRun[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   return db.select().from(memoryVnextPredictionRuns)
     .where(combineWithVisibleScope(principal, runScope))
     .orderBy(desc(memoryVnextPredictionRuns.completedAt), desc(memoryVnextPredictionRuns.id))

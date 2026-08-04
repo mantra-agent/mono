@@ -8,7 +8,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import { getTimezone } from "../timezone";
 import { combineWithVisibleScope } from "../scoped-storage";
 import { generateEmbedding } from "./embedding";
@@ -145,7 +145,7 @@ async function loadSourceRefs(claimIds: number[]): Promise<Map<number, MemoryVne
   const refsByClaim = new Map<number, MemoryVnextSourceRef[]>();
   if (claimIds.length === 0) return refsByClaim;
   const refs = await db.select().from(memoryVnextSourceRefs).where(combineWithVisibleScope(
-    getCurrentPrincipalOrSystem(), sourceScopeColumns, inArray(memoryVnextSourceRefs.claimId, claimIds),
+    requireCurrentUserPrincipal(), sourceScopeColumns, inArray(memoryVnextSourceRefs.claimId, claimIds),
   ));
   for (const ref of refs) refsByClaim.set(ref.claimId, [...(refsByClaim.get(ref.claimId) ?? []), ref]);
   return refsByClaim;
@@ -155,7 +155,7 @@ async function loadLinkCounts(claimIds: number[]): Promise<Map<number, number>> 
   const counts = new Map<number, number>();
   if (claimIds.length === 0) return counts;
   const links = await db.select().from(memoryVnextClaimLinks).where(combineWithVisibleScope(
-    getCurrentPrincipalOrSystem(), linkScopeColumns,
+    requireCurrentUserPrincipal(), linkScopeColumns,
     or(inArray(memoryVnextClaimLinks.fromClaimId, claimIds), inArray(memoryVnextClaimLinks.toClaimId, claimIds)),
   ));
   for (const link of links) {
@@ -176,7 +176,7 @@ async function loadLexicalClaims(query: string, includeStructuredPool: boolean):
         sql`EXISTS (SELECT 1 FROM unnest(${memoryVnextClaims.topics}) topic WHERE topic ILIKE ${`%${trimmed}%`})`,
       ));
   return db.select().from(memoryVnextClaims)
-    .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), claimScopeColumns, predicate))
+    .where(combineWithVisibleScope(requireCurrentUserPrincipal(), claimScopeColumns, predicate))
     .orderBy(desc(memoryVnextClaims.createdAt))
     .limit(trimmed === "*" || includeStructuredPool ? MAX_CANDIDATES : LEXICAL_POOL);
 }

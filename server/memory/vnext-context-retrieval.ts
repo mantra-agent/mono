@@ -12,7 +12,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import { combineWithVisibleScope } from "../scoped-storage";
 import type { BlendWeights } from "./vnext-retrieval-policy";
 import { generateEmbedding } from "./embedding";
@@ -128,7 +128,7 @@ function scoreCandidate(
 
 async function loadRecentClaims(): Promise<MemoryVnextClaim[]> {
   return db.select().from(memoryVnextClaims)
-    .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), claimScopeColumns, activePredicate()))
+    .where(combineWithVisibleScope(requireCurrentUserPrincipal(), claimScopeColumns, activePredicate()))
     .orderBy(desc(memoryVnextClaims.createdAt))
     .limit(RECENCY_SEED_COUNT);
 }
@@ -137,7 +137,7 @@ async function loadClaims(ids: number[]): Promise<MemoryVnextClaim[]> {
   if (ids.length === 0) return [];
   return db.select().from(memoryVnextClaims)
     .where(combineWithVisibleScope(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentUserPrincipal(),
       claimScopeColumns,
       and(inArray(memoryVnextClaims.id, ids), activePredicate()),
     ));
@@ -147,7 +147,7 @@ async function loadLinks(ids: number[]): Promise<MemoryVnextClaimLink[]> {
   if (ids.length === 0) return [];
   return db.select().from(memoryVnextClaimLinks)
     .where(combineWithVisibleScope(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentUserPrincipal(),
       linkScopeColumns,
       or(inArray(memoryVnextClaimLinks.fromClaimId, ids), inArray(memoryVnextClaimLinks.toClaimId, ids)),
     ))
@@ -159,7 +159,7 @@ async function loadSourceRefs(ids: number[]): Promise<Map<number, MemoryVnextSou
   if (ids.length === 0) return result;
   const rows = await db.select().from(memoryVnextSourceRefs)
     .where(combineWithVisibleScope(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentUserPrincipal(),
       sourceScopeColumns,
       inArray(memoryVnextSourceRefs.claimId, ids),
     ));

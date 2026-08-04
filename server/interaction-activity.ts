@@ -2,7 +2,7 @@ import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { emailMessages, persons } from "@shared/schema";
 import { db } from "./db";
 import type { Principal } from "./principal";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { visibleScopePredicate } from "./scoped-storage";
 import { combineWithSensitiveVisible } from "./sensitive-scope";
 import { userDayBounds } from "./utils/user-time";
@@ -34,7 +34,7 @@ export async function queryNonMeetingInteractionEventSeries(
   startDate: string,
   endDate: string,
   selfEmails: ReadonlySet<string> = new Set(),
-  principal: Principal = getCurrentPrincipalOrSystem(),
+  principal: Principal = requireCurrentUserPrincipal(),
 ): Promise<Map<string, number>> {
   const rangeStart = userDayBounds(startDate).start;
   const rangeEnd = new Date(userDayBounds(endDate).end.getTime() + 1);
@@ -102,7 +102,7 @@ export async function queryNonMeetingInteractionEventSeries(
 export async function queryDistinctInteractionPeopleSeries(
   startDate: string,
   endDate: string,
-  principal: Principal = getCurrentPrincipalOrSystem(),
+  principal: Principal = requireCurrentUserPrincipal(),
 ): Promise<Map<string, number>> {
   const result = await db.execute<InteractionCountRow>(sql`
     SELECT

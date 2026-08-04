@@ -22,7 +22,7 @@ import { sql, desc, ne } from "drizzle-orm";
 import { chatFileStorage, type FileMessage } from "./chat-file-storage";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, ownedInsertValues } from "./scoped-storage";
 
 const log = createLogger("SessionOutputBuffer");
@@ -108,7 +108,7 @@ export async function writeSessionToBuffer(sessionId: string): Promise<void> {
       .insert(sessionOutputBuffer)
       .values({
         sessionId,
-        ...ownedInsertValues(getCurrentPrincipalOrSystem(), sessionOutputScopeColumns),
+        ...ownedInsertValues(requireCurrentUserPrincipal(), sessionOutputScopeColumns),
         sessionType: session.sessionType ?? "user",
         title: session.title ?? null,
         topics: session.topics ?? [],
@@ -155,7 +155,7 @@ export async function getRecentSessions(limit = BUFFER_MAX_ROWS) {
   return db
     .select()
     .from(sessionOutputBuffer)
-    .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), sessionOutputScopeColumns, ne(sessionOutputBuffer.sessionType, "autonomous")))
+    .where(combineWithVisibleScope(requireCurrentUserPrincipal(), sessionOutputScopeColumns, ne(sessionOutputBuffer.sessionType, "autonomous")))
     .orderBy(desc(sessionOutputBuffer.createdAt))
     .limit(limit);
 }

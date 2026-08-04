@@ -14,7 +14,7 @@ import { chatStorage } from "../integrations/chat/storage";
 import { peopleStorage } from "../people-storage";
 import { createNamedSystemPrincipal } from "../principal";
 import { combineWithVisibleScope } from "../scoped-storage";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
+import { requireCurrentPrincipal, runWithPrincipal } from "../principal-context";
 import { resolveMeetingTransportSession, runWithMeetingOwnerPrincipal } from "./owner-principal";
 import { stripPrivateAgendaFromRecap } from "./recap-content";
 
@@ -111,7 +111,7 @@ async function loadRecapContent(meeting: MeetingSessionMeta): Promise<RecipientR
   const [page] = await db.select({ plainTextContent: libraryPages.plainTextContent })
     .from(libraryPages)
     .where(combineWithVisibleScope(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentPrincipal(),
       recapPageScopeColumns,
       eq(libraryPages.id, recap.pageId),
     ))
@@ -189,7 +189,7 @@ async function projectRecipientRecap(
 export async function getCurrentRecipientOnboardingRecapProjectionByMeeting(
   meetingSessionId: string,
 ): Promise<RecipientRecapProjection | null> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (principal.actorType !== "user" || !principal.userId) return null;
   const [user] = await db.select({ email: users.email })
     .from(users)

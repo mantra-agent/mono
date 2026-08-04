@@ -2,7 +2,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { invitedSubjects, objectGrants, privilegedAccessAudit, tasks, type User } from "@shared/schema";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, type DrizzleTx } from "./db";
 import { normalizeEmailAddress } from "./email-normalization";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 
 export type ResolvedSecuritySubject =
   | { subjectType: "user"; subjectId: string }
@@ -11,11 +11,7 @@ export type ResolvedSecuritySubject =
 const CAPABILITY_RANK = { read: 1, write: 2, admin: 3 } as const;
 
 function requireCreatorUserId(): string {
-  const principal = getCurrentPrincipalOrSystem();
-  if (principal.actorType !== "user" || !principal.userId) {
-    throw Object.assign(new Error("Invited subject creation requires an authenticated user"), { status: 403 });
-  }
-  return principal.userId;
+  return requireCurrentUserPrincipal().userId;
 }
 
 function labelForInvite(displayLabel: string | null | undefined, normalizedEmail: string): string {

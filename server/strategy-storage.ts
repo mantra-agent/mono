@@ -50,7 +50,7 @@ import {
   type InsertStrategyAssumptionLink,
 } from "@shared/schema";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
 const log = createLogger("StrategyStorage");
@@ -86,7 +86,7 @@ async function autoHeal<T>(operation: () => Promise<T>): Promise<T> {
 export class StrategyStorage {
   private async requireVisibleGoal(goalId: string): Promise<Strategy> {
     const [strategy] = await db.select().from(strategies)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), strategyScopeColumns, eq(strategies.id, goalId)))
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), strategyScopeColumns, eq(strategies.id, goalId)))
       .limit(1);
     if (!strategy) throw new Error(`Strategy ${goalId} not found or not visible`);
     return strategy;
@@ -94,7 +94,7 @@ export class StrategyStorage {
 
   private async requireWritableGoal(goalId: string): Promise<Strategy> {
     const [strategy] = await db.select().from(strategies)
-      .where(combineWithWritableScope(getCurrentPrincipalOrSystem(), strategyScopeColumns, eq(strategies.id, goalId)))
+      .where(combineWithWritableScope(requireCurrentUserPrincipal(), strategyScopeColumns, eq(strategies.id, goalId)))
       .limit(1);
     if (!strategy) throw new Error(`Strategy ${goalId} not found or not writable`);
     return strategy;
@@ -132,7 +132,7 @@ export class StrategyStorage {
     return autoHeal(async () => {
       const archived = opts?.archived ?? false;
       const results = await db.select().from(strategies)
-        .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), strategyScopeColumns, eq(strategies.archived, archived)))
+        .where(combineWithVisibleScope(requireCurrentUserPrincipal(), strategyScopeColumns, eq(strategies.archived, archived)))
         .orderBy(desc(strategies.createdAt));
       log.debug(`getStrategies archived=${archived} count=${results.length}`);
       return results;
@@ -142,7 +142,7 @@ export class StrategyStorage {
   async getAllStrategies(): Promise<Strategy[]> {
     return autoHeal(async () => {
       const results = await db.select().from(strategies)
-        .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), strategyScopeColumns))
+        .where(combineWithVisibleScope(requireCurrentUserPrincipal(), strategyScopeColumns))
         .orderBy(desc(strategies.createdAt));
       log.debug(`getAllStrategies count=${results.length}`);
       return results;
@@ -152,7 +152,7 @@ export class StrategyStorage {
   async getStrategy(id: string): Promise<Strategy | undefined> {
     return autoHeal(async () => {
       const [strategy] = await db.select().from(strategies)
-        .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), strategyScopeColumns, eq(strategies.id, id)));
+        .where(combineWithVisibleScope(requireCurrentUserPrincipal(), strategyScopeColumns, eq(strategies.id, id)));
       log.debug(`getStrategy id=${id} found=${!!strategy}`);
       return strategy;
     });
@@ -162,7 +162,7 @@ export class StrategyStorage {
     return autoHeal(async () => {
       const [strategy] = await db.insert(strategies).values({
         ...data,
-        ...ownedInsertValues(getCurrentPrincipalOrSystem(), strategyScopeColumns),
+        ...ownedInsertValues(requireCurrentUserPrincipal(), strategyScopeColumns),
       }).returning();
       log.debug(`createStrategy id=${strategy.id} title="${strategy.title}"`);
       return strategy;
@@ -172,7 +172,7 @@ export class StrategyStorage {
   async updateStrategy(id: string, updates: Partial<InsertStrategy>): Promise<Strategy | undefined> {
     return autoHeal(async () => {
       const [strategy] = await db.update(strategies).set({ ...updates, updatedAt: new Date() })
-        .where(combineWithWritableScope(getCurrentPrincipalOrSystem(), strategyScopeColumns, eq(strategies.id, id)))
+        .where(combineWithWritableScope(requireCurrentUserPrincipal(), strategyScopeColumns, eq(strategies.id, id)))
         .returning();
       log.debug(`updateStrategy id=${id} found=${!!strategy} fields=${Object.keys(updates).join(",")}`);
       return strategy;
@@ -182,7 +182,7 @@ export class StrategyStorage {
   async deleteStrategy(id: string): Promise<boolean> {
     return autoHeal(async () => {
       const result = await db.delete(strategies)
-        .where(combineWithWritableScope(getCurrentPrincipalOrSystem(), strategyScopeColumns, eq(strategies.id, id)))
+        .where(combineWithWritableScope(requireCurrentUserPrincipal(), strategyScopeColumns, eq(strategies.id, id)))
         .returning();
       log.debug(`deleteStrategy id=${id} deleted=${result.length > 0}`);
       return result.length > 0;

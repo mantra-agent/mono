@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { db } from "../db";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { getProviderCredential } from "../provider-credential-store";
 import { getBranchHead } from "../integrations/github-pr";
 import { combineWithVisibleScope } from "../scoped-storage";
@@ -36,15 +36,15 @@ const workflowRunScopeColumns = { scope: workflowRuns.scope, ownerUserId: workfl
 const workflowAttemptScopeColumns = { scope: workflowStageAttempts.scope, ownerUserId: workflowStageAttempts.ownerUserId, accountId: workflowStageAttempts.accountId };
 
 function visibleProviderConnection(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), providerConnectionScopeColumns, predicate);
+  return combineWithVisibleScope(requireCurrentPrincipal(), providerConnectionScopeColumns, predicate);
 }
 
 function visibleWorkflowRun(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), workflowRunScopeColumns, predicate);
+  return combineWithVisibleScope(requireCurrentPrincipal(), workflowRunScopeColumns, predicate);
 }
 
 function visibleWorkflowAttempt(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), workflowAttemptScopeColumns, predicate);
+  return combineWithVisibleScope(requireCurrentPrincipal(), workflowAttemptScopeColumns, predicate);
 }
 
 function insertValues(environmentId: number, input: UpsertBuildLifecycleConfig) {

@@ -2,7 +2,7 @@ import { abortTrace } from "../../abort-trace";
 import { pool as dbPool } from "../../db";
 import { chatStorage } from "./storage";
 import { createLogger } from "../../log";
-import { getCurrentPrincipalOrSystem } from "../../principal-context";
+import { requireCurrentPrincipal } from "../../principal-context";
 
 const log = createLogger("chat-abort-defer");
 
@@ -43,7 +43,7 @@ export function deferStatusSaved(sessionId: string, routeStartAt: number): void 
     },
   );
 
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   void runSqlBackstop(
     sessionId,
     routeStartAt,

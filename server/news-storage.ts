@@ -18,7 +18,7 @@ import {
   type RecentSignalDigestEntry,
 } from "@shared/schema";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
 const log = createLogger("SignalStorage");
@@ -35,13 +35,13 @@ function isInvalidXGrokStorySignal(data: Pick<InsertSignalItem, "sourceType" | "
     && data.url.startsWith("https://x.com/i/articles/");
 }
 
-function visibleSources(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), sourceScopeColumns, predicate); }
-function writableSources(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), sourceScopeColumns, predicate); }
-function visibleItems(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), itemScopeColumns, predicate); }
-function writableItems(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), itemScopeColumns, predicate); }
-function visibleScans(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), scanScopeColumns, predicate); }
-function writableScans(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), scanScopeColumns, predicate); }
-function visibleSourceDiagnostics(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), sourceDiagnosticScopeColumns, predicate); }
+function visibleSources(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentUserPrincipal(), sourceScopeColumns, predicate); }
+function writableSources(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentUserPrincipal(), sourceScopeColumns, predicate); }
+function visibleItems(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentUserPrincipal(), itemScopeColumns, predicate); }
+function writableItems(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentUserPrincipal(), itemScopeColumns, predicate); }
+function visibleScans(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentUserPrincipal(), scanScopeColumns, predicate); }
+function writableScans(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentUserPrincipal(), scanScopeColumns, predicate); }
+function visibleSourceDiagnostics(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentUserPrincipal(), sourceDiagnosticScopeColumns, predicate); }
 
 function normalizeSignalItemSourceTypes(sourceType: string): string[] {
   switch (sourceType) {
@@ -113,7 +113,7 @@ export class SignalStorage {
 
   async addSource(data: InsertSignalSource): Promise<SignalSource> {
     return autoHeal(async () => {
-      const [row] = await db.insert(signalSources).values({ ...data, ...ownedInsertValues(getCurrentPrincipalOrSystem(), sourceScopeColumns) }).returning();
+      const [row] = await db.insert(signalSources).values({ ...data, ...ownedInsertValues(requireCurrentUserPrincipal(), sourceScopeColumns) }).returning();
       log.debug(`addSource type=${row.sourceType} value="${row.value}" id=${row.id}`);
       return row;
     });
@@ -306,7 +306,7 @@ export class SignalStorage {
 
       // Try insert, on fingerprint conflict do nothing
       const result = await db.insert(signalItems)
-        .values({ ...normalizedData, ...ownedInsertValues(getCurrentPrincipalOrSystem(), itemScopeColumns) })
+        .values({ ...normalizedData, ...ownedInsertValues(requireCurrentUserPrincipal(), itemScopeColumns) })
         .onConflictDoNothing({ target: signalItems.fingerprint })
         .returning();
       if (result.length > 0) {
@@ -576,7 +576,7 @@ export class SignalStorage {
   // ── Scan Runs ──────────────────────────────────────────────────────
   async startScanRun(): Promise<ScanRun> {
     return autoHeal(async () => {
-      const [row] = await db.insert(scanRuns).values(ownedInsertValues(getCurrentPrincipalOrSystem(), scanScopeColumns)).returning();
+      const [row] = await db.insert(scanRuns).values(ownedInsertValues(requireCurrentUserPrincipal(), scanScopeColumns)).returning();
       log.debug(`startScanRun id=${row.id}`);
       return row;
     });
@@ -614,7 +614,7 @@ export class SignalStorage {
     await autoHeal(async () => {
       await db.insert(signalSourceScanDiagnostics).values(rows.map(row => ({
         ...row,
-        ...ownedInsertValues(getCurrentPrincipalOrSystem(), sourceDiagnosticScopeColumns),
+        ...ownedInsertValues(requireCurrentUserPrincipal(), sourceDiagnosticScopeColumns),
       })));
       log.debug(`saveSourceScanDiagnostics rows=${rows.length}`);
     });
@@ -690,7 +690,7 @@ export class SignalStorage {
 
         const [row] = await tx
           .insert(scanRuns)
-          .values(ownedInsertValues(getCurrentPrincipalOrSystem(), scanScopeColumns))
+          .values(ownedInsertValues(requireCurrentUserPrincipal(), scanScopeColumns))
           .returning();
         log.debug(`atomicClaimScanSlot: claimed slot id=${row.id}`);
         return row;
@@ -716,7 +716,7 @@ export class SignalStorage {
       const existingChX = await db.select().from(signalSources)
         .where(visibleSources(eq(signalSources.sourceType, "channel_x"))).limit(1);
       if (existingChX.length === 0) {
-        await db.insert(signalSources).values({ sourceType: "channel_x", value: "X Search", enabled: true, ...ownedInsertValues(getCurrentPrincipalOrSystem(), sourceScopeColumns) });
+        await db.insert(signalSources).values({ sourceType: "channel_x", value: "X Search", enabled: true, ...ownedInsertValues(requireCurrentUserPrincipal(), sourceScopeColumns) });
         log.debug("migrateChannelsAndTopics: created channel_x");
       }
 
@@ -724,7 +724,7 @@ export class SignalStorage {
       const existingChWeb = await db.select().from(signalSources)
         .where(visibleSources(eq(signalSources.sourceType, "channel_web"))).limit(1);
       if (existingChWeb.length === 0) {
-        await db.insert(signalSources).values({ sourceType: "channel_web", value: "Web Search", enabled: true, ...ownedInsertValues(getCurrentPrincipalOrSystem(), sourceScopeColumns) });
+        await db.insert(signalSources).values({ sourceType: "channel_web", value: "Web Search", enabled: true, ...ownedInsertValues(requireCurrentUserPrincipal(), sourceScopeColumns) });
         log.debug("migrateChannelsAndTopics: created channel_web");
       }
 

@@ -11,7 +11,21 @@ export function getCurrentPrincipal(): Principal | null {
   return principalALS.getStore() ?? null;
 }
 
-/** Missing context fails closed. Real system jobs must enter with a named system principal. */
+/** Fail closed when ALS has no principal. Prefer requireCurrentUserPrincipal for user-owned data. */
+export function requireCurrentPrincipal(): Principal {
+  const principal = getCurrentPrincipal();
+  if (!principal) {
+    throw new Error("Principal context required");
+  }
+  return principal;
+}
+
+/**
+ * @deprecated Compatibility alias — do not add new call sites. Prefer
+ * requireCurrentUserPrincipal, requireCurrentPrincipal, or explicit
+ * runWithPrincipal(createNamedSystemPrincipal(...)) at job entry.
+ * Missing context fails closed via a permissionless service principal.
+ */
 export function getCurrentPrincipalOrSystem(): Principal {
   return getCurrentPrincipal() ?? createServicePrincipal([], []);
 }

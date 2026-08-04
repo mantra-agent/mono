@@ -2,7 +2,7 @@ import { createLogger } from "./log";
 import { ACTIVITY_FRAMING } from "./job-profiles";
 import type { IndexData, IndexSection } from "@shared/models/indexed-content";
 import { and, eq } from "drizzle-orm";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithSensitiveVisible, sensitiveOwnershipValues } from "./sensitive-scope";
 import type { ObjectAclPolicy } from "./object_storage/objectAcl";
 
@@ -70,7 +70,7 @@ export async function persistToObjectStorage(
     const key = vaultObjectKeyAuto(category, filename);
     const buffer = Buffer.from(content, "utf-8");
     await storageBackend.putObject(key, buffer, { contentType: "text/plain; charset=utf-8" });
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     await setObjectAclPolicy(key, privateVaultAclPolicy({
       ownerUserId: principal.userId,
       accountId: principal.accountId,
@@ -458,7 +458,7 @@ export async function readVisibleIndexedContent(options: {
   const { objectStorageService } = await import("./object_storage");
   const { getObjectAclPolicy, setObjectAclPolicy } = await import("./object_storage/objectAcl");
   const { ObjectPermission } = await import("./object_storage/objectAcl");
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const cleanPath = row.objectStoragePath.startsWith("/objects/")
     ? row.objectStoragePath
     : `/objects/${row.objectStoragePath}`;
@@ -563,7 +563,7 @@ async function persistFileToObjectStorage(filePath: string, category: string): P
     // Stream the file directly from disk so we don't load it into a Buffer.
     const stream = fs.createReadStream(filePath);
     await storageBackend.putObject(key, stream, { contentType: "text/plain; charset=utf-8" });
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     await setObjectAclPolicy(key, privateVaultAclPolicy({
       ownerUserId: principal.userId,
       accountId: principal.accountId,

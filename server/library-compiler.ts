@@ -12,7 +12,7 @@ import {
 import { createLogger } from "./log";
 import { chatCompletion } from "./model-client";
 import type { Principal } from "./principal";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -331,7 +331,7 @@ async function linkPages(sourcePageId: string, targetPageId: string, principal: 
 
 export async function compileLibraryPageToMantraWiki(
   pageIdOrSlug: string,
-  principal: Principal = getCurrentPrincipalOrSystem(),
+  principal: Principal = requireCurrentUserPrincipal(),
 ): Promise<LibraryCompileResult> {
   const started = Date.now();
   const vault = await ensureMantraLibraryVault(principal);
@@ -434,7 +434,7 @@ export async function compileLibraryPageToMantraWiki(
 
 export async function queryMantraLibraryIndex(
   query: string,
-  principal: Principal = getCurrentPrincipalOrSystem(),
+  principal: Principal = requireCurrentUserPrincipal(),
 ): Promise<LibraryIndexQueryResult> {
   const vault = await ensureMantraLibraryVault(principal);
   const [indexPage] = await db.select().from(libraryPages).where(visible(principal, eq(libraryPages.id, vault.indexPageId))).limit(1);

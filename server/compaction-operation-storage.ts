@@ -12,7 +12,7 @@ import {
   BOOT_ID,
   db,
 } from "./db";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import type { CompactionSnapshot } from "./compaction-snapshot";
 import { createLogger } from "./log";
 
@@ -31,10 +31,7 @@ const ACTIVE_STATUSES: CompactionOperationStatus[] = [
 // Operation queries always combine owner and account identity.
 
 function ownerIdentity(): { ownerUserId: string; accountId: string; vaultId: string | null } {
-  const principal = getCurrentPrincipalOrSystem();
-  if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
-    throw new Error("Compaction requires an explicit user and account principal");
-  }
+  const principal = requireCurrentUserPrincipal();
   return {
     ownerUserId: principal.userId,
     accountId: principal.accountId,

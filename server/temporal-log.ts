@@ -4,13 +4,13 @@ import { getTimezone } from "./timezone";
 import { sanitizeSummary } from "./utils/sanitize-summary";
 import { userDateStr, userNoon } from "./utils/user-time";
 import { createLogger } from "./log";
-import { getCurrentPrincipal, getCurrentPrincipalOrSystem } from "./principal-context";
+import { getCurrentPrincipal, requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 
 const log = createLogger("TemporalLog");
 async function visibleLibraryPredicate(predicate: import("drizzle-orm").SQL): Promise<import("drizzle-orm").SQL> {
   const { libraryPages } = await import("@shared/models/info");
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), {
+  return combineWithVisibleScope(requireCurrentPrincipal(), {
     scope: libraryPages.scope,
     ownerUserId: libraryPages.ownerUserId,
     accountId: libraryPages.accountId,

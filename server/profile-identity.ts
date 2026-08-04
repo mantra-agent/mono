@@ -3,7 +3,7 @@ import { agentProfiles, userProfiles, users } from "@shared/schema";
 import { DEFAULT_AGENT_NAME } from "@shared/instance-config";
 import { db, withQueryAttributionAsync } from "./db";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { getCurrentPrincipal } from "./principal-context";
 import { deriveUserFirstName } from "@shared/identity-name";
 
 const log = createLogger("ProfileIdentity");
@@ -31,8 +31,8 @@ export function defaultProfileIdentity(): ProfileIdentity {
 
 /** Resolve names from the current user's canonical profile rows. */
 export async function resolveCurrentProfileIdentity(): Promise<ProfileIdentity> {
-  const principal = getCurrentPrincipalOrSystem();
-  if (!principal.userId) {
+  const principal = getCurrentPrincipal();
+  if (!principal?.userId) {
     return defaultProfileIdentity();
   }
 

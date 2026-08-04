@@ -7,7 +7,7 @@ import { createLogger } from "./log";
 import { getInstanceNameLower } from "@shared/instance-config";
 import { TTLCache } from "./utils/ttl-cache";
 import { eventBus } from "./event-bus";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import type { Thought } from "@shared/schema";
 
@@ -23,7 +23,7 @@ const thoughtScopeColumns = {
 };
 
 function principalCacheKey(): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
 }
 
@@ -69,7 +69,7 @@ export async function saveThought(text: string, context?: string, type?: string)
       context: context || null,
       type: type || null,
       occurredAt: new Date(),
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), thoughtScopeColumns),
+      ...ownedInsertValues(requireCurrentUserPrincipal(), thoughtScopeColumns),
     }).returning();
 
     thoughtsCache.invalidateAll();
@@ -96,7 +96,7 @@ export async function getAllThoughts(): Promise<Thought[]> {
   await ensureThoughtsTable();
   return thoughtsCache.getOrFetch(`all:${principalCacheKey()}`, async () => {
     return db.select().from(thoughts)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), thoughtScopeColumns))
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), thoughtScopeColumns))
       .orderBy(desc(thoughts.occurredAt));
   });
 }
@@ -106,7 +106,7 @@ export async function getRecentThoughts(maxAgeMs: number = ACTIVE_MAX_AGE_MS, li
   return thoughtsCache.getOrFetch(`recent:${principalCacheKey()}:${maxAgeMs}:${limit}`, async () => {
     const cutoff = new Date(Date.now() - maxAgeMs);
     return db.select().from(thoughts)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), thoughtScopeColumns, gte(thoughts.occurredAt, cutoff)))
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), thoughtScopeColumns, gte(thoughts.occurredAt, cutoff)))
       .orderBy(desc(thoughts.occurredAt))
       .limit(limit);
   });
@@ -119,14 +119,14 @@ export async function getActiveThoughtCount(): Promise<number> {
   return activeCountCache.getOrFetch(`count:${principalCacheKey()}`, async () => {
     const cutoff = new Date(Date.now() - ACTIVE_MAX_AGE_MS);
     const [result] = await db.select({ value: count() }).from(thoughts)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), thoughtScopeColumns, gte(thoughts.occurredAt, cutoff)));
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), thoughtScopeColumns, gte(thoughts.occurredAt, cutoff)));
     return result?.value ?? 0;
   });
 }
 
 export async function deleteThought(id: string): Promise<boolean> {
   await ensureThoughtsTable();
-  const result = await db.delete(thoughts).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), thoughtScopeColumns, eq(thoughts.id, id))).returning({ id: thoughts.id });
+  const result = await db.delete(thoughts).where(combineWithWritableScope(requireCurrentUserPrincipal(), thoughtScopeColumns, eq(thoughts.id, id))).returning({ id: thoughts.id });
   if (result.length > 0) {
     thoughtsCache.invalidateAll();
     activeCountCache.invalidateAll();
@@ -139,7 +139,7 @@ export async function deleteThought(id: string): Promise<boolean> {
 
 export async function deleteAllThoughts(): Promise<number> {
   await ensureThoughtsTable();
-  const result = await db.delete(thoughts).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), thoughtScopeColumns)).returning({ id: thoughts.id });
+  const result = await db.delete(thoughts).where(combineWithWritableScope(requireCurrentUserPrincipal(), thoughtScopeColumns)).returning({ id: thoughts.id });
   thoughtsCache.invalidateAll();
   activeCountCache.invalidateAll();
   eventBus.publish({ category: "system", event: "data:thoughts_changed", payload: { source: "thoughts", action: "delete_all" } });
@@ -149,7 +149,7 @@ export async function deleteAllThoughts(): Promise<number> {
 
 export async function getThoughtById(id: string): Promise<Thought | undefined> {
   await ensureThoughtsTable();
-  const [row] = await db.select().from(thoughts).where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), thoughtScopeColumns, eq(thoughts.id, id))).limit(1);
+  const [row] = await db.select().from(thoughts).where(combineWithVisibleScope(requireCurrentUserPrincipal(), thoughtScopeColumns, eq(thoughts.id, id))).limit(1);
   return row;
 }
 
@@ -185,7 +185,7 @@ export async function getJournalEntriesSince(days: number, tags: string[] = ["jo
   const { libraryPages } = await import("@shared/models/info");
   const cutoff = new Date(Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000);
   const visible = combineWithVisibleScope(
-    getCurrentPrincipalOrSystem(),
+    requireCurrentUserPrincipal(),
     { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId },
     and(
       gte(libraryPages.createdAt, cutoff),

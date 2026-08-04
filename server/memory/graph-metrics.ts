@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { db, withQueryAttributionAsync } from "../db";
 import { eventBus } from "../event-bus";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { combineWithWritableScope } from "../scoped-storage";
 
 const claimAliasScopeColumns = {
@@ -71,7 +71,7 @@ function normalizedEntropy(buckets: number[]): number {
  */
 export async function computeGSI(): Promise<GSIScore> {
   return withQueryAttributionAsync("memory-read", async () => {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (!principal.userId) throw new Error("vNext GSI requires a user principal");
     const [core] = (
       await db.execute(sql`

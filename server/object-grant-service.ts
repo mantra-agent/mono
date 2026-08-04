@@ -3,7 +3,7 @@ import { milestones, objectGrants, privilegedAccessAudit, projects, tasks } from
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, type DrizzleTx } from "./db";
 import { createLogger } from "./log";
 import { combineWithWorkObjectAccess, workObjectKey, type ObjectGrantCapability, type WorkObjectType } from "./object-grant-access";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { resolveInvitedSubjectReferenceInTransaction, type ResolvedSecuritySubject } from "./invited-subject-service";
 import type { Principal } from "./principal";
 
@@ -216,7 +216,7 @@ async function revokeInTransaction(
 
 export class ObjectGrantService {
   async grant(input: GrantObjectAccessInput): Promise<typeof objectGrants.$inferSelect> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     requireGrantActor(principal);
     const result = await db.transaction(async tx => {
       const resolvedSubject = input.subjectType === "invited_subject"
@@ -235,7 +235,7 @@ export class ObjectGrantService {
   }
 
   async revoke(input: RevokeObjectAccessInput): Promise<boolean> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     requireGrantActor(principal);
     const revoked = await db.transaction(async tx => {
       const resolvedSubject = input.subjectType === "invited_subject"
@@ -254,7 +254,7 @@ export class ObjectGrantService {
     next: TaskAssignmentSubject | null,
     origin: { originType: ObjectGrantOriginType; originId?: string | null },
   ): Promise<void> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     requireGrantActor(principal);
     const sameSubject = previous && next &&
       previous.subjectType === next.subjectType &&
@@ -285,7 +285,7 @@ export class ObjectGrantService {
     target: ObjectGrantTarget,
     meetingId: string,
   ): Promise<number> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     requireGrantActor(principal);
     const normalizedMeetingId = normalizeOriginId(meetingId);
     if (!normalizedMeetingId) throw new Error("Meeting provenance requires an origin id");
@@ -317,7 +317,7 @@ export class ObjectGrantService {
   }
 
   async revokeObjectGrantsInTransaction(tx: DrizzleTx, target: ObjectGrantTarget): Promise<number> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "user" && principal.actorType !== "system") {
       throw Object.assign(new Error("Object grant cleanup requires user or system authority"), { status: 403 });
     }

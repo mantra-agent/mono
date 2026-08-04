@@ -6,7 +6,7 @@ import type {
   ProjectStatus, PriorityLevel,
 } from "@shared/models/work";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import { combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import {
   hasAdminOnlyMilestoneChanges,
@@ -66,7 +66,7 @@ const taskScopeColumns = {
 };
 
 function resolveCreationVaultId(explicitVaultId?: string): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
     throw new Error("Project creation requires an explicit user principal");
   }
@@ -137,7 +137,7 @@ export class FileProjectStorage {
     const byProject = new Map<number, Milestone[]>();
     if (projectIds.length === 0) return byProject;
 
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const rows = await db.select().from(milestoneRows).where(
       principal.actorType === "system"
         ? combineWithProjectDerivedWorkAccess(
@@ -166,7 +166,7 @@ export class FileProjectStorage {
   async getMilestone(projectId: number, milestoneId: number): Promise<Milestone | undefined> {
     const rows = await db.select().from(milestoneRows).where(
       combineWithProjectDerivedWorkAccess(
-        getCurrentPrincipalOrSystem(),
+        requireCurrentUserPrincipal(),
         milestoneScopeColumns,
         "milestone",
         "read",
@@ -177,7 +177,7 @@ export class FileProjectStorage {
   }
 
   async getProjects(options?: { status?: string }): Promise<Project[]> {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       const conditions = [];
       if (options?.status) {
         const statusVal = options.status === "planned" ? "planning" : options.status;
@@ -220,7 +220,7 @@ export class FileProjectStorage {
   }
 
   async getProject(id: number): Promise<Project | undefined> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const rows = await db.select().from(projects).where(
       combineWithProjectAccess(principal, "read", eq(projects.id, id)),
     ).limit(1);
@@ -247,7 +247,7 @@ export class FileProjectStorage {
   }
 
   async createProject(input: InsertProject, provenance?: WorkCreationProvenance): Promise<Project> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("Project creation requires an explicit user principal");
     }
@@ -334,7 +334,7 @@ export class FileProjectStorage {
   }
 
   async replaceVaultMemberships(projectId: number, vaultIds: string[]): Promise<Project> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("Project Vault membership requires an authenticated user account");
     }
@@ -436,7 +436,7 @@ export class FileProjectStorage {
     if ((updates as Partial<InsertProject> & { vaultIds?: string[] }).vaultIds !== undefined) {
       throw new Error("Update Project Vaults through replaceVaultMemberships");
     }
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const updated = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(id));
       const required: ObjectGrantCapability = hasAdminOnlyProjectChanges(updates as Record<string, unknown>) ? "admin" : "write";
@@ -547,7 +547,7 @@ export class FileProjectStorage {
     if (input.status && !["planned", "active", "completed"].includes(input.status)) {
       throw new Error(`Invalid milestone status: ${input.status}`);
     }
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const creationProvenance = normalizeCreationProvenance(provenance);
     const newId = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
@@ -605,7 +605,7 @@ export class FileProjectStorage {
     if (updates.status && !["planned", "active", "completed"].includes(updates.status)) {
       throw new Error(`Invalid milestone status: ${updates.status}`);
     }
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const changed = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
       const required: ObjectGrantCapability = hasAdminOnlyMilestoneChanges(updates as Record<string, unknown>) ? "admin" : "write";
@@ -652,7 +652,7 @@ export class FileProjectStorage {
   }
 
   async removeMilestone(projectId: number, milestoneId: number): Promise<Project | undefined> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const removed = await db.transaction(async tx => {
       await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.PROJECT_MILESTONES, String(projectId));
       await objectGrantService.revokeObjectGrantsInTransaction(tx, {
@@ -697,7 +697,7 @@ export class FileProjectStorage {
       pages: pages as unknown as Record<string, unknown>,
       updatedAt: new Date(),
     }).where(
-      combineWithProjectAccess(getCurrentPrincipalOrSystem(), "write", eq(projects.id, projectId))
+      combineWithProjectAccess(requireCurrentUserPrincipal(), "write", eq(projects.id, projectId))
     );
 
     this.invalidateCache();
@@ -717,7 +717,7 @@ export class FileProjectStorage {
       files: files as unknown as Record<string, unknown>,
       updatedAt: new Date(),
     }).where(
-      combineWithProjectAccess(getCurrentPrincipalOrSystem(), "write", eq(projects.id, projectId))
+      combineWithProjectAccess(requireCurrentUserPrincipal(), "write", eq(projects.id, projectId))
     );
 
     this.invalidateCache();
@@ -743,7 +743,7 @@ export class FileProjectStorage {
       files: files as unknown as Record<string, unknown>,
       updatedAt: new Date(),
     }).where(
-      combineWithProjectAccess(getCurrentPrincipalOrSystem(), "write", eq(projects.id, projectId))
+      combineWithProjectAccess(requireCurrentUserPrincipal(), "write", eq(projects.id, projectId))
     );
 
     this.invalidateCache();
@@ -752,7 +752,7 @@ export class FileProjectStorage {
   }
 
   async deleteProject(id: number): Promise<boolean> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const deleted = await db.transaction(async tx => {
       const [project] = await tx.select({ id: projects.id }).from(projects).where(
         combineWithProjectAccess(principal, "admin", eq(projects.id, id)),

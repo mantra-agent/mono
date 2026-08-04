@@ -13,7 +13,7 @@ import { libraryPages } from "@shared/models/info";
 import { createLogger } from "./log";
 import { TTLCache } from "./utils/ttl-cache";
 import { eventBus } from "./event-bus";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "./principal-context";
+import { requireCurrentPrincipal, runWithPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
 import { normalizeMeetingSpeakerPolicy, type MeetingSpeakerPolicy } from "@shared/models/chat";
@@ -25,7 +25,7 @@ const calendarMetadataOwnerColumns = { ownerUserId: calendarEventMetadata.ownerU
 const calendarPeopleOwnerColumns = { ownerUserId: calendarEventPeople.ownerUserId, principalAccountId: calendarEventPeople.principalAccountId, vaultId: calendarEventPeople.vaultId };
 const calendarArtifactOwnerColumns = { ownerUserId: calendarEventArtifacts.ownerUserId, principalAccountId: calendarEventArtifacts.principalAccountId, vaultId: calendarEventArtifacts.vaultId };
 function principalCacheKey(): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
 }
 
@@ -452,7 +452,7 @@ export async function linkArtifact(
   }
   const metadata = await getWritableMetadataById(metadataId);
   if (!metadata) throw new Error(`Calendar event metadata not found or not writable: ${metadataId}`);
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const meetingPrincipal = metadata.vaultId
     ? {
         ...principal,
@@ -536,7 +536,7 @@ const libraryScopeColumns = {
 };
 
 export async function getVisibleLibraryPage(idOrSlug: string): Promise<MeetingAgendaPage | null> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const baseSelect = {
     id: libraryPages.id,
     title: libraryPages.title,
@@ -683,7 +683,7 @@ export async function setMeetingAgendaPage(
   const currentMetadata = await getWritableMetadataById(metadata.id);
   if (currentMetadata?.vaultId) {
     const ownership = await import("./meeting/vault-ownership");
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const meetingPrincipal = {
       ...principal,
       activeVaultId: currentMetadata.vaultId,
@@ -817,7 +817,7 @@ export async function autoLogMeetingInteractions(
       // Cross-reference opportunities where this person is champion or contact
       let opportunityContext = "";
       try {
-        const principal = getCurrentPrincipalOrSystem();
+        const principal = requireCurrentPrincipal();
         if (!principal.userId) {
           log.warn(`autoLogMeetingInteractions: no userId on principal (actorType=${principal.actorType}), skipping opportunity cross-reference for person=${lp.personId}`);
         }

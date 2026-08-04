@@ -10,7 +10,7 @@ import {
   type MemoryVnextStrengthEvent,
 } from "@shared/schema";
 import { db } from "../db";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import { combineWithVisibleScope } from "../scoped-storage";
 
 const DIMENSION_DERIVATION_VERSION = "vnext-orthogonal-v1";
@@ -266,7 +266,7 @@ export function deriveTemporalApplicability(claim: MemoryVnextClaim, evaluatedAt
 }
 
 async function deriveStrength(claimId: number): Promise<VnextClaimDimensions["strength"]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const visibility = combineWithVisibleScope(
     principal,
     strengthEventScopeColumns,
@@ -326,7 +326,7 @@ export async function deriveVnextStrengthValues(claimIds: number[]): Promise<Map
     value: sql<number>`LEAST(1, GREATEST(0, COALESCE(sum(${memoryVnextStrengthEvents.weight} * power(0.5, extract(epoch from (CURRENT_TIMESTAMP - ${memoryVnextStrengthEvents.occurredAt})) / ${STRENGTH_HALF_LIFE_DAYS * 86_400})), 0)))::real`,
   }).from(memoryVnextStrengthEvents)
     .where(combineWithVisibleScope(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentUserPrincipal(),
       strengthEventScopeColumns,
       inArray(memoryVnextStrengthEvents.claimId, uniqueIds),
     ))

@@ -14,7 +14,7 @@ import {
 } from "../db";
 import { createLogger } from "../log";
 import { createUserPrincipalFromUser, type Principal } from "../principal";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
+import { requireCurrentPrincipal, runWithPrincipal } from "../principal-context";
 import { combineWithSensitiveWritable } from "../sensitive-scope";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { syncContentFields } from "@shared/markdown-tiptap";
@@ -177,7 +177,7 @@ async function ensureOrganizationalPage(input: {
   });
 }
 
-export async function ensureMeetingsRoot(vaultId: string, principal = getCurrentPrincipalOrSystem()) {
+export async function ensureMeetingsRoot(vaultId: string, principal = requireCurrentPrincipal()) {
   const scopedPrincipal = principalForVault(principal, vaultId);
   return runWithPrincipal(scopedPrincipal, async () => {
     await requireDestinationVault(scopedPrincipal, vaultId);
@@ -307,7 +307,7 @@ export async function ensureMeetingLibraryNode(input: {
   title: string;
   principal?: Principal;
 }) {
-  const principal = input.principal ?? getCurrentPrincipalOrSystem();
+  const principal = input.principal ?? requireCurrentPrincipal();
   const root = await ensureMeetingsRoot(input.vaultId, principal);
   const id = meetingNodePageId(input.meetingKey);
   return ensureOrganizationalPage({
@@ -328,7 +328,7 @@ export async function organizeMeetingLibraryPage(input: {
   principal?: Principal;
 }): Promise<void> {
   if (input.pageId === input.nodePageId) return;
-  const principal = principalForVault(input.principal ?? getCurrentPrincipalOrSystem(), input.vaultId);
+  const principal = principalForVault(input.principal ?? requireCurrentPrincipal(), input.vaultId);
   await runWithPrincipal(principal, async () => {
     const [page] = await db
       .select({ id: libraryPages.id, parentId: libraryPages.parentId, vaultId: libraryPages.vaultId })
@@ -420,7 +420,7 @@ export async function moveCalendarMeetingAggregate(input: {
   event: CalendarEvent;
   destinationVaultId: string;
 }): Promise<{ metadata: typeof calendarEventMetadata.$inferSelect; nodePageId: string; sessionId: string | null }> {
-  const outer = getCurrentPrincipalOrSystem();
+  const outer = requireCurrentPrincipal();
   if (outer.actorType !== "user" || !outer.userId || !outer.accountId) {
     throw clientError(401, "A user principal is required to move a meeting");
   }

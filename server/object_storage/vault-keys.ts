@@ -7,7 +7,7 @@
  * land in vault-partitioned paths.
  */
 import type { Principal } from "../principal";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { storageBackend, PRIVATE_PREFIX, type ObjectMetadata } from "./s3-backend";
 import { createLogger } from "../log";
 
@@ -50,7 +50,7 @@ export function vaultObjectKeyFromPrincipal(
  * Convenience wrapper for code paths that don't have the principal in scope.
  */
 export function vaultObjectKeyAuto(category: string, filename: string): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   return vaultObjectKeyFromPrincipal(principal, category, filename);
 }
 

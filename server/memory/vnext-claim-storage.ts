@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import { getPostgresErrorDetails } from "../postgres-errors";
 import {
   combineWithVisibleScope,
@@ -310,7 +310,7 @@ function clampVnextClaimCap(value: number): number {
 }
 
 function computeContentHash(content: string): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const ownerKey = principal.userId
     ? `user:${principal.userId}`
     : principal.accountId
@@ -425,7 +425,7 @@ export async function executeVnextClaimSemanticSearch(
   limit: number,
 ): Promise<Array<{ row: MemoryVnextClaim; similarity: number }>> {
   const embeddingStr = vectorLiteral(queryEmbedding);
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const visibilityCondition = principal.actorType === "system"
     ? sql``
     : sql`AND (scope = 'global' OR owner_user_id = ${principal.userId} OR account_id = ${principal.accountId})`;
@@ -459,7 +459,7 @@ export async function executeVnextClaimTitleTwinSearch(
   queryEmbedding: number[],
 ): Promise<{ row: MemoryVnextClaim; similarity: number } | undefined> {
   const embeddingStr = vectorLiteral(queryEmbedding);
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const visibilityCondition = principal.actorType === "system"
     ? sql``
     : sql`AND (scope = 'global' OR owner_user_id = ${principal.userId} OR account_id = ${principal.accountId})`;
@@ -488,7 +488,7 @@ export async function executeVnextClaimTitleTwinSearch(
 export class MemoryVnextClaimStorage {
 
   async backfillOwnerScopedContentHashes(limit = 250): Promise<number> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "system") {
       throw new Error("vNext content-hash backfill requires a system principal");
     }
@@ -542,7 +542,7 @@ export class MemoryVnextClaimStorage {
   }
 
   async createClaim(input: CreateVnextClaimInput): Promise<MemoryVnextClaim> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const contentHash = computeContentHash(input.claim.content);
     const createdAt = input.createdAt ?? new Date();
     const writeBudget = input.writeBudget;
@@ -654,7 +654,7 @@ export class MemoryVnextClaimStorage {
    * user's nuke can never touch another user's claims.
    */
   async nukeAllClaims(): Promise<{ deleted: number }> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (!principal.userId) {
       throw new Error("vNext nuke rejected: a user principal is required");
     }
@@ -670,7 +670,7 @@ export class MemoryVnextClaimStorage {
     const normalizedStages = Array.from(new Set(stages.map((stage) => normalizeLifecycleStage(stage))));
     if (normalizedStages.length === 0) return [];
     const boundedLimit = Math.min(Math.max(limit, 1), 200);
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const nowIso = new Date().toISOString();
     const selected: VnextLifecycleCandidate[] = [];
     const selectedIds = new Set<number>();
@@ -783,26 +783,26 @@ export class MemoryVnextClaimStorage {
           FROM memory_vnext_claims duplicates
           WHERE duplicates.content_hash = ${memoryVnextClaims.contentHash}
             AND duplicates.id <> ${memoryVnextClaims.id}
-            AND ${combineWithWritableScope(getCurrentPrincipalOrSystem(), duplicateClaimScopeColumns, sql`TRUE`)}
+            AND ${combineWithWritableScope(requireCurrentUserPrincipal(), duplicateClaimScopeColumns, sql`TRUE`)}
         )`,
       })
       .from(memoryVnextClaims)
       .leftJoin(memoryVnextSourceRefs, and(
         eq(memoryVnextSourceRefs.claimId, memoryVnextClaims.id),
-        writableScopePredicate(getCurrentPrincipalOrSystem(), vnextSourceScopeColumns),
+        writableScopePredicate(requireCurrentUserPrincipal(), vnextSourceScopeColumns),
       ))
       .leftJoin(memoryVnextEntityLinks, and(
         eq(memoryVnextEntityLinks.claimId, memoryVnextClaims.id),
-        writableScopePredicate(getCurrentPrincipalOrSystem(), vnextEntityScopeColumns),
+        writableScopePredicate(requireCurrentUserPrincipal(), vnextEntityScopeColumns),
       ))
       .leftJoin(
         memoryVnextClaimLinks,
         and(
           sql`${memoryVnextClaimLinks.fromClaimId} = ${memoryVnextClaims.id} OR ${memoryVnextClaimLinks.toClaimId} = ${memoryVnextClaims.id}`,
-          writableScopePredicate(getCurrentPrincipalOrSystem(), vnextClaimLinkScopeColumns),
+          writableScopePredicate(requireCurrentUserPrincipal(), vnextClaimLinkScopeColumns),
         ),
       )
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextClaimScopeColumns, eq(memoryVnextClaims.id, claimId)))
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), vnextClaimScopeColumns, eq(memoryVnextClaims.id, claimId)))
       .groupBy(memoryVnextClaims.id)
       .limit(1);
 
@@ -822,7 +822,7 @@ export class MemoryVnextClaimStorage {
       .from(memoryVnextClaims)
       .where(
         combineWithVisibleScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           vnextClaimScopeColumns,
           and(eq(memoryVnextClaims.contentHash, claim.contentHash), sql`${memoryVnextClaims.id} <> ${claim.id}`),
         ),
@@ -835,7 +835,7 @@ export class MemoryVnextClaimStorage {
     const [claim] = await db
       .select()
       .from(memoryVnextClaims)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), vnextClaimScopeColumns, eq(memoryVnextClaims.id, id)))
       .limit(1);
     return claim ?? null;
   }
@@ -875,7 +875,7 @@ export class MemoryVnextClaimStorage {
   }
 
   async getCounts(): Promise<VnextClaimCounts> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const claimVisibility = combineWithVisibleScope(principal, vnextClaimScopeColumns);
     const sourceVisibility = combineWithVisibleScope(principal, vnextSourceScopeColumns);
     const entityVisibility = combineWithVisibleScope(principal, vnextEntityScopeColumns);
@@ -924,7 +924,7 @@ export class MemoryVnextClaimStorage {
     return db
       .select()
       .from(memoryVnextSourceRefs)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextSourceScopeColumns, eq(memoryVnextSourceRefs.claimId, claimId)))
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), vnextSourceScopeColumns, eq(memoryVnextSourceRefs.claimId, claimId)))
       .orderBy(desc(memoryVnextSourceRefs.strength), desc(memoryVnextSourceRefs.createdAt));
   }
 
@@ -932,7 +932,7 @@ export class MemoryVnextClaimStorage {
     return db
       .select()
       .from(memoryVnextEntityLinks)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextEntityScopeColumns, eq(memoryVnextEntityLinks.claimId, claimId)))
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), vnextEntityScopeColumns, eq(memoryVnextEntityLinks.claimId, claimId)))
       .orderBy(desc(memoryVnextEntityLinks.createdAt));
   }
 
@@ -942,7 +942,7 @@ export class MemoryVnextClaimStorage {
       .from(memoryVnextClaimLinks)
       .where(
         combineWithVisibleScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           vnextClaimLinkScopeColumns,
           sql`(${memoryVnextClaimLinks.fromClaimId} = ${claimId} OR ${memoryVnextClaimLinks.toClaimId} = ${claimId})`,
         ),
@@ -988,7 +988,7 @@ export class MemoryVnextClaimStorage {
     const uniqueIds = Array.from(new Set(ids.filter((id) => Number.isInteger(id) && id > 0)));
     if (uniqueIds.length === 0) return 0;
 
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const touchedAt = new Date();
     const updated = await db
       .update(memoryVnextClaims)
@@ -1016,7 +1016,7 @@ export class MemoryVnextClaimStorage {
     stage: MemoryVnextLifecycleStage,
     input?: VnextLifecycleTransitionInput,
   ): Promise<MemoryVnextClaim> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const [current] = await db
       .select()
       .from(memoryVnextClaims)
@@ -1080,7 +1080,7 @@ export class MemoryVnextClaimStorage {
   }
 
   async retireClaim(id: number, input: VnextLifecycleTransitionInput): Promise<MemoryVnextClaim> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const [current] = await db
       .select()
       .from(memoryVnextClaims)
@@ -1147,7 +1147,7 @@ export class MemoryVnextClaimStorage {
   }
 
   async markLifecycleSkipped(id: number, input: VnextLifecycleSkipInput): Promise<MemoryVnextClaim | null> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const [current] = await db
       .select()
       .from(memoryVnextClaims)
@@ -1198,7 +1198,7 @@ export class MemoryVnextClaimStorage {
   }
 
   async addSourceRef(claimId: number, input: VnextClaimSourceInput): Promise<MemoryVnextSourceRef | null> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const [claim] = await db
       .select({ id: memoryVnextClaims.id })
       .from(memoryVnextClaims)
@@ -1281,7 +1281,7 @@ export class MemoryVnextClaimStorage {
     entityId: string,
     resolution?: { method: string; matchedIdentity?: string },
   ): Promise<void> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const normalizedEntityType = entityType.trim().toLowerCase();
     const normalizedEntityId = entityId.trim();
     if (!normalizedEntityType || !normalizedEntityId) {
@@ -1335,7 +1335,7 @@ export class MemoryVnextClaimStorage {
   // existing compiled callers migrate to upsertClaimRelationship.
 
   async listBridgeCandidates(limit = 50): Promise<VnextBridgeCandidate[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (!principal.userId) {
       throw new Error("vNext bridge pass requires a user principal");
     }
@@ -1376,7 +1376,7 @@ export class MemoryVnextClaimStorage {
   }
 
   async findBridgeNeighbors(claimId: number, embedding: number[], limit = 25): Promise<VnextBridgeNeighbor[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (!principal.userId) {
       throw new Error("vNext bridge neighbor search requires a user principal");
     }
@@ -1411,7 +1411,7 @@ export class MemoryVnextClaimStorage {
   }
 
   async countActiveClaims(): Promise<number> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (!principal.userId) throw new Error("vNext bridge count requires a user principal");
     const [row] = await db
       .select({ count: sql<number>`count(*)::int` })
@@ -1429,7 +1429,7 @@ export class MemoryVnextClaimStorage {
    * Global templates are excluded and system principals fail closed.
    */
   async listRandomActiveClaims(limit = 8): Promise<MemoryVnextClaim[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (!principal.userId) throw new Error("vNext dream sampling requires a user principal");
     const bounded = Math.min(Math.max(Math.floor(limit), 1), 25);
     return db
@@ -1445,7 +1445,7 @@ export class MemoryVnextClaimStorage {
   }
 
   async listBridgeEdges(): Promise<VnextBridgeEdge[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (!principal.userId) throw new Error("vNext bridge listing requires a user principal");
     return db
       .select({
@@ -1467,7 +1467,7 @@ export class MemoryVnextClaimStorage {
     const deleted = await db
       .delete(memoryVnextClaimLinks)
       .where(combineWithWritableScope(
-        getCurrentPrincipalOrSystem(),
+        requireCurrentUserPrincipal(),
         vnextClaimLinkScopeColumns,
         and(eq(memoryVnextClaimLinks.id, id), eq(memoryVnextClaimLinks.relationship, VNEXT_BRIDGE_RELATIONSHIP)),
       ))
@@ -1488,7 +1488,7 @@ export class MemoryVnextClaimStorage {
         updatedAt: new Date(),
       })
       .where(combineWithWritableScope(
-        getCurrentPrincipalOrSystem(),
+        requireCurrentUserPrincipal(),
         vnextClaimScopeColumns,
         eq(memoryVnextClaims.id, claimId),
       ));
@@ -1501,7 +1501,7 @@ export class MemoryVnextClaimStorage {
     leftSourceKeys: string[],
     rightSourceKeys: string[],
   ): Promise<VnextBridgeMutationResult> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (!principal.userId) {
       throw new Error("vNext bridge mutation requires a user principal");
     }
@@ -1672,7 +1672,7 @@ export class MemoryVnextClaimStorage {
     const [row] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(memoryVnextClaims)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextClaimScopeColumns, predicate));
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), vnextClaimScopeColumns, predicate));
     return Number(row?.count ?? 0);
   }
 
@@ -1685,7 +1685,7 @@ export class MemoryVnextClaimStorage {
     const [countRow] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(memoryVnextClaims)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextClaimScopeColumns, predicate));
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), vnextClaimScopeColumns, predicate));
     return Number(countRow?.count ?? 0) < maxClaims;
   }
 
@@ -1698,7 +1698,7 @@ export class MemoryVnextClaimStorage {
     source: string,
     sourceId: string,
   ): Promise<MemoryVnextClaim[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     return db
       .select()
       .from(memoryVnextClaims)
@@ -1742,7 +1742,7 @@ export class MemoryVnextClaimStorage {
    * prevents a principal from mutating global or another user's claims.
    */
   async backfillMissingActiveEmbeddings(limit = 25): Promise<VnextEmbeddingBackfillResult> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 100));
     const activeMissingEmbedding = and(
       isNull(memoryVnextClaims.embedding),
@@ -1841,7 +1841,7 @@ export class MemoryVnextClaimStorage {
     return db
       .select()
       .from(memoryVnextClaims)
-      .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), vnextClaimScopeColumns, predicate))
+      .where(combineWithVisibleScope(requireCurrentUserPrincipal(), vnextClaimScopeColumns, predicate))
       .orderBy(desc(memoryVnextClaims.createdAt))
       .limit(lim)
       .offset(off);

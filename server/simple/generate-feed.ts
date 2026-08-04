@@ -5,7 +5,7 @@ import { chatCompletion } from "../model-client";
 import { ACTIVITY_FRAMING } from "../job-profiles";
 import { collectSimpleContext, type SimpleContextBundle } from "./collectors";
 import { lintSimpleTitle, validateSimpleFeed } from "./schema";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 
 const log = createLogger("SimpleFeed");
 const feedCache = new Map<string, SimpleFeed>();
@@ -32,7 +32,7 @@ function isCachedFeedCurrent(feed: SimpleFeed): boolean {
 }
 
 function simpleFeedCacheKey(accountId?: string): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const accountKey = accountId || principal.accountId || "__default__";
   const visibleVaultKey = [...principal.visibleVaultIds].sort().join(",") || "no-visible-vaults";
   return `${accountKey}::${visibleVaultKey}`;
@@ -214,9 +214,9 @@ async function enrichSectionsWithPlanArtifacts(
   const { db } = await import("../db");
   const { libraryPages } = await import("@shared/models/info");
   const { eq } = await import("drizzle-orm");
-  const { getCurrentPrincipalOrSystem } = await import("../principal-context");
+  const { requireCurrentUserPrincipal } = await import("../principal-context");
   const { combineWithVisibleScope } = await import("../scoped-storage");
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const libraryScope = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
 
   for (const section of sections) {

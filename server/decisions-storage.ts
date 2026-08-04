@@ -17,7 +17,8 @@ import {
   type DecisionTrafficLight,
 } from "@shared/schema";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
+import type { Principal } from "./principal";
 import { createAddressLink, listAddressLinks, retireAddressLink } from "./life-addressing-storage";
 import { normalizeProtocolAddress, type AddressLink } from "@shared/life-addressing";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
@@ -126,7 +127,7 @@ function decisionAddressLink(decisionId: string, link: AddressLink): DecisionAdd
   };
 }
 
-async function indexDecision(principal: ReturnType<typeof getCurrentPrincipalOrSystem>, decision: Decision): Promise<void> {
+async function indexDecision(principal: Principal, decision: Decision): Promise<void> {
   const { indexDecisionReferences } = await import("./decision-reference-index");
   await indexDecisionReferences(principal, decision);
 }
@@ -134,7 +135,7 @@ async function indexDecision(principal: ReturnType<typeof getCurrentPrincipalOrS
 export class DecisionsStorage {
   private async requireWritableDecision(decisionId: string): Promise<Decision> {
     const [decision] = await db.select().from(decisions)
-      .where(combineWithWritableScope(getCurrentPrincipalOrSystem(), decisionScopeColumns, eq(decisions.id, decisionId)))
+      .where(combineWithWritableScope(requireCurrentUserPrincipal(), decisionScopeColumns, eq(decisions.id, decisionId)))
       .limit(1);
     if (!decision) throw new Error(`Decision ${decisionId} not found or not writable`);
     return decision;
@@ -143,8 +144,8 @@ export class DecisionsStorage {
   async listDecisions(opts?: { status?: DecisionStatus }): Promise<Decision[]> {
     return autoHeal(async () => {
       const rows = opts?.status
-        ? await db.select().from(decisions).where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), decisionScopeColumns, eq(decisions.status, opts.status))).orderBy(desc(decisions.updatedAt))
-        : await db.select().from(decisions).where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), decisionScopeColumns)).orderBy(desc(decisions.updatedAt));
+        ? await db.select().from(decisions).where(combineWithVisibleScope(requireCurrentUserPrincipal(), decisionScopeColumns, eq(decisions.status, opts.status))).orderBy(desc(decisions.updatedAt))
+        : await db.select().from(decisions).where(combineWithVisibleScope(requireCurrentUserPrincipal(), decisionScopeColumns)).orderBy(desc(decisions.updatedAt));
       log.debug(`listDecisions status=${opts?.status ?? "all"} count=${rows.length}`);
       return rows;
     });
@@ -152,14 +153,14 @@ export class DecisionsStorage {
 
   async getDecision(id: string): Promise<Decision | undefined> {
     return autoHeal(async () => {
-      const [row] = await db.select().from(decisions).where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), decisionScopeColumns, eq(decisions.id, id)));
+      const [row] = await db.select().from(decisions).where(combineWithVisibleScope(requireCurrentUserPrincipal(), decisionScopeColumns, eq(decisions.id, id)));
       return row;
     });
   }
 
   async createDecision(data: InsertDecision): Promise<Decision> {
     return autoHeal(async () => {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
         const [row] = await tx.insert(decisions).values({ ...data, ...ownedInsertValues(principal, decisionScopeColumns) }).returning();
         await indexDecision(principal, row);
@@ -171,7 +172,7 @@ export class DecisionsStorage {
 
   async recordJudgment(input: RecordJudgmentInput): Promise<RecordJudgmentResult> {
     return autoHeal(async () => {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
         if (input.sourceSessionId && input.sourceToolCallId && principal.accountId) {
           const [existing] = await db.select().from(decisions).where(and(
@@ -265,7 +266,7 @@ export class DecisionsStorage {
 
   async updateDecision(id: string, updates: DecisionUpdatePatch): Promise<Decision | undefined> {
     return autoHeal(async () => {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
         const patch: Record<string, unknown> = { ...updates, updatedAt: new Date() };
         const [row] = await tx.update(decisions).set(patch).where(combineWithWritableScope(principal, decisionScopeColumns, eq(decisions.id, id))).returning();
@@ -285,7 +286,7 @@ export class DecisionsStorage {
         closedAt: existing.closedAt ?? new Date(),
         trafficLight: existing.trafficLight ?? "green",
         updatedAt: new Date(),
-      }).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), decisionScopeColumns, eq(decisions.id, id))).returning();
+      }).where(combineWithWritableScope(requireCurrentUserPrincipal(), decisionScopeColumns, eq(decisions.id, id))).returning();
       return row;
     });
   }
@@ -297,14 +298,14 @@ export class DecisionsStorage {
         closedAt: null,
         trafficLight: null,
         updatedAt: new Date(),
-      }).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), decisionScopeColumns, eq(decisions.id, id))).returning();
+      }).where(combineWithWritableScope(requireCurrentUserPrincipal(), decisionScopeColumns, eq(decisions.id, id))).returning();
       return row;
     });
   }
 
   async deleteDecision(id: string): Promise<boolean> {
     return autoHeal(async () => {
-      const result = await db.delete(decisions).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), decisionScopeColumns, eq(decisions.id, id))).returning();
+      const result = await db.delete(decisions).where(combineWithWritableScope(requireCurrentUserPrincipal(), decisionScopeColumns, eq(decisions.id, id))).returning();
       return result.length > 0;
     });
   }
@@ -319,7 +320,7 @@ export class DecisionsStorage {
 
   async addUpdate(data: InsertDecisionUpdate): Promise<DecisionUpdate> {
     return autoHeal(async () => {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
         await this.requireWritableDecision(data.decisionId);
         const [row] = await tx.insert(decisionUpdates).values(data).returning();
@@ -333,7 +334,7 @@ export class DecisionsStorage {
 
   async editUpdate(id: string, content: string): Promise<DecisionUpdate | undefined> {
     return autoHeal(async () => {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
         const [existing] = await tx.select().from(decisionUpdates).where(eq(decisionUpdates.id, id)).limit(1);
         if (!existing) return undefined;
@@ -349,7 +350,7 @@ export class DecisionsStorage {
 
   async deleteUpdate(id: string): Promise<boolean> {
     return autoHeal(async () => {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       return db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
         const [existing] = await tx.select().from(decisionUpdates).where(eq(decisionUpdates.id, id)).limit(1);
         if (!existing) return false;
@@ -367,7 +368,7 @@ export class DecisionsStorage {
     return autoHeal(async () => {
       const decision = await this.getDecision(decisionId);
       if (!decision) return [];
-      const canonicalPage = await listAddressLinks(getCurrentPrincipalOrSystem(), {
+      const canonicalPage = await listAddressLinks(requireCurrentUserPrincipal(), {
         sourceAddress: `@decision:${decisionId}`,
         lifecycle: "active",
         limit: 500,
@@ -387,7 +388,7 @@ export class DecisionsStorage {
         const target = normalizeProtocolAddress(`@${link.targetType}:${link.targetId}`);
         if (target.outcome !== "valid" || seen.has(`${target.address}:relates_to`)) continue;
         try {
-          const created = await createAddressLink(getCurrentPrincipalOrSystem(), {
+          const created = await createAddressLink(requireCurrentUserPrincipal(), {
             sourceAddress: `@decision:${decisionId}`,
             targetAddress: target.address,
             predicate: "relates_to",
@@ -428,7 +429,7 @@ export class DecisionsStorage {
   async listLinksForTarget(targetType: DecisionLinkTargetType, targetId: string): Promise<DecisionAddressLink[]> {
     return autoHeal(async () => {
       const targetAddress = decisionTargetAddress({ decisionId: "lookup", targetType, targetId });
-      const canonicalPage = await listAddressLinks(getCurrentPrincipalOrSystem(), {
+      const canonicalPage = await listAddressLinks(requireCurrentUserPrincipal(), {
         targetAddress,
         lifecycle: "active",
         limit: 500,
@@ -463,7 +464,7 @@ export class DecisionsStorage {
 
   async addLink(data: AddDecisionLinkInput): Promise<DecisionAddressLink> {
     return autoHeal(async () => {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       await this.requireWritableDecision(data.decisionId);
       const targetAddress = decisionTargetAddress(data);
       const predicate = data.predicate ?? "relates_to";
@@ -496,7 +497,7 @@ export class DecisionsStorage {
 
   async deleteLink(id: string): Promise<boolean> {
     return autoHeal(async () => {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       try {
         const retired = await retireAddressLink(principal, id);
         const source = normalizeProtocolAddress(retired.sourceAddress);
