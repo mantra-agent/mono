@@ -4,8 +4,8 @@ import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { ACTIVITY_FRAMING, ACTIVITY_CHAT, type ActivityId } from "./job-profiles";
 import { resolveModelCandidates, appendFailedAttempt, type ModelRoutingDecision } from "./model-routing";
-import { getMaxOutputTokens, getModel, supportsSelectableEffort } from "./model-registry";
-import type { OpenAITierModelConfig } from "@shared/model-connectors";
+import { getMaxOutputTokens, getModel, supportsSelectableEffort, supportsGrokReasoningEffort } from "./model-registry";
+import type { OpenAITierModelConfig, GrokSubscriptionTierModelConfig } from "@shared/model-connectors";
 import {
   buildReasoningAudit,
   resolveOpenAIReasoningEffort,
@@ -842,6 +842,22 @@ function resolvedOpenAIConfig(options: Pick<ChatCompletionOptions, "routingDecis
     : undefined;
 }
 
+function resolvedGrokConfig(options: Pick<ChatCompletionOptions, "routingDecision">): GrokSubscriptionTierModelConfig | undefined {
+  return options.routingDecision?.provider === "grok-subscription"
+    ? options.routingDecision.modelConfig as GrokSubscriptionTierModelConfig | undefined
+    : undefined;
+}
+
+// Grok stays on the chat.completions surface (transport override), so its tier
+// config never flows through applyOpenAIConnectorConfig. Inject reasoning_effort
+// directly, gated to grok-4.5 which is the only model that accepts the param.
+function applyGrokConnectorConfig(params: Record<string, any>, model: string, options: ChatCompletionOptions): void {
+  const config = resolvedGrokConfig(options);
+  if (config?.reasoningEffort && supportsGrokReasoningEffort(model)) {
+    params.reasoning_effort = config.reasoningEffort;
+  }
+}
+
 function connectorMaxOutputTokens(config: OpenAITierModelConfig | undefined, runtimeMaxTokens?: number): number | undefined {
   if (runtimeMaxTokens !== undefined) return config?.maxOutputTokens !== undefined ? Math.min(runtimeMaxTokens, config.maxOutputTokens) : runtimeMaxTokens;
   return config?.maxOutputTokens;
@@ -921,6 +937,7 @@ async function openaiCompletion(
     params.tools = convertToolsToOpenAI(options.tools);
     params.tool_choice = "auto";
   }
+  if (providerLabel === "grok-subscription") applyGrokConnectorConfig(params, model, options);
 
   const clientRequestId = randomUUID();
   try {
@@ -3327,6 +3344,7 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
   if (options.tools && options.tools.length > 0) {
     params.tools = convertToolsToOpenAI(options.tools);
   }
+  if (transport?.providerLabel === "grok-subscription") applyGrokConnectorConfig(params, model, options);
 
   try {
     // HTTP dispatch boundary: request build complete, dispatching to OpenAI.
