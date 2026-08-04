@@ -936,10 +936,30 @@ export function mergeIterationResults(
     .join(ITERATION_CONTENT_SEPARATOR);
 }
 
+export type PendingSessionEnd = {
+  status: "saved" | "failed";
+  summary?: string;
+  requestedAt: number;
+};
+
 export class AgentExecutor extends EventEmitter {
   private activeRuns = new Map<string, ActiveRunProgress>();
   /** One pending handoff per session — consumed by the next processChatStream. */
   private sessionHandoffs = new Map<string, SessionHandoff>();
+  /**
+   * Session IDs whose executor run has returned but whose toolCalls have not
+   * yet been persisted by the caller (skill-runner / chat routes). Prevents
+   * child monitors from treating mid-run session.end "saved" as completion
+   * before extractSuccessfulToolInvocations can see durable tool evidence.
+   */
+  private settlingSessions = new Map<string, number>();
+  /**
+   * Terminal status requested via session.end / set_status while a run was
+   * still active or settling. Applied only after tool persistence.
+   */
+  private pendingSessionEnds = new Map<string, PendingSessionEnd>();
+  /** Terminal ends already applied after tool persistence — outer finalizers must not clobber. */
+  private appliedSessionEnds = new Map<string, PendingSessionEnd>();
   private zombieCheckTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -1056,6 +1076,57 @@ export class AgentExecutor extends EventEmitter {
       if (run.sessionId === sessionId) return true;
     }
     return false;
+  }
+
+  /** True while a run is live OR tools from a just-finished run are still being persisted. */
+  isSessionBusy(sessionId: string): boolean {
+    return this.hasActiveRunForSession(sessionId) || this.settlingSessions.has(sessionId);
+  }
+
+  beginSessionSettling(sessionId: string | undefined): void {
+    if (!sessionId) return;
+    this.settlingSessions.set(sessionId, Date.now());
+  }
+
+  endSessionSettling(sessionId: string | undefined): void {
+    if (!sessionId) return;
+    this.settlingSessions.delete(sessionId);
+  }
+
+  markPendingSessionEnd(
+    sessionId: string,
+    status: "saved" | "failed",
+    summary?: string,
+  ): void {
+    this.pendingSessionEnds.set(sessionId, {
+      status,
+      summary: summary?.trim() ? summary.trim() : undefined,
+      requestedAt: Date.now(),
+    });
+  }
+
+  takePendingSessionEnd(sessionId: string): PendingSessionEnd | undefined {
+    const pending = this.pendingSessionEnds.get(sessionId);
+    if (!pending) return undefined;
+    this.pendingSessionEnds.delete(sessionId);
+    return pending;
+  }
+
+  peekPendingSessionEnd(sessionId: string): PendingSessionEnd | undefined {
+    return this.pendingSessionEnds.get(sessionId);
+  }
+
+  markAppliedSessionEnd(sessionId: string, end: PendingSessionEnd): void {
+    this.appliedSessionEnds.set(sessionId, end);
+  }
+
+  clearAppliedSessionEnd(sessionId: string): void {
+    this.appliedSessionEnds.delete(sessionId);
+  }
+
+  /** True if a deferred end is pending or was already applied for this session. */
+  hasDeferredOrAppliedSessionEnd(sessionId: string): boolean {
+    return this.pendingSessionEnds.has(sessionId) || this.appliedSessionEnds.has(sessionId);
   }
 
   /** True if any active run for this session has started tools or streamed assistant text. */
@@ -4057,6 +4128,10 @@ export class AgentExecutor extends EventEmitter {
         `tier=${tier} activity=${options.activity ?? "none"} elapsedMs=${Date.now() - startTime} ` +
         `admissionGranted=${admissionGranted}`,
       );
+      // Mark settling BEFORE dropping activeRuns so monitors never observe a
+      // gap where status can already be "saved" (session.end) but tools are
+      // not yet durable in chat messages.
+      this.beginSessionSettling(options.sessionId);
       this.activeRuns.delete(runId);
     }
     };

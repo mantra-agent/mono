@@ -3242,6 +3242,43 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           ),
         );
     } finally {
+      // Release post-run settling gate and apply any deferred session.end /
+      // set_status only after toolCalls have been (or failed to be) persisted.
+      try {
+        const { agentExecutor } = await import("../../agent-executor");
+        const pending = agentExecutor.takePendingSessionEnd(sessionId);
+        agentExecutor.endSessionSettling(sessionId);
+        if (pending) {
+          if (pending.status === "failed") {
+            await chatStorage.setErrorSeverity(sessionId, "error").catch(() => undefined);
+          }
+          await chatStorage
+            .updateSessionStatus(sessionId, pending.status, pending.summary)
+            .catch((err) =>
+              chatLog.warn(
+                `deferred session status apply failed sessionId=${sessionId} status=${pending.status}`,
+                err,
+              ),
+            );
+          await chatStorage.setSessionPinned(sessionId, false).catch(() => undefined);
+          agentExecutor.markAppliedSessionEnd(sessionId, pending);
+          if (pending.status === "saved") {
+            try {
+              const { runDeferredPostRunVerify } = await import("../../autonomous-skill-runner");
+              await runDeferredPostRunVerify(sessionId);
+            } catch (e: unknown) {
+              chatLog.warn(
+                `deferred postRunVerify after pending end failed sessionId=${sessionId}: ${e instanceof Error ? e.message : String(e)}`,
+              );
+            }
+          }
+          agentExecutor.clearAppliedSessionEnd(sessionId);
+        }
+      } catch (e: unknown) {
+        chatLog.warn(
+          `settling/pending-end cleanup failed sessionId=${sessionId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
       if (sayAloud) {
         clearMeetingVisualizerState(sessionId, "tool");
         clearMeetingVisualizerState(sessionId, "turn");

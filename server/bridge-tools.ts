@@ -4576,6 +4576,20 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         return { result: "Missing or invalid 'runStatus' parameter. Must be resolved/saved or failed. Session lifecycle is stored in session.status.", error: true };
       }
 
+      // Defer terminal status while the executor is still live or tools are
+      // still being persisted. Premature "saved" lets child monitors complete
+      // steps before extractSuccessfulToolInvocations can see durable tools.
+      const { agentExecutor } = await import("./agent-executor");
+      if (agentExecutor.isSessionBusy(sessionId)) {
+        if (status === "failed") {
+          await chatFileStorage.setErrorSeverity(sessionId, "error").catch(() => {});
+        }
+        agentExecutor.markPendingSessionEnd(sessionId, status as "saved" | "failed");
+        return {
+          result: `Session status "${status === "saved" ? "complete" : status}" deferred until tool persistence completes`,
+        };
+      }
+
       if (status === "failed") {
         await chatFileStorage.setErrorSeverity(sessionId, "error");
       }
@@ -4595,6 +4609,22 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const summary = args.summary || "Session ended";
       const conv = await chatFileStorage.getSession(sessionId);
       const sessionKey = conv?.sessionKey || `dashboard:${sessionId}`;
+
+      // Durable status "saved" must wait until toolCalls are persisted, otherwise
+      // plan/workflow child monitors race extractSuccessfulToolInvocations.
+      const { agentExecutor } = await import("./agent-executor");
+      if (agentExecutor.isSessionBusy(sessionId)) {
+        agentExecutor.markPendingSessionEnd(sessionId, "saved", summary);
+        await chatFileStorage.setEndReason(sessionId, summary).catch(() => {});
+        await chatFileStorage.setSessionPinned(sessionId, false).catch(() => {});
+        eventBus.publish({
+          category: "chat",
+          event: "session.end",
+          payload: { sessionId, summary, deferred: true },
+          sessionKey,
+        });
+        return { result: `Session end deferred until tool persistence completes. Summary: ${summary}` };
+      }
 
       await chatFileStorage.updateSessionStatus(sessionId, "saved", summary);
       await chatFileStorage.setSessionPinned(sessionId, false);

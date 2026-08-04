@@ -1067,6 +1067,11 @@ export type { QuestionResponseMeta, QuestionCancellationMeta } from "../question
 export interface ToolCallInfo {
   toolName: string;
   status: ToolCallStatus;
+  /**
+   * Executor structural outcome — single source of truth for whether the tool
+   * call succeeded. Prefer this over status/error when present.
+   */
+  outcome?: "succeeded" | "degraded" | "failed" | "cancelled";
   output?: string;
   arguments?: Record<string, unknown>;
   toolCallId?: string;

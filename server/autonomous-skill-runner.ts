@@ -92,12 +92,53 @@ function describeExecutorFailure(result: ExecutorRunResult): string {
   return `Skill run encountered an error: ${errorMsg}`;
 }
 
+/**
+ * After toolCalls are durable (or persistence was skipped), release the
+ * settling gate and apply any session.end / set_status that was deferred
+ * while the run was still busy. Canonical write site for that deferred status.
+ * @returns true if a deferred end was applied now OR earlier for this session
+ *          (outer finalizers must not overwrite status in either case).
+ */
+async function applyPendingSessionEndAfterTools(sessionId: string): Promise<boolean> {
+  const alreadyApplied = agentExecutor.hasDeferredOrAppliedSessionEnd(sessionId) &&
+    !agentExecutor.peekPendingSessionEnd(sessionId);
+  const pending = agentExecutor.takePendingSessionEnd(sessionId);
+  agentExecutor.endSessionSettling(sessionId);
+  if (!pending) {
+    return alreadyApplied || agentExecutor.hasDeferredOrAppliedSessionEnd(sessionId);
+  }
+
+  if (pending.status === "failed") {
+    await chatFileStorage.setErrorSeverity(sessionId, "error").catch(() => undefined);
+  }
+  await chatFileStorage
+    .updateSessionStatus(sessionId, pending.status, pending.summary)
+    .catch((e: unknown) => {
+      logger.error(
+        `[SkillChat] [${sessionId}] Failed to apply deferred session status ${pending.status}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    });
+  await chatFileStorage.setSessionPinned(sessionId, false).catch(() => undefined);
+  agentExecutor.markAppliedSessionEnd(sessionId, pending);
+  if (pending.status === "saved") {
+    try {
+      await runDeferredPostRunVerify(sessionId);
+    } catch (e: unknown) {
+      logger.warn(
+        `[SkillChat] [${sessionId}] deferred postRunVerify after pending end failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+  return true;
+}
+
 async function persistExecutorResult(
   sessionId: string,
   result: ExecutorRunResult,
   fallbackContent: string,
   isError?: boolean,
 ): Promise<void> {
+  try {
   if (!await conversationExists(sessionId)) {
     logger.warn(`[SkillChat] [${sessionId}] Session deleted mid-run — skipping persistExecutorResult`);
     return;
@@ -144,6 +185,11 @@ async function persistExecutorResult(
     isError,
   );
   logger.log(`[SkillChat] [${sessionId}] Persisted executor result: contentLen=${content.length} thinking=${!!thinking} toolCalls=${toolCalls?.length ?? 0} model=${model || "unknown"} systemSteps=${result.systemSteps?.length ?? 0} chronology=${result.segmentChronology?.length ?? 0}`);
+  } finally {
+    // Tools are durable (or intentionally skipped) — release settling gate and
+    // apply any session.end that was deferred while the run was busy.
+    await applyPendingSessionEndAfterTools(sessionId);
+  }
 }
 
 async function persistCrashMessage(
@@ -1026,16 +1072,26 @@ export async function executeAutonomousSkillRun(
         });
       }
 
-      logger.log(`[SkillChat] [${sessionId}] status → ${finalSessionStatus} (${result.status})`);
-      await chatFileStorage.updateSessionStatus(sessionId, finalSessionStatus).catch((e: unknown) => {
-        logger.error(`[SkillChat] [${sessionId}] Failed to set status to ${finalSessionStatus}: ${e instanceof Error ? e.message : String(e)}`);
-      });
+      // If session.end deferred a terminal status, tools already applied it in
+      // persistExecutorResult. Only write the pipeline's status when nothing is
+      // pending and settling is clear (or apply the deferred end now).
+      const appliedDeferred = await applyPendingSessionEndAfterTools(sessionId);
+      if (!appliedDeferred) {
+        logger.log(`[SkillChat] [${sessionId}] status → ${finalSessionStatus} (${result.status})`);
+        await chatFileStorage.updateSessionStatus(sessionId, finalSessionStatus).catch((e: unknown) => {
+          logger.error(`[SkillChat] [${sessionId}] Failed to set status to ${finalSessionStatus}: ${e instanceof Error ? e.message : String(e)}`);
+        });
+      } else {
+        logger.log(`[SkillChat] [${sessionId}] status → deferred session.end applied after tools (${result.status})`);
+        agentExecutor.clearAppliedSessionEnd(sessionId);
+      }
       await chatFileStorage.setHasUnreadResult(sessionId, true).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to set hasUnreadResult: ${e instanceof Error ? e.message : String(e)}`);
       });
 
     } else {
       logger.warn(`[SkillChat] [${sessionId}] Session deleted mid-run — skipping post-pipeline writes`);
+      await applyPendingSessionEndAfterTools(sessionId);
     }
 
     // Terminal gate for the checklist's deterministic items. A run that never
@@ -1398,6 +1454,8 @@ async function runSkillPipeline(
 
     if (result.status === "yielded") {
       logger.log(`[SkillChat] [${sessionId}] Skill run yielded to interactive session — deferring`);
+      // No tool persistence on yield — still release the settling gate.
+      await applyPendingSessionEndAfterTools(sessionId);
       return { sessionId, status: "yielded", summary: "Yielded to interactive session", durationMs };
     }
 
@@ -1641,10 +1699,17 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
   } finally {
     // A completed child session remains a durable chat document. The session row's
     // status is the only lifecycle source of truth.
-    const childFinalStatus = finalStatus === "succeeded" ? "saved" : "failed";
-    await chatFileStorage.updateSessionStatus(sessionId, childFinalStatus).catch((e: unknown) => {
-      logger.error(`[triggerResponse] [${sessionId}] Failed to set final status to ${childFinalStatus}: ${e instanceof Error ? e.message : String(e)}`);
-    });
+    // If tools already persisted, settling is clear and any deferred session.end
+    // was applied there. If not (crash before persist), apply now.
+    const appliedDeferred = await applyPendingSessionEndAfterTools(sessionId);
+    if (!appliedDeferred) {
+      const childFinalStatus = finalStatus === "succeeded" ? "saved" : "failed";
+      await chatFileStorage.updateSessionStatus(sessionId, childFinalStatus).catch((e: unknown) => {
+        logger.error(`[triggerResponse] [${sessionId}] Failed to set final status to ${childFinalStatus}: ${e instanceof Error ? e.message : String(e)}`);
+      });
+    } else {
+      agentExecutor.clearAppliedSessionEnd(sessionId);
+    }
     await chatFileStorage.setEndReason(sessionId, finalStatus === "succeeded" ? "complete" : finalSummary).catch(() => undefined);
 
     try {
