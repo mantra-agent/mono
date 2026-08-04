@@ -23,7 +23,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe, ChevronRight, RotateCcw, Pin, MessageSquare,
+  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe, ChevronRight, RotateCcw, Pin, MessageSquare, Share2,
 } from "lucide-react";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
@@ -36,6 +36,7 @@ import { useVaults, type Vault } from "@/hooks/use-vaults";
 import type { LibraryPageTitleColorResolver } from "./library-title-color";
 import { MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 import { UniversalTagPicker } from "@/components/universal-tag-picker";
+import { ShareSheet } from "@/components/sharing/share-sheet";
 import { semanticLibraryTags, structuralLibraryTags } from "@shared/library-tags";
 
 
@@ -182,6 +183,7 @@ export function LibraryPageEditor({
   const [specPickerOpen, setSpecPickerOpen] = useState(false);
   const [specPickerQuery, setSpecPickerQuery] = useState("");
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [bodyFocused, setBodyFocused] = useState(false);
   const [isTitleEditing, setIsTitleEditing] = useState(() => !selectedPage.title && !selectedPage.plainTextContent?.trim());
@@ -352,6 +354,9 @@ export function LibraryPageEditor({
                 />
                 {selectedPage.isPinned ? "Unpin" : "Pin"}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShareOpen(true)} data-testid="menu-page-share">
+                <Share2 className="h-3.5 w-3.5 mr-2" /> Share
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setDetailsDialogOpen(true)} data-testid="menu-page-details">
                 <Info className="h-3.5 w-3.5 mr-2" /> Details
               </DropdownMenuItem>
@@ -384,6 +389,7 @@ export function LibraryPageEditor({
       <PageLinkPickerDialog open={specPickerOpen} onOpenChange={setSpecPickerOpen} query={specPickerQuery} onQueryChange={setSpecPickerQuery} pages={pages} editorRef={editorRef} resolveTitleColor={resolveTitleColor} />
       <PageDetailsDialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen} page={selectedPage} pages={pages} />
       <MovePageDialog open={moveDialogOpen} onOpenChange={setMoveDialogOpen} page={selectedPage} pages={pages} resolveTitleColor={resolveTitleColor} />
+      <ShareSheet objectType="library_page" objectId={selectedPage.id} title={selectedPage.title} open={shareOpen} onOpenChange={setShareOpen} />
     </>
   );
 }
