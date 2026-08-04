@@ -16,7 +16,6 @@ import {
 } from "@/components/hierarchy-section-header";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import { ProfileDetailSection } from "@/components/profile-detail-section";
 import {
   PROFILE_DESCRIPTION_FRAME_CLASS,
   PROFILE_DESCRIPTION_TEXT_CLASS,
@@ -126,11 +125,11 @@ function measureTone(state: ScorecardMeasureState): {
 
 function GoalReferenceTitle({ goalId }: { goalId: string }) {
   return (
-    <span className="min-w-0 max-w-full whitespace-normal break-words">
+    <span className="block min-w-0 w-full max-w-none whitespace-normal break-words">
       <ReferenceRenderer
         refValue={createReferenceRef({ type: "goal", id: goalId })}
         surface="simple-row"
-        className="mx-0 max-w-full"
+        className="mx-0 max-w-none text-sm leading-snug"
         wrapLabel
       />
     </span>
@@ -254,49 +253,46 @@ function ThematicGoalDetails({
     saveMutation.mutate(next);
   };
 
-  return (
-    <ProfileDetailSection title="Details" defaultOpen testId="advantage-thematic-details">
-      {editing ? (
-        <div className="space-y-2">
-          <Textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={save}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setDraft(description);
-                setEditing(false);
-              }
-            }}
-            disabled={saveMutation.isPending}
-            className={cn(
-              PROFILE_DESCRIPTION_FRAME_CLASS,
-              PROFILE_DESCRIPTION_TEXT_CLASS,
-              "min-h-[96px] resize-y",
-            )}
-            data-testid="advantage-thematic-details-editor"
-            autoFocus
-          />
-          {saveMutation.isError ? (
-            <p className="text-xs text-rose-300">Could not save details. Try again.</p>
-          ) : null}
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          className={cn(
-            PROFILE_DESCRIPTION_FRAME_CLASS,
-            PROFILE_DESCRIPTION_TEXT_CLASS,
-            "w-full text-left transition-colors hover:border-primary/40",
-          )}
-          data-testid="advantage-thematic-details-display"
-        >
-          {description.trim() || "Add details…"}
-        </button>
+  // Expand the thematic goal row itself into details — no nested section disclosure.
+  return editing ? (
+    <div className="space-y-2" data-testid="advantage-thematic-details">
+      <Textarea
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={save}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setDraft(description);
+            setEditing(false);
+          }
+        }}
+        disabled={saveMutation.isPending}
+        className={cn(
+          PROFILE_DESCRIPTION_FRAME_CLASS,
+          PROFILE_DESCRIPTION_TEXT_CLASS,
+          "min-h-[96px] resize-y",
+        )}
+        data-testid="advantage-thematic-details-editor"
+        autoFocus
+      />
+      {saveMutation.isError ? (
+        <p className="text-xs text-rose-300">Could not save details. Try again.</p>
+      ) : null}
+    </div>
+  ) : (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className={cn(
+        PROFILE_DESCRIPTION_FRAME_CLASS,
+        PROFILE_DESCRIPTION_TEXT_CLASS,
+        "w-full text-left transition-colors hover:border-primary/40",
       )}
-    </ProfileDetailSection>
+      data-testid="advantage-thematic-details-display"
+    >
+      {description.trim() || "Add details…"}
+    </button>
   );
 }
 
@@ -319,7 +315,6 @@ function ObjectiveBranch({
   return (
     <HierarchyTreeRow continues={continues}>
       <ProfileTreeRow
-        icon={<Target className="h-3.5 w-3.5" />}
         label={<GoalReferenceTitle goalId={objective.goalId} />}
         hasValue
         showEmpty
@@ -352,11 +347,7 @@ function ObjectiveBranch({
           </div>
         }
       >
-        {goal ? (
-          <span className="text-xs text-muted-foreground">{goal.status ?? "active"}</span>
-        ) : (
-          <span className="text-xs text-rose-300">Missing</span>
-        )}
+        {goal ? null : <span className="text-xs text-rose-300">Missing</span>}
       </ProfileTreeRow>
     </HierarchyTreeRow>
   );
@@ -459,7 +450,6 @@ export default function BusinessAdvantagePage() {
           <div className={HIERARCHY_TREE_STACK_CLASS}>
             <HierarchyTreeRow continues={false}>
               <ProfileTreeRow
-                icon={<Target className="h-3.5 w-3.5" />}
                 label={<GoalReferenceTitle goalId={cycle.thematicGoalId} />}
                 hasValue
                 showEmpty
@@ -472,11 +462,7 @@ export default function BusinessAdvantagePage() {
                   />
                 }
               >
-                {thematicGoal ? (
-                  <span className="text-xs text-muted-foreground">
-                    {thematicGoal.status ?? "active"}
-                  </span>
-                ) : (
+                {thematicGoal ? null : (
                   <span className="text-xs text-rose-300">Missing</span>
                 )}
               </ProfileTreeRow>
