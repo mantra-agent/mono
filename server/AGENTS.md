@@ -182,14 +182,15 @@ Access control is server-owned and permission-based. Future code must plug into 
 - `sensitive-scope.ts` — Principal-aware sensitive ownership helpers and privileged-mode audit gates
 - `auth.ts` — Auth/session integration and `/api/auth/me` response shape
 - `authorize.ts` — Live object/vault grant predicates and authorizable object types (includes `drive_resource`)
-- `files-api.ts` — Connector-global external-file read boundary (Google Drive v1); vault-scoped whitelist enforcement
+- `files-api.ts` — Connector-global external-file read boundary (multi-provider); vault-scoped whitelist enforcement. Single authorize path: vault gate → bind/ownership/grant → whitelist → adapter
+- `files-providers.ts` — Provider adapters only (GoogleDriveAdapter, BoxAdapter stub 501, MantraStorageAdapter). No authorize logic; owner token minted by FilesApi
 - `drive-resource-service.ts` / `drive-resource-routes.ts` — Vault bind CRUD + Files API list/read/metadata HTTP surface
 
 ### Invariants
 - Resolve every request or server action to a `Principal` before making authorization decisions.
-- External file reads go only through `filesApi` (`server/files-api.ts`). Never call Google/Box provider clients from feature code or agent tools.
-- `drive_resource` is a vault-scoped bind pointer. Folder bind = recursive whitelist of the bound tree only. Resolve target, then authorize; fail closed on moved/trashed/unlisted children — never ambient crawl.
-- Drive access path: vault gate → bind or live `drive_resource`/`vault` grant → whitelist coverage → owner connector token server-side. Owner OAuth tokens never leave the server.
+- External file reads go only through `filesApi` (`server/files-api.ts`). Never call Google/Box/object-storage provider clients from feature code or agent tools for bound-file access.
+- `drive_resource` is a vault-scoped bind pointer (`provider` + `provider_file_id`). Providers: `google` | `box` | `mantra`. Folder bind = recursive whitelist of the bound tree only (Google). Mantra is flat object-storage keys (explicit file binds; no ambient prefix crawl). Box fails closed 501 until OAuth exists.
+- Access path: vault gate → bind or live `drive_resource`/`vault` grant → whitelist coverage → owner connector token (system-elevated mint for Google) → `getFilesProviderAdapter(provider)` transport. Owner OAuth tokens never leave the server. Fail closed on disconnect, missing `drive.file`, unknown provider, or non-whitelist. Never ambient crawl.
 - Vault-scoped list reads (`driveResourceService.list`, `filesApi.listBound`) authorize the vault, then return every bind in that vault — never filter binds by the caller's `accountId` (that hid shared-vault grantees).
 - Address resolution for `page` uses `combineWithAuthorizedScope` so live `library_page` / vault grants resolve the same as library list/get.
 - Named permissions are the authorization contract. Current vocabulary: `users:read`, `users:write`, `build:read`, `build:write`, `system:read`, `system:write`.
