@@ -11,7 +11,7 @@ import type { StreamingContent, SegmentPatch, MessageSegment } from "@shared/str
 import { initialStreamingContent } from "@shared/streaming-types";
 import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import { createLogger } from "@/lib/logger";
-import { markChatStreamProgress, streamingContentHasText } from "@/lib/browser-telemetry";
+import { markChatStreamProgress, streamingContentHasText, streamingContentHasProgress } from "@/lib/browser-telemetry";
 import { noteNavigationStreamPressure } from "@/lib/navigation-trace";
 import { getClientTabId } from "@/lib/client-tab-identity";
 
@@ -288,7 +288,7 @@ export function useSessionSubscriptions(
       log.verbose(() => `SNAPSHOT:RECEIVE session=${msg.sessionId} status=${status} segments=${content.segments.length}`);
       // The server snapshot is authoritative, including its settled terminal
       // payload. The transcript handoff releases it only after durable finality.
-      markChatStreamProgress(msg.sessionId, streamingContentHasText(content), status);
+      markChatStreamProgress(msg.sessionId, streamingContentHasProgress(content), streamingContentHasText(content), status);
       patchSeqRef.current[msg.sessionId] = msg.patchSeq ?? null;
       latestStreamRef.current[msg.sessionId] = content;
       upsertStream(msg.sessionId, {
@@ -332,7 +332,7 @@ export function useSessionSubscriptions(
       latestStreamRef.current[msg.sessionId] = content;
 
       log.verbose(() => `DELTA:RECEIVE session=${msg.sessionId} status=${status ?? "streaming"} segments=${content.segments.length}`);
-      markChatStreamProgress(msg.sessionId, streamingContentHasText(content), status);
+      markChatStreamProgress(msg.sessionId, streamingContentHasProgress(content), streamingContentHasText(content), status);
       const patch: Partial<SessionStreamState> = {};
       patch.streamingContent = content;
       if (status) patch.status = status;

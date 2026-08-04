@@ -249,6 +249,9 @@ export interface ExecutorTtftBreakdown {
   msToFirstSdkEvent: number | null;
   msToFirstTextDelta: number | null;
   msToFirstThinkingDelta: number | null;
+  msToFirstToolUse: number | null;
+  /** Felt-latency primary: min(thinking, text, tool-use) since call start. */
+  msToFirstProgress: number | null;
   poolKey?: string;
   poolHit?: boolean;
   poolEligible?: boolean;

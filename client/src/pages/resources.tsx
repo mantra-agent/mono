@@ -256,8 +256,13 @@ function frontendMetricBudget(frontend: BrowserTelemetrySummary, kind: string, n
 
 function contextHealthStatus(context: ContextHealthSummary | null): Status {
   if (!context || context.callCount === 0) return "amber";
-  if (context.ttftSampleCount === 0) return "amber";
-  if (context.p95TtftMs !== null && context.p95TtftMs > context.budgets.providerTtftP95Ms) return "amber";
+  // Primary felt-latency gate is time-to-first-progress; fall back to first-text
+  // where no progress samples exist yet.
+  const sampleCount = context.ttfpSampleCount || context.ttftSampleCount;
+  if (sampleCount === 0) return "amber";
+  const p95 = context.p95TtfpMs ?? context.p95TtftMs;
+  const budget = context.budgets.providerTtfpP95Ms ?? context.budgets.providerTtftP95Ms;
+  if (p95 !== null && p95 > budget) return "amber";
   return "ok";
 }
 
@@ -888,7 +893,7 @@ function ResourcesView({
                           <DetailList
                             items={[
                               `Navigation ${formatMs(frontendExperience.budgets.navigation.p95Ms)}`,
-                              `Chat ack ${formatMs(frontendExperience.budgets.chatLatency.submitToAckP95Ms)} · first token ${formatMs(frontendExperience.budgets.chatLatency.submitToFirstTokenP95Ms)} · complete ${formatMs(frontendExperience.budgets.chatLatency.submitToCompleteP95Ms)}`,
+                              `Chat ack ${formatMs(frontendExperience.budgets.chatLatency.submitToAckP95Ms)} · first progress ${formatMs(frontendExperience.budgets.chatLatency.submitToFirstTokenP95Ms)} · complete ${formatMs(frontendExperience.budgets.chatLatency.submitToCompleteP95Ms)}`,
                               `Vitals LCP ${formatMs(frontendExperience.budgets.webVital.lcpGoodMs)} · INP ${formatMs(frontendExperience.budgets.webVital.inpGoodMs)} · CLS ${frontendExperience.budgets.webVital.clsGoodScore}`,
                               `Long task ${formatMs(frontendExperience.budgets.longTaskP95Ms)} · frame contention ${formatMs(frontendExperience.budgets.frameContentionP95Ms)}`,
                             ]}
@@ -960,10 +965,17 @@ function ResourcesView({
                         testId="tile-context-population"
                       />
                       <MetricRow
+                        label="Provider TTFP"
+                        value={`${formatMs(contextHealth.avgTtfpMs)} / ${formatMs(contextHealth.p95TtfpMs)}`}
+                        status={contextHealth.p95TtfpMs !== null && contextHealth.p95TtfpMs > contextHealth.budgets.providerTtfpP95Ms ? "amber" : contextHealth.ttfpSampleCount > 0 ? "ok" : "amber"}
+                        detail={<DetailText>first progress (thinking/text/tool) · avg / p95 · n={contextHealth.ttfpSampleCount} · primary felt budget {formatMs(contextHealth.budgets.providerTtfpP95Ms)}.</DetailText>}
+                        testId="tile-context-ttfp"
+                      />
+                      <MetricRow
                         label="Provider TTFT"
                         value={`${formatMs(contextHealth.avgTtftMs)} / ${formatMs(contextHealth.p95TtftMs)}`}
                         status={contextHealth.p95TtftMs !== null && contextHealth.p95TtftMs > contextHealth.budgets.providerTtftP95Ms ? "amber" : contextHealth.ttftSampleCount > 0 ? "ok" : "amber"}
-                        detail={<DetailText>avg / p95 · n={contextHealth.ttftSampleCount} · real budget {formatMs(contextHealth.budgets.providerTtftP95Ms)}. This is the only health budget in the context summary.</DetailText>}
+                        detail={<DetailText>first visible text · avg / p95 · n={contextHealth.ttftSampleCount} · budget {formatMs(contextHealth.budgets.providerTtftP95Ms)} (secondary to TTFP).</DetailText>}
                         testId="tile-context-ttft"
                       />
                       <MetricRow

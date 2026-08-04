@@ -614,7 +614,7 @@ async function recordInference(params: {
   requestContent?: string;
   responseContent?: string;
   error?: Record<string, unknown>;
-  latency?: { providerTtftMs?: number | null; firstSdkEventMs?: number | null; firstThinkingMs?: number | null };
+  latency?: { providerTtftMs?: number | null; firstSdkEventMs?: number | null; firstThinkingMs?: number | null; firstProgressMs?: number | null };
   stopReason?: string;
   termination?: Record<string, unknown>;
   signal?: AbortSignal;
@@ -2157,6 +2157,9 @@ export interface TtftBreakdown {
   msToFirstSdkEvent: number | null;
   msToFirstTextDelta: number | null;
   msToFirstThinkingDelta: number | null;
+  msToFirstToolUse: number | null;
+  /** Felt-latency primary: min(thinking, text, tool-use) since call start. */
+  msToFirstProgress: number | null;
   poolKey?: string;
   poolHit?: boolean;
   poolEligible?: boolean;
@@ -2249,8 +2252,15 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
   let firstSdkEventAt: number | null = null;
   let firstTextAt: number | null = null;
   let firstThinkingAt: number | null = null;
+  let firstToolAt: number | null = null;
   let breakdownEmitted = false;
   let connectedMetadata: Record<string, unknown> | undefined;
+
+  // Earliest defined milestone timestamp. First *progress* = min(thinking, text, tool).
+  const minTs = (...values: Array<number | null>): number | null => {
+    const defined = values.filter((v): v is number => v !== null);
+    return defined.length ? Math.min(...defined) : null;
+  };
 
   const inner: AsyncGenerator<StreamEvent> = (() => {
     if (provider === "anthropic") return anthropicStream(model, optionsWithResolved);
@@ -2268,6 +2278,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
 
   const emitBreakdown = (): StreamEvent => {
     breakdownEmitted = true;
+    const firstProgressAt = minTs(firstThinkingAt, firstTextAt, firstToolAt);
     const breakdown: TtftBreakdown = {
       provider,
       model,
@@ -2278,6 +2289,8 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       msToFirstSdkEvent: firstSdkEventAt !== null ? firstSdkEventAt - t0 : null,
       msToFirstTextDelta: firstTextAt !== null ? firstTextAt - t0 : null,
       msToFirstThinkingDelta: firstThinkingAt !== null ? firstThinkingAt - t0 : null,
+      msToFirstToolUse: firstToolAt !== null ? firstToolAt - t0 : null,
+      msToFirstProgress: firstProgressAt !== null ? firstProgressAt - t0 : null,
       poolKey: connectedMetadata?.poolKey as string | undefined,
       poolHit: connectedMetadata?.poolHit as boolean | undefined,
       poolEligible: connectedMetadata?.poolEligible as boolean | undefined,
@@ -2285,8 +2298,9 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     log.debug(
       `stream ttft provider=${provider} model=${model} tier=${breakdown.routingTier ?? "?"} ` +
       `activity=${breakdown.activity ?? "?"} thinking=${breakdown.thinkingSent} maxTokens=${breakdown.maxTokens ?? "?"} ` +
-      `firstSdkEvent=${breakdown.msToFirstSdkEvent ?? "n/a"}ms firstText=${breakdown.msToFirstTextDelta ?? "n/a"}ms ` +
-      `firstThinking=${breakdown.msToFirstThinkingDelta ?? "n/a"}ms ` +
+      `firstSdkEvent=${breakdown.msToFirstSdkEvent ?? "n/a"}ms firstProgress=${breakdown.msToFirstProgress ?? "n/a"}ms ` +
+      `firstText=${breakdown.msToFirstTextDelta ?? "n/a"}ms firstThinking=${breakdown.msToFirstThinkingDelta ?? "n/a"}ms ` +
+      `firstTool=${breakdown.msToFirstToolUse ?? "n/a"}ms ` +
       `poolEligible=${breakdown.poolEligible ?? "?"} poolHit=${breakdown.poolHit ?? "?"} poolKey=${breakdown.poolKey ?? "?"}`,
     );
     return { type: "ttft_breakdown", breakdown };
@@ -2335,6 +2349,8 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
         : new Error(event.error);
     } else if (event.type === "thinking_delta") {
       if (firstThinkingAt === null) firstThinkingAt = Date.now();
+    } else if (event.type === "tool_use_start" || event.type === "tool_use") {
+      if (firstToolAt === null) firstToolAt = Date.now();
     }
 
     if (event.type === "usage") {
@@ -2379,6 +2395,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       providerTtftMs: firstTextAt !== null ? firstTextAt - t0 : null,
       firstSdkEventMs: firstSdkEventAt !== null ? firstSdkEventAt - t0 : null,
       firstThinkingMs: firstThinkingAt !== null ? firstThinkingAt - t0 : null,
+      firstProgressMs: (() => { const p = minTs(firstThinkingAt, firstTextAt, firstToolAt); return p !== null ? p - t0 : null; })(),
     },
     signal: options.signal,
     apiCallId: providerAttemptTracker.current?.apiCallId,
@@ -2401,6 +2418,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
         providerTtftMs: firstTextAt !== null ? firstTextAt - t0 : null,
         firstSdkEventMs: firstSdkEventAt !== null ? firstSdkEventAt - t0 : null,
         firstThinkingMs: firstThinkingAt !== null ? firstThinkingAt - t0 : null,
+        firstProgressMs: (() => { const p = minTs(firstThinkingAt, firstTextAt, firstToolAt); return p !== null ? p - t0 : null; })(),
       },
       signal: options.signal,
       apiCallId: providerAttemptTracker.current?.apiCallId,

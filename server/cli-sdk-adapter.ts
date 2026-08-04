@@ -1083,6 +1083,7 @@ export async function* cliSdkStream(
   let firstEventType: string | null = null;
   let firstTextAt: number | null = null;
   let firstThinkingAt: number | null = null;
+  let firstToolAt: number | null = null;
   let thinkingChars = 0;
   let eventCount = 0;
   let fullText = "";
@@ -1094,6 +1095,13 @@ export async function* cliSdkStream(
   let sawStreamDeltas = false;
   let connectedEmitted = false;
   let ttftLogged = false;
+
+  // Earliest defined timestamp across candidate milestones. First *progress* is the
+  // min of thinking / text / tool-use; returns null when none have fired yet.
+  const minDefined = (...values: Array<number | null>): number | null => {
+    const defined = values.filter((v): v is number => v !== null);
+    return defined.length ? Math.min(...defined) : null;
+  };
 
   // Emit a single greppable structured TTFT line per call. Called at first text delta
   // (or at end-of-call if no text was emitted), and idempotent. The breakdown carves the
@@ -1112,25 +1120,40 @@ export async function* cliSdkStream(
       : null;
     const totalTtft = firstTextAt !== null ? firstTextAt - start : null;
 
+    // First *progress* = earliest of thinking, text, or tool-use. This is the
+    // felt-latency signal; text TTFT stays a distinct secondary metric.
+    const firstProgressAt = minDefined(firstThinkingAt, firstTextAt, firstToolAt);
+    const firstEventToFirstThinking = firstEventAt !== null && firstThinkingAt !== null
+      ? firstThinkingAt - firstEventAt
+      : null;
+    const firstEventToFirstProgress = firstEventAt !== null && firstProgressAt !== null
+      ? firstProgressAt - firstEventAt
+      : null;
+    const totalTtfp = firstProgressAt !== null ? firstProgressAt - start : null;
+
     const line =
       `ttft_breakdown model=${model} pool_eligible=${poolEligible} pool_hit=${pooledHit} ` +
       `sdk_import_ms=${sdkImportMs} pre_sdk=${preSdk}ms ` +
       `pool_acquire=${poolAcquire ?? "n/a"}ms sdk_to_first_event=${sdkToFirstEvent ?? "n/a"}ms ` +
+      `first_event_to_first_thinking=${firstEventToFirstThinking ?? "n/a"}ms ` +
       `first_event_to_first_text=${firstEventToFirstText ?? "n/a"}ms ` +
-      `first_event_type=${firstEventType ?? "n/a"} total_ttft=${totalTtft ?? "n/a"}ms`;
+      `first_event_to_first_progress=${firstEventToFirstProgress ?? "n/a"}ms ` +
+      `first_event_type=${firstEventType ?? "n/a"} ` +
+      `total_ttfp=${totalTtfp ?? "n/a"}ms total_ttft=${totalTtft ?? "n/a"}ms`;
 
     log.debug(line);
 
-    // Guard the win: warn loudly when the dedicated Haiku fast lane regresses past
-    // 1.5s. The nested Orientation LLM phases expose the same breakdown in-product.
+    // Guard the win. The felt-latency regression is "no progress at all" (thinking,
+    // text, or tool) within 30s. Text TTFT stays a distinct secondary tripwire so the
+    // dedicated tool-free Haiku fast lane still gets its own text-specific check.
     const isHaiku = /haiku/i.test(model);
-    if (totalTtft !== null && totalTtft > 30_000) {
+    if (totalTtfp !== null && totalTtfp > 30_000) {
       log.warn(
-        `ttft_regression: model TTFT to first visible text exceeded 30s — ` + line,
+        `ttfp_regression: no model progress (thinking/text/tool) within 30s — ` + line,
       );
     } else if (poolEligible && isHaiku && totalTtft !== null && totalTtft > 1500) {
       log.warn(
-        `ttft_regression: tool-free Haiku TTFT exceeded 1500ms — ` + line,
+        `ttft_regression: tool-free Haiku TTFT to first text exceeded 1500ms — ` + line,
       );
     }
   };
@@ -1525,6 +1548,7 @@ export async function* cliSdkStream(
 
           for (const block of betaMsg.content) {
             if (block.type === "tool_use") {
+              if (firstToolAt === null) firstToolAt = Date.now();
               pendingToolCallIdQueue.push(block.id);
               yield {
                 type: "tool_call_resolved",
@@ -1622,6 +1646,7 @@ export async function* cliSdkStream(
     const spawnMs = queryInvokedAt - start;
     const firstEventMs = firstEventAt !== null ? firstEventAt - queryInvokedAt : null;
     const streamMs = firstEventAt !== null ? doneAt - firstEventAt : null;
+    const firstProgressAt = minDefined(firstThinkingAt, firstTextAt, firstToolAt);
     log.debug(
       `cliSdkStream: done model=${model} events=${eventCount} elapsed=${elapsed}ms ` +
       `spawn=${spawnMs}ms first_event=${firstEventMs ?? "n/a"}ms stream=${streamMs ?? "n/a"}ms ` +
@@ -1665,6 +1690,10 @@ export async function* cliSdkStream(
           firstThinkingAt,
           msToFirstThinkingDelta: firstThinkingAt !== null ? firstThinkingAt - start : null,
           firstEventToFirstThinkingMs: firstEventAt !== null && firstThinkingAt !== null ? firstThinkingAt - firstEventAt : null,
+          firstToolAt,
+          firstProgressAt,
+          msToFirstProgress: firstProgressAt !== null ? firstProgressAt - start : null,
+          firstEventToFirstProgressMs: firstEventAt !== null && firstProgressAt !== null ? firstProgressAt - firstEventAt : null,
           thinkingChars,
           sawStreamDeltas,
           firstEventType,

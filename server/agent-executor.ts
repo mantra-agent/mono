@@ -1472,6 +1472,13 @@ export class AgentExecutor extends EventEmitter {
     const firstEventToFirstThinkingMs = num(cli?.firstEventToFirstThinkingMs);
     const thinkingChars = num(cli?.thinkingChars) ?? ctx.iterationThinking.length;
 
+    // Felt-latency primary: first *progress* (thinking, text, or tool-use). Falls
+    // back to the executor's first-output timestamp for non-CLI providers, since
+    // that milestone already fires on the earliest of thinking/text/tool.
+    const msToFirstProgress =
+      num(cli?.msToFirstProgress) ?? (ctx.firstOutputTime != null ? ctx.firstOutputTime - start : null);
+    const firstEventToFirstProgressMs = num(cli?.firstEventToFirstProgressMs);
+
     // Streaming shape: did incremental deltas arrive, or did text come buffered
     // in the terminal event? Decisive buffered-vs-incremental signal for a
     // collapsed TTFT.
@@ -1523,6 +1530,8 @@ export class AgentExecutor extends EventEmitter {
         decodeMs,
         msToFirstThinkingDelta,
         firstEventToFirstThinkingMs,
+        msToFirstProgress,
+        firstEventToFirstProgressMs,
         thinkingChars,
         firstEventType,
         sawStreamDeltas,
