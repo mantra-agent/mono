@@ -91,18 +91,48 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   files: {
-    description: "Manage PERSISTENT files in object storage (survives deployment). Returns download links for write.",
+    description:
+      "Manage PERSISTENT files in object storage (survives deployment) and read vault-bound external drive resources through filesApi. Object-storage actions: write/read/list. Bound-drive actions: listBound/listChildren/getMetadata/read/authorize. Never call Google/Box directly — bound reads go through filesApi only.",
     category: "file",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["write", "read", "list"], description: "Action to perform" },
+        action: {
+          type: "string",
+          enum: ["write", "read", "list", "listBound", "listChildren", "getMetadata", "authorize"],
+          description:
+            "Action to perform. Object storage: write/read/list. Bound drive via filesApi: listBound/listChildren/getMetadata/authorize. Bound-drive file bodies use action=read with driveResourceId or provider+providerFileId (not filePath).",
+        },
         fileName: { type: "string", description: "File name to save (for write)" },
         content: { type: "string", description: "File content (for write)" },
         contentType: { type: "string", description: "MIME type (for write, auto-detected by default)" },
-        filePath: { type: "string", description: "Object storage path (for read, e.g., '/objects/uploads/abc.md')" },
-        prefix: { type: "string", description: "Path prefix filter (for list)" },
+        filePath: {
+          type: "string",
+          description: "Object storage path (for object-storage read, e.g., '/objects/uploads/abc.md')",
+        },
+        prefix: { type: "string", description: "Path prefix filter (for object-storage list)" },
+        vaultId: {
+          type: "string",
+          description: "Vault ID (required for listBound; optional vault gate for other bound-drive actions)",
+        },
+        driveResourceId: {
+          type: "string",
+          description: "Bound drive_resource ID (preferred identity for listChildren/getMetadata/read/authorize)",
+        },
+        provider: {
+          type: "string",
+          enum: ["google", "box", "mantra"],
+          description: "Provider when using provider+providerFileId instead of driveResourceId",
+        },
+        providerFileId: {
+          type: "string",
+          description: "Provider-native file/folder ID when not using driveResourceId",
+        },
+        pageToken: {
+          type: "string",
+          description: "Pagination token for listChildren",
+        },
       },
       required: ["action"],
     },

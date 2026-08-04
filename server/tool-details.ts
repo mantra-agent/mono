@@ -24,13 +24,17 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   files: {
-    description: "Manage PERSISTENT files in object storage (survive deployment, available in production). Returns download links. Actions: write, read, list.",
-    whenToUse: "When saving files the user should be able to download or that need to persist across deployments. For temporary scratch work, use the `scratch` tool instead.",
-    example: 'Save a file: { "action": "write", "fileName": "report.md", "content": "..." }\nRead a file: { "action": "read", "filePath": "/objects/uploads/abc123.md" }',
+    description: "Manage PERSISTENT object-storage files and read vault-bound external drive resources through filesApi. Object storage: write/read/list. Bound drive: listBound/listChildren/getMetadata/authorize, plus read with driveResourceId or provider+providerFileId. Never call Google/Box directly.",
+    whenToUse: "When saving files the user should download or that must persist across deployments, or when reading vault-bound Drive/Box/Mantra resources. For temporary scratch work, use the `scratch` tool instead.",
+    example: 'Save: { "action": "write", "fileName": "report.md", "content": "..." }\nObject read: { "action": "read", "filePath": "/objects/uploads/abc123.md" }\nBound roots: { "action": "listBound", "vaultId": "..." }\nBound read: { "action": "read", "driveResourceId": "..." }',
     actions: {
       write: { description: "Save a file permanently to object storage. Returns a download link you MUST include in your response.", requiredParams: ["fileName", "content"], optionalParams: ["contentType"] },
-      read: { description: "Read a persistent file from object storage by its object path (the /objects/... path returned by write).", requiredParams: ["filePath"] },
+      read: { description: "Read object storage by filePath, or a bound drive file via driveResourceId / provider+providerFileId (filesApi).", optionalParams: ["filePath", "vaultId", "driveResourceId", "provider", "providerFileId"] },
       list: { description: "List all persistent files stored in object storage.", optionalParams: ["prefix"] },
+      listBound: { description: "List vault-bound drive resources (no ambient provider crawl).", requiredParams: ["vaultId"] },
+      listChildren: { description: "List children of a bound folder via filesApi.", optionalParams: ["vaultId", "driveResourceId", "provider", "providerFileId", "pageToken"] },
+      getMetadata: { description: "Get metadata for a bound drive file/folder via filesApi.", optionalParams: ["vaultId", "driveResourceId", "provider", "providerFileId"] },
+      authorize: { description: "Authorize the current principal for a bound drive_resource via filesApi.", optionalParams: ["vaultId", "driveResourceId", "provider", "providerFileId"] },
     },
   },
   web: {
