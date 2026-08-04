@@ -209,14 +209,16 @@ async function driveClientForConnector(
 }
 
 /**
- * Resolve whitelist coverage for a Google file id inside a vault.
+ * Resolve whitelist coverage for a provider file id inside a vault.
  * Exact file bind wins; otherwise walk parents until a folder bind matches.
  * Fail closed when nothing covers the target — caller must re-prompt Picker.
+ * Parent walk is Google-only today; other providers require exact binds.
  */
 async function resolveWhitelist(
   principal: Principal,
   vaultId: string,
-  googleFileId: string,
+  provider: FilesProvider,
+  providerFileId: string,
 ): Promise<{ bind: DriveResourceRow; viaFolderBind: boolean }> {
   await assertVaultAccess(principal, vaultId, "read");
 
@@ -226,10 +228,22 @@ async function resolveWhitelist(
     .from(driveResources)
     .where(eq(driveResources.vaultId, vaultId));
 
-  const exact = binds.find((b) => b.googleFileId === googleFileId);
+  const exact = binds.find(
+    (b) => b.provider === provider && b.providerFileId === providerFileId,
+  );
   if (exact) return { bind: exact, viaFolderBind: false };
 
-  const folderBinds = binds.filter((b) => b.resourceType === "folder");
+  // Non-Google providers: exact bind only (no parent walk yet).
+  if (provider !== "google") {
+    throw httpError(
+      403,
+      "File is not whitelisted — pick it explicitly or bind a parent folder",
+    );
+  }
+
+  const folderBinds = binds.filter(
+    (b) => b.resourceType === "folder" && b.provider === "google",
+  );
   if (folderBinds.length === 0) {
     throw httpError(
       403,
@@ -245,10 +259,10 @@ async function resolveWhitelist(
   }
 
   for (const [connectorId, folders] of byConnector) {
-    const folderIds = new Set(folders.map((f) => f.googleFileId));
+    const folderIds = new Set(folders.map((f) => f.providerFileId));
     try {
       const drive = await driveClientForConnector(connectorId);
-      let currentId: string | null = googleFileId;
+      let currentId: string | null = providerFileId;
       for (let depth = 0; depth < MAX_PARENT_WALK && currentId; depth++) {
         const meta = await drive.files.get({
           fileId: currentId,
@@ -261,7 +275,7 @@ async function resolveWhitelist(
         const parents = meta.data.parents ?? [];
         for (const parentId of parents) {
           if (folderIds.has(parentId)) {
-            const bind = folders.find((f) => f.googleFileId === parentId)!;
+            const bind = folders.find((f) => f.providerFileId === parentId)!;
             return { bind, viaFolderBind: true };
           }
         }
@@ -272,7 +286,8 @@ async function resolveWhitelist(
       if (status === 410) throw err;
       log.warn("Whitelist parent walk failed", {
         connectorId,
-        googleFileId,
+        provider,
+        providerFileId,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -302,12 +317,14 @@ class FilesApi {
   async listChildren(input: {
     vaultId: string;
     driveResourceId?: string;
-    googleFileId?: string;
+    provider?: FilesProvider;
+    providerFileId?: string;
     pageToken?: string;
   }): Promise<{ children: FilesChild[]; nextPageToken: string | null }> {
     const principal = requireCurrentUserPrincipal();
 
-    let folderGoogleId: string;
+    let folderProvider: FilesProvider;
+    let folderProviderFileId: string;
     let connectorId: string;
     let coveringBindId: string;
     let vaultId = input.vaultId;
@@ -325,28 +342,36 @@ class FilesApi {
         throw httpError(400, "listChildren requires a folder bind");
       }
       vaultId = bind.vaultId;
-      folderGoogleId = bind.googleFileId;
+      folderProvider = (bind.provider as FilesProvider) || "google";
+      folderProviderFileId = bind.providerFileId;
       connectorId = bind.connectedAccountId;
       coveringBindId = bind.id;
-    } else if (input.googleFileId) {
+    } else if (input.providerFileId) {
       await assertVaultAccess(principal, vaultId, "read");
+      const provider = input.provider ?? "google";
       const resolved = await resolveWhitelist(
         principal,
         vaultId,
-        input.googleFileId,
+        provider,
+        input.providerFileId,
       );
-      folderGoogleId = input.googleFileId;
+      folderProvider = provider;
+      folderProviderFileId = input.providerFileId;
       connectorId = resolved.bind.connectedAccountId;
       coveringBindId = resolved.bind.id;
     } else {
-      throw httpError(400, "driveResourceId or googleFileId required");
+      throw httpError(400, "driveResourceId or providerFileId required");
+    }
+
+    if (folderProvider !== "google") {
+      throw httpError(501, `listChildren not implemented for provider ${folderProvider}`);
     }
 
     const drive = await driveClientForConnector(connectorId);
 
-    if (input.googleFileId && !input.driveResourceId) {
+    if (input.providerFileId && !input.driveResourceId) {
       const meta = await drive.files.get({
-        fileId: folderGoogleId,
+        fileId: folderProviderFileId,
         fields: "id,mimeType,trashed",
         supportsAllDrives: true,
       });
@@ -358,7 +383,7 @@ class FilesApi {
       }
     }
 
-    const escaped = folderGoogleId.replace(/'/g, "\\'");
+    const escaped = folderProviderFileId.replace(/'/g, "\\'");
     const resp = await drive.files.list({
       q: `'${escaped}' in parents and trashed = false`,
       fields: "nextPageToken, files(id,name,mimeType,iconLink,webViewLink)",
@@ -381,15 +406,16 @@ class FilesApi {
             .where(
               and(
                 eq(driveResources.vaultId, vaultId),
-                inArray(driveResources.googleFileId, childIds),
+                eq(driveResources.provider, folderProvider),
+                inArray(driveResources.providerFileId, childIds),
               ),
             );
-    const bindByGoogleId = new Map(
-      explicitBinds.map((b) => [b.googleFileId, b]),
+    const bindByProviderFileId = new Map(
+      explicitBinds.map((b) => [b.providerFileId, b]),
     );
 
     const children: FilesChild[] = files.map((f) => {
-      const bind = bindByGoogleId.get(f.id!);
+      const bind = bindByProviderFileId.get(f.id!);
       const mime = f.mimeType ?? null;
       return {
         provider: "google" as const,
@@ -406,7 +432,8 @@ class FilesApi {
 
     log.debug("listChildren", {
       vaultId,
-      folderGoogleId,
+      provider: folderProvider,
+      providerFileId: folderProviderFileId,
       count: children.length,
       coveringBindId,
     });
@@ -418,11 +445,13 @@ class FilesApi {
   async getMetadata(input: {
     vaultId?: string;
     driveResourceId?: string;
-    googleFileId?: string;
+    provider?: FilesProvider;
+    providerFileId?: string;
   }): Promise<FilesMetadata> {
     const principal = requireCurrentUserPrincipal();
 
-    let googleFileId: string;
+    let provider: FilesProvider;
+    let providerFileId: string;
     let connectorId: string;
     let driveResourceId: string;
     let vaultId: string;
@@ -436,30 +465,37 @@ class FilesApi {
       if (input.vaultId && bind.vaultId !== input.vaultId) {
         throw httpError(404, "Drive resource not found");
       }
-      googleFileId = bind.googleFileId;
+      provider = (bind.provider as FilesProvider) || "google";
+      providerFileId = bind.providerFileId;
       connectorId = bind.connectedAccountId;
       driveResourceId = bind.id;
       vaultId = bind.vaultId;
-    } else if (input.googleFileId && input.vaultId) {
+    } else if (input.providerFileId && input.vaultId) {
+      provider = input.provider ?? "google";
       const resolved = await resolveWhitelist(
         principal,
         input.vaultId,
-        input.googleFileId,
+        provider,
+        input.providerFileId,
       );
-      googleFileId = input.googleFileId;
+      providerFileId = input.providerFileId;
       connectorId = resolved.bind.connectedAccountId;
       driveResourceId = resolved.bind.id;
       vaultId = input.vaultId;
     } else {
       throw httpError(
         400,
-        "driveResourceId, or vaultId + googleFileId, required",
+        "driveResourceId, or vaultId + providerFileId, required",
       );
+    }
+
+    if (provider !== "google") {
+      throw httpError(501, `getMetadata not implemented for provider ${provider}`);
     }
 
     const drive = await driveClientForConnector(connectorId);
     const meta = await drive.files.get({
-      fileId: googleFileId,
+      fileId: providerFileId,
       fields:
         "id,name,mimeType,iconLink,webViewLink,size,modifiedTime,md5Checksum,trashed",
       supportsAllDrives: true,
@@ -472,7 +508,7 @@ class FilesApi {
     const mime = meta.data.mimeType ?? null;
     return {
       provider: "google",
-      providerFileId: meta.data.id ?? googleFileId,
+      providerFileId: meta.data.id ?? providerFileId,
       name: meta.data.name ?? "(untitled)",
       mimeType: mime,
       resourceType: mapResourceType(mime),
@@ -494,7 +530,8 @@ class FilesApi {
   async read(input: {
     vaultId?: string;
     driveResourceId?: string;
-    googleFileId?: string;
+    provider?: FilesProvider;
+    providerFileId?: string;
   }): Promise<FilesReadResult> {
     const metadata = await this.getMetadata(input);
     if (metadata.resourceType === "folder") {

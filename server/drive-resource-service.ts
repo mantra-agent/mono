@@ -5,13 +5,18 @@ import { vaults } from "@shared/models/vaults";
 import { createLogger } from "./log";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { liveVaultGatePredicate, type ObjectRole } from "./authorize";
+import type { FilesProvider } from "./files-api";
 
 const log = createLogger("DriveResourceService");
+
+const PROVIDERS: ReadonlySet<string> = new Set(["google", "box", "mantra"]);
 
 export interface BindDriveResourceInput {
   vaultId: string;
   connectedAccountId: string;
-  googleFileId: string;
+  /** Provider identity — defaults to google for the existing Picker path. */
+  provider?: FilesProvider;
+  providerFileId: string;
   name: string;
   mimeType?: string | null;
   resourceType?: "file" | "folder";
@@ -20,9 +25,9 @@ export interface BindDriveResourceInput {
 }
 
 /**
- * Binds Google Drive files/folders into a vault's Files branch. Every read and write is bounded to
- * the caller's authorized vault access; a binding is a pointer to a Google file (via drive.file),
- * never a copy. Unbinding deletes only the pointer row — it never touches the underlying Google file.
+ * Binds provider files/folders into a vault's Files branch. Every read and write is bounded to
+ * the caller's authorized vault access; a binding is a pointer (via drive.file today), never a copy.
+ * Unbinding deletes only the pointer row — it never touches the underlying provider file.
  */
 export class DriveResourceService {
   /** Vault owner account OR live vault grant at the required role. */
@@ -72,19 +77,24 @@ export class DriveResourceService {
   async bind(input: BindDriveResourceInput): Promise<DriveResourceRow> {
     const principal = requireCurrentUserPrincipal();
     await this.assertOwnedVault(input.vaultId);
-    const googleFileId = input.googleFileId.trim();
+    const provider = (input.provider ?? "google") as FilesProvider;
+    if (!PROVIDERS.has(provider)) {
+      throw Object.assign(new Error("provider must be google, box, or mantra"), { status: 400 });
+    }
+    const providerFileId = input.providerFileId.trim();
     const name = input.name.trim();
-    if (!googleFileId) throw Object.assign(new Error("googleFileId is required"), { status: 400 });
+    if (!providerFileId) throw Object.assign(new Error("providerFileId is required"), { status: 400 });
     if (!name) throw Object.assign(new Error("name is required"), { status: 400 });
-    // Idempotent: re-binding the same file into the same vault refreshes its metadata rather than
-    // erroring, so a re-pick is safe to replay.
+    // Idempotent: re-binding the same provider file into the same vault refreshes its metadata
+    // rather than erroring, so a re-pick is safe to replay.
     const [resource] = await db
       .insert(driveResources)
       .values({
         accountId: principal.accountId,
         vaultId: input.vaultId,
         connectedAccountId: input.connectedAccountId,
-        googleFileId,
+        provider,
+        providerFileId,
         name,
         mimeType: input.mimeType ?? null,
         resourceType: input.resourceType ?? "file",
@@ -93,7 +103,7 @@ export class DriveResourceService {
         addedByUserId: principal.userId,
       })
       .onConflictDoUpdate({
-        target: [driveResources.vaultId, driveResources.googleFileId],
+        target: [driveResources.vaultId, driveResources.provider, driveResources.providerFileId],
         set: {
           name,
           mimeType: input.mimeType ?? null,
@@ -102,11 +112,16 @@ export class DriveResourceService {
         },
       })
       .returning();
-    log.info("drive resource bound", { id: resource.id, vaultId: input.vaultId, googleFileId });
+    log.info("drive resource bound", {
+      id: resource.id,
+      vaultId: input.vaultId,
+      provider,
+      providerFileId,
+    });
     return resource;
   }
 
-  /** Remove the binding. Deletes only the pointer row — never touches the underlying Google file. */
+  /** Remove the binding. Deletes only the pointer row — never touches the underlying provider file. */
   async unbind(id: string): Promise<void> {
     const principal = requireCurrentUserPrincipal();
     const rows = await db
@@ -114,7 +129,7 @@ export class DriveResourceService {
       .where(and(eq(driveResources.id, id), eq(driveResources.accountId, principal.accountId)))
       .returning({ id: driveResources.id });
     if (rows.length === 0) throw Object.assign(new Error("Drive resource not found"), { status: 404 });
-    log.info("drive resource unbound (Google file untouched)", { id });
+    log.info("drive resource unbound (provider file untouched)", { id });
   }
 }
 

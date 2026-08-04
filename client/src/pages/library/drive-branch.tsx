@@ -20,7 +20,8 @@ const log = createLogger("DriveBranch");
 
 interface DriveResource {
   id: string;
-  googleFileId: string;
+  provider: "google" | "box" | "mantra";
+  providerFileId: string;
   name: string;
   mimeType: string | null;
   resourceType: "file" | "folder";
@@ -155,13 +156,15 @@ function resourceIcon(r: { iconUrl: string | null; resourceType: string }) {
 function FolderChildren({
   vaultId,
   driveResourceId,
-  googleFileId,
+  provider,
+  providerFileId,
   depth,
   searchQuery,
 }: {
   vaultId: string;
   driveResourceId?: string;
-  googleFileId?: string;
+  provider?: "google" | "box" | "mantra";
+  providerFileId?: string;
   depth: number;
   searchQuery: string;
 }) {
@@ -169,11 +172,18 @@ function FolderChildren({
   const q = searchQuery.trim().toLowerCase();
 
   const childrenQuery = useQuery<{ children: FilesChild[]; nextPageToken: string | null }>({
-    queryKey: ["/api/files/children", vaultId, driveResourceId ?? null, googleFileId ?? null],
+    queryKey: [
+      "/api/files/children",
+      vaultId,
+      driveResourceId ?? null,
+      provider ?? null,
+      providerFileId ?? null,
+    ],
     queryFn: async () => {
       const params = new URLSearchParams({ vaultId });
       if (driveResourceId) params.set("driveResourceId", driveResourceId);
-      if (googleFileId) params.set("googleFileId", googleFileId);
+      if (provider) params.set("provider", provider);
+      if (providerFileId) params.set("providerFileId", providerFileId);
       const res = await apiRequest("GET", `/api/files/children?${params.toString()}`);
       return res.json();
     },
@@ -260,7 +270,8 @@ function FolderChildren({
             {c.resourceType === "folder" && isOpen && (
               <FolderChildren
                 vaultId={vaultId}
-                googleFileId={c.providerFileId}
+                provider={c.provider}
+                providerFileId={c.providerFileId}
                 depth={depth + 1}
                 searchQuery={searchQuery}
               />
@@ -316,7 +327,8 @@ export function DriveBranch({
         await apiRequest("POST", "/api/drive/resources", {
           vaultId,
           connectedAccountId,
-          googleFileId: doc.id,
+          provider: "google",
+          providerFileId: doc.id,
           name: doc.name,
           mimeType: doc.mimeType ?? null,
           resourceType:

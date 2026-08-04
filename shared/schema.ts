@@ -822,10 +822,12 @@ export const driveResources = pgTable("drive_resources", {
   id: text("id").primaryKey().default(sql`gen_random_uuid()`),
   accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
   vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "cascade" }),
-  /** The connected Google account this file was picked from (drive.file grants per-file access). */
+  /** The connected account this file was picked from (drive.file grants per-file access for Google). */
   connectedAccountId: text("connected_account_id").notNull(),
-  /** Google Drive file id — the durable handle used for reads and (Step C) writes. */
-  googleFileId: text("google_file_id").notNull(),
+  /** Provider discriminant — google | box | mantra. Part of the bind identity. */
+  provider: text("provider").notNull().default("google"),
+  /** Provider-native file id — the durable handle used for reads and (Step C) writes. */
+  providerFileId: text("provider_file_id").notNull(),
   name: text("name").notNull(),
   mimeType: text("mime_type"),
   resourceType: text("resource_type", { enum: driveResourceTypes }).notNull().default("file"),
@@ -836,8 +838,13 @@ export const driveResources = pgTable("drive_resources", {
 }, (table) => [
   index("idx_drive_resources_vault").on(table.vaultId),
   index("idx_drive_resources_account").on(table.accountId),
-  uniqueIndex("idx_drive_resources_vault_file_unique").on(table.vaultId, table.googleFileId),
+  uniqueIndex("idx_drive_resources_vault_provider_file_unique").on(
+    table.vaultId,
+    table.provider,
+    table.providerFileId,
+  ),
   check("drive_resources_resource_type_check", sql`${table.resourceType} IN ('file', 'folder')`),
+  check("drive_resources_provider_check", sql`${table.provider} IN ('google', 'box', 'mantra')`),
 ]);
 
 export type DriveResourceRow = typeof driveResources.$inferSelect;
