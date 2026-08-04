@@ -1,6 +1,7 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 import { ACTIVITY_FRAMING, ACTIVITY_CHAT, type ActivityId } from "./job-profiles";
 import { resolveModelCandidates, appendFailedAttempt, type ModelRoutingDecision } from "./model-routing";
 import { getMaxOutputTokens, getModel, supportsSelectableEffort } from "./model-registry";
@@ -149,6 +150,8 @@ const GROK_SUBSCRIPTION_ACCOUNT_ID = "grok-subscription-primary";
 const GROK_SUBSCRIPTION_API_BASE_URL = "https://api.x.ai/v1";
 const GROK_SUBSCRIPTION_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 const GROK_SUBSCRIPTION_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
+/** xAI Imagine model used for image generation/edit via the Grok subscription connector. */
+const GROK_IMAGE_MODEL = "grok-imagine-pro";
 
 interface GrokSubscriptionTokens {
   access_token: string;
@@ -3494,18 +3497,68 @@ async function* openaiStream(model: string, options: ChatCompletionStreamOptions
 }
 
 // ---------------------------------------------------------------------------
-// Image generation via OpenAI Subscription (Responses API)
+// Image generation / edit
+// Primary: OpenAI Subscription Responses API
+// Fallback: Grok subscription via xAI Imagine (OpenAI-compatible images API)
 // ---------------------------------------------------------------------------
 
-export async function generateImageViaSubscription(
-  prompt: string,
-  options?: {
-    size?: string;
-    quality?: string;
-    background?: string;
-    outputFormat?: string;
-    signal?: AbortSignal;
+type ImageModalityOptions = {
+  size?: string;
+  quality?: string;
+  background?: string;
+  outputFormat?: string;
+  signal?: AbortSignal;
+};
+
+function isOpenAIImageProviderFailure(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes("usage_limit") ||
+    lower.includes("usage limit") ||
+    lower.includes("rate limit") ||
+    lower.includes("quota") ||
+    lower.includes("insufficient_quota") ||
+    lower.includes("billing") ||
+    lower.includes("unauthorized") ||
+    lower.includes("forbidden") ||
+    lower.includes("expired") ||
+    lower.includes("authentication") ||
+    lower.includes("not configured") ||
+    lower.includes("no openai") ||
+    lower.includes("openai subscription") ||
+    lower.includes("provider_quota") ||
+    lower.includes("codex image")
+  ) {
+    return true;
   }
+  // HTTP status codes commonly returned when the OpenAI sub path is down.
+  return /\b(401|402|403|429|500|502|503)\b/.test(msg);
+}
+
+function aspectRatioFromSize(size?: string): string | undefined {
+  if (!size) return undefined;
+  const match = /^(\d+)x(\d+)$/i.exec(size.trim());
+  if (!match) return undefined;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return undefined;
+  }
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const d = gcd(width, height);
+  return `${width / d}:${height / d}`;
+}
+
+async function getGrokImageClient(): Promise<OpenAI> {
+  const accessToken = await getGrokSubscriptionAccessToken();
+  return getOpenAIClient(accessToken, GROK_SUBSCRIPTION_API_BASE_URL);
+}
+
+async function generateImageViaOpenAISubscription(
+  prompt: string,
+  options?: ImageModalityOptions,
 ): Promise<{ buffer: Buffer; format: string }> {
   const accessToken = await getOpenAISubscriptionAccessToken();
   const modelString = (await resolveModelCandidates(ACTIVITY_FRAMING))[0].modelString;
@@ -3636,10 +3689,85 @@ export async function generateImageViaSubscription(
   throw new Error("Codex image generation exhausted retries without a provider failure");
 }
 
-export async function editImageViaSubscription(
+/**
+ * Generate an image via xAI Imagine on the Grok subscription connector.
+ * Uses the OpenAI-compatible Images API at api.x.ai/v1.
+ */
+export async function generateImageViaGrokSubscription(
+  prompt: string,
+  options?: ImageModalityOptions,
+): Promise<{ buffer: Buffer; format: string }> {
+  const client = await getGrokImageClient();
+  const format = options?.outputFormat === "jpeg" || options?.outputFormat === "webp"
+    ? options.outputFormat
+    : "png";
+  const aspectRatio = aspectRatioFromSize(options?.size);
+
+  const request: Record<string, unknown> = {
+    model: GROK_IMAGE_MODEL,
+    prompt,
+    n: 1,
+    response_format: "b64_json",
+  };
+  if (options?.size) request.size = options.size;
+  if (aspectRatio) request.aspect_ratio = aspectRatio;
+  if (options?.quality === "high" || options?.quality === "low") {
+    request.quality = options.quality;
+  }
+
+  log.info("Generating image via Grok subscription (xAI Imagine)", {
+    model: GROK_IMAGE_MODEL,
+    size: options?.size,
+    aspectRatio,
+  });
+
+  const response = await client.images.generate(request as any, {
+    signal: options?.signal,
+  } as any);
+
+  const b64 = response.data?.[0]?.b64_json;
+  if (!b64) {
+    throw new Error("Grok image generation completed but no image data was returned");
+  }
+
+  return {
+    buffer: Buffer.from(b64, "base64"),
+    format,
+  };
+}
+
+/**
+ * Generate an image. Tries OpenAI subscription first; on provider failure falls
+ * back to Grok subscription / xAI Imagine so image tools keep working when the
+ * OpenAI sub is exhausted or unavailable.
+ */
+export async function generateImageViaSubscription(
+  prompt: string,
+  options?: ImageModalityOptions,
+): Promise<{ buffer: Buffer; format: string }> {
+  try {
+    return await generateImageViaOpenAISubscription(prompt, options);
+  } catch (err) {
+    if (!isOpenAIImageProviderFailure(err)) throw err;
+    log.warn("OpenAI image generation failed; falling back to Grok subscription", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    try {
+      return await generateImageViaGrokSubscription(prompt, options);
+    } catch (fallbackErr) {
+      const primary = err instanceof Error ? err.message : String(err);
+      const fallback = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+      throw new Error(
+        `Image generation failed on OpenAI subscription (${primary}); Grok fallback also failed (${fallback})`,
+      );
+    }
+  }
+}
+
+async function editImageViaOpenAISubscription(
   imageBuffers: Array<{ buffer: Buffer; mediaType: string }>,
   prompt: string,
-  options?: { size?: string; quality?: string; outputFormat?: string; signal?: AbortSignal }
+  options?: ImageModalityOptions,
 ): Promise<{ buffer: Buffer; format: string }> {
   const accessToken = await getOpenAISubscriptionAccessToken();
   const modelString = (await resolveModelCandidates(ACTIVITY_FRAMING))[0].modelString;
@@ -3772,4 +3900,96 @@ export async function editImageViaSubscription(
   }
 
   throw new Error("Codex image editing exhausted retries without a provider failure");
+}
+
+/**
+ * Edit images via xAI Imagine on the Grok subscription connector.
+ * Uses the OpenAI-compatible Images Edit API at api.x.ai/v1.
+ */
+export async function editImageViaGrokSubscription(
+  imageBuffers: Array<{ buffer: Buffer; mediaType: string }>,
+  prompt: string,
+  options?: ImageModalityOptions,
+): Promise<{ buffer: Buffer; format: string }> {
+  if (!imageBuffers.length) {
+    throw new Error("Grok image edit requires at least one source image");
+  }
+
+  const client = await getGrokImageClient();
+  const format = options?.outputFormat === "jpeg" || options?.outputFormat === "webp"
+    ? options.outputFormat
+    : "png";
+  const aspectRatio = aspectRatioFromSize(options?.size);
+
+  const files = await Promise.all(
+    imageBuffers.map(async (img, index) => {
+      const imageExt = img.mediaType.includes("jpeg") || img.mediaType.includes("jpg")
+        ? "jpg"
+        : img.mediaType.includes("webp")
+          ? "webp"
+          : "png";
+      return toFile(img.buffer, `source-${index}.${imageExt}`, {
+        type: img.mediaType || `image/${imageExt === "jpg" ? "jpeg" : imageExt}`,
+      });
+    }),
+  );
+
+  const request: Record<string, unknown> = {
+    model: GROK_IMAGE_MODEL,
+    image: files.length === 1 ? files[0] : files,
+    prompt,
+    n: 1,
+    response_format: "b64_json",
+  };
+  if (options?.size) request.size = options.size;
+  if (aspectRatio) request.aspect_ratio = aspectRatio;
+
+  log.info("Editing image via Grok subscription (xAI Imagine)", {
+    model: GROK_IMAGE_MODEL,
+    sourceCount: imageBuffers.length,
+    size: options?.size,
+    aspectRatio,
+  });
+
+  const response = await client.images.edit(request as any, {
+    signal: options?.signal,
+  } as any);
+
+  const b64 = response.data?.[0]?.b64_json;
+  if (!b64) {
+    throw new Error("Grok image edit completed but no image data was returned");
+  }
+
+  return {
+    buffer: Buffer.from(b64, "base64"),
+    format,
+  };
+}
+
+/**
+ * Edit/combine images. Tries OpenAI subscription first; on provider failure
+ * falls back to Grok subscription / xAI Imagine.
+ */
+export async function editImageViaSubscription(
+  imageBuffers: Array<{ buffer: Buffer; mediaType: string }>,
+  prompt: string,
+  options?: ImageModalityOptions,
+): Promise<{ buffer: Buffer; format: string }> {
+  try {
+    return await editImageViaOpenAISubscription(imageBuffers, prompt, options);
+  } catch (err) {
+    if (!isOpenAIImageProviderFailure(err)) throw err;
+    log.warn("OpenAI image edit failed; falling back to Grok subscription", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    try {
+      return await editImageViaGrokSubscription(imageBuffers, prompt, options);
+    } catch (fallbackErr) {
+      const primary = err instanceof Error ? err.message : String(err);
+      const fallback = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+      throw new Error(
+        `Image edit failed on OpenAI subscription (${primary}); Grok fallback also failed (${fallback})`,
+      );
+    }
+  }
 }

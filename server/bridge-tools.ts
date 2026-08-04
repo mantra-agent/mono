@@ -12282,30 +12282,60 @@ ${refs}` : ""),
             return { result: "Missing image source. Provide one of: path (workspace file), url (image URL), or base64 (raw data)", error: true };
           }
 
-          // Route vision through openai-subscription which handles image_url blocks natively
-          // via buildCodexInput (converts to input_image). The claude-cli path's buildPrompt
-          // JSON.stringifies multimodal content into flat text, causing "prompt too long" errors.
+          // Prefer openai-subscription vision (native image_url → input_image). Fall back
+          // to Grok subscription multimodal chat when OpenAI sub is exhausted/unavailable.
+          // Avoid claude-cli: buildPrompt JSON.stringifies multimodal content into flat text.
           const dataUrl = `data:${mediaType};base64,${imageBase64}`;
           const { chatCompletion } = await import("./model-client");
-          const visionModel = a.depth === "deep"
+          const openAiVisionModel = a.depth === "deep"
             ? "openai-subscription/gpt-5.5-sub"
             : "openai-subscription/gpt-5.4-mini-sub";
+          const grokVisionModel = "grok-subscription/grok-4.5";
           const visionMessages = [
             { role: "user" as const, content: [
               { type: "image_url" as const, image_url: { url: dataUrl } },
               { type: "text" as const, text: prompt },
             ] },
           ];
-          log.debug(`[Images] analyze: routing to ${visionModel}`);
-          const result = await chatCompletion({
-            activity: (await import("./job-profiles")).ACTIVITY_MEDIA,
-            model: visionModel,
-            overrideReason: "image analysis requires multimodal OpenAI subscription model",
-            metadata: { source: "bridge-tool", toolName: "images.analyze", activity: (await import("./job-profiles")).ACTIVITY_MEDIA },
-            maxTokens: 4000,
-            messages: visionMessages,
-          });
-          const description = result.content.trim() || "Unable to describe image";
+          const activity = (await import("./job-profiles")).ACTIVITY_MEDIA;
+          log.debug(`[Images] analyze: routing to ${openAiVisionModel}`);
+          let description: string;
+          try {
+            const result = await chatCompletion({
+              activity,
+              model: openAiVisionModel,
+              overrideReason: "image analysis prefers multimodal OpenAI subscription model",
+              metadata: { source: "bridge-tool", toolName: "images.analyze", activity },
+              maxTokens: 4000,
+              messages: visionMessages,
+            });
+            description = result.content.trim() || "Unable to describe image";
+          } catch (primaryErr: any) {
+            const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+            log.warn(`[Images] OpenAI analyze failed; falling back to Grok: ${primaryMsg}`);
+            log.debug(`[Images] analyze: routing fallback to ${grokVisionModel}`);
+            try {
+              const fallback = await chatCompletion({
+                activity,
+                model: grokVisionModel,
+                overrideReason: "image analysis fallback to multimodal Grok subscription model",
+                metadata: {
+                  source: "bridge-tool",
+                  toolName: "images.analyze",
+                  activity,
+                  fallbackFrom: openAiVisionModel,
+                },
+                maxTokens: 4000,
+                messages: visionMessages,
+              });
+              description = fallback.content.trim() || "Unable to describe image";
+            } catch (fallbackErr: any) {
+              const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+              throw new Error(
+                `Image analysis failed on OpenAI (${primaryMsg}); Grok fallback also failed (${fallbackMsg})`,
+              );
+            }
+          }
           log.debug(`[Images] analyze complete: ${description.length} chars`);
           return { result: description };
         } catch (err: any) {
