@@ -61,12 +61,20 @@ export function objectGrantIdentity(objectType: AuthorizableObjectType, columns:
 }
 
 /**
- * Membership-expansion seam. Today a principal matches only its own `('user', userId)` grants.
- * When team/org subjects land, widen this to also match `('team', teamId)` / `('organization', orgId)`
- * for the principal's memberships — every call site keeps working unchanged.
+ * Membership-expansion seam. A principal matches its own `('user', userId)` grants, plus any
+ * `('team', teamId)` grant for a team it belongs to. Team membership is expanded live via an EXISTS
+ * against team_members so revoking membership immediately revokes team-derived access — every call
+ * site keeps working unchanged. Organization subjects would slot in here the same way.
  */
 function subjectMatchPredicate(principal: Principal): SQL {
-  return sql`(${objectGrants.subjectType} = 'user' AND ${objectGrants.subjectId} = ${principal.userId})`;
+  return sql`(
+    (${objectGrants.subjectType} = 'user' AND ${objectGrants.subjectId} = ${principal.userId})
+    OR (${objectGrants.subjectType} = 'team' AND EXISTS (
+      SELECT 1 FROM team_members tm
+      WHERE tm.team_id = ${objectGrants.subjectId}
+        AND tm.user_id = ${principal.userId}
+    ))
+  )`;
 }
 
 /** Does the principal hold a live direct grant on this object at >= the required role? */

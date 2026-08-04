@@ -18,12 +18,18 @@ export type ShareableObjectType = "library_page" | "project" | "milestone" | "ta
 export type ShareCapability = "read" | "write" | "admin";
 
 interface GrantRow {
-  subjectType: "user" | "invited_subject";
+  subjectType: "user" | "invited_subject" | "team";
   subjectId: string;
   capability: ShareCapability;
   createdAt: string;
   label: string;
   email: string | null;
+}
+
+interface TeamOption {
+  id: string;
+  name: string;
+  memberCount: number;
 }
 
 interface ShareSheetProps {
@@ -56,6 +62,17 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
     enabled: open,
   });
 
+  // Teams the caller's account owns — offered as grant subjects alongside people.
+  const { data: teamsData } = useQuery<{ teams: TeamOption[] }>({
+    queryKey: ["/api/teams"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/teams");
+      return res.json();
+    },
+    enabled: open,
+  });
+  const teams = teamsData?.teams ?? [];
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey });
 
   const addMutation = useMutation<unknown, Error, { email: string; capability: ShareCapability }>({
@@ -73,6 +90,23 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
       invalidate();
     },
     onError: (err) => setError(err.message || "Failed to share"),
+  });
+
+  const addTeamMutation = useMutation<unknown, Error, { teamId: string; capability: ShareCapability }>({
+    mutationFn: async ({ teamId, capability }) => {
+      const res = await apiRequest("POST", grantsUrl(objectType, objectId), {
+        subjectType: "team",
+        subjectId: teamId,
+        capability,
+        ...(projectId != null ? { projectId } : {}),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      setError(null);
+      invalidate();
+    },
+    onError: (err) => setError(err.message || "Failed to share with team"),
   });
 
   const revokeMutation = useMutation<unknown, Error, GrantRow>({
@@ -138,6 +172,30 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
             {addMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Share"}
           </Button>
         </div>
+
+        {/* Add a team */}
+        {teams.length > 0 && (
+          <div className="flex items-center gap-2">
+            <select
+              value=""
+              onChange={(e) => {
+                const teamId = e.target.value;
+                if (teamId) addTeamMutation.mutate({ teamId, capability });
+              }}
+              className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-sm text-muted-foreground"
+              disabled={addTeamMutation.isPending}
+              data-testid="select-share-team"
+            >
+              <option value="">Add a team…</option>
+              {teams.map((team) => (
+                <option key={team.id} value={team.id}>
+                  {team.name} ({team.memberCount})
+                </option>
+              ))}
+            </select>
+            {addTeamMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+          </div>
+        )}
 
         {error && <p className="text-xs text-destructive" data-testid="text-share-error">{error}</p>}
 

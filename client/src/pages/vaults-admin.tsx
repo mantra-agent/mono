@@ -37,6 +37,7 @@ import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
 import { VaultMigrationControls } from "@/components/vault-migration-controls";
+import { TeamsPanel } from "@/components/teams/teams-panel";
 import {
   DEFAULT_VAULT_COLOR,
   normalizeVaultColor,
@@ -508,6 +509,10 @@ export default function VaultsAdminPage() {
           </Collapsible>
 
           <VaultMigrationControls />
+
+          <div className="mt-6 border-t border-border pt-6">
+            <TeamsPanel />
+          </div>
       </div>
 
       <CreateVaultDialog open={createOpen} onOpenChange={setCreateOpen} />

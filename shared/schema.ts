@@ -567,7 +567,15 @@ export const insertTimerRunSchema = insertResponsibilityRunSchema;
 export type TimerRunRow = ResponsibilityRunRow;
 export type InsertTimerRun = InsertResponsibilityRun;
 
-export const objectGrantSubjectTypes = ["user", "invited_subject"] as const;
+export const objectGrantSubjectTypes = ["user", "invited_subject", "team"] as const;
+/**
+ * Task assignment is the human-obligation axis and is deliberately narrower than grant subjects:
+ * a task can be owed by a person, never by a team. Kept as its own single source so widening the
+ * grant subject set (e.g. adding `team`) can never silently make teams task-assignable.
+ */
+export const taskAssigneeSubjectTypes = ["user", "invited_subject"] as const;
+/** Team membership roles. `admin` may manage the team's roster; both are grant-expanded identically. */
+export const teamMemberRoles = ["admin", "member"] as const;
 export const objectGrantObjectTypes = ["project", "milestone", "task", "library_page"] as const;
 export const objectGrantCapabilities = ["read", "write", "admin"] as const;
 export const objectGrantOriginTypes = ["meeting", "manual"] as const;
@@ -583,7 +591,7 @@ export const tasks = pgTable("tasks", {
   effort: text("effort").notNull().default("mid"),
   owner: text("owner").notNull().default("me"),
   /** Human obligation axis. Execution ownership remains in owner (me | agent). */
-  assigneeSubjectType: text("assignee_subject_type", { enum: objectGrantSubjectTypes }),
+  assigneeSubjectType: text("assignee_subject_type", { enum: taskAssigneeSubjectTypes }),
   assigneeSubjectId: text("assignee_subject_id"),
   requiresReview: boolean("requires_review").notNull().default(false),
   projectId: integer("project_id"),
@@ -713,7 +721,7 @@ export const objectGrants = pgTable("object_grants", {
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (table) => [
-  check("object_grants_subject_type_check", sql`${table.subjectType} IN ('user', 'invited_subject')`),
+  check("object_grants_subject_type_check", sql`${table.subjectType} IN ('user', 'invited_subject', 'team')`),
   check("object_grants_object_type_check", sql`${table.objectType} IN ('project', 'milestone', 'task', 'library_page')`),
   check("object_grants_capability_check", sql`${table.capability} IN ('read', 'write', 'admin')`),
   check("object_grants_origin_type_check", sql`${table.originType} IN ('meeting', 'manual')`),
@@ -730,6 +738,39 @@ export const objectGrants = pgTable("object_grants", {
 
 export type ObjectGrantRow = typeof objectGrants.$inferSelect;
 export type InsertObjectGrantRow = typeof objectGrants.$inferInsert;
+
+// ── Teams: grant-addressable groups within an account ─────────────
+// A team is never an access grant by itself — it is only a *subject* an object_grant can target.
+// Membership expands a team grant to its member users at authorize() time (subjectMatchPredicate).
+export const teams = pgTable("teams", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_teams_account").on(table.accountId),
+  uniqueIndex("idx_teams_account_name_unique").on(table.accountId, table.name),
+]);
+
+export const teamMembers = pgTable("team_members", {
+  id: serial("id").primaryKey(),
+  teamId: text("team_id").notNull().references(() => teams.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role", { enum: teamMemberRoles }).notNull().default("member"),
+  addedByUserId: varchar("added_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("idx_team_members_team_user_unique").on(table.teamId, table.userId),
+  index("idx_team_members_user").on(table.userId),
+  check("team_members_role_check", sql`${table.role} IN ('admin', 'member')`),
+]);
+
+export type TeamRow = typeof teams.$inferSelect;
+export type InsertTeamRow = typeof teams.$inferInsert;
+export type TeamMemberRow = typeof teamMembers.$inferSelect;
+export type InsertTeamMemberRow = typeof teamMembers.$inferInsert;
 
 // ── Principles ────────────────────────────────────────────────────
 export const principles = pgTable("principles", {
