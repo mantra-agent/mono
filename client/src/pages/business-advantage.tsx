@@ -10,10 +10,7 @@ import {
   ShieldCheck,
   Target,
 } from "lucide-react";
-import {
-  HierarchySectionHeader,
-  HIERARCHY_TREE_STACK_CLASS,
-} from "@/components/hierarchy-section-header";
+import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import {
@@ -145,7 +142,7 @@ function MeasureRows({
 }) {
   if (measures.length === 0) {
     return (
-      <HierarchyTreeRow continues={continues}>
+      <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center">
         <ProfileTreeRow
           icon={<Gauge className="h-3.5 w-3.5" />}
           label="No scorecard measures"
@@ -165,7 +162,11 @@ function MeasureRows({
         const Icon = tone.Icon;
         const isLast = index === measures.length - 1;
         return (
-          <HierarchyTreeRow key={measure.key} continues={continues || !isLast}>
+          <HierarchyTreeRow
+            key={measure.key}
+            continues={continues || !isLast}
+            connectorAnchor="first-row-center"
+          >
             <ProfileTreeRow
               icon={<Target className="h-3.5 w-3.5" />}
               label={measure.label}
@@ -312,8 +313,11 @@ function ObjectiveBranch({
     objective.intent ||
     "";
 
+  // First-level goal chips match Session-menu titles: wrapped in a
+  // HierarchyTreeRow whose L connector is anchored to the row center, so the
+  // horizontal arm lands on the chip itself, not the expanded body below.
   return (
-    <HierarchyTreeRow continues={continues}>
+    <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center">
       <ProfileTreeRow
         label={<GoalReferenceTitle goalId={objective.goalId} />}
         hasValue
@@ -331,8 +335,11 @@ function ObjectiveBranch({
                 No description on the linked goal yet.
               </p>
             )}
-            <div className={HIERARCHY_TREE_STACK_CLASS}>
-              <HierarchyTreeRow continues={objective.measures.length > 0}>
+            <div className="min-w-0">
+              <HierarchyTreeRow
+                continues={objective.measures.length > 0}
+                connectorAnchor="first-row-center"
+              >
                 <ProfileTreeRow
                   icon={<ShieldCheck className="h-3.5 w-3.5" />}
                   label="Owner"
@@ -447,8 +454,8 @@ export default function BusinessAdvantagePage() {
 
         <section className="space-y-3" data-testid="advantage-thematic-goal">
           <HierarchySectionHeader>Thematic Goal</HierarchySectionHeader>
-          <div className={HIERARCHY_TREE_STACK_CLASS}>
-            <HierarchyTreeRow continues={false}>
+          <div className="min-w-0">
+            <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
               <ProfileTreeRow
                 label={<GoalReferenceTitle goalId={cycle.thematicGoalId} />}
                 hasValue
@@ -472,7 +479,7 @@ export default function BusinessAdvantagePage() {
 
         <section className="space-y-3" data-testid="advantage-defining-objectives">
           <HierarchySectionHeader>Defining Objectives</HierarchySectionHeader>
-          <div className={HIERARCHY_TREE_STACK_CLASS}>
+          <div className="min-w-0">
             {definingObjectives.map((objective, index) => (
               <ObjectiveBranch
                 key={objective.goalId}
@@ -486,13 +493,17 @@ export default function BusinessAdvantagePage() {
 
         <section className="space-y-3" data-testid="advantage-standing-objectives">
           <HierarchySectionHeader>Standing Operating Objectives</HierarchySectionHeader>
-          <div className={HIERARCHY_TREE_STACK_CLASS}>
+          <div className="min-w-0">
             {standingObjectives.map((item, index) => {
               const tone = measureTone(item.health);
               const Icon = tone.Icon;
               const isLast = index === standingObjectives.length - 1;
               return (
-                <HierarchyTreeRow key={item.key} continues={!isLast}>
+                <HierarchyTreeRow
+                  key={item.key}
+                  continues={!isLast}
+                  connectorAnchor="first-row-center"
+                >
                   <ProfileTreeRow
                     icon={<ShieldCheck className="h-3.5 w-3.5" />}
                     label={item.label}
@@ -539,8 +550,8 @@ export default function BusinessAdvantagePage() {
 
         <section className="space-y-3" data-testid="advantage-source">
           <HierarchySectionHeader>Source</HierarchySectionHeader>
-          <div className={HIERARCHY_TREE_STACK_CLASS}>
-            <HierarchyTreeRow continues={false}>
+          <div className="min-w-0">
+            <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
               <ProfileTreeRow
                 icon={<Gauge className="h-3.5 w-3.5" />}
                 label="Operating cycle"
