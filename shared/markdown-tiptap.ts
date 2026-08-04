@@ -18,7 +18,7 @@ export function tiptapToMarkdown(node: JSONContent): string {
 
   if (type === "doc") return children.trim();
   if (type === "paragraph") return children ? `${children}\n\n` : "\n";
-  if (type === "hardBreak") return "  \n";
+  if (type === "hardBreak") return " \n";
   if (type === "text") {
     let text = node.text ?? "";
     if (node.marks) {
@@ -36,79 +36,192 @@ export function tiptapToMarkdown(node: JSONContent): string {
     const level = (node.attrs as Record<string, number>)?.level ?? 1;
     return `${"#".repeat(level)} ${children.trim()}\n\n`;
   }
-  if (type === "bulletList") return children;
-  if (type === "orderedList") {
-    let idx = 0;
-    return (node.content ?? []).map(item => {
-      idx++;
-      return `${idx}. ${tiptapToMarkdown(item).replace(/^\s*/, "").replace(/\n+$/, "")}\n`;
-    }).join("") + "\n";
+  if (type === "bulletList") {
+    return (node.content ?? [])
+      .map((item) => `- ${tiptapToMarkdown(item).trim()}`)
+      .join("\n") + "\n\n";
   }
-  if (type === "listItem") return children;
-  if (type === "blockquote") return children.split("\n").map(l => `> ${l}`).join("\n") + "\n";
+  if (type === "orderedList") {
+    return (node.content ?? [])
+      .map((item, i) => `${i + 1}. ${tiptapToMarkdown(item).trim()}`)
+      .join("\n") + "\n\n";
+  }
+  if (type === "listItem") return children.trim();
   if (type === "codeBlock") {
     const lang = (node.attrs as Record<string, string>)?.language ?? "";
-    return `\`\`\`${lang}\n${node.content?.map(n => n.text ?? "").join("") ?? ""}\n\`\`\`\n\n`;
+    const code = (node.content ?? []).map((n) => n.text ?? "").join("");
+    return `\`\`\`${lang}\n${code}\n\`\`\`\n\n`;
   }
-  if (type === "horizontalRule") return `---\n\n`;
-  if (type === "table") {
-    const rows = (node.content ?? []);
-    if (rows.length === 0) return "";
-    const tableRows = rows.map(row =>
-      "| " + (row.content ?? []).map(cell =>
-        (cell.content ?? []).map(tiptapToMarkdown).join("").replace(/\n+/g, " ").trim()
-      ).join(" | ") + " |"
-    );
-    const headerRow = tableRows[0];
-    const colCount = (rows[0].content ?? []).length;
-    const separator = "| " + Array(colCount).fill("---").join(" | ") + " |";
-    return [headerRow, separator, ...tableRows.slice(1)].join("\n") + "\n\n";
+  if (type === "blockquote") {
+    return children
+      .trim()
+      .split("\n")
+      .map((l) => `> ${l}`)
+      .join("\n") + "\n\n";
   }
+  if (type === "horizontalRule") return "---\n\n";
   if (type === "image") {
-    const attrs = (node.attrs as Record<string, string>) ?? {};
-    return `![${attrs.alt ?? ""}](${attrs.src ?? ""})\n\n`;
+    const attrs = node.attrs as Record<string, string>;
+    return `![${attrs?.alt ?? ""}](${attrs?.src ?? ""})\n\n`;
   }
+  if (type === "table") {
+    const rows = node.content ?? [];
+    if (rows.length === 0) return "";
+    const mdRows = rows.map((row) => {
+      const cells = (row.content ?? []).map((cell) => tiptapToMarkdown(cell).trim().replace(/\n+/g, " "));
+      return `| ${cells.join(" | ")} |`;
+    });
+    if (mdRows.length > 0) {
+      const colCount = (rows[0].content ?? []).length || 1;
+      const sep = `| ${Array(colCount).fill("---").join(" | ")} |`;
+      mdRows.splice(1, 0, sep);
+    }
+    return mdRows.join("\n") + "\n\n";
+  }
+  if (type === "tableRow") return children;
+  if (type === "tableCell" || type === "tableHeader") return children.trim();
   return children;
 }
 
+/** Inline marks only — never emits empty text nodes. */
 function parseInlineMarks(text: string): JSONContent[] {
+  if (!text) return [];
   const nodes: JSONContent[] = [];
   const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|~~(.+?)~~|`(.+?)`|\[([^\]]+)\]\(([^)]+)\))/g;
   let lastIndex = 0;
-  let m;
-  while ((m = regex.exec(text)) !== null) {
-    if (m.index > lastIndex) {
-      nodes.push({ type: "text", text: text.slice(lastIndex, m.index) });
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      const plain = text.slice(lastIndex, match.index);
+      if (plain) nodes.push({ type: "text", text: plain });
     }
-    if (m[2]) {
-      nodes.push({ type: "text", marks: [{ type: "bold" }], text: m[2] });
-    } else if (m[3]) {
-      nodes.push({ type: "text", marks: [{ type: "italic" }], text: m[3] });
-    } else if (m[4]) {
-      nodes.push({ type: "text", marks: [{ type: "strike" }], text: m[4] });
-    } else if (m[5]) {
-      nodes.push({ type: "text", marks: [{ type: "code" }], text: m[5] });
-    } else if (m[6] && m[7]) {
-      nodes.push({ type: "text", marks: [{ type: "link", attrs: { href: m[7] } }], text: m[6] });
+    if (match[2] !== undefined) {
+      if (match[2]) nodes.push({ type: "text", text: match[2], marks: [{ type: "bold" }] });
+    } else if (match[3] !== undefined) {
+      if (match[3]) nodes.push({ type: "text", text: match[3], marks: [{ type: "italic" }] });
+    } else if (match[4] !== undefined) {
+      if (match[4]) nodes.push({ type: "text", text: match[4], marks: [{ type: "strike" }] });
+    } else if (match[5] !== undefined) {
+      if (match[5]) nodes.push({ type: "text", text: match[5], marks: [{ type: "code" }] });
+    } else if (match[6] !== undefined) {
+      if (match[6]) {
+        nodes.push({
+          type: "text",
+          text: match[6],
+          marks: [{ type: "link", attrs: { href: match[7] } }],
+        });
+      }
     }
-    lastIndex = m.index + m[0].length;
+    lastIndex = match.index + match[0].length;
   }
   if (lastIndex < text.length) {
-    nodes.push({ type: "text", text: text.slice(lastIndex) });
+    const plain = text.slice(lastIndex);
+    if (plain) nodes.push({ type: "text", text: plain });
   }
-  return nodes.length > 0 ? nodes : [{ type: "text", text }];
+  return nodes;
 }
 
-export function syncContentFields(input: { markdown?: string; tiptapJson?: JSONContent }): { content: JSONContent; plainTextContent: string } {
-  const normalizedContent = normalizeTiptapDoc(input.tiptapJson);
-  if (normalizedContent) {
-    const plainTextContent = tiptapToMarkdown(normalizedContent);
-    return { content: normalizedContent, plainTextContent };
+/** Table cells require block content (paragraph), never bare inline text. */
+function cellFromText(text: string, header: boolean): JSONContent {
+  const inlines = parseInlineMarks(text.trim());
+  return {
+    type: header ? "tableHeader" : "tableCell",
+    content: [
+      inlines.length > 0
+        ? { type: "paragraph", content: inlines }
+        : { type: "paragraph" },
+    ],
+  };
+}
+
+const BLOCK_TYPES = new Set([
+  "paragraph",
+  "heading",
+  "bulletList",
+  "orderedList",
+  "codeBlock",
+  "blockquote",
+  "horizontalRule",
+  "image",
+  "table",
+  "hardBreak",
+]);
+
+function isInlineNode(node: JSONContent): boolean {
+  return node.type === "text" || node.type === "hardBreak";
+}
+
+function isBlockNode(node: JSONContent): boolean {
+  return !!node.type && BLOCK_TYPES.has(node.type);
+}
+
+/**
+ * Repair a single node into schema-safe TipTap JSON.
+ * - drops empty text nodes (ProseMirror rejects them)
+ * - wraps bare inlines inside table cells into paragraphs
+ * - ensures table cells/headers always have at least one paragraph
+ */
+function sanitizeNode(node: JSONContent): JSONContent | null {
+  if (!node || typeof node !== "object") return null;
+
+  if (node.type === "text") {
+    if (typeof node.text !== "string" || node.text.length === 0) return null;
+    return node;
   }
-  const md = input.markdown ?? "";
-  const content = markdownToTiptap(md);
-  const plainTextContent = tiptapToMarkdown(content);
-  return { content, plainTextContent };
+
+  const rawChildren = Array.isArray(node.content) ? node.content : undefined;
+  const sanitizedChildren = rawChildren
+    ? rawChildren
+        .map(sanitizeNode)
+        .filter((child): child is JSONContent => child !== null)
+    : undefined;
+
+  if (node.type === "tableCell" || node.type === "tableHeader") {
+    const children = sanitizedChildren ?? [];
+    const hasBlocks = children.some(isBlockNode);
+    const inlines = children.filter(isInlineNode);
+    const blocks = children.filter(isBlockNode);
+
+    let nextContent: JSONContent[];
+    if (hasBlocks && inlines.length === 0) {
+      nextContent = blocks;
+    } else if (inlines.length > 0 && !hasBlocks) {
+      nextContent = [{ type: "paragraph", content: inlines }];
+    } else if (inlines.length > 0 && hasBlocks) {
+      // Mixed invalid content: wrap leftover inlines into a leading paragraph.
+      nextContent = [{ type: "paragraph", content: inlines }, ...blocks];
+    } else {
+      nextContent = [{ type: "paragraph" }];
+    }
+
+    return { ...node, content: nextContent };
+  }
+
+  if (node.type === "tableRow") {
+    const cells = (sanitizedChildren ?? []).filter(
+      (child) => child.type === "tableCell" || child.type === "tableHeader",
+    );
+    if (cells.length === 0) return null;
+    return { ...node, content: cells };
+  }
+
+  if (node.type === "table") {
+    const rows = (sanitizedChildren ?? []).filter((child) => child.type === "tableRow");
+    if (rows.length === 0) return null;
+    return { ...node, content: rows };
+  }
+
+  if (node.type === "paragraph" || node.type === "heading") {
+    const children = sanitizedChildren ?? [];
+    // Paragraphs/headings may be empty (valid). Drop only null children already filtered.
+    return children.length > 0 ? { ...node, content: children } : { ...node, content: undefined };
+  }
+
+  if (sanitizedChildren) {
+    return { ...node, content: sanitizedChildren };
+  }
+  return node;
 }
 
 export function isValidTiptapDoc(value: unknown): value is TiptapDocument {
@@ -117,14 +230,20 @@ export function isValidTiptapDoc(value: unknown): value is TiptapDocument {
   return doc.type === "doc" && Array.isArray(doc.content);
 }
 
-export function normalizeTiptapDoc(value: unknown): JSONContent | null {
+export function normalizeTiptapDoc(value: unknown): TiptapDocument | null {
   if (!isValidTiptapDoc(value)) return null;
-  if (value.content.length > 0) return value;
-  return { ...value, content: [{ type: "paragraph" }] };
+  const sanitized = sanitizeNode(value);
+  if (!sanitized || sanitized.type !== "doc") return null;
+  const content = Array.isArray(sanitized.content) ? sanitized.content : [];
+  return {
+    type: "doc",
+    content: content.length > 0 ? content : [{ type: "paragraph" }],
+  };
 }
 
 export function markdownToTiptap(md: string): JSONContent {
   if (!md.trim()) return { type: "doc", content: [{ type: "paragraph" }] };
+
   const lines = md.split("\n");
   const content: JSONContent[] = [];
   let i = 0;
@@ -132,115 +251,185 @@ export function markdownToTiptap(md: string): JSONContent {
   while (i < lines.length) {
     const line = lines[i];
 
-    if (!line.trim()) { i++; continue; }
-
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)/);
-    if (headingMatch) {
-      content.push({ type: "heading", attrs: { level: headingMatch[1].length }, content: parseInlineMarks(headingMatch[2]) });
+    if (!line.trim()) {
       i++;
       continue;
     }
 
-    if (line.startsWith("```")) {
-      const lang = line.slice(3).trim();
+    // Code block
+    if (line.trim().startsWith("```")) {
+      const lang = line.trim().slice(3).trim();
       const codeLines: string[] = [];
       i++;
-      while (i < lines.length && !lines[i].startsWith("```")) {
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
         codeLines.push(lines[i]);
         i++;
       }
-      i++;
-      content.push({ type: "codeBlock", attrs: { language: lang }, content: [{ type: "text", text: codeLines.join("\n") }] });
+      i++; // skip closing ```
+      content.push({
+        type: "codeBlock",
+        attrs: { language: lang || null },
+        content: codeLines.length > 0 ? [{ type: "text", text: codeLines.join("\n") }] : [],
+      });
       continue;
     }
 
-    if (line.startsWith("---") || line.startsWith("***") || line.startsWith("___")) {
+    // Heading
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      const inlines = parseInlineMarks(headingMatch[2]);
+      content.push({
+        type: "heading",
+        attrs: { level: headingMatch[1].length },
+        ...(inlines.length > 0 ? { content: inlines } : {}),
+      });
+      i++;
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
       content.push({ type: "horizontalRule" });
       i++;
       continue;
     }
 
-    const imageMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
-    if (imageMatch) {
-      content.push({ type: "image", attrs: { src: imageMatch[2], alt: imageMatch[1] || null, title: null } });
-      i++;
-      continue;
-    }
-
+    // Blockquote
     if (line.startsWith("> ")) {
       const quoteLines: string[] = [];
       while (i < lines.length && lines[i].startsWith("> ")) {
         quoteLines.push(lines[i].slice(2));
         i++;
       }
-      content.push({ type: "blockquote", content: [{ type: "paragraph", content: parseInlineMarks(quoteLines.join("\n")) }] });
+      content.push({
+        type: "blockquote",
+        content: [
+          {
+            type: "paragraph",
+            content: parseInlineMarks(quoteLines.join("\n")),
+          },
+        ],
+      });
       continue;
     }
 
-    if (line.startsWith("| ")) {
-      const tableLines: string[] = [];
-      while (i < lines.length && lines[i].startsWith("| ")) {
-        tableLines.push(lines[i]);
-        i++;
-      }
-      if (tableLines.length >= 2) {
-        const rows = tableLines.filter((_, idx) => idx !== 1);
-        const cellAttrs = { colspan: 1, rowspan: 1, colwidth: null };
-        const parsedRows: JSONContent[] = rows.map((row, rowIdx) => ({
-          type: "tableRow",
-          content: row.split("|").slice(1, -1).map(cell => ({
-            type: rowIdx === 0 ? "tableHeader" : "tableCell",
-            attrs: cellAttrs,
-            content: [{ type: "paragraph", content: parseInlineMarks(cell.trim()) }],
-          })),
-        }));
-        const headerColCount = (parsedRows[0]?.content ?? []).length || 1;
-        const tableContent: JSONContent[] = parsedRows.map((row, rowIdx) => {
-          const cells = row.content ?? [];
-          const cellType = rowIdx === 0 ? "tableHeader" : "tableCell";
-          if (cells.length < headerColCount) {
-            const padded = [...cells];
-            while (padded.length < headerColCount) {
-              padded.push({ type: cellType, attrs: cellAttrs, content: [{ type: "paragraph" }] });
-            }
-            return { ...row, content: padded };
-          } else if (cells.length > headerColCount) {
-            return { ...row, content: cells.slice(0, headerColCount) };
-          }
-          return row;
-        });
-        content.push({ type: "table", content: tableContent });
-        continue;
-      }
-    }
-
-    const bulletMatch = line.match(/^[-*+]\s+(.+)/);
-    if (bulletMatch) {
+    // Unordered list
+    if (/^[\s]*[-*+]\s+/.test(line)) {
       const items: JSONContent[] = [];
-      while (i < lines.length && /^[-*+]\s+/.test(lines[i])) {
-        const itemText = lines[i].replace(/^[-*+]\s+/, "");
-        items.push({ type: "listItem", content: [{ type: "paragraph", content: parseInlineMarks(itemText) }] });
+      while (i < lines.length && /^[\s]*[-*+]\s+/.test(lines[i])) {
+        const itemText = lines[i].replace(/^[\s]*[-*+]\s+/, "");
+        const inlines = parseInlineMarks(itemText);
+        items.push({
+          type: "listItem",
+          content: [
+            inlines.length > 0
+              ? { type: "paragraph", content: inlines }
+              : { type: "paragraph" },
+          ],
+        });
         i++;
       }
       content.push({ type: "bulletList", content: items });
       continue;
     }
 
-    const orderedMatch = line.match(/^\d+\.\s+(.+)/);
-    if (orderedMatch) {
+    // Ordered list
+    if (/^[\s]*\d+\.\s+/.test(line)) {
       const items: JSONContent[] = [];
-      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
-        const itemText = lines[i].replace(/^\d+\.\s+/, "");
-        items.push({ type: "listItem", content: [{ type: "paragraph", content: parseInlineMarks(itemText) }] });
+      while (i < lines.length && /^[\s]*\d+\.\s+/.test(lines[i])) {
+        const itemText = lines[i].replace(/^[\s]*\d+\.\s+/, "");
+        const inlines = parseInlineMarks(itemText);
+        items.push({
+          type: "listItem",
+          content: [
+            inlines.length > 0
+              ? { type: "paragraph", content: inlines }
+              : { type: "paragraph" },
+          ],
+        });
         i++;
       }
       content.push({ type: "orderedList", content: items });
       continue;
     }
 
-    content.push({ type: "paragraph", content: parseInlineMarks(line) });
+    // Table — cells must contain paragraphs, not bare text nodes
+    if (line.trim().startsWith("|") && line.trim().endsWith("|")) {
+      const tableRows: string[][] = [];
+      while (
+        i < lines.length &&
+        lines[i].trim().startsWith("|") &&
+        lines[i].trim().endsWith("|")
+      ) {
+        const row = lines[i].trim();
+        // Skip separator rows like |---|---|
+        if (/^\|[\s:|-]+\|$/.test(row)) {
+          i++;
+          continue;
+        }
+        const cells = row
+          .slice(1, -1)
+          .split("|")
+          .map((c) => c.trim());
+        tableRows.push(cells);
+        i++;
+      }
+      if (tableRows.length > 0) {
+        content.push({
+          type: "table",
+          content: tableRows.map((row, rowIdx) => ({
+            type: "tableRow",
+            content: row.map((cell) => cellFromText(cell, rowIdx === 0)),
+          })),
+        });
+      }
+      continue;
+    }
+
+    // Image
+    const imgMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imgMatch) {
+      content.push({
+        type: "image",
+        attrs: { src: imgMatch[2], alt: imgMatch[1] },
+      });
+      i++;
+      continue;
+    }
+
+    // Default: paragraph
+    const inlines = parseInlineMarks(line);
+    content.push(
+      inlines.length > 0
+        ? { type: "paragraph", content: inlines }
+        : { type: "paragraph" },
+    );
     i++;
   }
 
-  return { type: "doc", content: content.length > 0 ? content : [{ type: "paragraph" }] };
+  if (content.length === 0) content.push({ type: "paragraph" });
+  // Final sanitize pass guarantees schema-safe output even if a branch regresses.
+  return normalizeTiptapDoc({ type: "doc", content }) ?? {
+    type: "doc",
+    content: [{ type: "paragraph" }],
+  };
+}
+
+export function syncContentFields(input: {
+  markdown?: string;
+  tiptapJson?: JSONContent;
+}): { content: JSONContent; plainTextContent: string } {
+  const normalizedContent = normalizeTiptapDoc(input.tiptapJson);
+  if (normalizedContent) {
+    return {
+      content: normalizedContent,
+      plainTextContent: tiptapToMarkdown(normalizedContent),
+    };
+  }
+  const md = input.markdown ?? "";
+  const content = markdownToTiptap(md);
+  return {
+    content,
+    plainTextContent: md || tiptapToMarkdown(content),
+  };
 }

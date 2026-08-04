@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useEditableContent } from "@/hooks/use-editable-content";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { downloadPageAsMarkdown } from "@/lib/editor-utils";
-import { markdownToTiptap, isValidTiptapDoc } from "@shared/markdown-tiptap";
+import { markdownToTiptap, normalizeTiptapDoc } from "@shared/markdown-tiptap";
 import { parseReferenceText } from "@shared/reference-parser";
 import { createReferenceRef, type ReferenceRef } from "@shared/references";
 import { Button } from "@/components/ui/button";
@@ -198,16 +198,24 @@ export function LibraryPageEditor({
 
   const selectedPageContent = useMemo((): JSONContent | null => {
     const rawContent = selectedPage.content;
-    if (isValidTiptapDoc(rawContent)) {
-      log.debug("[LibraryContent] using rich content", { pageId: selectedPage.id, contentSize: JSON.stringify(rawContent).length });
-      return rawContent;
+    // Always normalize — stored docs may predate schema-safe table/cell emission.
+    const normalized = normalizeTiptapDoc(rawContent);
+    if (normalized) {
+      log.debug("[LibraryContent] using rich content", {
+        pageId: selectedPage.id,
+        contentSize: JSON.stringify(normalized).length,
+      });
+      return normalized;
     }
     if (selectedPage.plainTextContent) {
-      log.warn("[LibraryContent] page has no valid rich content, falling back to plainText conversion", { pageId: selectedPage.id, plainTextLength: selectedPage.plainTextContent.length });
+      log.warn("[LibraryContent] page has no valid rich content, falling back to plainText conversion", {
+        pageId: selectedPage.id,
+        plainTextLength: selectedPage.plainTextContent.length,
+      });
       return markdownToTiptap(selectedPage.plainTextContent);
     }
-    log.warn("[LibraryContent] page has no content at all", { pageId: selectedPage.id });
-    return rawContent;
+    log.error("[LibraryContent] page has no content at all", { pageId: selectedPage.id });
+    return null;
   }, [selectedPage.id, selectedPage.content, selectedPage.plainTextContent]);
 
   const saveMutation = useApiMutation<{ id: string; title: string; content: JSONContent | null; plainTextContent: string }>({
