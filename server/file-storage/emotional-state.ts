@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { emotionalStates } from "@shared/models/cognition";
 import { and, desc, eq, isNull, or } from "drizzle-orm";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
@@ -17,7 +17,7 @@ const emotionalScopeColumns = {
 const STALENESS_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 function principalCacheKey(): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
 }
 
@@ -79,7 +79,7 @@ export class FileEmotionalStateStorage {
         .from(emotionalStates)
         .where(
           combineWithVisibleScope(
-            getCurrentPrincipalOrSystem(),
+            requireCurrentUserPrincipal(),
             emotionalScopeColumns,
           ),
         )
@@ -140,11 +140,11 @@ export class FileEmotionalStateStorage {
         source: input.source || "explicit",
         active: true,
         ...ownedInsertValues(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           emotionalScopeColumns,
         ),
-        createdByUserId: getCurrentPrincipalOrSystem().userId ?? undefined,
-        updatedByUserId: getCurrentPrincipalOrSystem().userId ?? undefined,
+        createdByUserId: requireCurrentUserPrincipal().userId ?? undefined,
+        updatedByUserId: requireCurrentUserPrincipal().userId ?? undefined,
       })
       .returning();
 
@@ -212,13 +212,13 @@ export class FileEmotionalStateStorage {
       ? eq(emotionalStates.narrative, input.expected.narrative)
       : or(isNull(emotionalStates.narrative), eq(emotionalStates.narrative, ""));
 
-    patch.updatedByUserId = getCurrentPrincipalOrSystem().userId ?? undefined;
+    patch.updatedByUserId = requireCurrentUserPrincipal().userId ?? undefined;
     const [row] = await db
       .update(emotionalStates)
       .set(patch)
       .where(
         combineWithWritableScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
           emotionalScopeColumns,
           and(
             eq(emotionalStates.id, numericId),

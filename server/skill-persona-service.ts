@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "./db";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { personaStorage } from "./file-storage/persona-storage";
 import { skillPersonaPreferences, skills } from "@shared/models/skills";
 import { personas } from "@shared/models/cognition";
@@ -34,7 +34,7 @@ const skillScopeColumns = {
 };
 
 export async function listSkillPersonaConfiguration(): Promise<SkillPersonaConfiguration> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const preferenceRows = principal.userId && principal.accountId
     ? await db
         .select({
@@ -78,7 +78,7 @@ export async function setSkillPersonaPreference(
   skillId: string,
   personaId: number | null,
 ): Promise<{ skillId: string; personaId: number | null }> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) {
     throw new Error("A user principal with an account is required to set a skill persona preference");
   }
@@ -146,7 +146,7 @@ export async function setSkillPersonaPreference(
 export async function resolveSkillRunPersona(
   skill: Pick<Skill, "id" | "scope" | "personaId" | "recommendedPersonaTemplateId">,
 ): Promise<SkillPersonaResolution | null> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
 
   if (principal.userId && principal.accountId) {
     const [preference] = await db

@@ -13,7 +13,7 @@ import { normalizeEmailAddress } from "../email-normalization";
 import { chatStorage } from "../integrations/chat/storage";
 import { createLogger } from "../log";
 import { peopleStorage } from "../people-storage";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { stripPrivateAgendaFromRecap } from "./recap-content";
 import {
   getLockedAuthenticatedRecapMaterializationSource,
@@ -76,7 +76,7 @@ export async function materializeAuthenticatedRecipientRecap(
   rawToken: string,
   authenticatedEmail: string,
 ): Promise<RecipientRecapMaterializationResult | null> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (
     principal.actorType !== "user"
     || !principal.userId

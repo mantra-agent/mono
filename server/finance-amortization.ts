@@ -7,7 +7,7 @@ import {
   type InsertTransactionAmortization,
 } from "@shared/schema";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
 
 const log = createLogger("Finance");
@@ -57,7 +57,7 @@ function spreadCovers(amort: { startMonth: string; spreadMonths: number }, month
 }
 
 export async function listAmortizations(opts: { activeOnly?: boolean } = {}): Promise<TransactionAmortization[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const predicate = opts.activeOnly
     ? combineWithSensitiveVisible(amortizationScopeColumns, eq(transactionAmortizations.isActive, true), principal)
     : combineWithSensitiveVisible(amortizationScopeColumns, undefined, principal);
@@ -67,7 +67,7 @@ export async function listAmortizations(opts: { activeOnly?: boolean } = {}): Pr
 export async function listAmortizationsWithTxn(opts: { activeOnly?: boolean } = {}): Promise<AmortizationWithTxn[]> {
   const [amorts, txns] = await Promise.all([
     listAmortizations(opts),
-    db.select().from(plaidTransactions).where(combineWithSensitiveVisible(transactionScopeColumns, undefined, getCurrentPrincipalOrSystem())),
+    db.select().from(plaidTransactions).where(combineWithSensitiveVisible(transactionScopeColumns, undefined, requireCurrentUserPrincipal())),
   ]);
   const txnById = new Map(txns.map(t => [t.transactionId, t]));
   return amorts.map(a => {
@@ -96,7 +96,7 @@ export async function listAmortizationsWithTxn(opts: { activeOnly?: boolean } = 
 export async function createAmortization(data: InsertTransactionAmortization): Promise<TransactionAmortization> {
   const [row] = await db.insert(transactionAmortizations).values({
     ...data,
-    ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()),
+    ...sensitiveOwnershipValues(requireCurrentUserPrincipal()),
   }).returning();
   log.log(`[Finance] Created amortization id=${row.id} txnId=${row.transactionId} amount=${row.originalAmount} months=${row.spreadMonths}`);
   return row;
@@ -105,7 +105,7 @@ export async function createAmortization(data: InsertTransactionAmortization): P
 export async function updateAmortization(id: number, patch: Partial<Pick<TransactionAmortization, "spreadMonths" | "isActive" | "startMonth" | "category" | "notes">>): Promise<TransactionAmortization | null> {
   const [row] = await db.update(transactionAmortizations)
     .set(patch)
-    .where(combineWithSensitiveWritable(amortizationScopeColumns, eq(transactionAmortizations.id, id), getCurrentPrincipalOrSystem()))
+    .where(combineWithSensitiveWritable(amortizationScopeColumns, eq(transactionAmortizations.id, id), requireCurrentUserPrincipal()))
     .returning();
   if (row) log.log(`[Finance] Updated amortization id=${id}`);
   return row ?? null;
@@ -114,7 +114,7 @@ export async function updateAmortization(id: number, patch: Partial<Pick<Transac
 export async function softDeleteAmortization(id: number): Promise<boolean> {
   const [row] = await db.update(transactionAmortizations)
     .set({ isActive: false })
-    .where(combineWithSensitiveWritable(amortizationScopeColumns, eq(transactionAmortizations.id, id), getCurrentPrincipalOrSystem()))
+    .where(combineWithSensitiveWritable(amortizationScopeColumns, eq(transactionAmortizations.id, id), requireCurrentUserPrincipal()))
     .returning();
   if (row) log.log(`[Finance] Soft-deleted amortization id=${id}`);
   return !!row;

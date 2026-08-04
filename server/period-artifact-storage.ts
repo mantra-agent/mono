@@ -9,7 +9,7 @@
  */
 import { documentStorage } from "./memory/document-storage";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 
 const log = createLogger("PeriodArtifacts");
 
@@ -30,9 +30,8 @@ export interface PeriodArtifacts {
 type PeriodType = "daily" | "weekly" | "monthly" | "quarterly";
 
 function docId(date: string, period: PeriodType): string {
-  const principal = getCurrentPrincipalOrSystem();
-  const ownerKey = principal.accountId || principal.userId || principal.actorType;
-  return `${ownerKey}:artifact:${date}:${period}`;
+  const principal = requireCurrentUserPrincipal();
+  return `${principal.accountId}:artifact:${date}:${period}`;
 }
 
 export async function getArtifacts(date: string, period: PeriodType): Promise<PeriodArtifacts | null> {

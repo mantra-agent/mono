@@ -29,7 +29,7 @@ import { signalStorage } from "../news-storage";
 import type { SignalItem } from "@shared/models/signal";
 import { db } from "../db";
 import { and, eq, sql } from "drizzle-orm";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { queryDistinctInteractionPeopleSeries } from "../interaction-activity";
 import { sensitiveVisiblePredicate } from "../sensitive-scope";
 import { visiblePersonPredicate } from "../person-vault-access";
@@ -505,7 +505,7 @@ const emailDismissalScopeColumns = {
 };
 
 function visibleEmailScopeCtes() {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   return {
     messages: sensitiveVisiblePredicate(emailMessageScopeColumns, principal),
     enrichments: sensitiveVisiblePredicate(emailEnrichmentScopeColumns, principal),
@@ -1604,7 +1604,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   // Wellness — local durable activity status only (never Oura/provider fan-out).
   // Projection stops immediately when Wellness composition is inactive.
   try {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (principal.actorType === "user") {
       const { hasActiveWellnessAccess } = await import("../mods/wellness-access");
       if (await hasActiveWellnessAccess(principal)) {
@@ -1658,7 +1658,7 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   // Build deployment Inbox reads only durable PostgreSQL projections. The
   // collector's canonical Build-access check removes it immediately on disable.
   try {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     if (principal.actorType === "user") {
       const deployments = await listBuildDeploymentHomeItems(principal);
       deployments.forEach((deployment, index) => items.push(itemFromBuildDeployment(deployment, index, timezone)));

@@ -15,7 +15,7 @@ import { db } from "./db";
 import { sessionArtifacts } from "@shared/schema";
 import { eq, and, desc, or } from "drizzle-orm";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope, ownedInsertValues } from "./scoped-storage";
 import { canonicalExecutionArtifactAddress } from "./execution-provenance-address";
 import { linkSessionArtifactProduced } from "./execution-provenance-links";
@@ -35,7 +35,7 @@ export async function recordSessionArtifact(
 ): Promise<void> {
   if (!sessionId) return; // No session context (e.g., REST API call)
   try {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const artifactAddress = principal.actorType === "user"
       ? await canonicalExecutionArtifactAddress(principal, artifactType, artifactId, metadata)
       : null;
@@ -66,7 +66,7 @@ export async function getArtifactsBySession(sessionId: string) {
   return db
     .select()
     .from(sessionArtifacts)
-    .where(combineWithVisibleScope(getCurrentPrincipalOrSystem(), sessionArtifactScopeColumns, eq(sessionArtifacts.sessionId, sessionId)))
+    .where(combineWithVisibleScope(requireCurrentPrincipal(), sessionArtifactScopeColumns, eq(sessionArtifacts.sessionId, sessionId)))
     .orderBy(sessionArtifacts.createdAt);
 }
 
@@ -74,7 +74,7 @@ export async function getArtifactsBySession(sessionId: string) {
  * Get all sessions that link to a given artifact.
  */
 export async function getSessionsByArtifact(artifactType: string, artifactId: string) {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const artifactAddress = principal.actorType === "user"
     ? await canonicalExecutionArtifactAddress(principal, artifactType, artifactId)
     : null;

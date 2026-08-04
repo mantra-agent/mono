@@ -20,7 +20,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -156,7 +156,7 @@ async function loadDimensionEvidence(claimIds: number[]): Promise<{
   strength: Map<number, number>;
 }> {
   const ids = [...new Set(claimIds)].slice(0, MAX_CANDIDATES);
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const [sources, entities, links, strength] = await Promise.all([
     ids.length ? db.select().from(memoryVnextSourceRefs).where(combineWithVisibleScope(principal, sourceScope, inArray(memoryVnextSourceRefs.claimId, ids))).limit(MAX_CANDIDATES * 8) : [],
     ids.length ? db.select().from(memoryVnextEntityLinks).where(combineWithVisibleScope(principal, entityScope, inArray(memoryVnextEntityLinks.claimId, ids))).limit(MAX_CANDIDATES * 8) : [],
@@ -240,7 +240,7 @@ export function retrievalContextKey(focusText: string): string {
 }
 
 export async function getRetrievalControl(): Promise<{ retrievalMode: MemoryVnextRetrievalMode; predictionOutputMode: "shadow"; reason: string; updatedAt: Date | null }> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Retrieval control requires a user principal");
   const [row] = await db.select().from(memoryVnextRetrievalControls)
     .where(combineWithVisibleScope(principal, controlScope)).limit(1);
@@ -253,7 +253,7 @@ export async function getRetrievalControl(): Promise<{ retrievalMode: MemoryVnex
 }
 
 export async function setRetrievalMode(input: { mode: MemoryVnextRetrievalMode; reason: string; replayKey: string }) {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Retrieval activation requires a user principal");
   const reason = input.reason.trim().slice(0, 500);
   const replayKey = input.replayKey.trim().slice(0, 300);
@@ -298,7 +298,7 @@ export async function setRetrievalMode(input: { mode: MemoryVnextRetrievalMode; 
 }
 
 export async function upsertRetrievalLabel(input: { contextKey: string; claimId: number; relevance: "relevant" | "irrelevant"; durableFact: boolean; note?: string }) {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Retrieval labeling requires a user principal");
   const [claim] = await db.select({ id: memoryVnextClaims.id }).from(memoryVnextClaims)
     .where(combineWithWritableScope(principal, claimScope, eq(memoryVnextClaims.id, input.claimId))).limit(1);
@@ -328,7 +328,7 @@ export async function evaluateDualRetrieval(input: {
   compatibilityCandidates: VnextContextCandidate[];
   startedAt: Date;
 }): Promise<{ selectedMode: MemoryVnextRetrievalMode; selectedCandidates: VnextContextCandidate[] }> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Dual retrieval evaluation requires a user principal");
   const control = await getRetrievalControl();
   const contextKey = retrievalContextKey(input.focusText);
@@ -400,7 +400,7 @@ export async function evaluateDualRetrieval(input: {
 }
 
 export async function inspectRetrievalEvaluation(limit = 25) {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const [control, runs, labels] = await Promise.all([
     getRetrievalControl(),
     db.select().from(memoryVnextRetrievalEvaluationRuns).where(combineWithVisibleScope(principal, retrievalRunScope))
@@ -430,7 +430,7 @@ function average(values: number[]): number | null {
 }
 
 export async function upsertCausalPathReview(input: { predictionId: number; judgment: "correct" | "incorrect" | "unclear"; note?: string }) {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Causal path review requires a user principal");
   const [prediction] = await db.select({ id: memoryVnextPredictions.id }).from(memoryVnextPredictions)
     .where(combineWithWritableScope(principal, predictionScope, eq(memoryVnextPredictions.id, input.predictionId))).limit(1);
@@ -450,7 +450,7 @@ export async function upsertCausalPathReview(input: { predictionId: number; judg
 }
 
 async function strictCutoffBaselines(prediction: typeof memoryVnextPredictions.$inferSelect, actual: number) {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const historical = await db.select({
     probability: memoryVnextPredictions.probability,
     outcomeClass: memoryVnextPredictions.predictedOutcomeClass,
@@ -505,7 +505,7 @@ async function strictCutoffBaselines(prediction: typeof memoryVnextPredictions.$
 }
 
 export async function evaluatePredictions(input: { replayKey?: string } = {}) {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (!principal.userId || !principal.accountId) throw new Error("Prediction evaluation requires a user principal");
   const evaluatedAt = new Date();
   const rows = await db.select({ prediction: memoryVnextPredictions, resolution: memoryVnextPredictionResolutions })
@@ -566,7 +566,7 @@ export async function evaluatePredictions(input: { replayKey?: string } = {}) {
 }
 
 export async function inspectPredictionEvaluation(limit = 25) {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const reviews = await db.select().from(memoryVnextCausalPathReviews).where(combineWithVisibleScope(principal, causalReviewScope)).limit(MAX_PREDICTIONS);
   const runs = await db.select().from(memoryVnextPredictionEvaluationRuns).where(combineWithVisibleScope(principal, predictionRunScope))
     .orderBy(desc(memoryVnextPredictionEvaluationRuns.evaluatedAt), desc(memoryVnextPredictionEvaluationRuns.id)).limit(Math.min(Math.max(limit, 1), MAX_EVALUATION_RUNS));

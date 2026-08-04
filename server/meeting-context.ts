@@ -2,7 +2,7 @@ import type { CalendarEventArtifact, CalendarEventPerson } from "@shared/schema"
 import { libraryPages } from "@shared/models/info";
 import { and, inArray } from "drizzle-orm";
 import { db } from "./db";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { peopleStorage, type Interaction, type Person } from "./people-storage";
 import { visibleScopePredicate } from "./scoped-storage";
 
@@ -89,7 +89,7 @@ export async function resolveMeetingPeopleContext(links: CalendarEventPerson[]):
 export async function resolveMeetingArtifactContext(links: CalendarEventArtifact[]): Promise<MeetingArtifactContext[]> {
   if (links.length === 0) return [];
   const pageIds = Array.from(new Set(links.map(link => link.libraryPageId)));
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const pages = await db
     .select({
       id: libraryPages.id,

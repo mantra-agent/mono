@@ -6,7 +6,7 @@ import { eq, and, desc, sql, ilike, inArray } from "drizzle-orm";
 import { triageJob } from "../triage-job-state";
 import { storage } from "../storage";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable } from "../sensitive-scope";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 const log = createLogger("EmailRoutes");
 
 const messageScopeCols = { ownerUserId: emailMessages.ownerUserId, principalAccountId: emailMessages.principalAccountId };
@@ -78,7 +78,7 @@ export function registerEmailRoutes(app: Express) {
       const where = combineWithSensitiveVisible(messageScopeCols, userCondition);
 
       if (groupByThread) {
-        const principal = getCurrentPrincipalOrSystem();
+        const principal = requireCurrentPrincipal();
         const rawConditions: ReturnType<typeof sql>[] = [];
         if (principal.actorType !== "system") {
           const ownerPredicates: ReturnType<typeof sql>[] = [];

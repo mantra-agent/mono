@@ -20,7 +20,7 @@ import { createLogger } from "../log";
 import { searchVnextMemory } from "./vnext-search";
 import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { getPrincipal } from "../principal";
 import { combineWithVisibleScope } from "../scoped-storage";
 import { getSetting, setSetting } from "../system-settings";
@@ -364,7 +364,7 @@ async function handleGetVnextGraph(req: Request, res: Response): Promise<void> {
     return handleGetVnextGraphLegacy(req, res);
   }
   try {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const selected = typeof req.query.selected === "string"
       ? req.query.selected.split(",").map(value => value.trim()).filter(Boolean).slice(0, 5)
       : [];
@@ -391,7 +391,7 @@ async function handleGetVnextGraph(req: Request, res: Response): Promise<void> {
 // Retained claim-first assembly, wired as the LIBRARY_FIRST_GRAPH_ENABLED=false rollback path.
 async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<void> {
   try {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const claimScopeColumns = {
       scope: memoryVnextClaims.scope,
       ownerUserId: memoryVnextClaims.ownerUserId,
@@ -973,7 +973,7 @@ async function handleGetVnextSources(req: Request, res: Response): Promise<void>
   try {
     const limit = Math.min(parsePositiveInt(req.query.limit) ?? 100, 500);
     const status = typeof req.query.status === "string" && req.query.status.trim() ? req.query.status.trim() : undefined;
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const sources = await listVisibleSources(principal, { status, limit });
     const byStatus = { pending: 0, processing: 0, completed: 0, total: sources.length };
     for (const source of sources) {

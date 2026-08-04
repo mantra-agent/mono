@@ -3,7 +3,7 @@ import { acquireLibraryParentLocks, db, runWithDatabaseTransaction } from "./db"
 import { createLogger } from "./log";
 import type { Principal } from "./principal";
 import { createNamedSystemPrincipal } from "./principal";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -418,7 +418,7 @@ export interface MantraLibraryVaultBootstrapResult {
 }
 
 export async function ensureMantraLibraryVault(
-  principal: Principal = getCurrentPrincipalOrSystem(),
+  principal: Principal = requireCurrentUserPrincipal(),
 ): Promise<MantraLibraryVaultBootstrapResult> {
   const vaultId = await ensureMantraVault(principal);
   const index = await ensureCanonicalVaultMetadataPage({ principal, vaultId, kind: "index" });

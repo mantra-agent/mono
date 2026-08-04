@@ -7,7 +7,7 @@ import { getRuntimePublicBaseUrl } from "../runtime-identity";
 import { createLogger } from "../log";
 import { chatStorage } from "../integrations/chat";
 import { peopleStorage } from "../people-storage";
-import { getCurrentPrincipalOrSystem, runWithPrincipal } from "../principal-context";
+import { requireCurrentPrincipal, runWithPrincipal } from "../principal-context";
 import { DeepgramSTTProvider } from "./stt/provider";
 import { PhoneTurnDetector } from "./turn-detector";
 import { clearPhoneSpeech, sendPhoneSpeech } from "./audio";
@@ -17,7 +17,7 @@ import type { TwilioCallStatus } from "../integrations/twilio/client";
 import { getSecretSync } from "../secrets-store";
 
 const log = createLogger("PhoneTransport");
-const pendingCalls = new Map<string, { sessionId: string; caller: string; principal: ReturnType<typeof getCurrentPrincipalOrSystem>; callerName: string }>();
+const pendingCalls = new Map<string, { sessionId: string; caller: string; principal: ReturnType<typeof requireCurrentPrincipal>; callerName: string }>();
 
 export type PhoneIngestFn = (event: { sessionId: string; speakerLabel: string; text: string; onResponse: (text: string) => Promise<void> }) => Promise<
   { ok: true; sessionId: string; sessionKey: string; speaker?: MessageSpeakerMeta; queued: boolean } | { ok: false; status: number; error: string }
@@ -106,7 +106,7 @@ export function registerPhoneRoutes(app: Express, deps: {
     const caller = typeof req.body?.From === "string" ? req.body.From : "Unknown";
     if (!callSid) return res.status(400).type("text/xml").send("<Response><Reject/></Response>");
     try {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       if (principal.actorType !== "user") throw new Error("Twilio inbound webhook requires an owning user principal");
       const identity = await callerIdentity(caller);
       const title = identity.personId ? `Call with ${identity.name}` : `Call from ${caller}`;

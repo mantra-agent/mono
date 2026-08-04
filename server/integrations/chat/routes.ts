@@ -78,13 +78,13 @@ import { agendaDefinitionStorage } from "../../agenda-storage";
 import { instantiateAgendaDefinition } from "@shared/models/agendas";
 import { createLogger } from "../../log";
 import { requireAuth } from "../../auth";
-import { getCurrentPrincipalOrSystem } from "../../principal-context";
+import { requireCurrentPrincipal } from "../../principal-context";
 import { resolveQuestionResponse } from "../../question-response";
 import { emailDraftStorage } from "../../email-draft-storage";
 
 const chatLog = createLogger("ChatStream");
 const planScopeColumns = { ownerUserId: planExecutions.ownerUserId, accountId: planExecutions.accountId };
-function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
+function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planScopeColumns, predicate); }
 
 function isLiveSessionStatus(session: { id: string }): boolean {
   return sessionManager.getSnapshot(session.id)?.runActive === true;
@@ -1437,15 +1437,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
 
   async function resolveAuthorityToolDefinitions(sessionId: string): Promise<ToolDefinition[]> {
     const { filterToolSchemasForAuthority } = await import("../../agent-authority");
-    const { getCurrentPrincipalOrSystem } = await import("../../principal-context");
+    const { requireCurrentPrincipal } = await import("../../principal-context");
     const { filterBuildToolSchemas } = await import("../../mods/build-tool-access");
     const { filterWellnessToolSchemas } = await import("../../mods/wellness-tool-access");
     const authorityTools = filterToolSchemasForAuthority(getToolDefinitions(), {
       origin: "interactive",
       sessionId,
     });
-    const buildScopedTools = await filterBuildToolSchemas(getCurrentPrincipalOrSystem(), authorityTools);
-    const modScopedTools = await filterWellnessToolSchemas(getCurrentPrincipalOrSystem(), buildScopedTools);
+    const buildScopedTools = await filterBuildToolSchemas(requireCurrentPrincipal(), authorityTools);
+    const modScopedTools = await filterWellnessToolSchemas(requireCurrentPrincipal(), buildScopedTools);
     return modScopedTools.map((tool) => ({
       name: tool.name,
       description: tool.description,

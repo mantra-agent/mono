@@ -15,14 +15,14 @@ import {
   type ThesisConviction,
 } from "@shared/schema";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { tagService } from "./tag-service";
 
 const log = createLogger("ThesisStorage");
 const thesisScopeColumns = { scope: theses.scope, ownerUserId: theses.ownerUserId, accountId: theses.accountId, vaultId: theses.vaultId };
-function visibleThesis(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), thesisScopeColumns, predicate); }
-function writableThesis(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), thesisScopeColumns, predicate); }
+function visibleThesis(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentUserPrincipal(), thesisScopeColumns, predicate); }
+function writableThesis(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentUserPrincipal(), thesisScopeColumns, predicate); }
 async function visibleThesisIds(predicate?: SQL): Promise<string[]> {
   const rows = await db.select({ id: theses.id }).from(theses).where(visibleThesis(predicate));
   return rows.map((row) => row.id);
@@ -77,7 +77,7 @@ export class ThesisStorage {
 
   async create(data: InsertThesis): Promise<Thesis> {
     return autoHeal(async () => {
-      const [row] = await db.insert(theses).values({ ...data, ...ownedInsertValues(getCurrentPrincipalOrSystem(), thesisScopeColumns) }).returning();
+      const [row] = await db.insert(theses).values({ ...data, ...ownedInsertValues(requireCurrentUserPrincipal(), thesisScopeColumns) }).returning();
       log.debug(`create id=${row.id} title="${row.title}"`);
       tagService.replaceEntityTags("thesis", row.id, row.title, row.tags || []).catch((err) =>
         log.warn("thesis tag sync failed", { id: row.id, error: err instanceof Error ? err.message : String(err) }),

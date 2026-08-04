@@ -17,7 +17,7 @@ import {
 } from "@shared/schema";
 import { ADVISORY_LOCK_NS, db, fnv1a32 } from "./db";
 import type { Principal } from "./principal";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -610,7 +610,7 @@ async function repointReferences(
 }
 
 async function syncEmailIndex(tx: Tx, sourceId: string, target: Person): Promise<void> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
     throw new Error("Person merge email indexing requires an authenticated user account");
   }

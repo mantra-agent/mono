@@ -14,7 +14,7 @@ import { libraryPages } from "@shared/models/info";
 import { planExecutions, planStepAttempts, planStepReviews, planSteps } from "@shared/schema";
 import { isPlanReviewDecision, PLAN_REVIEW_REASON_MAX_LENGTH } from "@shared/plan-review";
 import { ensureOpenPlanStepReview, resolvePlanStepReview } from "../plan-service";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { logPatchClearAudit, sanitizePatch } from "../lib/patch-guard";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { and, eq, desc, ilike, type SQL } from "drizzle-orm";
@@ -25,12 +25,12 @@ const planStepScopeColumns = { ownerUserId: planSteps.ownerUserId, accountId: pl
 const planAttemptScopeColumns = { ownerUserId: planStepAttempts.ownerUserId, accountId: planStepAttempts.accountId };
 const planReviewScopeColumns = { ownerUserId: planStepReviews.ownerUserId, accountId: planStepReviews.accountId };
 const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
-function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
-function writablePlan(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
-function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
-function visiblePlanAttempt(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planAttemptScopeColumns, predicate); }
-function visiblePlanReview(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planReviewScopeColumns, predicate); }
-function visibleLibrary(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), libraryScopeColumns, predicate); }
+function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planScopeColumns, predicate); }
+function writablePlan(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), planScopeColumns, predicate); }
+function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planStepScopeColumns, predicate); }
+function visiblePlanAttempt(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planAttemptScopeColumns, predicate); }
+function visiblePlanReview(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planReviewScopeColumns, predicate); }
+function visibleLibrary(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), libraryScopeColumns, predicate); }
 
 function routeError(error: unknown, operation: string): { message: string; operation: string } {
   const message = error instanceof Error ? error.message : String(error);
@@ -863,7 +863,7 @@ export async function registerProjectsRoutes(app: Express) {
       } else {
         await db.insert(planExecutions).values({
           id: internalId,
-          ...ownedInsertValues(getCurrentPrincipalOrSystem(), planScopeColumns),
+          ...ownedInsertValues(requireCurrentPrincipal(), planScopeColumns),
           pageId: page.id,
           status: parsed.meta.status,
           originSessionId: parsed.meta.originSessionId || "legacy",

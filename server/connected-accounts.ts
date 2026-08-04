@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { connectedAccounts, vaults, type ConnectedAccount } from "@shared/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable, sensitiveOwnershipValues } from "./sensitive-scope";
 import { createLogger } from "./log";
 import { encryptTokens, decryptTokens } from "./encryption";
@@ -41,7 +41,7 @@ export const DEFAULT_GOOGLE_PERMISSIONS: GoogleAccountPermissions = {
 
 
 export async function listVisibleConnectedAccounts(provider?: string): Promise<ConnectedAccount[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const predicates = [provider ? eq(connectedAccounts.provider, provider) : undefined];
   if (principal.actorType !== "system") {
     if (principal.visibleVaultIds.length === 0) return [];
@@ -58,7 +58,7 @@ export async function getVisibleConnectedAccount(accountId: string): Promise<Con
 }
 
 export async function createConnectedAccountInVault(data: Parameters<typeof createAccount>[0], vaultId: string): Promise<ConnectedAccount> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (!principal.accountId) throw new Error("Account principal required");
   const [vault] = await db.select({ id: vaults.id }).from(vaults).where(and(eq(vaults.id, vaultId), eq(vaults.accountId, principal.accountId), eq(vaults.isArchived, false))).limit(1);
   if (!vault) throw new Error("Selected Vault is unavailable");
@@ -83,7 +83,7 @@ export function isSystemSubscriptionAccount(accountId: string): boolean {
 }
 
 export async function listAccounts(provider?: string): Promise<ConnectedAccount[]> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const predicate = combineWithSensitiveVisible({ ownerUserId: connectedAccounts.ownerUserId, principalAccountId: connectedAccounts.principalAccountId }, provider ? eq(connectedAccounts.provider, provider) : undefined, principal);
   const rows = await db.select().from(connectedAccounts).where(predicate);
   // Hide system subscription principals from user-facing account lists.
@@ -92,7 +92,7 @@ export async function listAccounts(provider?: string): Promise<ConnectedAccount[
 }
 
 export async function getAccount(accountId: string): Promise<ConnectedAccount | null> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   // System/boot health probes address accounts by stable accountId across all owners.
   const where =
     principal.actorType === "system"
@@ -126,7 +126,7 @@ export async function createAccount(data: {
     .insert(connectedAccounts)
     .values({
       accountId: data.accountId,
-      ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()),
+      ...sensitiveOwnershipValues(requireCurrentPrincipal()),
       provider: data.provider,
       vaultId: data.vaultId || null,
       providerAccountId: data.providerAccountId || null,
@@ -145,7 +145,7 @@ export async function createAccount(data: {
         workspaceName: data.workspaceName || undefined,
         tokens: encryptedTokens || undefined,
         permissions: data.permissions || undefined,
-        ...sensitiveOwnershipValues(getCurrentPrincipalOrSystem()),
+        ...sensitiveOwnershipValues(requireCurrentPrincipal()),
         updatedAt: new Date(),
       },
     })
@@ -173,7 +173,7 @@ export async function updateAccount(
   if (updateFields.tokens !== undefined) {
     updateFields.tokens = updateFields.tokens ? await encryptTokens(updateFields.tokens) : updateFields.tokens;
   }
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   // System/boot health probes must mutate by accountId without user-scope false negatives.
   const where =
     principal.actorType === "system"
@@ -197,7 +197,7 @@ export async function updateAccount(
 }
 
 export async function assignConnectedAccountVault(accountId: string, vaultId: string): Promise<ConnectedAccount> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (!principal.accountId) throw new Error("Account principal required");
   const [vault] = await db.select({ id: vaults.id }).from(vaults).where(and(eq(vaults.id, vaultId), eq(vaults.accountId, principal.accountId), eq(vaults.isArchived, false))).limit(1);
   if (!vault) throw new Error("Selected Vault is unavailable");

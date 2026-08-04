@@ -1786,10 +1786,10 @@ async function handleGmailReply(args: Record<string, any>): Promise<ToolHandlerR
 
   const { db } = await import("./db");
   const { emailMessages } = await import("@shared/schema");
-  const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+  const { requireCurrentPrincipal } = await import("./principal-context");
   const { combineWithVisibleScope } = await import("./scoped-storage");
   const { and: andOp, desc: descOp, eq: eqOp } = await import("drizzle-orm");
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId };
 
   let accountId: string | undefined;
@@ -1852,8 +1852,8 @@ async function handleGmailDraft(args: Record<string, any>): Promise<ToolHandlerR
 
   try {
     const { emailDraftStorage } = await import("./email-draft-storage");
-    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-    const principal = getCurrentPrincipalOrSystem();
+    const { requireCurrentPrincipal } = await import("./principal-context");
+    const principal = requireCurrentPrincipal();
 
     const draft = await emailDraftStorage.create(principal, {
       gmailAccountId: draftAccountId || undefined,
@@ -1998,8 +1998,8 @@ async function handleGmailDraftUpdate(args: Record<string, any>): Promise<ToolHa
 
   try {
     const { emailDraftStorage } = await import("./email-draft-storage");
-    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-    const principal = getCurrentPrincipalOrSystem();
+    const { requireCurrentPrincipal } = await import("./principal-context");
+    const principal = requireCurrentPrincipal();
     const account = optionalDraftText(args.account);
     let gmailAccountId: string | undefined;
     if (account) {
@@ -2595,10 +2595,10 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
 
     const { db } = await import("./db");
     const { emailMessages, emailEnrichments } = await import("@shared/schema");
-    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+    const { requireCurrentPrincipal } = await import("./principal-context");
     const { combineWithVisibleScope } = await import("./scoped-storage");
     const { and: andOp, asc: ascOp, desc: descOp, eq: eqOp } = await import("drizzle-orm");
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const emailScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId, vaultId: emailMessages.vaultId };
     const enrichmentScope = { ownerUserId: emailEnrichments.ownerUserId, accountId: emailEnrichments.principalAccountId, vaultId: emailEnrichments.vaultId };
 
@@ -2691,9 +2691,9 @@ async function handleGmailEmailCache(args: Record<string, any>): Promise<ToolHan
     const { db } = await import("./db");
     const { emailMessages, emailEnrichments } = await import("@shared/schema");
     const { eq: eqOp } = await import("drizzle-orm");
-    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+    const { requireCurrentPrincipal } = await import("./principal-context");
     const { combineWithVisibleScope } = await import("./scoped-storage");
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const messageScope = { ownerUserId: emailMessages.ownerUserId, accountId: emailMessages.principalAccountId, vaultId: emailMessages.vaultId };
     const enrichmentScope = { ownerUserId: emailEnrichments.ownerUserId, accountId: emailEnrichments.principalAccountId, vaultId: emailEnrichments.vaultId };
     const [msg] = await db.select().from(emailMessages)
@@ -5281,9 +5281,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const { db } = await import("./db");
       const { libraryPages } = await import("@shared/models/info");
       const { eq } = await import("drizzle-orm");
-      const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+      const { requireCurrentPrincipal } = await import("./principal-context");
       const { combineWithVisibleScope } = await import("./scoped-storage");
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       const scope = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
       const byId = await db.select({ id: libraryPages.id }).from(libraryPages).where(combineWithVisibleScope(principal, scope, eq(libraryPages.id, rawId)));
       if (byId[0]) return { uuid: byId[0].id };
@@ -9951,7 +9951,7 @@ ${refs}` : ""),
         insertPlatformProductEnvironmentSchema,
         upsertContextArtifactSchema,
       } = await import("@shared/models/platforms");
-      const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+      const { requireCurrentPrincipal } = await import("./principal-context");
       const { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } = await import("./scoped-storage");
       const { storeProviderCredential, getProviderCredential, deleteProviderCredential } = await import("./provider-credential-store");
       const { getVisibleEnvironment, getWritableEnvironment, getVisibleProduct, getWritableProduct } = await import("./platforms/platform-access");
@@ -9960,12 +9960,12 @@ ${refs}` : ""),
       const connScopeColumns = { scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId };
       const platScopeColumns = { scope: platformsTable.scope, ownerUserId: platformsTable.ownerUserId, accountId: platformsTable.accountId };
 
-      const visibleConn = (pred?: SQL) => combineWithVisibleScope(getCurrentPrincipalOrSystem(), connScopeColumns, pred);
-      const writableConn = (pred?: SQL) => combineWithWritableScope(getCurrentPrincipalOrSystem(), connScopeColumns, pred);
-      const visiblePlat = (pred?: SQL) => combineWithVisibleScope(getCurrentPrincipalOrSystem(), platScopeColumns, pred);
-      const writablePlat = (pred?: SQL) => combineWithWritableScope(getCurrentPrincipalOrSystem(), platScopeColumns, pred);
+      const visibleConn = (pred?: SQL) => combineWithVisibleScope(requireCurrentPrincipal(), connScopeColumns, pred);
+      const writableConn = (pred?: SQL) => combineWithWritableScope(requireCurrentPrincipal(), connScopeColumns, pred);
+      const visiblePlat = (pred?: SQL) => combineWithVisibleScope(requireCurrentPrincipal(), platScopeColumns, pred);
+      const writablePlat = (pred?: SQL) => combineWithWritableScope(requireCurrentPrincipal(), platScopeColumns, pred);
       const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
-      const visibleLib = (pred?: SQL) => combineWithVisibleScope(getCurrentPrincipalOrSystem(), libraryScopeColumns, pred);
+      const visibleLib = (pred?: SQL) => combineWithVisibleScope(requireCurrentPrincipal(), libraryScopeColumns, pred);
       const positiveId = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null);
 
       // ── list_connections ──
@@ -10036,7 +10036,7 @@ ${refs}` : ""),
         const credential = typeof args.credential === "string" ? args.credential.trim() : "";
         if (!provider || !label) return { result: "Missing 'provider' and/or 'label' for create_connection", error: true };
 
-        const principal = getCurrentPrincipalOrSystem();
+        const principal = requireCurrentPrincipal();
         const parsed = insertProviderConnectionSchema.parse({ provider, label });
         const [created] = await db.insert(providerConnections).values({ ...parsed, ...ownedInsertValues(principal, connScopeColumns) }).returning();
 
@@ -10051,7 +10051,7 @@ ${refs}` : ""),
 
       // ── create_platform ──
       if (action === "create_platform") {
-        const principal = getCurrentPrincipalOrSystem();
+        const principal = requireCurrentPrincipal();
         const parsed = insertPlatformSchema.parse({
           name: typeof args.name === "string" ? args.name : "",
           description: typeof args.description === "string" ? args.description : "",
@@ -10265,7 +10265,7 @@ ${refs}` : ""),
       if (["get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"].includes(action)) {
         const envId = positiveId(args.id);
         if (!envId) return { result: "Missing positive environment id", error: true };
-        const principal = getCurrentPrincipalOrSystem();
+        const principal = requireCurrentPrincipal();
         const { principalHasPermission } = await import("./permissions");
         if (!(await getVisibleEnvironment(envId))) return { result: `Environment ${envId} not accessible`, error: true };
         const permission = action === "get_cloudflare_pages_project" || action === "poll_cloudflare_pages_deployment" ? "build:read" : "build:write";
@@ -11415,12 +11415,12 @@ ${refs}` : ""),
     const { db } = await import("./db");
     const { libraryPages, libraryAnnotations, libraryPageLinks } = await import("@shared/models/info");
     const { eq, desc, asc, ilike, or, and, sql } = await import("drizzle-orm");
-    const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+    const { requireCurrentPrincipal } = await import("./principal-context");
     const { combineWithVisibleScope, combineWithWritableScope, visibleScopePredicate } = await import("./scoped-storage");
     const { libraryPageIsLive } = await import("./library-trash");
 
     const action = args.action;
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     const libScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
     const visibleLib = (predicate?: SQL) => combineWithVisibleScope(principal, libScopeColumns, predicate ? and(predicate, libraryPageIsLive()) : libraryPageIsLive());
     const writableLib = (predicate?: SQL) => combineWithWritableScope(principal, libScopeColumns, predicate);
@@ -11938,7 +11938,7 @@ ${refs}` : ""),
         const fromPageId = args.fromPageId || args.sourceId;
         const toPageId = args.toPageId || args.targetId;
         if (!fromPageId || !toPageId) return { result: "Provide fromPageId and toPageId to link pages.", error: true };
-        const { getCurrentPrincipalOrSystem: getPrincipalForLink } = await import("./principal-context");
+        const { requireCurrentPrincipal: getPrincipalForLink } = await import("./principal-context");
         const { ownedInsertValues: ownedInsertForLink } = await import("./scoped-storage");
         const linkScopeColumns = { scope: libraryPageLinks.scope, ownerUserId: libraryPageLinks.ownerUserId, accountId: libraryPageLinks.accountId };
         const [link] = await db.insert(libraryPageLinks).values({
@@ -11957,7 +11957,7 @@ ${refs}` : ""),
         const page = byId[0] || (await db.select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug }).from(libraryPages).where(visibleLib(eq(libraryPages.slug, id))))[0];
         if (!page) return { result: `Library page "${id}" not found.`, error: true };
         const annotationType = args.annotationType || "observation";
-        const { getCurrentPrincipalOrSystem: getPrincipalForAnnotation } = await import("./principal-context");
+        const { requireCurrentPrincipal: getPrincipalForAnnotation } = await import("./principal-context");
         const { ownedInsertValues: ownedInsertForAnnotation } = await import("./scoped-storage");
         const annotationScopeColumns = { scope: libraryAnnotations.scope, ownerUserId: libraryAnnotations.ownerUserId, accountId: libraryAnnotations.accountId };
         const [annotation] = await db.insert(libraryAnnotations).values({
@@ -12395,8 +12395,8 @@ ${refs}` : ""),
 
         let testEvent: any;
         if (eventId) {
-          const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-          const eventPrincipal = getCurrentPrincipalOrSystem();
+          const { requireCurrentPrincipal } = await import("./principal-context");
+          const eventPrincipal = requireCurrentPrincipal();
           const recentEvents = eventBus.getRecentEvents(500, undefined, eventPrincipal);
           testEvent = recentEvents.find(e => e.id === eventId);
           if (!testEvent) return { result: "Event not found in current process buffer", error: true };
@@ -12889,11 +12889,11 @@ const persistentFileTools: Record<string, ToolHandler> = {
       const { storageBackend, PRIVATE_PREFIX } = await import("./object_storage");
 
       const { VAULT_PREFIX } = await import("./object_storage/vault-keys");
-      const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+      const { requireCurrentPrincipal } = await import("./principal-context");
 
       const subPrefix = args.prefix || "uploads/";
       const legacyPrefix = `${PRIVATE_PREFIX}${subPrefix}`;
-      const vaultId = getCurrentPrincipalOrSystem()?.activeVaultId;
+      const vaultId = requireCurrentPrincipal()?.activeVaultId;
       const vaultPrefix = vaultId ? `${VAULT_PREFIX}${vaultId}/${subPrefix}` : null;
 
       // Dual-read parity with getObjectEntityFile: vault-partitioned keys
@@ -13424,7 +13424,7 @@ const systemTools: Record<string, ToolHandler> = {
       const { db } = await import("./db");
       const { indexedContent } = await import("@shared/schema");
       const { desc, eq } = await import("drizzle-orm");
-      const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+      const { requireCurrentPrincipal } = await import("./principal-context");
       const { combineWithSensitiveVisible } = await import("./sensitive-scope");
       const ownerColumns = {
         ownerUserId: indexedContent.ownerUserId,
@@ -13432,7 +13432,7 @@ const systemTools: Record<string, ToolHandler> = {
         vaultId: indexedContent.vaultId,
       };
       const visible = (predicate?: SQL) =>
-        combineWithSensitiveVisible(ownerColumns, predicate, getCurrentPrincipalOrSystem());
+        combineWithSensitiveVisible(ownerColumns, predicate, requireCurrentPrincipal());
 
       switch (action) {
         case "list": {
@@ -14497,8 +14497,8 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         const { memoryVnextSourceRefs } = await import("../shared/models/memory");
         const { eq } = await import("drizzle-orm");
         const { combineWithWritableScope } = await import("./scoped-storage");
-        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-        const deleted = await db.delete(memoryVnextSourceRefs).where(combineWithWritableScope(getCurrentPrincipalOrSystem(), {
+        const { requireCurrentPrincipal } = await import("./principal-context");
+        const deleted = await db.delete(memoryVnextSourceRefs).where(combineWithWritableScope(requireCurrentPrincipal(), {
           scope: memoryVnextSourceRefs.scope,
           ownerUserId: memoryVnextSourceRefs.ownerUserId,
           accountId: memoryVnextSourceRefs.accountId,
@@ -14872,9 +14872,9 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
 
     if (action === "context_health") {
       try {
-        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+        const { requireCurrentPrincipal } = await import("./principal-context");
         const { principalHasPermission } = await import("./permissions");
-        const principal = getCurrentPrincipalOrSystem();
+        const principal = requireCurrentPrincipal();
         if (!principalHasPermission(principal, "system:read")) {
           return { result: "Permission required: system:read", error: true };
         }
@@ -14889,8 +14889,8 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     }
     if (action === "events") {
       try {
-        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-        const principal = getCurrentPrincipalOrSystem();
+        const { requireCurrentPrincipal } = await import("./principal-context");
+        const principal = requireCurrentPrincipal();
         const limit = (args.limit as number) || 100;
         let payloadQuery: Record<string, unknown> | undefined;
         if (args.payloadQuery) {
@@ -14913,19 +14913,19 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: JSON.stringify({ total: result.total, source: "in-memory", events: result.events.map(e => ({ id: e.id, timestamp: new Date(e.timestamp).toISOString(), category: e.category, event: e.event, runId: e.runId || null })) }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+        const { requireCurrentPrincipal } = await import("./principal-context");
         const fallbackEvents = eventBus.getRecentEvents((args.limit as number) || 100, {
           category: args.category as string | undefined,
           runId: args.runId as string | undefined,
           event: args.event as string | undefined,
-        }, getCurrentPrincipalOrSystem());
+        }, requireCurrentPrincipal());
         return { result: JSON.stringify({ total: fallbackEvents.length, source: "in-memory", events: fallbackEvents.map(e => ({ id: e.id, timestamp: new Date(e.timestamp).toISOString(), category: e.category, event: e.event, runId: e.runId || null })) }) };
       }
     }
     if (action === "active_runs") {
       try {
-        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-        const runs = eventBus.getActiveRuns(getCurrentPrincipalOrSystem());
+        const { requireCurrentPrincipal } = await import("./principal-context");
+        const runs = eventBus.getActiveRuns(requireCurrentPrincipal());
         return { result: JSON.stringify({ total: runs.length, runs: runs.map(r => ({ runId: r.runId, startedAt: new Date(r.startedAt).toISOString(), events: r.events, lastEvent: r.lastEvent })) }) };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -14937,8 +14937,8 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         const runId = String(args.runId || args.id || "").trim();
         if (!runId) return { result: "Missing runId parameter", error: true };
         const reason = String(args.reason || "manual_cleanup").trim() || "manual_cleanup";
-        const { getCurrentPrincipalOrSystem } = await import("./principal-context");
-        const result = eventBus.clearActiveRun(runId, reason, getCurrentPrincipalOrSystem());
+        const { requireCurrentPrincipal } = await import("./principal-context");
+        const result = eventBus.clearActiveRun(runId, reason, requireCurrentPrincipal());
         return { result: JSON.stringify(result), error: !result.cleared };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -16227,7 +16227,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             return { result: "Missing 'decisions' array parameter", error: true };
           }
           const { bufferCurationDecisions } = await import("./news-curation-handoff");
-          const { getCurrentPrincipalOrSystem: _getPrincipal } = await import("./principal-context");
+          const { requireCurrentPrincipal: _getPrincipal } = await import("./principal-context");
           const _principal = _getPrincipal();
           if (!_principal.userId) {
             return {

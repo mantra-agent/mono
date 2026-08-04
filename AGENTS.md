@@ -225,7 +225,7 @@ Every request and every async server operation must have a resolved `Principal` 
 - **Autonomous runs (timers, skills, hooks):** Must wrap execution in `runWithPrincipal(userPrincipal, fn)` using `server/principal-context.ts`. The user principal comes from the user who owns the timer/skill/hook.
 - **System jobs (sleep cycle, migrations):** Use `createSystemPrincipal()`.
 
-**`getCurrentPrincipalOrSystem()`** falls back to a system principal when no principal is in AsyncLocalStorage. This is a safety net, not an excuse. If user-owned data is being written and the principal is system, the `owner_user_id` will be `NULL` and the data will be orphaned. Every code path that creates or queries user data must have a real user principal in scope.
+**Missing principal context fails closed.** Call `requireCurrentPrincipal()` or `requireCurrentUserPrincipal()` at the boundary. Do not invent ambient system authority. System jobs enter through `runWithPrincipal(createNamedSystemPrincipal(...), fn)` or `createSystemPrincipal()` at the documented job entry only. If user-owned data is written under a system principal, `owner_user_id` will be `NULL` and the row orphaned.
 
 ### Scoped Storage Helpers (`server/scoped-storage.ts`)
 
@@ -282,7 +282,7 @@ These are the correct way to enforce ownership. Do not write raw queries against
 
 1. **Forgetting `visibleScopePredicate` on a list/search query.** The query works, returns results, looks correct in dev with one user. With two users, it returns everyone's data.
 
-2. **Using `getCurrentPrincipalOrSystem()` in a code path that handles user data.** The system principal sees everything. If an autonomous job uses system principal instead of the owning user's principal, it reads/writes data without ownership boundaries.
+2. **Running user-data work under a system principal.** System principals see everything they are granted. If an autonomous job uses a system principal instead of the owning user's principal, it reads/writes data without ownership boundaries.
 
 3. **Adding a new table or column without ownership columns.** If a table stores user-specific data, it needs `owner_user_id`, `account_id`, and ideally `scope`. Adding the table without these columns means every query against it is unscoped.
 

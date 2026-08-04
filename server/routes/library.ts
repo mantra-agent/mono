@@ -35,7 +35,7 @@ import { searchVnextMemory } from "../memory/vnext-search";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -1709,7 +1709,7 @@ export async function upsertLibraryPageMemory(
 ): Promise<void> {
   // Compatibility alias during legacy retirement. Library pages feed vNext
   // directly through the source queue; no memory_entries mirror is maintained.
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   await markSourceChanged("library_page", page.id, principal);
   log.debug(`[vnext_ingest] queued source=library_page sourceId=${page.id} via=compat_alias`);
 }

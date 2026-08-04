@@ -4,7 +4,7 @@ import { db } from "../db";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
 import { requirePermission } from "../permissions";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { combineWithVisibleScope, ownedInsertValues } from "../scoped-storage";
 import { getSecretSync } from "../secrets-store";
 import { getProviderCredential } from "../provider-credential-store";
@@ -24,13 +24,13 @@ const log = createLogger("PlatformRoutes");
 const providerConnectionScopeColumns = { scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId };
 
 function visibleProviderConnection(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), providerConnectionScopeColumns, predicate);
+  return combineWithVisibleScope(requireCurrentPrincipal(), providerConnectionScopeColumns, predicate);
 }
 
 const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
 
 function visibleLibrary(predicate?: SQL): SQL {
-  return combineWithVisibleScope(getCurrentPrincipalOrSystem(), libraryScopeColumns, predicate);
+  return combineWithVisibleScope(requireCurrentPrincipal(), libraryScopeColumns, predicate);
 }
 
 
@@ -696,7 +696,7 @@ export function registerPlatformRoutes(app: Express): void {
   app.post("/api/platforms", async (req, res) => {
     try {
       const parsed = insertPlatformSchema.parse(req.body);
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       const [created] = await db.insert(platforms).values({ ...parsed, ...ownedInsertValues(principal, platformScopeColumns) }).returning();
       res.status(201).json({ ...created, products: [] });
     } catch (error: unknown) {

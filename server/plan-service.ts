@@ -4,7 +4,7 @@ import { and, desc, eq, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { db, runWithDatabaseTransaction } from "./db";
 import { createLogger } from "./log";
 import { eventBus } from "./event-bus";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { planExecutions, planSessionLinks, planStepAttempts, planStepReviews, planSteps, type PlanExecutionRow, type PlanStepAttemptRow, type PlanStepReviewRow, type PlanStepRow } from "@shared/schema";
 import { PLAN_REVIEW_REASON_MAX_LENGTH, PLAN_REVIEW_DETAIL_MAX_LENGTH, type PlanReviewDecision } from "@shared/plan-review";
@@ -38,15 +38,15 @@ const planAttemptScopeColumns = { ownerUserId: planStepAttempts.ownerUserId, acc
 const planReviewScopeColumns = { ownerUserId: planStepReviews.ownerUserId, accountId: planStepReviews.accountId };
 const planLinkScopeColumns = { ownerUserId: planSessionLinks.ownerUserId, accountId: planSessionLinks.accountId };
 
-function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
-function writablePlan(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planScopeColumns, predicate); }
-function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
-function writablePlanStep(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planStepScopeColumns, predicate); }
-function visiblePlanAttempt(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planAttemptScopeColumns, predicate); }
-function writablePlanAttempt(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planAttemptScopeColumns, predicate); }
-function visiblePlanReview(predicate?: SQL): SQL { return combineWithVisibleScope(getCurrentPrincipalOrSystem(), planReviewScopeColumns, predicate); }
-function writablePlanReview(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planReviewScopeColumns, predicate); }
-function writablePlanLink(predicate?: SQL): SQL { return combineWithWritableScope(getCurrentPrincipalOrSystem(), planLinkScopeColumns, predicate); }
+function visiblePlan(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planScopeColumns, predicate); }
+function writablePlan(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), planScopeColumns, predicate); }
+function visiblePlanStep(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planStepScopeColumns, predicate); }
+function writablePlanStep(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), planStepScopeColumns, predicate); }
+function visiblePlanAttempt(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planAttemptScopeColumns, predicate); }
+function writablePlanAttempt(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), planAttemptScopeColumns, predicate); }
+function visiblePlanReview(predicate?: SQL): SQL { return combineWithVisibleScope(requireCurrentPrincipal(), planReviewScopeColumns, predicate); }
+function writablePlanReview(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), planReviewScopeColumns, predicate); }
+function writablePlanLink(predicate?: SQL): SQL { return combineWithWritableScope(requireCurrentPrincipal(), planLinkScopeColumns, predicate); }
 
 export type PlanStepStatus = PlanStep["status"];
 export type AttemptStatus = "pending" | "running" | "completed" | "failed" | "blocked" | "needs_review" | "abandoned";
@@ -177,7 +177,7 @@ export async function releasePlanExecution(planId: string, leaseId: string): Pro
 
 export async function createPlanSessionLink(planId: string, sessionId: string, anchorMessageId?: string | null): Promise<void> {
   await db.insert(planSessionLinks).values({
-    ...ownedInsertValues(getCurrentPrincipalOrSystem(), planLinkScopeColumns),
+    ...ownedInsertValues(requireCurrentPrincipal(), planLinkScopeColumns),
     planId,
     sessionId,
     anchorMessageId: anchorMessageId ?? null,
@@ -201,7 +201,7 @@ export async function createPlanStepAttempt(params: {
   startedAt?: Date | null;
 }): Promise<number | null> {
   const rows = await db.insert(planStepAttempts).values({
-    ...ownedInsertValues(getCurrentPrincipalOrSystem(), planAttemptScopeColumns),
+    ...ownedInsertValues(requireCurrentPrincipal(), planAttemptScopeColumns),
     planId: params.planId,
     stepId: params.stepId,
     attemptNumber: params.attemptNumber,
@@ -311,7 +311,7 @@ export async function ensureOpenPlanStepReview(params: {
     : null;
 
   const [created] = await db.insert(planStepReviews).values({
-    ...ownedInsertValues(getCurrentPrincipalOrSystem(), planReviewScopeColumns),
+    ...ownedInsertValues(requireCurrentPrincipal(), planReviewScopeColumns),
     planId: params.planId,
     stepId: params.stepId,
     attemptId: params.attemptId ?? null,
@@ -344,7 +344,7 @@ export async function reportPlanStepNeedsReview(params: {
   detail?: string | null;
   outcome?: string | null;
 }): Promise<PlanStepReviewRow> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (!principal.userId || !principal.accountId || principal.actorType !== "user") {
     throw new Error("Plan review gates require the owning user principal");
   }
@@ -424,7 +424,7 @@ export async function reportPlanStepNeedsReview(params: {
     if (attemptUpdated.length === 0) throw new Error(`Attempt ${attempt.id} lost active ownership before review opened`);
 
     const [inserted] = await tx.insert(planStepReviews).values({
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), planReviewScopeColumns),
+      ...ownedInsertValues(requireCurrentPrincipal(), planReviewScopeColumns),
       planId: params.planId,
       stepId: params.stepId,
       attemptId: attempt.id,
@@ -482,7 +482,7 @@ export async function resolvePlanStepReview(params: {
   source: "ui" | "later_human_turn";
   resolvedBySessionId?: string | null;
 }): Promise<ResolvePlanStepReviewResult> {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (!principal.userId || !principal.accountId || principal.actorType !== "user") {
     throw new Error("Plan review requires an authenticated human principal");
   }
@@ -847,7 +847,7 @@ export async function renderPlanProjection(planId: string): Promise<void> {
     const { syncContentFields } = await import("@shared/markdown-tiptap");
     const synced = syncContentFields({ markdown: content });
     const libraryScope = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentPrincipal();
     await db.transaction(async tx => runWithDatabaseTransaction(tx, async () => {
       const [page] = await tx.update(libraryPages).set({
         content: synced.content,

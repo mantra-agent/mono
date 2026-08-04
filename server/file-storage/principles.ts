@@ -9,7 +9,7 @@ import { generateId } from "./utils";
 import { createLogger } from "../log";
 import { TTLCache } from "../utils/ttl-cache";
 import { principalCacheKey } from "./base";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentUserPrincipal } from "../principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -148,7 +148,7 @@ export class FilePrincipleStorage {
   }
 
   async getPrinciples(): Promise<Principle[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     return this._principlesCache.getOrFetch(principalCacheKey("principles"), async () => {
       const rows = await db.select(currentPrincipleProjection)
         .from(principles)
@@ -162,7 +162,7 @@ export class FilePrincipleStorage {
   }
 
   async getPrinciple(id: string): Promise<Principle | null> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const rows = await db.select(currentPrincipleProjection)
       .from(principles)
       .innerJoin(principleRevisions, currentRevisionJoin())
@@ -184,7 +184,7 @@ export class FilePrincipleStorage {
     manualTags?: string[];
     relatedIds?: string[];
   }): Promise<Principle> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const now = new Date();
     const id = generateId();
     const currentRevisionId = generateId("prrev_");
@@ -236,7 +236,7 @@ export class FilePrincipleStorage {
       return null;
     }
 
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const now = new Date();
     const [identity] = await db.select({
       currentRevisionId: principles.currentRevisionId,
@@ -309,7 +309,7 @@ export class FilePrincipleStorage {
   }
 
   async deletePrinciple(id: string): Promise<boolean> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const result = await db.delete(principles)
       .where(combineWithWritableScope(principal, principlesScopeColumns, eq(principles.id, id)));
     const deleted = (result.rowCount ?? 0) > 0;

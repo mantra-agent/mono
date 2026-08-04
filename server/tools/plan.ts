@@ -18,7 +18,7 @@ import {
   resolvePlanStepReview,
   unlinkPlanSession,
 } from "../plan-service";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { isPlanReviewDecision, PLAN_REVIEW_REASON_MAX_LENGTH } from "@shared/plan-review";
 import {
   combineWithVisibleScope,
@@ -65,28 +65,28 @@ function libraryScopeColumns(
 }
 function visiblePlan(predicate?: SQL): SQL {
   return combineWithVisibleScope(
-    getCurrentPrincipalOrSystem(),
+    requireCurrentPrincipal(),
     planScopeColumns,
     predicate,
   );
 }
 function writablePlan(predicate?: SQL): SQL {
   return combineWithWritableScope(
-    getCurrentPrincipalOrSystem(),
+    requireCurrentPrincipal(),
     planScopeColumns,
     predicate,
   );
 }
 function visiblePlanStep(predicate?: SQL): SQL {
   return combineWithVisibleScope(
-    getCurrentPrincipalOrSystem(),
+    requireCurrentPrincipal(),
     planStepScopeColumns,
     predicate,
   );
 }
 function writablePlanStep(predicate?: SQL): SQL {
   return combineWithWritableScope(
-    getCurrentPrincipalOrSystem(),
+    requireCurrentPrincipal(),
     planStepScopeColumns,
     predicate,
   );
@@ -106,7 +106,7 @@ async function getLibraryPage(pageId: string) {
     .from(libraryPages)
     .where(
       combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
+        requireCurrentPrincipal(),
         scope,
         eq(libraryPages.id, pageId),
       ),
@@ -117,7 +117,7 @@ async function getLibraryPage(pageId: string) {
     .from(libraryPages)
     .where(
       combineWithVisibleScope(
-        getCurrentPrincipalOrSystem(),
+        requireCurrentPrincipal(),
         scope,
         eq(libraryPages.slug, pageId),
       ),
@@ -176,7 +176,7 @@ async function handleCreate(
   if (!title)
     return { result: "Missing required 'title' parameter.", error: true };
 
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (!principal.userId || !principal.accountId) {
     return { result: "Plan creation requires an explicit user principal.", error: true };
   }
@@ -268,7 +268,7 @@ async function handleCreate(
 
   // Insert into DB (source of truth)
   const ownerValues = ownedInsertValues(
-    getCurrentPrincipalOrSystem(),
+    requireCurrentPrincipal(),
     planScopeColumns,
   );
 
@@ -287,7 +287,7 @@ async function handleCreate(
   for (let i = 0; i < stepsInput.length; i++) {
     await db.insert(planSteps).values({
       id: generateStepId(i),
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), planStepScopeColumns),
+      ...ownedInsertValues(requireCurrentPrincipal(), planStepScopeColumns),
       planId,
       position: i,
       title: stepsInput[i].title,
@@ -494,7 +494,7 @@ async function handleList(
     .select({ id: libraryPages.id, title: libraryPages.title, slug: libraryPages.slug })
     .from(libraryPages)
     .where(combineWithVisibleScope(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentPrincipal(),
       libraryScopeColumns(libraryPages),
       inArray(libraryPages.id, pageIds),
     ));
@@ -538,7 +538,7 @@ async function handleReconcileLibrary(
   }
   const { reconcilePlanLibraryPlacement } = await import("../plan-library-reconciliation");
   const result = await reconcilePlanLibraryPlacement({
-    principal: getCurrentPrincipalOrSystem(),
+    principal: requireCurrentPrincipal(),
     mode,
     limit: args.limit,
     offset: args.offset,
@@ -640,7 +640,7 @@ async function handleExecuteLegacy(
     .insert(planExecutions)
     .values({
       id: meta.id,
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), planScopeColumns),
+      ...ownedInsertValues(requireCurrentPrincipal(), planScopeColumns),
       pageId: page.id,
       status: meta.status,
       originSessionId: meta.originSessionId,
@@ -661,7 +661,7 @@ async function handleExecuteLegacy(
       .values({
         id: step.id,
         ...ownedInsertValues(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentPrincipal(),
           planStepScopeColumns,
         ),
         planId: meta.id,
@@ -902,7 +902,7 @@ async function handleEdit(
       })
       .where(
         combineWithWritableScope(
-          getCurrentPrincipalOrSystem(),
+          requireCurrentPrincipal(),
           libraryScopeColumns(libraryPages),
           eq(libraryPages.id, page.id),
         ),
@@ -1107,7 +1107,7 @@ async function handleAddSteps(
   for (let i = 0; i < newSteps.length; i++) {
     await db.insert(planSteps).values({
       id: generateStepId(existingCount + i),
-      ...ownedInsertValues(getCurrentPrincipalOrSystem(), planStepScopeColumns),
+      ...ownedInsertValues(requireCurrentPrincipal(), planStepScopeColumns),
       planId: resolvedPlanId,
       position: insertAfterPosition + 1 + i,
       title: newSteps[i].title,

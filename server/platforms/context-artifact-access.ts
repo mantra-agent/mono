@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
-import { getCurrentPrincipalOrSystem } from "../principal-context";
+import { requireCurrentPrincipal } from "../principal-context";
 import { combineWithVisibleScope } from "../scoped-storage";
 import { libraryPages } from "@shared/models/info";
 import {
@@ -20,7 +20,7 @@ const libraryScopeColumns = {
 
 export async function listVisibleEnvironmentContextPages(kinds: string[], environmentId?: number) {
   if (kinds.length === 0) return [];
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   return db
     .select({
       environmentId: environmentContextArtifacts.environmentId,

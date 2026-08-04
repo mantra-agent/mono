@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { and, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal } from "./principal-context";
 import { recordPrincipalDiagnosticEvent } from "./principal-diagnostics";
 import { getPrincipal, hasScope, recordPrivilegedAccess, type Principal } from "./principal";
 import { assertSystemVaultAccess } from "./vault-allowlist";
@@ -21,7 +21,7 @@ function hasAccount(principal: Principal): principal is Principal & { accountId:
   return typeof principal.accountId === "string" && principal.accountId.length > 0;
 }
 
-export function sensitiveOwnershipValues(principal: Principal = getCurrentPrincipalOrSystem()): Record<string, string> {
+export function sensitiveOwnershipValues(principal: Principal = requireCurrentPrincipal()): Record<string, string> {
   if (principal.actorType !== "user" && principal.actorType !== "system") {
     throw new Error("Service principals must choose an explicit owner before writing sensitive data");
   }
@@ -36,7 +36,7 @@ export function sensitiveOwnershipValues(principal: Principal = getCurrentPrinci
 
 export function sensitiveVisiblePredicate(
   columns: SensitiveOwnerColumns,
-  principal: Principal = getCurrentPrincipalOrSystem(),
+  principal: Principal = requireCurrentPrincipal(),
 ): SQL {
   if (principal.actorType === "system") {
     if (columns.vaultId) assertSystemVaultAccess(principal, "sensitiveVisiblePredicate");
@@ -63,7 +63,7 @@ export function sensitiveVisiblePredicate(
 
 export function sensitiveWritablePredicate(
   columns: SensitiveOwnerColumns,
-  principal: Principal = getCurrentPrincipalOrSystem(),
+  principal: Principal = requireCurrentPrincipal(),
 ): SQL {
   if (principal.actorType === "system") {
     if (columns.vaultId) assertSystemVaultAccess(principal, "sensitiveWritablePredicate");
@@ -88,7 +88,7 @@ export function sensitiveWritablePredicate(
 export function combineWithSensitiveVisible(
   columns: SensitiveOwnerColumns,
   predicate?: SQL,
-  principal: Principal = getCurrentPrincipalOrSystem(),
+  principal: Principal = requireCurrentPrincipal(),
 ): SQL {
   const scope = sensitiveVisiblePredicate(columns, principal);
   return predicate ? and(predicate, scope)! : scope;
@@ -97,7 +97,7 @@ export function combineWithSensitiveVisible(
 export function combineWithSensitiveWritable(
   columns: SensitiveOwnerColumns,
   predicate?: SQL,
-  principal: Principal = getCurrentPrincipalOrSystem(),
+  principal: Principal = requireCurrentPrincipal(),
 ): SQL {
   const scope = sensitiveWritablePredicate(columns, principal);
   return predicate ? and(predicate, scope)! : scope;

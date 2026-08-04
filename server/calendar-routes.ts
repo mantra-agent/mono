@@ -22,7 +22,7 @@ import { getBandwidthSummary } from "./calendar-bandwidth";
 import { buildEmailPersonContextMap, resolveMeetingArtifactContext, resolveMeetingPeopleContext } from "./meeting-context";
 import { MEETING_JOIN_MODES, type MeetingJoinMode } from "@shared/schema";
 import { formatMeetingInviteeName } from "@shared/meeting-feed-items";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentPrincipal } from "./principal-context";
 
 const log = createLogger("CalendarRoutes");
 
@@ -227,7 +227,7 @@ export function registerCalendarRoutes(app: Express): void {
         return res.status(404).json({ error: "That email is not an external attendee on this event" });
       }
       const inviteeName = formatMeetingInviteeName(attendee.displayName, attendee.email);
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       if (!principal.accountId) {
         return res.status(401).json({ error: "Authenticated account is required" });
       }
@@ -541,7 +541,7 @@ export function registerCalendarRoutes(app: Express): void {
           return res.status(409).json({ error: "The calendar source has no owning Vault" });
         }
         const { runWithPrincipal } = await import("./principal-context");
-        const principal = getCurrentPrincipalOrSystem();
+        const principal = requireCurrentPrincipal();
         metadata = await runWithPrincipal({
           ...principal,
           activeVaultId: sourceAccount.vaultId,
@@ -558,7 +558,7 @@ export function registerCalendarRoutes(app: Express): void {
       const { moveCalendarMeetingAggregate } = await import("./meeting/vault-ownership");
       const result = await moveCalendarMeetingAggregate({ metadataId: metadata.id, event, destinationVaultId: vaultId });
       const { runWithPrincipal } = await import("./principal-context");
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentPrincipal();
       const context = await runWithPrincipal({
         ...principal,
         activeVaultId: vaultId,

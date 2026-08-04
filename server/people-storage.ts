@@ -10,7 +10,8 @@ import { getSetting, setSetting } from "./system-settings";
 import { calendarEventPeople, personEmails as personEmailsTable, personMergeAliases, personVaultMemberships, persons, vaults } from "@shared/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { TTLCache } from "./utils/ttl-cache";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
+import type { Principal } from "./principal";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 import { mergePersonValues } from "./person-merge-values";
 import { calendarPeopleOwnerColumns, performPersonMerge, type MergePeopleInput, type MergePeopleResult } from "./person-merge-service";
@@ -670,7 +671,7 @@ function rowToPerson(row: Record<string, any>): Person {
 const log = createLogger("PeopleStorage");
 
 function principalCacheKey(): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   const visibleVaultKey = [...principal.visibleVaultIds].sort().join(",") || "no-visible-vaults";
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}:${visibleVaultKey}`;
 }
@@ -690,7 +691,7 @@ export class PeopleStorage {
   }
 
   private async getAliasGraph(): Promise<Map<string, string>> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     return this._aliasGraphCache.getOrFetch(principalCacheKey(), async () => {
       const aliases = await db
         .select({ sourceId: personMergeAliases.sourceId, targetId: personMergeAliases.targetId })
@@ -721,7 +722,7 @@ export class PeopleStorage {
     executor: Pick<PeopleTransaction, "select" | "delete" | "insert">,
     person: Person,
   ): Promise<void> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("Person email indexing requires an authenticated user account");
     }
@@ -765,7 +766,7 @@ export class PeopleStorage {
 
   static async lookupPersonByEmail(email: string): Promise<{ id: string; name: string } | null> {
     const normalized = normalizePersonEmail(email);
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "user" || !principal.accountId) return null;
     const rows = await db.select().from(personEmailsTable).where(and(
       eq(personEmailsTable.accountId, principal.accountId),
@@ -776,13 +777,13 @@ export class PeopleStorage {
   }
 
   private async hydratePersonRows(rows: Array<typeof persons.$inferSelect>): Promise<Person[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const vaultIdsByPerson = await loadPersonVaultIds(principal, rows.map(row => row.id));
     return rows.map(row => rowToPerson({ ...row, vaultIds: vaultIdsByPerson.get(row.id) ?? [] }));
   }
 
   private async assignInitialVaultMembership(personId: string): Promise<void> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType === "system") return;
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId || !principal.activeVaultId) {
       throw new Error("Creating a Person requires an authenticated user with an active Vault");
@@ -810,7 +811,7 @@ export class PeopleStorage {
   }
 
   async listVaultMemberships(personId: string): Promise<PersonVaultMembershipView[]> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("Person Vault membership requires an authenticated user account");
     }
@@ -839,7 +840,7 @@ export class PeopleStorage {
   }
 
   async addVaultMembership(personId: string, vaultId: string): Promise<PersonVaultMutationResult> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("Person Vault membership requires an authenticated user account");
     }
@@ -886,7 +887,7 @@ export class PeopleStorage {
   }
 
   async removeVaultMembership(personId: string, vaultId: string): Promise<PersonVaultMutationResult> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("Person Vault membership requires an authenticated user account");
     }
@@ -953,7 +954,7 @@ export class PeopleStorage {
     vaultIds: string[],
     options: { requireVisibleTargets?: boolean } = {},
   ): Promise<Person> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
       throw new Error("Person Vault membership requires an authenticated user account");
     }
@@ -1009,7 +1010,7 @@ export class PeopleStorage {
   }
 
   private async loadWritablePersonAfterVaultMutation(
-    principal: ReturnType<typeof getCurrentPrincipalOrSystem>,
+    principal: Principal,
     personId: string,
   ): Promise<Person> {
     const rows = await db.select().from(persons).where(
@@ -1022,7 +1023,7 @@ export class PeopleStorage {
 
   private async savePerson(person: Person): Promise<void> {
     const now = new Date();
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     await db.transaction(async tx => {
       await tx.insert(persons)
         .values({
@@ -1147,7 +1148,7 @@ export class PeopleStorage {
 
   async listPeople(): Promise<PersonIndexEntry[]> {
     return this._listCache.getOrFetch(`all:${principalCacheKey()}`, async () => {
-      const principal = getCurrentPrincipalOrSystem();
+      const principal = requireCurrentUserPrincipal();
       const rows = await db.select().from(persons).where(visiblePersonPredicate(principal));
       const people = await this.hydratePersonRows(rows);
       const entries = people.map(person => this.toIndexEntry(person));
@@ -1162,7 +1163,7 @@ export class PeopleStorage {
 
   async getPersonByEmail(email: string): Promise<Person | null> {
     const normalizedEmail = normalizePersonEmail(email);
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const rows = await db
       .select({ person: persons })
       .from(personEmailsTable)
@@ -1182,7 +1183,7 @@ export class PeopleStorage {
 
   async getPerson(id: string): Promise<Person | null> {
     const resolvedId = await this.resolvePersonAlias(id);
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const rows = await db.select().from(persons).where(
       visiblePersonPredicate(principal, eq(persons.id, resolvedId)),
     );
@@ -1197,7 +1198,7 @@ export class PeopleStorage {
 
   async getPeopleByIds(ids: string[]): Promise<Person[]> {
     if (ids.length === 0) return [];
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     const aliasBySource = await this.getAliasGraph();
     const resolvedIds = ids.map(id => this.resolvePersonAliasFromGraph(id, aliasBySource));
     const uniqueIds = [...new Set(resolvedIds)];
@@ -1217,7 +1218,7 @@ export class PeopleStorage {
     email: string;
     isSelf?: boolean;
   }): Promise<Person> {
-    const principal = getCurrentPrincipalOrSystem();
+    const principal = requireCurrentUserPrincipal();
     if (
       principal.actorType !== "user"
       || !principal.userId
@@ -1307,7 +1308,7 @@ export class PeopleStorage {
       await db.transaction(async tx => {
         await tx.delete(personEmailsTable).where(eq(personEmailsTable.personId, person.id));
         await tx.delete(persons).where(
-          combineWithWritableScope(getCurrentPrincipalOrSystem(), personScopeColumns, eq(persons.id, person.id)),
+          combineWithWritableScope(requireCurrentUserPrincipal(), personScopeColumns, eq(persons.id, person.id)),
         );
       });
       throw error;
@@ -1392,7 +1393,7 @@ export class PeopleStorage {
         combineWithSensitiveWritable(
           calendarPeopleOwnerColumns,
           eq(calendarEventPeople.personId, person.id),
-          getCurrentPrincipalOrSystem(),
+          requireCurrentUserPrincipal(),
         ),
       );
 
@@ -1427,7 +1428,7 @@ export class PeopleStorage {
     }
 
     const result = await performPersonMerge(
-      getCurrentPrincipalOrSystem(),
+      requireCurrentUserPrincipal(),
       normalizedInput,
       (targetRow, sourceRow) => {
         const merged = mergePersonValues(rowToPerson(targetRow), rowToPerson(sourceRow));
@@ -1448,7 +1449,7 @@ export class PeopleStorage {
   async deletePerson(id: string): Promise<void> {
     log.debug(`deletePerson id=${id}`);
     await db.delete(persons).where(
-      writablePersonPredicate(getCurrentPrincipalOrSystem(), eq(persons.id, id)),
+      writablePersonPredicate(requireCurrentUserPrincipal(), eq(persons.id, id)),
     );
     await db.delete(personEmailsTable).where(eq(personEmailsTable.personId, id));
     this.invalidateListCache();
@@ -1459,7 +1460,7 @@ export class PeopleStorage {
     const now = new Date();
     await db.update(persons)
       .set({ lastViewedAt: now })
-      .where(writablePersonPredicate(getCurrentPrincipalOrSystem(), eq(persons.id, id)));
+      .where(writablePersonPredicate(requireCurrentUserPrincipal(), eq(persons.id, id)));
     this.invalidateListCache();
   }
 

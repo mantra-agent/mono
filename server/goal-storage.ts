@@ -6,13 +6,13 @@ import { goalStatuses, resolveHorizon } from "@shared/schema";
 import { tagRegistry } from "./file-storage";
 import { TTLCache } from "./utils/ttl-cache";
 import { createLogger } from "./log";
-import { getCurrentPrincipalOrSystem } from "./principal-context";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { getDateInTimezone } from "./timezone";
 
 const log = createLogger("GoalStorage");
 
 function principalCacheKey(): string {
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentUserPrincipal();
   return `${principal.actorType}:${principal.accountId || "no-account"}:${principal.userId || "no-user"}`;
 }
 

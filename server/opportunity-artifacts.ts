@@ -57,9 +57,9 @@ async function findChildByTitle(
 
 /** Resolve/create the Opportunities root through the vault-aware Library lifecycle. */
 async function ensureOpportunitiesRoot(): Promise<string> {
-  const { getCurrentPrincipalOrSystem } = await import("./principal-context");
+  const { requireCurrentPrincipal } = await import("./principal-context");
   const { assertWritableVault, ensureVaultPage } = await import("./library-domain");
-  const principal = getCurrentPrincipalOrSystem();
+  const principal = requireCurrentPrincipal();
   if (!principal.activeVaultId) {
     throw new Error("An active vault is required for opportunity artifacts");
   }
