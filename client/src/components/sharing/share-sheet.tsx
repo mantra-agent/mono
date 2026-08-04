@@ -14,7 +14,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
 /** Object types the Share sheet can manage. Mirrors the server GrantableObjectType. */
-export type ShareableObjectType = "library_page" | "project" | "milestone" | "task" | "vault";
+export type ShareableObjectType = "library_page" | "project" | "milestone" | "task" | "vault" | "drive_resource";
 export type ShareCapability = "read" | "write" | "admin";
 
 interface GrantRow {

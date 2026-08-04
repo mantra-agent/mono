@@ -140,7 +140,14 @@ export async function removeGmailAccount(accountId: string, confirmationEmail: s
   const cleanup = await storage.cleanupEmailAccountState(accountId);
   await deleteAccount(accountId);
   clearHealthCache(accountId);
-  log.log(`removeGmailAccount id=${accountId} cleanup=${JSON.stringify(cleanup.deleted)}`);
+  // Fail closed on disconnect: bound Drive files were readable only through this account's drive.file
+  // grant. Once the account is gone the pointers are dead, so drop them rather than leave rows that
+  // resolve to nothing. Any object_grants on those drive_resources become inert (object no longer exists).
+  const { db } = await import("./db");
+  const { driveResources } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
+  const droppedDrive = await db.delete(driveResources).where(eq(driveResources.connectedAccountId, accountId)).returning({ id: driveResources.id });
+  log.log(`removeGmailAccount id=${accountId} cleanup=${JSON.stringify(cleanup.deleted)} driveResourcesDropped=${droppedDrive.length}`);
 }
 
 export async function updateAccountLabel(accountId: string, label: string): Promise<GmailAccount | null> {

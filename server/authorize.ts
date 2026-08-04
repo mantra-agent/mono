@@ -28,7 +28,7 @@ export type ObjectRole = "read" | "write" | "admin";
  * Objects the grant primitive can protect. Ships with user subjects only; the object_type set is
  * the single source shared with `objectGrantObjectTypes` in shared/schema.ts.
  */
-export type AuthorizableObjectType = "project" | "milestone" | "task" | "library_page" | "vault";
+export type AuthorizableObjectType = "project" | "milestone" | "task" | "library_page" | "vault" | "drive_resource";
 
 export interface ObjectGrantIdentity {
   objectType: AuthorizableObjectType;

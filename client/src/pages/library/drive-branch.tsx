@@ -1,9 +1,10 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ExternalLink, X, HardDrive, Plus } from "lucide-react";
+import { Loader2, ExternalLink, X, HardDrive, Plus, Share2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
+import { ShareSheet } from "@/components/sharing/share-sheet";
 
 const log = createLogger("DriveBranch");
 
@@ -51,6 +52,7 @@ export function DriveBranch({ vaultId }: { vaultId: string }) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [shareId, setShareId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery<{ resources: DriveResource[] }>({
     queryKey: ["/api/drive/resources", vaultId],
@@ -180,6 +182,22 @@ export function DriveBranch({ vaultId }: { vaultId: string }) {
                   <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               )}
+              <button
+                type="button"
+                onClick={() => setShareId(r.id)}
+                className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                title="Share this file"
+                data-testid={`button-drive-share-${r.id}`}
+              >
+                <Share2 className="h-3.5 w-3.5" />
+              </button>
+              <ShareSheet
+                objectType="drive_resource"
+                objectId={r.id}
+                title={r.name}
+                open={shareId === r.id}
+                onOpenChange={(o) => setShareId(o ? r.id : null)}
+              />
               <button
                 type="button"
                 onClick={() => unbindMutation.mutate(r.id)}
