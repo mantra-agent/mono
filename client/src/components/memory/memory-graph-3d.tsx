@@ -197,6 +197,11 @@ const ACTIVITY_MEAN_EMIT_GAP_MS = 17;
 const ACTIVITY_MIN_EMIT_GAP_MS = 10;
 const ACTIVITY_MAX_EMIT_GAP_MS = 160;
 const ACTIVITY_RETRY_GAP_MS = 60;
+// Pulse Rate is a density control, not absolute throughput. Emission scales with
+// visible node count so a small graph keeps the same calm per-node feel as a large
+// one. Reference matches a full-size memory graph (~2k nodes); rate 1.0 there is
+// the historical baseline cadence.
+const ACTIVITY_PULSE_RATE_NODE_REFERENCE = 2_000;
 // Hot nodes recycle quickly so traffic concentrates where recency is high; cold
 // nodes stay eligible but rarely selected, leaving a faint scattered background.
 const ACTIVITY_MIN_NODE_COOLDOWN_MS = 220;
@@ -471,12 +476,14 @@ function weightedActivityPath(paths: ActivityPath[]): ActivityPath | null {
   return fallbackPaths?.[Math.floor(Math.random() * fallbackPaths.length)] ?? null;
 }
 
-// Continuous Poisson emission at a constant global rate: exponential inter-arrival
-// spacing keeps the stream organic rather than metronomic. Density stays uniform in
-// time; per-node concentration is handled entirely by weighted selection, not by
-// throttling the stream (throttling on the last node's recency created idle gaps).
-function activityEmitGapMs(pulseRate: number) {
-  const rate = Math.max(0.1, pulseRate);
+// Continuous Poisson emission scaled by visible graph size: exponential inter-arrival
+// spacing keeps the stream organic rather than metronomic. Pulse Rate sets per-node
+// density; absolute packet throughput rises and falls with visibleNodeCount so small
+// graphs are not flooded. Per-node concentration still comes from weighted selection.
+function activityEmitGapMs(pulseRate: number, visibleNodeCount: number) {
+  const userRate = Math.max(0.1, pulseRate);
+  const densityScale = Math.max(1, visibleNodeCount) / ACTIVITY_PULSE_RATE_NODE_REFERENCE;
+  const rate = Math.max(0.01, userRate * densityScale);
   const poissonGap = -Math.log(1 - Math.random()) * ACTIVITY_MEAN_EMIT_GAP_MS / rate;
   return THREE.MathUtils.clamp(
     poissonGap,
@@ -1483,7 +1490,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
           return;
         }
         if (activityFrame === 0) activityFrame = requestAnimationFrame(animateActivity);
-        scheduleNextActivity(activityEmitGapMs(activeSettings.pulseRate));
+        scheduleNextActivity(activityEmitGapMs(activeSettings.pulseRate, activeVisibleNodeIds.size));
       }, delayMs);
     }
 
@@ -2080,7 +2087,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       nodeDepthOrderDirty = true;
       if (radiiChanged || forcesChanged) scheduleLayoutRestart();
       if (activityTimer !== null && previousSettings.pulseRate !== nextSettings.pulseRate) {
-        scheduleNextActivity(activityEmitGapMs(nextSettings.pulseRate));
+        scheduleNextActivity(activityEmitGapMs(nextSettings.pulseRate, activeVisibleNodeIds.size));
       }
       requestRender();
     }
