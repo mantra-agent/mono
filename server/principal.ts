@@ -1,4 +1,4 @@
-import { sql, eq, and } from "drizzle-orm";
+import { sql, eq, and, isNotNull } from "drizzle-orm";
 import { type Request, type Response, type NextFunction } from "express";
 import { ADVISORY_LOCK_NS, acquireAdvisoryTransactionLock, db, type DrizzleTx } from "./db";
 import { createLogger } from "./log";
@@ -218,6 +218,50 @@ export async function tryResolveUserIdentityFoundation(
     activeVaultId: existing.activeVaultId,
     visibleVaultIds: existing.visibleVaultIds ?? [],
   };
+}
+
+/**
+ * Producer-side filter for identity-scoped background work.
+ * Only users with personal account ownership, membership, and an active vault.
+ * Orphan invite/synthetic users never enter the iteration set.
+ */
+export async function listUsersWithIdentityFoundation(): Promise<
+  Array<{ user: User; foundation: UserIdentityFoundation }>
+> {
+  const rows = await db
+    .select({
+      user: users,
+      accountId: accounts.id,
+      role: memberships.role,
+      activeVaultId: users.activeVaultId,
+      visibleVaultIds: users.visibleVaultIds,
+    })
+    .from(users)
+    .innerJoin(memberships, eq(memberships.userId, users.id))
+    .innerJoin(
+      accounts,
+      and(
+        eq(accounts.id, memberships.accountId),
+        eq(accounts.kind, "personal"),
+        eq(accounts.ownerUserId, users.id),
+      ),
+    )
+    .where(isNotNull(users.activeVaultId));
+
+  const out: Array<{ user: User; foundation: UserIdentityFoundation }> = [];
+  for (const row of rows) {
+    if (!row.accountId || !row.activeVaultId) continue;
+    out.push({
+      user: row.user,
+      foundation: {
+        accountId: row.accountId,
+        role: normalizeRole(row.role),
+        activeVaultId: row.activeVaultId,
+        visibleVaultIds: row.visibleVaultIds ?? [],
+      },
+    });
+  }
+  return out;
 }
 
 export async function ensureUserIdentityFoundation(
