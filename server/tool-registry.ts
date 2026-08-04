@@ -162,7 +162,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   memory: {
-    description: "Unified memory system — read/write workspace knowledge files, search and inspect vNext claims, run vNext maintenance ops, and reject retired legacy memory_entries CRUD/link/delete actions with migration guidance. Actions: read, write, read_entry, search, get, get_many, count, link_entity, get_entity_links, list_sources, add_source, delete_source, search_claims, vnext_claim_counts, vnext_claim_detail, run_vnext_lifecycle, run_full_sleep_cycle, compute_gsi, run_rem. Legacy actions create_link, update_entry, delete_entry, find_duplicates, and bulk_delete are accepted only to return retirement guidance.",
+    description: "Unified memory system — read/write workspace knowledge files, search and inspect vNext claims, run vNext maintenance ops. Actions: read, write, read_entry, search, get, get_many, count, link_entity, get_entity_links, list_sources, add_source, delete_source, search_claims, vnext_claim_counts, vnext_claim_detail, run_vnext_lifecycle, run_full_sleep_cycle, compute_gsi, run_rem. Retired legacy memory_entries actions return migration guidance if called.",
     category: "memory",
 
     parameters: {
@@ -625,7 +625,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   library: {
-    description: "Manage standard Library pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Actions: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Pages retain their Vault and parent hierarchy; Library2 Wiki/Index/Log organization is disabled. Use 'browse_tree' or 'tree' to see the full page hierarchy grouped by Vault as an indented outline, 'list_vaults' to enumerate the account's Vaults (id, name, page count, visibility), and an optional vaultId filter on list/search/browse_tree to scope to one Vault; reads report each page's Vault. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
+    description: "Manage standard Library pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Actions: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Pages retain their Vault and parent hierarchy. Use 'browse_tree' or 'tree' to see the full page hierarchy grouped by Vault as an indented outline, 'list_vaults' to enumerate the account's Vaults (id, name, page count, visibility), and an optional vaultId filter on list/search/browse_tree to scope to one Vault; reads report each page's Vault. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
     category: "knowledge",
 
     parameters: {
