@@ -194,11 +194,10 @@ export type RegisteredCommandKey = (typeof REGISTERED_COMMAND_KEYS)[number];
 export const REGISTERED_EXTENSION_SLOT_KEYS = [] as const;
 export type RegisteredExtensionSlotKey = (typeof REGISTERED_EXTENSION_SLOT_KEYS)[number];
 
-// Dashboard activity heatmap series keys (Dashboard host + activity API).
+// Dashboard activity heatmap series keys (must match live collectors in dashboard-activity.ts).
 export const REGISTERED_DASHBOARD_HEATMAP_SERIES_KEYS = [
-  "work",
-  "personal",
-  "meetings",
+  "opportunity_interactions",
+  "completed_tasks",
   "shipped_prs",
   "wellness_completions",
 ] as const;

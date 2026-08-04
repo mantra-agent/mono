@@ -55,6 +55,9 @@ export interface ActivityDashboardResult {
   series: ActivityDashboardSeries[];
 }
 
+export type ActivityDashboardSeriesKey = ActivityDashboardKpi["key"];
+
+/** @deprecated Prefer seriesKeys allowlist from product composition. */
 export type ActivityDashboardSource = "all" | "core" | "code";
 
 const KPI_DEFINITIONS: ReadonlyArray<Pick<ActivityDashboardKpi, "key" | "label">> = [
@@ -75,6 +78,33 @@ const KPI_DEFINITIONS: ReadonlyArray<Pick<ActivityDashboardKpi, "key" | "label">
     label: "Shipped PRs",
   },
 ];
+
+const ALL_SERIES_KEYS: ActivityDashboardSeriesKey[] = KPI_DEFINITIONS.map(
+  (definition) => definition.key,
+);
+
+function normalizeSeriesKeys(
+  seriesKeys: readonly string[] | undefined,
+  source: ActivityDashboardSource | undefined,
+): ActivityDashboardSeriesKey[] {
+  const allowed = new Set<string>(ALL_SERIES_KEYS);
+  if (seriesKeys && seriesKeys.length > 0) {
+    const selected = new Set(
+      seriesKeys
+        .map((key) => key.trim())
+        .filter((key): key is ActivityDashboardSeriesKey => allowed.has(key)),
+    );
+    return ALL_SERIES_KEYS.filter((key) => selected.has(key));
+  }
+  // Legacy source filter kept for transitional callers.
+  if (source === "core") {
+    return ALL_SERIES_KEYS.filter((key) => key !== "shipped_prs");
+  }
+  if (source === "code") {
+    return ["shipped_prs"];
+  }
+  return [...ALL_SERIES_KEYS];
+}
 
 function recentDates(endDate: string, count: number): string[] {
   const end = new Date(`${endDate}T12:00:00Z`);
@@ -227,7 +257,7 @@ async function timedSource<T>(
 export async function queryActivityDashboard(
   date: string,
   principal: Principal,
-  source: ActivityDashboardSource = "all",
+  seriesKeysOrSource: readonly string[] | ActivityDashboardSource = "all",
 ): Promise<ActivityDashboardResult> {
   const startedAt = performance.now();
   const timings: Partial<Record<ActivityDashboardKpi["key"], number>> = {};
@@ -235,39 +265,73 @@ export async function queryActivityDashboard(
   const rangeStart = userDayBounds(dates[0]).start;
   const selectedEnd = userDayBounds(date).end;
   const rangeEnd = new Date(selectedEnd.getTime() + 1);
-  const includeCore = source !== "code";
-  const includeCode = source !== "core";
 
-  const corePromise = includeCore
-    ? Promise.all([
-        timedSource("opportunity_interactions", timings, async () => {
-          if (date < INTERACTION_TRACKING_START_DATE) return new Map<string, number>();
-          const interactionStartDate = dates[0] < INTERACTION_TRACKING_START_DATE
+  const legacySource =
+    typeof seriesKeysOrSource === "string" ? seriesKeysOrSource : undefined;
+  const seriesKeys =
+    Array.isArray(seriesKeysOrSource) ? seriesKeysOrSource : undefined;
+  const includedKeys = new Set(normalizeSeriesKeys(seriesKeys, legacySource));
+  const include = (key: ActivityDashboardSeriesKey) => includedKeys.has(key);
+
+  const interactionsPromise = include("opportunity_interactions")
+    ? timedSource("opportunity_interactions", timings, async () => {
+        if (date < INTERACTION_TRACKING_START_DATE) return new Map<string, number>();
+        const interactionStartDate =
+          dates[0] < INTERACTION_TRACKING_START_DATE
             ? INTERACTION_TRACKING_START_DATE
             : dates[0];
-          const accounts = await listGmailAccounts();
-          const selfEmails = new Set(
-            accounts.map((account) => account.email.trim().toLowerCase()).filter(Boolean),
-          );
-          const [interactionEvents, calendarMeetings] = await Promise.all([
-            queryNonMeetingInteractionEventSeries(interactionStartDate, date, selfEmails, principal),
-            queryCalendarMeetingSeries(interactionStartDate, date, principal, selfEmails).catch((error) => {
-              log.warn("Dashboard calendar interactions unavailable; returning persisted interaction events", {
+        const accounts = await listGmailAccounts();
+        const selfEmails = new Set(
+          accounts.map((account) => account.email.trim().toLowerCase()).filter(Boolean),
+        );
+        const [interactionEvents, calendarMeetings] = await Promise.all([
+          queryNonMeetingInteractionEventSeries(
+            interactionStartDate,
+            date,
+            selfEmails,
+            principal,
+          ),
+          queryCalendarMeetingSeries(
+            interactionStartDate,
+            date,
+            principal,
+            selfEmails,
+          ).catch((error) => {
+            log.warn(
+              "Dashboard calendar interactions unavailable; returning persisted interaction events",
+              {
                 error: error instanceof Error ? error.message : String(error),
-              });
-              return new Map<string, number>();
-            }),
-          ]);
-          return sumSeries(interactionEvents, calendarMeetings);
-        }),
-        timedSource("wellness_completions", timings, () => queryWellnessSeries(rangeStart, rangeEnd, principal)),
-        timedSource("completed_tasks", timings, () => queryTaskSeries(rangeStart, rangeEnd, principal)),
-      ])
-    : Promise.resolve([new Map<string, number>(), new Map<string, number>(), new Map<string, number>()] as const);
-  const codePromise = includeCode
+              },
+            );
+            return new Map<string, number>();
+          }),
+        ]);
+        return sumSeries(interactionEvents, calendarMeetings);
+      })
+    : Promise.resolve(new Map<string, number>());
+
+  const wellnessPromise = include("wellness_completions")
+    ? timedSource("wellness_completions", timings, () =>
+        queryWellnessSeries(rangeStart, rangeEnd, principal),
+      )
+    : Promise.resolve(new Map<string, number>());
+
+  const tasksPromise = include("completed_tasks")
+    ? timedSource("completed_tasks", timings, () =>
+        queryTaskSeries(rangeStart, rangeEnd, principal),
+      )
+    : Promise.resolve(new Map<string, number>());
+
+  const shippedPromise = include("shipped_prs")
     ? timedSource("shipped_prs", timings, () => fetchMergedPrsSince(rangeStart))
     : Promise.resolve([]);
-  const [[interactions, wellness, completedTasks], shippedPrs] = await Promise.all([corePromise, codePromise]);
+
+  const [interactions, wellness, completedTasks, shippedPrs] = await Promise.all([
+    interactionsPromise,
+    wellnessPromise,
+    tasksPromise,
+    shippedPromise,
+  ]);
 
   const shipped = new Map<string, number>();
   for (const pr of shippedPrs) increment(shipped, localCalendarDate(new Date(pr.mergedAt)));
@@ -277,20 +341,23 @@ export async function queryActivityDashboard(
     completed_tasks: completedTasks,
     shipped_prs: shipped,
   };
-  const includedKeys = source === "core"
-    ? new Set<ActivityDashboardKpi["key"]>(["opportunity_interactions", "wellness_completions", "completed_tasks"])
-    : source === "code"
-      ? new Set<ActivityDashboardKpi["key"]>(["shipped_prs"])
-      : null;
-  const series = KPI_DEFINITIONS
-    .filter((definition) => !includedKeys || includedKeys.has(definition.key))
-    .map((definition) => ({
+  const series = KPI_DEFINITIONS.filter((definition) => include(definition.key)).map(
+    (definition) => ({
       key: definition.key,
       label: definition.label,
-      days: dates.map((day) => ({ date: day, value: countMaps[definition.key].get(day) ?? 0 })),
-    }));
+      days: dates.map((day) => ({
+        date: day,
+        value: countMaps[definition.key].get(day) ?? 0,
+      })),
+    }),
+  );
   const totalMs = Math.round(performance.now() - startedAt);
-  const diagnostic = { date, source, totalMs, sourcesMs: timings };
+  const diagnostic = {
+    date,
+    seriesKeys: [...includedKeys],
+    totalMs,
+    sourcesMs: timings,
+  };
   if (totalMs > DASHBOARD_LOAD_BUDGET_MS) {
     log.warn("Dashboard load exceeded latency budget", diagnostic);
   } else {
@@ -298,7 +365,11 @@ export async function queryActivityDashboard(
   }
   return {
     date,
-    kpis: series.map((item) => ({ key: item.key, label: item.label, value: item.days.find((day) => day.date === date)?.value ?? 0 })),
+    kpis: series.map((item) => ({
+      key: item.key,
+      label: item.label,
+      value: item.days.find((day) => day.date === date)?.value ?? 0,
+    })),
     series,
   };
 }

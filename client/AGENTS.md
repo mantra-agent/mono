@@ -252,6 +252,10 @@ One control for `@anything`. Do not invent local typeaheads for tags, people, pa
 - **Tags only:** `UniversalTagPicker` is a thin `types:['tag']` facade over `ReferencePicker`. Prefer `ReferencePicker` for new work.
 - **Design:** interactive playground lives under Build → Design → References (§13).
 
+### Dashboard activity heatmaps
+
+Dashboard heatmap **visibility and order** come from `useProductComposition().dashboardHeatmaps` (Core + active entitled Mods). The host requests `/api/dashboard/activity?series=…` with those series keys; the API intersects with composition and only runs collectors for the allowlist. Presentation markers (icon/criterion thresholds) stay host-owned per series key. Wellness owns `wellness_completions` — it appears only when the Wellness mod is active.
+
 ### Profile Tree Rows
 
 Use `ProfileTreeRow` for compact label/value rows with optional progressive disclosure. Pass `defaultOpen` only when readiness or missing required configuration must be visible on first render; ordinary detail rows stay collapsed.
