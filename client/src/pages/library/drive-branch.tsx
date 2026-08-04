@@ -48,7 +48,7 @@ function loadPicker(): Promise<void> {
  * it is not, the action degrades to a disabled, explained state rather than a broken picker.
  * Removing a row unbinds the pointer — it never deletes the underlying Google file.
  */
-export function DriveBranch({ vaultId }: { vaultId: string }) {
+export function DriveBranch({ vaultId, searchQuery = "" }: { vaultId: string; searchQuery?: string }) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +58,13 @@ export function DriveBranch({ vaultId }: { vaultId: string }) {
     queryKey: ["/api/drive/resources", vaultId],
     queryFn: async () => (await apiRequest("GET", `/api/drive/resources?vaultId=${encodeURIComponent(vaultId)}`)).json(),
   });
-  const resources = data?.resources ?? [];
+  const allResources = data?.resources ?? [];
+  // Federated title search: Drive is title-only (drive.file exposes just picked files, so our bound
+  // rows are the authoritative Drive index). When searching, filter by name and collapse the whole
+  // branch if nothing matches so the results read as one unified list with native pages.
+  const query = searchQuery.trim().toLowerCase();
+  const resources = query ? allResources.filter((r) => r.name.toLowerCase().includes(query)) : allResources;
+  const hiddenBySearch = query.length > 0 && resources.length === 0;
 
   const { data: status } = useQuery<{ drivePickerConfigured?: boolean }>({
     queryKey: ["/api/gmail/status"],
@@ -131,6 +137,10 @@ export function DriveBranch({ vaultId }: { vaultId: string }) {
   }, [connectedAccountId, vaultId, queryClient]);
 
   const pickerReady = status?.drivePickerConfigured !== false;
+
+  // During an active search with no Drive title matches, collapse the branch entirely so results
+  // read as one federated list. Hooks above always run, so this conditional return is safe.
+  if (hiddenBySearch) return null;
 
   return (
     <div className="ml-6 mt-1 border-l border-border pl-3" data-testid={`drive-branch-${vaultId}`}>
