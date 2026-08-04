@@ -6,7 +6,7 @@ import { TTLCache } from "../utils/ttl-cache";
 import { createLogger } from "../log";
 import { isUniqueViolationError } from "../postgres-errors";
 import { requireCurrentUserPrincipal } from "../principal-context";
-import type { Principal } from "../principal";
+import { createSystemPrincipal, type Principal } from "../principal";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -1158,12 +1158,16 @@ class PersonaStorageClass {
           updates.routingExamples = routingExamplesForPersona(seed.name);
         }
         if (needsSystemUpdate) updates.isSystem = expectedIsSystem;
+        // Global seed personas are system-owned data reconciled at boot, when
+        // no user principal exists in context. Authorize the write as system:
+        // writableScopePredicate() returns TRUE for system principals, and the
+        // UPDATE is already narrowed to this specific global seed row by id.
         await db
           .update(personas)
           .set(updates)
           .where(
             combineWithWritableScope(
-              requireCurrentUserPrincipal(),
+              createSystemPrincipal(),
               personaScopeColumns,
               eq(personas.id, existing.id),
             ),
