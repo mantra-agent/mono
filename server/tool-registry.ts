@@ -477,6 +477,28 @@ export const TOOLS: Record<string, ToolMeta> = {
           },
         },
         allowResponseReasoning: { type: "boolean", description: "Allow the user to attach freeform reasoning, default false." },
+        recommendation: {
+          type: "object",
+          description: "Optional agent preliminary judgment shown in the widget before the human confirms: highlighted answer, confidence %, prefilled reasoning, and checked principles. Prefer this whenever you have a clear take.",
+          properties: {
+            optionIds: {
+              type: "array",
+              minItems: 1,
+              maxItems: 8,
+              items: { type: "string" },
+              description: "Option IDs the agent would choose. Must match prompt option ids. Exactly one id in single mode.",
+            },
+            confidence: { type: "number", description: "Confidence 1–100 for the recommended choice." },
+            reasoning: { type: "string", description: "Short reasoning prefilled into the Reasoning box." },
+            principleRevisionIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Principle revision IDs checked as most important to the preliminary call. Prefer ids from the principles shortlist when provided.",
+            },
+          },
+          required: ["optionIds", "confidence"],
+          additionalProperties: false,
+        },
       },
       required: ["question", "options"],
     },
