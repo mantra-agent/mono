@@ -26,6 +26,7 @@ import { runWithPrincipal } from "./principal-context";
 import { eventBus } from "./event-bus";
 import { extractProviderSystemTools, mergeVoiceTools } from "./voice/provider-system-tools";
 import { filterBuildToolSchemas } from "./mods/build-tool-access";
+import { filterWellnessToolSchemas } from "./mods/wellness-tool-access";
 
 // ── Voice submodules ──────────────────────────────────────────────
 import type { VoiceSession, VoiceMessage, VoiceToolCall, TurnContext } from "./voice/types";
@@ -652,7 +653,10 @@ async function executeVoiceTurnBody(
       : extractProviderSystemTools((req.body as Record<string, unknown> | undefined)?.tools);
     const voiceTools = session.toolMode === "none"
       ? []
-      : await filterBuildToolSchemas(session.principal, getVoiceTools());
+      : await filterWellnessToolSchemas(
+          session.principal,
+          await filterBuildToolSchemas(session.principal, getVoiceTools()),
+        );
     const tools = session.toolMode === "none"
       ? []
       : mergeVoiceTools(voiceTools, providerSystemTools);

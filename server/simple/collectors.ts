@@ -34,6 +34,7 @@ import { queryDistinctInteractionPeopleSeries } from "../interaction-activity";
 import { sensitiveVisiblePredicate } from "../sensitive-scope";
 import { visiblePersonPredicate } from "../person-vault-access";
 import { listBuildDeploymentHomeItems } from "../mods/build-deployment-home";
+import { hasActiveWellnessAccess } from "../mods/wellness-access";
 
 const log = createLogger("SimpleCollectors");
 
@@ -1601,27 +1602,31 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     errors.push({ source: "task", message });
   }
 
-  // Wellness
+  // Wellness Home projections are composition-gated. Disable removes them
+  // immediately; history stays durable and is not deleted here.
   try {
-    const now = new Date();
-    const activities = await queryActivityStatus();
-    const visibleActivities = activities
-      .map((activity, index) => ({ activity, section: wellnessSection(activity, now, timezone), index }))
-      .filter((entry): entry is { activity: WellnessActivityStatus; section: SimpleSection; index: number } => entry.section != null);
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType === "user" && (await hasActiveWellnessAccess(principal))) {
+      const now = new Date();
+      const activities = await queryActivityStatus();
+      const visibleActivities = activities
+        .map((activity, index) => ({ activity, section: wellnessSection(activity, now, timezone), index }))
+        .filter((entry): entry is { activity: WellnessActivityStatus; section: SimpleSection; index: number } => entry.section != null);
 
-    const actionableActivities = visibleActivities
-      .filter(entry => entry.section !== "done")
-      .sort((a, b) => {
-        if (a.activity.inWindow !== b.activity.inWindow) return a.activity.inWindow ? -1 : 1;
-        return b.activity.urgency - a.activity.urgency;
-      })
-      .slice(0, 6);
-    const completedTodayActivities = visibleActivities
-      .filter(entry => entry.section === "done")
-      .sort((a, b) => new Date(b.activity.lastCompletedAt ?? 0).getTime() - new Date(a.activity.lastCompletedAt ?? 0).getTime());
+      const actionableActivities = visibleActivities
+        .filter(entry => entry.section !== "done")
+        .sort((a, b) => {
+          if (a.activity.inWindow !== b.activity.inWindow) return a.activity.inWindow ? -1 : 1;
+          return b.activity.urgency - a.activity.urgency;
+        })
+        .slice(0, 6);
+      const completedTodayActivities = visibleActivities
+        .filter(entry => entry.section === "done")
+        .sort((a, b) => new Date(b.activity.lastCompletedAt ?? 0).getTime() - new Date(a.activity.lastCompletedAt ?? 0).getTime());
 
-    [...actionableActivities, ...completedTodayActivities]
-      .forEach(({ activity, section }, index) => items.push(itemFromWellnessActivity(activity, section, index)));
+      [...actionableActivities, ...completedTodayActivities]
+        .forEach(({ activity, section }, index) => items.push(itemFromWellnessActivity(activity, section, index)));
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`wellness collection failed: ${message}`);

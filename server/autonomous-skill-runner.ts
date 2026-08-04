@@ -18,6 +18,7 @@ import { isAgentType } from "@shared/instance-config";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { getCurrentPrincipal } from "./principal-context";
 import { filterBuildToolSchemas } from "./mods/build-tool-access";
+import { filterWellnessToolSchemas } from "./mods/wellness-tool-access";
 import { hasActiveBuildAccess } from "./mods/build-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
 import type { ChecklistItem } from "@shared/schema";
@@ -484,7 +485,8 @@ async function getSkillTools(
   const principal = getCurrentPrincipal();
   if (!principal) throw new Error("Skill tool discovery requires an explicit user principal");
   const authorityToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), authority);
-  const allToolDefs = await filterBuildToolSchemas(principal, authorityToolDefs);
+  const buildScopedToolDefs = await filterBuildToolSchemas(principal, authorityToolDefs);
+  const allToolDefs = await filterWellnessToolSchemas(principal, buildScopedToolDefs);
   const tools = allToolDefs.map((t: AgentToolDefinition) => ({
     name: t.name,
     description: t.description,

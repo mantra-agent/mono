@@ -229,6 +229,13 @@ function RequireBuild({ children }: { children: ReactNode }) {
   return <RequirePermission permission="build:read">{children}</RequirePermission>;
 }
 
+function RequireWellness({ children }: { children: ReactNode }) {
+  const { data: composition, isLoading, isError } = useProductComposition();
+  if (isLoading) return <PageFallback label="Checking Wellness access…" />;
+  if (isError || !composition?.activeMods.some((mod) => mod.key === "wellness")) return <ForbiddenPage />;
+  return <>{children}</>;
+}
+
 function preserveCurrentQuery(targetPath: string): string {
   const params = new URLSearchParams(window.location.search);
   const query = params.toString();
@@ -328,7 +335,7 @@ function Router() {
         <Route path="/settings">{() => <Redirect to="/integrations" />}</Route>
         <Route path="/issues/:id">{() => <RequireBuild><IssueDetailPage /></RequireBuild>}</Route>
         <Route path="/chat">{() => <Redirect to={preserveCurrentQuery("/session")} />}</Route>
-        <Route path="/wellness" component={WellnessPage} />
+        <Route path="/wellness">{() => <RequireWellness><WellnessPage /></RequireWellness>}</Route>
         <Route path="/profile" component={ProfilePage} />
         <Route path="/workflows/:id" component={WorkflowsPage} />
         <Route path="/workflows" component={WorkflowsPage} />
