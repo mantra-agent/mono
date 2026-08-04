@@ -114,7 +114,7 @@ export async function ensurePlatformVaultMembershipSchema(): Promise<void> {
         COALESCE(p.scope, 'user'),
         p.owner_user_id,
         p.account_id,
-        COALESCE(p.created_by_user_id, p.owner_user_id)
+        p.owner_user_id
       FROM platforms p
       WHERE p.vault_id IS NOT NULL
         AND NOT EXISTS (
