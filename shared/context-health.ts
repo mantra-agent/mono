@@ -1,4 +1,7 @@
 export const CONTEXT_HEALTH_BUDGETS = {
+  // Primary felt-latency budget: time to first *progress* (thinking, text, or tool).
+  providerTtfpP95Ms: 3000,
+  // Secondary: time to first visible *text* token, kept for continuity.
   providerTtftP95Ms: 3000,
 } as const;
 
@@ -17,7 +20,7 @@ export const CONTEXT_HEALTH_MEASUREMENT_CONTRACT = {
   contextWindowSource: "server/model-registry.ts ModelInfo.contextWindow, matched by canonical api_calls.model",
   providerRows: "grouped by provider with comparable/excluded coverage and observed exclusion reasons",
   modelRows: "grouped by provider, model, tier, usage semantics, and context-window status; token statistics are comparable-row only",
-  budgets: "provider TTFT p95 is the only health budget in this summary; context token distribution is informational until a real workload budget exists",
+  budgets: "provider TTFP (first-progress: thinking/text/tool) p95 is the primary felt-latency budget, with TTFT (first-text) p95 reported alongside; context token distribution is informational until a real workload budget exists",
 } as const;
 
 export type ContextUsageSemantics = "per_call" | "cumulative_provider_session" | "unknown";
@@ -56,6 +59,7 @@ export interface ContextHealthModelSummary {
   medianContextTokens: number | null;
   p95ContextTokens: number | null;
   maxContextTokens: number | null;
+  avgTtfpMs: number | null;
   avgTtftMs: number | null;
   exclusionReasons: ContextHealthExclusionReason[];
 }
@@ -81,6 +85,9 @@ export interface ContextHealthSummary {
   avgTotalTokens: number | null;
   avgDurationMs: number | null;
   p95DurationMs: number | null;
+  ttfpSampleCount: number;
+  avgTtfpMs: number | null;
+  p95TtfpMs: number | null;
   ttftSampleCount: number;
   avgTtftMs: number | null;
   p95TtftMs: number | null;

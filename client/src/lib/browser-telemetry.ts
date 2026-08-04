@@ -32,7 +32,7 @@ let initialized = false;
 let lastFrameContentionAt = 0;
 let lastEventLoopProbeAt = 0;
 let lastLongTaskAt = 0;
-const chatTurns = new Map<string, { sessionId: string | null; submittedAt: number; ackAt?: number; firstTokenAt?: number }>();
+const chatTurns = new Map<string, { sessionId: string | null; submittedAt: number; ackAt?: number; firstProgressAt?: number; firstTokenAt?: number }>();
 const completedChatTurns = new Set<string>();
 
 function safeNow(): number {
@@ -159,14 +159,21 @@ export function markChatAck(clientTurnId: string, sessionId: string | null): voi
   });
 }
 
-export function markChatStreamProgress(sessionId: string, hasAssistantContent: boolean, status?: string): void {
+export function markChatStreamProgress(sessionId: string, hasProgress: boolean, hasText: boolean, status?: string): void {
   for (const [clientTurnId, turn] of chatTurns) {
     if (turn.sessionId !== sessionId || completedChatTurns.has(clientTurnId)) continue;
     const now = safeNow();
-    if (hasAssistantContent && !turn.firstTokenAt) {
+    // Primary felt-latency metric: first *progress* (thinking, tool, or text).
+    if (hasProgress && !turn.firstProgressAt) {
+      turn.firstProgressAt = now;
+      const value = now - turn.submittedAt;
+      recordBrowserTelemetry({ kind: "chat_latency", name: "submit_to_first_progress", value, unit: "ms", sessionId, clientTurnId, bucket: bucketDuration(value) });
+    }
+    // Secondary: first visible *text* token, kept for continuity.
+    if (hasText && !turn.firstTokenAt) {
       turn.firstTokenAt = now;
       const value = now - turn.submittedAt;
-      recordBrowserTelemetry({ kind: "chat_latency", name: "submit_to_first_token", value, unit: "ms", sessionId, clientTurnId, bucket: bucketDuration(value) });
+      recordBrowserTelemetry({ kind: "chat_latency", name: "submit_to_first_token", value, unit: "ms", sessionId, clientTurnId, bucket: bucketDuration(value), metadata: { outputType: "text" } });
     }
     if (status && status !== "streaming") {
       completedChatTurns.add(clientTurnId);
@@ -200,6 +207,18 @@ function hasContentSegment(content: unknown): boolean {
 
 export function streamingContentHasText(content: unknown): boolean {
   return hasContentSegment(content);
+}
+
+// First *progress* = any visible assistant activity: streamed text, or a timeline
+// segment carrying at least one execution step (thinking, tool-use, first-token).
+export function streamingContentHasProgress(content: unknown): boolean {
+  if (hasContentSegment(content)) return true;
+  const segments = (content as { segments?: unknown[] } | null)?.segments;
+  if (!Array.isArray(segments)) return false;
+  return segments.some((segment) => {
+    const s = segment as { type?: unknown; steps?: unknown };
+    return s.type === "timeline" && Array.isArray(s.steps) && s.steps.length > 0;
+  });
 }
 
 function observeNavigation(): void {

@@ -13098,11 +13098,19 @@ function formatContextHealthSummary(summary: import("@shared/context-health").Co
         count: reason.count,
       })),
     },
+    providerTtfp: {
+      sampleCount: summary.ttfpSampleCount,
+      averageMs: summary.avgTtfpMs,
+      p95Ms: summary.p95TtfpMs,
+      p95BudgetMs: summary.budgets.providerTtfpP95Ms,
+      note: "Time to first progress (thinking, text, or tool-use) — primary felt-latency budget.",
+    },
     providerTtft: {
       sampleCount: summary.ttftSampleCount,
       averageMs: summary.avgTtftMs,
       p95Ms: summary.p95TtftMs,
       p95BudgetMs: summary.budgets.providerTtftP95Ms,
+      note: "Time to first visible text token — secondary metric.",
     },
     outcomes: {
       success: summary.successCount,
@@ -13135,6 +13143,7 @@ function formatContextHealthSummary(summary: import("@shared/context-health").Co
         p95: row.p95ContextTokens,
         max: row.maxContextTokens,
       },
+      avgTtfpMs: row.avgTtfpMs,
       avgTtftMs: row.avgTtftMs,
     })),
     raw: summary,

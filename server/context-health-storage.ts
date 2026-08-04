@@ -41,6 +41,7 @@ type ClassifiedContextRow = {
   totalTokens: number | null;
   durationMs: number | null;
   providerTtftMs: number | null;
+  providerTtfpMs: number | null;
   usageSemantics: ContextUsageSemantics;
   contextTokens: number | null;
   contextWindow: number | null;
@@ -58,6 +59,7 @@ type Accumulator = {
   totalTokens: number[];
   durations: number[];
   ttfts: number[];
+  ttfps: number[];
   exclusions: Map<string, number>;
 };
 
@@ -71,6 +73,7 @@ function emptyAccumulator(): Accumulator {
     totalTokens: [],
     durations: [],
     ttfts: [],
+    ttfps: [],
     exclusions: new Map(),
   };
 }
@@ -112,6 +115,7 @@ function increment(acc: Accumulator, row: ClassifiedContextRow): void {
   }
   if (row.durationMs !== null) acc.durations.push(row.durationMs);
   if (row.providerTtftMs !== null) acc.ttfts.push(row.providerTtftMs);
+  if (row.providerTtfpMs !== null) acc.ttfps.push(row.providerTtfpMs);
 }
 
 function exclusionReasonsFromMap(map: Map<string, number>): ContextHealthExclusionReason[] {
@@ -182,6 +186,7 @@ function classifyRow(row: ApiCallContextRow): ClassifiedContextRow {
     totalTokens,
     durationMs: nullableNumber(row.duration_ms),
     providerTtftMs: nullableMetadataNumber(metadata, ["latency", "providerTtftMs"]),
+    providerTtfpMs: nullableMetadataNumber(metadata, ["latency", "firstProgressMs"]),
     usageSemantics,
     contextTokens,
     contextWindow,
@@ -216,6 +221,7 @@ function summarizeModel(key: string, rows: ClassifiedContextRow[]): ContextHealt
     medianContextTokens: percentile(acc.contextTokens, 0.5),
     p95ContextTokens: percentile(acc.contextTokens, 0.95),
     maxContextTokens: max(acc.contextTokens),
+    avgTtfpMs: average(acc.ttfps),
     avgTtftMs: average(acc.ttfts),
     exclusionReasons: exclusionReasonsFromMap(acc.exclusions),
   };
@@ -298,6 +304,9 @@ export async function getContextHealthSummary(windowHours = 24): Promise<Context
     avgTotalTokens: average(global.totalTokens),
     avgDurationMs: average(global.durations),
     p95DurationMs: percentile(global.durations, 0.95),
+    ttfpSampleCount: global.ttfps.length,
+    avgTtfpMs: average(global.ttfps),
+    p95TtfpMs: percentile(global.ttfps, 0.95),
     ttftSampleCount: global.ttfts.length,
     avgTtftMs: average(global.ttfts),
     p95TtftMs: percentile(global.ttfts, 0.95),
