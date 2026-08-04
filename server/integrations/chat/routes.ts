@@ -3621,6 +3621,38 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     },
   );
 
+  // Clear the runtime SESSION AGENDA. Sibling of the POST route above and uses
+  // the same principal-scoped `chatStorage.getSession` ownership check, so a
+  // session the caller does not own fails closed as not-found. Clearing is
+  // written only through the one canonical `clearSessionAgenda` path and is
+  // idempotent: clearing an already-empty agenda succeeds unchanged.
+  app.delete(
+    "/api/sessions/:id/agenda",
+    async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.params.id as string;
+
+        const session = await chatStorage.getSession(sessionId);
+        if (!session) {
+          return res.status(404).json({ error: "Session not found" });
+        }
+
+        const updated = await chatStorage.clearSessionAgenda(sessionId);
+        if (!updated) {
+          return res.status(404).json({ error: "Session not found" });
+        }
+
+        chatLog.info(`session agenda cleared sessionId=${sessionId}`);
+        res.json(updated);
+      } catch (error) {
+        chatLog.error("Error clearing session agenda:", error);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Failed to clear session agenda" });
+        }
+      }
+    },
+  );
+
   app.post(
     "/api/sessions/:id/question/cancel",
     async (req: Request, res: Response) => {
