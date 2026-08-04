@@ -176,6 +176,7 @@ When adding admin or system UI:
 - Hide or redirect whole privileged surfaces when the read permission is absent; do not merely disable child actions while leaving sensitive tabs or data loaders mounted.
 - If a new UI action needs a new permission, add the server permission first and consume the `/api/auth/me` contract after it exists.
 - Permission editors must distinguish inherited/base permissions from explicit user overrides. Saving override state is replace-set semantics: unchecked explicit grants must be omitted so they revoke cleanly.
+- Library Drive branch (`pages/library/drive-branch.tsx`): bound folders expand via `GET /api/drive/resources/:id/children` (Files API). Share uses `ShareSheet` with `objectType: "drive_resource"`. Do not call Google APIs from the client except the Picker bind flow.
 
 ## Badge System
 

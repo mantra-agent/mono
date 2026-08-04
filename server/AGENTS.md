@@ -181,9 +181,15 @@ Access control is server-owned and permission-based. Future code must plug into 
 - `scoped-storage.ts` — Principal-aware visible/writable predicates and `ownedInsertValues(...)` for normal user-owned tables
 - `sensitive-scope.ts` — Principal-aware sensitive ownership helpers and privileged-mode audit gates
 - `auth.ts` — Auth/session integration and `/api/auth/me` response shape
+- `authorize.ts` — Live object/vault grant predicates and authorizable object types (includes `drive_resource`)
+- `files-api.ts` — Connector-global external-file read boundary (Google Drive v1); vault-scoped whitelist enforcement
+- `drive-resource-service.ts` / `drive-resource-routes.ts` — Vault bind CRUD + Files API list/read/metadata HTTP surface
 
 ### Invariants
 - Resolve every request or server action to a `Principal` before making authorization decisions.
+- External file reads go only through `filesApi` (`server/files-api.ts`). Never call Google/Box provider clients from feature code or agent tools.
+- `drive_resource` is a vault-scoped bind pointer. Folder bind = recursive whitelist of the bound tree only. Resolve target, then authorize; fail closed on moved/trashed/unlisted children — never ambient crawl.
+- Drive access path: vault gate → bind or live `drive_resource`/`vault` grant → whitelist coverage → owner connector token server-side. Owner OAuth tokens never leave the server.
 - Named permissions are the authorization contract. Current vocabulary: `users:read`, `users:write`, `build:read`, `build:write`, `system:read`, `system:write`.
 - `role=admin` only contributes base permissions inside `permissions.ts`. Do not use role checks as route authorization.
 - User-specific grants live in `user_permissions`; do not duplicate permission state in settings, client state, or feature flags. Override updates are replace-set operations: omitted permissions are revoked, not inherited implicitly.

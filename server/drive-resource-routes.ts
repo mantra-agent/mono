@@ -1,6 +1,7 @@
 import type { Express, Response } from "express";
 import { createLogger } from "./log";
 import { driveResourceService } from "./drive-resource-service";
+import { filesApi } from "./files-api";
 import { getDriveAccessTokenForAccount } from "./gmail";
 import { getSecretSync } from "./secrets-store";
 
@@ -14,11 +15,15 @@ function handleError(res: Response, error: unknown, fallback: string) {
 }
 
 /**
- * Drive resource routes. A drive_resource is an explicit vault-scoped binding to a Google Drive file
- * created via the Picker. Every handler resolves the caller's principal through driveResourceService,
- * which bounds all reads and writes to the caller's account.
+ * Drive resource + Files API routes.
+ *
+ * Bind/unbind/picker stay on driveResourceService (explicit Picker whitelist).
+ * All provider reads go through filesApi — connector-global, vault-gated,
+ * object_grants-aware, owner-token only, fail-closed, read-only v1.
  */
 export function registerDriveResourceRoutes(app: Express) {
+  // ── Bind surface (Picker whitelist) ──────────────────────────────────────
+
   app.get("/api/drive/resources", async (req, res) => {
     try {
       const vaultId = typeof req.query.vaultId === "string" ? req.query.vaultId : "";
@@ -37,10 +42,10 @@ export function registerDriveResourceRoutes(app: Express) {
         connectedAccountId: String(body.connectedAccountId ?? ""),
         googleFileId: String(body.googleFileId ?? ""),
         name: String(body.name ?? ""),
-        mimeType: typeof body.mimeType === "string" ? body.mimeType : null,
+        mimeType: body.mimeType == null ? null : String(body.mimeType),
         resourceType: body.resourceType === "folder" ? "folder" : "file",
-        iconUrl: typeof body.iconUrl === "string" ? body.iconUrl : null,
-        webViewLink: typeof body.webViewLink === "string" ? body.webViewLink : null,
+        iconUrl: body.iconUrl == null ? null : String(body.iconUrl),
+        webViewLink: body.webViewLink == null ? null : String(body.webViewLink),
       });
       res.status(201).json({ resource });
     } catch (error) {
@@ -48,32 +53,141 @@ export function registerDriveResourceRoutes(app: Express) {
     }
   });
 
-  // Mint a short-lived Picker session: a fresh access token (refresh token stays server-side) plus
-  // the browser API key and app id. Returns configured=false when GOOGLE_PICKER_API_KEY is absent so
-  // the client degrades honestly instead of opening a broken picker.
-  app.get("/api/drive/picker-token", async (req, res) => {
+  // Mint a short-lived Picker session: a fresh access token (refresh if needed)
+  // plus the browser-safe Picker API key. Token is owner-scoped and never stored
+  // client-side beyond the Picker session.
+  app.post("/api/drive/picker-token", async (req, res) => {
     try {
-      const connectedAccountId = typeof req.query.connectedAccountId === "string" ? req.query.connectedAccountId : "";
-      if (!connectedAccountId) throw Object.assign(new Error("connectedAccountId is required"), { status: 400 });
+      const connectedAccountId = String(req.body?.connectedAccountId ?? "");
+      if (!connectedAccountId) {
+        throw Object.assign(new Error("connectedAccountId is required"), { status: 400 });
+      }
+      const { accessToken, expiresAt } =
+        await getDriveAccessTokenForAccount(connectedAccountId);
       const apiKey = getSecretSync("GOOGLE_PICKER_API_KEY");
       const appId = getSecretSync("GOOGLE_CLIENT_ID")?.split("-")[0] || null;
       if (!apiKey) {
         res.json({ configured: false });
         return;
       }
-      const { accessToken, expiresAt } = await getDriveAccessTokenForAccount(connectedAccountId);
-      res.json({ configured: true, accessToken, apiKey, appId, expiresAt });
+      res.json({
+        configured: true,
+        accessToken,
+        expiresAt,
+        apiKey,
+        appId,
+      });
     } catch (error) {
-      handleError(res, error, "Failed to create Drive picker session");
+      handleError(res, error, "Failed to mint picker token");
+    }
+  });
+
+  app.get("/api/drive/picker-config", async (_req, res) => {
+    try {
+      const apiKey = getSecretSync("GOOGLE_PICKER_API_KEY");
+      const appId = getSecretSync("GOOGLE_CLIENT_ID")?.split("-")[0] || null;
+      if (!apiKey) {
+        res.json({ configured: false });
+        return;
+      }
+      res.json({ configured: true, apiKey, appId });
+    } catch (error) {
+      handleError(res, error, "Failed to load picker config");
     }
   });
 
   app.delete("/api/drive/resources/:id", async (req, res) => {
     try {
       await driveResourceService.unbind(req.params.id);
-      res.json({ removed: true });
+      res.json({ ok: true });
     } catch (error) {
       handleError(res, error, "Failed to unbind drive resource");
+    }
+  });
+
+  // ── Files API (connector-global read path) ───────────────────────────────
+  // GET  /api/files/bound?vaultId=
+  // GET  /api/files/children?vaultId=&driveResourceId= | &googleFileId=
+  // GET  /api/files/metadata?vaultId=&driveResourceId= | &googleFileId=
+  // GET  /api/files/read?vaultId=&driveResourceId= | &googleFileId=
+  // POST /api/files/authorize  { driveResourceId, required? }
+
+  app.get("/api/files/bound", async (req, res) => {
+    try {
+      const vaultId = typeof req.query.vaultId === "string" ? req.query.vaultId : "";
+      if (!vaultId) throw Object.assign(new Error("vaultId is required"), { status: 400 });
+      res.json({ resources: await filesApi.listBound(vaultId) });
+    } catch (error) {
+      handleError(res, error, "Failed to list bound files");
+    }
+  });
+
+  app.get("/api/files/children", async (req, res) => {
+    try {
+      const vaultId = typeof req.query.vaultId === "string" ? req.query.vaultId : "";
+      if (!vaultId) throw Object.assign(new Error("vaultId is required"), { status: 400 });
+      const driveResourceId =
+        typeof req.query.driveResourceId === "string" ? req.query.driveResourceId : undefined;
+      const googleFileId =
+        typeof req.query.googleFileId === "string" ? req.query.googleFileId : undefined;
+      const pageToken =
+        typeof req.query.pageToken === "string" ? req.query.pageToken : undefined;
+      const result = await filesApi.listChildren({
+        vaultId,
+        driveResourceId,
+        googleFileId,
+        pageToken,
+      });
+      res.json(result);
+    } catch (error) {
+      handleError(res, error, "Failed to list file children");
+    }
+  });
+
+  app.get("/api/files/metadata", async (req, res) => {
+    try {
+      const vaultId = typeof req.query.vaultId === "string" ? req.query.vaultId : "";
+      if (!vaultId) throw Object.assign(new Error("vaultId is required"), { status: 400 });
+      const driveResourceId =
+        typeof req.query.driveResourceId === "string" ? req.query.driveResourceId : undefined;
+      const googleFileId =
+        typeof req.query.googleFileId === "string" ? req.query.googleFileId : undefined;
+      res.json({
+        metadata: await filesApi.getMetadata({ vaultId, driveResourceId, googleFileId }),
+      });
+    } catch (error) {
+      handleError(res, error, "Failed to load file metadata");
+    }
+  });
+
+  app.get("/api/files/read", async (req, res) => {
+    try {
+      const vaultId = typeof req.query.vaultId === "string" ? req.query.vaultId : "";
+      if (!vaultId) throw Object.assign(new Error("vaultId is required"), { status: 400 });
+      const driveResourceId =
+        typeof req.query.driveResourceId === "string" ? req.query.driveResourceId : undefined;
+      const googleFileId =
+        typeof req.query.googleFileId === "string" ? req.query.googleFileId : undefined;
+      res.json(await filesApi.read({ vaultId, driveResourceId, googleFileId }));
+    } catch (error) {
+      handleError(res, error, "Failed to read file");
+    }
+  });
+
+  app.post("/api/files/authorize", async (req, res) => {
+    try {
+      const driveResourceId = String(req.body?.driveResourceId ?? "");
+      if (!driveResourceId) {
+        throw Object.assign(new Error("driveResourceId is required"), { status: 400 });
+      }
+      const required =
+        req.body?.required === "write" || req.body?.required === "admin"
+          ? req.body.required
+          : "read";
+      const resource = await filesApi.authorize(driveResourceId, required);
+      res.json({ ok: true, resource });
+    } catch (error) {
+      handleError(res, error, "Failed to authorize file access");
     }
   });
 }
