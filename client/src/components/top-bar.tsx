@@ -59,7 +59,7 @@ function getPageTitle(pathname: string) {
     });
 
   if (!navMatch) return "Home";
-  return navMatch.title === "Info" ? "Files" : navMatch.title;
+  return navMatch.title === "Info" ? "Library" : navMatch.title;
 }
 
 function PageTitle({ title, customContent, href }: { title: string; customContent?: ReactNode; href?: string }) {

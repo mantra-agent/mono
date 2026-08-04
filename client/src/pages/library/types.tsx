@@ -70,9 +70,9 @@ export interface FlatNode {
 export type DropPosition = "above" | "below" | "inside";
 
 export const INFO_TABS = [
-  { value: "library", label: "Files", icon: <FolderOpen className="h-3.5 w-3.5" />, testId: "tab-info-library" },
+  { value: "library", label: "Pages", icon: <FolderOpen className="h-3.5 w-3.5" />, testId: "tab-info-library" },
   { value: "index", label: "Index", icon: <List className="h-3.5 w-3.5" />, testId: "tab-info-index" },
-  { value: "files", label: "Files", icon: <FolderOpen className="h-3.5 w-3.5" />, testId: "tab-info-files" },
+  { value: "files", label: "Search", icon: <FolderOpen className="h-3.5 w-3.5" />, testId: "tab-info-files" },
 ];
 
 export const VISIBLE_INFO_TABS = INFO_TABS.filter((tab) => tab.value === "library");

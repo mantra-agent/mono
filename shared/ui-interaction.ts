@@ -8,6 +8,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.news.open": { href: "/news" },
   "navigation.email.open": { href: "/email" },
   "navigation.library.open": { href: "/library" },
+  "navigation.files.open": { href: "/files" },
   "navigation.schedule.open": { href: "/schedule" },
   "navigation.projects.open": { href: "/projects" },
   "navigation.wellness.open": { href: "/wellness" },

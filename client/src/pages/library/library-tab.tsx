@@ -16,7 +16,6 @@ import type { LibraryPage, LibraryPageFull, TreeNode, DropPosition } from "./typ
 import { LibraryPageEditor, EmptyLibraryState, TrashSection, MovePageDialog, PageEmoji } from "./library-components";
 import { flattenTree, DndTree } from "./library-tree";
 import { useVaultSections } from "./use-vault-sections";
-import { DriveBranch } from "./drive-branch";
 import { useVaults, type Vault } from "@/hooks/use-vaults";
 import { MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 import { libraryPageTitleColor, type LibraryPageTitleColorResolver } from "./library-title-color";
@@ -199,7 +198,6 @@ function VaultTreeSection({
             resolveTitleColor={resolveTitleColor}
           />
         )}
-        <DriveBranch vaultId={vault.id} searchQuery={searchQuery} />
       </CollapsibleContent>
     </Collapsible>
   );
