@@ -5,7 +5,12 @@ import { ACTIVITY_FRAMING, ACTIVITY_CHAT, type ActivityId } from "./job-profiles
 import { resolveModelCandidates, appendFailedAttempt, type ModelRoutingDecision } from "./model-routing";
 import { getMaxOutputTokens, getModel, supportsSelectableEffort } from "./model-registry";
 import type { OpenAITierModelConfig } from "@shared/model-connectors";
-import { resolveOpenAIReasoningEffort, type OpenAIReasoningEffort } from "./thinking-config";
+import {
+  buildReasoningAudit,
+  resolveOpenAIReasoningEffort,
+  type OpenAIReasoningEffort,
+  type ReasoningAudit,
+} from "./thinking-config";
 import { withTimeout, STREAM_FINAL_MESSAGE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { getSecretSync, onSecretChange } from "./secrets-store";
@@ -615,6 +620,7 @@ async function recordInference(params: {
   responseContent?: string;
   error?: Record<string, unknown>;
   latency?: { providerTtftMs?: number | null; firstSdkEventMs?: number | null; firstThinkingMs?: number | null; firstProgressMs?: number | null };
+  reasoning?: ReasoningAudit;
   stopReason?: string;
   termination?: Record<string, unknown>;
   signal?: AbortSignal;
@@ -623,6 +629,7 @@ async function recordInference(params: {
   try {
     const { logApiCall } = await import("./cost-tracker");
     const meta = params.metadata;
+    const reasoning = params.reasoning;
     await logApiCall({
       apiCallId: params.apiCallId,
       startTime: params.startTime,
@@ -654,6 +661,19 @@ async function recordInference(params: {
         routing: auditRouting(params.routing),
         error: params.error,
         latency: params.latency,
+        reasoning: reasoning
+          ? {
+              effort: reasoning.effort,
+              thinkingSent: reasoning.thinkingSent,
+              sourceKind: reasoning.sourceKind,
+              nativeEffort: reasoning.nativeEffort,
+              budgetTokens: reasoning.budgetTokens,
+            }
+          : undefined,
+        // Flat aliases for SQL/jsonb filters and context-health grouping.
+        reasoningEffort: reasoning?.effort,
+        reasoningSourceKind: reasoning?.sourceKind,
+        thinkingSent: reasoning?.thinkingSent,
         termination: params.termination,
         trackedAtBoundary: true,
       },
@@ -772,7 +792,8 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
     const elapsed = Date.now() - start;
     const usage = result.usage;
     log.debug(`chatCompletion done in ${elapsed}ms provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash} prompt=${usage?.promptTokens ?? "?"} completion=${usage?.completionTokens ?? "?"} total=${usage?.totalTokens ?? "?"}`);
-    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status: "success", usage, requestContent, responseContent: result.content, stopReason: result.stopReason, termination: result.termination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
+    const reasoning = buildReasoningAudit(options.thinking, provider);
+    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status: "success", usage, requestContent, responseContent: result.content, reasoning, stopReason: result.stopReason, termination: result.termination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
     return result;
   } catch (err: any) {
     const elapsed = Date.now() - start;
@@ -801,7 +822,8 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
       : undefined;
     const providerStopReason = err instanceof ModelProviderError ? providerFailureStopReason(err.providerFailure) : undefined;
     const providerTermination = err instanceof ModelProviderError ? providerFailureTerminationMetadata(err.providerFailure) : undefined;
-    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status, usage: result?.usage || providerUsage, requestContent, responseContent: result?.content, error: errorMetadata, stopReason: providerStopReason, termination: providerTermination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
+    const reasoning = buildReasoningAudit(options.thinking, provider);
+    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status, usage: result?.usage || providerUsage, requestContent, responseContent: result?.content, error: errorMetadata, reasoning, stopReason: providerStopReason, termination: providerTermination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
     throw enrichModelError(err, routing, options.metadata);
   }
 }
@@ -2153,6 +2175,10 @@ export interface TtftBreakdown {
   routingTier?: string;
   activity?: string;
   thinkingSent: string;
+  /** Normalized reasoning level for TTFT joins: none|low|medium|high|xhigh|unknown */
+  reasoningEffort?: string;
+  /** request_effort | request_budget | imputed_from_tier | none | unknown */
+  reasoningSourceKind?: string;
   maxTokens?: number;
   msToFirstSdkEvent: number | null;
   msToFirstTextDelta: number | null;
@@ -2232,6 +2258,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     await import("./thinking-config");
   const resolvedThinking = options.thinking
     ?? resolveThinkingConfig(model, thinkingBudgetToTier(options.thinkingBudget));
+  const reasoningAudit = buildReasoningAudit(resolvedThinking, provider);
   const providerAttemptTracker = createProviderAttemptTracker();
   const optionsWithResolved: ChatCompletionStreamOptions = { ...options, thinking: resolvedThinking, providerAttemptTracker };
   const thinkingDesc = describeResolvedThinking(resolvedThinking);
@@ -2285,6 +2312,8 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       routingTier: options.routingTier,
       activity: options.activity,
       thinkingSent: thinkingDesc,
+      reasoningEffort: reasoningAudit.effort,
+      reasoningSourceKind: reasoningAudit.sourceKind,
       maxTokens: options.maxTokens,
       msToFirstSdkEvent: firstSdkEventAt !== null ? firstSdkEventAt - t0 : null,
       msToFirstTextDelta: firstTextAt !== null ? firstTextAt - t0 : null,
@@ -2389,6 +2418,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     usage: streamUsage,
     requestContent,
     responseContent,
+    reasoning: reasoningAudit,
     stopReason: streamStopReason,
     termination: streamTermination,
     latency: {
@@ -2411,6 +2441,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       usage: streamUsage,
       requestContent,
       responseContent,
+      reasoning: reasoningAudit,
       stopReason: streamStopReason,
       termination: streamTermination,
       error: serializeModelError(err),

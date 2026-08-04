@@ -42,6 +42,8 @@ type ClassifiedContextRow = {
   durationMs: number | null;
   providerTtftMs: number | null;
   providerTtfpMs: number | null;
+  reasoningEffort: string | null;
+  reasoningSourceKind: string | null;
   usageSemantics: ContextUsageSemantics;
   contextTokens: number | null;
   contextWindow: number | null;
@@ -177,6 +179,17 @@ function classifyRow(row: ApiCallContextRow): ClassifiedContextRow {
   else if (contextWindow === null) exclusionReason = "unknown_model_context_window";
   else if (contextTokens > contextWindow) exclusionReason = "exceeds_model_context_window";
 
+  const reasoningEffortRaw =
+    (typeof metadata?.reasoningEffort === "string" && metadata.reasoningEffort) ||
+    (typeof (metadata?.reasoning as { effort?: unknown } | undefined)?.effort === "string"
+      ? ((metadata?.reasoning as { effort?: string }).effort as string)
+      : null);
+  const reasoningSourceKindRaw =
+    (typeof metadata?.reasoningSourceKind === "string" && metadata.reasoningSourceKind) ||
+    (typeof (metadata?.reasoning as { sourceKind?: unknown } | undefined)?.sourceKind === "string"
+      ? ((metadata?.reasoning as { sourceKind?: string }).sourceKind as string)
+      : null);
+
   return {
     provider: row.provider,
     model: row.model,
@@ -187,6 +200,8 @@ function classifyRow(row: ApiCallContextRow): ClassifiedContextRow {
     durationMs: nullableNumber(row.duration_ms),
     providerTtftMs: nullableMetadataNumber(metadata, ["latency", "providerTtftMs"]),
     providerTtfpMs: nullableMetadataNumber(metadata, ["latency", "firstProgressMs"]),
+    reasoningEffort: reasoningEffortRaw,
+    reasoningSourceKind: reasoningSourceKindRaw,
     usageSemantics,
     contextTokens,
     contextWindow,
@@ -204,13 +219,15 @@ function distributionFromValues(values: number[]): ContextHealthDistributionBuck
 }
 
 function summarizeModel(key: string, rows: ClassifiedContextRow[]): ContextHealthModelSummary {
-  const [provider, model, tier, usageSemantics, contextWindowPart] = key.split("\u0000");
+  const [provider, model, tier, usageSemantics, contextWindowPart, reasoningEffortPart, reasoningSourceKindPart] = key.split("\u0000");
   const acc = emptyAccumulator();
   rows.forEach((row) => increment(acc, row));
   return {
     provider,
     model,
     tier,
+    reasoningEffort: reasoningEffortPart && reasoningEffortPart !== "null" ? reasoningEffortPart : null,
+    reasoningSourceKind: reasoningSourceKindPart && reasoningSourceKindPart !== "null" ? reasoningSourceKindPart : null,
     callCount: acc.callCount,
     comparableCallCount: acc.comparableCallCount,
     excludedCallCount: acc.excludedCallCount,
@@ -269,7 +286,15 @@ export async function getContextHealthSummary(windowHours = 24): Promise<Context
     else if (row.status === "partial") partialCount++;
     else successCount++;
 
-    const modelKey = [row.provider, row.model, row.tier, row.usageSemantics, row.contextWindow ?? "unknown"].join("\u0000");
+    const modelKey = [
+      row.provider,
+      row.model,
+      row.tier,
+      row.usageSemantics,
+      row.contextWindow ?? "unknown",
+      row.reasoningEffort ?? "null",
+      row.reasoningSourceKind ?? "null",
+    ].join("\u0000");
     modelRows.set(modelKey, [...(modelRows.get(modelKey) ?? []), row]);
     providerRows.set(row.provider, [...(providerRows.get(row.provider) ?? []), row]);
   }
@@ -278,7 +303,7 @@ export async function getContextHealthSummary(windowHours = 24): Promise<Context
   const byModel = [...modelRows.entries()]
     .map(([key, modelGroup]) => summarizeModel(key, modelGroup))
     .sort((a, b) => b.callCount - a.callCount)
-    .slice(0, 8);
+    .slice(0, 24);
   const byProvider = [...providerRows.entries()]
     .map(([provider, providerGroup]) => summarizeProvider(provider, providerGroup))
     .sort((a, b) => b.callCount - a.callCount || a.provider.localeCompare(b.provider));

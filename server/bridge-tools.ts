@@ -8314,6 +8314,18 @@ ${lines.join("\n")}` };
               : (settled ? "n/a" : "in-flight");
             const metadata = c.metadata && typeof c.metadata === "object" ? c.metadata as Record<string, unknown> : {};
             const routing = metadata.routing && typeof metadata.routing === "object" ? metadata.routing as Record<string, unknown> : null;
+            const latency = metadata.latency && typeof metadata.latency === "object" ? metadata.latency as Record<string, unknown> : null;
+            const reasoning = metadata.reasoning && typeof metadata.reasoning === "object" ? metadata.reasoning as Record<string, unknown> : null;
+            const reasoningEffort =
+              typeof metadata.reasoningEffort === "string"
+                ? metadata.reasoningEffort
+                : (typeof reasoning?.effort === "string" ? reasoning.effort : null);
+            const reasoningSourceKind =
+              typeof metadata.reasoningSourceKind === "string"
+                ? metadata.reasoningSourceKind
+                : (typeof reasoning?.sourceKind === "string" ? reasoning.sourceKind : null);
+            const ttft = typeof latency?.providerTtftMs === "number" ? `${latency.providerTtftMs}ms` : null;
+            const ttfp = typeof latency?.firstProgressMs === "number" ? `${latency.firstProgressMs}ms` : null;
             const runId = typeof metadata.runId === "string" ? metadata.runId : null;
             const sessionId = typeof metadata.sessionId === "string" ? metadata.sessionId : null;
             const iteration = typeof metadata.iteration === "number" ? metadata.iteration : null;
@@ -8327,6 +8339,10 @@ ${lines.join("\n")}` };
               connectorProvider ? `provider:${connectorProvider}` : null,
               connectorLabel ? `connector:${connectorLabel}` : null,
               requestedTier ? `tier:${requestedTier}` : null,
+              reasoningEffort ? `reasoning:${reasoningEffort}` : null,
+              reasoningSourceKind ? `reasoningSource:${reasoningSourceKind}` : null,
+              ttft ? `ttft:${ttft}` : null,
+              ttfp ? `ttfp:${ttfp}` : null,
               runId ? `run:${runId}` : null,
               sessionId ? `session:${sessionId}` : null,
               iteration != null ? `iteration:${iteration}` : null,
@@ -8351,6 +8367,20 @@ ${lines.join("\n")}` };
             || (call.totalTokens || 0) > 0
             || !!call.stopReason;
           const routing = metadata.routing && typeof metadata.routing === "object" ? metadata.routing as Record<string, unknown> : null;
+          const latency = metadata.latency && typeof metadata.latency === "object" ? metadata.latency as Record<string, unknown> : null;
+          const reasoning = metadata.reasoning && typeof metadata.reasoning === "object" ? metadata.reasoning as Record<string, unknown> : null;
+          const reasoningEffort =
+            typeof metadata.reasoningEffort === "string"
+              ? metadata.reasoningEffort
+              : (typeof reasoning?.effort === "string" ? reasoning.effort : "n/a");
+          const reasoningSourceKind =
+            typeof metadata.reasoningSourceKind === "string"
+              ? metadata.reasoningSourceKind
+              : (typeof reasoning?.sourceKind === "string" ? reasoning.sourceKind : "n/a");
+          const thinkingSent =
+            typeof metadata.thinkingSent === "string"
+              ? metadata.thinkingSent
+              : (typeof reasoning?.thinkingSent === "string" ? reasoning.thinkingSent : "n/a");
           const parts = [
             `**Inference Call #${call.id}**`,
             `Model: ${call.model} | Provider: ${call.provider}`,
@@ -8358,6 +8388,10 @@ ${lines.join("\n")}` };
             routing
               ? `Routing: connector=${typeof routing.connectorLabel === "string" ? routing.connectorLabel : "n/a"} (${typeof routing.connectorProvider === "string" ? routing.connectorProvider : "n/a"}#${typeof routing.connectorId === "number" ? routing.connectorId : "n/a"}) tier=${typeof routing.requestedTier === "string" ? routing.requestedTier : "n/a"} resolved=${typeof routing.resolvedModel === "string" ? routing.resolvedModel : call.model}`
               : "Routing: n/a",
+            `Reasoning: effort=${reasoningEffort} source=${reasoningSourceKind} thinkingSent=${thinkingSent}`,
+            latency
+              ? `Latency: ttft=${typeof latency.providerTtftMs === "number" ? `${latency.providerTtftMs}ms` : "n/a"} ttfp=${typeof latency.firstProgressMs === "number" ? `${latency.firstProgressMs}ms` : "n/a"} firstSdk=${typeof latency.firstSdkEventMs === "number" ? `${latency.firstSdkEventMs}ms` : "n/a"} firstThinking=${typeof latency.firstThinkingMs === "number" ? `${latency.firstThinkingMs}ms` : "n/a"}`
+              : "Latency: n/a",
             settled
               ? `Tokens: ${call.inputTokens} in / ${call.outputTokens} out (${call.totalTokens} total)`
               : "Tokens: pending (in-flight; usage settles when the provider attempt completes)",
@@ -13182,6 +13216,8 @@ function formatContextHealthSummary(summary: import("@shared/context-health").Co
       provider: row.provider,
       model: row.model,
       tier: row.tier,
+      reasoningEffort: row.reasoningEffort,
+      reasoningSourceKind: row.reasoningSourceKind,
       usageSemantics: row.usageSemantics,
       contextWindow: row.contextWindow,
       contextWindowStatus: row.contextWindowStatus,

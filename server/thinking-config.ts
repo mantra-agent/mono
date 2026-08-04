@@ -117,3 +117,74 @@ export function resolveOpenAIReasoningEffort(
       return undefined;
   }
 }
+
+/**
+ * Canonical reasoning-level audit for TTFT joins.
+ * - Claude/OpenAI: level comes from the request that was actually sent
+ *   (budget→bucket or adaptive effort / OpenAI reasoning.effort).
+ * - Grok: no native effort control today; impute from the tier thinking
+ *   config so model×tier×reasoning slices still work.
+ */
+export type ReasoningSourceKind =
+  | "request_effort"
+  | "request_budget"
+  | "imputed_from_tier"
+  | "none"
+  | "unknown";
+
+export interface ReasoningAudit {
+  /** Normalized level: none | low | medium | high | xhigh | unknown */
+  effort: string;
+  /** Human-readable request descriptor (e.g. adaptive(high), enabled(16000)). */
+  thinkingSent: string;
+  sourceKind: ReasoningSourceKind;
+  /** Provider-native effort string when available (OpenAI/Claude adaptive). */
+  nativeEffort?: string;
+  /** Extended-thinking budget when that path was used. */
+  budgetTokens?: number;
+}
+
+export function buildReasoningAudit(
+  thinking: ResolvedThinking | undefined,
+  provider: string,
+): ReasoningAudit {
+  if (!thinking) {
+    return {
+      effort: "unknown",
+      thinkingSent: "unspecified",
+      sourceKind: "unknown",
+    };
+  }
+
+  const thinkingSent = describeResolvedThinking(thinking);
+  const openaiEffort = resolveOpenAIReasoningEffort(thinking, "responses");
+  const effort = openaiEffort ?? "unknown";
+
+  if (thinking.thinking.type === "disabled") {
+    return {
+      effort: "none",
+      thinkingSent,
+      sourceKind: "none",
+    };
+  }
+
+  if (thinking.thinking.type === "enabled") {
+    const budgetTokens = thinking.thinking.budgetTokens;
+    return {
+      effort,
+      thinkingSent,
+      sourceKind: "request_budget",
+      budgetTokens: typeof budgetTokens === "number" ? budgetTokens : undefined,
+    };
+  }
+
+  // adaptive
+  const nativeEffort = thinking.effort;
+  const isGrok = provider === "grok-subscription" || provider.startsWith("grok");
+  return {
+    effort,
+    thinkingSent,
+    sourceKind: isGrok ? "imputed_from_tier" : "request_effort",
+    nativeEffort: typeof nativeEffort === "string" ? nativeEffort : undefined,
+  };
+}
