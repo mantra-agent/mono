@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
-  Trash2, FileText, ChevronRight, Globe,
+  Trash2, FileText, ChevronRight,
   Download, FilePlus, Loader2, MessageSquare, MoreHorizontal, Sparkles, FolderInput, Pin,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -185,10 +185,7 @@ export function DraggableTreeNode({ flatNode, selectedId, onSelect, onCreateChil
                   >
                     {node.title || "Untitled"}
                   </span>
-                  {node.scope === "shared" && (
-                    <Globe className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Shared with all users" />
-                  )}
-                </button>
+                  </button>
               </TooltipTrigger>
               <TooltipContent side="right" align="start" className="max-w-xs">
                 {pageTooltip || node.title || "Untitled"}

@@ -23,7 +23,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
-  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, Globe, ChevronRight, RotateCcw, Pin, MessageSquare, Share2,
+  Trash2, FileText, BookOpen, Download, MoreHorizontal, Loader2, FilePlus, Search, Info, FolderInput, ChevronRight, RotateCcw, Pin, MessageSquare, Share2,
 } from "lucide-react";
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
@@ -263,13 +263,6 @@ export function LibraryPageEditor({
     invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library", selectedId]],
   });
 
-  const shareMutation = useApiMutation<{ id: string; shared: boolean }>({
-    method: "PATCH",
-    path: ({ id }) => `/api/info/library/${id}/share`,
-    body: ({ shared }) => ({ shared }),
-    invalidateKeys: [["/api/info/library"], ["/api/info/library/tree"], ["/api/info/library", selectedId]],
-  });
-
   const isNewUntitledPage = !selectedPage.title && !selectedPage.plainTextContent?.trim();
 
   useEffect(() => {
@@ -370,9 +363,6 @@ export function LibraryPageEditor({
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setMoveDialogOpen(true)} data-testid="menu-move-page">
                 <FolderInput className="h-3.5 w-3.5 mr-2" /> Move
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => shareMutation.mutate({ id: selectedPage.id, shared: selectedPage.scope !== "shared" })} data-testid="menu-share-page">
-                <Globe className="h-3.5 w-3.5 mr-2" /> {selectedPage.scope === "shared" ? "Unshare" : "Share with all users"}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => downloadPageAsMarkdown(selectedPage.title, selectedPage.content, selectedPage.plainTextContent)} data-testid="menu-download-page">
                 <Download className="h-3.5 w-3.5 mr-2" /> Download

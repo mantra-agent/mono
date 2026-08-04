@@ -13040,6 +13040,142 @@ const persistentFileTools: Record<string, ToolHandler> = {
       return { result: `Error listing files: ${err.message}`, error: true };
     }
   },
+
+  /** Bound-drive reads — always via filesApi (never Google/Box SDKs directly). */
+  async listBound(args) {
+    const vaultId = typeof args.vaultId === "string" ? args.vaultId.trim() : "";
+    if (!vaultId) return { result: "Missing vaultId for listBound", error: true };
+    try {
+      const { filesApi } = await import("./files-api");
+      const rows = await filesApi.listBound(vaultId);
+      return {
+        result: JSON.stringify(
+          {
+            vaultId,
+            count: rows.length,
+            bound: rows.map((r) => ({
+              driveResourceId: r.id,
+              provider: r.provider,
+              providerFileId: r.providerFileId,
+              name: r.name,
+              mimeType: r.mimeType,
+              isFolder: r.isFolder,
+              accountEmail: r.accountEmail,
+              vaultId: r.vaultId,
+            })),
+          },
+          null,
+          2,
+        ),
+      };
+    } catch (err: any) {
+      return { result: `listBound failed: ${err.message}`, error: true };
+    }
+  },
+
+  async listChildren(args) {
+    const vaultId = typeof args.vaultId === "string" ? args.vaultId.trim() : undefined;
+    const driveResourceId =
+      typeof args.driveResourceId === "string" ? args.driveResourceId.trim() : undefined;
+    const provider = typeof args.provider === "string" ? args.provider.trim() : undefined;
+    const providerFileId =
+      typeof args.providerFileId === "string" ? args.providerFileId.trim() : undefined;
+    const pageToken = typeof args.pageToken === "string" ? args.pageToken.trim() : undefined;
+    if (!driveResourceId && !(provider && providerFileId)) {
+      return {
+        result: "listChildren requires driveResourceId or provider+providerFileId",
+        error: true,
+      };
+    }
+    try {
+      const { filesApi } = await import("./files-api");
+      const result = await filesApi.listChildren({
+        vaultId,
+        driveResourceId,
+        provider: provider as any,
+        providerFileId,
+        pageToken: pageToken || null,
+      });
+      return { result: JSON.stringify(result, null, 2) };
+    } catch (err: any) {
+      return { result: `listChildren failed: ${err.message}`, error: true };
+    }
+  },
+
+  async getMetadata(args) {
+    const vaultId = typeof args.vaultId === "string" ? args.vaultId.trim() : undefined;
+    const driveResourceId =
+      typeof args.driveResourceId === "string" ? args.driveResourceId.trim() : undefined;
+    const provider = typeof args.provider === "string" ? args.provider.trim() : undefined;
+    const providerFileId =
+      typeof args.providerFileId === "string" ? args.providerFileId.trim() : undefined;
+    if (!driveResourceId && !(provider && providerFileId)) {
+      return {
+        result: "getMetadata requires driveResourceId or provider+providerFileId",
+        error: true,
+      };
+    }
+    try {
+      const { filesApi } = await import("./files-api");
+      const metadata = await filesApi.getMetadata({
+        vaultId,
+        driveResourceId,
+        provider: provider as any,
+        providerFileId,
+      });
+      return { result: JSON.stringify(metadata, null, 2) };
+    } catch (err: any) {
+      return { result: `getMetadata failed: ${err.message}`, error: true };
+    }
+  },
+
+  async authorize(args) {
+    const vaultId = typeof args.vaultId === "string" ? args.vaultId.trim() : undefined;
+    const driveResourceId =
+      typeof args.driveResourceId === "string" ? args.driveResourceId.trim() : undefined;
+    const provider = typeof args.provider === "string" ? args.provider.trim() : undefined;
+    const providerFileId =
+      typeof args.providerFileId === "string" ? args.providerFileId.trim() : undefined;
+    if (!driveResourceId && !(provider && providerFileId)) {
+      return {
+        result: "authorize requires driveResourceId or provider+providerFileId",
+        error: true,
+      };
+    }
+    try {
+      const { filesApi } = await import("./files-api");
+      if (driveResourceId) {
+        const row = await filesApi.authorize(driveResourceId, vaultId);
+        return {
+          result: JSON.stringify(
+            {
+              authorized: true,
+              driveResourceId: row.id,
+              provider: row.provider,
+              providerFileId: row.providerFileId,
+              name: row.name,
+              mimeType: row.mimeType,
+              isFolder: row.isFolder,
+              vaultId: row.vaultId,
+              accountEmail: row.accountEmail,
+            },
+            null,
+            2,
+          ),
+        };
+      }
+      const metadata = await filesApi.getMetadata({
+        vaultId,
+        provider: provider as any,
+        providerFileId,
+      });
+      return {
+        result: JSON.stringify({ authorized: true, metadata }, null, 2),
+      };
+    } catch (err: any) {
+      return { result: `authorize failed: ${err.message}`, error: true };
+    }
+  },
 };
 
 const SHELL_DENYLIST = [
@@ -14386,10 +14522,66 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
   async files(args) {
     const action = args.action;
     if (!action) return { result: "Missing action parameter", error: true };
+
+    // Bound-drive file body: action=read with drive identity (not object-storage filePath).
+    const isBoundDriveRead =
+      action === "read" &&
+      !args.filePath &&
+      (args.driveResourceId || (args.provider && args.providerFileId));
+
+    if (isBoundDriveRead) {
+      const vaultId = typeof args.vaultId === "string" ? args.vaultId.trim() : undefined;
+      const driveResourceId =
+        typeof args.driveResourceId === "string" ? args.driveResourceId.trim() : undefined;
+      const provider = typeof args.provider === "string" ? args.provider.trim() : undefined;
+      const providerFileId =
+        typeof args.providerFileId === "string" ? args.providerFileId.trim() : undefined;
+      try {
+        const { filesApi } = await import("./files-api");
+        const payload = await filesApi.read({
+          vaultId,
+          driveResourceId,
+          provider: provider as any,
+          providerFileId,
+        });
+        // Cap large text/base64 bodies so tool results stay agent-usable.
+        const MAX_CHARS = 100_000;
+        if (
+          (payload.encoding === "text" || payload.encoding === "base64") &&
+          typeof payload.content === "string"
+        ) {
+          const truncated = payload.content.length > MAX_CHARS;
+          return {
+            result: JSON.stringify(
+              {
+                ...payload,
+                content: truncated ? payload.content.slice(0, MAX_CHARS) : payload.content,
+                truncated: truncated || undefined,
+                originalLength: truncated ? payload.content.length : undefined,
+                note:
+                  truncated && payload.encoding === "base64"
+                    ? "Binary body truncated for tool result size; use getMetadata for full size."
+                    : undefined,
+              },
+              null,
+              2,
+            ),
+          };
+        }
+        return { result: JSON.stringify(payload, null, 2) };
+      } catch (err: any) {
+        return { result: `Bound-drive read failed: ${err.message}`, error: true };
+      }
+    }
+
     const sub: Record<string, ToolHandler> = {
       write: persistentFileTools.write_file,
       read: persistentFileTools.read_file,
       list: persistentFileTools.list_files,
+      listBound: persistentFileTools.listBound,
+      listChildren: persistentFileTools.listChildren,
+      getMetadata: persistentFileTools.getMetadata,
+      authorize: persistentFileTools.authorize,
     };
     const handler = sub[action];
     if (!handler) return { result: `Unknown files action: ${action}`, error: true };
