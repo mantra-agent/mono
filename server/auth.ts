@@ -142,6 +142,12 @@ async function getWaitlistApplications(): Promise<WaitlistApplicationRow[]> {
 declare module "express-session" {
   interface SessionData {
     userId?: string;
+    /** ISO timestamp when this auth session was established (inventory). */
+    createdAt?: string;
+    /** Request User-Agent captured at auth (inventory). */
+    userAgent?: string;
+    /** Best-effort client IP captured at auth (inventory). */
+    clientIp?: string;
   }
 }
 
@@ -149,6 +155,109 @@ const PgStore = connectPgSimple(session);
 const SESSION_TABLE_NAME = "session";
 const SESSION_COOKIE_NAME = "connect.sid";
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+
+export interface UserSessionInventoryRow {
+  sid: string;
+  createdAt: string | null;
+  lastActiveAt: string | null;
+  expiresAt: string;
+  userAgent: string | null;
+  clientIp: string | null;
+  current: boolean;
+}
+
+function readClientIp(req: Request): string | null {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0]?.trim() || null;
+  }
+  if (Array.isArray(forwarded) && forwarded[0]?.trim()) {
+    return forwarded[0].split(",")[0]?.trim() || null;
+  }
+  return req.ip?.trim() || req.socket.remoteAddress?.trim() || null;
+}
+
+function stampSessionInventoryMetadata(req: Request): void {
+  if (!req.session.createdAt) {
+    req.session.createdAt = new Date().toISOString();
+  }
+  const userAgent = req.get("user-agent");
+  if (userAgent && userAgent.trim()) {
+    req.session.userAgent = userAgent.trim().slice(0, 512);
+  }
+  const clientIp = readClientIp(req);
+  if (clientIp) {
+    req.session.clientIp = clientIp.slice(0, 128);
+  }
+}
+
+function sessionLastActiveAt(expire: Date): string | null {
+  // Rolling sessions refresh `expire` on activity, so last activity ≈ expire − TTL.
+  const lastActiveMs = expire.getTime() - SESSION_TTL_MS;
+  if (!Number.isFinite(lastActiveMs)) return null;
+  return new Date(Math.min(lastActiveMs, Date.now())).toISOString();
+}
+
+async function listUserSessions(
+  pool: Pool,
+  userId: string,
+  currentSessionId?: string | null,
+): Promise<UserSessionInventoryRow[]> {
+  const result = await pool.query<{ sid: string; sess: unknown; expire: Date }>(
+    `SELECT sid, sess, expire
+     FROM "session"
+     WHERE sess->>'userId' = $1
+       AND expire > NOW()
+     ORDER BY expire DESC`,
+    [userId],
+  );
+
+  return result.rows.map((row) => {
+    const sess =
+      row.sess && typeof row.sess === "object"
+        ? (row.sess as Record<string, unknown>)
+        : typeof row.sess === "string"
+          ? (JSON.parse(row.sess) as Record<string, unknown>)
+          : {};
+    const expire = row.expire instanceof Date ? row.expire : new Date(row.expire);
+    const createdAt =
+      typeof sess.createdAt === "string" && sess.createdAt.trim()
+        ? sess.createdAt
+        : null;
+    const userAgent =
+      typeof sess.userAgent === "string" && sess.userAgent.trim()
+        ? sess.userAgent
+        : null;
+    const clientIp =
+      typeof sess.clientIp === "string" && sess.clientIp.trim()
+        ? sess.clientIp
+        : null;
+
+    return {
+      sid: row.sid,
+      createdAt,
+      lastActiveAt: sessionLastActiveAt(expire),
+      expiresAt: expire.toISOString(),
+      userAgent,
+      clientIp,
+      current: Boolean(currentSessionId && row.sid === currentSessionId),
+    };
+  });
+}
+
+async function revokeUserSession(
+  pool: Pool,
+  userId: string,
+  sid: string,
+): Promise<boolean> {
+  const result = await pool.query(
+    `DELETE FROM "session"
+     WHERE sid = $1
+       AND sess->>'userId' = $2`,
+    [sid, userId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
 const CAPABILITY_HASH_PREFIX = "h1:";
 const AUTH_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_LIMIT_MAX_KEYS = 10_000;
@@ -325,6 +434,7 @@ async function completeUserAuth(
   await regenerateSession(req);
   delete req.session.servicePrincipal;
   req.session.userId = user.id;
+  stampSessionInventoryMetadata(req);
   const principal = await attachUserPrincipal(req, user);
   const { modLifecycleService } = await import("./mods/mod-lifecycle-service");
   await runWithPrincipal(principal, () => modLifecycleService.ensureBuildInstalled(principal));
@@ -1212,6 +1322,82 @@ export function setupAuth(app: Express) {
         res.json({ userId: targetId, permissionOverrides: overrides, permissions: effective, availablePermissions: PERMISSIONS });
       } catch {
         res.status(500).json({ error: "Failed to update user permissions" });
+      }
+    },
+  );
+
+  // Active HTTP session inventory for admin user detail (SEC-2026-015).
+  app.get(
+    "/api/auth/users/:id/sessions",
+    requireAuth,
+    requirePermission("users:read"),
+    async (req: Request, res: Response) => {
+      try {
+        const targetId = req.params.id as string;
+        const user = await storage.getUser(targetId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+        const sessions = await listUserSessions(pool, targetId, req.sessionID);
+        res.json({ userId: targetId, sessions });
+      } catch (error) {
+        log.error("Failed to list user sessions", {
+          targetId: req.params.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        res.status(500).json({ error: "Failed to list user sessions" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/auth/users/:id/sessions/:sid",
+    requireAuth,
+    requirePermission("users:write"),
+    async (req: Request, res: Response) => {
+      try {
+        const targetId = req.params.id as string;
+        const sid = req.params.sid as string;
+        if (!sid || sid.length > 200) {
+          return res.status(400).json({ error: "Invalid session id" });
+        }
+        const user = await storage.getUser(targetId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        const revoked = await revokeUserSession(pool, targetId, sid);
+        if (!revoked) return res.status(404).json({ error: "Session not found" });
+
+        const principal = getPrincipal(req);
+        await recordPrivilegedAccess({
+          principal: principal!,
+          action: "revoke_user_session",
+          reason: "admin session inventory revocation",
+          metadata: {
+            targetUserId: targetId,
+            sessionSidHash: shortHash(sid),
+            revokedCurrent: sid === req.sessionID,
+          },
+        });
+
+        // Revoking the caller's own current session ends this request like logout.
+        if (sid === req.sessionID) {
+          return req.session.destroy((error) => {
+            if (error) {
+              log.error("Failed to destroy current session after revoke", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return res.status(500).json({ error: "Session revoked but cleanup failed" });
+            }
+            res.clearCookie(SESSION_COOKIE_NAME);
+            return res.json({ ok: true, revokedCurrent: true });
+          });
+        }
+
+        res.json({ ok: true, revokedCurrent: false });
+      } catch (error) {
+        log.error("Failed to revoke user session", {
+          targetId: req.params.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        res.status(500).json({ error: "Failed to revoke user session" });
       }
     },
   );

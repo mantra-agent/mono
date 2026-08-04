@@ -238,7 +238,12 @@ async function createScreenshotSession(userId: string, sessionSecret?: string): 
   // `timestamp without time zone` which silently drops timezone context and
   // causes comparison mismatches when the server TZ differs from UTC.
   const expireEpochSeconds = Math.ceil((Date.now() + 120_000) / 1000);
-  const sess = JSON.stringify({ cookie: { maxAge: 120000 }, userId: sessionUserId });
+  const sess = JSON.stringify({
+    cookie: { maxAge: 120000 },
+    userId: sessionUserId,
+    createdAt: new Date().toISOString(),
+    userAgent: "mantra-screenshot-session",
+  });
   await pool.query(
     'INSERT INTO "session" (sid, sess, expire) VALUES ($1, $2, to_timestamp($3))',
     [sid, sess, expireEpochSeconds]
