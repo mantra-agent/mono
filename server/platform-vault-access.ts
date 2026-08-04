@@ -77,7 +77,7 @@ export async function ensurePlatformVaultMembershipSchema(): Promise<void> {
       WHERE p.vault_id IS NULL
         AND p.account_id IS NOT NULL
         AND v.account_id = p.account_id
-        AND v.kind = 'personal'
+        AND v.is_default = true
         AND v.is_archived = false;
     `);
     await client.query(`
@@ -89,7 +89,7 @@ export async function ensurePlatformVaultMembershipSchema(): Promise<void> {
         WHERE account_id = p.account_id
           AND is_archived = false
         ORDER BY
-          CASE WHEN kind = 'personal' THEN 0 ELSE 1 END,
+          CASE WHEN is_default = true THEN 0 ELSE 1 END,
           position ASC NULLS LAST,
           created_at ASC
         LIMIT 1
