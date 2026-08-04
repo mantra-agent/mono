@@ -1429,17 +1429,17 @@ Read your preContext or user message for:
     category: "planning",
     activity: ACTIVITY_WORK,
     author: "system",
-    version: "1.0",
+    version: "1.1",
     addToMemory: false,
     pinnedToContext: false,
     whenToUse: "Runs automatically each night to keep the goal graph clean, connected, and honestly defined. Can be invoked manually to reconcile goals after a burst of goal or relationship changes.",
-    outputSpec: "One dated entry appended to the 'Goal Manager Log' Library page (canonical skills folder) summarizing goals reviewed, mutations by type, links pruned, and goals flagged for Ray's attention. No goal is deleted; ambiguous cases are flagged, not changed.",
+    outputSpec: "One dated entry prepended to the pinned Goal Manager Log Library page (@page:af8471de-41e1-4211-bcc3-808d56c11ca8) summarizing goals reviewed, mutations by type, links pruned, and goals flagged for Ray's attention. No goal is deleted; ambiguous cases are flagged, not changed. Never create a second log page.",
     checklist: [
       { check: "Loaded active goals via goals(action:\"list\") before mutating anything", weight: 3, kind: "tool_invoked", tool: "goals", action: "list" },
       { check: "No goal was deleted, and no relationship whose endpoint still resolves was pruned on taste alone", weight: 3 },
       { check: "Total goal and relationship mutations did not exceed the 25-mutation cap", weight: 3 },
       { check: "Weak, stale, or ambiguous goals were flagged in the log rather than silently mutated", weight: 2 },
-      { check: "A dated entry was appended to the Goal Manager Log page under the skills folder", weight: 3, kind: "tool_invoked", tool: "library" },
+      { check: "A dated entry was written to the pinned Goal Manager Log page id af8471de-41e1-4211-bcc3-808d56c11ca8 (never a newly created fork)", weight: 3, kind: "tool_invoked", tool: "library" },
     ],
     process: `You are Goal Manager, the nightly steward of Ray's goal graph. Keep goals clean, well-connected, and honestly defined — conservatively. Repair the obvious, prune the clearly dangling, flag the ambiguous, and never delete a goal.
 
@@ -1466,19 +1466,23 @@ Collect (do not mutate) goals that are:
 - stale (past target date, dormant);
 - ambiguous parent candidates.
 
-## Step 4: Deterministic run log
-Maintain a single running log page.
-1. Find it: \`library(action:"search_library_pages", query:"Goal Manager Log")\`. If none exists, create it: \`library(action:"create_library_page", title:"Goal Manager Log", canonicalFolder:"skills", tags:["goal-manager","skills","log"])\`.
-2. Prepend one dated entry with this fixed structure:
+## Step 4: Deterministic run log (pinned page — never fork)
+Canonical log page id (load-bearing — do not search, do not create):
+**\`af8471de-41e1-4211-bcc3-808d56c11ca8\`**
+
+1. Load it by id only: \`library(action:"get_library_page", id:"af8471de-41e1-4211-bcc3-808d56c11ca8")\`.
+2. Prepend one dated entry via \`library(action:"update_library_page", id:"af8471de-41e1-4211-bcc3-808d56c11ca8", ...)\` (or \`edit_library_page\` on that same id). Keep the existing body; put the new entry immediately under the title/intro.
+3. **Never** call \`search_library_pages\` to find this log. **Never** call \`create_library_page\` for this log. Search ranks noise over the real page and has already forked stewardship history; create is forbidden because the page already exists.
+4. Entry structure (fixed):
    \`\`\`
    ## {YYYY-MM-DD HH:mm}
    - Reviewed: {n} goals across {horizons}
    - Mutations: parent set {a}, relationships pruned {b} — total {a+b}/25
    - Flagged: {bulleted @goal:id refs, each with a one-line reason}, or "none"
    \`\`\`
-   Append-only. Never rewrite prior entries.
+   Append-only. Never rewrite prior entries. If the pinned page get fails, stop and report — do not create a replacement.
 
 ## Output
-Return a 3-5 line summary: goals reviewed, mutations by type, count flagged, and the log page reference. If nothing needed doing, say so plainly and still write the dated log entry.`,
+Return a 3-5 line summary: goals reviewed, mutations by type, count flagged, and the log page reference \`@page:af8471de-41e1-4211-bcc3-808d56c11ca8\`. If nothing needed doing, say so plainly and still write the dated log entry.`,
   },
 ];
