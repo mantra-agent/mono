@@ -37,7 +37,10 @@ import { createMeetingArtifactChild, createMeetingPersonChild, dedupeMeetingInvi
 import type { SimpleSourceRef } from "@shared/models/simple";
 import { SimpleTreeRow } from "@/components/home/home-tree-row";
 import { sourceRefToReferenceRef } from "@shared/simple-references";
+import { ReferenceChip } from "@/components/references/reference-chip";
+import { resolveReference } from "@/components/references/reference-registry";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import type { Schedule, TimerWithNextRun } from "@shared/models/timers";
 
 interface CalendarInfo {
   id: string;
@@ -240,7 +243,162 @@ function getEventEndSlot(event: CalendarEvent, timezone: string): number {
   return Math.max(startSlot, lastTouchedSlot);
 }
 
-function getDaySlotRows(section: ScheduleSection, events: CalendarEvent[], timezone: string, now = new Date()): DaySlotRow[] {
+/** Frequencies shown on Schedule day view. Sub-hourly cadences are excluded. */
+const DAY_VIEW_TIMER_FREQUENCIES = new Set([
+  "daily",
+  "weekly",
+  "every_x_weeks",
+  "monthly",
+  "quarterly",
+  "annually",
+  "once",
+  "custom",
+]);
+
+const TIMER_WEEKDAY_BY_JS: Array<"sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat"> = [
+  "sun",
+  "mon",
+  "tue",
+  "wed",
+  "thu",
+  "fri",
+  "sat",
+];
+
+interface DayTimerOccurrence {
+  timerId: string;
+  name: string;
+  slot: number;
+  minuteOfDay: number;
+}
+
+function parseTimeOfDayMinutes(timeOfDay: string | undefined): { hour: number; minute: number } | null {
+  if (!timeOfDay) return null;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(timeOfDay.trim());
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+  return { hour, minute };
+}
+
+function dayKeyMatchesParts(
+  dayKey: string,
+  parts: { year: number; month: number; day: number },
+): boolean {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  return year === parts.year && month === parts.month && day === parts.day;
+}
+
+function scheduleRunsOnDay(schedule: Schedule, dayKey: string, timezone: string): boolean {
+  if (!DAY_VIEW_TIMER_FREQUENCIES.has(schedule.frequency)) return false;
+
+  const dayDate = fromCivilDate(dayKey);
+  const weekday = TIMER_WEEKDAY_BY_JS[dayDate.getDay()];
+  const dayOfMonth = dayDate.getDate();
+  const month = dayDate.getMonth() + 1;
+
+  switch (schedule.frequency) {
+    case "daily":
+      return true;
+    case "weekly":
+    case "every_x_weeks": {
+      const days = schedule.daysOfWeek?.length ? schedule.daysOfWeek : ["mon"];
+      return days.includes(weekday);
+    }
+    case "monthly":
+      return dayOfMonth === (schedule.dayOfMonth || 1);
+    case "quarterly":
+      // Server fires on the 1st of each quarter-start month (Jan/Apr/Jul/Oct).
+      return dayOfMonth === 1 && [1, 4, 7, 10].includes(month);
+    case "annually": {
+      if (schedule.dayOfYear) {
+        const start = Date.UTC(dayDate.getFullYear(), 0, 0);
+        const current = Date.UTC(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate());
+        const dayOfYear = Math.round((current - start) / (24 * 60 * 60 * 1000));
+        return dayOfYear === schedule.dayOfYear;
+      }
+      return month === (schedule.monthOfYear || 1) && dayOfMonth === (schedule.dayOfMonth || 1);
+    }
+    case "once": {
+      if (!schedule.fireAt) return false;
+      return dayKeyMatchesParts(dayKey, getPartsInTimezone(schedule.fireAt, timezone));
+    }
+    case "custom":
+      // Cron expansion stays server-side; surface via nextRunAt only.
+      return false;
+    default:
+      return false;
+  }
+}
+
+function occurrenceFromParts(
+  timer: TimerWithNextRun,
+  hour: number,
+  minute: number,
+): DayTimerOccurrence {
+  return {
+    timerId: timer.id,
+    name: timer.name,
+    slot: Math.floor((hour * 60 + minute) / 30),
+    minuteOfDay: hour * 60 + minute,
+  };
+}
+
+function getDayTimerOccurrences(
+  timers: TimerWithNextRun[],
+  dayKey: string,
+  timezone: string,
+): DayTimerOccurrence[] {
+  const occurrences: DayTimerOccurrence[] = [];
+  const seen = new Set<string>();
+
+  const push = (occurrence: DayTimerOccurrence) => {
+    const key = `${occurrence.timerId}:${occurrence.minuteOfDay}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    occurrences.push(occurrence);
+  };
+
+  for (const timer of timers) {
+    if (!timer.enabled) continue;
+    const timerTz = timer.timezone || timezone;
+
+    for (const schedule of timer.schedules || []) {
+      if (!scheduleRunsOnDay(schedule, dayKey, timerTz)) continue;
+
+      if (schedule.frequency === "once" && schedule.fireAt) {
+        const parts = getPartsInTimezone(schedule.fireAt, timerTz);
+        push(occurrenceFromParts(timer, parts.hour, parts.minute));
+        continue;
+      }
+
+      const tod = parseTimeOfDayMinutes(schedule.timeOfDay);
+      if (!tod) continue;
+      push(occurrenceFromParts(timer, tod.hour, tod.minute));
+    }
+
+    // nextRunAt covers custom/cron and any schedule whose wall-clock fell through.
+    if (timer.nextRunAt) {
+      const parts = getPartsInTimezone(timer.nextRunAt, timezone);
+      if (dayKeyMatchesParts(dayKey, parts)) {
+        push(occurrenceFromParts(timer, parts.hour, parts.minute));
+      }
+    }
+  }
+
+  return occurrences.sort((a, b) => a.minuteOfDay - b.minuteOfDay || a.name.localeCompare(b.name));
+}
+
+function getDaySlotRows(
+  section: ScheduleSection,
+  events: CalendarEvent[],
+  timezone: string,
+  timerOccurrences: DayTimerOccurrence[] = [],
+  now = new Date(),
+): DaySlotRow[] {
   const today = isToday(section.start, timezone);
   const startSlot = (today ? getPartsInTimezone(now.toISOString(), timezone).hour : 5) * 2;
   const timedEvents = events.filter(event => !isAllDay(event) && event.start.dateTime);
@@ -248,9 +406,16 @@ function getDaySlotRows(section: ScheduleSection, events: CalendarEvent[], timez
     const endSlot = getEventEndSlot(event, timezone);
     return latest === null ? endSlot : Math.max(latest, endSlot);
   }, null);
-  if (latestEventSlot === null || latestEventSlot < startSlot) return [];
+  const latestTimerSlot = timerOccurrences.reduce<number | null>((latest, occurrence) => {
+    return latest === null ? occurrence.slot : Math.max(latest, occurrence.slot);
+  }, null);
+  const latestSlot = [latestEventSlot, latestTimerSlot].reduce<number | null>((latest, slot) => {
+    if (slot === null) return latest;
+    return latest === null ? slot : Math.max(latest, slot);
+  }, null);
+  if (latestSlot === null || latestSlot < startSlot) return [];
 
-  return Array.from({ length: latestEventSlot - startSlot + 1 }, (_, index) => ({
+  return Array.from({ length: latestSlot - startSlot + 1 }, (_, index) => ({
     slot: startSlot + index,
   }));
 }
@@ -544,8 +709,19 @@ export default function CalendarPage() {
     enabled: hasConnected,
   });
 
+  const { data: timersData } = useQuery<{ timers: TimerWithNextRun[] }>({
+    queryKey: ["/api/timers"],
+    queryFn: async () => {
+      const res = await fetch("/api/timers", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+    enabled: view === "day",
+  });
+
   const calendars = calendarsData?.calendars || [];
   const events = eventsData?.events || [];
+  const timers = timersData?.timers || [];
   const isLoading = accountsLoading || calendarsLoading;
   const accountEmails = useMemo(() => accounts.map(a => a.email), [accounts]);
 
@@ -707,6 +883,7 @@ export default function CalendarPage() {
                 calendarMap={calendarMap}
                 accountEmails={accountEmails}
                 timezone={timezone}
+                timers={timers}
                 onEventClick={(event) => navigate(`/schedule/${event.id}?calendarId=${encodeURIComponent(event.calendarId)}&accountId=${encodeURIComponent(event.accountId)}`)}
               />
             );
@@ -718,7 +895,7 @@ export default function CalendarPage() {
   );
 }
 
-function ScheduleTreeSection({ section, mode, events, loading, calendarMap, accountEmails, timezone, onEventClick }: {
+function ScheduleTreeSection({ section, mode, events, loading, calendarMap, accountEmails, timezone, timers = [], onEventClick }: {
   section: ScheduleSection;
   mode: ScheduleMode;
   events: CalendarEvent[];
@@ -726,12 +903,17 @@ function ScheduleTreeSection({ section, mode, events, loading, calendarMap, acco
   calendarMap: Map<string, CalendarInfo>;
   accountEmails: string[];
   timezone: string;
+  timers?: TimerWithNextRun[];
   onEventClick: (event: CalendarEvent) => void;
 }) {
   const [open, setOpen] = useState(true);
+  const dayTimerOccurrences = useMemo(
+    () => (mode === "day" ? getDayTimerOccurrences(timers, section.id, timezone) : []),
+    [mode, section.id, timers, timezone],
+  );
   const daySlotRows = useMemo(
-    () => mode === "day" ? getDaySlotRows(section, events, timezone) : [],
-    [events, mode, section, timezone],
+    () => mode === "day" ? getDaySlotRows(section, events, timezone, dayTimerOccurrences) : [],
+    [dayTimerOccurrences, events, mode, section, timezone],
   );
   const allDayEvents = mode === "day" ? events.filter(isAllDay) : [];
 
@@ -754,6 +936,7 @@ function ScheduleTreeSection({ section, mode, events, loading, calendarMap, acco
               <DayTimeline
                 rows={daySlotRows}
                 events={events}
+                timerOccurrences={dayTimerOccurrences}
                 accountEmails={accountEmails}
                 timezone={timezone}
                 onEventClick={onEventClick}
@@ -811,14 +994,27 @@ function DayAllDayRow({ events, onEventClick }: {
   );
 }
 
-function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
+function DayTimeline({ rows, events, timerOccurrences = [], accountEmails, timezone, onEventClick }: {
   rows: DaySlotRow[];
   events: CalendarEvent[];
+  timerOccurrences?: DayTimerOccurrence[];
   accountEmails: string[];
   timezone: string;
   onEventClick: (event: CalendarEvent) => void;
 }) {
   const blocks = useMemo(() => getDayEventBlocks(rows, events, timezone), [rows, events, timezone]);
+  const timersBySlot = useMemo(() => {
+    const firstSlot = rows[0]?.slot ?? 0;
+    const lastSlot = rows[rows.length - 1]?.slot ?? -1;
+    const map = new Map<number, DayTimerOccurrence[]>();
+    for (const occurrence of timerOccurrences) {
+      if (occurrence.slot < firstSlot || occurrence.slot > lastSlot) continue;
+      const list = map.get(occurrence.slot) ?? [];
+      list.push(occurrence);
+      map.set(occurrence.slot, list);
+    }
+    return map;
+  }, [rows, timerOccurrences]);
   if (rows.length === 0) return null;
 
   return (
@@ -830,6 +1026,7 @@ function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
         const hourStart = isHourStartSlot(row.slot);
         const hourLabel = formatHourLabel(slotHour(row.slot));
         const hourBoundary = !hourStart || index === rows.length - 1;
+        const slotTimers = timersBySlot.get(row.slot) ?? [];
         return (
           <div key={row.slot} className="contents" data-testid={`${hourStart ? "schedule-hour" : "schedule-half-hour"}-${hourLabel}`}>
             <span
@@ -839,9 +1036,28 @@ function DayTimeline({ rows, events, accountEmails, timezone, onEventClick }: {
               {hourStart ? hourLabel : null}
             </span>
             <span
-              className={cn("border-b border-l border-border/30", !hourBoundary && "border-b-border/10")}
+              className={cn(
+                "relative border-b border-l border-border/30",
+                !hourBoundary && "border-b-border/10",
+                slotTimers.length > 0 && "z-20 flex items-center gap-1 overflow-x-auto px-1",
+              )}
               style={{ gridColumn: 2, gridRow: index + 1 }}
-            />
+            >
+              {slotTimers.map(timer => {
+                const reference = resolveReference({
+                  type: "timer",
+                  id: timer.timerId,
+                  metadata: { label: timer.name },
+                });
+                return (
+                  <ReferenceChip
+                    key={`${timer.timerId}:${timer.minuteOfDay}`}
+                    reference={reference}
+                    className="max-w-[11rem] shrink-0 bg-background/90"
+                  />
+                );
+              })}
+            </span>
           </div>
         );
       })}

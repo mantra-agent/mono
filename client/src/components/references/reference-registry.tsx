@@ -32,6 +32,7 @@ import {
   Workflow,
   Target,
   Tags,
+  Timer,
   User,
   type LucideIcon,
 } from "lucide-react";
@@ -122,6 +123,11 @@ const registry: Record<string, RegistryEntry> = {
     Icon: Scale,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id,
     href: ref => metadataString(ref, "href") || `/decisions?decision=${encodeURIComponent(ref.id)}`,
+  },
+  timer: {
+    Icon: Timer,
+    fallbackLabel: ref => metadataString(ref, "label") || `Timer ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/timers?timer=${encodeURIComponent(ref.id)}`,
   },
   wellness_activity: {
     Icon: Heart,
