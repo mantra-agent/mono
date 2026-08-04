@@ -27,6 +27,7 @@ import { ModelProviderError, isModelContextOverflow, type StreamEvent as ModelSt
 import { ContextOperatingBudgetExceededError, estimateToolDefinitionTokens, getContextRequestBudget, type ContextRequestBudget } from "./context-budget";
 import { estimateToolOutputSize } from "./tool-output-artifacts";
 import {
+  ACTIVE_HISTORY_BUDGET_TOKENS,
   CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS,
   MATERIAL_REFRESH_REDUCTION_TOKENS,
   projectImmediateToolResult,
@@ -3180,7 +3181,16 @@ export class AgentExecutor extends EventEmitter {
         budgetTokens: contextBudget.operatingInputLimit,
       });
       const pendingToolResultMessages = providerMessages.filter(m => m.role === "tool_result").length;
-      log.debug(`agent.loop.model_request runId=${ctx.runId} sessionId=${options.sessionId || "none"} iteration=${ctx.iteration} pendingToolResults=${pendingToolResultMessages} messageCount=${providerMessages.length} workingSetOutcome=${workingSet.telemetry.outcome} projectedTokens=${workingSet.telemetry.tokensProjected}`);
+      log.debug(
+        `agent.loop.model_request runId=${ctx.runId} sessionId=${options.sessionId || "none"} ` +
+        `iteration=${ctx.iteration} pendingToolResults=${pendingToolResultMessages} ` +
+        `messageCount=${providerMessages.length} workingSetOutcome=${workingSet.telemetry.outcome} ` +
+        `reason=${workingSet.telemetry.reason} projectedTokens=${workingSet.telemetry.tokensProjected} ` +
+        `receipts=${workingSet.telemetry.receiptsApplied} digests=${workingSet.telemetry.digestsApplied || 0} ` +
+        `checkpoints=${workingSet.telemetry.checkpointsApplied || 0} ` +
+        `activeHistory=${workingSet.telemetry.attribution?.activeHistoryTokens ?? "n/a"}/` +
+        `${workingSet.telemetry.activeHistoryBudgetTokens ?? ACTIVE_HISTORY_BUDGET_TOKENS}`,
+      );
       eventBus.publish({
         category: "agent",
         event: "agent.loop.model_request",
