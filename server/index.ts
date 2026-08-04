@@ -520,6 +520,8 @@ app.use((req, res, next) => {
   await ensureObjectGrantSchema(workVaultPool);
   const { ensureTeamsSchema } = await import("./teams-schema");
   await ensureTeamsSchema(workVaultPool);
+  const { ensureDriveResourcesSchema } = await import("./drive-resources-schema");
+  await ensureDriveResourcesSchema(workVaultPool);
   const { ensureAgendaDefinitionSchema } = await import("./agenda-schema");
   await ensureAgendaDefinitionSchema();
   const { ensureInvitedSubjectSchema } = await import("./invited-subject-schema");

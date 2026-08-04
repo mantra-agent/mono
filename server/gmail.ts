@@ -297,6 +297,28 @@ export async function getReadClientForAccount(accountId: string) {
   return google.gmail({ version: 'v1', auth: oauth2Client });
 }
 
+/**
+ * Mint a fresh, short-lived Google access token carrying drive.file for the Picker. Refresh tokens
+ * stay server-side; only the ephemeral access token crosses to the browser. Throws if the account
+ * has not granted Drive (hasDrive=false) so the caller can prompt a reconnect.
+ */
+export async function getDriveAccessTokenForAccount(accountId: string): Promise<{ accessToken: string; expiresAt: number | null }> {
+  const tokens = await getAccountTokens(accountId);
+  if (!tokens) throw Object.assign(new Error(`No tokens for account ${accountId}`), { status: 404 });
+  const scope = tokens.scope || '';
+  if (!scope.split(' ').includes('https://www.googleapis.com/auth/drive.file')) {
+    throw Object.assign(new Error('This Google account has not granted Drive access — reconnect to enable Drive.'), { status: 403 });
+  }
+  const oauth2Client = await getOAuth2Client();
+  oauth2Client.setCredentials(tokens);
+  oauth2Client.on('tokens', async (newTokens) => {
+    await setAccountTokens(accountId, { ...tokens, ...newTokens } as GoogleTokens);
+  });
+  const { token } = await oauth2Client.getAccessToken();
+  if (!token) throw Object.assign(new Error('Failed to obtain a Drive access token'), { status: 502 });
+  return { accessToken: token, expiresAt: oauth2Client.credentials.expiry_date ?? null };
+}
+
 // ─── Unified Google OAuth client ───
 
 export async function isConnectorConnected(): Promise<boolean> {

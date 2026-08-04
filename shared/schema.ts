@@ -772,6 +772,36 @@ export type InsertTeamRow = typeof teams.$inferInsert;
 export type TeamMemberRow = typeof teamMembers.$inferSelect;
 export type InsertTeamMemberRow = typeof teamMembers.$inferInsert;
 
+// ── Drive resources: Google Drive files/folders bound into a vault's Files branch ──
+// A drive_resource is an *explicit* binding created via the Google Picker (drive.file scope). It is
+// a pointer, never a copy: unbinding removes the row and never touches the underlying Google file.
+// It is a first-class grantable object (Step 8) so a bound file can be shared like a native page.
+export const driveResourceTypes = ["file", "folder"] as const;
+export const driveResources = pgTable("drive_resources", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "cascade" }),
+  /** The connected Google account this file was picked from (drive.file grants per-file access). */
+  connectedAccountId: text("connected_account_id").notNull(),
+  /** Google Drive file id — the durable handle used for reads and (Step C) writes. */
+  googleFileId: text("google_file_id").notNull(),
+  name: text("name").notNull(),
+  mimeType: text("mime_type"),
+  resourceType: text("resource_type", { enum: driveResourceTypes }).notNull().default("file"),
+  iconUrl: text("icon_url"),
+  webViewLink: text("web_view_link"),
+  addedByUserId: varchar("added_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_drive_resources_vault").on(table.vaultId),
+  index("idx_drive_resources_account").on(table.accountId),
+  uniqueIndex("idx_drive_resources_vault_file_unique").on(table.vaultId, table.googleFileId),
+  check("drive_resources_resource_type_check", sql`${table.resourceType} IN ('file', 'folder')`),
+]);
+
+export type DriveResourceRow = typeof driveResources.$inferSelect;
+export type InsertDriveResourceRow = typeof driveResources.$inferInsert;
+
 // ── Principles ────────────────────────────────────────────────────
 export const principles = pgTable("principles", {
   id: text("id").primaryKey(),
