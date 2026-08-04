@@ -430,6 +430,8 @@ interface EmailReferenceProps {
   showEnrichment?: boolean;
   showDoneButton?: boolean;
   showInboxIndicators?: boolean;
+  forceExpanded?: boolean;
+  highlighted?: boolean;
   onDraftClick?: () => void;
   onViewDraft?: () => void;
   onSnooze?: (ids: number[], snoozedUntil: string) => void;
@@ -444,13 +446,16 @@ function EmailReference({
   showEnrichment,
   showDoneButton,
   showInboxIndicators,
+  forceExpanded = false,
+  highlighted = false,
   onDraftClick,
   onViewDraft,
   onSnooze,
   onHover,
 }: EmailReferenceProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(forceExpanded);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const { latestMessage, messages, unreadCount, triageTier, triageReason } = thread;
   const sender = parseSender(latestMessage.fromAddress);
   const hasUnread = unreadCount > 0;
@@ -458,16 +463,29 @@ function EmailReference({
   const isTriaged = messages.some(m => m.triageStatus === "triaged");
   const isDone = messages.some(m => m.isDone);
   const title = latestMessage.subject || "(no subject)";
+  const accountId = latestMessage.accountId;
+  const threadKey = accountId ? `${accountId}:${thread.threadId}` : thread.threadId;
 
   const stopTrigger = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
   }, []);
 
+  useEffect(() => {
+    if (forceExpanded) setExpanded(true);
+  }, [forceExpanded]);
+
+  useEffect(() => {
+    if (!highlighted || !rowRef.current) return;
+    rowRef.current.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [highlighted]);
+
   return (
     <div
-      className="group min-w-0 overflow-hidden"
+      ref={rowRef}
+      className={`group min-w-0 overflow-hidden${highlighted ? " rounded-md bg-primary/5 ring-2 ring-primary/50" : ""}`}
       data-testid={`email-reference-${thread.threadId}`}
+      data-thread-key={threadKey}
       onMouseEnter={() => onHover?.(messages.map(m => m.id))}
       onMouseLeave={() => onHover?.(null)}
     >
@@ -611,6 +629,8 @@ function ThreadRow(props: {
   onViewDraft?: () => void;
   enrichment?: EmailEnrichment;
   showEnrichment?: boolean;
+  forceExpanded?: boolean;
+  highlighted?: boolean;
   onSnooze?: (ids: number[], snoozedUntil: string) => void;
 }) {
   return <EmailReference {...props} />;
@@ -1321,10 +1341,12 @@ function ReviewTab({
   onHover,
   onSwitchTab,
   searchTokens,
+  highlightThreadKey,
 }: {
   onHover: (ids: number[] | null) => void;
   onSwitchTab: (tab: string) => void;
   searchTokens: string[];
+  highlightThreadKey?: string | null;
 }) {
   const { toast } = useToast();
   const snoozeMutation = useEmailSnooze();
@@ -1523,14 +1545,24 @@ function ReviewTab({
       <div data-testid="review-thread-list">
         {threads.map((thread) => {
           const threadDrafts = draftsByThreadId.get(thread.threadId) ?? [];
+          const accountId = thread.latestMessage.accountId;
+          const threadKey = `${accountId}:${thread.threadId}`;
+          const isHighlighted = Boolean(
+            highlightThreadKey
+            && (highlightThreadKey === threadKey
+              || highlightThreadKey === thread.threadId
+              || highlightThreadKey.endsWith(`:${thread.threadId}`)),
+          );
           return (
             <ThreadRow
               key={thread.threadId}
               thread={thread}
-              accountLabel={accounts.length > 1 ? accountLabelMap.get(thread.latestMessage.accountId) : undefined}
+              accountLabel={accounts.length > 1 ? accountLabelMap.get(accountId) : undefined}
               onHover={onHover}
               showDoneButton
               linkedDrafts={threadDrafts}
+              forceExpanded={isHighlighted}
+              highlighted={isHighlighted}
               onDraftClick={() => draftSessionMutation.mutate(thread)}
               onViewDraft={() => onSwitchTab("drafts")}
               enrichment={enrichmentMap.get(thread.threadId)}
@@ -1699,6 +1731,11 @@ export default function CommsPage() {
   const [pullDistance, setPullDistance] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const searchTokens = useMemo(() => getSearchTokens(searchQuery), [searchQuery]);
+  const highlightThreadKey = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const raw = new URLSearchParams(window.location.search).get("thread")?.trim();
+    return raw || null;
+  }, []);
   const markDone = useEmailMarkDone();
 
   const refreshMutation = useMutation({
@@ -1808,7 +1845,7 @@ export default function CommsPage() {
           />
           <CommsSection id="review" title="Review" defaultOpen>
             <div className="max-h-[calc(100vh-13rem)] overflow-y-auto overflow-x-hidden rounded-md border border-border/20" data-testid="section-panel-review">
-              <ReviewTab onHover={handleHover} onSwitchTab={() => undefined} searchTokens={searchTokens} />
+              <ReviewTab onHover={handleHover} onSwitchTab={() => undefined} searchTokens={searchTokens} highlightThreadKey={highlightThreadKey} />
             </div>
           </CommsSection>
           <CommsSection id="triage" title="Triage">

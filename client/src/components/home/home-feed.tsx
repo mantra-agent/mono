@@ -320,7 +320,7 @@ function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems, feedItems }: 
             ) : entry.kind === "news" ? (
               <SurfacedNewsRow key={entry.item.id} item={entry.item} dateLabel={surfacedDateLabel(entry.item)} />
             ) : entry.kind === "email" ? (
-              <SurfacedEmailRow key={entry.item.id} item={entry.item} dateLabel={surfacedDateLabel(entry.item)} />
+              <SurfacedEmailRow key={entry.item.id} item={entry.item} dateLabel={entry.item.time || surfacedDateLabel(entry.item)} />
             ) : entry.kind === "feed" ? (
               <SimpleWidgetRenderer key={entry.item.id} item={entry.item} />
             ) : (
