@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SimpleFeedItem } from "@shared/models/simple";
+import { createReferenceRef } from "@shared/references";
 import { ChevronRight, Loader2, Mail, MessageSquare, MoreHorizontal, X } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -58,11 +59,25 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
   const senderReference = item.references?.find(ref => ref.type === "person") ?? null;
   const reason = payloadString(item, "reason");
   const snippet = payloadString(item, "snippet");
+  // Kept for dismiss metadata only — no longer rendered as a traffic-light icon.
   const triageTier = payloadString(item, "triageTier");
   const messageIds = useMemo(() => payloadNumberArray(item, "messageIds"), [item]);
-
   const sourceRef = item.sourceRefs.find(ref => ref.type === "email");
   const [accountId, providerThreadId] = (sourceRef?.id ?? "").split(":");
+  const emailHref = sourceRef?.href
+    || (accountId && providerThreadId
+      ? `/comms?thread=${encodeURIComponent(`${accountId}:${providerThreadId}`)}`
+      : "/comms");
+  const replyReference = useMemo(() => {
+    const threadId = sourceRef?.id
+      || (accountId && providerThreadId ? `${accountId}:${providerThreadId}` : null);
+    if (!threadId) return null;
+    return createReferenceRef({
+      type: "email_thread",
+      id: threadId,
+      metadata: { label: "Reply", href: emailHref },
+    });
+  }, [accountId, emailHref, providerThreadId, sourceRef?.id]);
 
   const markDone = useEmailMarkDone();
   const snoozeMutation = useEmailSnooze();
@@ -123,12 +138,17 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
       const personRef = senderReference?.id ? `@person:${senderReference.id}` : null;
       const parts = [
         `Let's discuss this email thread: **${item.title}**`,
+        "",
+        "Load the relevant context from previous interactions, projects, goals, and memories for the person and email thread.",
+        "Use the draft tool to draft a reply that both addresses the open question in the email thread and moves forward our goals, unless there are any ambiguities about what the draft should include, in which case first ask clarifying question(s) using the question tool.",
+        "",
         emailThreadRef ? `Email thread: ${emailThreadRef}` : null,
         emailMessageRef ? `Latest message: ${emailMessageRef}` : null,
         personRef ? `Person: ${personRef}` : null,
         `From: ${sender}`,
         reason ? `Summary: ${reason}` : null,
         snippet ? `Snippet: ${snippet}` : null,
+        `Open email: ${emailHref}`,
       ].filter(Boolean);
       await apiRequest("POST", `/api/sessions/${session.id}/messages`, { content: parts.join("\n") });
       return session;
@@ -142,7 +162,6 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
   });
 
   const pending = markDone.isPending || snoozeMutation.isPending;
-  const tierIcon = triageTier === "🔴" ? "🔴" : triageTier === "🟡" ? "🟡" : triageTier === "🟢" ? "🟢" : null;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -160,7 +179,7 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           }}
           data-testid={`surfaced-email-row-${item.id}`}
         >
-          <span className="w-14 shrink-0 whitespace-nowrap pr-1.5 text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
+          <span className="w-14 shrink-0 whitespace-pre-line pr-1.5 text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
             {dateLabel ?? ""}
           </span>
           <span className="flex w-4 shrink-0 items-center justify-center">
@@ -169,7 +188,13 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           <div className="relative min-w-0 flex-1 pl-2">
             <span className="inline-flex max-w-full items-center gap-1 text-sm">
               <Mail className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <span className="shrink-0 text-muted-foreground">Reply from</span>
+              {replyReference ? (
+                <span className="inline-flex min-w-0 items-center" onClick={(e) => e.stopPropagation()}>
+                  <ReferenceRenderer refValue={replyReference} surface="simple-row" className="mx-0" />
+                </span>
+              ) : (
+                <span className="shrink-0 text-muted-foreground">Reply</span>
+              )}
               {senderReference ? (
                 <span className="inline-flex min-w-0 items-center" onClick={(e) => e.stopPropagation()}>
                   <ReferenceRenderer refValue={senderReference} surface="simple-row" className="mx-0" />
@@ -177,7 +202,6 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
               ) : (
                 <span className="min-w-0 truncate font-medium">{sender}</span>
               )}
-              {tierIcon && <span className="shrink-0 text-xs">{tierIcon}</span>}
             </span>
           </div>
           <CollapsibleTrigger type="button" className="ml-1 shrink-0 rounded p-0.5 hover:bg-accent/60" aria-label={`${open ? "Collapse" : "Expand"} ${item.title}`} onClick={(event) => event.stopPropagation()}>
@@ -194,7 +218,7 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
                 {discussMutation.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <MessageSquare className="mr-2 h-3.5 w-3.5" />}
                 Discuss
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); window.location.href = "/comms"; }}>
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); window.location.href = emailHref; }}>
                 <Mail className="mr-2 h-3.5 w-3.5" />
                 Open in Comms
               </DropdownMenuItem>

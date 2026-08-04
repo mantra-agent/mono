@@ -18,7 +18,6 @@ import type { Task, Project, Milestone } from "@shared/models/work";
 import { formatHour, getWindowLabel, inRange } from "@shared/wellness-window";
 import { queryActivityStatus } from "../routes/wellness";
 import { sourceRefsToReferenceRefs } from "@shared/simple-references";
-import { createReferenceRef } from "@shared/references";
 import { createMeetingArtifactChild, createMeetingPersonChild, dedupeMeetingInvitees, formatMeetingInviteeName } from "@shared/meeting-feed-items";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { listMetadataByEvents, classifyEventByTitle, getLinkedArtifactsByMetadataIds } from "../calendar-metadata";
@@ -758,21 +757,29 @@ function emailSenderAddress(fromAddress: string | null): string | null {
   return address.includes("@") ? address : null;
 }
 
-function itemFromEmailReview(thread: EmailReviewThread, index: number, emailMap: EmailPersonMap, options?: { done?: boolean }): SimpleFeedItem {
+function itemFromEmailReview(
+  thread: EmailReviewThread,
+  index: number,
+  emailMap: EmailPersonMap,
+  timezone: string,
+  options?: { done?: boolean },
+): SimpleFeedItem {
   const done = options?.done === true;
   const title = thread.subject || "(no subject)";
   const sender = emailSenderName(thread.fromAddress);
   const senderAddress = emailSenderAddress(thread.fromAddress);
   const senderPerson = senderAddress ? emailMap.get(senderAddress) ?? null : null;
   const observedAt = thread.date || new Date().toISOString();
+  const threadKey = `${thread.accountId}:${thread.providerThreadId}`;
+  const emailHref = `/comms?thread=${encodeURIComponent(threadKey)}`;
   const sourceRef: SimpleSourceRef = {
     type: "email",
-    id: `${thread.accountId}:${thread.providerThreadId}`,
+    id: threadKey,
     label: title,
-    href: "/comms",
+    href: emailHref,
     observedAt,
   };
-  const inboxAddedDate = dateInTimezone(observedAt);
+  const observedDate = new Date(observedAt);
   return {
     id: `email-review-${thread.accountId}-${thread.providerThreadId}`,
     section: done ? "done" : "inbox",
@@ -782,14 +789,22 @@ function itemFromEmailReview(thread: EmailReviewThread, index: number, emailMap:
     completedAt: done ? thread.doneAt ?? undefined : undefined,
     priority: 40 + index,
     anchorTime: observedAt,
-    time: formatInboxDate(inboxAddedDate),
+    // Match Builds: clock time above MM/DD (whitespace-pre-line in the time column).
+    time: Number.isNaN(observedDate.getTime())
+      ? formatInboxDate(dateInTimezone(observedAt, timezone), timezone)
+      : stackTimeOverDate(formatClockTime(observedDate, timezone), observedDate, timezone),
     sourceRefs: [sourceRef],
     references: [
       ...sourceRefsToReferenceRefs([sourceRef]),
+      createReferenceRef({
+        type: "email_thread",
+        id: threadKey,
+        metadata: { label: "Reply", href: emailHref },
+      }),
       ...thread.messageIds.slice(0, 1).map(messageId => createReferenceRef({
         type: "email_message",
         id: String(messageId),
-        metadata: { label: `${title} latest message`, href: "/comms" },
+        metadata: { label: `${title} latest message`, href: emailHref },
       })),
       ...(senderPerson ? [createReferenceRef({
         type: "person",
@@ -810,9 +825,11 @@ function itemFromEmailReview(thread: EmailReviewThread, index: number, emailMap:
       unreadCount: thread.unreadCount,
       enrichmentActions: thread.enrichmentActions,
       inboxAddedAt: observedAt,
+      providerThreadId: thread.providerThreadId,
+      accountId: thread.accountId,
     },
     actions: [
-      { id: `open-email-${thread.id}`, label: "Open email", type: "navigate", href: "/comms", sourceRef },
+      { id: `open-email-${thread.id}`, label: "Open email", type: "navigate", href: emailHref, sourceRef },
     ],
   };
 }
@@ -1677,9 +1694,9 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   // Email Review (enriched triaged threads needing attention)
   try {
     const emailReviewThreads = await collectEmailReviewThreads();
-    emailReviewThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index, emailMap)));
+    emailReviewThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index, emailMap, timezone)));
     const emailDoneThreads = await collectEmailDoneToday();
-    emailDoneThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index, emailMap, { done: true })));
+    emailDoneThreads.forEach((thread, index) => items.push(itemFromEmailReview(thread, index, emailMap, timezone, { done: true })));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`email review collection failed: ${message}`);
