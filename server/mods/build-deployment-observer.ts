@@ -27,8 +27,6 @@ import {
   recordSuccessfulRailwayDeployments,
   type BuildDeploymentEnvironmentIdentity,
 } from "./build-deployment-home";
-import { invalidateSimpleFeedCache } from "../simple/generate-feed";
-
 const log = createLogger("build-deployment-observer");
 const OBSERVER_PRINCIPAL = createNamedSystemPrincipal("build-deployment-observer");
 const OWNER_LIMIT = 50;
@@ -190,7 +188,6 @@ async function observeOwner(user: DiscoveredBuildOwner["user"]) {
     }
 
     if (projectionsCreated > 0) {
-      invalidateSimpleFeedCache(principal.accountId ?? undefined);
       eventBus.publish({
         category: "system",
         event: "data:home_changed",

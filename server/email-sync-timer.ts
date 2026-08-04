@@ -159,16 +159,11 @@ async function runOwnerVaultPipeline(): Promise<OwnerPipelineResult> {
     triageDismissed > 0 ||
     enrichmentRunStatus === "completed" ||
     enrichmentDismissed > 0;
-  if (feedMutated) {
-    const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
-    invalidateSimpleFeedCache(requireCurrentUserPrincipal().accountId);
-  }
-
   log.info(
     `Vault pipeline complete accounts=${sync.accountsSynced}/${sync.accountsDiscovered} ` +
       `untriagedBefore=${before.untriaged} triaged=${triageTriaged} ` +
       `awaitingAfter=${afterTriage.awaitingEnrichment} enrichment=${enrichmentRunStatus} ` +
-      `feedInvalidated=${feedMutated}`,
+      `feedMutated=${feedMutated}`,
   );
 
   return {

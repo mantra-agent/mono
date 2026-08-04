@@ -7,8 +7,6 @@ import { triageJob } from "../triage-job-state";
 import { storage } from "../storage";
 import { combineWithSensitiveVisible, combineWithSensitiveWritable } from "../sensitive-scope";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
-import { invalidateSimpleFeedCache } from "../simple/generate-feed";
-
 const log = createLogger("EmailRoutes");
 
 const messageScopeCols = { ownerUserId: emailMessages.ownerUserId, principalAccountId: emailMessages.principalAccountId };
@@ -237,7 +235,6 @@ export function registerEmailRoutes(app: Express) {
         }
       }
 
-      invalidateSimpleFeedCache(req.principal?.accountId || updated.principalAccountId || updated.accountId || undefined);
       if (gmailArchived === false && isDone) {
         const rolledBack = await storage.markEmailDone(id, false);
         res.json({ ...(rolledBack || updated), isDone: false, gmailArchived });
@@ -267,7 +264,6 @@ export function registerEmailRoutes(app: Express) {
         .where(combineWithSensitiveWritable(messageScopeCols, eq(emailMessages.id, id)))
         .returning();
       if (updated.length === 0) return res.status(404).json({ error: "Message not found" });
-      invalidateSimpleFeedCache(req.principal?.accountId || updated[0].principalAccountId || updated[0].accountId || undefined);
       res.json(updated[0]);
     } catch (err: any) {
       log.error(`PATCH /api/email/messages/:id/snooze error: ${err.message}`);
@@ -504,7 +500,6 @@ export function registerEmailRoutes(app: Express) {
         reason: reason || null,
         dismissedBy: dismissedBy || "manual",
       });
-      invalidateSimpleFeedCache(req.principal?.accountId || accountId || undefined);
       res.json(dismissal);
     } catch (err: any) {
       log.error(`POST /api/email/history/record error: ${err.message}`);
