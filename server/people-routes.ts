@@ -2,7 +2,7 @@
 import type { Express } from "express";
 import { requireAuth } from "./auth";
 import { PeopleStorage } from "./people-storage";
-import { tagRegistry } from "./file-storage";
+
 import { chatCompletion } from "./model-client";
 import { getPromptModulePrompt } from "./prompt-modules";
 import { contextBuilder } from "./context-builder";
@@ -364,15 +364,7 @@ export function registerPeopleRoutes(app: Express, peopleStorage: PeopleStorage)
           return res.json(person);
         }
       }
-      if (Array.isArray(req.body.tags)) {
-        for (const tag of req.body.tags) {
-          await tagRegistry.ensureTag(tag);
-        }
-      }
       const person = await peopleStorage.updatePerson(req.params.id, req.body);
-      if (Array.isArray(req.body.tags)) {
-        await tagRegistry.setEntityTags("person", person.id, person.name, person.tags || []).catch(err => log.warn("tag sync failed", err));
-      }
       res.json(person);
     } catch (error: any) {
       if (error.message.includes("not found")) {

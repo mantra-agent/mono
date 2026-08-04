@@ -56,6 +56,13 @@ const DOMAINS: DomainSpec[] = [
     titleColumn: "title",
     tagsKind: "text[]",
   },
+  {
+    migrationKey: "entity-array-tags-person-v1",
+    table: "persons",
+    entityType: "person",
+    titleColumn: "name",
+    tagsKind: "jsonb",
+  },
 ];
 
 function nonEmptyTagsPredicate(tagsKind: DomainSpec["tagsKind"]): string {

@@ -8,6 +8,7 @@ export type ReferenceSuggestion = {
   id: string;
   label: string;
   description?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export const REFERENCE_TYPE_LABELS: Record<string, string> = {
@@ -59,7 +60,7 @@ interface CompanyResult {
 interface TagResult {
   slug: string;
   label: string;
-  description?: string;
+  color?: string | null;
   usageCount: number;
 }
 
@@ -225,6 +226,7 @@ export async function loadReferenceSuggestions(
       id: tag.slug,
       label: tag.label,
       description: `Tag · ${tag.usageCount} ${tag.usageCount === 1 ? "usage" : "usages"}`,
+      metadata: tag.color ? { color: tag.color } : undefined,
     });
   }
 
