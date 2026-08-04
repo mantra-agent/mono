@@ -5,11 +5,46 @@ import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTr
 
 const log = createLogger("StoreIssues");
 
+/** Minimum non-whitespace length for actionable repro steps. */
+const MIN_REPRO_STEPS_LENGTH = 12;
+
+export class IssueCreateValidationError extends Error {
+  readonly code = "issue_create_validation";
+  constructor(message: string) {
+    super(message);
+    this.name = "IssueCreateValidationError";
+  }
+}
+
+function normalizeOptionalText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeReproSteps(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function parseOptionalPositiveInt(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  if (typeof value === "string" && value.trim()) {
+    const n = Number(value);
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+  return null;
+}
+
 function issueToContent(issue: Issue): string {
   let body = "";
 
   if (issue.description) {
     body += issue.description + "\n";
+  }
+
+  if (issue.reproSteps) {
+    body += "\n## Repro Steps\n\n" + issue.reproSteps + "\n";
   }
 
   if (issue.spec) {
@@ -42,6 +77,7 @@ function issueToContent(issue: Issue): string {
 
 function parseContent(content: string): {
   description: string;
+  reproSteps: string | null;
   spec: string | null;
   feedback: string | null;
   logs: string | null;
@@ -49,6 +85,7 @@ function parseContent(content: string): {
 } {
   const body = content.trim();
 
+  const reproMatch = body.match(/\n## Repro Steps\n\n([\s\S]*?)(?=\n## |\n$|$)/);
   const specMatch = body.match(/\n## Spec\n\n([\s\S]*?)(?=\n## |\n$|$)/);
   const feedbackMatch = body.match(/\n## Feedback\n\n([\s\S]*?)(?=\n## |\n$|$)/);
   const logsMatch = body.match(/\n## Logs\n\n```\n([\s\S]*?)\n```/);
@@ -84,6 +121,7 @@ function parseContent(content: string): {
 
   return {
     description,
+    reproSteps: reproMatch ? reproMatch[1].trim() : null,
     spec: specMatch ? specMatch[1].trim() : null,
     feedback: feedbackMatch ? feedbackMatch[1].trim() : null,
     logs: logsMatch ? logsMatch[1].trim() : null,
@@ -93,20 +131,46 @@ function parseContent(content: string): {
 
 function docToIssue(doc: { content: string; metadata: Record<string, unknown> }): Issue {
   const meta = doc.metadata;
+  const parsed = parseContent(doc.content || "");
+  const reproFromMeta = normalizeOptionalText(meta.reproSteps);
+  const buildIdRaw = meta.buildId;
+  const buildId =
+    typeof buildIdRaw === "string" && buildIdRaw.trim().length > 0
+      ? buildIdRaw.trim()
+      : null;
 
   return {
     id: typeof meta.id === "number" ? meta.id : parseInt(String(meta.id), 10),
     title: String(meta.title || "Untitled"),
-    description: String(meta.description || ""),
+    description: String(meta.description || parsed.description || ""),
+    reproSteps: reproFromMeta || parsed.reproSteps || "",
     status: String(meta.status || "open"),
     page: (meta.page as string) || null,
     screenshot: (meta.screenshot as string) || null,
-    spec: (meta.spec as string) || null,
-    feedback: (meta.feedback as string) || null,
-    notes: (meta.notes as IssueNote[]) || null,
-    logs: (meta.logs as string) || null,
+    spec: (meta.spec as string) || parsed.spec || null,
+    feedback: (meta.feedback as string) || parsed.feedback || null,
+    notes: (meta.notes as IssueNote[]) || parsed.notes || null,
+    logs: (meta.logs as string) || parsed.logs || null,
     dependencies: (meta.dependencies as number[]) || null,
+    platformEnvironmentId: parseOptionalPositiveInt(meta.platformEnvironmentId),
+    buildId,
     createdAt: meta.createdAt ? new Date(String(meta.createdAt)) : new Date(),
+  };
+}
+
+function issueMetadata(issue: Issue): Record<string, unknown> {
+  return {
+    id: issue.id,
+    title: issue.title,
+    description: issue.description,
+    reproSteps: issue.reproSteps,
+    status: issue.status,
+    page: issue.page,
+    screenshot: issue.screenshot,
+    dependencies: issue.dependencies,
+    platformEnvironmentId: issue.platformEnvironmentId,
+    buildId: issue.buildId,
+    createdAt: issue.createdAt instanceof Date ? issue.createdAt.toISOString() : String(issue.createdAt),
   };
 }
 
@@ -140,6 +204,8 @@ export class FileIssueStorage {
         title: i.title,
         status: i.status,
         page: i.page,
+        platformEnvironmentId: i.platformEnvironmentId,
+        buildId: i.buildId,
         createdAt: i.createdAt,
       }));
     }
@@ -163,13 +229,55 @@ export class FileIssueStorage {
   }
 
   async createIssue(issue: InsertIssue): Promise<Issue> {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
+    const title = normalizeOptionalText(issue.title);
+    if (!title) {
+      throw new IssueCreateValidationError("Issue title is required");
+    }
 
+    const reproSteps = normalizeReproSteps(issue.reproSteps);
+    if (reproSteps.length < MIN_REPRO_STEPS_LENGTH) {
+      throw new IssueCreateValidationError(
+        `Issue reproSteps is required (min ${MIN_REPRO_STEPS_LENGTH} non-whitespace characters). Do not file title-only shells.`,
+      );
+    }
+
+    // Resolve env/build from caller when provided; otherwise fill from runtime identity.
+    let platformEnvironmentId = parseOptionalPositiveInt(issue.platformEnvironmentId);
+    let buildId = normalizeOptionalText(issue.buildId);
+
+    if (platformEnvironmentId == null || buildId == null) {
+      try {
+        const { getRuntimeIdentity } = await import("../runtime-identity");
+        const runtime = await getRuntimeIdentity();
+        if (platformEnvironmentId == null) {
+          platformEnvironmentId = parseOptionalPositiveInt(runtime.platformEnvironmentId);
+        }
+        if (buildId == null) {
+          buildId = normalizeOptionalText(runtime.deploymentId);
+        }
+      } catch (err) {
+        log.warn("createIssue runtime identity lookup failed", err);
+      }
+    }
+
+    if (platformEnvironmentId == null) {
+      throw new IssueCreateValidationError(
+        "Issue platformEnvironmentId is required. Pass it explicitly or ensure runtime identity resolves a Platforms Environment.",
+      );
+    }
+    if (buildId == null) {
+      throw new IssueCreateValidationError(
+        "Issue buildId is required. Pass the provider deployment/build id explicitly or ensure runtime identity resolves one.",
+      );
+    }
+
+    const id = Date.now() + Math.floor(Math.random() * 1000);
     const now = new Date();
     const full: Issue = {
       id,
-      title: issue.title || "Untitled",
-      description: issue.description || "",
+      title,
+      description: typeof issue.description === "string" ? issue.description : "",
+      reproSteps,
       status: issue.status || "open",
       page: issue.page || null,
       screenshot: issue.screenshot || null,
@@ -178,19 +286,13 @@ export class FileIssueStorage {
       notes: issue.notes || null,
       logs: issue.logs || null,
       dependencies: issue.dependencies || null,
+      platformEnvironmentId,
+      buildId,
       createdAt: now,
     };
 
     const content = issueToContent(full);
-    const metadata: Record<string, unknown> = {
-      id: full.id,
-      title: full.title,
-      status: full.status,
-      page: full.page,
-      screenshot: full.screenshot,
-      dependencies: full.dependencies,
-      createdAt: full.createdAt.toISOString(),
-    };
+    const metadata = issueMetadata(full);
 
     await documentStorage.upsertDocument(
       "issue",
@@ -201,7 +303,9 @@ export class FileIssueStorage {
       metadata
     );
 
-    log.log(`createIssue id=${id} title="${full.title}" status=${full.status}`);
+    log.log(
+      `createIssue id=${id} title="${full.title}" status=${full.status} env=${full.platformEnvironmentId} build=${full.buildId}`,
+    );
     return full;
   }
 
@@ -240,17 +344,42 @@ export class FileIssueStorage {
       ];
     }
 
-    const updated: Issue = { ...existing, ...effectiveUpdates, id: existing.id, createdAt: existing.createdAt };
-    const content = issueToContent(updated);
-    const metadata: Record<string, unknown> = {
-      id: updated.id,
-      title: updated.title,
-      status: updated.status,
-      page: updated.page,
-      screenshot: updated.screenshot,
-      dependencies: updated.dependencies,
-      createdAt: updated.createdAt instanceof Date ? updated.createdAt.toISOString() : String(updated.createdAt),
+    if (effectiveUpdates.reproSteps !== undefined) {
+      const nextRepro = normalizeReproSteps(effectiveUpdates.reproSteps);
+      if (nextRepro.length < MIN_REPRO_STEPS_LENGTH) {
+        throw new IssueCreateValidationError(
+          `Issue reproSteps is required (min ${MIN_REPRO_STEPS_LENGTH} non-whitespace characters).`,
+        );
+      }
+      effectiveUpdates.reproSteps = nextRepro;
+    }
+    if (effectiveUpdates.platformEnvironmentId !== undefined) {
+      const nextEnv = parseOptionalPositiveInt(effectiveUpdates.platformEnvironmentId);
+      if (nextEnv == null) {
+        throw new IssueCreateValidationError("Issue platformEnvironmentId must be a positive integer when set.");
+      }
+      effectiveUpdates.platformEnvironmentId = nextEnv;
+    }
+    if (effectiveUpdates.buildId !== undefined) {
+      const nextBuild = normalizeOptionalText(effectiveUpdates.buildId);
+      if (nextBuild == null) {
+        throw new IssueCreateValidationError("Issue buildId must be a non-empty string when set.");
+      }
+      effectiveUpdates.buildId = nextBuild;
+    }
+
+    const updated: Issue = {
+      ...existing,
+      ...effectiveUpdates,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      reproSteps: (effectiveUpdates.reproSteps as string | undefined) ?? existing.reproSteps,
+      platformEnvironmentId:
+        (effectiveUpdates.platformEnvironmentId as number | undefined) ?? existing.platformEnvironmentId,
+      buildId: (effectiveUpdates.buildId as string | undefined) ?? existing.buildId,
     };
+    const content = issueToContent(updated);
+    const metadata = issueMetadata(updated);
 
     await documentStorage.upsertDocument(
       "issue",
@@ -311,15 +440,7 @@ export class FileIssueStorage {
 
   async writeIssueWithId(issue: Issue): Promise<void> {
     const content = issueToContent(issue);
-    const metadata: Record<string, unknown> = {
-      id: issue.id,
-      title: issue.title,
-      status: issue.status,
-      page: issue.page,
-      screenshot: issue.screenshot,
-      dependencies: issue.dependencies,
-      createdAt: issue.createdAt instanceof Date ? issue.createdAt.toISOString() : String(issue.createdAt),
-    };
+    const metadata = issueMetadata(issue);
 
     await documentStorage.upsertDocument(
       "issue",

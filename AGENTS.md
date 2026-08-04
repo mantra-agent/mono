@@ -363,6 +363,10 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 16. **Opportunity Artifacts** — Generate button → server provisions Library slot → spawns skill session → skill writes to Library page → render_artifact_docx → DOCX download
 17. **Context Assembly** — semantic orientation flags + kernel/state/instruction/reference layers → parallel resolve → tree assembly → memory injection → XML prompt
 
+## Issue filing rule
+
+Never file an Issue without explicit **repro steps** plus **platform environment** and **build** linkage. `storage.createIssue` is the sole create path and rejects title-only shells; when env/build are omitted it fills them from runtime identity. Prefer evidence-rich bugs over volume. Full boundary: `server/AGENTS.md` → **Issue create boundary**.
+
 ## Known Structural Gaps
 
 1. **`bridge-tools.ts` is a 587KB monolith** — 126 handlers, no domain isolation

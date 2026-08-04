@@ -297,6 +297,8 @@ export interface IssueNote {
 export const insertIssueSchema = z.object({
   title: z.string(),
   description: z.string().default(""),
+  /** Explicit reproduction steps — required at create; thin title-only issues are rejected. */
+  reproSteps: z.string().min(1),
   status: z.string().default("open"),
   page: z.string().nullable().optional(),
   screenshot: z.string().nullable().optional(),
@@ -305,12 +307,18 @@ export const insertIssueSchema = z.object({
   notes: z.any().nullable().optional(),
   logs: z.string().nullable().optional(),
   dependencies: z.array(z.number()).nullable().optional(),
+  /** Platforms Environment ID. Optional on input — createIssue fills from runtime identity when omitted. */
+  platformEnvironmentId: z.number().int().positive().nullable().optional(),
+  /** Provider deployment/build ID. Optional on input — createIssue fills from runtime identity when omitted. */
+  buildId: z.string().min(1).nullable().optional(),
 });
 
 export interface Issue {
   id: number;
   title: string;
   description: string;
+  /** Explicit reproduction steps. Always non-empty on issues created after the repro gate. */
+  reproSteps: string;
   status: string;
   page: string | null;
   screenshot: string | null;
@@ -319,6 +327,10 @@ export interface Issue {
   notes: unknown;
   logs: string | null;
   dependencies: number[] | null;
+  /** Platforms Environment ID the issue was filed against. Null only on legacy pre-gate issues. */
+  platformEnvironmentId: number | null;
+  /** Provider deployment/build ID the issue was filed against. Null only on legacy pre-gate issues. */
+  buildId: string | null;
   createdAt: Date;
 }
 export type InsertIssue = z.infer<typeof insertIssueSchema>;

@@ -5186,19 +5186,56 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     if (action === "create") {
       const title = args.title;
-      if (!title) return { result: "Missing issue title", error: true };
+      if (!title) {
+        return {
+          result: "Missing issue title",
+          error: true,
+          failure: inputFailure("issue_create_missing_title"),
+        };
+      }
+      const reproSteps = typeof args.reproSteps === "string" ? args.reproSteps.trim() : "";
+      if (!reproSteps) {
+        return {
+          result: "Missing issue reproSteps. Do not file title-only shells — include explicit reproduction steps.",
+          error: true,
+          failure: inputFailure("issue_create_missing_repro"),
+        };
+      }
       try {
+        const platformEnvironmentId =
+          typeof args.platformEnvironmentId === "number" && Number.isInteger(args.platformEnvironmentId) && args.platformEnvironmentId > 0
+            ? args.platformEnvironmentId
+            : typeof args.platformEnvironmentId === "string" && args.platformEnvironmentId.trim()
+              ? Number(args.platformEnvironmentId)
+              : null;
+        const buildId = typeof args.buildId === "string" && args.buildId.trim()
+          ? args.buildId.trim()
+          : null;
         const issue = await storage.createIssue({
           title,
           description: args.description || "",
+          reproSteps,
           status: "open",
           page: null,
           screenshot: null,
           logs: null,
+          platformEnvironmentId: Number.isInteger(platformEnvironmentId) && (platformEnvironmentId as number) > 0
+            ? (platformEnvironmentId as number)
+            : null,
+          buildId,
         });
-        return { result: `Issue created: "${issue.title}" (ID: ${issue.id})` };
+        return {
+          result: `Issue created: "${issue.title}" (ID: ${issue.id}, env=${issue.platformEnvironmentId}, build=${issue.buildId})`,
+        };
       } catch (err: any) {
-        return { result: `Failed to create issue: ${err.message}`, error: true };
+        const isValidation = err?.name === "IssueCreateValidationError";
+        return {
+          result: `Failed to create issue: ${err.message}`,
+          error: true,
+          failure: isValidation
+            ? inputFailure(err.code || "issue_create_validation")
+            : undefined,
+        };
       }
     }
 

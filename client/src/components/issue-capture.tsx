@@ -247,6 +247,7 @@ export function IssueCaptureDialog() {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [reproSteps, setReproSteps] = useState("");
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   const [annotating, setAnnotating] = useState(false);
@@ -259,6 +260,7 @@ export function IssueCaptureDialog() {
       routeRef.current = getCurrentRoute();
       setTitle("");
       setDescription("");
+      setReproSteps("");
       setScreenshot(null);
       setIncludeLogs(false);
       setOpen(true);
@@ -273,7 +275,14 @@ export function IssueCaptureDialog() {
   });
 
   const submitMutation = useMutation({
-    mutationFn: async (payload: { title: string; description: string; page: string; screenshot?: string; logs?: string }) => {
+    mutationFn: async (payload: {
+      title: string;
+      description: string;
+      reproSteps: string;
+      page: string;
+      screenshot?: string;
+      logs?: string;
+    }) => {
       const res = await apiRequest("POST", "/api/issues", payload);
       return res.json();
     },
@@ -281,6 +290,7 @@ export function IssueCaptureDialog() {
       toast({ title: "Issue captured" });
       setTitle("");
       setDescription("");
+      setReproSteps("");
       setScreenshot(null);
       setIncludeLogs(false);
       setOpen(false);
@@ -325,7 +335,16 @@ export function IssueCaptureDialog() {
   }, [toast]);
 
   const handleSubmit = () => {
-    if (!title.trim() && !description.trim()) return;
+    const trimmedRepro = reproSteps.trim();
+    if (!trimmedRepro) {
+      toast({
+        title: "Repro steps required",
+        description: "Describe how to reproduce the issue before filing.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!title.trim() && !description.trim() && !trimmedRepro) return;
 
     let logsText: string | undefined;
     if (includeLogs && recentLogs && recentLogs.length > 0) {
@@ -335,9 +354,11 @@ export function IssueCaptureDialog() {
         .join("\n");
     }
 
+    // platformEnvironmentId + buildId are filled server-side from runtime identity.
     submitMutation.mutate({
       title: title.trim(),
       description: description.trim(),
+      reproSteps: trimmedRepro,
       page: routeRef.current,
       screenshot: screenshot || undefined,
       logs: logsText,
@@ -430,10 +451,18 @@ export function IssueCaptureDialog() {
             />
 
             <Textarea
+              value={reproSteps}
+              onChange={(e) => setReproSteps(e.target.value)}
+              placeholder="Repro steps (required) — numbered steps to reproduce..."
+              className="min-h-[80px] text-sm"
+              data-testid="input-issue-repro"
+            />
+
+            <Textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe the issue or improvement in detail... (optional)"
-              className="min-h-[80px] text-sm"
+              placeholder="Context / expected vs actual (optional)"
+              className="min-h-[60px] text-sm"
               data-testid="input-issue-description"
             />
 
@@ -514,7 +543,7 @@ export function IssueCaptureDialog() {
                 size="sm"
                 className="ml-auto"
                 onClick={handleSubmit}
-                disabled={(!title.trim() && !description.trim()) || submitMutation.isPending}
+                disabled={!reproSteps.trim() || submitMutation.isPending}
                 data-testid="button-submit-issue"
               >
                 {submitMutation.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}

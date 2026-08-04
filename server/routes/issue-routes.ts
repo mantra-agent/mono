@@ -11,17 +11,29 @@ const log = createLogger("IssueRoutes");
 const createIssueSchema = z.object({
   title: z.string().max(500).optional().default(""),
   description: z.string().max(10000).default(""),
+  /** Explicit reproduction steps — required at create; storage enforces min length. */
+  reproSteps: z.string().min(1).max(10000),
   page: z.string().optional(),
   screenshot: z.string().optional(),
   logs: z.string().max(50000).optional(),
+  platformEnvironmentId: z.number().int().positive().nullable().optional(),
+  buildId: z.string().min(1).max(200).nullable().optional(),
 });
 
-function generateIssueTitleSync(description?: string): string {
-  if (description && description.length > 0) {
-    const words = description.split(/\s+/).slice(0, 5).join(" ");
+function generateIssueTitleSync(description?: string, reproSteps?: string): string {
+  const source = (description && description.trim()) || (reproSteps && reproSteps.trim()) || "";
+  if (source.length > 0) {
+    const words = source.split(/\s+/).slice(0, 5).join(" ");
     return words.length > 50 ? words.substring(0, 47) + "..." : words;
   }
   return "Untitled Issue";
+}
+
+function isIssueCreateValidationError(error: unknown): error is { name: string; message: string; code?: string } {
+  return !!error
+    && typeof error === "object"
+    && "name" in error
+    && (error as { name?: string }).name === "IssueCreateValidationError";
 }
 
 export function registerIssueRoutes(app: Express) {
@@ -33,12 +45,7 @@ export function registerIssueRoutes(app: Express) {
 
       let issueTitle = data.title?.trim() || "";
       if (!issueTitle) {
-        const content = data.description || data.logs || data.page || "";
-        if (content) {
-          issueTitle = generateIssueTitleSync(data.description);
-        } else {
-          issueTitle = "Untitled Issue";
-        }
+        issueTitle = generateIssueTitleSync(data.description, data.reproSteps);
       }
 
       let screenshotPath: string | undefined;
@@ -63,16 +70,22 @@ export function registerIssueRoutes(app: Express) {
       const issue = await storage.createIssue({
         title: issueTitle,
         description: data.description,
+        reproSteps: data.reproSteps,
         status: "open",
         page: data.page || null,
         screenshot: screenshotPath || null,
         logs: data.logs || null,
+        platformEnvironmentId: data.platformEnvironmentId ?? null,
+        buildId: data.buildId ?? null,
       });
 
       res.json(issue);
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Invalid input", details: error.errors });
+      }
+      if (isIssueCreateValidationError(error)) {
+        return res.status(400).json({ error: error.message, code: error.code || "issue_create_validation" });
       }
       res.status(500).json({ error: error.message });
     }
@@ -166,8 +179,11 @@ export function registerIssueRoutes(app: Express) {
     spec: z.string().max(10000).optional(),
     title: z.string().min(1).max(500).optional(),
     description: z.string().max(10000).optional(),
+    reproSteps: z.string().min(1).max(10000).optional(),
     feedback: z.string().max(10000).optional(),
     dependencies: z.array(z.number()).optional(),
+    platformEnvironmentId: z.number().int().positive().nullable().optional(),
+    buildId: z.string().min(1).max(200).nullable().optional(),
     notes: z.any().optional(),
   });
 
@@ -186,6 +202,9 @@ export function registerIssueRoutes(app: Express) {
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Invalid input", details: error.errors });
+      }
+      if (isIssueCreateValidationError(error)) {
+        return res.status(400).json({ error: error.message, code: error.code || "issue_create_validation" });
       }
       res.status(500).json({ error: error.message });
     }
