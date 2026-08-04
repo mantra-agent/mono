@@ -91,6 +91,7 @@ Before any code diagnosis, system debugging, file edit, build, PR, or merge:
 - For a bounded visual or implementation change that the user specifies, make one coherent scoped pass and one final verification. Do not enter an unsolicited tuning loop unless the requested change fails the production build/runtime correctness gate or the user asks for another iteration.
 - When automation is the goal, complete infrastructure and setup work end-to-end. Ask the user only for credentials, approvals, or physical actions the system cannot perform.
 - Before coding under pressure, establish the external state that determines truth: target branch, deploy target, live artifact, verification command, and terminal state. Local edits, PRs, merges, builds, deployments, and user-visible behavior are distinct states.
+- To answer "is this fix live?", do **not** grep `/app` or the runtime filesystem. Read Runtime Identity in context first; then `platforms.get_environment_status` / `get_build_status` + merge ancestry. The platform attests by commit, not by line. Forbidden `/app` access is not a missing capability.
 - If `AGENTS.md` is missing, allow only safe root discovery and creation of `AGENTS.md` at the verified repository root. Block normal code work until it exists.
 
 ## Diagnostic Workflow
@@ -144,6 +145,17 @@ npm run build
 ```
 
 If it fails, fix the build. Do not substitute tests, smoke tests, or standalone typechecks for the build gate.
+
+## Live Verification
+
+To answer "is this fix live?", do **not** grep `/app` or the runtime filesystem. The sandbox wall is correct; the platform already attests.
+
+1. **Runtime Identity** in the context header — if this session is on the target host, read `Commit`, `Platform Environment`, and `Public URL` first.
+2. **`platforms.get_environment_status(id)`** — authoritative served commit, deploy status, and reachability for any bound environment.
+3. **`platforms.get_build_status(id)`** + merge ancestry — whether your SHA is an ancestor of the served commit.
+4. **Behavioral proof** only when commit attestation is insufficient (log signature, UI path, API contract).
+
+Trust boundary: the platform attests by **commit**, not by line. Never treat forbidden `/app` access as a missing capability.
 
 ## Final Report Checklist
 
