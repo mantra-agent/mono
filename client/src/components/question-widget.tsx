@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronRight, Loader2, MessageCircleQuestion, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { SimpleCheckCircle } from "@/components/home/home-check-circle";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -55,6 +56,8 @@ function ExpandableDetailRow({
   detail,
   testId,
   onSelect,
+  badge,
+  emphasized,
 }: {
   checked: boolean;
   disabled: boolean;
@@ -62,6 +65,8 @@ function ExpandableDetailRow({
   detail?: string;
   testId: string;
   onSelect: () => void;
+  badge?: string;
+  emphasized?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const detailText = detail?.trim() || "";
@@ -71,7 +76,8 @@ function ExpandableDetailRow({
     <div
       className={cn(
         "rounded-sm transition-colors",
-        checked ? "bg-accent/60" : "hover:bg-accent/40",
+        checked || emphasized ? "bg-accent/60" : "hover:bg-accent/40",
+        emphasized && "ring-1 ring-primary/30",
         disabled && "opacity-60",
       )}
     >
@@ -105,7 +111,18 @@ function ExpandableDetailRow({
         >
           <SimpleCheckCircle checked={checked} interactive={false} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
-            <span className="block text-sm text-foreground">{label}</span>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="block min-w-0 flex-1 text-sm text-foreground">{label}</span>
+              {badge ? (
+                <Badge
+                  variant="secondary"
+                  className="shrink-0 text-[10px] font-medium tabular-nums"
+                  data-testid={`${testId}-confidence`}
+                >
+                  {badge}
+                </Badge>
+              ) : null}
+            </span>
           </span>
         </button>
       </div>
@@ -175,22 +192,37 @@ export function QuestionWidget({
   onSubmit: (response: QuestionResponseMeta) => Promise<QuestionSubmitResult | boolean>;
   onCancel?: () => Promise<boolean>;
 }) {
-  const [selected, setSelected] = useState<string[]>(response?.selectedOptionIds ?? []);
+  const recommendation = prompt.recommendation;
+  const [selected, setSelected] = useState<string[]>(
+    () => response?.selectedOptionIds ?? recommendation?.optionIds ?? [],
+  );
   const [otherSelected, setOtherSelected] = useState(Boolean(response?.otherText));
   const [otherText, setOtherText] = useState(response?.otherText ?? "");
   const [selectedPrinciples, setSelectedPrinciples] = useState<string[]>(
-    response?.selectedPrincipleRevisionIds ?? [],
+    () =>
+      response?.selectedPrincipleRevisionIds ??
+      recommendation?.principleRevisionIds ??
+      [],
   );
   const [principleCatalog, setPrincipleCatalog] = useState<QuestionPrincipleOption[]>(prompt.principles);
   const [principleQuery, setPrincipleQuery] = useState("");
   const [principlesLoading, setPrinciplesLoading] = useState(false);
-  const [reasoning, setReasoning] = useState(response?.reasoning ?? "");
-  // Principles/context stay collapsed by default; reasoning lives outside this panel.
-  const [showContext, setShowContext] = useState(false);
+  const [reasoning, setReasoning] = useState(
+    () => response?.reasoning ?? recommendation?.reasoning ?? prompt.reasoning ?? "",
+  );
+  // Principles stay collapsed unless the agent already checked some.
+  const [showContext, setShowContext] = useState(
+    () => Boolean(recommendation?.principleRevisionIds?.length),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const recommendedOptionIds = useMemo(
+    () => new Set(recommendation?.optionIds ?? []),
+    [recommendation?.optionIds],
+  );
+  const recommendedConfidence = recommendation?.confidence;
   const [localDecisionId, setLocalDecisionId] = useState<string | undefined>(response?.decisionId);
 
   const cancel = async () => {
@@ -442,17 +474,26 @@ export function QuestionWidget({
         </div>
       </div>
       <div className="space-y-0.5 px-2 py-2">
-        {prompt.options.map((option) => (
-          <ExpandableDetailRow
-            key={option.id}
-            checked={selected.includes(option.id)}
-            disabled={controlsDisabled}
-            label={option.label}
-            detail={option.description}
-            testId={`question-option-${prompt.toolCallId}-${option.id}`}
-            onSelect={() => selectOption(option.id)}
-          />
-        ))}
+        {prompt.options.map((option) => {
+          const isRecommended = recommendedOptionIds.has(option.id);
+          return (
+            <ExpandableDetailRow
+              key={option.id}
+              checked={selected.includes(option.id)}
+              disabled={controlsDisabled}
+              label={option.label}
+              detail={option.description}
+              testId={`question-option-${prompt.toolCallId}-${option.id}`}
+              onSelect={() => selectOption(option.id)}
+              emphasized={isRecommended}
+              badge={
+                isRecommended && typeof recommendedConfidence === "number"
+                  ? `${recommendedConfidence}% confidence`
+                  : undefined
+              }
+            />
+          );
+        })}
         {prompt.allowOther && (
           <div>
             <ExpandableDetailRow
@@ -480,9 +521,9 @@ export function QuestionWidget({
       <div className="space-y-1.5 border-t border-border/40 px-3 py-2">
         <label
           htmlFor={`question-reasoning-${prompt.toolCallId}`}
-          className="block text-xs font-medium text-muted-foreground"
+          className="sr-only"
         >
-          Reasoning
+          Reasoning (optional)
         </label>
         <textarea
           id={`question-reasoning-${prompt.toolCallId}`}
@@ -490,7 +531,7 @@ export function QuestionWidget({
           onChange={(event) => setReasoning(event.target.value)}
           disabled={controlsDisabled}
           rows={2}
-          placeholder="Why this choice (optional)"
+          placeholder="Reasoning (optional)"
           className="w-full resize-none rounded-sm border border-border/30 bg-transparent p-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-border/60"
           data-testid={`question-reasoning-${prompt.toolCallId}`}
         />
@@ -506,7 +547,7 @@ export function QuestionWidget({
           data-testid={`question-provenance-toggle-${prompt.toolCallId}`}
         >
           <ChevronRight className={cn("h-3.5 w-3.5 shrink-0 transition-transform", showContext && "rotate-90")} />
-          <span className="min-w-0 flex-1">Context</span>
+          <span className="min-w-0 flex-1">Principles</span>
           {principlesLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
           {selectedPrinciples.length > 0 ? (
             <span className="text-[10px] font-normal text-muted-foreground/70">{selectedPrinciples.length}</span>

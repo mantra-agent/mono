@@ -13,6 +13,18 @@ export interface QuestionPrincipleOption {
   layer1: string;
 }
 
+/** Agent preliminary judgment shown in the widget before the human confirms. */
+export interface QuestionAgentRecommendation {
+  /** Option IDs the agent would choose. Must match prompt option ids. */
+  optionIds: string[];
+  /** Confidence 1–100 for the recommended choice. */
+  confidence: number;
+  /** Short reasoning prefilled into the Reasoning box. */
+  reasoning?: string;
+  /** Principle revision IDs checked as most important to the call. */
+  principleRevisionIds?: string[];
+}
+
 export interface QuestionPrompt {
   question: string;
   options: QuestionOption[];
@@ -21,6 +33,11 @@ export interface QuestionPrompt {
   reasoning?: string;
   principles: QuestionPrincipleOption[];
   allowResponseReasoning: boolean;
+  /**
+   * Optional agent preliminary judgment: highlighted answer, confidence %,
+   * prefilled reasoning, and checked principles. Human can still change any of it.
+   */
+  recommendation?: QuestionAgentRecommendation;
 }
 
 export interface QuestionResponseMeta {
@@ -209,6 +226,93 @@ export function normalizeQuestionPrompt(input: unknown): QuestionValidationResul
   }
 
   const selectionMode: QuestionSelectionMode = raw.selectionMode === "multiple" ? "multiple" : "single";
+
+  let recommendation: QuestionAgentRecommendation | undefined;
+  if (raw.recommendation !== undefined && raw.recommendation !== null) {
+    if (!raw.recommendation || typeof raw.recommendation !== "object" || Array.isArray(raw.recommendation)) {
+      return { ok: false, error: "recommendation must be an object when provided." };
+    }
+    const rec = raw.recommendation as Record<string, unknown>;
+    if (!Array.isArray(rec.optionIds) || rec.optionIds.length === 0) {
+      return { ok: false, error: "recommendation.optionIds must be a non-empty array." };
+    }
+    const optionIdSet = new Set(options.map((option) => option.id));
+    const recommendedOptionIds: string[] = [];
+    const seenRecommended = new Set<string>();
+    for (const [index, rawId] of rec.optionIds.entries()) {
+      const id = nonEmptyString(rawId, MAX_OPTION_ID_LENGTH);
+      if (!id) {
+        return { ok: false, error: `recommendation.optionIds[${index}] must be a non-empty string.` };
+      }
+      if (!optionIdSet.has(id)) {
+        return { ok: false, error: `recommendation.optionIds[${index}] must match a prompt option id.` };
+      }
+      if (seenRecommended.has(id)) continue;
+      seenRecommended.add(id);
+      recommendedOptionIds.push(id);
+    }
+    if (selectionMode === "single" && recommendedOptionIds.length !== 1) {
+      return {
+        ok: false,
+        error: "recommendation.optionIds must contain exactly one id in single mode.",
+      };
+    }
+    if (typeof rec.confidence !== "number" || !Number.isFinite(rec.confidence)) {
+      return { ok: false, error: "recommendation.confidence must be a finite number." };
+    }
+    const confidence = Math.round(rec.confidence);
+    if (confidence < 1 || confidence > 100) {
+      return { ok: false, error: "recommendation.confidence must be an integer from 1 to 100." };
+    }
+    const recReasoning =
+      rec.reasoning === undefined || rec.reasoning === null
+        ? undefined
+        : nonEmptyString(rec.reasoning, MAX_OPTION_DESCRIPTION_LENGTH);
+    if (rec.reasoning !== undefined && rec.reasoning !== null && !recReasoning) {
+      return {
+        ok: false,
+        error: `recommendation.reasoning must be non-empty and at most ${MAX_OPTION_DESCRIPTION_LENGTH} characters.`,
+      };
+    }
+    let principleRevisionIds: string[] | undefined;
+    if (rec.principleRevisionIds !== undefined && rec.principleRevisionIds !== null) {
+      if (!Array.isArray(rec.principleRevisionIds)) {
+        return {
+          ok: false,
+          error: "recommendation.principleRevisionIds must be an array when provided.",
+        };
+      }
+      const principleIdSet = new Set(principles.map((item) => item.revisionId));
+      const ids: string[] = [];
+      const seenPrincipleRec = new Set<string>();
+      for (const [index, rawId] of rec.principleRevisionIds.entries()) {
+        const id = nonEmptyString(rawId, 200);
+        if (!id) {
+          return {
+            ok: false,
+            error: `recommendation.principleRevisionIds[${index}] must be a non-empty string.`,
+          };
+        }
+        if (principleIdSet.size > 0 && !principleIdSet.has(id)) {
+          return {
+            ok: false,
+            error: `recommendation.principleRevisionIds[${index}] must match a principles[].revisionId.`,
+          };
+        }
+        if (seenPrincipleRec.has(id)) continue;
+        seenPrincipleRec.add(id);
+        ids.push(id);
+      }
+      if (ids.length > 0) principleRevisionIds = ids;
+    }
+    recommendation = {
+      optionIds: recommendedOptionIds,
+      confidence,
+      ...(recReasoning ? { reasoning: recReasoning } : {}),
+      ...(principleRevisionIds ? { principleRevisionIds } : {}),
+    };
+  }
+
   return {
     ok: true,
     value: {
@@ -219,6 +323,7 @@ export function normalizeQuestionPrompt(input: unknown): QuestionValidationResul
       ...(reasoning ? { reasoning } : {}),
       principles,
       allowResponseReasoning: raw.allowResponseReasoning === true,
+      ...(recommendation ? { recommendation } : {}),
     },
   };
 }
