@@ -241,6 +241,17 @@ Hosting credentials and environment configuration belong to Platform Environment
 
 ## Shared UI Patterns
 
+### Universal Reference Picker
+
+One control for `@anything`. Do not invent local typeaheads for tags, people, pages, goals, or other linkable objects.
+
+- **Search:** `client/src/lib/reference-search.ts` (`loadReferenceSuggestions`) is the single multi-type source.
+- **Rows:** `client/src/components/references/reference-suggestion-row.tsx` — compact one-line rows (icon · label · type).
+- **Field / menu control:** `client/src/components/references/reference-picker.tsx` (`ReferencePicker`). Support `types`, multi/single, inline/menu, and tag create when needed.
+- **Chat:** `useMentionAutocomplete` + `MentionPopover` consume the same search path and rows.
+- **Tags only:** `UniversalTagPicker` is a thin `types:['tag']` facade over `ReferencePicker`. Prefer `ReferencePicker` for new work.
+- **Design:** interactive playground lives under Build → Design → References (§13).
+
 ### Profile Tree Rows
 
 Use `ProfileTreeRow` for compact label/value rows with optional progressive disclosure. Pass `defaultOpen` only when readiness or missing required configuration must be visible on first render; ordinary detail rows stay collapsed.
