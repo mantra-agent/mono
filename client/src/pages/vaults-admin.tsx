@@ -12,6 +12,7 @@ import {
   Search,
   X,
   Briefcase,
+  Share2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -38,6 +39,7 @@ import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
 import { VaultMigrationControls } from "@/components/vault-migration-controls";
 import { TeamsPanel } from "@/components/teams/teams-panel";
+import { ShareSheet } from "@/components/sharing/share-sheet";
 import {
   DEFAULT_VAULT_COLOR,
   normalizeVaultColor,
@@ -362,6 +364,7 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
   const [renameOpen, setRenameOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   const nonArchivedCount = allVaults.filter((item) => !item.isArchived).length;
   const canArchive = !isActive && nonArchivedCount > 1;
@@ -403,6 +406,14 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
           )}
           <Tooltip>
             <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShareOpen(true)} aria-label={`Share ${vault.name}`} data-testid={`button-vault-share-${vault.id}`}>
+                <Share2 className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Share vault</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRenameOpen(true)} aria-label={`Edit ${vault.name}`}>
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
@@ -431,6 +442,7 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
         </div>
       </div>
       {detailsOpen ? <VaultOpportunitySelector vault={vault} opportunities={opportunities} /> : null}
+      <ShareSheet objectType="vault" objectId={vault.id} title={vault.name} open={shareOpen} onOpenChange={setShareOpen} />
       <RenameDialog vault={vault} open={renameOpen} onOpenChange={setRenameOpen} />
       <ArchiveDialog vault={vault} open={archiveOpen} onOpenChange={setArchiveOpen} />
     </>
