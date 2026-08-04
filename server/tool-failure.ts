@@ -35,7 +35,12 @@ export type ToolFailureCode =
   // Code / GitNexus contract rejects
   | "code_missing_action"
   | "code_unknown_action"
-  | "code_missing_query";
+  | "code_missing_query"
+  | "git_auth_denied"
+  | "git_state_conflict"
+  | "git_network"
+  | "scratch_path_denied"
+  | "scratch_not_found";
 
 export interface ToolFailure {
   kind: ToolFailureKind;
@@ -74,6 +79,14 @@ export function inputFailure(code: ToolFailureCode, detail?: string): ToolFailur
 
 export function permissionFailure(code: ToolFailureCode, detail?: string): ToolFailure {
   return makeFailure("permission", code, false, detail ? { detail } : undefined);
+}
+
+/**
+ * Retryable operational failures — the same call may succeed on a later attempt
+ * once a transient condition (network, remote availability) clears.
+ */
+export function transientFailure(code: ToolFailureCode, detail?: string): ToolFailure {
+  return makeFailure("transient", code, true, detail ? { detail } : undefined);
 }
 
 /**
@@ -138,6 +151,70 @@ export function toolFailureFromError(err: unknown): ToolFailure | null {
 
   if (isUniqueViolation(err)) {
     return inputFailure("hook_name_conflict", message || undefined);
+  }
+
+  return null;
+}
+
+/**
+ * Classify a failed GitHub REST API response by HTTP status. PR create/merge/
+ * delete calls fail on auth (401/403), rate or availability limits (408/429/5xx),
+ * and validation or state conflicts (404/422 and other 4xx). Detail strings carry
+ * only the status code, never response bodies, to avoid leaking tokens.
+ */
+export function classifyGitHubApiStatus(status: number): ToolFailure | null {
+  if (status === 401 || status === 403) return permissionFailure("git_auth_denied", `github_api_${status}`);
+  if (status === 408 || status === 429 || status >= 500) return transientFailure("git_network", `github_api_${status}`);
+  if (status >= 400) return inputFailure("git_state_conflict", `github_api_${status}`);
+  return null;
+}
+
+/**
+ * Classify a failed git subprocess (execFile rejection) by its stderr/message.
+ *
+ * Git subprocess failures are caught and flattened at the git tool handler's
+ * own catch block, so the raw error never reaches toolFailureFromError. This
+ * recognizes the known, expected git failure classes so they render amber.
+ * Genuinely unrecognized git failures return null and stay red — a true
+ * surprise worth investigating. Detail strings are generic (never raw stderr)
+ * to avoid leaking credentials into telemetry.
+ */
+export function classifyGitError(err: unknown): ToolFailure | null {
+  if (err instanceof ToolFailureError) return err.failure;
+  const e = (err ?? {}) as { stderr?: unknown; message?: unknown };
+  const haystack = [
+    typeof e.stderr === "string" ? e.stderr : "",
+    typeof e.message === "string" ? e.message : "",
+  ]
+    .join("\n")
+    .trim();
+  if (!haystack) return null;
+
+  // Auth / permission walls — credentials wrong, revoked, or prompts disabled.
+  if (
+    /authentication failed|could not read (?:username|password)|permission denied|invalid username or password|support for password authentication|terminal prompts disabled|returned error: 403|access denied/i.test(
+      haystack,
+    )
+  ) {
+    return permissionFailure("git_auth_denied", "git authentication/permission denied");
+  }
+
+  // Network / transient — DNS, connectivity, server 5xx, interrupted transfer.
+  if (
+    /could not resolve host|couldn't connect|failed to connect|connection (?:timed out|reset|refused)|operation timed out|network is unreachable|early eof|rpc failed|the requested url returned error: 5\d\d|unable to access/i.test(
+      haystack,
+    )
+  ) {
+    return transientFailure("git_network", "git network/connectivity failure");
+  }
+
+  // Repo-state conflicts — the operation cannot proceed given current state.
+  if (
+    /nothing to commit|no changes added to commit|nothing added to commit|updates were rejected|non-fast-forward|failed to push some refs|automatic merge failed|merge conflict|\bconflict\b|already exists|not a valid (?:ref|object)|unknown revision|did not match any file|pathspec .* did not match|not a git repository|couldn't find remote ref|needed a single revision/i.test(
+      haystack,
+    )
+  ) {
+    return inputFailure("git_state_conflict", "git repository state conflict");
   }
 
   return null;
