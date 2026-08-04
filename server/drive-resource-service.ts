@@ -1,9 +1,10 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { db } from "./db";
 import { driveResources, type DriveResourceRow } from "@shared/schema";
 import { vaults } from "@shared/models/vaults";
 import { createLogger } from "./log";
 import { requireCurrentUserPrincipal } from "./principal-context";
+import { liveVaultGatePredicate, type ObjectRole } from "./authorize";
 
 const log = createLogger("DriveResourceService");
 
@@ -20,11 +21,30 @@ export interface BindDriveResourceInput {
 
 /**
  * Binds Google Drive files/folders into a vault's Files branch. Every read and write is bounded to
- * the caller's account; a binding is a pointer to a Google file (via drive.file), never a copy.
- * Unbinding deletes only the pointer row — it never touches the underlying Google file.
+ * the caller's authorized vault access; a binding is a pointer to a Google file (via drive.file),
+ * never a copy. Unbinding deletes only the pointer row — it never touches the underlying Google file.
  */
 export class DriveResourceService {
-  /** Assert the caller's account owns the vault a binding targets, or throw 404. */
+  /** Vault owner account OR live vault grant at the required role. */
+  private async assertVaultAccess(vaultId: string, required: ObjectRole): Promise<void> {
+    const principal = requireCurrentUserPrincipal();
+    const [vault] = await db
+      .select({ id: vaults.id })
+      .from(vaults)
+      .where(
+        and(
+          eq(vaults.id, vaultId),
+          or(
+            eq(vaults.accountId, principal.accountId),
+            liveVaultGatePredicate(principal, vaults.id, required),
+          ),
+        ),
+      )
+      .limit(1);
+    if (!vault) throw Object.assign(new Error("Vault not found"), { status: 404 });
+  }
+
+  /** Mutations that create/destroy binds stay owner-account only (not vault grantees). */
   private async assertOwnedVault(vaultId: string): Promise<void> {
     const principal = requireCurrentUserPrincipal();
     const [vault] = await db
@@ -35,12 +55,17 @@ export class DriveResourceService {
     if (!vault) throw Object.assign(new Error("Vault not found"), { status: 404 });
   }
 
+  /**
+   * Vault-scoped read: any principal who can see the vault sees every bind in it.
+   * Do not filter binds by principal.accountId — that hid shared-vault grantees
+   * (Step 11 under-permissive gap).
+   */
   async list(vaultId: string): Promise<DriveResourceRow[]> {
-    const principal = requireCurrentUserPrincipal();
+    await this.assertVaultAccess(vaultId, "read");
     return db
       .select()
       .from(driveResources)
-      .where(and(eq(driveResources.vaultId, vaultId), eq(driveResources.accountId, principal.accountId)))
+      .where(eq(driveResources.vaultId, vaultId))
       .orderBy(driveResources.name);
   }
 
