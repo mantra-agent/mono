@@ -194,6 +194,17 @@ export type RegisteredCommandKey = (typeof REGISTERED_COMMAND_KEYS)[number];
 export const REGISTERED_EXTENSION_SLOT_KEYS = [] as const;
 export type RegisteredExtensionSlotKey = (typeof REGISTERED_EXTENSION_SLOT_KEYS)[number];
 
+// Dashboard activity heatmap series keys (Dashboard host + activity API).
+export const REGISTERED_DASHBOARD_HEATMAP_SERIES_KEYS = [
+  "work",
+  "personal",
+  "meetings",
+  "shipped_prs",
+  "wellness_completions",
+] as const;
+export type RegisteredDashboardHeatmapSeriesKey =
+  (typeof REGISTERED_DASHBOARD_HEATMAP_SERIES_KEYS)[number];
+
 /** Read-only Set catalogs used by the validator for existence checks. */
 export const REGISTERED_KEY_CATALOGS = {
   surface: new Set<string>(REGISTERED_SURFACE_KEYS),
@@ -206,4 +217,5 @@ export const REGISTERED_KEY_CATALOGS = {
   routeGroup: new Set<string>(REGISTERED_ROUTE_GROUP_KEYS),
   command: new Set<string>(REGISTERED_COMMAND_KEYS),
   slot: new Set<string>(REGISTERED_EXTENSION_SLOT_KEYS),
+  dashboardHeatmapSeries: new Set<string>(REGISTERED_DASHBOARD_HEATMAP_SERIES_KEYS),
 } as const;

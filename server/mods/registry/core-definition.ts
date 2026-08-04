@@ -6,7 +6,13 @@
 // forbids any Mod from claiming that namespace or overriding a Core route/action.
 
 import type { CoreDefinition } from "@shared/models/mod-registry";
-import { clientRoute, integration, nav, widget } from "./contribution-builders";
+import {
+  clientRoute,
+  dashboardHeatmap,
+  integration,
+  nav,
+  widget,
+} from "./contribution-builders";
 import { actionsForOwner } from "./action-catalog";
 
 export const CORE_VERSION = "1.0.0";
@@ -106,6 +112,12 @@ export const coreDefinition: CoreDefinition = {
     widgets: [
       widget("core.widget.state", "home.primary", "state", "state", 1),
       widget("core.widget.inbox", "home.inbox", "inbox_item", "email", 1),
+    ],
+    dashboardHeatmaps: [
+      dashboardHeatmap("core.heatmap.work", "work", "Work", "Briefcase", 10, "operating"),
+      dashboardHeatmap("core.heatmap.personal", "personal", "Personal", "User", 20, "operating"),
+      dashboardHeatmap("core.heatmap.meetings", "meetings", "Meetings", "Calendar", 30, "operating"),
+      dashboardHeatmap("core.heatmap.shipped_prs", "shipped_prs", "Shipped PRs", "GitBranch", 40, "code"),
     ],
     actions: actionsForOwner("core"),
     integrations: [
