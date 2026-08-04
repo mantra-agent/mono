@@ -25,6 +25,7 @@ import {
   visiblePersonPredicate,
   writablePersonPredicate,
 } from "./person-vault-access";
+import { tagService } from "./tag-service";
 
 const personScopeColumns = { scope: persons.scope, ownerUserId: persons.ownerUserId, accountId: persons.accountId };
 const personMergeAliasScopeColumns = { scope: personMergeAliases.scope, ownerUserId: personMergeAliases.ownerUserId, accountId: personMergeAliases.accountId };
@@ -1315,7 +1316,10 @@ export class PeopleStorage {
     }
     const created = await this.getPerson(person.id);
     if (!created) throw new Error(`Person ${person.id} was created without visible Vault membership`);
-    log.debug(`createPerson created id=${person.id} name=${person.name}`);
+    tagService.replaceEntityTags("person", created.id, created.name, created.tags || []).catch((err) =>
+      log.warn("person tag sync failed", { id: created.id, error: err }),
+    );
+    log.debug(`createPerson created id=${created.id} name=${created.name}`);
     return created;
   }
 
@@ -1338,6 +1342,11 @@ export class PeopleStorage {
       updated.networkProfile.mobilization = computeMobilization(updated);
     }
     await this.savePerson(updated);
+    if (updates.tags !== undefined || updates.name !== undefined) {
+      tagService.replaceEntityTags("person", updated.id, updated.name, updated.tags || []).catch((err) =>
+        log.warn("person tag sync failed", { id: updated.id, error: err }),
+      );
+    }
     return updated;
   }
 
@@ -1440,6 +1449,17 @@ export class PeopleStorage {
     );
     this.invalidateListCache();
     this.invalidateAliasGraphCache();
+    if (!result.alreadyMerged) {
+      const target = await this.getPerson(result.targetPersonId);
+      if (target) {
+        tagService.replaceEntityTags("person", target.id, target.name, target.tags || []).catch((err) =>
+          log.warn("person tag sync failed", { id: target.id, error: err }),
+        );
+      }
+      tagService.removeEntity("person", result.sourcePersonId).catch((err) =>
+        log.warn("person tag cleanup failed", { id: result.sourcePersonId, error: err }),
+      );
+    }
     log.info(
       `mergePeople sourceId=${result.sourcePersonId} targetId=${result.targetPersonId} alreadyMerged=${result.alreadyMerged}`,
     );
@@ -1452,6 +1472,9 @@ export class PeopleStorage {
       writablePersonPredicate(requireCurrentUserPrincipal(), eq(persons.id, id)),
     );
     await db.delete(personEmailsTable).where(eq(personEmailsTable.personId, id));
+    tagService.removeEntity("person", id).catch((err) =>
+      log.warn("person tag cleanup failed", { id, error: err }),
+    );
     this.invalidateListCache();
   }
 
