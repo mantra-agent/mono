@@ -37,10 +37,20 @@ export function registerDriveResourceRoutes(app: Express) {
   app.post("/api/drive/resources", async (req, res) => {
     try {
       const body = req.body ?? {};
+      const providerRaw = body.provider == null ? "google" : String(body.provider);
+      const provider =
+        providerRaw === "box" || providerRaw === "mantra" || providerRaw === "google"
+          ? providerRaw
+          : null;
+      if (!provider) {
+        throw Object.assign(new Error("provider must be google, box, or mantra"), { status: 400 });
+      }
+      const providerFileId = String(body.providerFileId ?? "");
       const resource = await driveResourceService.bind({
         vaultId: String(body.vaultId ?? ""),
         connectedAccountId: String(body.connectedAccountId ?? ""),
-        googleFileId: String(body.googleFileId ?? ""),
+        provider,
+        providerFileId,
         name: String(body.name ?? ""),
         mimeType: body.mimeType == null ? null : String(body.mimeType),
         resourceType: body.resourceType === "folder" ? "folder" : "file",
@@ -107,9 +117,9 @@ export function registerDriveResourceRoutes(app: Express) {
 
   // ── Files API (connector-global read path) ───────────────────────────────
   // GET  /api/files/bound?vaultId=
-  // GET  /api/files/children?vaultId=&driveResourceId= | &googleFileId=
-  // GET  /api/files/metadata?vaultId=&driveResourceId= | &googleFileId=
-  // GET  /api/files/read?vaultId=&driveResourceId= | &googleFileId=
+  // GET  /api/files/children?vaultId=&driveResourceId= | &provider=&providerFileId=
+  // GET  /api/files/metadata?vaultId=&driveResourceId= | &provider=&providerFileId=
+  // GET  /api/files/read?vaultId=&driveResourceId= | &provider=&providerFileId=
   // POST /api/files/authorize  { driveResourceId, required? }
 
   app.get("/api/files/bound", async (req, res) => {
@@ -128,14 +138,19 @@ export function registerDriveResourceRoutes(app: Express) {
       if (!vaultId) throw Object.assign(new Error("vaultId is required"), { status: 400 });
       const driveResourceId =
         typeof req.query.driveResourceId === "string" ? req.query.driveResourceId : undefined;
-      const googleFileId =
-        typeof req.query.googleFileId === "string" ? req.query.googleFileId : undefined;
+      const provider =
+        typeof req.query.provider === "string" ? req.query.provider : undefined;
+      const providerFileId =
+        typeof req.query.providerFileId === "string"
+          ? req.query.providerFileId
+          : undefined;
       const pageToken =
         typeof req.query.pageToken === "string" ? req.query.pageToken : undefined;
       const result = await filesApi.listChildren({
         vaultId,
         driveResourceId,
-        googleFileId,
+        provider: provider as "google" | "box" | "mantra" | undefined,
+        providerFileId,
         pageToken,
       });
       res.json(result);
@@ -150,10 +165,19 @@ export function registerDriveResourceRoutes(app: Express) {
       if (!vaultId) throw Object.assign(new Error("vaultId is required"), { status: 400 });
       const driveResourceId =
         typeof req.query.driveResourceId === "string" ? req.query.driveResourceId : undefined;
-      const googleFileId =
-        typeof req.query.googleFileId === "string" ? req.query.googleFileId : undefined;
+      const provider =
+        typeof req.query.provider === "string" ? req.query.provider : undefined;
+      const providerFileId =
+        typeof req.query.providerFileId === "string"
+          ? req.query.providerFileId
+          : undefined;
       res.json({
-        metadata: await filesApi.getMetadata({ vaultId, driveResourceId, googleFileId }),
+        metadata: await filesApi.getMetadata({
+          vaultId,
+          driveResourceId,
+          provider: provider as "google" | "box" | "mantra" | undefined,
+          providerFileId,
+        }),
       });
     } catch (error) {
       handleError(res, error, "Failed to load file metadata");
@@ -166,9 +190,20 @@ export function registerDriveResourceRoutes(app: Express) {
       if (!vaultId) throw Object.assign(new Error("vaultId is required"), { status: 400 });
       const driveResourceId =
         typeof req.query.driveResourceId === "string" ? req.query.driveResourceId : undefined;
-      const googleFileId =
-        typeof req.query.googleFileId === "string" ? req.query.googleFileId : undefined;
-      res.json(await filesApi.read({ vaultId, driveResourceId, googleFileId }));
+      const provider =
+        typeof req.query.provider === "string" ? req.query.provider : undefined;
+      const providerFileId =
+        typeof req.query.providerFileId === "string"
+          ? req.query.providerFileId
+          : undefined;
+      res.json(
+        await filesApi.read({
+          vaultId,
+          driveResourceId,
+          provider: provider as "google" | "box" | "mantra" | undefined,
+          providerFileId,
+        }),
+      );
     } catch (error) {
       handleError(res, error, "Failed to read file");
     }

@@ -1,7 +1,7 @@
 import { createLogger } from "./log";
 
 const log = createLogger("DriveResourcesSchema");
-const MIGRATION_LOCK_KEY = "migration.drive-resources-schema.v1";
+const MIGRATION_LOCK_KEY = "migration.drive-resources-schema.v2";
 
 type QueryableClient = {
   query: (sql: string, params?: unknown[]) => Promise<unknown>;
@@ -13,10 +13,13 @@ type ConnectionPool = {
 };
 
 /**
- * Idempotent convergence for drive_resources — Google Drive files/folders bound into a vault's Files
- * branch via the Picker (drive.file scope). A binding is a pointer, never a copy; unbinding deletes
- * the row and never touches the underlying Google file. Kept in its own convergence module (mirrors
- * ensureTeamsSchema) so each table owns its DDL and the boot sequence stays explicit.
+ * Idempotent convergence for drive_resources — provider-agnostic file/folder binds into a vault's
+ * Files branch (Picker today; Box/Mantra later). A binding is a pointer, never a copy; unbinding
+ * deletes the row and never touches the underlying provider file. Kept in its own convergence
+ * module (mirrors ensureTeamsSchema) so each table owns its DDL and the boot sequence stays explicit.
+ *
+ * Identity is (provider, provider_file_id). Legacy google_file_id is backfilled into provider_file_id
+ * and retained as a generated compatibility column for zero-downtime readers.
  */
 export async function ensureDriveResourcesSchema(pool: ConnectionPool): Promise<void> {
   const client = await pool.connect();
@@ -29,7 +32,8 @@ export async function ensureDriveResourcesSchema(pool: ConnectionPool): Promise<
         account_id VARCHAR NOT NULL,
         vault_id TEXT NOT NULL,
         connected_account_id TEXT NOT NULL,
-        google_file_id TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'google',
+        provider_file_id TEXT NOT NULL,
         name TEXT NOT NULL,
         mime_type TEXT,
         resource_type TEXT NOT NULL DEFAULT 'file',
@@ -38,6 +42,70 @@ export async function ensureDriveResourcesSchema(pool: ConnectionPool): Promise<
         added_by_user_id VARCHAR,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
+    `);
+    // Additive migration from google_file_id → (provider, provider_file_id).
+    await client.query(`
+      DO $migration$
+      BEGIN
+        -- provider column
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'drive_resources' AND column_name = 'provider'
+        ) THEN
+          ALTER TABLE drive_resources ADD COLUMN provider TEXT NOT NULL DEFAULT 'google';
+        END IF;
+
+        -- provider_file_id column (nullable first for backfill)
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'drive_resources' AND column_name = 'provider_file_id'
+        ) THEN
+          ALTER TABLE drive_resources ADD COLUMN provider_file_id TEXT;
+        END IF;
+
+        -- Backfill provider_file_id from legacy google_file_id when present
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'drive_resources' AND column_name = 'google_file_id'
+        ) THEN
+          EXECUTE 'UPDATE drive_resources SET provider_file_id = google_file_id WHERE provider_file_id IS NULL AND google_file_id IS NOT NULL';
+        END IF;
+
+        -- Fail closed if any row still lacks provider_file_id (empty table is fine)
+        IF EXISTS (SELECT 1 FROM drive_resources WHERE provider_file_id IS NULL) THEN
+          RAISE EXCEPTION 'drive_resources.provider_file_id backfill incomplete';
+        END IF;
+
+        -- Enforce NOT NULL on provider_file_id
+        ALTER TABLE drive_resources ALTER COLUMN provider_file_id SET NOT NULL;
+
+        -- Drop legacy unique on (vault_id, google_file_id) if present
+        IF EXISTS (
+          SELECT 1 FROM pg_indexes
+          WHERE schemaname = 'public' AND indexname = 'idx_drive_resources_vault_file_unique'
+        ) THEN
+          EXECUTE 'DROP INDEX IF EXISTS idx_drive_resources_vault_file_unique';
+        END IF;
+
+        -- New unique on (vault_id, provider, provider_file_id)
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_indexes
+          WHERE schemaname = 'public' AND indexname = 'idx_drive_resources_vault_provider_file_unique'
+        ) THEN
+          EXECUTE 'CREATE UNIQUE INDEX idx_drive_resources_vault_provider_file_unique ON drive_resources(vault_id, provider, provider_file_id)';
+        END IF;
+
+        -- Keep google_file_id as a generated compatibility column when the physical column still exists
+        -- (fresh installs never create it; existing installs keep it as a view of provider_file_id for google rows).
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'drive_resources' AND column_name = 'google_file_id'
+        ) THEN
+          -- Drop the physical column after backfill; public types no longer expose it.
+          -- Reads that still need the Google id use provider_file_id where provider = 'google'.
+          EXECUTE 'ALTER TABLE drive_resources DROP COLUMN google_file_id';
+        END IF;
+      END $migration$
     `);
     await client.query(`
       DO $migration$
@@ -58,12 +126,20 @@ export async function ensureDriveResourcesSchema(pool: ConnectionPool): Promise<
           ALTER TABLE drive_resources ADD CONSTRAINT drive_resources_resource_type_check
             CHECK (resource_type IN ('file', 'folder'));
         END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'drive_resources_provider_check') THEN
+          ALTER TABLE drive_resources ADD CONSTRAINT drive_resources_provider_check
+            CHECK (provider IN ('google', 'box', 'mantra'));
+        END IF;
       END $migration$
     `);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_drive_resources_vault ON drive_resources(vault_id)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_drive_resources_account ON drive_resources(account_id)`);
-    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_drive_resources_vault_file_unique ON drive_resources(vault_id, google_file_id)`);
-    await client.query(`COMMENT ON TABLE drive_resources IS 'Google Drive files/folders bound into a vault Files branch via the Picker. A pointer, never a copy; unbinding never touches the Google file.'`);
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_drive_resources_vault_provider_file_unique ON drive_resources(vault_id, provider, provider_file_id)`,
+    );
+    await client.query(
+      `COMMENT ON TABLE drive_resources IS 'Provider-agnostic file/folder binds into a vault Files branch. Identity is (provider, provider_file_id). A pointer, never a copy; unbinding never touches the provider file.'`,
+    );
     await client.query("COMMIT");
     log.info("drive_resources schema convergence complete");
   } catch (error) {
