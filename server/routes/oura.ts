@@ -23,6 +23,8 @@ import type {
   OuraWebhookSubscription,
 } from "../integrations/oura";
 import { OURA_PROVIDER } from "../integrations/oura";
+import { requireAuth } from "../auth";
+import { requireActiveWellness } from "../mods/wellness-route-access";
 
 const log = createLogger("OuraRoutes");
 
@@ -352,6 +354,19 @@ async function fetchOuraPersonalInfo(tokens: OuraTokens): Promise<OuraPersonalIn
 }
 
 export async function registerOuraRoutes(app: Express): Promise<void> {
+  // Product Oura surface is Wellness-owned. Webhooks stay service-classified
+  // and unauthenticated so provider delivery continues; durable health rows
+  // remain even when Wellness is disabled.
+  app.use("/api/oura", (req, res, next) => {
+    if (req.path === "/webhook" || req.path.startsWith("/webhook/")) {
+      return next();
+    }
+    return requireAuth(req, res, (err?: unknown) => {
+      if (err) return next(err);
+      return requireActiveWellness(req, res, next);
+    });
+  });
+
   app.get("/api/oura/status", async (_req, res) => {
     try {
       const [oauthConfigured, webhookConfigured, accounts] = await Promise.all([

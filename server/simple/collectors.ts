@@ -1601,27 +1601,34 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
     errors.push({ source: "task", message });
   }
 
-  // Wellness
+  // Wellness — local durable activity status only (never Oura/provider fan-out).
+  // Projection stops immediately when Wellness composition is inactive.
   try {
-    const now = new Date();
-    const activities = await queryActivityStatus();
-    const visibleActivities = activities
-      .map((activity, index) => ({ activity, section: wellnessSection(activity, now, timezone), index }))
-      .filter((entry): entry is { activity: WellnessActivityStatus; section: SimpleSection; index: number } => entry.section != null);
+    const principal = getCurrentPrincipalOrSystem();
+    if (principal.actorType === "user") {
+      const { hasActiveWellnessAccess } = await import("../mods/wellness-access");
+      if (await hasActiveWellnessAccess(principal)) {
+        const now = new Date();
+        const activities = await queryActivityStatus();
+        const visibleActivities = activities
+          .map((activity, index) => ({ activity, section: wellnessSection(activity, now, timezone), index }))
+          .filter((entry): entry is { activity: WellnessActivityStatus; section: SimpleSection; index: number } => entry.section != null);
 
-    const actionableActivities = visibleActivities
-      .filter(entry => entry.section !== "done")
-      .sort((a, b) => {
-        if (a.activity.inWindow !== b.activity.inWindow) return a.activity.inWindow ? -1 : 1;
-        return b.activity.urgency - a.activity.urgency;
-      })
-      .slice(0, 6);
-    const completedTodayActivities = visibleActivities
-      .filter(entry => entry.section === "done")
-      .sort((a, b) => new Date(b.activity.lastCompletedAt ?? 0).getTime() - new Date(a.activity.lastCompletedAt ?? 0).getTime());
+        const actionableActivities = visibleActivities
+          .filter(entry => entry.section !== "done")
+          .sort((a, b) => {
+            if (a.activity.inWindow !== b.activity.inWindow) return a.activity.inWindow ? -1 : 1;
+            return b.activity.urgency - a.activity.urgency;
+          })
+          .slice(0, 6);
+        const completedTodayActivities = visibleActivities
+          .filter(entry => entry.section === "done")
+          .sort((a, b) => new Date(b.activity.lastCompletedAt ?? 0).getTime() - new Date(a.activity.lastCompletedAt ?? 0).getTime());
 
-    [...actionableActivities, ...completedTodayActivities]
-      .forEach(({ activity, section }, index) => items.push(itemFromWellnessActivity(activity, section, index)));
+        [...actionableActivities, ...completedTodayActivities]
+          .forEach(({ activity, section }, index) => items.push(itemFromWellnessActivity(activity, section, index)));
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error(`wellness collection failed: ${message}`);

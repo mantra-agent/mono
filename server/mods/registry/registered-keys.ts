@@ -173,6 +173,9 @@ export const REGISTERED_TIMER_TEMPLATE_KEYS = [
   "build-reliability-sentinel-30m",
   "build-security-sentinel-weekly",
   "post-build-regression",
+  "weekly-reflection",
+  "monthly-reflection",
+  "reflect-daily",
 ] as const;
 export type RegisteredTimerTemplateKey = (typeof REGISTERED_TIMER_TEMPLATE_KEYS)[number];
 

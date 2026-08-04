@@ -29,6 +29,10 @@ import {
   disableBuildManagedResources,
   materializeBuildManagedResources,
 } from "./build-managed-resources";
+import {
+  disableWellnessManagedResources,
+  materializeWellnessManagedResources,
+} from "./wellness-managed-resources";
 import { timerStorage } from "../file-storage/timers";
 import { isModPlatformEnabled } from "./mod-platform-config";
 
@@ -161,13 +165,17 @@ export class ModLifecycleService {
     installation: ModInstallationRow,
     modKey: ModKey,
   ): Promise<void> {
-    if (modKey !== "build") return;
+    if (modKey !== "build" && modKey !== "wellness") return;
     const [profile] = await tx.select({ timezone: userProfiles.timezone })
       .from(userProfiles)
       .where(eq(userProfiles.userId, principal.userId!))
       .limit(1);
     const timezone = profile?.timezone?.trim() || "America/New_York";
-    await materializeBuildManagedResources(tx, principal, installation, timezone);
+    if (modKey === "build") {
+      await materializeBuildManagedResources(tx, principal, installation, timezone);
+    } else {
+      await materializeWellnessManagedResources(tx, principal, installation, timezone);
+    }
     timerStorage.invalidateCache();
   }
 
@@ -177,9 +185,15 @@ export class ModLifecycleService {
     principal: Principal,
     installation: ModInstallationRow,
   ): Promise<void> {
-    if (installation.modKey !== "build") return;
-    await disableBuildManagedResources(tx, principal, installation);
-    timerStorage.invalidateCache();
+    if (installation.modKey === "build") {
+      await disableBuildManagedResources(tx, principal, installation);
+      timerStorage.invalidateCache();
+      return;
+    }
+    if (installation.modKey === "wellness") {
+      await disableWellnessManagedResources(tx, principal, installation);
+      timerStorage.invalidateCache();
+    }
   }
 
   /** Grant (or refresh) account-level entitlement. Idempotent by (account, Mod). */
