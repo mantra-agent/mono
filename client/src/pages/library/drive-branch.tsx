@@ -1,6 +1,16 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ExternalLink, X, HardDrive, Plus, Share2 } from "lucide-react";
+import {
+  Loader2,
+  ExternalLink,
+  X,
+  HardDrive,
+  Plus,
+  Share2,
+  ChevronRight,
+  ChevronDown,
+  FileText,
+} from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { createLogger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
@@ -18,11 +28,31 @@ interface DriveResource {
   webViewLink: string | null;
 }
 
+interface FilesChild {
+  provider: "google" | "box" | "mantra";
+  providerFileId: string;
+  name: string;
+  mimeType: string | null;
+  resourceType: "file" | "folder";
+  iconUrl: string | null;
+  webViewLink: string | null;
+  driveResourceId: string | null;
+  viaFolderBind: boolean;
+}
+
 interface PickerToken {
   configured: boolean;
   accessToken?: string;
   apiKey?: string;
   appId?: string | null;
+}
+
+interface ConnectedAccountRow {
+  id: number;
+  accountId: string;
+  provider: string;
+  email?: string | null;
+  label?: string | null;
 }
 
 // Lazily inject the Google Picker script once. Resolves when window.google.picker is ready.
@@ -35,155 +65,189 @@ function loadPicker(): Promise<void> {
     if (w.gapi) return finish();
     const script = document.createElement("script");
     script.src = "https://apis.google.com/js/api.js";
-    script.onload = finish;
-    script.onerror = () => reject(new Error("Failed to load Google Picker"));
-    document.body.appendChild(script);
+    script.async = true;
+    script.onload = () => finish();
+    script.onerror = () => {
+      pickerLoad = null;
+      reject(new Error("Failed to load Google API script"));
+    };
+    document.head.appendChild(script);
   });
   return pickerLoad;
 }
 
-/**
- * A vault's Drive branch in the Files tree: bound Google Drive files render as same-grammar rows.
- * "Add from Drive" opens the Google Picker (drive.file) when a browser API key is configured; when
- * it is not, the action degrades to a disabled, explained state rather than a broken picker.
- * Removing a row unbinds the pointer — it never deletes the underlying Google file.
- */
-export function DriveBranch({ vaultId, searchQuery = "" }: { vaultId: string; searchQuery?: string }) {
-  const queryClient = useQueryClient();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [shareId, setShareId] = useState<string | null>(null);
+type GoogleDoc = {
+  id: string;
+  name: string;
+  mimeType?: string;
+  iconUrl?: string;
+  url?: string;
+};
 
-  const { data, isLoading } = useQuery<{ resources: DriveResource[] }>({
-    queryKey: ["/api/drive/resources", vaultId],
-    queryFn: async () => (await apiRequest("GET", `/api/drive/resources?vaultId=${encodeURIComponent(vaultId)}`)).json(),
-  });
-  const allResources = data?.resources ?? [];
-  // Federated title search: Drive is title-only (drive.file exposes just picked files, so our bound
-  // rows are the authoritative Drive index). When searching, filter by name and collapse the whole
-  // branch if nothing matches so the results read as one unified list with native pages.
-  const query = searchQuery.trim().toLowerCase();
-  const resources = query ? allResources.filter((r) => r.name.toLowerCase().includes(query)) : allResources;
-  const hiddenBySearch = query.length > 0 && resources.length === 0;
+type GooglePickerData = {
+  action: string;
+  docs?: GoogleDoc[];
+};
 
-  const { data: status } = useQuery<{ drivePickerConfigured?: boolean }>({
-    queryKey: ["/api/gmail/status"],
-    queryFn: async () => (await apiRequest("GET", "/api/gmail/status")).json(),
-  });
-  const { data: accounts } = useQuery<Array<{ id: string }>>({
-    queryKey: ["/api/gmail/accounts"],
-    queryFn: async () => (await apiRequest("GET", "/api/gmail/accounts")).json(),
-  });
-  const connectedAccountId = accounts?.[0]?.id;
+type GooglePickerBuilder = {
+  addView: (view: unknown) => GooglePickerBuilder;
+  setOAuthToken: (token: string) => GooglePickerBuilder;
+  setDeveloperKey: (key: string) => GooglePickerBuilder;
+  setAppId: (appId: string) => GooglePickerBuilder;
+  setCallback: (cb: (data: GooglePickerData) => void) => GooglePickerBuilder;
+  enableFeature: (feature: string) => GooglePickerBuilder;
+  setSelectableMimeTypes: (types: string) => GooglePickerBuilder;
+  build: () => { setVisible: (v: boolean) => void };
+};
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/drive/resources", vaultId] });
+function openGooglePicker(opts: {
+  accessToken: string;
+  apiKey: string;
+  appId?: string | null;
+  onPicked: (docs: GoogleDoc[]) => void;
+}): void {
+  const g = (window as unknown as {
+    google?: {
+      picker: {
+        PickerBuilder: new () => GooglePickerBuilder;
+        ViewId: { DOCS: string };
+        Feature: { MULTISELECT_ENABLED: string; SUPPORT_DRIVES: string };
+        Action: { PICKED: string };
+        DocsView: new (viewId: string) => {
+          setIncludeFolders: (v: boolean) => unknown;
+          setSelectFolderEnabled: (v: boolean) => unknown;
+        };
+      };
+    };
+  }).google;
+  if (!g?.picker) throw new Error("Google Picker not loaded");
 
-  const unbindMutation = useMutation<unknown, Error, string>({
-    mutationFn: async (id) => {
-      await apiRequest("DELETE", `/api/drive/resources/${id}`);
-    },
-    onSuccess: invalidate,
-    onError: (err) => setError(err.message || "Failed to remove"),
-  });
+  const view = new g.picker.DocsView(g.picker.ViewId.DOCS);
+  (view as { setIncludeFolders: (v: boolean) => void }).setIncludeFolders(true);
+  (view as { setSelectFolderEnabled: (v: boolean) => void }).setSelectFolderEnabled(true);
 
-  const openPicker = useCallback(async () => {
-    setError(null);
-    if (!connectedAccountId) {
-      setError("Connect a Google account with Drive first.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const token: PickerToken = await (await apiRequest("GET", `/api/drive/picker-token?connectedAccountId=${encodeURIComponent(connectedAccountId)}`)).json();
-      if (!token.configured || !token.accessToken || !token.apiKey) {
-        setError("Drive picking isn't configured on the server (GOOGLE_PICKER_API_KEY).");
-        return;
+  let builder = new g.picker.PickerBuilder()
+    .addView(view)
+    .setOAuthToken(opts.accessToken)
+    .setDeveloperKey(opts.apiKey)
+    .enableFeature(g.picker.Feature.MULTISELECT_ENABLED)
+    .enableFeature(g.picker.Feature.SUPPORT_DRIVES)
+    .setCallback((data: GooglePickerData) => {
+      if (data.action === g.picker.Action.PICKED && data.docs?.length) {
+        opts.onPicked(data.docs);
       }
-      await loadPicker();
-      const g = (window as unknown as { google: any }).google;
-      const view = new g.picker.DocsView(g.picker.ViewId.DOCS)
-        .setIncludeFolders(true)
-        .setSelectFolderEnabled(true);
-      const builder = new g.picker.PickerBuilder()
-        .addView(view)
-        .setOAuthToken(token.accessToken)
-        .setDeveloperKey(token.apiKey)
-        .enableFeature(g.picker.Feature.MULTISELECT_ENABLED)
-        .setCallback(async (result: any) => {
-          if (result[g.picker.Response.ACTION] !== g.picker.Action.PICKED) return;
-          const docs = result[g.picker.Response.DOCUMENTS] || [];
-          for (const doc of docs) {
-            await apiRequest("POST", "/api/drive/resources", {
-              vaultId,
-              connectedAccountId,
-              googleFileId: doc[g.picker.Document.ID],
-              name: doc[g.picker.Document.NAME],
-              mimeType: doc[g.picker.Document.MIME_TYPE],
-              resourceType: doc[g.picker.Document.TYPE] === "folder" ? "folder" : "file",
-              iconUrl: doc[g.picker.Document.ICON_URL],
-              webViewLink: doc[g.picker.Document.URL],
-            });
-          }
-          invalidate();
-        });
-      if (token.appId) builder.setAppId(token.appId);
-      builder.build().setVisible(true);
-    } catch (err) {
-      log.error("picker failed", { error: err instanceof Error ? err.message : String(err) });
-      setError(err instanceof Error ? err.message : "Failed to open Drive picker");
-    } finally {
-      setBusy(false);
-    }
-  }, [connectedAccountId, vaultId, queryClient]);
+    });
+  if (opts.appId) builder = builder.setAppId(opts.appId);
+  builder.build().setVisible(true);
+}
 
-  const pickerReady = status?.drivePickerConfigured !== false;
+function resourceIcon(r: { iconUrl: string | null; resourceType: string }) {
+  if (r.iconUrl) {
+    return <img src={r.iconUrl} alt="" className="h-4 w-4 shrink-0" />;
+  }
+  return r.resourceType === "folder" ? (
+    <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
+  ) : (
+    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+  );
+}
 
-  // During an active search with no Drive title matches, collapse the branch entirely so results
-  // read as one federated list. Hooks above always run, so this conditional return is safe.
-  if (hiddenBySearch) return null;
+function FolderChildren({
+  vaultId,
+  driveResourceId,
+  googleFileId,
+  depth,
+  searchQuery,
+}: {
+  vaultId: string;
+  driveResourceId?: string;
+  googleFileId?: string;
+  depth: number;
+  searchQuery: string;
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const q = searchQuery.trim().toLowerCase();
+
+  const childrenQuery = useQuery<{ children: FilesChild[]; nextPageToken: string | null }>({
+    queryKey: ["/api/files/children", vaultId, driveResourceId ?? null, googleFileId ?? null],
+    queryFn: async () => {
+      const params = new URLSearchParams({ vaultId });
+      if (driveResourceId) params.set("driveResourceId", driveResourceId);
+      if (googleFileId) params.set("googleFileId", googleFileId);
+      const res = await apiRequest("GET", `/api/files/children?${params.toString()}`);
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  if (childrenQuery.isLoading) {
+    return (
+      <div
+        className="flex items-center gap-2 py-1 text-xs text-muted-foreground"
+        style={{ paddingLeft: 12 + depth * 12 }}
+      >
+        <Loader2 className="h-3 w-3 animate-spin" /> Loading…
+      </div>
+    );
+  }
+  if (childrenQuery.isError) {
+    return (
+      <div className="py-1 text-xs text-destructive" style={{ paddingLeft: 12 + depth * 12 }}>
+        {(childrenQuery.error as Error)?.message || "Failed to list folder"}
+      </div>
+    );
+  }
+
+  const children = (childrenQuery.data?.children ?? []).filter(
+    (c) => !q || c.name.toLowerCase().includes(q),
+  );
+  if (children.length === 0) {
+    return (
+      <div className="py-1 text-xs text-muted-foreground" style={{ paddingLeft: 12 + depth * 12 }}>
+        Empty folder
+      </div>
+    );
+  }
 
   return (
-    <div className="ml-6 mt-1 border-l border-border pl-3" data-testid={`drive-branch-${vaultId}`}>
-      <div className="flex items-center gap-2 py-1">
-        <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium text-muted-foreground">Drive</span>
-        <button
-          type="button"
-          onClick={openPicker}
-          disabled={busy || !pickerReady}
-          className={cn(
-            "ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-xs",
-            pickerReady ? "text-muted-foreground hover:bg-accent hover:text-foreground" : "cursor-not-allowed text-muted-foreground/50",
-          )}
-          title={pickerReady ? "Add files from Google Drive" : "Set GOOGLE_PICKER_API_KEY on the server to enable Drive picking"}
-          data-testid={`button-drive-add-${vaultId}`}
-        >
-          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
-          Add from Drive
-        </button>
-      </div>
-
-      {error && <p className="py-0.5 text-xs text-destructive">{error}</p>}
-
-      {isLoading ? (
-        <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
-          <Loader2 className="h-3 w-3 animate-spin" /> Loading…
-        </div>
-      ) : resources.length === 0 ? (
-        <p className="py-1 text-xs text-muted-foreground/70">No Drive files bound yet.</p>
-      ) : (
-        <ul className="flex flex-col gap-0.5">
-          {resources.map((r) => (
-            <li key={r.id} className="group flex items-center gap-2 rounded px-1 py-1 hover:bg-accent" data-testid={`drive-row-${r.id}`}>
-              {r.iconUrl ? (
-                <img src={r.iconUrl} alt="" className="h-3.5 w-3.5" />
+    <ul className="flex flex-col gap-0.5">
+      {children.map((c) => {
+        const key = c.providerFileId;
+        const isOpen = !!expanded[key];
+        return (
+          <li key={key}>
+            <div
+              className="group flex items-center gap-2 rounded px-2 py-1 hover:bg-muted/60"
+              style={{ paddingLeft: 8 + depth * 12 }}
+            >
+              {c.resourceType === "folder" ? (
+                <button
+                  type="button"
+                  className="shrink-0 text-muted-foreground"
+                  onClick={() => setExpanded((s) => ({ ...s, [key]: !s[key] }))}
+                  aria-label={isOpen ? "Collapse" : "Expand"}
+                >
+                  {isOpen ? (
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  )}
+                </button>
               ) : (
-                <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="w-3.5 shrink-0" />
               )}
-              <span className="min-w-0 flex-1 truncate text-sm text-foreground">{r.name}</span>
-              {r.webViewLink && (
+              {resourceIcon(c)}
+              <span className="min-w-0 flex-1 truncate text-sm" title={c.name}>
+                {c.name}
+              </span>
+              {c.viaFolderBind && (
+                <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  via folder
+                </span>
+              )}
+              {c.webViewLink && (
                 <a
-                  href={r.webViewLink}
+                  href={c.webViewLink}
                   target="_blank"
                   rel="noreferrer"
                   className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
@@ -192,35 +256,245 @@ export function DriveBranch({ vaultId, searchQuery = "" }: { vaultId: string; se
                   <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               )}
-              <button
-                type="button"
-                onClick={() => setShareId(r.id)}
-                className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
-                title="Share this file"
-                data-testid={`button-drive-share-${r.id}`}
-              >
-                <Share2 className="h-3.5 w-3.5" />
-              </button>
-              <ShareSheet
-                objectType="drive_resource"
-                objectId={r.id}
-                title={r.name}
-                open={shareId === r.id}
-                onOpenChange={(o) => setShareId(o ? r.id : null)}
+            </div>
+            {c.resourceType === "folder" && isOpen && (
+              <FolderChildren
+                vaultId={vaultId}
+                googleFileId={c.providerFileId}
+                depth={depth + 1}
+                searchQuery={searchQuery}
               />
-              <button
-                type="button"
-                onClick={() => unbindMutation.mutate(r.id)}
-                disabled={unbindMutation.isPending}
-                className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
-                title="Remove from Files (does not delete the Google file)"
-                data-testid={`button-drive-unbind-${r.id}`}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </li>
-          ))}
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+export function DriveBranch({
+  vaultId,
+  searchQuery = "",
+}: {
+  vaultId: string;
+  searchQuery?: string;
+}) {
+  const qc = useQueryClient();
+  const [picking, setPicking] = useState(false);
+  const [shareTarget, setShareTarget] = useState<DriveResource | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
+  const q = searchQuery.trim().toLowerCase();
+
+  const accountsQuery = useQuery<{ accounts: ConnectedAccountRow[] }>({
+    queryKey: ["/api/accounts"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/accounts");
+      return res.json();
+    },
+  });
+
+  const googleAccount =
+    accountsQuery.data?.accounts?.find((a) => a.provider === "google") ?? null;
+  const connectedAccountId = googleAccount?.accountId ?? null;
+
+  const resourcesQuery = useQuery<{ resources: DriveResource[] }>({
+    queryKey: ["/api/drive/resources", vaultId],
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/drive/resources?vaultId=${encodeURIComponent(vaultId)}`,
+      );
+      return res.json();
+    },
+    enabled: !!vaultId,
+  });
+
+  const bindMutation = useMutation({
+    mutationFn: async (docs: GoogleDoc[]) => {
+      if (!connectedAccountId) throw new Error("No connected Google account");
+      for (const doc of docs) {
+        await apiRequest("POST", "/api/drive/resources", {
+          vaultId,
+          connectedAccountId,
+          googleFileId: doc.id,
+          name: doc.name,
+          mimeType: doc.mimeType ?? null,
+          resourceType:
+            doc.mimeType === "application/vnd.google-apps.folder" ? "folder" : "file",
+          iconUrl: doc.iconUrl ?? null,
+          webViewLink: doc.url ?? null,
+        });
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/drive/resources", vaultId] });
+      qc.invalidateQueries({ queryKey: ["/api/files/children"] });
+    },
+    onError: (err) => log.error("bind failed", { error: String(err) }),
+  });
+
+  const unbindMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/drive/resources/${id}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/drive/resources", vaultId] });
+      qc.invalidateQueries({ queryKey: ["/api/files/children"] });
+    },
+    onError: (err) => log.error("unbind failed", { error: String(err) }),
+  });
+
+  const openPicker = useCallback(async () => {
+    if (!connectedAccountId) {
+      log.warn("No connected Google account for picker");
+      return;
+    }
+    setPicking(true);
+    try {
+      await loadPicker();
+      const res = await apiRequest("POST", "/api/drive/picker-token", { connectedAccountId });
+      const token = (await res.json()) as PickerToken;
+      if (!token.configured || !token.accessToken || !token.apiKey) {
+        throw new Error("Google Picker is not configured on this environment");
+      }
+      openGooglePicker({
+        accessToken: token.accessToken,
+        apiKey: token.apiKey,
+        appId: token.appId,
+        onPicked: (docs) => bindMutation.mutate(docs),
+      });
+    } catch (err) {
+      log.error("picker open failed", { error: String(err) });
+    } finally {
+      setPicking(false);
+    }
+  }, [bindMutation, connectedAccountId]);
+
+  const resources = (resourcesQuery.data?.resources ?? []).filter(
+    (r) => !q || r.name.toLowerCase().includes(q),
+  );
+  const busy = picking || bindMutation.isPending;
+  const pickerReady = !!connectedAccountId;
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="drive-branch">
+      <div className="flex items-center justify-between gap-2 px-1">
+        <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <HardDrive className="h-3.5 w-3.5" />
+          Drive
+        </div>
+        <button
+          type="button"
+          onClick={openPicker}
+          disabled={busy || !pickerReady}
+          className={cn(
+            "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground",
+            (busy || !pickerReady) && "opacity-50 cursor-not-allowed",
+          )}
+          title={
+            pickerReady
+              ? "Add file or folder from Google Drive"
+              : "Connect Google to add files"
+          }
+          data-testid="button-drive-add"
+        >
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+          Add
+        </button>
+      </div>
+
+      {resourcesQuery.isLoading ? (
+        <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" /> Loading…
+        </div>
+      ) : resources.length === 0 ? (
+        <p className="px-2 py-1 text-xs text-muted-foreground">No Drive files bound yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-0.5">
+          {resources.map((r) => {
+            const isOpen = !!expandedFolders[r.id];
+            return (
+              <li key={r.id}>
+                <div className="group flex items-center gap-2 rounded px-2 py-1 hover:bg-muted/60">
+                  {r.resourceType === "folder" ? (
+                    <button
+                      type="button"
+                      className="shrink-0 text-muted-foreground"
+                      onClick={() =>
+                        setExpandedFolders((s) => ({ ...s, [r.id]: !s[r.id] }))
+                      }
+                      aria-label={isOpen ? "Collapse folder" : "Expand folder"}
+                      data-testid={`button-drive-expand-${r.id}`}
+                    >
+                      {isOpen ? (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  ) : (
+                    <span className="w-3.5 shrink-0" />
+                  )}
+                  {resourceIcon(r)}
+                  <span className="min-w-0 flex-1 truncate text-sm" title={r.name}>
+                    {r.name}
+                  </span>
+                  {r.webViewLink && (
+                    <a
+                      href={r.webViewLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                      title="Open in Drive"
+                      data-testid={`link-drive-open-${r.id}`}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShareTarget(r)}
+                    className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                    title="Share this file"
+                    data-testid={`button-drive-share-${r.id}`}
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => unbindMutation.mutate(r.id)}
+                    disabled={unbindMutation.isPending}
+                    className="text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100"
+                    title="Remove bind"
+                    data-testid={`button-drive-unbind-${r.id}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {r.resourceType === "folder" && isOpen && (
+                  <FolderChildren
+                    vaultId={vaultId}
+                    driveResourceId={r.id}
+                    depth={1}
+                    searchQuery={searchQuery}
+                  />
+                )}
+              </li>
+            );
+          })}
         </ul>
+      )}
+
+      {shareTarget && (
+        <ShareSheet
+          open={!!shareTarget}
+          onOpenChange={(open) => {
+            if (!open) setShareTarget(null);
+          }}
+          objectType="drive_resource"
+          objectId={shareTarget.id}
+          title={shareTarget.name}
+        />
       )}
     </div>
   );
