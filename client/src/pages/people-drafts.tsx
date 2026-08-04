@@ -203,6 +203,9 @@ function DraftDetailPane({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/email-drafts"] });
+      // Sent mail lands in the thread list and Home Inbox — same keys thread actions refresh.
+      queryClient.invalidateQueries({ queryKey: ["/api/email/messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
       toast({ title: "Email sent successfully" });
       onClose();
     },

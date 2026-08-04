@@ -359,6 +359,9 @@ export function EmailDraftWidget({ draftId }: { draftId: string }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/email-drafts", draftId] });
+      // Sent mail lands in the thread list and Home Inbox — same keys thread actions refresh.
+      queryClient.invalidateQueries({ queryKey: ["/api/email/messages"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
       setLocalEdits({});
     },
   });
