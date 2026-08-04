@@ -448,6 +448,7 @@ function MessageSection({ value }: { value: unknown }) {
             key={`${label}-${index}`}
             icon={messageRoleIcon(message)}
             label={label}
+            meta={`${formatTokens(estimateTokens(message))} tokens`}
             testId={`message-row-${index}`}
             expandedContent={typeof content === "string"
               ? <MarkdownContent value={content} />
