@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { UniversalTagPicker } from "@/components/universal-tag-picker";
+import { ReferencePicker } from "@/components/references/reference-picker";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { GoalRelationshipsRow } from "@/components/goal-relationships-row";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -151,10 +152,17 @@ export function GoalInlineDetails({ goalId }: GoalInlineDetailsProps) {
     () => allProjects.filter((project) => project.goalId === goalId),
     [allProjects, goalId],
   );
-  const availableParents = useMemo(
-    () => allGoalsData?.goals.filter((candidate) => candidate.id !== goalId) ?? [],
-    [allGoalsData?.goals, goalId],
-  );
+  const parentValue = useMemo(() => {
+    if (!goal?.parentId) return [];
+    const parent = allGoalsData?.goals.find((candidate) => candidate.id === goal.parentId);
+    return [
+      {
+        type: "goal" as const,
+        id: goal.parentId,
+        label: parent?.shortName || goal.parentId,
+      },
+    ];
+  }, [allGoalsData?.goals, goal?.parentId]);
 
   if (isLoading) {
     return (
@@ -268,15 +276,19 @@ export function GoalInlineDetails({ goalId }: GoalInlineDetailsProps) {
       </ProfileTreeRow>
 
       <ProfileTreeRow label="Parent" icon={<Network className="h-3.5 w-3.5" />} hasValue={Boolean(goal.parentId)} showEmpty mobileLayout="inline" testId={`row-goal-parent-${goalId}`}>
-        <Select value={goal.parentId || "none"} onValueChange={(parentId) => parentMutation.mutate(parentId)}>
-          <SelectTrigger className="w-48" data-testid={`select-goal-parent-${goalId}`}><SelectValue placeholder="No parent" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">No parent</SelectItem>
-            {availableParents.map((candidate) => (
-              <SelectItem key={candidate.id} value={candidate.id}>{candidate.shortName}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <ReferencePicker
+          mode="single"
+          types={["goal"]}
+          value={parentValue}
+          excludeIds={[goalId]}
+          onChange={(next) => {
+            const pick = next[0];
+            parentMutation.mutate(pick?.id ?? "none");
+          }}
+          placeholder="Search parent goal…"
+          dense
+          testId={`picker-goal-parent-${goalId}`}
+        />
       </ProfileTreeRow>
 
       <ProfileTreeRow

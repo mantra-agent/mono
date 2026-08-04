@@ -31,6 +31,11 @@ export type ReferencePickerProps = {
   mode?: "multi" | "single";
   /** inline field (default), compact, or menu checklist (tag-only). */
   variant?: "inline" | "compact" | "menu";
+  /**
+   * Hide these ids from suggestions (e.g. self when picking a parent goal).
+   * Matched against suggestion.id only — type-agnostic.
+   */
+  excludeIds?: string[];
   /** Allow creating a new tag when types includes tag (or is unrestricted). */
   allowCreate?: boolean;
   placeholder?: string;
@@ -149,6 +154,7 @@ function FieldPicker({
   showToken,
   allowCreate,
   disabled,
+  excludeIds,
 }: Required<
   Pick<
     ReferencePickerProps,
@@ -165,6 +171,7 @@ function FieldPicker({
   types?: ReferenceType[];
   className?: string;
   testId?: string;
+  excludeIds?: string[];
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -177,9 +184,18 @@ function FieldPicker({
 
   const { suggestions, isLoading } = useDebouncedReferenceSearch(input, types, open);
 
+  const excluded = useMemo(() => {
+    if (!excludeIds?.length) return null;
+    return new Set(excludeIds.map((id) => id.toLowerCase()));
+  }, [excludeIds]);
+
   const visible = useMemo(() => {
-    return suggestions.filter((s) => !selectedHas(value, s));
-  }, [suggestions, value]);
+    return suggestions.filter((s) => {
+      if (selectedHas(value, s)) return false;
+      if (excluded?.has(s.id.toLowerCase())) return false;
+      return true;
+    });
+  }, [suggestions, value, excluded]);
 
   const exactTagExists = visible.some(
     (s) => s.type === "tag" && s.label.toLowerCase() === input.trim().toLowerCase(),
@@ -521,6 +537,7 @@ export function ReferencePicker({
   dense,
   showToken = false,
   disabled = false,
+  excludeIds,
 }: ReferencePickerProps) {
   const selected = normalizeIncoming(value);
   const handleChange = onChange ?? (() => undefined);
@@ -550,6 +567,7 @@ export function ReferencePicker({
       showToken={showToken}
       allowCreate={allowCreate}
       disabled={disabled}
+      excludeIds={excludeIds}
     />
   );
 }
