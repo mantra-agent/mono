@@ -245,6 +245,10 @@ export interface ExecutorTtftBreakdown {
   routingTier?: string;
   activity?: string;
   thinkingSent: string;
+  /** Normalized reasoning level for TTFT joins: none|low|medium|high|xhigh|unknown */
+  reasoningEffort?: string;
+  /** How the level was obtained: request_effort|request_budget|imputed_from_tier|none|unknown */
+  reasoningSourceKind?: string;
   maxTokens?: number;
   msToFirstSdkEvent: number | null;
   msToFirstTextDelta: number | null;

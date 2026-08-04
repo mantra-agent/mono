@@ -49,6 +49,10 @@ export interface ContextHealthModelSummary {
   provider: string;
   model: string;
   tier: string;
+  /** Normalized reasoning level joined to TTFT (none|low|medium|high|xhigh|unknown|null when absent). */
+  reasoningEffort: string | null;
+  /** request_effort | request_budget | imputed_from_tier | none | unknown | null */
+  reasoningSourceKind: string | null;
   callCount: number;
   comparableCallCount: number;
   excludedCallCount: number;
