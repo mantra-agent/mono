@@ -1,6 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { milestones, objectGrants, privilegedAccessAudit, projects, tasks } from "@shared/schema";
 import { vaults } from "@shared/models/vaults";
+import { driveResources } from "@shared/schema";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, type DrizzleTx } from "./db";
 import { createLogger } from "./log";
 import { combineWithWorkObjectAccess, workObjectKey, type ObjectGrantCapability, type WorkObjectType } from "./object-grant-access";
@@ -16,8 +17,8 @@ const MAX_MEETING_DEFAULT_GRANT_SUBJECTS = 500;
 export type ObjectGrantSubjectType = "user" | "invited_subject" | "team";
 export type ObjectGrantOriginType = "meeting" | "manual";
 
-/** Every object the canonical grant service can share. Library pages and vaults key on their text id. */
-export type GrantableObjectType = WorkObjectType | "library_page" | "vault";
+/** Every object the canonical grant service can share. Library pages, vaults, and drive resources key on their text id. */
+export type GrantableObjectType = WorkObjectType | "library_page" | "vault" | "drive_resource";
 
 export interface ObjectGrantTarget {
   objectType: GrantableObjectType;
@@ -65,7 +66,7 @@ function lockKey(objectType: GrantableObjectType, objectId: string): string {
 
 /** Resolve the grant `object_id` key for any grantable object. Library pages key on their text id. */
 function grantObjectKey(objectType: GrantableObjectType, objectId: number | string, projectId?: number): string {
-  if (objectType === "library_page" || objectType === "vault") {
+  if (objectType === "library_page" || objectType === "vault" || objectType === "drive_resource") {
     const id = String(objectId).trim();
     if (!id) throw new Error(`${objectType} grant requires an id`);
     return id;
@@ -133,6 +134,12 @@ async function assertTargetAdmin(
     // sharing rights — ownership does. This is the root of the vault trust boundary.
     found = (await tx.select({ id: vaults.id }).from(vaults).where(
       and(eq(vaults.id, String(target.objectId)), eq(vaults.accountId, principal.accountId!)),
+    ).limit(1)).length > 0;
+  } else if (target.objectType === "drive_resource") {
+    // A bound Drive file is admin-able only by the account that owns the binding. The binding is a
+    // pointer; sharing it shares Mantra's row, not Google's ACL — Google access still rides drive.file.
+    found = (await tx.select({ id: driveResources.id }).from(driveResources).where(
+      and(eq(driveResources.id, String(target.objectId)), eq(driveResources.accountId, principal.accountId!)),
     ).limit(1)).length > 0;
   } else {
     if (!Number.isInteger(target.projectId) || (target.projectId ?? 0) <= 0) throw new Error("Milestone grants require projectId");

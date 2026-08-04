@@ -576,7 +576,7 @@ export const objectGrantSubjectTypes = ["user", "invited_subject", "team"] as co
 export const taskAssigneeSubjectTypes = ["user", "invited_subject"] as const;
 /** Team membership roles. `admin` may manage the team's roster; both are grant-expanded identically. */
 export const teamMemberRoles = ["admin", "member"] as const;
-export const objectGrantObjectTypes = ["project", "milestone", "task", "library_page", "vault"] as const;
+export const objectGrantObjectTypes = ["project", "milestone", "task", "library_page", "vault", "drive_resource"] as const;
 export const objectGrantCapabilities = ["read", "write", "admin"] as const;
 export const objectGrantOriginTypes = ["meeting", "manual"] as const;
 
@@ -722,7 +722,7 @@ export const objectGrants = pgTable("object_grants", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (table) => [
   check("object_grants_subject_type_check", sql`${table.subjectType} IN ('user', 'invited_subject', 'team')`),
-  check("object_grants_object_type_check", sql`${table.objectType} IN ('project', 'milestone', 'task', 'library_page', 'vault')`),
+  check("object_grants_object_type_check", sql`${table.objectType} IN ('project', 'milestone', 'task', 'library_page', 'vault', 'drive_resource')`),
   check("object_grants_capability_check", sql`${table.capability} IN ('read', 'write', 'admin')`),
   check("object_grants_origin_type_check", sql`${table.originType} IN ('meeting', 'manual')`),
   uniqueIndex("idx_object_grants_one_live_subject_object")
