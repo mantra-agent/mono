@@ -27,18 +27,18 @@ export interface MemoryGraphSettingDefinition {
  * Persisted user settings are complete objects with these exact field names.
  */
 export const MEMORY_GRAPH_SETTINGS_DEFAULTS: Readonly<MemoryGraphSettings> = {
-  linkAttractionFactor: 1,
-  linkBendFactor: 1,
-  nodeRepulsionFactor: 1,
-  pulseRate: 1,
-  pulseBrightness: 1,
-  pulseSize: 1.75,
-  linkComplexity: 3,
-  linkBrightnessFactor: 1,
+  linkAttractionFactor: 3,
+  linkBendFactor: 4.9,
+  nodeRepulsionFactor: 2.3,
+  pulseRate: 0.5,
+  pulseBrightness: 0.75,
+  pulseSize: 2,
+  linkComplexity: 5,
+  linkBrightnessFactor: 0.1,
   nodeBrightnessFactor: 2,
-  recencyBrightness: 0.85,
-  smallestNode: 4,
-  largestNode: 40,
+  recencyBrightness: 0.7,
+  smallestNode: 4.5,
+  largestNode: 54,
 };
 
 export const MEMORY_GRAPH_SETTING_DEFINITIONS: readonly MemoryGraphSettingDefinition[] = [
