@@ -20,6 +20,7 @@ import { getCurrentPrincipal } from "./principal-context";
 import { filterBuildToolSchemas } from "./mods/build-tool-access";
 import { hasActiveBuildAccess } from "./mods/build-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
+import { BUILD_OWNED_SKILL_NAME_SET, resolveSkillRunName } from "./skill-identities";
 import type { ChecklistItem } from "@shared/schema";
 
 const logger = createLogger("AutonomousSkillRunner");
@@ -386,6 +387,30 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     timeoutMs: 10 * 60 * 1000,
     sessionType: "agent",
   },
+  // Build-owned skills: authoritative runtime config lives here so timer/manual
+  // paths never depend on principal-scoped DB lookup for admission.
+  "sentry": {
+    skillId: "sentry",
+    label: "Sentry",
+    callType: "full",
+    activity: ACTIVITY_WORK,
+    temperature: 0.2,
+    timeoutMs: 15 * 60 * 1000,
+    sessionType: "autonomous",
+    admissionTier: "background",
+    estimatedDuration: "10min",
+  },
+  "guard": {
+    skillId: "guard",
+    label: "Guard",
+    callType: "full",
+    activity: ACTIVITY_WORK,
+    temperature: 0.2,
+    timeoutMs: 20 * 60 * 1000,
+    sessionType: "autonomous",
+    admissionTier: "background",
+    estimatedDuration: "15min",
+  },
   "regression": {
     skillId: "regression",
     label: "Regression",
@@ -638,51 +663,62 @@ export async function executeAutonomousSkillRun(
     };
     logger.log(`[skillless] Using inline config — label="${label}" timeoutMs=${config.timeoutMs}`);
   } else {
-  config = SKILL_RUN_CONFIGS[skillId]!;
-  if (!config) {
-    // Fallback: look up the skill in the database and check if its name matches a hardcoded config
-    try {
-      let dbSkill = await storage.getSkillByName(skillId);
-      if (!dbSkill) dbSkill = await storage.getSkill(skillId);
-      if (!dbSkill) {
-        throw new Error(`No skill run config and no database record found for "${skillId}"`, { cause: new Error("skill-not-found") });
-      }
-      if (dbSkill.status === "deprecated") {
-        throw new Error(`Skill "${dbSkill.name}" is deprecated and cannot be run`, { cause: new Error("skill-deprecated") });
-      }
-
-      const hardcodedByName = SKILL_RUN_CONFIGS[dbSkill.name];
-      if (hardcodedByName) {
-        config = hardcodedByName;
-        logger.log(`[skill:${skillId}] Resolved UUID to hardcoded config via db name="${dbSkill.name}" — timeout=${config.timeoutMs}ms`);
-      } else {
-        const resolvedActivity = resolveActivityId(dbSkill.activity || "");
-        const activity: ActivityId = BUILTIN_ACTIVITY_IDS.includes(resolvedActivity) ? resolvedActivity : ACTIVITY_WORK;
-        const DYNAMIC_FALLBACK_MIN_TIMEOUT_MS = 10 * 60 * 1000;
-        const dbTimeoutMs = parseEstimatedDurationMs(dbSkill.estimatedDuration);
-        const timeoutMs = Math.max(dbTimeoutMs ?? DYNAMIC_FALLBACK_MIN_TIMEOUT_MS, DYNAMIC_FALLBACK_MIN_TIMEOUT_MS);
-        config = {
-          skillId: dbSkill.name,
-          label: dbSkill.name,
-          callType: "full",
-          activity,
-          temperature: 0.5,
-          timeoutMs,
-          // No sessionType here — let the top-level default handle it
-          // (autonomous for top-level runs, agent for child runs)
-        };
-        logger.log(`[skill:${skillId}] Built dynamic config from database — label="${config.label}" activity=${activity} timeoutMs=${config.timeoutMs}${dbTimeoutMs ? " (from estimatedDuration)" : " (default)"}`);
-      }
-    } catch (err: unknown) {
-      const errDetail = err instanceof Error ? (err.stack || err.message) : String(err);
-      logger.error(`[skill:${skillId}] phase=config-resolve FAILED — could not build dynamic config: ${errDetail}`);
-      throw new Error(`phase=config-resolve FAILED for skill "${skillId}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+    // Single authoritative resolve: alias → SKILL_RUN_CONFIGS, then DB only
+    // for non-hardcoded skills. Build-owned names never enter the DB path.
+    const requestedId = skillId;
+    const canonicalName = resolveSkillRunName(requestedId);
+    config = SKILL_RUN_CONFIGS[canonicalName]!;
+    if (!config && canonicalName !== requestedId) {
+      config = SKILL_RUN_CONFIGS[requestedId]!;
     }
-  }
+    if (!config) {
+      try {
+        let dbSkill = await storage.getSkillByName(requestedId);
+        if (!dbSkill && canonicalName !== requestedId) {
+          dbSkill = await storage.getSkillByName(canonicalName);
+        }
+        if (!dbSkill) dbSkill = await storage.getSkill(requestedId);
+        if (!dbSkill) {
+          throw new Error(`No skill run config and no database record found for "${requestedId}"`, { cause: new Error("skill-not-found") });
+        }
+        if (dbSkill.status === "deprecated") {
+          throw new Error(`Skill "${dbSkill.name}" is deprecated and cannot be run`, { cause: new Error("skill-deprecated") });
+        }
+
+        const resolvedName = resolveSkillRunName(dbSkill.name);
+        const hardcodedByName = SKILL_RUN_CONFIGS[resolvedName] ?? SKILL_RUN_CONFIGS[dbSkill.name];
+        if (hardcodedByName) {
+          config = hardcodedByName;
+          logger.log(`[skill:${requestedId}] Resolved UUID to hardcoded config via db name="${dbSkill.name}" — timeout=${config.timeoutMs}ms`);
+        } else {
+          const resolvedActivity = resolveActivityId(dbSkill.activity || "");
+          const activity: ActivityId = BUILTIN_ACTIVITY_IDS.includes(resolvedActivity) ? resolvedActivity : ACTIVITY_WORK;
+          const DYNAMIC_FALLBACK_MIN_TIMEOUT_MS = 10 * 60 * 1000;
+          const dbTimeoutMs = parseEstimatedDurationMs(dbSkill.estimatedDuration);
+          const timeoutMs = Math.max(dbTimeoutMs ?? DYNAMIC_FALLBACK_MIN_TIMEOUT_MS, DYNAMIC_FALLBACK_MIN_TIMEOUT_MS);
+          config = {
+            skillId: dbSkill.name,
+            label: dbSkill.name,
+            callType: "full",
+            activity,
+            temperature: 0.5,
+            timeoutMs,
+            // No sessionType here — let the top-level default handle it
+            // (autonomous for top-level runs, agent for child runs)
+          };
+          logger.log(`[skill:${requestedId}] Built dynamic config from database — label="${config.label}" activity=${activity} timeoutMs=${config.timeoutMs}${dbTimeoutMs ? " (from estimatedDuration)" : " (default)"}`);
+        }
+      } catch (err: unknown) {
+        const errDetail = err instanceof Error ? (err.stack || err.message) : String(err);
+        logger.error(`[skill:${requestedId}] phase=config-resolve FAILED — could not build dynamic config: ${errDetail}`);
+        throw new Error(`phase=config-resolve FAILED for skill "${requestedId}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+      }
+    } else if (canonicalName !== requestedId) {
+      logger.log(`[skill:${requestedId}] Resolved alias to hardcoded config "${canonicalName}" — timeout=${config.timeoutMs}ms`);
+    }
   } // end skill-based config resolution
 
-  const buildOwnedSkillNames = new Set(["sentry", "guard", "regression"]);
-  if (!isSkillless && buildOwnedSkillNames.has(config.skillId)) {
+  if (!isSkillless && BUILD_OWNED_SKILL_NAME_SET.has(config.skillId)) {
     const principal = getCurrentPrincipal();
     if (!principal || !(await hasActiveBuildAccess(principal))) {
       throw new Error(`Build Mod is inactive; Skill ${config.skillId} cannot run`);

@@ -10,6 +10,7 @@ import { listSkillPersonaConfiguration, setSkillPersonaPreference } from "./skil
 import { getCurrentPrincipalOrSystem } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
 import { hasActiveBuildAccess } from "./mods/build-access";
+import { BUILD_OWNED_SKILL_NAME_SET } from "./skill-identities";
 
 const libraryPageScopeColumns = {
   scope: libraryPages.scope,
@@ -35,7 +36,7 @@ function stripSkillForExport(skill: Skill & { references?: SkillReference[]; tru
   return stripped;
 }
 
-const BUILD_SKILL_NAMES = new Set(["sentry", "guard", "regression"]);
+const BUILD_SKILL_NAMES = BUILD_OWNED_SKILL_NAME_SET;
 /** Wellness-owned Skills — projection stops when Wellness is inactive. */
 const WELLNESS_SKILL_NAMES = new Set(["reflect", "affirmations", "coach"]);
 
