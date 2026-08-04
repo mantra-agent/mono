@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Plus, Loader2, Target, X, ChevronRight, User, Search, ZoomIn, ZoomOut, Maximize2, Tag, Pencil, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { UniversalTagPicker } from "@/components/universal-tag-picker";
+import { ReferencePicker } from "@/components/references/reference-picker";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { InlineReferenceText } from "@/components/references/inline-reference-text";
 import { useMentionAutocomplete } from "@/hooks/use-mention-autocomplete";
@@ -140,17 +141,7 @@ function GoalNode({ data }: NodeProps) {
 
 function NewGoalDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const { toast } = useToast();
-  const [goalFields, setGoalFields] = useState<Partial<CreateGoalInput & { selectedParentId: string | null }>>({});
-  const [parentSearch, setParentSearch] = useState("");
-  const [showParentDropdown, setShowParentDropdown] = useState(false);
-
-  const { data: goalsData } = useQuery<{ goals: GoalIndexEntry[] }>({
-    queryKey: ["/api/life-goals"],
-  });
-  const existingGoals = useMemo(() => {
-    const list = goalsData?.goals;
-    return Array.isArray(list) ? list : [];
-  }, [goalsData]);
+  const [goalFields, setGoalFields] = useState<Partial<CreateGoalInput & { selectedParentId: string | null; selectedParentLabel?: string | null }>>({});
 
   const createMutation = useMutation({
     mutationFn: async (goal: CreateGoalInput) => {
@@ -170,8 +161,6 @@ function NewGoalDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
 
   const handleClose = () => {
     setGoalFields({});
-    setParentSearch("");
-    setShowParentDropdown(false);
     onOpenChange(false);
   };
 
@@ -195,14 +184,9 @@ function NewGoalDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
     } as any);
   };
 
-  const selectedParentGoal = existingGoals.find(g => g.id === goalFields.selectedParentId);
-
-  const availableParents = useMemo(() => {
-    const filtered = existingGoals;
-    if (!parentSearch.trim()) return filtered;
-    const q = parentSearch.toLowerCase();
-    return filtered.filter(g => g.shortName.toLowerCase().includes(q));
-  }, [existingGoals, parentSearch]);
+  const parentValue = goalFields.selectedParentId
+    ? [{ type: "goal" as const, id: goalFields.selectedParentId, label: goalFields.selectedParentLabel || goalFields.selectedParentId }]
+    : [];
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); else onOpenChange(v); }}>
@@ -270,51 +254,25 @@ function NewGoalDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v
             />
           </div>
 
-          {existingGoals.length > 0 && (
-            <div>
-              <Label>Parent Goal</Label>
-              {selectedParentGoal ? (
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="inline-flex items-center flex-1 justify-start bg-cat-channel/15 text-cat-channel-foreground border border-cat-channel/30 rounded-sm text-xs font-medium px-2 py-0.5" data-testid="badge-selected-parent">
-                    <InlineReferenceText text={selectedParentGoal.shortName} className="truncate" />
-                  </span>
-                  <button
-                    className="text-xs text-muted-foreground hover:underline shrink-0"
-                    onClick={() => { setGoalFields(prev => ({ ...prev, selectedParentId: null })); setParentSearch(""); setShowParentDropdown(false); }}
-                    data-testid="button-clear-parent"
-                  >
-                    Clear
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-1 space-y-1">
-                  <Input
-                    value={parentSearch}
-                    onChange={(e) => { setParentSearch(e.target.value); setShowParentDropdown(true); }}
-                    onFocus={() => setShowParentDropdown(true)}
-                    placeholder="Search parent goal..."
-                    className="h-8 text-sm"
-                    data-testid="input-parent-search"
-                  />
-                  {showParentDropdown && availableParents.length > 0 && (
-                    <div className="border rounded-md max-h-36 overflow-y-auto space-y-0.5 p-1" data-testid="parent-dropdown">
-                      {availableParents.map(g => (
-                        <div
-                          key={g.id}
-                          className="flex items-center gap-2 text-sm rounded-md p-1.5 cursor-pointer hover-elevate"
-                          onClick={() => { setGoalFields(prev => ({ ...prev, selectedParentId: g.id })); setParentSearch(""); setShowParentDropdown(false); }}
-                          data-testid={`parent-option-${g.id}`}
-                        >
-                          <InlineReferenceText text={g.shortName} className="flex-1 truncate" />
-                          <span className="inline-flex items-center bg-cat-event/15 text-cat-event-foreground border border-cat-event/30 rounded-sm text-xs font-medium px-2 py-0.5">{HORIZON_LABELS[g.horizon]}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          <div>
+            <Label className="mb-1.5 block">Parent Goal</Label>
+            <ReferencePicker
+              mode="single"
+              types={["goal"]}
+              value={parentValue}
+              onChange={(next) => {
+                const pick = next[0];
+                setGoalFields((prev) => ({
+                  ...prev,
+                  selectedParentId: pick?.id ?? null,
+                  selectedParentLabel: pick?.label ?? null,
+                }));
+              }}
+              placeholder="Search parent goal…"
+              dense
+              testId="picker-goal-parent"
+            />
+          </div>
 
           <DialogFooter>
             <Button
@@ -350,8 +308,7 @@ function GoalDetailPanel({
   const [titleCursor, setTitleCursor] = useState(0);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [showParentPicker, setShowParentPicker] = useState(false);
-  const [parentSearch, setParentSearch] = useState("");
-
+  
   const mention = useMentionAutocomplete({
     value: titleDraft,
     cursorPosition: titleCursor,
@@ -366,7 +323,6 @@ function GoalDetailPanel({
 
   useEffect(() => {
     setShowParentPicker(false);
-    setParentSearch("");
     setEditingTitle(false);
   }, [goalId]);
 
@@ -421,7 +377,6 @@ function GoalDetailPanel({
       queryClient.invalidateQueries({ queryKey: ["/api/life-goals/graph"] });
       queryClient.invalidateQueries({ queryKey: ["/api/life-goals"] });
       setShowParentPicker(false);
-      setParentSearch("");
       toast({ title: "Parent goal updated" });
     } catch (err: any) {
       toast({ title: "Failed to set parent", description: err.message, variant: "destructive" });
@@ -443,14 +398,9 @@ function GoalDetailPanel({
   if (!goal) return null;
 
   const parentGoal = goal.parentId ? goals.find(g => g.id === goal.parentId) : null;
-  const availableParents = goals.filter(g => {
-    if (g.id === goalId) return false;
-    if (parentSearch.trim()) {
-      const q = parentSearch.toLowerCase();
-      return g.shortName.toLowerCase().includes(q);
-    }
-    return true;
-  });
+  const parentValue = parentGoal
+    ? [{ type: "goal" as const, id: parentGoal.id, label: parentGoal.shortName }]
+    : [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -593,38 +543,34 @@ function GoalDetailPanel({
               {showParentPicker && (
                 <div className="mt-1 space-y-1">
                   <div className="flex items-center gap-1">
-                    <Input
-                      value={parentSearch}
-                      onChange={(e) => setParentSearch(e.target.value)}
-                      placeholder="Search goals..."
-                      className="h-7 text-xs flex-1"
-                      autoFocus
-                      data-testid="input-summary-parent-search"
-                    />
+                    <div className="flex-1 min-w-0">
+                      <ReferencePicker
+                        mode="single"
+                        types={["goal"]}
+                        value={parentValue}
+                        excludeIds={[goalId]}
+                        onChange={(next) => {
+                          const pick = next[0];
+                          if (!pick) {
+                            void handleUnlinkParent();
+                            return;
+                          }
+                          void handleSetParent(pick.id);
+                        }}
+                        placeholder="Search parent goal…"
+                        dense
+                        testId="picker-summary-parent"
+                      />
+                    </div>
                     <Button
                       size="icon"
                       variant="ghost"
                       className="h-7 w-7 shrink-0"
-                      onClick={() => { setShowParentPicker(false); setParentSearch(""); }}
+                      onClick={() => setShowParentPicker(false)}
+                      data-testid="button-cancel-parent"
                     >
                       <X className="h-3 w-3" />
                     </Button>
-                  </div>
-                  <div className="border rounded-md max-h-32 overflow-y-auto space-y-0.5 p-1" data-testid="summary-parent-dropdown">
-                    {availableParents.length === 0 && (
-                      <p className="text-xs text-muted-foreground py-2 text-center">No matching goals.</p>
-                    )}
-                    {availableParents.map(g => (
-                      <div
-                        key={g.id}
-                        className="flex items-center gap-2 text-xs rounded-md p-1.5 cursor-pointer hover-elevate"
-                        onClick={() => handleSetParent(g.id)}
-                        data-testid={`summary-parent-option-${g.id}`}
-                      >
-                        <InlineReferenceText text={g.shortName} className="flex-1 truncate" />
-                        <span className="inline-flex items-center bg-cat-event/15 text-cat-event-foreground border border-cat-event/30 rounded-sm text-xs font-medium px-2 py-0.5">{HORIZON_LABELS[g.horizon]}</span>
-                      </div>
-                    ))}
                   </div>
                 </div>
               )}
