@@ -43,6 +43,7 @@ export * from "./models/mods";
 export * from "./models/build-deployments";
 export * from "./models/runtime";
 export * from "./models/outbox";
+export * from "./models/metrics";
 
 
 export const mobileStartupTelemetry = pgTable("mobile_startup_telemetry", {

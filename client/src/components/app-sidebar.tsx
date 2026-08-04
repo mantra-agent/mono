@@ -243,6 +243,8 @@ const navSections: NavSection[] = [
       navItem("Pipelines", "navigation.pipelines.open", Waypoints),
       navItem("Model", "navigation.businessModel.open", LineChart),
       navItem("Roles", "navigation.roles.open", Briefcase),
+      navItem("KPIs", "navigation.kpis.open", Gauge),
+      navItem("Metrics", "navigation.metrics.open", Activity),
     ],
   },
   {
