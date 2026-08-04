@@ -4033,7 +4033,31 @@ export class AgentExecutor extends EventEmitter {
           const systemMessage: ExecutorMessage = { role: "system", content: refreshed.systemPrompt };
           if (systemIndex >= 0) messages[systemIndex] = systemMessage;
           else messages.unshift(systemMessage);
-          options.tools = [...refreshed.tools];
+          // A persona switch enhances persona gating; it must never lobotomize
+          // the run. If the refreshed set is empty or drops a core tool that was
+          // callable before the switch (e.g. a degraded authority resolution at
+          // refresh time), keep the last known-good set so orient/tools/session
+          // survive and the run can still recover. Fail loudly, degrade gracefully.
+          const { reconcilePersonaSwitchToolSet } = await import("./tool-registry");
+          const previousToolSet = options.tools ?? [];
+          const reconciled = reconcilePersonaSwitchToolSet(previousToolSet, refreshed.tools);
+          options.tools = [...reconciled.tools];
+          if (reconciled.degraded) {
+            log.warn(
+              `persona switch tool refresh degraded — retained prior set runId=${runId} sessionId=${options.sessionId || "none"} refreshedCount=${refreshed.tools.length} retainedCount=${options.tools.length} missingCore=${reconciled.missingCore.join(",") || "none"}`,
+            );
+            ctx.publish("system_step", {
+              step: "persona_switch",
+              status: "done",
+              detail: `Tool refresh degraded — retained ${options.tools.length} prior tools (missing core: ${reconciled.missingCore.join(", ") || "none"})`,
+              metadata: {
+                degraded: true,
+                refreshedCount: refreshed.tools.length,
+                retainedCount: options.tools.length,
+                missingCore: reconciled.missingCore,
+              },
+            });
+          }
           ctx.modelString = modelString;
           ctx.resolvedModel = modelString;
           ctx.resolvedProvider = routingDecision.provider;

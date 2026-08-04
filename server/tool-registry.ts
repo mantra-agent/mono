@@ -2085,6 +2085,34 @@ export function filterToolsForPersonaBundle<T extends { name: string }>(
   return schemas.filter(schema => CORE_TOOL_NAMES.has(schema.name) || included.has(schema.name));
 }
 
+/**
+ * Reconcile a mid-run persona-switch tool refresh against the pre-switch set.
+ *
+ * A persona switch changes persona *gating*, never authority. It must never be
+ * able to reduce the callable set below the core tools that were already
+ * available: losing orient/tools/session mid-run strands the agent with no way
+ * to recover or switch back. `filterToolsForPersonaBundle` only *passes through*
+ * core tools already present in the authority set — it cannot re-add them — so a
+ * degraded authority resolution (null/restricted principal at refresh time)
+ * yields an empty set that silently lobotomizes the run.
+ *
+ * This is the single structural guarantee for that invariant: if the refreshed
+ * set is empty, or drops a core tool that was present before the switch, the
+ * refresh is degraded and the caller keeps the last known-good set instead.
+ */
+export function reconcilePersonaSwitchToolSet<T extends { name: string }>(
+  previous: T[],
+  refreshed: T[],
+): { tools: T[]; degraded: boolean; missingCore: string[] } {
+  const previousCore = new Set(
+    previous.filter(tool => CORE_TOOL_NAMES.has(tool.name)).map(tool => tool.name),
+  );
+  const refreshedNames = new Set(refreshed.map(tool => tool.name));
+  const missingCore = [...previousCore].filter(name => !refreshedNames.has(name));
+  const degraded = refreshed.length === 0 || missingCore.length > 0;
+  return { tools: degraded ? previous : refreshed, degraded, missingCore };
+}
+
 export interface ToolCatalogEntry {
   name: string;
   description: string;
