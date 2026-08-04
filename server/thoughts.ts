@@ -189,7 +189,11 @@ export async function getJournalEntriesSince(days: number, tags: string[] = ["jo
     { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId },
     and(
       gte(libraryPages.createdAt, cutoff),
-      tags.length > 0 ? sql`${libraryPages.tags} && ${tags}` : undefined,
+      // Drizzle binds JS string[] as a record/tuple; cast an explicit text[] so
+      // the && overlap operator is valid (text[] && text[]).
+      tags.length > 0
+        ? sql`${libraryPages.tags} && ARRAY[${sql.join(tags.map((tag) => sql`${tag}`), sql`, `)}]::text[]`
+        : undefined,
     ),
   );
   const rows = await db
