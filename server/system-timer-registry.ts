@@ -12,22 +12,12 @@ import { createUserPrincipalFromUser } from "./principal";
 import { runWithPrincipal } from "./principal-context";
 import { storage } from "./storage";
 import { getUserEffectivePermissions } from "./permissions";
+import { SKILL_NAME_ALIASES } from "./skill-identities";
 
 const log = createLogger("SystemTimerRegistry");
 
-export const SYSTEM_TIMER_SKILL_ALIASES: Record<string, string> = {
-  "plan-weekly": "plan",
-  "plan-monthly": "plan",
-  "reflect-daily": "reflect",
-  "reflect-weekly": "reflect",
-  "reflect-monthly": "reflect",
-  "reflect-quarterly": "reflect",
-  "reflect-annual": "reflect",
-  "sleep-cycle": "sleep",
-  "memory-sleep": "sleep",
-  "idea-generation": "ideate",
-  "landscape-scan": "scan",
-};
+/** Timer skillId aliases — same SSOT as seed renames and runtime config resolve. */
+export const SYSTEM_TIMER_SKILL_ALIASES: Record<string, string> = { ...SKILL_NAME_ALIASES };
 
 export interface SystemTimerDefinition extends InsertTimer {
   systemKey: string;

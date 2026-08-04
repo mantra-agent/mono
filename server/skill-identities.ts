@@ -4,3 +4,40 @@ export const CANONICAL_SCAN_SKILL_ID = "e64a948e-5f91-4551-8f3f-a67bd7b7a58c";
 export const CANONICAL_REGRESSION_SKILL_ID = "f4374a5d-1f97-4f0e-857a-0fef418d58c9";
 export const CANONICAL_DAILY_BRIEF_SKILL_ID = "85ffa707-a446-4455-91ad-b9e97984b9f3";
 export const CANONICAL_AFFIRM_SKILL_ID = "0b7f0748-1aca-45bb-9f5f-cc2aabe892a3";
+
+/** Build-mod owned skill names — single source for routes, runner access, and config authority. */
+export const BUILD_OWNED_SKILL_NAMES = ["sentry", "guard", "regression"] as const;
+export type BuildOwnedSkillName = (typeof BUILD_OWNED_SKILL_NAMES)[number];
+export const BUILD_OWNED_SKILL_NAME_SET = new Set<string>(BUILD_OWNED_SKILL_NAMES);
+
+/**
+ * Legacy skill/timer/prompt names → canonical skill name.
+ * Single source for seed renames, timer aliasing, and runtime config resolve.
+ */
+export const SKILL_NAME_ALIASES: Record<string, string> = {
+  "monthly-reflect": "reflect",
+  "sleep-cycle": "sleep",
+  "memory-sleep": "sleep",
+  "introspect": "reflect",
+  "reflect-daily": "reflect",
+  "reflect-weekly": "reflect",
+  "reflect-monthly": "reflect",
+  "reflect-quarterly": "reflect",
+  "reflect-annual": "reflect",
+  "plan-weekly": "plan",
+  "plan-monthly": "plan",
+  "idea-generation": "ideate",
+  "landscape-scan": "scan",
+  "opportunity-research": "research",
+  "council-advocate": "advocate",
+  "coaching-model-1-0": "coach",
+  "news-curation": "curate",
+  "reliability-sentinel": "sentry",
+  "security-sentinel": "guard",
+};
+
+export function resolveSkillRunName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+  return SKILL_NAME_ALIASES[trimmed] ?? SKILL_NAME_ALIASES[trimmed.toLowerCase()] ?? trimmed;
+}

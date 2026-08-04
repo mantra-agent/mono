@@ -11,6 +11,7 @@ import {
   CANONICAL_DAILY_BRIEF_SKILL_ID,
   CANONICAL_REGRESSION_SKILL_ID,
   CANONICAL_SCAN_SKILL_ID,
+  SKILL_NAME_ALIASES,
 } from "./skill-identities";
 
 const log = createLogger("SkillSeed");
@@ -20,26 +21,8 @@ const PROMPT_NAME_TO_SKILL: Record<string, string> = {
   "monthly-reflect": "reflect",
 };
 
-const SKILL_RENAMES: Record<string, string> = {
-  "monthly-reflect": "reflect",
-  "sleep-cycle": "memory-sleep",
-  "memory-sleep": "sleep",
-  "introspect": "reflect",
-  "reflect-daily": "reflect",
-  "reflect-monthly": "reflect",
-  "reflect-quarterly": "reflect",
-  "reflect-annual": "reflect",
-  "plan-weekly": "plan",
-  "plan-monthly": "plan",
-  "idea-generation": "ideate",
-  "landscape-scan": "scan",
-  "opportunity-research": "research",
-  "council-advocate": "advocate",
-  "coaching-model-1-0": "coach",
-  "news-curation": "curate",
-  "reliability-sentinel": "sentry",
-  "security-sentinel": "guard",
-};
+/** Seed rename map — derived from shared skill-identities SSOT. */
+const SKILL_RENAMES: Record<string, string> = { ...SKILL_NAME_ALIASES };
 
 export async function migrateSkillRenames(): Promise<void> {
   for (const [oldName, newName] of Object.entries(SKILL_RENAMES)) {
@@ -1567,7 +1550,8 @@ export async function deleteZombieSkills(): Promise<void> {
 }
 
 export async function getSkillProcess(name: string): Promise<string> {
-  const skillName = PROMPT_NAME_TO_SKILL[name] || name;
+  const { resolveSkillRunName } = await import("./skill-identities");
+  const skillName = resolveSkillRunName(PROMPT_NAME_TO_SKILL[name] || name);
   const { storage } = await import("./storage");
   const skill = await storage.getSkillByName(skillName);
   if (skill) return skill.process;
@@ -1575,7 +1559,8 @@ export async function getSkillProcess(name: string): Promise<string> {
 }
 
 export async function getSkillEntry(name: string): Promise<{ process: string; activity: string }> {
-  const skillName = PROMPT_NAME_TO_SKILL[name] || name;
+  const { resolveSkillRunName } = await import("./skill-identities");
+  const skillName = resolveSkillRunName(PROMPT_NAME_TO_SKILL[name] || name);
   const { storage } = await import("./storage");
   const skill = await storage.getSkillByName(skillName);
   if (skill) return { process: skill.process, activity: skill.activity };
