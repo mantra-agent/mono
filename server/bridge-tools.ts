@@ -13186,8 +13186,14 @@ const systemTools: Record<string, ToolHandler> = {
     const shellPolicy = validateShellCommand(command);
     if (!shellPolicy.allowed) {
       eventBus.publish({ category: "agent", event: "tool:shell_denied", payload: { reason: shellPolicy.reason } });
+      const denyDetail =
+        shellPolicy.reason === "git_write_blocked"
+          ? "Shell git write/mutate commands are blocked. Use the git tool for clone/add/commit/push/PR/merge and branch mutation. Shell git is read-only: status, log, diff, show, branch, remote, rev-parse, grep."
+          : shellPolicy.reason === "shell_git_read_only"
+            ? "Shell git admits only the read-only subcommands listed in the tool contract (status/log/diff/show/branch/remote/rev-parse/grep). This subcommand is not in that set — do not retry variants."
+            : `Shell command blocked by deterministic allowlist: ${shellPolicy.reason}`;
       return {
-        result: `Shell command blocked by deterministic allowlist: ${shellPolicy.reason}`,
+        result: denyDetail,
         error: true,
         failure: inputFailure("shell_policy_denied", shellPolicy.reason),
       };
@@ -13207,21 +13213,9 @@ const systemTools: Record<string, ToolHandler> = {
       };
     }
 
-    // Block shell-based git WRITE commands — read-only git via shell is allowed.
-    const GIT_SHELL_PATTERN = /(?:^|&&|\|\||;|\n)\s*git\s/;
-    const GIT_WRITE_SUBCOMMANDS = /\bgit\s+(push|commit|merge|rebase|reset|checkout\s+-b|checkout\s+--orphan|switch\s+-c|tag|stash|cherry-pick|pull|am|format-patch|init|clone|add|rm|mv|restore\s+--staged|bisect|clean|submodule|remote\s+(add|remove|rename|set-url))\b/;
-    if (GIT_SHELL_PATTERN.test(command) && GIT_WRITE_SUBCOMMANDS.test(command)) {
-      eventBus.publish({
-        category: "agent",
-        event: "tool:shell_denied",
-        payload: { command, reason: "git_write_blocked" },
-      });
-      return {
-        result: "Shell git write commands are blocked. Use the git MCP tool for write operations (clone, add, commit, push, create_pr, merge_pr) — it handles authentication and directory isolation. Shell git is allowed for read operations: status, log, diff, show, branch, remote, rev-parse, grep.",
-        error: true,
-        failure: inputFailure("shell_policy_denied", "git_write_blocked"),
-      };
-    }
+    // Git write vs read-only misuse is classified inside validateShellCommand
+    // (git_write_blocked vs shell_git_read_only). Do not re-parse here — dual
+    // admitters drift and collapse distinct recovery paths into one reason.
 
     eventBus.publish({
       category: "agent",

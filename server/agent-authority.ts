@@ -374,10 +374,59 @@ function stripSafeShellRedirectsForValidation(command: string): string {
     .replace(/(?:^|\s)\d*>&\d+\b/g, " ");
 }
 
-function isSafeShellGitSegment(segment: string): boolean {
+/**
+ * Known write/mutate git subcommands. Denied as `git_write_blocked` so recovery can
+ * route to the git tool instead of thrashing on the generic read-only reason.
+ * Keep this set aligned with bridge-era write coverage; unknown subs stay
+ * `shell_git_read_only` (not in the read allowlist) rather than being labeled writes.
+ */
+const SHELL_GIT_WRITE_SUBCOMMANDS = new Set([
+  "push",
+  "commit",
+  "merge",
+  "rebase",
+  "reset",
+  "checkout",
+  "switch",
+  "tag",
+  "stash",
+  "cherry-pick",
+  "pull",
+  "fetch",
+  "am",
+  "format-patch",
+  "init",
+  "clone",
+  "add",
+  "rm",
+  "mv",
+  "restore",
+  "bisect",
+  "clean",
+  "submodule",
+  "worktree",
+  "config",
+  "reflog",
+  "repack",
+  "gc",
+  "filter-branch",
+  "replace",
+  "notes",
+  "sparse-checkout",
+]);
+
+/**
+ * Classify a `git …` segment for shell admission.
+ * Returns null when the segment is a permitted read-only inspection command;
+ * otherwise a precise deny reason:
+ *   - git_write_blocked: known write/mutate subcommand or mutation flag on an
+ *     otherwise-read subcommand (branch -d, remote add, …)
+ *   - shell_git_read_only: missing/unknown subcommand outside the read allowlist
+ */
+function classifyShellGitSegment(segment: string): string | null {
   // Skip read-only global options (`-C path`, `--no-pager`, `-c key=value`) before the subcommand.
   const tokens = segment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
-  if (tokens[0] !== "git") return false;
+  if (tokens[0] !== "git") return "shell_git_read_only";
   let i = 1;
   while (i < tokens.length) {
     const t = tokens[i];
@@ -404,23 +453,25 @@ function isSafeShellGitSegment(segment: string): boolean {
     break;
   }
   const sub = tokens[i];
-  if (!sub || !SAFE_SHELL_GIT_SUBCOMMANDS.has(sub)) return false;
+  if (!sub) return "shell_git_read_only";
+  if (SHELL_GIT_WRITE_SUBCOMMANDS.has(sub)) return "git_write_blocked";
+  if (!SAFE_SHELL_GIT_SUBCOMMANDS.has(sub)) return "shell_git_read_only";
   if (sub === "branch") {
     // List/inspect only — block create/delete/rename/copy/upstream mutation flags.
     if (/\s(?:-[dDmM]|--delete|--move|--copy|--set-upstream-to|--unset-upstream|--edit-description)\b/.test(segment)) {
-      return false;
+      return "git_write_blocked";
     }
-    return true;
+    return null;
   }
   if (sub === "remote") {
     // Read-only remote inspection — block add/remove/rename/set-url/prune/update.
     const remoteAction = tokens[i + 1];
     if (remoteAction && ["add", "remove", "rename", "set-url", "set-head", "set-branches", "prune", "update"].includes(remoteAction)) {
-      return false;
+      return "git_write_blocked";
     }
-    return true;
+    return null;
   }
-  return true;
+  return null;
 }
 
 /**
@@ -439,7 +490,7 @@ export function getShellToolContractDescription(): string {
     "Never use newlines, backticks, `$(...)`, bare `&`, `||`, `<`/`>` file redirection, `~`, or variable expansion.",
     "Safe redirect exceptions only: `>/dev/null`, `N>/dev/null`, and `N>&M` FD merges (e.g. `2>&1`).",
     "Absolute paths must stay under `/app`, or name a system binary under `/bin`, `/usr/bin`, or `/usr/local/bin`.",
-    `Shell git is inspection-only (${gitSubs}); branch/remote mutation flags are denied. All git writes use the git tool.`,
+    `Shell git is inspection-only (${gitSubs}); branch/remote mutation flags are denied. Write/mutate subs deny as git_write_blocked (use the git tool); unknown/non-read subs deny as shell_git_read_only.`,
     "Shell npm is only `npm run build`. sed only as `sed -n 'N,Mp' [file]` (file optional for pipeline stdin). find may not use -exec/-delete.",
     "Prefer scratch.read when the path is already known. Prefer parallel tool calls for independent work when latency matters; `;` sequencing is also valid for independent allowlisted segments.",
     "A non-zero process exit (e.g. rg/grep miss, git status 1) is returned as a normal tool result with an exit header — not a tool error. Do not retry solely because exit ≠ 0; read the body. Timeouts, spawn failures, and policy denials remain tool errors.",
@@ -539,8 +590,9 @@ export function validateShellCommand(command: string): ToolAuthorityDecision {
     if (first === "sort" && /(?:^|\s)(?:-o(?:\s|$)|--output(?:=|\s)|--compress-program(?:=|\s))/.test(segment)) return { allowed: false, reason: "sort_write_or_program_blocked" };
     if (first === "uniq" && /(?:^|\s)--?output(?:=|\s)/.test(segment)) return { allowed: false, reason: "uniq_output_blocked" };
     if (first === "file" && /(?:^|\s)-(?:[^\s]*z|[^\s]*Z)(?:\s|$)/.test(segment)) return { allowed: false, reason: "file_decompress_blocked" };
-    if (first === "git" && !isSafeShellGitSegment(segment)) {
-      return { allowed: false, reason: "shell_git_read_only" };
+    if (first === "git") {
+      const gitDeny = classifyShellGitSegment(segment);
+      if (gitDeny) return { allowed: false, reason: gitDeny };
     }
     if (first === "npm" && !/^npm\s+run\s+build\s*$/.test(segment)) return { allowed: false, reason: "npm_command_not_allowlisted" };
   }
