@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent, type ReactNode } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { usePageHeader } from "@/hooks/use-page-header";
@@ -15,12 +15,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ActiveStatusSpinner } from "@/components/nav-dot";
+import { useVaults, type Vault } from "@/hooks/use-vaults";
+import { vaultTitleColor } from "@/lib/vault-title-color";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { latestLiveDeploymentId, useEnvironmentBuildSeenState, type EnvironmentBuildSnapshot } from "@/lib/environment-build-seen";
@@ -50,6 +56,9 @@ interface Platform {
   name: string;
   description: string;
   status: string;
+  vaultId?: string | null;
+  vaultIds?: string[];
+  canManageVaults?: boolean;
   createdAt: string;
   updatedAt: string;
   products: PlatformProduct[];
@@ -125,6 +134,7 @@ function PlatformTreeRow({
   depth,
   icon: Icon,
   title,
+  titleColor,
   children,
   onSelect,
   onRename,
@@ -145,6 +155,7 @@ function PlatformTreeRow({
   depth: number;
   icon?: ComponentType<{ className?: string }>;
   title: string;
+  titleColor?: string;
   children?: ReactNode;
   onSelect?: () => void;
   onRename?: () => void;
@@ -214,7 +225,12 @@ function PlatformTreeRow({
                 }}
                 aria-label={onRename ? `Rename ${title}` : title}
               >
-                <span className={cn("truncate", isBuilding && "text-active animate-pulse")}>{title}</span>
+                <span
+                  className={cn("truncate", isBuilding && "text-active animate-pulse")}
+                  style={titleColor && !isBuilding ? { color: titleColor } : undefined}
+                >
+                  {title}
+                </span>
               </button>
             </span>
           )}
@@ -317,6 +333,8 @@ function EnvironmentRow({
 export default function PlatformsPage() {
   usePageHeader({ title: "Platforms" });
   const [, setLocation] = useLocation();
+  const { vaults, activeVaultId } = useVaults();
+  const vaultById = useMemo(() => new Map(vaults.map((vault) => [vault.id, vault])), [vaults]);
   const [closedPlatforms, setClosedPlatforms] = useState<Set<number>>(() => new Set());
   const [closedProducts, setClosedProducts] = useState<Set<number>>(() => new Set());
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
@@ -381,6 +399,16 @@ export default function PlatformsPage() {
     mutationFn: async (id: number) => apiRequest("DELETE", `/api/platforms/${id}`),
     onSuccess: () => {
       setPendingDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/platforms"] });
+    },
+  });
+
+  const vaultMembershipMutation = useMutation({
+    mutationFn: async ({ platformId, vaultIds }: { platformId: number; vaultIds: string[] }) => {
+      const response = await apiRequest("PATCH", `/api/platforms/${platformId}/vaults`, { vaultIds });
+      return response.json() as Promise<Platform>;
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/platforms"] });
     },
   });
@@ -562,11 +590,22 @@ export default function PlatformsPage() {
           ) : platforms.map(platform => {
             const platformOpen = !closedPlatforms.has(platform.id);
             const platformRenaming = renameTarget?.type === "platform" && renameTarget.id === platform.id;
+            const platformVaultIds = platform.vaultIds?.length
+              ? platform.vaultIds
+              : platform.vaultId
+                ? [platform.vaultId]
+                : [];
+            const platformTitleColor = vaultTitleColor(
+              platformVaultIds,
+              vaultById,
+              activeVaultId,
+            );
             return (
               <div key={platform.id} className="space-y-0 mt-0">
                 <PlatformTreeRow
                   depth={0}
                   title={platform.name}
+                  titleColor={platformTitleColor}
                   sectionHeader
                   onSelect={() => togglePlatform(platform.id)}
                   onRename={() => startRenamePlatform(platform)}
@@ -592,6 +631,42 @@ export default function PlatformsPage() {
                         <Plus className="mr-2 h-4 w-4" />
                         Add product
                       </DropdownMenuItem>
+                      {platform.canManageVaults !== false && vaults.length > 0 && (
+                        <DropdownMenuSub>
+                          <DropdownMenuSubTrigger
+                            data-testid={`menu-platform-vaults-${platform.id}`}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            Vaults
+                          </DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent>
+                            {vaults.map((vault: Vault) => {
+                              const checked = platformVaultIds.includes(vault.id);
+                              return (
+                                <DropdownMenuCheckboxItem
+                                  key={vault.id}
+                                  checked={checked}
+                                  disabled={vaultMembershipMutation.isPending || (checked && platformVaultIds.length === 1)}
+                                  onSelect={(event) => event.preventDefault()}
+                                  onCheckedChange={(nextChecked) => {
+                                    const nextVaultIds = nextChecked
+                                      ? Array.from(new Set([...platformVaultIds, vault.id]))
+                                      : platformVaultIds.filter((id) => id !== vault.id);
+                                    if (nextVaultIds.length === 0) return;
+                                    vaultMembershipMutation.mutate({
+                                      platformId: platform.id,
+                                      vaultIds: nextVaultIds,
+                                    });
+                                  }}
+                                  data-testid={`menu-platform-vault-${platform.id}-${vault.id}`}
+                                >
+                                  <span style={{ color: vault.color || undefined }}>{vault.name}</span>
+                                </DropdownMenuCheckboxItem>
+                              );
+                            })}
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                      )}
                       <DropdownMenuItem
                         className="text-destructive focus:text-destructive"
                         onClick={(event) => { event.stopPropagation(); setPendingDelete({ type: "platform", platform }); }}
