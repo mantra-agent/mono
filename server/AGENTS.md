@@ -358,9 +358,13 @@ Live meeting transcript commits are fragments, not conversational turns. The ses
 
 Meeting barge-in is driven by raw per-frame participant RMS energy (`observeMeetingParticipantSpeechEnergy` in `meeting/output-media.ts`, fed from `meeting/stt.ts`), not by transcript ingest. The bot's own output stream returns as `excluded` before energy is measured, so the signal is echo-free and the agent cannot interrupt itself. Onset uses an energy threshold with a sustain window and gap reset. The transcript-bound `interruptMeetingSpeech` call remains a harmless idempotent backstop; do not rebind barge-in to transcription, which lands seconds late and stays silent during the exact overlap barge-in exists to catch.
 
-## Browser performance telemetry
+## Telemetry writes
 
-`browser_performance_telemetry` is the principal-scoped canonical store for browser experience samples and correlated SPA navigation traces. `browser-telemetry-storage.ts` owns validation, metadata minimization, retention, and the bounded summary shared by the Performance page and `system.frontend_performance`; do not create a parallel incident or navigation store. SPA navigation p50/p95 are computed only over `outcome: "completed"` samples; deadline/pagehide/superseded traces increment `incompleteCount` and never enter latency percentiles.
+Best-effort observability samples share one write path. Domain storage validates and maps rows; durable insert goes through `enqueueTelemetryWrite` in `server/telemetry-write.ts` (serial log-sink lane). Do not add per-table queues or foreground `await db.insert` on telemetry POST handlers — accept with `202` and enqueue.
+
+- **Browser:** `browser_performance_telemetry` is the principal-scoped canonical store for browser experience samples and correlated SPA navigation traces. `browser-telemetry-storage.ts` owns validation, metadata minimization, retention, enqueue, and the bounded summary shared by the Performance page and `system.frontend_performance`; do not create a parallel incident or navigation store. SPA navigation p50/p95 are computed only over `outcome: "completed"` samples; deadline/pagehide/superseded traces increment `incompleteCount` and never enter latency percentiles.
+- **Mobile startup:** `mobile_startup_telemetry` rows enqueue via `mobile-telemetry-storage.ts` → the same log-sink. `POST /api/mobile/telemetry/startup` returns `202`.
+- **Ordered audit (not the sink):** `api_calls` and similar awaited writers use `createSerialQueue` from `server/utils/serial-async-delivery.ts`. Durable correctness tables (ACLs, settings) stay on the request path.
 
 ## Issue create boundary
 

@@ -4,12 +4,16 @@ import { getCurrentPrincipal } from "../principal-context";
 import { createLogger } from "../log";
 import { getSetting } from "../system-settings";
 import { storageBackend, PRIVATE_PREFIX } from "../object_storage/objectStorage";
+import { createSerialQueue } from "../utils/serial-async-delivery";
 import type { QueryResultRow } from "pg";
 
 const log = createLogger("StoreApiCalls");
 
 const INFERENCE_DEBUG_KEY = "system.inference_debug";
 const S3_PREFIX = `${PRIVATE_PREFIX}inference/`;
+
+/** Ordered durable writes for api_calls — shared serial queue, not a local reinvention. */
+const apiCallWriteQueue = createSerialQueue({ label: "api-calls" });
 
 function captureIdProjection(apiCallAlias = "api_calls"): string {
   return `(SELECT capture.id
@@ -140,14 +144,6 @@ export interface ApiCallListFilters {
   before?: Date;
 }
 
-let writeQueue: Promise<void> = Promise.resolve();
-
-function enqueueWrite<T>(fn: () => Promise<T>): Promise<T> {
-  const result = writeQueue.then(fn, fn);
-  writeQueue = result.then(() => {}, () => {});
-  return result;
-}
-
 function rowToApiCall(row: ApiCallRow): ApiCall {
   return {
     id: row.id,
@@ -248,7 +244,7 @@ function buildWhereParams(since: Date | undefined, params: Array<Date | string |
 
 export class FileApiCallStorage {
   async createApiCall(call: InsertApiCall): Promise<ApiCall> {
-    return enqueueWrite(async () => {
+    return apiCallWriteQueue.enqueueAndWait(async () => {
       const ownership = currentOwnership();
       const result = await pool.query<ApiCallRow>(
         `INSERT INTO api_calls (timestamp, scope, owner_user_id, account_id, model, provider, profile, input_tokens, output_tokens,
@@ -292,7 +288,7 @@ export class FileApiCallStorage {
   }
 
   async settleApiCall(id: number, call: InsertApiCall): Promise<ApiCall | undefined> {
-    return enqueueWrite(async () => {
+    return apiCallWriteQueue.enqueueAndWait(async () => {
       const ownership = ownershipClause("api_calls", 18);
       const result = await pool.query<ApiCallRow>(
         `UPDATE api_calls
