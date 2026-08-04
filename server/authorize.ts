@@ -79,6 +79,11 @@ function subjectMatchPredicate(principal: Principal): SQL {
       WHERE tm.team_id = ${objectGrants.subjectId}
         AND tm.user_id = ${principal.userId}
     ))
+    OR (${objectGrants.subjectType} = 'organization' AND EXISTS (
+      SELECT 1 FROM organization_members om
+      WHERE om.organization_id = ${objectGrants.subjectId}
+        AND om.user_id = ${principal.userId}
+    ))
   )`;
 }
 
