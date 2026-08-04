@@ -122,7 +122,6 @@ export interface SimpleFeed {
   timezone: string;
   anchor: "now";
   sections: SimpleFeedSection[];
-  stale?: boolean;
   degraded?: boolean;
   errors?: Array<{ source: string; message: string }>;
 }

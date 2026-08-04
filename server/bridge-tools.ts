@@ -5313,7 +5313,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const libraryPageId = resolved.uuid;
       const { setArtifact } = await import("./period-artifact-storage");
       const { getDateInTimezone } = await import("./timezone");
-      const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
 
       if (artifactAction === "set_review" || artifactAction === "set_daily_plan") {
         const date = args.date ? String(args.date) : getDateInTimezone();
@@ -5321,7 +5320,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         if ("error" in parsed) return { result: parsed.error, error: true };
         const updates = artifactAction === "set_review" ? { reviewPageId: libraryPageId } : { dailyPlanPageId: libraryPageId };
         await setArtifact(date, "daily", updates);
-        invalidateSimpleFeedCache();
         const field = artifactAction === "set_review" ? "reviewPageId" : "dailyPlanPageId";
         return { result: `${field} set for ${date}: ${libraryPageId}` };
       }
@@ -5337,7 +5335,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         const mondayDate = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
         const field = artifactAction === "set_weekly_reflection" ? "weeklyReflectionPageId" : "weeklyPlanPageId";
         await setArtifact(mondayDate, "weekly", { [field]: libraryPageId });
-        invalidateSimpleFeedCache();
         return { result: `${field} set for week of ${mondayDate}: ${libraryPageId}` };
       }
 
@@ -5358,7 +5355,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
         const field = artifactAction === "set_monthly_plan" ? "monthlyPlanPageId" : "monthlyReflectionPageId";
         await setArtifact(firstOfMonth, "monthly", { [field]: libraryPageId });
-        invalidateSimpleFeedCache();
         return { result: `${field} set for month of ${firstOfMonth}: ${libraryPageId}` };
       }
 
@@ -5379,7 +5375,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         }
         const field = artifactAction === "set_quarterly_plan" ? "quarterlyPlanPageId" : "quarterlyReflectionPageId";
         await setArtifact(firstOfQuarter, "quarterly", { [field]: libraryPageId });
-        invalidateSimpleFeedCache();
         return { result: `${field} set for quarter of ${firstOfQuarter}: ${libraryPageId}` };
       }
 

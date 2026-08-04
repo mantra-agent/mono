@@ -8,50 +8,14 @@ import { lintSimpleTitle, validateSimpleFeed } from "./schema";
 import { getCurrentPrincipalOrSystem } from "../principal-context";
 
 const log = createLogger("SimpleFeed");
-const feedCache = new Map<string, SimpleFeed>();
-const feedGeneration = new Map<string, number>();
+/** In-flight coalesce only — no durable process-local cache (cross-replica safe). */
 const inFlightFeeds = new Map<string, Promise<SimpleFeed>>();
 
-function feedLocalDate(feed: SimpleFeed): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: feed.timezone || "America/Chicago",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(feed.generatedAt));
-}
-
-function isCachedFeedCurrent(feed: SimpleFeed): boolean {
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: feed.timezone || "America/Chicago",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-  return feedLocalDate(feed) === today;
-}
-
-function simpleFeedCacheKey(accountId?: string): string {
+function simpleFeedInFlightKey(accountId: string | undefined, useModel: boolean): string {
   const principal = getCurrentPrincipalOrSystem();
   const accountKey = accountId || principal.accountId || "__default__";
   const visibleVaultKey = [...principal.visibleVaultIds].sort().join(",") || "no-visible-vaults";
-  return `${accountKey}::${visibleVaultKey}`;
-}
-
-export function invalidateSimpleFeedCache(accountId?: string): void {
-  if (accountId) {
-    const accountPrefix = `${accountId}::`;
-    for (const key of new Set([...feedCache.keys(), ...feedGeneration.keys()])) {
-      if (!key.startsWith(accountPrefix)) continue;
-      feedCache.delete(key);
-      feedGeneration.set(key, (feedGeneration.get(key) || 0) + 1);
-    }
-    return;
-  }
-  feedCache.clear();
-  for (const key of feedGeneration.keys()) {
-    feedGeneration.set(key, (feedGeneration.get(key) || 0) + 1);
-  }
+  return `${accountKey}::${visibleVaultKey}::${useModel ? "curated" : "deterministic"}`;
 }
 
 function localMinutesFromIso(value: string | undefined, timezone: string): number | null {
@@ -381,16 +345,12 @@ async function curateWithModel(bundle: SimpleContextBundle, fallback: SimpleFeed
 }
 
 export async function generateSimpleFeed(options: { refresh?: boolean; useModel?: boolean; accountId?: string } = {}): Promise<SimpleFeed> {
-  const cacheKey = simpleFeedCacheKey(options.accountId);
-  const cached = feedCache.get(cacheKey);
-  if (!options.refresh && cached && isCachedFeedCurrent(cached)) return { ...cached, stale: true };
-
-  const generation = feedGeneration.get(cacheKey) || 0;
-  if (!feedGeneration.has(cacheKey)) feedGeneration.set(cacheKey, generation);
-  const inFlightKey = `${cacheKey}:${options.useModel === true ? "curated" : "deterministic"}:${generation}`;
+  // refresh is accepted for API compatibility; every request recomputes from source of truth.
+  const useModel = options.useModel === true;
+  const inFlightKey = simpleFeedInFlightKey(options.accountId, useModel);
   const existing = inFlightFeeds.get(inFlightKey);
   if (existing) {
-    log.debug(`coalesced Simple feed generation account=${cacheKey} generation=${generation}`);
+    log.debug(`coalesced Simple feed generation key=${inFlightKey}`);
     return existing;
   }
 
@@ -405,29 +365,19 @@ export async function generateSimpleFeed(options: { refresh?: boolean; useModel?
       log.warn(`plan artifact enrichment failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    const cacheIfCurrent = (feed: SimpleFeed): void => {
-      if ((feedGeneration.get(cacheKey) || 0) === generation) {
-        feedCache.set(cacheKey, feed);
-      }
-    };
-
-    if (!options.useModel) {
-      cacheIfCurrent(fallback);
+    if (!useModel) {
       log.debug(`generated deterministic Simple feed items=${fallback.sections.reduce((n, section) => n + section.items.length, 0)} degraded=${!!fallback.degraded} ms=${Date.now() - started}`);
       return fallback;
     }
 
     try {
       const curated = await curateWithModel(bundle, fallback);
-      cacheIfCurrent(curated);
       log.debug(`generated curated Simple feed items=${curated.sections.reduce((n, section) => n + section.items.length, 0)} degraded=${!!curated.degraded} ms=${Date.now() - started}`);
       return curated;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error(`curated generation failed, using fallback: ${message}`);
-      const degraded = { ...fallback, degraded: true, errors: [...(fallback.errors || []), { source: "llm", message }] };
-      cacheIfCurrent(degraded);
-      return degraded;
+      return { ...fallback, degraded: true, errors: [...(fallback.errors || []), { source: "llm", message }] };
     }
   })();
 

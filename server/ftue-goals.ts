@@ -19,8 +19,6 @@ function today(): string {
 
 async function publishGoalMutation(action: string, title: string, goalId?: string): Promise<void> {
   try {
-    const { invalidateSimpleFeedCache } = await import("./simple/generate-feed");
-    invalidateSimpleFeedCache();
     eventBus.publish({
       category: "goals",
       event: "data:goals_changed",

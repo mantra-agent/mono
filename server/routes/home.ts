@@ -5,7 +5,7 @@ import { eventBus } from "../event-bus";
 import { fileTaskStorage } from "../file-storage/tasks";
 import { listAllEvents, type CalendarEvent } from "../google-calendar";
 import { logWellnessActivity } from "./wellness";
-import { generateSimpleFeed, invalidateSimpleFeedCache } from "../simple/generate-feed";
+import { generateSimpleFeed } from "../simple/generate-feed";
 import { goalsService } from "../goals-service";
 import { dismissPeopleSurface, snoozePeopleSurface } from "../simple/people-surface-state";
 import { dismissBuildDeploymentHomeItem } from "../mods/build-deployment-home";
@@ -349,7 +349,6 @@ export function registerHomeRoutes(app: Express) {
         event: "chat.xyz.initiated",
         payload: { sessionId: created.id, topic, source: "home-plan", cadence },
       });
-      invalidateSimpleFeedCache();
       res.json({ success: true, sessionId: created.id, skillName: "plan", cadence });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -367,7 +366,6 @@ export function registerHomeRoutes(app: Express) {
         const reasonKey = stringValue(req.body?.reasonKey);
         if (!reasonKey) return res.status(400).json({ error: "reasonKey is required" });
         const state = await dismissPeopleSurface(personId, reasonKey);
-        invalidateSimpleFeedCache(req.principal?.accountId || undefined);
         return res.json({ ok: true, personId, state });
       }
       if (action === "snooze") {
@@ -378,7 +376,6 @@ export function registerHomeRoutes(app: Express) {
         const snoozedUntil = new Date(rawUntil);
         if (Number.isNaN(snoozedUntil.getTime())) return res.status(400).json({ error: "Invalid snoozedUntil" });
         const state = await snoozePeopleSurface(personId, reasonKey, snoozedUntil);
-        invalidateSimpleFeedCache(req.principal?.accountId || undefined);
         return res.json({ ok: true, personId, state });
       }
       return res.status(400).json({ error: "action must be dismiss or snooze" });
@@ -414,7 +411,6 @@ export function registerHomeRoutes(app: Express) {
               : null;
 
       if (!result) return res.status(400).json({ error: "Unsupported Home completion source" });
-      invalidateSimpleFeedCache(req.principal?.accountId || undefined);
       res.json(result);
     } catch (err: any) {
       const message = err instanceof Error ? err.message : String(err);

@@ -204,8 +204,6 @@ export function registerEmailDraftRoutes(app: Express) {
         try {
           const { ingestSentGmailMessage } = await import("../email-sync");
           await ingestSentGmailMessage(sent.gmailAccountId, sent.sentMessageId);
-          const { invalidateSimpleFeedCache } = await import("../simple/generate-feed");
-          invalidateSimpleFeedCache(principal.accountId || undefined);
         } catch (projectionErr) {
           log.warn(`Sent draft ${sent.id} but immediate email/People projection failed; deferred to email sync: ${projectionErr instanceof Error ? projectionErr.message : String(projectionErr)}`);
         }
