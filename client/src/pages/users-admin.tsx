@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronRight, Clock, Copy, Glasses, Globe2, Loader2, Mail, MoreHorizontal, Shield, Smartphone, Trash2, User, UserPlus, Users } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Clock, Copy, Glasses, Globe2, Loader2, Mail, Monitor, MoreHorizontal, Shield, Smartphone, Trash2, User, UserPlus, Users } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,21 @@ interface AdminUserRow {
   permissionOverrides: string[];
   presence: ClientPresenceEntry[];
   identityIncomplete?: boolean;
+}
+
+interface UserSessionRow {
+  sid: string;
+  createdAt: string | null;
+  lastActiveAt: string | null;
+  expiresAt: string;
+  userAgent: string | null;
+  clientIp: string | null;
+  current: boolean;
+}
+
+interface UserSessionsResponse {
+  userId: string;
+  sessions: UserSessionRow[];
 }
 
 interface WaitlistApplicationRow {
@@ -87,6 +103,36 @@ function formatDateTime(value: string | null): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function summarizeUserAgent(userAgent: string | null | undefined): string {
+  if (!userAgent?.trim()) return "Unknown device";
+  const ua = userAgent.trim();
+  if (ua === "mantra-screenshot-session") return "Screenshot session";
+  const browser =
+    /Edg\//.test(ua) ? "Edge"
+      : /Chrome\//.test(ua) ? "Chrome"
+        : /Firefox\//.test(ua) ? "Firefox"
+          : /Safari\//.test(ua) && !/Chrome\//.test(ua) ? "Safari"
+            : null;
+  const os =
+    /iPhone|iPad/.test(ua) ? "iOS"
+      : /Android/.test(ua) ? "Android"
+        : /Mac OS X/.test(ua) ? "macOS"
+          : /Windows/.test(ua) ? "Windows"
+            : /Linux/.test(ua) ? "Linux"
+              : null;
+  if (browser && os) return `${browser} on ${os}`;
+  if (browser) return browser;
+  if (os) return os;
+  return ua.length > 48 ? `${ua.slice(0, 45)}…` : ua;
+}
+
+function formatSessionRelative(value: string | null | undefined): string {
+  if (!value) return "Unknown";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return formatDistanceToNow(date, { addSuffix: true });
 }
 
 function PresenceIcon({ kind, className = "h-3.5 w-3.5" }: { kind: ClientPresenceKind; className?: string }) {
@@ -304,6 +350,13 @@ function WaitlistDetail({ application, canWrite, onBack }: { application: Waitli
 }
 
 function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange, onBack }: { user: AdminUserRow; availablePermissions: string[]; canWrite: boolean; draft: Set<string>; onDraftChange: (next: Set<string>) => void; onBack: () => void }) {
+  const { toast } = useToast();
+  const [revokingSid, setRevokingSid] = useState<string | null>(null);
+  const sessionsQueryKey = ["/api/auth/users", user.id, "sessions"] as const;
+  const sessionsQuery = useQuery<UserSessionsResponse>({
+    queryKey: sessionsQueryKey,
+    queryFn: async () => (await apiRequest("GET", `/api/auth/users/${user.id}/sessions`)).json(),
+  });
   const mutation = useMutation({
     mutationFn: async (permissions: string[]) => (await apiRequest("PATCH", `/api/auth/users/${user.id}/permissions`, { permissions })).json(),
     onSuccess: () => {
@@ -311,8 +364,28 @@ function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
     },
   });
+  const revokeSessionMutation = useMutation({
+    mutationFn: async (sid: string) => {
+      setRevokingSid(sid);
+      return (await apiRequest("DELETE", `/api/auth/users/${user.id}/sessions/${encodeURIComponent(sid)}`)).json() as Promise<{ ok: boolean; revokedCurrent?: boolean }>;
+    },
+    onSuccess: async (result) => {
+      if (result.revokedCurrent) {
+        toast({ title: "Current session revoked", description: "Sign in again to continue." });
+        window.location.assign("/login");
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: sessionsQueryKey });
+      toast({ title: "Session revoked" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not revoke session", description: error.message, variant: "destructive" });
+    },
+    onSettled: () => setRevokingSid(null),
+  });
   const dirty = Array.from(draft).sort().join("|") !== [...user.permissionOverrides].sort().join("|");
   const created = new Date(user.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const sessions = sessionsQuery.data?.sessions ?? [];
   return (
     <div className="p-2" data-testid={`user-detail-${user.id}`}>
       <div className="mb-2 flex items-start justify-between gap-3 px-2 py-1.5">
@@ -328,6 +401,69 @@ function UserDetail({ user, availablePermissions, canWrite, draft, onDraftChange
         <ProfileTreeRow label="Connections" icon={<Globe2 className="h-3.5 w-3.5" />} hasValue={user.presence.length > 0} showEmpty><UserPresence presence={user.presence} showLabels /></ProfileTreeRow>
         <ProfileTreeRow label="Role" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty><span className="capitalize text-foreground">{user.role}</span></ProfileTreeRow>
         <ProfileTreeRow label="Joined" icon={<Users className="h-3.5 w-3.5" />} hasValue showEmpty><span className="text-foreground">{created}</span></ProfileTreeRow>
+        <ProfileTreeRow
+          label="Sessions"
+          icon={<Monitor className="h-3.5 w-3.5" />}
+          hasValue={sessions.length > 0 || sessionsQuery.isLoading || sessionsQuery.isError}
+          showEmpty
+          expandedContentClassName="pt-1"
+          expandedContent={
+            sessionsQuery.isLoading ? (
+              <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading sessions…
+              </div>
+            ) : sessionsQuery.isError ? (
+              <p className="px-1 py-2 text-sm text-destructive">Could not load sessions.</p>
+            ) : sessions.length === 0 ? (
+              <p className="px-1 py-2 text-sm text-muted-foreground">No active sessions.</p>
+            ) : (
+              <div className="space-y-2">
+                {sessions.map((session) => {
+                  const revoking = revokingSid === session.sid && revokeSessionMutation.isPending;
+                  return (
+                    <div key={session.sid} className="rounded-md border border-border/60 px-3 py-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-foreground">{summarizeUserAgent(session.userAgent)}</span>
+                            {session.current ? (
+                              <span className="rounded border border-border/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                Current
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="space-y-0.5 text-xs text-muted-foreground">
+                            <div>Last active {formatSessionRelative(session.lastActiveAt)}</div>
+                            <div>Signed in {formatSessionRelative(session.createdAt)}</div>
+                            {session.clientIp ? <div className="font-mono">{session.clientIp}</div> : null}
+                            <div>Expires {formatSessionRelative(session.expiresAt)}</div>
+                          </div>
+                        </div>
+                        {canWrite ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={revokeSessionMutation.isPending}
+                            onClick={() => revokeSessionMutation.mutate(session.sid)}
+                          >
+                            {revoking ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                            Revoke
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          }
+        >
+          <span className="text-foreground">
+            {sessionsQuery.isLoading ? "…" : sessions.length}
+          </span>
+        </ProfileTreeRow>
         <ProfileTreeRow label="Permissions" icon={<Shield className="h-3.5 w-3.5" />} hasValue={availablePermissions.length > 0} showEmpty expandedContentClassName="pt-1" expandedContent={<div className="grid gap-2 @sm:grid-cols-2 @lg:grid-cols-3">{availablePermissions.map((permission) => { const inherited = user.permissions.includes(permission) && !user.permissionOverrides.includes(permission); const checked = inherited || draft.has(permission); return <label key={permission} className="flex min-h-11 items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm"><Checkbox checked={checked} disabled={!canWrite || inherited} onCheckedChange={(value) => { const next = new Set(draft); if (value) next.add(permission); else next.delete(permission); onDraftChange(next); }} /><span className="capitalize text-foreground">{labelForPermission(permission)}</span>{inherited ? <span className="text-xs text-muted-foreground">inherited</span> : null}</label>; })}</div>}><span className="text-foreground">{user.permissions.length}</span></ProfileTreeRow>
       </div>
     </div>
