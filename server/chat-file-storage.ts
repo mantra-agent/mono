@@ -1418,6 +1418,7 @@ export interface IChatFileStorage {
   updateSessionSessionKey(id: string, sessionKey: string): Promise<void>;
   updateSessionTopics(id: string, topics: string[]): Promise<void>;
   setSessionAgenda(id: string, items: SessionAgendaItemInput[]): Promise<FileSession | null>;
+  clearSessionAgenda(id: string): Promise<FileSession | null>;
   updateSessionAgendaItem(id: string, itemId: string, patch: SessionAgendaItemPatch): Promise<FileSession | null>;
   updateSessionPersona(id: string, personaId: number): Promise<void>;
   setSessionPersonaIfUnset(id: string, personaId: number): Promise<{ personaId: number; applied: boolean } | null>;
@@ -2112,6 +2113,21 @@ export const chatFileStorage: IChatFileStorage = {
       const session = convToMeta(data);
       invalidateSessionsCache({ action: "updated", sessionId: id, session });
       log.info("Session agenda replaced", { sessionId: id, itemCount: agenda.items.length });
+      return session;
+    });
+  },
+
+  async clearSessionAgenda(id: string) {
+    return withConvLock(id, async () => {
+      const data = await readConv(id);
+      if (!data) return null;
+      if (!data.agenda) return convToMeta(data);
+      data.agenda = undefined;
+      data.updatedAt = new Date().toISOString();
+      await writeConv(data);
+      const session = convToMeta(data);
+      invalidateSessionsCache({ action: "updated", sessionId: id, session });
+      log.info("Session agenda cleared", { sessionId: id });
       return session;
     });
   },

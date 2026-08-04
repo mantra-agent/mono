@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight,
   Circle,
@@ -8,8 +9,11 @@ import {
   MoreHorizontal,
   Pause,
   SkipForward,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { useAgendaDiscussion } from "@/hooks/use-agenda-discussion";
 import { buildSessionAgendaDiscussionMessage } from "@/lib/agenda-discussion";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
@@ -17,6 +21,16 @@ import {
   HIERARCHY_SECTION_HEADER_CLASS,
   HIERARCHY_SESSION_ROW_CLASS,
 } from "@/components/hierarchy-section-header";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Collapsible,
   CollapsibleContent,
@@ -159,7 +173,23 @@ export function SessionAgendaTree({
   const hasItems = items.length > 0;
   const allItemsComplete = hasItems && items.every((item) => item.status === "complete");
   const [open, setOpen] = useState(() => !allItemsComplete);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const discussMutation = useAgendaDiscussion();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const clearMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/sessions/${sessionId}/agenda`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+    },
+    onError: (err) => {
+      toast({ title: "Failed to clear agenda", description: String(err), variant: "destructive" });
+    },
+  });
 
   useEffect(() => {
     if (hasItems) setOpen(!allItemsComplete);
@@ -172,16 +202,55 @@ export function SessionAgendaTree({
   return (
     <div className="min-w-0 border-b border-border/20 p-2" data-testid="session-agenda-tree">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger
-          className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}
-          data-testid="button-agenda-section"
-        >
-          <ChevronRight
-            className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")}
-            aria-hidden="true"
-          />
-          Agenda
-        </CollapsibleTrigger>
+        <div className="group relative min-w-0">
+          <CollapsibleTrigger
+            className={cn(HIERARCHY_SECTION_HEADER_CLASS, "pr-9 hover-elevate")}
+            data-testid="button-agenda-section"
+          >
+            <ChevronRight
+              className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")}
+              aria-hidden="true"
+            />
+            Agenda
+          </CollapsibleTrigger>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "absolute right-1 top-1/2 z-10 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-border/40 bg-background text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100",
+                )}
+                data-testid="button-agenda-section-menu"
+                onClick={(event) => event.stopPropagation()}
+                aria-label="Agenda actions"
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="min-w-[140px]"
+              onCloseAutoFocus={(event) => event.preventDefault()}
+            >
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                disabled={clearMutation.isPending}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setShowClearConfirm(true);
+                }}
+                data-testid="menu-agenda-clear"
+              >
+                {clearMutation.isPending ? (
+                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-2 h-3.5 w-3.5" />
+                )}
+                Clear agenda
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         <CollapsibleContent>
           <div className="min-w-0">
             {items.map((item, index) => (
@@ -213,6 +282,29 @@ export function SessionAgendaTree({
           </div>
         </CollapsibleContent>
       </Collapsible>
+      <AlertDialog open={showClearConfirm} onOpenChange={setShowClearConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear agenda</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the agenda from this session. This can’t be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-agenda-clear-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                clearMutation.mutate();
+                setShowClearConfirm(false);
+              }}
+              data-testid="button-agenda-clear-confirm"
+            >
+              Clear agenda
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
