@@ -43,9 +43,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     },
   },
   memory: {
-    description: "Unified memory system — read/write knowledge files, search vNEXT claims with structured filters, manage graph links, delete entries (single or bulk), batch retrieve, count, find duplicate clusters, run vNext maintenance ops. Actions: read, write, read_entry, search, create_link, update_entry, delete_entry, get, get_many, find_duplicates, count, bulk_delete, run_full_sleep_cycle, compute_gsi, run_rem, run_vnext_lifecycle.",
-    whenToUse: "When you need to read or update workspace knowledge files, search past conversations, retrieve specific memory entries, link memories, delete obsolete entries (one or many), batch-fetch entries, count entries, find duplicate clusters, or run memory maintenance operations.",
-    example: 'Read: { "action": "read", "file": "PRINCIPLES.md" }\nSearch: { "action": "search", "query": "what did we discuss about product launch?" }\nCount: { "action": "count", "layer": "long" }\nFind duplicates: { "action": "find_duplicates", "layer": "long", "limit": 20 }\nDelete (preview): { "action": "delete_entry", "id": 42 }\nDelete (confirm): { "action": "delete_entry", "id": 42, "confirm": true, "reason": "duplicate entry" }\nBulk delete (preview): { "action": "bulk_delete", "ids": [1, 2, 3] }\nBulk delete (confirm): { "action": "bulk_delete", "ids": [1, 2, 3], "confirm": true, "reason": "duplicate cluster cleanup" }',
+    description: "Unified memory system — read/write knowledge files, search vNEXT claims with structured filters, manage graph links/sources, batch retrieve, count, run vNext maintenance ops. Actions: read, write, read_entry, search, get, get_many, count, link_entity, get_entity_links, list_sources, add_source, delete_source, search_claims, vnext_claim_counts, vnext_claim_detail, run_vnext_lifecycle, run_full_sleep_cycle, compute_gsi, run_rem. Retired legacy memory_entries actions return migration guidance if called.",
+    whenToUse: "When you need to read or update workspace knowledge files, search past conversations, retrieve specific memory entries, manage claim sources/entity links, count entries, or run memory maintenance operations.",
+    example: 'Read: { "action": "read", "file": "PRINCIPLES.md" }\nSearch: { "action": "search", "query": "what did we discuss about product launch?" }\nCount: { "action": "count" }\nGet claim: { "action": "get", "id": 42 }\nSearch claims: { "action": "search_claims", "query": "funding" }',
     actions: {
       read: { description: "Read workspace knowledge files (PRINCIPLES.md, etc.).", requiredParams: ["file"] },
       write: { description: "Update workspace knowledge files. Use append:true to add to existing content.", requiredParams: ["file", "content"], optionalParams: ["append"] },
@@ -278,7 +278,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'Use goals: { "action": "list", "filters": { "horizon": "today" } }',
   },
   library: {
-    description: "Manage standard Library pages and annotations. Pages support Vault membership, tags, status fields, and hierarchical parent/child structure; Library2 Wiki/Index/Log organization is disabled.",
+    description: "Manage standard Library pages and annotations. Pages support Vault membership, tags, status fields, and hierarchical parent/child structure.",
     whenToUse: "When the user wants to create, browse, or manage structured knowledge pages.",
     example: '{ "action": "search", "query": "architecture" }',
     actions: {

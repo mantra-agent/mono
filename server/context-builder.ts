@@ -2017,42 +2017,52 @@ async function resolveCodeInstructions(): Promise<string> {
 
 This section is always loaded. Use it for code changes, debugging, repo/system diagnosis, builds, PRs, merges, deployments, and implementation planning.`;
 
-  // Strategy 1: Load only context artifacts visible through both the
-  // parent Platform and the linked Library page. The ContextRequest does not
-  // yet carry a selected environment, so all principal-visible environments
-  // may contribute while other tenants fail closed.
+  // Repo CODING.md is the single source of truth. Environment coding_process
+  // artifacts are fallback only, and are never joined with the filesystem body
+  // (that double-injection was the largest easy context win).
+  let filesystemBody: string | null = null;
+  try {
+    const codingProcessPath = path.resolve(process.cwd(), "CODING.md");
+    filesystemBody = (await readFile(codingProcessPath, "utf-8")).trim();
+  } catch {
+    filesystemBody = null;
+  }
+
+  if (filesystemBody) {
+    return `${header}
+
+${filesystemBody}`;
+  }
+
+  // Fallback: principal-visible environment coding_process pages, deduped.
   try {
     const { listVisibleEnvironmentContextPages } = await import("./platforms/context-artifact-access");
     const pages = await listVisibleEnvironmentContextPages(["coding_process"]);
-    const contents = pages.map(page => page.content.trim()).filter(Boolean);
+    const seen = new Set<string>();
+    const contents: string[] = [];
+    for (const page of pages) {
+      const body = page.content.trim();
+      if (!body) continue;
+      const key = page.id || page.slug || body.slice(0, 200);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      contents.push(body);
+    }
     if (contents.length > 0) {
       return `${header}
 
 ${contents.join("\n\n---\n\n")}`;
     }
   } catch (err) {
-    // Fall through to next strategy
     const { createLogger } = await import("./log");
-    createLogger("ContextBuilder").warn("Failed to load coding process from environment artifact", { error: err instanceof Error ? err.message : String(err) });
+    createLogger("ContextBuilder").warn("Failed to load coding process from environment artifact", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
-  // Strategy 2: Filesystem fallback (CODING.md)
-  try {
-    const codingProcessPath = path.resolve(process.cwd(), "CODING.md");
-    const codingProcess = await readFile(codingProcessPath, "utf-8");
-    const { createLogger } = await import("./log");
-    createLogger("ContextBuilder").warn("Coding instructions loaded from filesystem CODING.md (fallback). Prefer linking a Library page as a coding_process context artifact on the platform environment.");
-    return `${header}
-
-${codingProcess.trim()}`;
-  } catch {
-    // All strategies failed
-  }
-
-  // Strategy 3: Degraded
   return `${header}
 
-WARNING: Coding instructions could not be loaded from any source (environment context artifact or filesystem CODING.md). Coding work may proceed with reduced guidance. Report this in the final coding report as a degraded check.`;
+WARNING: Coding instructions could not be loaded from any source (filesystem CODING.md or environment context artifact). Coding work may proceed with reduced guidance. Report this in the final coding report as a degraded check.`;
 }
 
 async function resolvePlanningInstructions(): Promise<string> {
