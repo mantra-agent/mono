@@ -835,6 +835,7 @@ interface RunIterationContext {
   routingTier: string;
   iteration: number;
   emergencyCompactionRetries: number;
+  emptyFinalTurnRetries: number;
   aborted: boolean;
   abortReason?: AbortReason;
   abortDetails?: AbortDetails;
@@ -897,6 +898,8 @@ interface RunIterationContext {
   diagnosticLastStep?: "model_response" | "tool_batch" | "terminal";
   diagnosticLastModelStopReason?: string;
   diagnosticLastAssistantTextLength: number;
+  /** Visible (thinking-stripped, trimmed) text length of the LAST completed model turn. Classifier discriminant for empty final turns. */
+  diagnosticLastAssistantVisibleTextLength: number;
   diagnosticLastToolCallId?: string;
   diagnosticLastToolBatchCompletedAt?: number;
   diagnosticHadToolErrors: boolean;
@@ -918,6 +921,15 @@ const ZOMBIE_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
 const ZOMBIE_HARD_CAP_MS = 40 * 60 * 1000;
 
 const ITERATION_CONTENT_SEPARATOR = "\n\n";
+// A completed model turn (no tool calls, no await-user pause) that produces no
+// visible text is never a clean success — it is a known provider failure mode.
+// Grok/xAI can return end_turn with 0 output tokens after a long tool-use
+// sequence (cline #6269, litellm #17136), and the same class appears on other
+// providers (DeepSeek #1453, GPT-4o content=None). Re-drive the model this many
+// times with the UNCHANGED context before accepting the empty completion; a
+// fresh sample almost always returns real content ("press retry" is the
+// community remedy). Bounded so a deterministically-empty context cannot loop.
+const MAX_EMPTY_FINAL_TURN_RETRIES = 2;
 
 /**
  * Merge every model iteration's visible prose into the durable assistant body.
@@ -2452,11 +2464,17 @@ export class AgentExecutor extends EventEmitter {
     const lastStopReason = ctx.diagnosticLastModelStopReason;
     // Empty final text on a completed turn is never a clean success unless the
     // executor intentionally stopped to await the user (e.g. question widget).
-    // Classify at the producer so consumers can key off one discriminant.
+    // Classify on the LAST turn's visible text, not the merged run content: an
+    // empty final turn after earlier tool narration must not be masked into a
+    // false success (Grok/xAI empty end_turn after a tool-use sequence). By the
+    // time we reach here the executeIteration loop has already exhausted its
+    // MAX_EMPTY_FINAL_TURN_RETRIES re-drives, so a still-empty final turn is a
+    // genuine degradation. Classify at the producer so consumers key off one
+    // discriminant.
     const emptyCompletedResponse =
       !ctx.aborted &&
       terminationReason === "complete" &&
-      finalContent.trim().length === 0 &&
+      ctx.diagnosticLastAssistantVisibleTextLength === 0 &&
       !ctx.intentionallyAwaitingUser;
     const degradationReason: TerminalDegradationReason | undefined =
       ctx.terminalToolFailure
@@ -2502,6 +2520,8 @@ export class AgentExecutor extends EventEmitter {
       failedToolCount: ctx.diagnosticFailedToolCount,
       assistantTextLength: finalContent.length,
       lastAssistantTextLength: ctx.diagnosticLastAssistantTextLength,
+      lastAssistantVisibleTextLength: ctx.diagnosticLastAssistantVisibleTextLength,
+      emptyFinalTurnRetries: ctx.emptyFinalTurnRetries,
       finalMessageId: ctx.runId ? `done:${ctx.runId}` : null,
       source: options.activity || "agent",
     };
@@ -2786,7 +2806,7 @@ export class AgentExecutor extends EventEmitter {
       allThinking: [], resolvedToolCalls: [],
       totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       resolvedModel: modelString, resolvedProvider: routingDecision.provider, routingDecision, routingTier,
-      iteration: 0, emergencyCompactionRetries: 0, aborted: false,
+      iteration: 0, emergencyCompactionRetries: 0, emptyFinalTurnRetries: 0, aborted: false,
       iterationThinking: "", iterationText: "",
       iterationUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       pendingToolCalls: [],
@@ -2803,6 +2823,7 @@ export class AgentExecutor extends EventEmitter {
       toolUseReceivedAt: new Map(),
       operationRecovery: new ToolOperationRecovery(),
       diagnosticLastAssistantTextLength: 0,
+      diagnosticLastAssistantVisibleTextLength: 0,
       diagnosticHadToolErrors: false,
       diagnosticFailedToolCount: 0,
       providerConsumedToolCallIds: new Set<string>(),
@@ -3434,6 +3455,12 @@ export class AgentExecutor extends EventEmitter {
     this.flushChronologyContent(ctx);
 
     const cleanText = extractThinkingFromText(ctx.iterationText).clean;
+    // Record this turn's visible (thinking-stripped, trimmed) text length. Every
+    // non-aborted iteration passes through here, so at terminal time this holds
+    // the FINAL turn's length. publishRunResult classifies an empty final turn on
+    // this last-turn signal rather than the merged run content, so an empty
+    // completion after earlier tool narration is no longer masked into a success.
+    ctx.diagnosticLastAssistantVisibleTextLength = cleanText.trim().length;
 
     if (ctx.iterationStopReason === "max_tokens" && ctx.pendingToolCalls.length > 0) {
       const incomplete = ctx.pendingToolCalls.filter(tc => Object.keys(tc.input).length === 0);
@@ -3776,6 +3803,50 @@ export class AgentExecutor extends EventEmitter {
       messages.push({ role: "assistant", content: ctx.iterationText });
       messages.push({ role: "user", content: "[System: Your previous response reached the provider output boundary. Continue exactly where you left off. Do not repeat what you already said.]" });
       return { finalContent: cleanText, shouldContinue: true, hasRunStage2, continuationType: "max_tokens" };
+    }
+
+    // Empty final turn: the model completed with no tool calls, no await-user
+    // pause, and no visible text. This is never a clean success — it is a known
+    // provider failure mode (Grok/xAI end_turn with 0 output tokens after a long
+    // tool-use sequence; cline #6269, litellm #17136; same class on DeepSeek
+    // #1453 and GPT-4o). Re-drive the model with the UNCHANGED context: because
+    // executeIteration resets iterationText/pendingToolCalls at its head, this
+    // yields a clean fresh sample, which almost always returns real content
+    // ("press retry" is the community remedy). We deliberately do NOT push the
+    // empty assistant turn back into `messages` — xAI 400s on empty-content
+    // history ("Each message must have at least one content element", n8n
+    // #14797) — and empty finalContent is never appended to iterationResults, so
+    // the merge is untouched. If retries are exhausted, publishRunResult
+    // classifies the run degraded/empty_response instead of a silent success.
+    if (
+      cleanText.trim().length === 0 &&
+      ctx.pendingToolCalls.length === 0 &&
+      !ctx.aborted &&
+      ctx.emptyFinalTurnRetries < MAX_EMPTY_FINAL_TURN_RETRIES
+    ) {
+      ctx.emptyFinalTurnRetries++;
+      log.warn(
+        `agent.loop.empty_final_turn_retry runId=${ctx.runId} sessionId=${options.sessionId || "none"} ` +
+        `attempt=${ctx.emptyFinalTurnRetries}/${MAX_EMPTY_FINAL_TURN_RETRIES} ` +
+        `lastStopReason=${ctx.diagnosticLastModelStopReason} lastStep=${ctx.diagnosticLastStep ?? "none"} model=${ctx.resolvedModel}`,
+      );
+      eventBus.publish({
+        category: "agent",
+        event: "agent.loop.empty_final_turn_retry",
+        payload: {
+          runId: ctx.runId,
+          sessionId: options.sessionId || null,
+          attempt: ctx.emptyFinalTurnRetries,
+          maxAttempts: MAX_EMPTY_FINAL_TURN_RETRIES,
+          lastStopReason: ctx.diagnosticLastModelStopReason,
+          lastStep: ctx.diagnosticLastStep ?? null,
+          model: ctx.resolvedModel,
+          source: options.activity || "agent",
+        },
+        runId: ctx.runId,
+        sessionKey: options.sessionKey,
+      });
+      return { finalContent: "", shouldContinue: true, hasRunStage2 };
     }
 
     return { finalContent: cleanText, shouldContinue: false, hasRunStage2, exitCause: "natural_stop" };
