@@ -361,6 +361,7 @@ function itemFromGoal(goal: GoalIndexEntry, index: number, fallbackSection?: Sim
     payload: {
       kind: "goal",
       goalId: goal.id,
+      description: goal.description ?? "",
       horizon: goal.horizon,
       goalStatus: goal.status,
       parentId: goal.parentId,
@@ -1093,6 +1094,7 @@ function itemFromTask(task: Task, today: string, tomorrow: string, weekEnd: stri
     completable: true,
     payload: {
       kind: "task",
+      description: task.description ?? "",
       status: task.status,
       taskPriority: task.priority,
       impact: task.impact,

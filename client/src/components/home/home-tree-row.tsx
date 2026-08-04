@@ -15,7 +15,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { SimpleCheckCircle } from "./home-check-circle";
-import { SimpleTextFrame } from "./simple-text-frame";
+import { SimpleTextFrame, SIMPLE_TEXT_FRAME_CLASS } from "./simple-text-frame";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MeetingAgentToggle } from "./widgets/meeting-agent-toggle";
@@ -201,6 +201,107 @@ function expandedContent(item: SimpleFeedItem, hasPerson: boolean): string | nul
   return null;
 }
 
+// ─── Editable description (task + goal rows) ───
+
+interface DescriptionTarget {
+  /** REST endpoint that accepts a PATCH { description } for this entity. */
+  endpoint: string;
+  /** Current description value carried in the feed payload. */
+  value: string;
+}
+
+/**
+ * Resolve the editable-description save target for a task or goal feed item.
+ * Returns null for every other kind so no other row gets an editor.
+ */
+function descriptionTarget(item: SimpleFeedItem): DescriptionTarget | null {
+  const kind = item.payload?.kind;
+  const value = typeof item.payload?.description === "string" ? item.payload.description : "";
+  if (kind === "task") {
+    const ref = item.sourceRefs?.[0];
+    const taskId = ref?.type === "task" ? ref.id : null;
+    if (!taskId) return null;
+    return { endpoint: `/api/projects/tasks/${encodeURIComponent(taskId)}`, value };
+  }
+  if (kind === "goal") {
+    const goalId = typeof item.payload?.goalId === "string" ? item.payload.goalId : null;
+    if (!goalId) return null;
+    return { endpoint: `/api/life-goals/${encodeURIComponent(goalId)}`, value };
+  }
+  return null;
+}
+
+/**
+ * Inline, editable description rendered in the same styled frame as expanded
+ * feed content. Saving requires non-empty text: task descriptions are protected
+ * (empty is a no-op) and goal descriptions reject empty server-side, so the Save
+ * control mirrors the wellness entry editor and disables on empty input.
+ */
+function InlineDescriptionEditor({ target }: { target: DescriptionTarget }) {
+  const [value, setValue] = useState(target.value);
+  const [dirty, setDirty] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  // Adopt refreshed feed values only while the user has no pending local edit.
+  useEffect(() => {
+    if (!dirty) setValue(target.value);
+  }, [target.value, dirty]);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const trimmed = value.trim();
+      if (!trimmed) throw new Error("Description cannot be empty");
+      await apiRequest("PATCH", target.endpoint, { description: trimmed });
+    },
+    onSuccess: () => {
+      setDirty(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/home/feed"] });
+    },
+    onError: (error) => {
+      toast({
+        title: "Could not save description",
+        description: error instanceof Error ? error.message : "The description was not saved.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  return (
+    <div className={cn(SIMPLE_TEXT_FRAME_CLASS, "flex flex-col gap-2")}>
+      <Textarea
+        value={value}
+        onChange={(event) => { setValue(event.target.value); setDirty(true); }}
+        placeholder="Add a description…"
+        maxLength={5000}
+        className="min-h-[5rem] w-full resize-none border-0 bg-transparent p-0 text-xs leading-relaxed text-white shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+      />
+      {dirty ? (
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={save.isPending}
+            onClick={() => { setValue(target.value); setDirty(false); }}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!value.trim() || save.isPending}
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+            Save
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ─── Tree Row ───
 
 interface SimpleTreeRowProps {
@@ -254,7 +355,9 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
   const agendaPageSlug = isAgendaPage && typeof item.payload?.slug === "string" ? item.payload.slug : null;
   const buildEnvId = buildEnvironmentId(item);
   const hasChildren = Boolean(item.children?.length);
-  const canExpand = hasChildren || Boolean(inlineExpandedContent) || Boolean(agendaPageId && agendaPageSlug) || buildEnvId != null;
+  const descTarget = descriptionTarget(item);
+  const hasDescription = Boolean(descTarget?.value.trim());
+  const canExpand = hasChildren || Boolean(inlineExpandedContent) || Boolean(agendaPageId && agendaPageSlug) || buildEnvId != null || hasDescription;
   const entryKind = wellnessEntryKind(item);
   const entryUi = useMemo(() => entryKind ? entryCopy(entryKind) : null, [entryKind]);
 
@@ -590,6 +693,13 @@ export function SimpleTreeRow({ item, depth = 0, layout = "feed", children, onDe
       ) : displayedExpanded && inlineExpandedContent ? (
         <div className="pb-2 pl-0 pr-1.5">
           <SimpleTextFrame content={inlineExpandedContent} />
+        </div>
+      ) : null}
+
+      {/* Editable description for task/goal rows — sits above nested children. */}
+      {displayedExpanded && descTarget ? (
+        <div className="pb-2 pl-0 pr-1.5">
+          <InlineDescriptionEditor target={descTarget} />
         </div>
       ) : null}
 

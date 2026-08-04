@@ -84,6 +84,7 @@ export class GoalStorage {
     return {
       id: goal.id,
       shortName: goal.shortName,
+      description: goal.description ?? "",
       horizon: goal.horizon,
       owner: goal.owner,
       tags: goal.tags,
@@ -368,7 +369,7 @@ export class GoalStorage {
     const goals: (GoalIndexEntry & { description?: string })[] = [];
     for (const entry of index) {
       const goal = await this.getGoal(entry.id);
-      goals.push({ ...entry, description: goal?.description });
+      goals.push({ ...entry, description: goal?.description ?? entry.description });
     }
     return { goals };
   }

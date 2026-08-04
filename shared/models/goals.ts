@@ -123,6 +123,7 @@ export interface GoalListFilters {
 export interface GoalIndexEntry {
   id: string;
   shortName: string;
+  description: string;
   horizon: GoalHorizon;
   owner: string;
   tags: string[];
