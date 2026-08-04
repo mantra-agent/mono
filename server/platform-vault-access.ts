@@ -205,7 +205,7 @@ export async function loadVaultIdsByPlatformIds(
       platformId: platformVaultMemberships.platformId,
       vaultId: platformVaultMemberships.vaultId,
       position: vaults.position,
-      kind: vaults.kind,
+      isDefault: vaults.isDefault,
       createdAt: vaults.createdAt,
     })
     .from(platformVaultMemberships)
@@ -233,9 +233,8 @@ export async function loadVaultIdsByPlatformIds(
 
   for (const [platformId, memberships] of grouped) {
     memberships.sort((a, b) => {
-      const kindRank = (kind: string | null) => (kind === "personal" ? 0 : 1);
-      const kindDelta = kindRank(a.kind) - kindRank(b.kind);
-      if (kindDelta !== 0) return kindDelta;
+      const defaultDelta = Number(b.isDefault) - Number(a.isDefault);
+      if (defaultDelta !== 0) return defaultDelta;
       const posA = a.position ?? Number.MAX_SAFE_INTEGER;
       const posB = b.position ?? Number.MAX_SAFE_INTEGER;
       if (posA !== posB) return posA - posB;

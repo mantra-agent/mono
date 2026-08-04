@@ -39,34 +39,39 @@ CREATE INDEX IF NOT EXISTS idx_platform_vault_memberships_vault_platform
 CREATE INDEX IF NOT EXISTS idx_platform_vault_memberships_scope_owner
   ON platform_vault_memberships (scope, owner_user_id, account_id);
 
--- Seed primary vault from the owning account Personal vault when missing.
+-- Seed primary vault from the owning account default vault when missing.
+-- vaults.is_default is the canonical discriminant; vaults has no kind column.
 UPDATE platforms p
 SET vault_id = v.id
 FROM vaults v
 WHERE p.vault_id IS NULL
   AND p.account_id IS NOT NULL
   AND v.account_id = p.account_id
-  AND v.kind = 'personal'
+  AND v.is_default = true
   AND v.is_archived = false;
 
 -- Fallback: any live vault in the same account.
+-- DISTINCT ON subquery (not LATERAL referencing UPDATE target alias p).
 UPDATE platforms p
-SET vault_id = v.id
-FROM LATERAL (
-  SELECT id
+SET vault_id = v.vault_id
+FROM (
+  SELECT DISTINCT ON (account_id)
+    account_id,
+    id AS vault_id
   FROM vaults
-  WHERE account_id = p.account_id
-    AND is_archived = false
+  WHERE is_archived = false
   ORDER BY
-    CASE WHEN kind = 'personal' THEN 0 ELSE 1 END,
+    account_id,
+    CASE WHEN is_default = true THEN 0 ELSE 1 END,
     position ASC NULLS LAST,
     created_at ASC
-  LIMIT 1
 ) v
 WHERE p.vault_id IS NULL
-  AND p.account_id IS NOT NULL;
+  AND p.account_id IS NOT NULL
+  AND v.account_id = p.account_id;
 
 -- Seed memberships from platforms.vault_id for rows that still lack membership.
+-- platforms ownership columns are owner_user_id/account_id (no created_by_user_id).
 INSERT INTO platform_vault_memberships (
   platform_id,
   vault_id,
@@ -81,7 +86,7 @@ SELECT
   COALESCE(p.scope, 'user'),
   p.owner_user_id,
   p.account_id,
-  COALESCE(p.created_by_user_id, p.owner_user_id)
+  p.owner_user_id
 FROM platforms p
 WHERE p.vault_id IS NOT NULL
   AND NOT EXISTS (
