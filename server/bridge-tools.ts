@@ -25,6 +25,8 @@ import {
   scratchEditFailure,
   authorityDenialFailure,
   toolFailureFromError,
+  classifyGitError,
+  classifyGitHubApiStatus,
   inputFailure,
   permissionFailure,
   type ToolFailure,
@@ -7408,7 +7410,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
               const context = Object.keys(failure.context).length > 0 ? ` ${JSON.stringify(failure.context)}` : "";
               return `${failure.mode}${context}: ${failure.error}`;
             }).join("\n");
-            return { result: `Git clone failed after platform-first auth and legacy fallback.\n${failureSummary}`, error: true };
+            // Reaching this branch means every auth candidate was tried and rejected,
+            // so the failure is an expected operational denial (auth/network/access),
+            // not a code surprise. Classify from the accumulated stderr; default to
+            // auth-denied since all auth modes were exhausted.
+            const failure = classifyGitError({ stderr: failureSummary }) ?? permissionFailure("git_auth_denied", "clone_auth_exhausted");
+            return { result: `Git clone failed after platform-first auth and legacy fallback.\n${failureSummary}`, error: true, failure };
           }
 
           const hydrationStatus = await ensureCloneUsesSharedNodeModules(targetDir, dirName);
@@ -7661,7 +7668,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           if (!response.ok) {
             const errText = await response.text().catch(() => "unknown error");
-            return { result: `GitHub API error (${response.status}): ${scrubTokens(errText)}`, error: true };
+            const failure = classifyGitHubApiStatus(response.status);
+            return { result: `GitHub API error (${response.status}): ${scrubTokens(errText)}`, error: true, ...(failure ? { failure } : {}) };
           }
 
           const pr = await response.json() as { number: number; html_url: string; title: string };
@@ -7701,7 +7709,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           if (!prResponse.ok) {
             const errText = await prResponse.text().catch(() => "unknown error");
-            return { result: `GitHub API error (${prResponse.status}): ${scrubTokens(errText)}`, error: true };
+            const failure = classifyGitHubApiStatus(prResponse.status);
+            return { result: `GitHub API error (${prResponse.status}): ${scrubTokens(errText)}`, error: true, ...(failure ? { failure } : {}) };
           }
 
           const prDetails = await prResponse.json() as { base?: { ref?: string } };
@@ -7720,11 +7729,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           if (!response.ok) {
             const errText = await response.text().catch(() => "unknown error");
-            return { result: `GitHub API error (${response.status}): ${scrubTokens(errText)}`, error: true };
+            const failure = classifyGitHubApiStatus(response.status);
+            return { result: `GitHub API error (${response.status}): ${scrubTokens(errText)}`, error: true, ...(failure ? { failure } : {}) };
           }
 
           const result = await response.json() as { sha: string; message: string; merged: boolean };
-          if (!result.merged) return { result: `Merge failed: ${result.message}`, error: true };
+          if (!result.merged) return { result: `Merge failed: ${result.message}`, error: true, failure: inputFailure("git_state_conflict", "merge_not_applied") };
           if (baseBranch === "main") {
             triggerMobileBuildFromMainGitChange({
               sourceRef: result.sha,
@@ -7762,7 +7772,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           if (!response.ok && response.status !== 422) {
             const errText = await response.text().catch(() => "unknown error");
-            return { result: `GitHub API error (${response.status}): ${scrubTokens(errText)}`, error: true };
+            const failure = classifyGitHubApiStatus(response.status);
+            return { result: `GitHub API error (${response.status}): ${scrubTokens(errText)}`, error: true, ...(failure ? { failure } : {}) };
           }
 
           return { result: `Remote branch '${branchName}' deleted from origin.` };
@@ -7774,7 +7785,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     } catch (err: any) {
       const msg = err.stderr?.toString?.() || err.stdout?.toString?.() || err.message || String(err);
-      return { result: `Git error: ${truncate(scrubTokens(msg), 2000)}`, error: true };
+      // Subprocess rejections are expected git/auth/state/network failures when
+      // classifyGitError matches; unmatched stay red (true surprise).
+      const failure = classifyGitError(err);
+      return {
+        result: `Git error: ${truncate(scrubTokens(msg), 2000)}`,
+        error: true,
+        ...(failure ? { failure } : {}),
+      };
     }
   },
 
@@ -12487,12 +12505,12 @@ const workspaceTools: Record<string, ToolHandler> = {
     if (!filePath) return { result: "Missing file path", error: true };
 
     const resolved = resolveWorkspacePath(filePath);
-    if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true };
-    if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true };
+    if (!resolved) return { result: `Path escapes workspace: ${filePath}`, error: true, failure: permissionFailure("scratch_path_denied", "Path escapes workspace") };
+    if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true, failure: inputFailure("scratch_not_found", "File not found") };
 
     try {
       const s = await stat(resolved);
-      if (s.isDirectory()) return { result: `Path is a directory, not a file: ${filePath}`, error: true };
+      if (s.isDirectory()) return { result: `Path is a directory, not a file: ${filePath}`, error: true, failure: inputFailure("scratch_not_found", "Path is a directory") };
 
       const content = await readFile(resolved, "utf-8");
       const lines = content.split("\n");
@@ -12519,7 +12537,7 @@ const workspaceTools: Record<string, ToolHandler> = {
     if (content === undefined || content === null) return { result: "Missing file content", error: true };
 
     const resolved = await resolveScratchWritePath(filePath, args._sessionId);
-    if (!resolved) return { result: `Write path is outside the current session-owned workspace: ${filePath}`, error: true };
+    if (!resolved) return { result: `Write path is outside the current session-owned workspace: ${filePath}`, error: true, failure: permissionFailure("scratch_path_denied", "Write path outside session workspace") };
 
     try {
       const dir = dirname(resolved);
@@ -12541,8 +12559,8 @@ const workspaceTools: Record<string, ToolHandler> = {
     if (newString === undefined) return { result: "Missing new_string", error: true };
 
     const resolved = await resolveScratchWritePath(filePath, args._sessionId);
-    if (!resolved) return { result: `Edit path is outside the current session-owned workspace: ${filePath}`, error: true };
-    if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true };
+    if (!resolved) return { result: `Edit path is outside the current session-owned workspace: ${filePath}`, error: true, failure: permissionFailure("scratch_path_denied", "Edit path outside session workspace") };
+    if (!await pathExists(resolved)) return { result: `File not found: ${filePath}`, error: true, failure: inputFailure("scratch_not_found", "File not found") };
 
     try {
       const content = await readFile(resolved, "utf-8");
@@ -12578,8 +12596,8 @@ const workspaceTools: Record<string, ToolHandler> = {
     const dirPath = args.path || ".";
 
     const resolved = resolveWorkspacePath(dirPath);
-    if (!resolved) return { result: `Path escapes workspace: ${dirPath}`, error: true };
-    if (!await pathExists(resolved)) return { result: `Directory not found: ${dirPath}`, error: true };
+    if (!resolved) return { result: `Path escapes workspace: ${dirPath}`, error: true, failure: permissionFailure("scratch_path_denied", "Path escapes workspace") };
+    if (!await pathExists(resolved)) return { result: `Directory not found: ${dirPath}`, error: true, failure: inputFailure("scratch_not_found", "Directory not found") };
 
     try {
       const s = await stat(resolved);
