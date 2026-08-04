@@ -106,6 +106,16 @@ export interface WidgetContribution extends ContributionBase {
   order: number;
 }
 
+/** Dashboard activity heatmap series owned by Core or a Mod. */
+export interface DashboardHeatmapContribution extends ContributionBase {
+  kind: "dashboard-heatmap";
+  seriesKey: string;
+  title: string;
+  icon: string;
+  order: number;
+  group: "operating" | "code" | "wellness";
+}
+
 export interface SlotContribution extends ContributionBase {
   kind: "slot";
   slotKey: string;
@@ -206,6 +216,7 @@ export interface ModContributions {
   serverRouteGroups?: ServerRouteGroupContribution[];
   navigation?: NavigationContribution[];
   widgets?: WidgetContribution[];
+  dashboardHeatmaps?: DashboardHeatmapContribution[];
   actions?: ActionContribution[];
   slots?: SlotContribution[];
   searchProviders?: SearchProviderContribution[];
@@ -225,6 +236,7 @@ export type AnyContribution =
   | ServerRouteGroupContribution
   | NavigationContribution
   | WidgetContribution
+  | DashboardHeatmapContribution
   | ActionContribution
   | SlotContribution
   | SearchProviderContribution
@@ -293,6 +305,7 @@ export function listContributions(contributions: ModContributions): AnyContribut
     contributions.serverRouteGroups,
     contributions.navigation,
     contributions.widgets,
+    contributions.dashboardHeatmaps,
     contributions.actions,
     contributions.slots,
     contributions.searchProviders,

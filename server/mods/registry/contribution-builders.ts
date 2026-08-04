@@ -6,6 +6,7 @@
 
 import type {
   ClientRouteContribution,
+  DashboardHeatmapContribution,
   IntegrationContribution,
   NavigationContribution,
   PermissionKey,
@@ -18,6 +19,7 @@ import type { UiInteractionTarget } from "@shared/ui-interaction";
 import type {
   RegisteredConnectorKey,
   RegisteredCollectorKey,
+  RegisteredDashboardHeatmapSeriesKey,
   RegisteredIconKey,
   RegisteredSurfaceKey,
   RegisteredWidgetKey,
@@ -83,6 +85,31 @@ export function widget(
   order: number,
 ): WidgetContribution {
   return { kind: "widget", id, slot, surfaceKey, collectorKey, order };
+}
+
+interface DashboardHeatmapOpts {
+  requiredPermissions?: PermissionKey[];
+}
+
+export function dashboardHeatmap(
+  id: string,
+  seriesKey: RegisteredDashboardHeatmapSeriesKey,
+  title: string,
+  icon: RegisteredIconKey,
+  order: number,
+  group: DashboardHeatmapContribution["group"],
+  opts: DashboardHeatmapOpts = {},
+): DashboardHeatmapContribution {
+  return {
+    kind: "dashboard-heatmap",
+    id,
+    seriesKey,
+    title,
+    icon,
+    order,
+    group,
+    ...(opts.requiredPermissions ? { requiredPermissions: opts.requiredPermissions } : {}),
+  };
 }
 
 export function integration(

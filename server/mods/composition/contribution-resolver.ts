@@ -48,6 +48,7 @@ import {
   type ContributionModality,
   type ResolvedAction,
   type ResolvedClientRoute,
+  type ResolvedDashboardHeatmap,
   type ResolvedIntegrationCard,
   type ResolvedNavigationItem,
   type ResolvedOnboardingStep,
@@ -316,6 +317,7 @@ function compose(
   const routes: ResolvedClientRoute[] = [];
   const navigation: ResolvedNavigationItem[] = [];
   const widgets: ResolvedWidget[] = [];
+  const dashboardHeatmaps: ResolvedDashboardHeatmap[] = [];
   const actions: ResolvedAction[] = [];
   const integrations: ResolvedIntegrationCard[] = [];
   const onboarding: ResolvedOnboardingStep[] = [];
@@ -376,6 +378,17 @@ function compose(
             sourceMod: bundle.owner,
           });
           break;
+        case "dashboard-heatmap":
+          dashboardHeatmaps.push({
+            id: contribution.id,
+            seriesKey: contribution.seriesKey,
+            title: contribution.title,
+            icon: contribution.icon,
+            order: contribution.order,
+            group: contribution.group,
+            sourceMod: bundle.owner,
+          });
+          break;
         case "action":
           actions.push({
             id: contribution.id,
@@ -428,6 +441,7 @@ function compose(
     a.section === b.section ? a.order - b.order : a.section.localeCompare(b.section),
   );
   widgets.sort((a, b) => (a.slot === b.slot ? a.order - b.order : a.slot.localeCompare(b.slot)));
+  dashboardHeatmaps.sort((a, b) => (a.order === b.order ? a.id.localeCompare(b.id) : a.order - b.order));
   onboarding.sort((a, b) => a.order - b.order);
   slots.sort((a, b) => a.order - b.order);
 
@@ -446,6 +460,7 @@ function compose(
     routes,
     navigation,
     widgets,
+    dashboardHeatmaps,
     actions,
     integrations,
     onboarding,

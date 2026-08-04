@@ -53,6 +53,17 @@ export interface ResolvedWidget {
   sourceMod: "core" | ModKey;
 }
 
+/** One resolved Dashboard activity heatmap series. */
+export interface ResolvedDashboardHeatmap {
+  id: string;
+  seriesKey: string;
+  title: string;
+  icon: string;
+  order: number;
+  group: "operating" | "code" | "wellness";
+  sourceMod: "core" | ModKey;
+}
+
 export type ResolvedActionTarget =
   | { kind: "navigate"; routeId: string }
   | { kind: "tool"; toolName: string; action?: string }
@@ -121,6 +132,7 @@ export interface ResolvedProductComposition {
   routes: ResolvedClientRoute[];
   navigation: ResolvedNavigationItem[];
   widgets: ResolvedWidget[];
+  dashboardHeatmaps: ResolvedDashboardHeatmap[];
   actions: ResolvedAction[];
   integrations: ResolvedIntegrationCard[];
   onboarding: ResolvedOnboardingStep[];

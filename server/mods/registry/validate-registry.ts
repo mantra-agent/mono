@@ -105,6 +105,7 @@ export function validateModRegistry(registry: ModRegistry): string[] {
 
   // ── First pass: identity indexes ─────────────────────────────────────────
   const contributionIdCounts = new Map<string, number>();
+  const heatmapSeriesKeyCounts = new Map<string, number>();
   const clientRouteIds = new Set<string>();
   const clientRoutePaths = new Map<string, string>();
   const routePaths = new Map<string, number>();
@@ -121,6 +122,12 @@ export function validateModRegistry(registry: ModRegistry): string[] {
       if (actionIds.has(contribution.id)) push(`Duplicate semantic action ID "${contribution.id}".`);
       actionIds.add(contribution.id);
     }
+    if (contribution.kind === "dashboard-heatmap") {
+      heatmapSeriesKeyCounts.set(
+        contribution.seriesKey,
+        (heatmapSeriesKeyCounts.get(contribution.seriesKey) ?? 0) + 1,
+      );
+    }
   }
 
   for (const [id, count] of contributionIdCounts) {
@@ -128,6 +135,11 @@ export function validateModRegistry(registry: ModRegistry): string[] {
   }
   for (const [path, count] of routePaths) {
     if (count > 1) push(`Duplicate client route path "${path}" (appears ${count} times).`);
+  }
+  for (const [seriesKey, count] of heatmapSeriesKeyCounts) {
+    if (count > 1) {
+      push(`Duplicate dashboard heatmap seriesKey "${seriesKey}" (appears ${count} times).`);
+    }
   }
 
   // ── Second pass: per-contribution reference + policy checks ───────────────
@@ -196,6 +208,15 @@ function validateContribution(owner: string, c: AnyContribution, ctx: Contributi
       requireKey("widget", c.surfaceKey, c.id, ctx);
       requireKey("collector", c.collectorKey, c.id, ctx);
       if (!Number.isFinite(c.order)) push(`Widget "${c.id}" has a non-numeric order.`);
+      break;
+    case "dashboard-heatmap":
+      requireKey("dashboardHeatmapSeries", c.seriesKey, c.id, ctx);
+      requireKey("icon", c.icon, c.id, ctx);
+      if (!c.title || !c.title.trim()) push(`Dashboard heatmap "${c.id}" is missing title.`);
+      if (!Number.isFinite(c.order)) push(`Dashboard heatmap "${c.id}" has a non-numeric order.`);
+      if (c.group !== "operating" && c.group !== "code" && c.group !== "wellness") {
+        push(`Dashboard heatmap "${c.id}" has invalid group "${String(c.group)}".`);
+      }
       break;
     case "slot":
       requireKey("slot", c.slotKey, c.id, ctx);

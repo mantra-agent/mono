@@ -6,7 +6,15 @@
 // renders from these yet (Phase 1 shadow).
 
 import type { ModDefinition } from "@shared/models/mod-registry";
-import { clientRoute, integration, nav, timerTemplateRef, widget, workflowRef } from "./contribution-builders";
+import {
+  clientRoute,
+  dashboardHeatmap,
+  integration,
+  nav,
+  timerTemplateRef,
+  widget,
+  workflowRef,
+} from "./contribution-builders";
 import { actionsForOwner } from "./action-catalog";
 
 const MIN_CORE = "1.0.0";
@@ -152,6 +160,16 @@ const wellness: ModDefinition = {
     clientRoutes: [clientRoute("wellness.route.wellness", "/wellness", "wellness")],
     navigation: [nav("wellness.nav.wellness", "Tools", "Wellness", "Activity", "navigation.wellness.open", "wellness.route.wellness", 8)],
     widgets: [widget("wellness.widget.wellness", "home.primary", "wellness", "wellness", 4)],
+    dashboardHeatmaps: [
+      dashboardHeatmap(
+        "wellness.heatmap.completions",
+        "wellness_completions",
+        "Wellness",
+        "Heart",
+        50,
+        "wellness",
+      ),
+    ],
     integrations: [integration("wellness.integration.oura", "oura", "available", ["health-metrics"])],
     // Cadence Timers materialize through wellness-managed-resources under installation ownership.
     timerTemplates: [
