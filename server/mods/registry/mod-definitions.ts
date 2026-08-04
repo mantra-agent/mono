@@ -136,7 +136,7 @@ const business: ModDefinition = {
 
 const wellness: ModDefinition = {
   key: "wellness",
-  version: "1.0.0",
+  version: "1.1.0",
   name: "Wellness",
   description: "Wellness activities, routines, health signals, reflection, coaching, and health integrations.",
   outcome: {
@@ -153,6 +153,12 @@ const wellness: ModDefinition = {
     navigation: [nav("wellness.nav.wellness", "Tools", "Wellness", "Activity", "navigation.wellness.open", "wellness.route.wellness", 8)],
     widgets: [widget("wellness.widget.wellness", "home.primary", "wellness", "wellness", 4)],
     integrations: [integration("wellness.integration.oura", "oura", "available", ["health-metrics"])],
+    // Cadence Timers materialize through wellness-managed-resources under installation ownership.
+    timerTemplates: [
+      timerTemplateRef("wellness.timer.weekly-reflection", "weekly-reflection"),
+      timerTemplateRef("wellness.timer.monthly-reflection", "monthly-reflection"),
+      timerTemplateRef("wellness.timer.reflect-daily", "reflect-daily"),
+    ],
     actions: actionsForOwner("wellness"),
   },
 };

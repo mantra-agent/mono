@@ -108,53 +108,11 @@ function materializeDefinition(
   };
 }
 
+// Wellness cadence Timers (weekly/monthly/daily reflection) materialize through
+// server/mods/wellness-managed-resources.ts under Wellness installation ownership.
+// They are intentionally absent from this platform registry so disable/reinstall
+// cannot re-project them while Wellness is inactive.
 export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
-  {
-    legacyMatch: (t) =>
-      t.type === "skill" &&
-      (t.name === "Weekly Reflection" || t.skillId === "reflect-weekly"),
-
-    systemKey: "weekly-reflection",
-    name: "Weekly Reflection",
-    description:
-      "Weekly review using parameterized Reflect — produces a surfaced Library brief for the completed week",
-    type: "skill",
-    skillId: "reflect",
-    prompt: "cadence=weekly",
-    schedules: [
-      {
-        id: "sys-skill-reflect-weekly-1",
-        frequency: "weekly",
-        daysOfWeek: ["sun"],
-        timeOfDay: "20:00",
-      },
-    ],
-    enabled: true,
-    timezone: "__USER_TZ__",
-  },
-  {
-    legacyMatch: (t) =>
-      t.type === "skill" &&
-      (t.name === "Monthly Reflection" || t.skillId === "reflect-monthly"),
-
-    systemKey: "monthly-reflection",
-    name: "Monthly Reflection",
-    description:
-      "Monthly synthesis using parameterized Reflect — produces a surfaced Library brief from the completed month",
-    type: "skill",
-    skillId: "reflect",
-    prompt: "cadence=monthly",
-    schedules: [
-      {
-        id: "sys-skill-reflect-monthly-1",
-        frequency: "monthly",
-        dayOfMonth: 1,
-        timeOfDay: "06:00",
-      },
-    ],
-    enabled: true,
-    timezone: "__USER_TZ__",
-  },
   {
     legacyMatch: (t) => t.type === "skill" && t.skillId === "financial-review",
 
@@ -187,28 +145,6 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     prompt: "",
     schedules: [
       { id: "sys-skill-sleep-1", frequency: "daily", timeOfDay: "02:00" },
-    ],
-    enabled: true,
-    timezone: "__USER_TZ__",
-  },
-  {
-    legacyMatch: (t) =>
-      t.type === "skill" &&
-      (t.name === "Reflect Daily" || t.skillId === "reflect-daily"),
-
-    systemKey: "reflect-daily",
-    name: "Reflect Daily",
-    description:
-      "Daily journal using parameterized Reflect — creates a deterministic source artifact without surfacing inbox noise",
-    type: "skill",
-    skillId: "reflect",
-    prompt: "cadence=daily",
-    schedules: [
-      {
-        id: "sys-skill-reflect-daily-1",
-        frequency: "daily",
-        timeOfDay: "21:00",
-      },
     ],
     enabled: true,
     timezone: "__USER_TZ__",

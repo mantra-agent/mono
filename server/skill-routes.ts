@@ -36,13 +36,25 @@ function stripSkillForExport(skill: Skill & { references?: SkillReference[]; tru
 }
 
 const BUILD_SKILL_NAMES = new Set(["sentry", "guard", "regression"]);
+/** Wellness-owned Skills — projection stops when Wellness is inactive. */
+const WELLNESS_SKILL_NAMES = new Set(["reflect", "affirmations", "coach"]);
 
-async function filterBuildSkills<T extends { name: string }>(skills: T[]): Promise<T[]> {
+async function filterModOwnedSkills<T extends { name: string }>(skills: T[]): Promise<T[]> {
   const principal = getCurrentPrincipalOrSystem();
-  if (principal.actorType !== "user") return skills.filter((skill) => !BUILD_SKILL_NAMES.has(skill.name));
-  return (await hasActiveBuildAccess(principal))
-    ? skills
-    : skills.filter((skill) => !BUILD_SKILL_NAMES.has(skill.name));
+  let next = skills;
+  if (principal.actorType !== "user") {
+    return next.filter(
+      (skill) => !BUILD_SKILL_NAMES.has(skill.name) && !WELLNESS_SKILL_NAMES.has(skill.name),
+    );
+  }
+  if (!(await hasActiveBuildAccess(principal))) {
+    next = next.filter((skill) => !BUILD_SKILL_NAMES.has(skill.name));
+  }
+  const { hasActiveWellnessAccess } = await import("./mods/wellness-access");
+  if (!(await hasActiveWellnessAccess(principal))) {
+    next = next.filter((skill) => !WELLNESS_SKILL_NAMES.has(skill.name));
+  }
+  return next;
 }
 
 function safeItemName(item: unknown): string {
@@ -58,7 +70,7 @@ export function registerSkillRoutes(app: Express): void {
     try {
       const status = req.query.status as string | undefined;
       const skills = await storage.getSkills(status ? { status } : undefined);
-      res.json(await filterBuildSkills(skills));
+      res.json(await filterModOwnedSkills(skills));
     } catch (err: any) {
       log.error("GET /api/skills error:", err.message);
       res.status(500).json({ error: "Failed to fetch skills" });

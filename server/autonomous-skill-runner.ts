@@ -483,8 +483,10 @@ async function getSkillTools(
   const authority = { origin: "autonomous" as const, trustedDelegation, activity, skillId: authoritySkillId, sessionKey, sessionId };
   const principal = getCurrentPrincipal();
   if (!principal) throw new Error("Skill tool discovery requires an explicit user principal");
+  const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
   const authorityToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), authority);
-  const allToolDefs = await filterBuildToolSchemas(principal, authorityToolDefs);
+  const buildScopedTools = await filterBuildToolSchemas(principal, authorityToolDefs);
+  const allToolDefs = await filterWellnessToolSchemas(principal, buildScopedTools);
   const tools = allToolDefs.map((t: AgentToolDefinition) => ({
     name: t.name,
     description: t.description,
@@ -638,6 +640,14 @@ export async function executeAutonomousSkillRun(
     const principal = getCurrentPrincipal();
     if (!principal || !(await hasActiveBuildAccess(principal))) {
       throw new Error(`Build Mod is inactive; Skill ${config.skillId} cannot run`);
+    }
+  }
+  const wellnessOwnedSkillNames = new Set(["reflect", "affirmations", "coach"]);
+  if (!isSkillless && wellnessOwnedSkillNames.has(config.skillId)) {
+    const principal = getCurrentPrincipal();
+    const { hasActiveWellnessAccess } = await import("./mods/wellness-access");
+    if (!principal || !(await hasActiveWellnessAccess(principal))) {
+      throw new Error(`Wellness Mod is inactive; Skill ${config.skillId} cannot run`);
     }
   }
 
