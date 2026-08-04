@@ -390,6 +390,8 @@ app.use((req, res, next) => {
   await ensureWorkVaultParentSchema(pool);
   const { ensureMilestonesSchema } = await import("./milestone-schema");
   await ensureMilestonesSchema(pool);
+  const { ensureMetricsDefinitionsSchema } = await import("./metrics-storage");
+  await ensureMetricsDefinitionsSchema();
   await beginRuntimeProcessLifecycle();
   // Persona templates and skill recommendations are a runtime invariant, not
   // optional background maintenance. Complete them before accepting requests

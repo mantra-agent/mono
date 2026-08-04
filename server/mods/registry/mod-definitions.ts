@@ -127,6 +127,8 @@ const business: ModDefinition = {
       clientRoute("business.route.business-model", "/business/model", "business-model", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.advantage", "/business/advantage", "business-advantage"),
       clientRoute("business.route.job-roles", "/business/roles", "job-roles", { requiredPermissions: ["system:read"] }),
+      clientRoute("business.route.kpis", "/business/kpis", "business-kpis", { requiredPermissions: ["system:read"] }),
+      clientRoute("business.route.metrics", "/business/metrics", "business-metrics", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.pipelines", "/pipelines", "pipelines"),
     ],
     navigation: [
@@ -137,6 +139,8 @@ const business: ModDefinition = {
       nav("business.nav.pipelines", "Business", "Pipelines", "Waypoints", "navigation.pipelines.open", "business.route.pipelines", 2),
       nav("business.nav.business-model", "Business", "Model", "LineChart", "navigation.businessModel.open", "business.route.business-model", 3, { requiredPermissions: ["system:read"] }),
       nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "navigation.roles.open", "business.route.job-roles", 4, { requiredPermissions: ["system:read"] }),
+      nav("business.nav.kpis", "Business", "KPIs", "Gauge", "navigation.kpis.open", "business.route.kpis", 5, { requiredPermissions: ["system:read"] }),
+      nav("business.nav.metrics", "Business", "Metrics", "Activity", "navigation.metrics.open", "business.route.metrics", 6, { requiredPermissions: ["system:read"] }),
     ],
     actions: actionsForOwner("business"),
   },

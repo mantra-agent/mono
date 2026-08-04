@@ -74,6 +74,8 @@ const MeetingsPage = lazyWithRetry(() => import("@/pages/meetings"));
 const CompaniesPage = lazyWithRetry(() => import("@/pages/companies"));
 const BusinessModelPage = lazyWithRetry(() => import("@/pages/business-model"));
 const BusinessAdvantagePage = lazyWithRetry(() => import("@/pages/business-advantage"));
+const BusinessKpisPage = lazyWithRetry(() => import("@/pages/business-kpis"));
+const BusinessMetricsPage = lazyWithRetry(() => import("@/pages/business-metrics"));
 const JobRolesPage = lazyWithRetry(() => import("@/pages/job-roles"));
 const CommsPage = lazyWithRetry(() => import("@/pages/comms"));
 const CalendarPage = lazyWithRetry(() => import("@/pages/calendar"));
@@ -318,6 +320,8 @@ function Router() {
         <Route path="/business/model">{() => <RequirePermission permission="system:read"><BusinessModelPage /></RequirePermission>}</Route>
         <Route path="/business/advantage" component={BusinessAdvantagePage} />
         <Route path="/business/roles">{() => <RequirePermission permission="system:read"><JobRolesPage /></RequirePermission>}</Route>
+        <Route path="/business/kpis">{() => <RequirePermission permission="system:read"><BusinessKpisPage /></RequirePermission>}</Route>
+        <Route path="/business/metrics">{() => <RequirePermission permission="system:read"><BusinessMetricsPage /></RequirePermission>}</Route>
         <Route path="/email" component={CommsPage} />
         <Route path="/comms">{() => <Redirect to="/email" />}</Route>
         <Route path="/orientation" component={OrientationPage} />
