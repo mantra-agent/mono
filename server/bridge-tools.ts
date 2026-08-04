@@ -11460,13 +11460,22 @@ ${refs}` : ""),
     const { eq, desc, asc, ilike, or, and, sql } = await import("drizzle-orm");
     const { requireCurrentPrincipal } = await import("./principal-context");
     const { combineWithVisibleScope, combineWithWritableScope, visibleScopePredicate } = await import("./scoped-storage");
+    const { authorizedScopePredicate } = await import("./authorize");
     const { libraryPageIsLive } = await import("./library-trash");
 
     const action = args.action;
     const principal = requireCurrentPrincipal();
-    const libScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
-    const visibleLib = (predicate?: SQL) => combineWithVisibleScope(principal, libScopeColumns, predicate ? and(predicate, libraryPageIsLive()) : libraryPageIsLive());
-    const writableLib = (predicate?: SQL) => combineWithWritableScope(principal, libScopeColumns, predicate);
+    // objectId carries libraryPages.id so authorize() can OR in cross-user object_grants (read|write|admin).
+    const libScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId, objectId: libraryPages.id };
+    // Canonical authorization spine: vault-gated ownership OR a live direct grant. Never bypass.
+    const visibleLib = (predicate?: SQL) => {
+      const owned = combineWithVisibleScope(principal, libScopeColumns, predicate ? and(predicate, libraryPageIsLive()) : libraryPageIsLive());
+      return authorizedScopePredicate(principal, owned, "library_page", libScopeColumns, "read");
+    };
+    const writableLib = (predicate?: SQL) => {
+      const owned = combineWithWritableScope(principal, libScopeColumns, predicate);
+      return authorizedScopePredicate(principal, owned, "library_page", libScopeColumns, "write");
+    };
 
     function publishLibraryChanged(action: string, page?: { id?: string | null; title?: string | null; surface?: boolean | null; surfaceUntil?: Date | string | null }) {
       eventBus.publish({
