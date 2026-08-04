@@ -31,7 +31,17 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/calendar.readonly',
+  // Drive is opt-in per-file access (Picker grants files one at a time). Requested at consent so a
+  // reconnect enables Drive, but treated as OPTIONAL below — existing accounts without it stay
+  // healthy; hasDrive simply reports false until the user reconnects.
+  'https://www.googleapis.com/auth/drive.file',
 ];
+
+/** Drive is an optional capability scope: absent from an account's grant never means "unhealthy". */
+export const OPTIONAL_GOOGLE_SCOPES = new Set<string>([
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/drive.file',
+]);
 
 export interface GmailAccount {
   id: string;
@@ -146,13 +156,14 @@ export async function getAccountScopes(accountId: string): Promise<{
   hasModify: boolean;
   hasCalendar: boolean;
   hasCalendarReadonly: boolean;
+  hasDrive: boolean;
   missingScopes: string[];
 }> {
   const tokens = await getAccountTokens(accountId);
   if (!tokens) return {
     hasGmailRead: false, hasSend: false, hasDraft: false, hasModify: false,
-    hasCalendar: false, hasCalendarReadonly: false,
-    missingScopes: GOOGLE_SCOPES.filter(s => s !== 'https://www.googleapis.com/auth/userinfo.email'),
+    hasCalendar: false, hasCalendarReadonly: false, hasDrive: false,
+    missingScopes: GOOGLE_SCOPES.filter(s => !OPTIONAL_GOOGLE_SCOPES.has(s)),
   };
   const scope = tokens.scope || '';
   const hasFullAccess = scope.includes('mail.google.com');
@@ -163,6 +174,7 @@ export async function getAccountScopes(accountId: string): Promise<{
     hasModify: hasFullAccess || scope.includes('gmail.modify'),
     hasCalendar: scope.split(' ').includes('https://www.googleapis.com/auth/calendar'),
     hasCalendarReadonly: scope.includes('calendar.readonly') || scope.split(' ').includes('https://www.googleapis.com/auth/calendar'),
+    hasDrive: scope.split(' ').includes('https://www.googleapis.com/auth/drive.file'),
     missingScopes: [] as string[],
   };
   const scopeChecks: Record<string, boolean> = {
@@ -172,9 +184,10 @@ export async function getAccountScopes(accountId: string): Promise<{
     'https://www.googleapis.com/auth/gmail.modify': result.hasModify,
     'https://www.googleapis.com/auth/calendar': result.hasCalendar,
     'https://www.googleapis.com/auth/calendar.readonly': result.hasCalendarReadonly,
+    'https://www.googleapis.com/auth/drive.file': result.hasDrive,
   };
   result.missingScopes = GOOGLE_SCOPES.filter(s => {
-    if (s === 'https://www.googleapis.com/auth/userinfo.email') return false;
+    if (OPTIONAL_GOOGLE_SCOPES.has(s)) return false;
     return !scopeChecks[s];
   });
   return result;

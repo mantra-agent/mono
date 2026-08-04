@@ -117,7 +117,12 @@ export async function registerIntegrationsRoutes(app: Express) {
           }
         }
         const oauthConfigured = !!(getSecretSync("GOOGLE_CLIENT_ID") && getSecretSync("GOOGLE_CLIENT_SECRET"));
-        return { connected, readAccess, connectorAccess, email, oauthConfigured, accounts: accounts.length };
+        // Drive file picking (Steps 7-8) needs a browser API key with the Picker API enabled — a
+        // credential distinct from the OAuth client. Reported honestly so the UI can degrade rather
+        // than fake a picker when the key is absent. The drive.file OAuth scope itself rides the
+        // existing consent flow and needs no new credential.
+        const drivePickerConfigured = !!(getSecretSync("GOOGLE_CLIENT_ID") && getSecretSync("GOOGLE_PICKER_API_KEY"));
+        return { connected, readAccess, connectorAccess, email, oauthConfigured, drivePickerConfigured, accounts: accounts.length };
       })();
       res.json(result);
     } catch (error: any) {

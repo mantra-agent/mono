@@ -2207,7 +2207,7 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
       email: string;
       label: string;
       addedAt: string;
-      scopes?: { hasGmailRead: boolean; hasSend: boolean; missingScopes?: string[] };
+      scopes?: { hasGmailRead: boolean; hasSend: boolean; hasDrive?: boolean; missingScopes?: string[] };
       missingScopes?: string[];
       healthy?: boolean;
       healthError?: string;
@@ -2386,6 +2386,11 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                     Missing: {missingScopes.map((scope) => scope.split("/").pop() || scope).join(", ")}
                   </p>
                 ) : null}
+                <p className="text-xs text-muted-foreground" data-testid={`text-drive-status-${account.id}`}>
+                  Drive: {account.scopes?.hasDrive
+                    ? "Connected — files you pick are readable in Files"
+                    : "Reconnect this account to enable Drive file picking"}
+                </p>
                 {permAccount ? (
                   <div className="space-y-4">
                     {[
