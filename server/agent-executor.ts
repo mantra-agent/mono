@@ -517,8 +517,10 @@ interface CompactionTelemetry {
   preToolRunPressure?: boolean;
   reason: string;
   contextLimit: number;
+  outputReserve: number;
   hardInputLimit: number;
   operatingInputLimit: number;
+  compactionTarget: number;
   toolDefinitionTokens: number;
   threshold1: number;
   threshold2: number;
@@ -717,9 +719,10 @@ async function runCompaction(
   publish: (type: JournalEntry["type"], extra?: Partial<JournalEntry>) => void,
   hasRunStage2: boolean,
 ): Promise<{ messages: ExecutorMessage[]; stage: number; summaryContent?: string; telemetry: CompactionTelemetry }> {
-  const threshold1 = Math.floor(budget.operatingInputLimit * 0.65);
-  const threshold2 = Math.floor(budget.operatingInputLimit * 0.80);
-  const threshold3 = budget.operatingInputLimit;
+  // Stage thresholds aim at compactionTarget (soft), not the hard operating gate.
+  const threshold1 = Math.floor(budget.compactionTarget * 0.65);
+  const threshold2 = Math.floor(budget.compactionTarget * 0.80);
+  const threshold3 = budget.compactionTarget;
   const estimateRequestTokens = (requestMessages: ExecutorMessage[]) =>
     estimateTotalTokens(requestMessages) + toolDefinitionTokens;
 
@@ -732,7 +735,10 @@ async function runCompaction(
   let stage2Telemetry: Stage2CompactionTelemetry | undefined;
 
   if (currentTokens <= threshold1) {
-    log.debug(`Compaction not needed: request=${currentTokens} tokens <= stage1=${threshold1} operating=${budget.operatingInputLimit} hard=${budget.hardInputLimit}`);
+    log.debug(
+      `Compaction not needed: request=${currentTokens} tokens <= stage1=${threshold1} ` +
+        `target=${budget.compactionTarget} operating=${budget.operatingInputLimit} hard=${budget.hardInputLimit}`,
+    );
     return {
       messages,
       stage: 0,
@@ -743,8 +749,10 @@ async function runCompaction(
         preToolRunPressure,
         reason: "below_threshold",
         contextLimit: budget.contextWindow,
+        outputReserve: budget.outputReserve,
         hardInputLimit: budget.hardInputLimit,
         operatingInputLimit: budget.operatingInputLimit,
+        compactionTarget: budget.compactionTarget,
         toolDefinitionTokens,
         threshold1,
         threshold2,
@@ -759,7 +767,10 @@ async function runCompaction(
     };
   }
 
-  log.debug(`Compaction needed: request=${currentTokens} tokens > stage1=${threshold1} operating=${budget.operatingInputLimit} hard=${budget.hardInputLimit}`);
+  log.debug(
+    `Compaction needed: request=${currentTokens} tokens > stage1=${threshold1} ` +
+      `target=${budget.compactionTarget} operating=${budget.operatingInputLimit} hard=${budget.hardInputLimit}`,
+  );
   const compactionStepId = `compaction-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   publish("compacting", { stepId: compactionStepId, status: "active", content: "Working context compression started..." });
   const preparedStage2Capsule = currentTokens > threshold2
@@ -775,7 +786,10 @@ async function runCompaction(
   }
 
   if (currentTokens > threshold2) {
-    log.debug(`Stage 2 needed: request=${currentTokens} tokens > stage2=${threshold2} operating=${budget.operatingInputLimit}`);
+    log.debug(
+      `Stage 2 needed: request=${currentTokens} tokens > stage2=${threshold2} ` +
+        `target=${budget.compactionTarget} operating=${budget.operatingInputLimit}`,
+    );
     publish("compacting", { stepId: compactionStepId, status: "active", content: "Folding earlier working context..." });
     const s2 = compactStage2(messages, preparedStage2Capsule);
     stage2Telemetry = s2.telemetry;
@@ -789,7 +803,10 @@ async function runCompaction(
   }
 
   if (currentTokens > threshold3) {
-    log.debug(`Stage 3 needed: ${currentTokens} tokens > ${threshold3} threshold (90%)`);
+    log.debug(
+      `Stage 3 needed: ${currentTokens} tokens > stage3=${threshold3} ` +
+        `target=${budget.compactionTarget} operating=${budget.operatingInputLimit}`,
+    );
     publish("compacting", { stepId: compactionStepId, status: "active", content: "Aggressively compressing working context..." });
     const s3 = compactStage3(messages);
     if (s3.compacted) {
@@ -817,8 +834,10 @@ async function runCompaction(
       preToolRunPressure,
       reason: tokensBefore > threshold1 ? "above_threshold" : "below_threshold",
       contextLimit: budget.contextWindow,
+      outputReserve: budget.outputReserve,
       hardInputLimit: budget.hardInputLimit,
       operatingInputLimit: budget.operatingInputLimit,
+      compactionTarget: budget.compactionTarget,
       toolDefinitionTokens,
       threshold1,
       threshold2,
