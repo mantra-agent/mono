@@ -518,6 +518,8 @@ app.use((req, res, next) => {
   await migrateProjectNotesSpecToLibrary();
   const { ensureObjectGrantSchema } = await import("./object-grant-schema");
   await ensureObjectGrantSchema(workVaultPool);
+  const { ensureTeamsSchema } = await import("./teams-schema");
+  await ensureTeamsSchema(workVaultPool);
   const { ensureAgendaDefinitionSchema } = await import("./agenda-schema");
   await ensureAgendaDefinitionSchema();
   const { ensureInvitedSubjectSchema } = await import("./invited-subject-schema");
