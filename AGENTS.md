@@ -126,6 +126,17 @@ Classify logs by the contract of the local operation being logged:
 
 Severity is based on the local operation's contract, not whether the whole app survives. A failed email draft is `error` even if the app keeps running. A failed optional enrichment inside a batch that continues is usually `warn`. A retry attempt is `debug`; retry exhaustion is `error` if the operation fails, or `warn` if a fallback completes the contract.
 
+**Telemetry Writes**
+
+Observability samples and ordered audit rows share one delivery owner — do not invent a new queue per call site.
+
+Two classes, one module family:
+
+1. **Best-effort observability sink** — browser performance, mobile startup, ambient metrics. Fire-and-forget. Accept on the request path (`202` / void), insert in the background. Use `enqueueTelemetryWrite(label, run)` from `server/telemetry-write.ts`. That module owns `createSerialAsyncDelivery` + `withQueryAttributionAsync("log-sink", …)`. Domain storage validates and maps rows, then enqueues; routes must not `await db.insert` for telemetry.
+2. **Serial durable write** — ordered audit rows that must return a result (e.g. `api_calls`). Await the write. Use `createSerialQueue({ label }).enqueueAndWait(fn)` from `server/utils/serial-async-delivery.ts`. Do not hand-roll `let writeQueue = Promise.resolve()` chains.
+
+Never put durable correctness paths (ACLs, settings, billing, ownership mutations) on the telemetry sink. Their SLOW rows are pool-contention symptoms — fix attribution/caching/query shape, not fire-and-forget durability. STT and other transport callback serialization may use `createSerialAsyncDelivery` directly when the consumer is not a DB telemetry insert.
+
 **Tracked LLM Boundary**
 
 Every text/chat/streaming LLM call goes through `server/model-client.ts` via `chatCompletion(...)` or `chatCompletionStream(...)` with structured metadata. Do not call model providers directly from feature code. Specialized modalities must use a sibling tracked boundary before shipping.

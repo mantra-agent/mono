@@ -1,11 +1,12 @@
 import type { Express, Request, Response } from "express";
-import { desc } from "drizzle-orm";
 import { z } from "zod";
 import { requireAuth, requireAdmin } from "../auth";
-import { db } from "../db";
 import { createLogger } from "../log";
 import { getSecretSync } from "../secrets-store";
-import { mobileStartupTelemetry } from "@shared/schema";
+import {
+  enqueueMobileStartupTelemetry,
+  listRecentMobileStartupTelemetry,
+} from "../mobile-telemetry-storage";
 
 const log = createLogger("MobileTelemetryRoutes");
 
@@ -95,7 +96,8 @@ export function registerMobileTelemetryRoutes(app: Express) {
       }
 
       const event = parsed.data;
-      await db.insert(mobileStartupTelemetry).values({
+      // Accept immediately; durable insert runs on the shared telemetry log-sink.
+      enqueueMobileStartupTelemetry({
         kind: event.kind,
         phase: event.phase || null,
         mobileSessionId: event.mobileSessionId,
@@ -121,9 +123,9 @@ export function registerMobileTelemetryRoutes(app: Express) {
         occurredAt: event.occurredAt ? new Date(event.occurredAt) : new Date(),
       });
 
-      res.json({ ok: true });
+      res.status(202).json({ ok: true, accepted: true });
     } catch (err: any) {
-      log.error(`Failed to record mobile telemetry: ${err?.message || err}`);
+      log.error(`Failed to accept mobile telemetry: ${err?.message || err}`);
       res.status(500).json({ error: "Failed to record telemetry" });
     }
   });
@@ -131,11 +133,7 @@ export function registerMobileTelemetryRoutes(app: Express) {
   app.get("/api/mobile/telemetry/startup", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const limit = Math.max(1, Math.min(100, Number(req.query.limit || 25) || 25));
-      const events = await db
-        .select()
-        .from(mobileStartupTelemetry)
-        .orderBy(desc(mobileStartupTelemetry.receivedAt))
-        .limit(limit);
+      const events = await listRecentMobileStartupTelemetry(limit);
 
       const sentryDsn = getSecretSync("EXPO_PUBLIC_SENTRY_DSN") || getSecretSync("SENTRY_DSN");
       const sentryAuthToken = getSecretSync("SENTRY_AUTH_TOKEN");
