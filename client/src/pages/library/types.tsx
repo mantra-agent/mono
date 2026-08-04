@@ -1,5 +1,5 @@
 import type { JSONContent } from "@tiptap/core";
-import { BookOpen, List, FolderOpen } from "lucide-react";
+import { List, FolderOpen } from "lucide-react";
 
 export interface LibraryPage {
   id: string;
@@ -70,7 +70,7 @@ export interface FlatNode {
 export type DropPosition = "above" | "below" | "inside";
 
 export const INFO_TABS = [
-  { value: "library", label: "Library", icon: <BookOpen className="h-3.5 w-3.5" />, testId: "tab-info-library" },
+  { value: "library", label: "Files", icon: <FolderOpen className="h-3.5 w-3.5" />, testId: "tab-info-library" },
   { value: "index", label: "Index", icon: <List className="h-3.5 w-3.5" />, testId: "tab-info-index" },
   { value: "files", label: "Files", icon: <FolderOpen className="h-3.5 w-3.5" />, testId: "tab-info-files" },
 ];
