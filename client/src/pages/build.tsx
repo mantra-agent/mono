@@ -61,6 +61,11 @@ import { getStatusClasses } from "@/components/nav-dot";
 import { MantraLogo } from "@/components/mantra-logo";
 import { InlineDatePicker } from "@/components/inline-date-picker";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
+import {
+  ReferencePicker,
+  type ReferencePickerValue,
+} from "@/components/references/reference-picker";
+import { serializeReference } from "@shared/references";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -3786,6 +3791,93 @@ const referenceExamples = [
   },
 ];
 
+/** Interactive Design playground for the universal @ picker. */
+function DesignReferencePlayground() {
+  const [anything, setAnything] = useState<ReferencePickerValue[]>([]);
+  const [tagsOnly, setTagsOnly] = useState<ReferencePickerValue[]>([]);
+
+  return (
+    <div className="space-y-4 rounded-md border border-border/30 bg-muted/10 p-4">
+      <div className="space-y-1">
+        <div className="text-sm font-medium">Universal reference picker</div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          One control for @anything. Chat mentions, field multi-select, and tag-only
+          editors share the same search path and compact single-line rows.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-muted-foreground">@ anything</div>
+        <div className="rounded-md border border-border/40 bg-background px-2 py-1.5">
+          <ReferencePicker
+            value={anything}
+            onChange={setAnything}
+            mode="multi"
+            variant="inline"
+            allowCreate
+            showToken
+            placeholder="Type to search people, pages, goals, tags…"
+            testId="design-reference-picker-anything"
+          />
+        </div>
+        {anything.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {anything.map((item) => (
+              <code
+                key={`${item.type}:${item.id}`}
+                className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+              >
+                {serializeReference({ type: item.type, id: item.id })}
+              </code>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-xs font-medium text-muted-foreground">Tag-locked field</div>
+        <div className="rounded-md border border-border/40 bg-background px-2 py-1.5">
+          <ReferencePicker
+            value={tagsOnly}
+            onChange={setTagsOnly}
+            types={["tag"]}
+            mode="multi"
+            variant="inline"
+            allowCreate
+            dense
+            placeholder="Add tag…"
+            testId="design-reference-picker-tags"
+          />
+        </div>
+      </div>
+
+      <ul className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+        <li>
+          <span className="text-foreground">Search:</span>{" "}
+          <code className="rounded bg-muted px-1 font-mono">loadReferenceSuggestions</code>{" "}
+          is the single multi-type source.
+        </li>
+        <li>
+          <span className="text-foreground">Rows:</span> compact one-line{" "}
+          <code className="rounded bg-muted px-1 font-mono">ReferenceSuggestionRow</code>{" "}
+          (icon · label · type).
+        </li>
+        <li>
+          <span className="text-foreground">Chat:</span>{" "}
+          <code className="rounded bg-muted px-1 font-mono">MentionPopover</code> uses the
+          same rows — no more two-line dense list.
+        </li>
+        <li>
+          <span className="text-foreground">Tags:</span>{" "}
+          <code className="rounded bg-muted px-1 font-mono">UniversalTagPicker</code> is a
+          thin <code className="rounded bg-muted px-1 font-mono">types:[&apos;tag&apos;]</code>{" "}
+          facade.
+        </li>
+      </ul>
+    </div>
+  );
+}
+
 function DesignSection({
   number,
   title,
@@ -4745,83 +4837,92 @@ export function DesignTab() {
           eyebrow="References"
           title="Typed reference links"
         >
-          <div className="grid gap-6 @lg:grid-cols-[1.1fr_0.9fr]">
-            <div className="space-y-3">
-              {referenceExamples.map((item) => {
-                return (
-                  <div
-                    key={item.canonical}
-                    className="flex flex-col gap-2 overflow-hidden rounded-md border border-border/20 p-3 @md:flex-row @md:items-center @md:gap-4"
-                  >
-                    <ReferenceRenderer
-                      refValue={{ type: item.type, id: item.canonical.slice(item.canonical.indexOf(":") + 1), canonical: item.canonical }}
-                      surface="inline"
-                      className="mx-0"
-                    />
-                    <code className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded bg-muted px-2 py-1 font-mono text-[11px]">
-                      {item.canonical}
-                    </code>
-                  </div>
-                );
-              })}
-              <div className="flex items-center gap-3 p-3">
-                <span className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <Link2 className="h-3.5 w-3.5 shrink-0" />
-                  <span className="border-b border-current leading-tight">
-                    Missing reference
+          <div className="space-y-6">
+            <DesignReferencePlayground />
+
+            <div className="grid gap-6 @lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="space-y-3">
+                {referenceExamples.map((item) => {
+                  return (
+                    <div
+                      key={item.canonical}
+                      className="flex flex-col gap-2 overflow-hidden rounded-md border border-border/20 p-3 @md:flex-row @md:items-center @md:gap-4"
+                    >
+                      <ReferenceRenderer
+                        refValue={{ type: item.type, id: item.canonical.slice(item.canonical.indexOf(":") + 1), canonical: item.canonical }}
+                        surface="inline"
+                        className="mx-0"
+                      />
+                      <code className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded bg-muted px-2 py-1 font-mono text-[11px]">
+                        {item.canonical}
+                      </code>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center gap-3 p-3">
+                  <span className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <Link2 className="h-3.5 w-3.5 shrink-0" />
+                    <span className="border-b border-current leading-tight">
+                      Missing reference
+                    </span>
                   </span>
-                </span>
-                <p className="text-xs text-muted-foreground">
-                  Degraded references stay legible and neutral.
-                </p>
+                  <p className="text-xs text-muted-foreground">
+                    Degraded references stay legible and neutral.
+                  </p>
+                </div>
               </div>
-            </div>
-            <div>
-              <div className="text-sm font-medium">Reference doctrine</div>
-              <ul className="mt-3 space-y-2 text-xs leading-relaxed text-muted-foreground">
-                <li>
-                  <span className="text-foreground">Canonical:</span> emit{" "}
-                  <code className="rounded bg-muted px-1 font-mono">
-                    @type:id
-                  </code>{" "}
-                  when the ID is known.
-                </li>
-                <li>
-                  <span className="text-foreground">Rendering:</span> use the shared parser and ReferenceRenderer so every registered type gets the current inline treatment.
-                </li>
-                <li>
-                  <span className="text-foreground">Resolved:</span> references are compact inline links with their type icon and current object label.
-                </li>
-                <li>
-                  <span className="text-foreground">Actionable:</span>{" "}
-                  intentions may render richer controls instead of a generic
-                  chip.
-                </li>
-                <li>
-                  <span className="text-foreground">Wellness:</span> use{" "}
-                  <code className="rounded bg-muted px-1 font-mono">
-                    @wellness_activity:id
-                  </code>
-                  ;{" "}
-                  <code className="rounded bg-muted px-1 font-mono">
-                    @health_activity:id
-                  </code>{" "}
-                  aliases during migration.
-                </li>
-                <li>
-                  <span className="text-foreground">Priorities:</span> use{" "}
-                  <code className="rounded bg-muted px-1 font-mono">
-                    @priority:period:date:id
-                  </code>{" "}
-                  for daily, next_day, weekly, next_week, monthly, and
-                  next_month items.
-                </li>
-                <li>
-                  <span className="text-foreground">Not decoration:</span>{" "}
-                  reference links are object links and provenance, not visual
-                  confetti.
-                </li>
-              </ul>
+              <div>
+                <div className="text-sm font-medium">Reference doctrine</div>
+                <ul className="mt-3 space-y-2 text-xs leading-relaxed text-muted-foreground">
+                  <li>
+                    <span className="text-foreground">Canonical:</span> emit{" "}
+                    <code className="rounded bg-muted px-1 font-mono">
+                      @type:id
+                    </code>{" "}
+                    when the ID is known.
+                  </li>
+                  <li>
+                    <span className="text-foreground">Picker:</span> one{" "}
+                    <code className="rounded bg-muted px-1 font-mono">ReferencePicker</code>{" "}
+                    for chat, fields, and tag editors — never invent a local typeahead.
+                  </li>
+                  <li>
+                    <span className="text-foreground">Rendering:</span> use the shared parser and ReferenceRenderer so every registered type gets the current inline treatment.
+                  </li>
+                  <li>
+                    <span className="text-foreground">Resolved:</span> references are compact inline links with their type icon and current object label.
+                  </li>
+                  <li>
+                    <span className="text-foreground">Actionable:</span>{" "}
+                    intentions may render richer controls instead of a generic
+                    chip.
+                  </li>
+                  <li>
+                    <span className="text-foreground">Wellness:</span> use{" "}
+                    <code className="rounded bg-muted px-1 font-mono">
+                      @wellness_activity:id
+                    </code>
+                    ;{" "}
+                    <code className="rounded bg-muted px-1 font-mono">
+                      @health_activity:id
+                    </code>{" "}
+                    aliases during migration.
+                  </li>
+                  <li>
+                    <span className="text-foreground">Priorities:</span> use{" "}
+                    <code className="rounded bg-muted px-1 font-mono">
+                      @priority:period:date:id
+                    </code>{" "}
+                    for daily, next_day, weekly, next_week, monthly, and
+                    next_month items.
+                  </li>
+                  <li>
+                    <span className="text-foreground">Not decoration:</span>{" "}
+                    reference links are object links and provenance, not visual
+                    confetti.
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
         </DesignSection>
