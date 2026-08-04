@@ -35,6 +35,8 @@ import { HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-h
 import { useVaults, type Vault } from "@/hooks/use-vaults";
 import type { LibraryPageTitleColorResolver } from "./library-title-color";
 import { MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
+import { UniversalTagPicker } from "@/components/universal-tag-picker";
+import { semanticLibraryTags, structuralLibraryTags } from "@shared/library-tags";
 
 
 const log = createLogger("LibraryComponents");
@@ -732,6 +734,18 @@ function PageDetailsDialog({ open, onOpenChange, page, pages }: {
   open: boolean; onOpenChange: (open: boolean) => void; page: LibraryPageFull; pages: LibraryPage[];
 }) {
   const parent = page.parentId ? pages.find(p => p.id === page.parentId) : null;
+  const tagsMutation = useApiMutation<{ tags: string[] }>({
+    method: "PATCH",
+    path: `/api/info/library/${page.id}`,
+    body: ({ tags }) => ({ tags }),
+    invalidateKeys: [
+      ["/api/info/library"],
+      ["/api/info/library/tree"],
+      ["/api/tags"],
+    ],
+    errorTitle: "Failed to update tags",
+  });
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
@@ -745,16 +759,19 @@ function PageDetailsDialog({ open, onOpenChange, page, pages }: {
           {parent && <DetailRow label="Parent" value={parent.title || "Untitled"} />}
           {page.oneLiner && <DetailRow label="One-liner" value={page.oneLiner} />}
           {page.summary && <DetailRow label="Summary" value={page.summary} />}
-          {page.tags.length > 0 && (
-            <div className="flex gap-2">
-              <span className="text-muted-foreground shrink-0 w-20">Tags</span>
-              <div className="flex flex-wrap gap-1">
-                {page.tags.map(t => (
-                  <span key={t} className="text-xs bg-accent px-1.5 py-0.5 rounded">{t}</span>
-                ))}
-              </div>
+          <div className="flex gap-2">
+            <span className="text-muted-foreground shrink-0 w-20 pt-1">Tags</span>
+            <div className="min-w-0 flex-1">
+              <UniversalTagPicker
+                variant="compact"
+                selected={semanticLibraryTags(page.tags)}
+                onChange={(next) => tagsMutation.mutate({ tags: [...structuralLibraryTags(page.tags), ...next] })}
+                placeholder="Add tag"
+                testId="input-library-page-tags"
+                className="min-h-8 rounded-md border border-input px-2 py-1"
+              />
             </div>
-          )}
+          </div>
           <DetailRow label="Created" value={new Date(page.createdAt).toLocaleString()} />
           <DetailRow label="Updated" value={new Date(page.updatedAt).toLocaleString()} />
         </div>
