@@ -342,6 +342,7 @@ Plus: `registerChatRoutes`, `registerPeopleRoutes`, `registerGoalRoutes`, `regis
 | Tool definitions | In-memory | Rebuilt on demand from `tool-registry.ts` |
 | Exec (career) | PostgreSQL | `exec_experience`, `exec_skills`, `exec_opportunities`, `exec_metrics`, `exec_education`, `opportunity_artifacts` |
 | Persistent files | Object storage (R2) | Cloud |
+| External files (multi-provider) | Google Drive + Mantra object storage (+ Box stub) | `server/files-api.ts` + `server/files-providers.ts` — vault-bound reads only; authorize in FilesApi, transport in adapters |
 | Scratch workspace | Local filesystem | Ephemeral |
 
 ### PostgreSQL Runtime Shape

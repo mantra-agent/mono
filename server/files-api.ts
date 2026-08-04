@@ -3,7 +3,7 @@
  *
  * Invariants (locked v1):
  * 1. Connector-global: every provider read goes through this module. Agent never
- *    calls Google/Box directly. Owner tokens stay server-side.
+ *    calls Google/Box/object-storage directly. Owner tokens stay server-side.
  * 2. drive_resource = file or folder pointer (vault-scoped bind).
  * 3. Folder bind = recursive whitelist. Explicit file bind is also allowed inside
  *    a non-whitelisted folder.
@@ -11,11 +11,13 @@
  * 5. Connector owns the vault relationship (like email connectors).
  *
  * Path: resolve target → authorize (bind ownership | object_grant | vault gate)
- * → owner token (system-elevated mint) → provider. Fail closed on disconnect,
- * missing drive.file, or non-whitelist. Never ambient crawl.
+ * → owner token (system-elevated mint, when needed) → provider adapter.
+ * Fail closed on disconnect, missing drive.file, or non-whitelist. Never ambient crawl.
+ *
+ * Transport lives in files-providers.ts (GoogleDriveAdapter / BoxAdapter /
+ * MantraStorageAdapter). FilesApi never leaks provider clients past this boundary.
  */
 import { and, eq, inArray, or, sql } from "drizzle-orm";
-import { google, type drive_v3 } from "googleapis";
 import { db } from "./db";
 import { driveResources, type DriveResourceRow } from "@shared/schema";
 import { vaults } from "@shared/models/vaults";
@@ -25,7 +27,7 @@ import {
   runWithPrincipal,
 } from "./principal-context";
 import { createSystemPrincipal, type Principal } from "./principal";
-import { getDriveAccessTokenForAccount, getOAuth2Client } from "./gmail";
+import { getDriveAccessTokenForAccount } from "./gmail";
 import { getAccount } from "./connected-accounts";
 import {
   liveObjectGrantPredicate,
@@ -34,21 +36,20 @@ import {
   type ObjectGrantIdentity,
   type ObjectRole,
 } from "./authorize";
+import {
+  getFilesProviderAdapter,
+  type AdapterContext,
+  type FilesProvider,
+  type FilesProviderAdapter,
+} from "./files-providers";
 
 const log = createLogger("FilesApi");
 
-const FOLDER_MIME = "application/vnd.google-apps.folder";
 const MAX_READ_BYTES = 2 * 1024 * 1024;
 const MAX_LIST_PAGE = 100;
 const MAX_PARENT_WALK = 32;
 
-const GOOGLE_EXPORT_MAP: Record<string, string> = {
-  "application/vnd.google-apps.document": "text/plain",
-  "application/vnd.google-apps.spreadsheet": "text/csv",
-  "application/vnd.google-apps.presentation": "text/plain",
-};
-
-export type FilesProvider = "google" | "box" | "mantra";
+export type { FilesProvider };
 
 export interface FilesChild {
   provider: FilesProvider;
@@ -91,10 +92,6 @@ export interface FilesReadResult {
 
 function httpError(status: number, message: string): Error {
   return Object.assign(new Error(message), { status });
-}
-
-function mapResourceType(mimeType: string | null | undefined): "file" | "folder" {
-  return mimeType === FOLDER_MIME ? "folder" : "file";
 }
 
 function driveResourceGrantIdentity(_driveResourceId: string): ObjectGrantIdentity {
@@ -180,130 +177,97 @@ async function authorizeBoundResource(
 }
 
 /**
- * Mint a Drive client as the connector owner.
- * Elevates to system principal so grantee reads can use the binder's token
- * without principal-scoping the connected_accounts row. Token never leaves server.
+ * Mint adapter context for a connector.
+ * Google: system-elevated owner token from connected_accounts.
+ * Mantra / Box: no OAuth token (Box fails closed 501 inside the adapter).
  */
-async function driveClientForConnector(
+async function adapterContextForConnector(
+  provider: string,
   connectedAccountId: string,
-): Promise<drive_v3.Drive> {
-  return runWithPrincipal(createSystemPrincipal(), async () => {
+): Promise<{ adapter: FilesProviderAdapter; ctx: AdapterContext }> {
+  const adapter = getFilesProviderAdapter(provider);
+
+  if (provider === "mantra" || provider === "box") {
+    return {
+      adapter,
+      ctx: { connectedAccountId, accessToken: null },
+    };
+  }
+
+  // Google (and any future OAuth provider): mint binder token as system.
+  const accessToken = await runWithPrincipal(createSystemPrincipal(), async () => {
     const account = await getAccount(connectedAccountId);
     if (!account) {
+      throw httpError(403, "Connected account disconnected or missing");
+    }
+    try {
+      const { accessToken: token } =
+        await getDriveAccessTokenForAccount(connectedAccountId);
+      return token;
+    } catch (err) {
+      log.warn("Failed to mint Drive token for connector", {
+        connectedAccountId,
+        err: err instanceof Error ? err.message : String(err),
+      });
       throw httpError(
         403,
-        "Connector disconnected — reconnect Google to read this file",
+        "Drive access unavailable — reconnect Google with drive.file scope",
       );
     }
-
-    // Validates drive.file scope and refreshes; throws on missing scope/disconnect.
-    const { accessToken, expiresAt } =
-      await getDriveAccessTokenForAccount(connectedAccountId);
-    const oauth2Client = await getOAuth2Client();
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-      expiry_date: expiresAt ?? undefined,
-    });
-    return google.drive({ version: "v3", auth: oauth2Client });
   });
+
+  return {
+    adapter,
+    ctx: { connectedAccountId, accessToken },
+  };
 }
 
 /**
- * Resolve whitelist coverage for a provider file id inside a vault.
- * Exact file bind wins; otherwise walk parents until a folder bind matches.
- * Fail closed when nothing covers the target — caller must re-prompt Picker.
- * Parent walk is Google-only today; other providers require exact binds.
+ * Walk parents via the provider adapter until a folder bind is hit or depth exhausted.
+ * Folder bind = recursive whitelist for that connector.
  */
-async function resolveWhitelist(
-  principal: Principal,
-  vaultId: string,
-  provider: FilesProvider,
+async function isUnderAnyFolderBind(
+  adapter: FilesProviderAdapter,
+  ctx: AdapterContext,
   providerFileId: string,
-): Promise<{ bind: DriveResourceRow; viaFolderBind: boolean }> {
-  await assertVaultAccess(principal, vaultId, "read");
+  folderBindIds: Set<string>,
+): Promise<boolean> {
+  if (folderBindIds.has(providerFileId)) return true;
 
-  // All binds in the vault (owner or vault-grantee sees the vault's whitelist).
-  const binds = await db
-    .select()
-    .from(driveResources)
-    .where(eq(driveResources.vaultId, vaultId));
-
-  const exact = binds.find(
-    (b) => b.provider === provider && b.providerFileId === providerFileId,
-  );
-  if (exact) return { bind: exact, viaFolderBind: false };
-
-  // Non-Google providers: exact bind only (no parent walk yet).
-  if (provider !== "google") {
-    throw httpError(
-      403,
-      "File is not whitelisted — pick it explicitly or bind a parent folder",
-    );
-  }
-
-  const folderBinds = binds.filter(
-    (b) => b.resourceType === "folder" && b.provider === "google",
-  );
-  if (folderBinds.length === 0) {
-    throw httpError(
-      403,
-      "File is not whitelisted — pick it explicitly or bind a parent folder",
-    );
-  }
-
-  const byConnector = new Map<string, DriveResourceRow[]>();
-  for (const f of folderBinds) {
-    const list = byConnector.get(f.connectedAccountId) ?? [];
-    list.push(f);
-    byConnector.set(f.connectedAccountId, list);
-  }
-
-  for (const [connectorId, folders] of byConnector) {
-    const folderIds = new Set(folders.map((f) => f.providerFileId));
-    try {
-      const drive = await driveClientForConnector(connectorId);
-      let currentId: string | null = providerFileId;
-      for (let depth = 0; depth < MAX_PARENT_WALK && currentId; depth++) {
-        const meta = await drive.files.get({
-          fileId: currentId,
-          fields: "id,parents,trashed",
-          supportsAllDrives: true,
-        });
-        if (meta.data.trashed) {
-          throw httpError(410, "File has been trashed in Google Drive");
-        }
-        const parents = meta.data.parents ?? [];
-        for (const parentId of parents) {
-          if (folderIds.has(parentId)) {
-            const bind = folders.find((f) => f.providerFileId === parentId)!;
-            return { bind, viaFolderBind: true };
-          }
-        }
-        currentId = parents[0] ?? null;
-      }
-    } catch (err) {
-      const status = (err as { status?: number })?.status;
-      if (status === 410) throw err;
-      log.warn("Whitelist parent walk failed", {
-        connectorId,
-        provider,
-        providerFileId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+  let current = providerFileId;
+  for (let i = 0; i < MAX_PARENT_WALK; i++) {
+    const parents = await adapter.getParentIds(ctx, current);
+    if (parents.length === 0) return false;
+    for (const p of parents) {
+      if (folderBindIds.has(p)) return true;
     }
+    // Continue walk on the first parent (Drive files usually have one).
+    current = parents[0]!;
   }
+  return false;
+}
 
-  throw httpError(
-    403,
-    "File is not whitelisted — pick it explicitly or bind a parent folder",
+function isTextLike(mime: string | null | undefined): boolean {
+  if (!mime) return false;
+  const m = mime.toLowerCase();
+  return (
+    m.startsWith("text/") ||
+    m === "application/json" ||
+    m === "application/xml" ||
+    m === "application/javascript" ||
+    m.endsWith("+json") ||
+    m.endsWith("+xml") ||
+    m === "application/csv" ||
+    m === "text/csv"
   );
 }
 
 class FilesApi {
-  /** Bound roots in a vault — no ambient Google crawl. */
+  /** Bound roots in a vault — no ambient provider crawl. */
   async listBound(vaultId: string): Promise<DriveResourceRow[]> {
     const principal = requireCurrentUserPrincipal();
-    await assertVaultAccess(principal, vaultId, "read");
+    await assertVaultAccess(principal, vaultId);
+
     return db
       .select()
       .from(driveResources)
@@ -311,8 +275,8 @@ class FilesApi {
   }
 
   /**
-   * List children of a bound folder, or of a descendant folder under a folder bind.
-   * Recursive whitelist: every child of a bound folder is visible.
+   * List children of a bound folder, or of a folder under a bound folder tree.
+   * Whitelist: target must be a folder bind, or a folder reachable under one.
    */
   async listChildren(input: {
     vaultId: string;
@@ -322,81 +286,112 @@ class FilesApi {
     pageToken?: string;
   }): Promise<{ children: FilesChild[]; nextPageToken: string | null }> {
     const principal = requireCurrentUserPrincipal();
+    await assertVaultAccess(principal, input.vaultId);
 
-    let folderProvider: FilesProvider;
-    let folderProviderFileId: string;
+    let folderId: string;
+    let provider: FilesProvider;
     let connectorId: string;
-    let coveringBindId: string;
-    let vaultId = input.vaultId;
+    let folderBindsForConnector: DriveResourceRow[] = [];
 
     if (input.driveResourceId) {
-      const bind = await authorizeBoundResource(
-        principal,
-        input.driveResourceId,
-        "read",
-      );
-      if (input.vaultId && bind.vaultId !== input.vaultId) {
-        throw httpError(404, "Drive resource not found");
+      const bind = await authorizeBoundResource(principal, input.driveResourceId);
+      if (bind.vaultId !== input.vaultId) {
+        throw httpError(400, "drive_resource is not in this vault");
       }
       if (bind.resourceType !== "folder") {
         throw httpError(400, "listChildren requires a folder bind");
       }
-      vaultId = bind.vaultId;
-      folderProvider = (bind.provider as FilesProvider) || "google";
-      folderProviderFileId = bind.providerFileId;
+      folderId = bind.providerFileId;
+      provider = bind.provider as FilesProvider;
       connectorId = bind.connectedAccountId;
-      coveringBindId = bind.id;
-    } else if (input.providerFileId) {
-      await assertVaultAccess(principal, vaultId, "read");
-      const provider = input.provider ?? "google";
-      const resolved = await resolveWhitelist(
-        principal,
-        vaultId,
-        provider,
-        input.providerFileId,
-      );
-      folderProvider = provider;
-      folderProviderFileId = input.providerFileId;
-      connectorId = resolved.bind.connectedAccountId;
-      coveringBindId = resolved.bind.id;
+      folderBindsForConnector = await db
+        .select()
+        .from(driveResources)
+        .where(
+          and(
+            eq(driveResources.vaultId, input.vaultId),
+            eq(driveResources.connectedAccountId, connectorId),
+            eq(driveResources.provider, provider),
+            eq(driveResources.resourceType, "folder"),
+          ),
+        );
+    } else if (input.provider && input.providerFileId) {
+      provider = input.provider;
+      folderId = input.providerFileId;
+
+      const folderBinds = await db
+        .select()
+        .from(driveResources)
+        .where(
+          and(
+            eq(driveResources.vaultId, input.vaultId),
+            eq(driveResources.provider, provider),
+            eq(driveResources.resourceType, "folder"),
+          ),
+        );
+      if (folderBinds.length === 0) {
+        throw httpError(403, "No folder binds for this provider in vault");
+      }
+
+      const byConnector = new Map<string, DriveResourceRow[]>();
+      for (const f of folderBinds) {
+        const list = byConnector.get(f.connectedAccountId) ?? [];
+        list.push(f);
+        byConnector.set(f.connectedAccountId, list);
+      }
+
+      let resolved: {
+        connectorId: string;
+        binds: DriveResourceRow[];
+      } | null = null;
+
+      for (const [cid, binds] of byConnector) {
+        let authorized = false;
+        for (const b of binds) {
+          try {
+            await authorizeBoundResource(principal, b.id);
+            authorized = true;
+            break;
+          } catch {
+            // try next bind
+          }
+        }
+        if (!authorized) continue;
+
+        const { adapter, ctx } = await adapterContextForConnector(provider, cid);
+        const folderIds = new Set(binds.map((b) => b.providerFileId));
+        if (
+          folderIds.has(folderId) ||
+          (await isUnderAnyFolderBind(adapter, ctx, folderId, folderIds))
+        ) {
+          resolved = { connectorId: cid, binds };
+          break;
+        }
+      }
+
+      if (!resolved) {
+        throw httpError(403, "Folder is not under any authorized folder bind");
+      }
+      connectorId = resolved.connectorId;
+      folderBindsForConnector = resolved.binds;
     } else {
-      throw httpError(400, "driveResourceId or providerFileId required");
+      throw httpError(
+        400,
+        "listChildren requires driveResourceId or provider+providerFileId",
+      );
     }
 
-    if (folderProvider !== "google") {
-      throw httpError(501, `listChildren not implemented for provider ${folderProvider}`);
-    }
-
-    const drive = await driveClientForConnector(connectorId);
-
-    if (input.providerFileId && !input.driveResourceId) {
-      const meta = await drive.files.get({
-        fileId: folderProviderFileId,
-        fields: "id,mimeType,trashed",
-        supportsAllDrives: true,
-      });
-      if (meta.data.trashed) {
-        throw httpError(410, "Folder has been trashed in Google Drive");
-      }
-      if (meta.data.mimeType !== FOLDER_MIME) {
-        throw httpError(400, "listChildren requires a folder");
-      }
-    }
-
-    const escaped = folderProviderFileId.replace(/'/g, "\\'");
-    const resp = await drive.files.list({
-      q: `'${escaped}' in parents and trashed = false`,
-      fields: "nextPageToken, files(id,name,mimeType,iconLink,webViewLink)",
-      pageSize: MAX_LIST_PAGE,
+    const { adapter, ctx } = await adapterContextForConnector(
+      provider,
+      connectorId,
+    );
+    const result = await adapter.listChildren(ctx, {
+      folderId,
       pageToken: input.pageToken,
-      supportsAllDrives: true,
-      includeItemsFromAllDrives: true,
-      orderBy: "folder,name_natural",
+      pageSize: MAX_LIST_PAGE,
     });
 
-    const files = (resp.data.files ?? []).filter((f) => !!f.id);
-    const childIds = files.map((f) => f.id!);
-
+    const childIds = result.children.map((c) => c.providerFileId);
     const explicitBinds =
       childIds.length === 0
         ? []
@@ -405,43 +400,37 @@ class FilesApi {
             .from(driveResources)
             .where(
               and(
-                eq(driveResources.vaultId, vaultId),
-                eq(driveResources.provider, folderProvider),
+                eq(driveResources.vaultId, input.vaultId),
+                eq(driveResources.connectedAccountId, connectorId),
+                eq(driveResources.provider, provider),
                 inArray(driveResources.providerFileId, childIds),
               ),
             );
-    const bindByProviderFileId = new Map(
-      explicitBinds.map((b) => [b.providerFileId, b]),
+    const bindByFileId = new Map(
+      explicitBinds.map((b) => [b.providerFileId, b] as const),
+    );
+    const folderBindIds = new Set(
+      folderBindsForConnector.map((b) => b.providerFileId),
     );
 
-    const children: FilesChild[] = files.map((f) => {
-      const bind = bindByProviderFileId.get(f.id!);
-      const mime = f.mimeType ?? null;
+    const children: FilesChild[] = result.children.map((c) => {
+      const bind = bindByFileId.get(c.providerFileId) ?? null;
       return {
-        provider: "google" as const,
-        providerFileId: f.id!,
-        name: f.name ?? "(untitled)",
-        mimeType: mime,
-        resourceType: mapResourceType(mime),
-        iconUrl: f.iconLink ?? null,
-        webViewLink: f.webViewLink ?? null,
+        provider: c.provider,
+        providerFileId: c.providerFileId,
+        name: c.name,
+        mimeType: c.mimeType,
+        resourceType: c.resourceType,
+        iconUrl: c.iconUrl,
+        webViewLink: c.webViewLink,
         driveResourceId: bind?.id ?? null,
-        viaFolderBind: !bind,
+        viaFolderBind: !bind && folderBindIds.size > 0,
       };
     });
 
-    log.debug("listChildren", {
-      vaultId,
-      provider: folderProvider,
-      providerFileId: folderProviderFileId,
-      count: children.length,
-      coveringBindId,
-    });
-
-    return { children, nextPageToken: resp.data.nextPageToken ?? null };
+    return { children, nextPageToken: result.nextPageToken };
   }
 
-  /** Metadata for a bound file/folder or a whitelisted descendant. */
   async getMetadata(input: {
     vaultId?: string;
     driveResourceId?: string;
@@ -457,66 +446,52 @@ class FilesApi {
     let vaultId: string;
 
     if (input.driveResourceId) {
-      const bind = await authorizeBoundResource(
-        principal,
-        input.driveResourceId,
-        "read",
-      );
+      const bind = await authorizeBoundResource(principal, input.driveResourceId);
       if (input.vaultId && bind.vaultId !== input.vaultId) {
-        throw httpError(404, "Drive resource not found");
+        throw httpError(400, "drive_resource is not in this vault");
       }
-      provider = (bind.provider as FilesProvider) || "google";
+      provider = bind.provider as FilesProvider;
       providerFileId = bind.providerFileId;
       connectorId = bind.connectedAccountId;
       driveResourceId = bind.id;
       vaultId = bind.vaultId;
-    } else if (input.providerFileId && input.vaultId) {
-      provider = input.provider ?? "google";
-      const resolved = await resolveWhitelist(
+      await assertVaultAccess(principal, vaultId);
+    } else if (input.vaultId && input.provider && input.providerFileId) {
+      await assertVaultAccess(principal, input.vaultId);
+      const resolved = await this.resolveWhitelistedTarget(
         principal,
         input.vaultId,
-        provider,
+        input.provider,
         input.providerFileId,
       );
+      provider = input.provider;
       providerFileId = input.providerFileId;
-      connectorId = resolved.bind.connectedAccountId;
-      driveResourceId = resolved.bind.id;
+      connectorId = resolved.connectorId;
+      driveResourceId = resolved.driveResourceId;
       vaultId = input.vaultId;
     } else {
       throw httpError(
         400,
-        "driveResourceId, or vaultId + providerFileId, required",
+        "getMetadata requires driveResourceId or vaultId+provider+providerFileId",
       );
     }
 
-    if (provider !== "google") {
-      throw httpError(501, `getMetadata not implemented for provider ${provider}`);
-    }
-
-    const drive = await driveClientForConnector(connectorId);
-    const meta = await drive.files.get({
-      fileId: providerFileId,
-      fields:
-        "id,name,mimeType,iconLink,webViewLink,size,modifiedTime,md5Checksum,trashed",
-      supportsAllDrives: true,
-    });
-
-    if (meta.data.trashed) {
-      throw httpError(410, "File has been trashed in Google Drive");
-    }
-
-    const mime = meta.data.mimeType ?? null;
+    const { adapter, ctx } = await adapterContextForConnector(
+      provider,
+      connectorId,
+    );
+    const meta = await adapter.getMetadata(ctx, providerFileId);
     return {
-      provider: "google",
-      providerFileId: meta.data.id ?? providerFileId,
-      name: meta.data.name ?? "(untitled)",
-      mimeType: mime,
-      resourceType: mapResourceType(mime),
-      iconUrl: meta.data.iconLink ?? null,
-      webViewLink: meta.data.webViewLink ?? null,
-      size: meta.data.size ?? null,
-      modifiedTime: meta.data.modifiedTime ?? null,
-      md5Checksum: meta.data.md5Checksum ?? null,
+      provider: meta.provider,
+      providerFileId: meta.providerFileId,
+      name: meta.name,
+      mimeType: meta.mimeType,
+      resourceType: meta.resourceType,
+      iconUrl: meta.iconUrl,
+      webViewLink: meta.webViewLink,
+      size: meta.size,
+      modifiedTime: meta.modifiedTime,
+      md5Checksum: meta.md5Checksum,
       driveResourceId,
       vaultId,
       connectedAccountId: connectorId,
@@ -525,7 +500,7 @@ class FilesApi {
 
   /**
    * Read file bytes/text (v1 read-only). Folders rejected.
-   * Google editors exported to text/csv; binary returned as base64 up to cap.
+   * Google editors exported to text/csv; binary returned as base64.
    */
   async read(input: {
     vaultId?: string;
@@ -535,89 +510,154 @@ class FilesApi {
   }): Promise<FilesReadResult> {
     const metadata = await this.getMetadata(input);
     if (metadata.resourceType === "folder") {
-      throw httpError(400, "Cannot read bytes of a folder — use listChildren");
+      throw httpError(400, "Cannot read a folder — use listChildren");
     }
 
-    const drive = await driveClientForConnector(metadata.connectedAccountId);
-    const exportMime = metadata.mimeType
-      ? GOOGLE_EXPORT_MAP[metadata.mimeType]
-      : undefined;
+    const { adapter, ctx } = await adapterContextForConnector(
+      metadata.provider,
+      metadata.connectedAccountId,
+    );
 
     try {
-      if (exportMime) {
-        const resp = await drive.files.export(
-          { fileId: metadata.providerFileId, mimeType: exportMime },
-          { responseType: "arraybuffer" },
-        );
-        const buf = Buffer.from(resp.data as ArrayBuffer);
-        const truncated = buf.byteLength > MAX_READ_BYTES;
-        const slice = truncated ? buf.subarray(0, MAX_READ_BYTES) : buf;
-        return {
-          metadata,
-          contentType: exportMime,
-          text: slice.toString("utf8"),
-          base64: null,
-          byteLength: slice.byteLength,
-          truncated,
-        };
-      }
+      const bytes = await adapter.readBytes(ctx, metadata.providerFileId, {
+        maxBytes: MAX_READ_BYTES,
+        mimeType: metadata.mimeType,
+      });
 
-      const resp = await drive.files.get(
-        {
-          fileId: metadata.providerFileId,
-          alt: "media",
-          supportsAllDrives: true,
-        },
-        { responseType: "arraybuffer" },
-      );
-      const buf = Buffer.from(resp.data as ArrayBuffer);
-      const truncated = buf.byteLength > MAX_READ_BYTES;
-      const slice = truncated ? buf.subarray(0, MAX_READ_BYTES) : buf;
-      const contentType = metadata.mimeType || "application/octet-stream";
-      const isText =
-        contentType.startsWith("text/") ||
-        contentType === "application/json" ||
-        contentType.endsWith("+json") ||
-        contentType.endsWith("+xml");
+      const truncated = bytes.truncated || bytes.byteLength > MAX_READ_BYTES;
+      const buf = truncated
+        ? bytes.buffer.subarray(0, Math.min(bytes.buffer.length, MAX_READ_BYTES))
+        : bytes.buffer;
+      const contentType = bytes.contentType || metadata.mimeType || "application/octet-stream";
+      const text = isTextLike(contentType) ? buf.toString("utf8") : null;
+      const base64 = text == null ? buf.toString("base64") : null;
 
       return {
         metadata,
         contentType,
-        text: isText ? slice.toString("utf8") : null,
-        base64: isText ? null : slice.toString("base64"),
-        byteLength: slice.byteLength,
+        text,
+        base64,
+        byteLength: buf.length,
         truncated,
       };
     } catch (err) {
-      const status =
-        (err as { status?: number; code?: number })?.status ??
-        (err as { code?: number })?.code;
+      const status = (err as { status?: number }).status;
+      if (status === 403 || status === 404 || status === 501) throw err;
+      // Google drive.file often surfaces as 404 when outside grants.
       const msg = err instanceof Error ? err.message : String(err);
-      if (
-        status === 403 ||
-        status === 404 ||
-        /not found|insufficient|forbidden/i.test(msg)
-      ) {
+      if (/403|insufficient|not found|404/i.test(msg)) {
         throw httpError(
           403,
           "Provider denied read — file may be outside drive.file grants. Re-pick via Picker.",
         );
       }
       log.error("Files read failed", {
+        provider: metadata.provider,
         providerFileId: metadata.providerFileId,
-        error: msg,
+        err: msg,
       });
-      throw httpError(502, "Failed to read file from provider");
+      throw httpError(502, "Provider read failed");
     }
   }
 
-  /** Authorize a principal against a drive_resource at a required role. */
+  /**
+   * Authorize a bound drive_resource for the current principal.
+   * Used by routes that only need the bind row after the grant check.
+   */
   async authorize(
     driveResourceId: string,
     required: ObjectRole = "read",
   ): Promise<DriveResourceRow> {
     const principal = requireCurrentUserPrincipal();
     return authorizeBoundResource(principal, driveResourceId, required);
+  }
+
+  /**
+   * Resolve provider+providerFileId against vault binds:
+   * explicit file bind preferred, else under an authorized folder bind.
+   */
+  private async resolveWhitelistedTarget(
+    principal: Principal,
+    vaultId: string,
+    provider: FilesProvider,
+    providerFileId: string,
+  ): Promise<{ connectorId: string; driveResourceId: string }> {
+    const fileBinds = await db
+      .select()
+      .from(driveResources)
+      .where(
+        and(
+          eq(driveResources.vaultId, vaultId),
+          eq(driveResources.provider, provider),
+          eq(driveResources.resourceType, "file"),
+          eq(driveResources.providerFileId, providerFileId),
+        ),
+      );
+
+    for (const bind of fileBinds) {
+      try {
+        await authorizeBoundResource(principal, bind.id);
+        return {
+          connectorId: bind.connectedAccountId,
+          driveResourceId: bind.id,
+        };
+      } catch {
+        // try next
+      }
+    }
+
+    const folderBinds = await db
+      .select()
+      .from(driveResources)
+      .where(
+        and(
+          eq(driveResources.vaultId, vaultId),
+          eq(driveResources.provider, provider),
+          eq(driveResources.resourceType, "folder"),
+        ),
+      );
+
+    if (folderBinds.length === 0) {
+      throw httpError(
+        403,
+        "File is not whitelisted — pick it explicitly or bind a parent folder",
+      );
+    }
+
+    const byConnector = new Map<string, DriveResourceRow[]>();
+    for (const f of folderBinds) {
+      const list = byConnector.get(f.connectedAccountId) ?? [];
+      list.push(f);
+      byConnector.set(f.connectedAccountId, list);
+    }
+
+    for (const [cid, binds] of byConnector) {
+      let authorizedBind: DriveResourceRow | null = null;
+      for (const b of binds) {
+        try {
+          await authorizeBoundResource(principal, b.id);
+          authorizedBind = b;
+          break;
+        } catch {
+          // try next
+        }
+      }
+      if (!authorizedBind) continue;
+
+      const { adapter, ctx } = await adapterContextForConnector(provider, cid);
+      const folderIds = new Set(binds.map((b) => b.providerFileId));
+      if (await isUnderAnyFolderBind(adapter, ctx, providerFileId, folderIds)) {
+        return {
+          connectorId: cid,
+          driveResourceId: authorizedBind.id,
+        };
+      }
+    }
+
+    throw httpError(
+      403,
+      "File is not whitelisted — pick it explicitly or bind a parent folder",
+    );
   }
 }
 
