@@ -84,7 +84,7 @@ function getAttemptChildSessionId(attempt: PlanStepAttempt): string | null {
   return attempt.childSessionId || null;
 }
 
-function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBlocks, sessionTitleById, sessionStreams }: { planId: string; parentSessionId: string; step: PlanStep; attempt: PlanStepAttempt; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap }) {
+function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBlocks, sessionTitleById, sessionStreams, variant = "history" }: { planId: string; parentSessionId: string; step: PlanStep; attempt: PlanStepAttempt; ownedChildBlocks?: Map<string, ChildSessionBlockMeta>; sessionTitleById?: Record<string, string>; sessionStreams?: SessionStreamMap; variant?: "active" | "history" }) {
   const stepCompleted = isProgressedStep(step);
   const childSessionId = getAttemptChildSessionId(attempt);
   if (!childSessionId) return null;
@@ -114,6 +114,8 @@ function PlanAttemptChild({ planId, parentSessionId, step, attempt, ownedChildBl
       childStream={sessionStreams?.[childSessionId]}
       hierarchyStepCompleted={stepCompleted}
       hierarchyLabel={`Attempt ${attempt.attemptNumber}`}
+      hideHeader={variant === "active"}
+      defaultExpanded={variant === "active"}
     />
   );
 }
@@ -282,6 +284,8 @@ function PlanStepCheckbox({
     return bySession;
   }, [ownedChildBlocks, planId, step.attempts, step.id]);
   const attempts = [...attemptsBySession.values()].sort((a, b) => a.attemptNumber - b.attemptNumber);
+  const currentAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+  const priorAttempts = attempts.length > 1 ? attempts.slice(0, -1).reverse() : [];
   const hasRunningAttempt = attempts.some((attempt) => {
     if (attempt.status === "running" || attempt.status === "pending") return true;
     if (!attempt.childSessionId || attempt.completedAt) return false;
@@ -331,19 +335,30 @@ function PlanStepCheckbox({
           {attempts.length > 0 && (
             <button
               type="button"
-              className="flex h-5 shrink-0 items-center gap-1 rounded px-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={() => setAttemptsOpen((open) => !open)}
               aria-expanded={attemptsOpen}
+              aria-label={attemptsOpen ? "Collapse step attempts" : "Expand step attempts"}
             >
-              {attempts.length} {attempts.length === 1 ? "attempt" : "attempts"}
               {attemptsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
             </button>
           )}
         </div>
 
-        {attemptsOpen && attempts.length > 0 && (
+        {attemptsOpen && currentAttempt && (
           <div className="ml-4 border-l border-border/60 pl-2">
-            {attempts.map((attempt) => (
+            <PlanAttemptChild
+              key={currentAttempt.id ?? `${step.id}-${currentAttempt.attemptNumber}`}
+              planId={planId}
+              parentSessionId={parentSessionId}
+              step={step}
+              attempt={currentAttempt}
+              ownedChildBlocks={ownedChildBlocks}
+              sessionTitleById={sessionTitleById}
+              sessionStreams={sessionStreams}
+              variant="active"
+            />
+            {priorAttempts.map((attempt) => (
               <PlanAttemptChild
                 key={attempt.id ?? `${step.id}-${attempt.attemptNumber}`}
                 planId={planId}
@@ -353,6 +368,7 @@ function PlanStepCheckbox({
                 ownedChildBlocks={ownedChildBlocks}
                 sessionTitleById={sessionTitleById}
                 sessionStreams={sessionStreams}
+                variant="history"
               />
             ))}
           </div>
