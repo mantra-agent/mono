@@ -2,11 +2,18 @@
  * Shared child session monitor — polls a child session until it resolves,
  * fails, or goes idle. Extracted from plan-executor.ts so both plans and
  * workflows can share the same parent-owned lifecycle monitoring.
+ *
+ * Invariant: an open Question is not terminal work. The monitor keeps
+ * polling while the child has an unanswered Question tool call, whether the
+ * session is still active or already marked saved after await_user. Human
+ * judgment answers resume the child; only explicit acceptance gates
+ * (plan needs_review) may complete a step without further child work.
  */
 
 import { createLogger } from "./log";
 import { eventBus } from "./event-bus";
 import { POST_ABORT_DRAIN_GRACE_MS } from "./timeout";
+import { hasUnansweredQuestion } from "./question-response";
 
 const log = createLogger("child-session-monitor");
 
@@ -15,6 +22,8 @@ const log = createLogger("child-session-monitor");
 export const IDLE_POLL_INTERVAL_MS = 5_000;
 /** After this many consecutive poll errors, the monitor rejects */
 export const MAX_CONSECUTIVE_POLL_ERRORS = 5;
+/** Throttle "awaiting Question" info logs so open gates don't spam every poll. */
+const AWAITING_QUESTION_LOG_INTERVAL_MS = 60_000;
 /**
  * Abort first, then allow the executor's own bounded drain plus one poll margin
  * to prove the child is no longer capable of mutating state.
@@ -105,6 +114,7 @@ export async function monitorChildSession(
   let lastActivityAt = Date.now();
   let lastUpdatedAt: string | undefined;
   let consecutivePollErrors = 0;
+  let lastAwaitingQuestionLogAt = 0;
 
   return new Promise<MonitorResult>((resolve) => {
     let settling = false;
@@ -198,6 +208,23 @@ export async function monitorChildSession(
           );
           return;
         }
+
+        // Open Question is not terminal. await_user ends the agent run as
+        // "saved" while the human answer is outstanding; keep polling so the
+        // answer can resume the child and finish real step work.
+        const messages = await chatFileStorage.getMessagesBySession(sessionId);
+        if (hasUnansweredQuestion(messages)) {
+          lastActivityAt = Date.now();
+          if (Date.now() - lastAwaitingQuestionLogAt >= AWAITING_QUESTION_LOG_INTERVAL_MS) {
+            lastAwaitingQuestionLogAt = Date.now();
+            log.info(
+              `[monitor] Child session ${sessionId} has an open Question — ` +
+                "keeping monitor alive until the human answers",
+            );
+          }
+          return;
+        }
+
         if (sessionStatus === "saved") {
           if (!beginSettlement()) return;
           const output = await readFinalAssistantOutput(sessionId);

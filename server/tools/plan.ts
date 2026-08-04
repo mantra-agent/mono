@@ -5,6 +5,13 @@
  * All state is read/written via the plan_executions and plan_steps DB tables.
  * Library pages are created on plan create and updated after state changes
  * as a rendered view, but execution NEVER reads from the Library page.
+ *
+ * Step-status invariant:
+ * - `needs_review` is an acceptance gate only (human verifies shipped work).
+ * - Judgment / scope / design forks use the Question widget inside the child
+ *   session. The child monitor keeps the step alive until the answer lands
+ *   and the child finishes real work. A human answer never completes a step
+ *   except through an explicit acceptance review.
  */
 import { db } from "../db";
 import { eq, and, desc, gt, inArray, sql, type SQL } from "drizzle-orm";
@@ -767,7 +774,7 @@ async function handleUpdateStep(
       );
       return {
         result: isCurrentAttempt
-          ? `Step "${step.title}" is managed by the parent executor. End this child session when complete; the executor will record completion automatically. Use blocked or needs_review only when execution must stop.`
+          ? `Step "${step.title}" is managed by the parent executor. End this child session when complete; the executor will record completion automatically. Use blocked for external blockers. Use needs_review only for acceptance of shipped work — judgment/scope forks use the Question widget so you can continue after the answer.`
           : `Attempt ${callerAttempt.attemptNumber} is no longer the active owner of step "${step.title}". No plan state was changed.`,
       };
     }
@@ -793,7 +800,7 @@ async function handleUpdateStep(
         .then((rows) => rows[0]);
       if (latestPlan) await refreshPlanPage(latestPlan, page);
       return {
-        result: `Step "${step.title}" is awaiting human review (review ${review.id}). End this child session; the parent executor will stop at the gate.`,
+        result: `Step "${step.title}" is awaiting human acceptance review (review ${review.id}). End this child session; the parent executor will stop at the gate. For judgment/scope questions, use the Question widget instead so you can continue after the answer.`,
       };
     }
   }
