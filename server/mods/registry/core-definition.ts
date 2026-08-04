@@ -64,6 +64,7 @@ export const coreDefinition: CoreDefinition = {
       clientRoute("core.route.dev-orb", "/dev/orb", "dev-orb", { requiredPermissions: ["system:read"] }),
       clientRoute("core.route.library", "/library", "library"),
       clientRoute("core.route.info", "/info", "library"),
+      clientRoute("core.route.files", "/files", "files"),
       clientRoute("core.route.audiences", "/audiences", "audiences", { requiredPermissions: ["system:read"] }),
       clientRoute("core.route.campaigns", "/campaigns", "campaigns", { requiredPermissions: ["system:read"] }),
       clientRoute("core.route.account", "/account", "user-details"),
@@ -76,6 +77,7 @@ export const coreDefinition: CoreDefinition = {
       nav("core.nav.news", "Tools", "News", "Newspaper", "navigation.news.open", "core.route.news", 3),
       nav("core.nav.email", "Tools", "Email", "Mail", "navigation.email.open", "core.route.email", 4),
       nav("core.nav.library", "Tools", "Library", "BookOpen", "navigation.library.open", "core.route.library", 5),
+      nav("core.nav.files", "Tools", "Files", "HardDrive", "navigation.files.open", "core.route.files", 6),
       // Automation
       nav("core.nav.agendas", "Automation", "Agendas", "ClipboardList", "navigation.agendas.open", "core.route.agendas", 1),
       nav("core.nav.skills", "Automation", "Skills", "Lightbulb", "navigation.skills.open", "core.route.skills", 2),

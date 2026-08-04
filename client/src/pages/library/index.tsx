@@ -123,7 +123,7 @@ export default function InfoPage() {
   ) : undefined;
 
   usePageHeader({
-    title: "Files",
+    title: "Library",
     tabs,
     activeTab: tab,
     onTabChange: setTab,
