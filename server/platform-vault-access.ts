@@ -82,20 +82,22 @@ export async function ensurePlatformVaultMembershipSchema(): Promise<void> {
     `);
     await client.query(`
       UPDATE platforms p
-      SET vault_id = v.id
-      FROM LATERAL (
-        SELECT id
+      SET vault_id = v.vault_id
+      FROM (
+        SELECT DISTINCT ON (account_id)
+          account_id,
+          id AS vault_id
         FROM vaults
-        WHERE account_id = p.account_id
-          AND is_archived = false
+        WHERE is_archived = false
         ORDER BY
+          account_id,
           CASE WHEN is_default = true THEN 0 ELSE 1 END,
           position ASC NULLS LAST,
           created_at ASC
-        LIMIT 1
       ) v
       WHERE p.vault_id IS NULL
-        AND p.account_id IS NOT NULL;
+        AND p.account_id IS NOT NULL
+        AND v.account_id = p.account_id;
     `);
     await client.query(`
       INSERT INTO platform_vault_memberships (
