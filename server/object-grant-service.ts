@@ -3,6 +3,8 @@ import { milestones, objectGrants, privilegedAccessAudit, projects, tasks } from
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, type DrizzleTx } from "./db";
 import { createLogger } from "./log";
 import { combineWithWorkObjectAccess, workObjectKey, type ObjectGrantCapability, type WorkObjectType } from "./object-grant-access";
+import { combineWithAuthorizedScope, ownedScopePredicate } from "./authorize";
+import { libraryPages } from "@shared/models/info";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { resolveInvitedSubjectReferenceInTransaction, type ResolvedSecuritySubject } from "./invited-subject-service";
 import type { Principal } from "./principal";
@@ -13,9 +15,12 @@ const MAX_MEETING_DEFAULT_GRANT_SUBJECTS = 500;
 export type ObjectGrantSubjectType = "user" | "invited_subject";
 export type ObjectGrantOriginType = "meeting" | "manual";
 
+/** Every object the canonical grant service can share. Library pages key on their text id. */
+export type GrantableObjectType = WorkObjectType | "library_page";
+
 export interface ObjectGrantTarget {
-  objectType: WorkObjectType;
-  objectId: number;
+  objectType: GrantableObjectType;
+  objectId: number | string;
   projectId?: number;
 }
 
@@ -53,8 +58,18 @@ function normalizeOriginId(originId: string | null | undefined): string | null {
   return originId?.trim() || null;
 }
 
-function lockKey(objectType: WorkObjectType, objectId: string): string {
+function lockKey(objectType: GrantableObjectType, objectId: string): string {
   return `${objectType}:${objectId}`;
+}
+
+/** Resolve the grant `object_id` key for any grantable object. Library pages key on their text id. */
+function grantObjectKey(objectType: GrantableObjectType, objectId: number | string, projectId?: number): string {
+  if (objectType === "library_page") {
+    const id = String(objectId).trim();
+    if (!id) throw new Error("library_page grant requires a page id");
+    return id;
+  }
+  return workObjectKey(objectType, Number(objectId), projectId);
 }
 
 const projectGrantColumns = {
@@ -76,6 +91,12 @@ const milestoneGrantColumns = {
   ownerUserId: milestones.ownerUserId,
   accountId: milestones.accountId,
 };
+const libraryPageGrantColumns = {
+  objectId: libraryPages.id,
+  scope: libraryPages.scope,
+  ownerUserId: libraryPages.ownerUserId,
+  accountId: libraryPages.accountId,
+};
 
 async function assertTargetAdmin(
   tx: DrizzleTx,
@@ -83,7 +104,18 @@ async function assertTargetAdmin(
   target: ObjectGrantTarget,
 ): Promise<void> {
   let found = false;
-  if (target.objectType === "project") {
+  if (target.objectType === "library_page") {
+    found = (await tx.select({ id: libraryPages.id }).from(libraryPages).where(
+      combineWithAuthorizedScope(
+        principal,
+        ownedScopePredicate(principal, libraryPageGrantColumns, "admin"),
+        "library_page",
+        libraryPageGrantColumns,
+        "admin",
+        eq(libraryPages.id, String(target.objectId)),
+      ),
+    ).limit(1)).length > 0;
+  } else if (target.objectType === "project") {
     found = (await tx.select({ id: projects.id }).from(projects).where(
       combineWithWorkObjectAccess(principal, projectGrantColumns, "project", "admin", eq(projects.id, target.objectId)),
     ).limit(1)).length > 0;
@@ -136,7 +168,7 @@ async function grantInTransaction(
     : { subjectType: input.subjectType, subjectId: normalizeSubjectId(input.subjectId) });
   const subjectType = resolvedSubject.subjectType;
   const subjectId = resolvedSubject.subjectId;
-  const objectId = workObjectKey(input.objectType, input.objectId, input.projectId);
+  const objectId = grantObjectKey(input.objectType, input.objectId, input.projectId);
   await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.OBJECT_GRANT, lockKey(input.objectType, objectId));
   await assertTargetAdmin(tx, principal, input);
 
@@ -193,7 +225,7 @@ async function revokeInTransaction(
     : { subjectType: input.subjectType, subjectId: normalizeSubjectId(input.subjectId) });
   const subjectType = resolvedSubject.subjectType;
   const subjectId = resolvedSubject.subjectId;
-  const objectId = workObjectKey(input.objectType, input.objectId, input.projectId);
+  const objectId = grantObjectKey(input.objectType, input.objectId, input.projectId);
   await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.OBJECT_GRANT, lockKey(input.objectType, objectId));
   await assertTargetAdmin(tx, principal, input);
   const rows = await tx.update(objectGrants).set({ revokedAt: new Date() }).where(and(
@@ -245,6 +277,20 @@ export class ObjectGrantService {
     });
     if (revoked) log.info("object grant revoked", { requestedSubjectType: input.subjectType, objectType: input.objectType, objectId: input.objectId });
     return revoked;
+  }
+
+  async list(target: ObjectGrantTarget): Promise<Array<typeof objectGrants.$inferSelect>> {
+    const principal = requireCurrentUserPrincipal();
+    requireGrantActor(principal);
+    return db.transaction(async tx => {
+      await assertTargetAdmin(tx, principal, target);
+      const objectId = grantObjectKey(target.objectType, target.objectId, target.projectId);
+      return tx.select().from(objectGrants).where(and(
+        eq(objectGrants.objectType, target.objectType),
+        eq(objectGrants.objectId, objectId),
+        isNull(objectGrants.revokedAt),
+      )).orderBy(objectGrants.createdAt);
+    });
   }
 
   async setTaskAssignmentInTransaction(
@@ -321,7 +367,7 @@ export class ObjectGrantService {
     if (principal.actorType !== "user" && principal.actorType !== "system") {
       throw Object.assign(new Error("Object grant cleanup requires user or system authority"), { status: 403 });
     }
-    const objectId = workObjectKey(target.objectType, target.objectId, target.projectId);
+    const objectId = grantObjectKey(target.objectType, target.objectId, target.projectId);
     await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.OBJECT_GRANT, lockKey(target.objectType, objectId));
     const rows = await tx.update(objectGrants).set({ revokedAt: new Date() }).where(and(
       eq(objectGrants.objectType, target.objectType),

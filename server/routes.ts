@@ -17,6 +17,7 @@ import { registerJobRoleRoutes } from "./job-role-routes";
 import { peopleStorage } from "./people-storage";
 import { registerGoalRoutes } from "./goal-routes";
 import { registerTagRoutes } from "./tag-routes";
+import { registerObjectGrantRoutes } from "./object-grant-routes";
 import { registerCalendarRoutes } from "./calendar-routes";
 import { registerObservationRoutes } from "./thought-routes";
 import { registerTimerRoutes } from "./timer-routes";
@@ -197,7 +198,7 @@ export async function registerRoutes(
 
   // Confirmed user-data leak surfaces: route auth establishes request principal
   // for document-backed storage and external-account access before handlers run.
-  app.use(["/api/people", "/api/life-goals", "/api/calendar", "/api/context", "/api/email-sync", "/api/gmail", "/api/twitter"], requireAuth);
+  app.use(["/api/people", "/api/life-goals", "/api/calendar", "/api/context", "/api/email-sync", "/api/gmail", "/api/twitter", "/api/objects"], requireAuth);
 
   registerPeopleRoutes(app, peopleStorage);
   registerCompanyRoutes(app);
@@ -208,6 +209,7 @@ export async function registerRoutes(
   registerLifeAddressingCutoverRoutes(app);
   registerRuntimeRoutes(app);
   registerTagRoutes(app);
+  registerObjectGrantRoutes(app);
   registerCalendarRoutes(app);
   registerTimerRoutes(app);
   registerMemoryRoutes(app);

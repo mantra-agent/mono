@@ -2,6 +2,7 @@
 import { createLogger } from "@/lib/logger";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { ShareSheet } from "@/components/sharing/share-sheet";
 import { useSearch, useLocation } from "wouter";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { useFocusSession } from "@/hooks/use-focus-session";
@@ -78,6 +79,7 @@ import {
   GripVertical,
   MessageSquare,
   MoreHorizontal,
+  Share2,
   ArrowUpFromLine,
   StickyNote,
   Pencil,
@@ -1636,6 +1638,7 @@ function ProjectTreeNode({
   const [projectTitleDraft, setProjectTitleDraft] = useState(project.title);
   const [pagePickerOpen, setPagePickerOpen] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [editingMilestoneId, setEditingMilestoneId] = useState<number | null>(null);
   const [milestoneNameDraft, setMilestoneNameDraft] = useState("");
   useEffect(() => {
@@ -1695,6 +1698,7 @@ function ProjectTreeNode({
           setPagePickerOpen(false);
         }}
       />
+      <ShareSheet objectType="project" objectId={project.id} title={project.title} open={shareOpen} onOpenChange={setShareOpen} />
       <ProjectFileUploadDialog
         open={filePickerOpen}
         onOpenChange={setFilePickerOpen}
@@ -1805,6 +1809,13 @@ function ProjectTreeNode({
                   >
                     {discussPending ? <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5 mr-2" />}
                     Discuss
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={(e) => { e.stopPropagation(); setShareOpen(true); }}
+                    data-testid={`menu-project-share-${project.id}`}
+                  >
+                    <Share2 className="h-3.5 w-3.5 mr-2" />
+                    Share
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuSub>
