@@ -198,6 +198,20 @@ function toolTransfersExecutionToChild(name: string, args: Record<string, unknow
   return false;
 }
 
+/**
+ * True when a child-launching tool would enqueue work into a nested Runtime
+ * scheduler while the parent already holds a Runtime capacity fence.
+ *
+ * skills.run is intentional synchronous composition: the child skill run does
+ * not take a Runtime fence (no runtimeFence), so it must be allowed under a
+ * Runtime-owned parent. Blocking it breaks brief-daily (and any checklist
+ * child_skill_invoked skill) that composes via skills.run wait=true.
+ */
+function toolRequiresNestedRuntimeScheduler(name: string, args: Record<string, unknown>): boolean {
+  if (name === "skills" && args.action === "run") return false;
+  return toolTransfersExecutionToChild(name, args);
+}
+
 export type AbortReason = "idle_timeout" | "stream_idle_timeout" | "pipeline_timeout" | "run_time_limit" | "cancelled" | "superseded" | "error" | "circuit_breaker" | "zombie_timeout";
 
 /** Runtime set of valid AbortReason values — used to validate signal reasons from AbortController.
@@ -2111,7 +2125,7 @@ export class AgentExecutor extends EventEmitter {
       try {
         toolResult = await this.executeToolWithRecovery(ctx, tc.name, tc.input, async () => {
           if (toolTransfersExecutionToChild(tc.name, tc.input)) {
-            if (options.capacityOwner?.kind === "runtime") {
+            if (options.capacityOwner?.kind === "runtime" && toolRequiresNestedRuntimeScheduler(tc.name, tc.input)) {
               throw new Error("Native Runtime handlers cannot transfer execution into a nested scheduler");
             }
             const { admissionController } = await import("./run-admission");
@@ -3133,7 +3147,11 @@ export class AgentExecutor extends EventEmitter {
       const boundedToolExecutor = options.toolExecutor
         ? async (name: string, args: Record<string, unknown>, toolContext?: { toolCallId: string; order: number }) => {
             const execute = () => options.toolExecutor!(name, args);
-            if (toolTransfersExecutionToChild(name, args) && options.capacityOwner?.kind === "runtime") {
+            if (
+              toolTransfersExecutionToChild(name, args)
+              && options.capacityOwner?.kind === "runtime"
+              && toolRequiresNestedRuntimeScheduler(name, args)
+            ) {
               throw new Error("Native Runtime handlers cannot transfer execution into a nested scheduler");
             }
             const result = await this.executeToolWithRecovery(ctx, name, args, async () => (
