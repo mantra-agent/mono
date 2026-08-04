@@ -4057,7 +4057,7 @@ function IntegrationTree({ status }: IntegrationTreeProps) {
   );
 
   return (
-    <div className="w-full md:w-1/3">
+    <div className="w-full min-w-0">
       <div className={HIERARCHY_TREE_STACK_CLASS}>
         <div className="[&_input]:h-11 [&_input]:pr-12 md:[&_input]:h-7 md:[&_input]:pr-7 [&_button]:h-11 [&_button]:w-11 md:[&_button]:h-4 md:[&_button]:w-4 [&_button]:focus-visible:outline-none [&_button]:focus-visible:ring-1 [&_button]:focus-visible:ring-ring">
           <HierarchySearchInput
