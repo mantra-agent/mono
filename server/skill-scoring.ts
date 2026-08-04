@@ -130,7 +130,14 @@ export function extractSuccessfulToolInvocations(messages: FileMessage[]): Set<s
   for (const m of messages) {
     if (!Array.isArray(m.toolCalls)) continue;
     for (const tc of m.toolCalls as ToolCallInfo[]) {
-      if (!tc || typeof tc.toolName !== "string" || tc.status !== "done") continue;
+      if (!tc || typeof tc.toolName !== "string") continue;
+      // Prefer structural outcome (executor SSOT) when present. Fall back to
+      // status==="done" for older messages that predate outcome persistence.
+      if (tc.outcome) {
+        if (tc.outcome !== "succeeded" && tc.outcome !== "degraded") continue;
+      } else if (tc.status !== "done") {
+        continue;
+      }
       invoked.add(tc.toolName);
       const action = tc.arguments?.action;
       if (typeof action === "string" && action.trim()) invoked.add(`${tc.toolName}:${action.trim()}`);

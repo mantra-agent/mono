@@ -39,9 +39,10 @@ const log = createLogger("PlanExecutor");
 
 /**
  * Session status `saved` is lifecycle evidence only. Step completion requires
- * ship evidence: at least one successful tool invocation in the child transcript.
- * Mirrors the skill runner's structural tool_invoked gate so hollow children
- * cannot false-green a plan step.
+ * ship evidence: at least one successful tool invocation in the child transcript
+ * (preferring toolCalls.outcome, falling back to status==="done").
+ * session.end no longer writes saved while the run is busy or settling, so this
+ * scrape runs only after tools are durable.
  */
 async function assessChildWorkEvidence(sessionId: string): Promise<
   | { ok: true; toolCount: number }
@@ -54,8 +55,8 @@ async function assessChildWorkEvidence(sessionId: string): Promise<
     return {
       ok: false,
       message:
-        `Child session ${sessionId} ended saved with no successful tool invocations. ` +
-        "Session end is not ship evidence; step completion requires at least one done tool call.",
+        `hollow_completion: child session ${sessionId} ended without durable successful tool invocations. ` +
+        "Session end is not ship evidence; step completion requires at least one succeeded/done tool call.",
     };
   }
   return { ok: true, toolCount: invoked.size };

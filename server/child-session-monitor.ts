@@ -57,12 +57,16 @@ export async function abortAndConfirmChildTermination(
     const abortedRuns = agentExecutor.abortByChatSessionId(sessionId, abortReason);
     const deadline = startedAt + CHILD_TERMINATION_CONFIRM_TIMEOUT_MS;
 
-    while (agentExecutor.hasActiveRunForSession(sessionId) && Date.now() < deadline) {
+    // Wait through both live execution AND post-run tool persistence settling.
+    // hasActiveRunForSession alone has a gap: activeRuns is cleared before the
+    // caller persists toolCalls, which is exactly when premature session.end
+    // used to flip status to saved and hollow-complete plan steps.
+    while (agentExecutor.isSessionBusy(sessionId) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(250, deadline - Date.now()))));
     }
 
     const waitedMs = Date.now() - startedAt;
-    const confirmed = !agentExecutor.hasActiveRunForSession(sessionId);
+    const confirmed = !agentExecutor.isSessionBusy(sessionId);
     const logMessage =
       `[monitor] Child termination ${confirmed ? "confirmed" : "unconfirmed"} session=${sessionId} ` +
       `abortReason=${abortReason} abortedRuns=${abortedRuns} waitedMs=${waitedMs}`;
@@ -185,7 +189,15 @@ export async function monitorChildSession(
         }
 
         // Check completion states. The child session row's status is the
-        // lifecycle source of truth.
+        // lifecycle source of truth — but only after the run is no longer busy
+        // (live or settling tools). A mid-run session.end can write "saved"
+        // before toolCalls are durable; ignore it until isSessionBusy is false.
+        if (sessionStatus === "saved" && agentExecutor.isSessionBusy(sessionId)) {
+          log.debug(
+            `[monitor] Session ${sessionId} status=saved while still busy — waiting for tool persistence`,
+          );
+          return;
+        }
         if (sessionStatus === "saved") {
           if (!beginSettlement()) return;
           const output = await readFinalAssistantOutput(sessionId);
