@@ -3,7 +3,7 @@ import type { JSONContent } from "@tiptap/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { createReferenceRef } from "@shared/references";
-import { isValidTiptapDoc, markdownToTiptap } from "@shared/markdown-tiptap";
+import { markdownToTiptap, normalizeTiptapDoc } from "@shared/markdown-tiptap";
 import { RichTextEditor } from "@/components/rich-text-editor";
 import { SIMPLE_TEXT_FRAME_CLASS } from "@/components/home/simple-text-frame";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
@@ -45,8 +45,11 @@ export function InlineLibraryPageEditor({
   const { data, isLoading, isError } = useInlineLibraryPage(page);
   const initialContent = useMemo<JSONContent | null>(() => {
     if (!data) return null;
-    if (isValidTiptapDoc(data.content)) return data.content;
-    return data.plainTextContent?.trim() ? markdownToTiptap(data.plainTextContent) as JSONContent : null;
+    const normalized = normalizeTiptapDoc(data.content);
+    if (normalized) return normalized;
+    return data.plainTextContent?.trim()
+      ? (markdownToTiptap(data.plainTextContent) as JSONContent)
+      : null;
   }, [data]);
 
   const saveMutation = useMutation<unknown, Error, { id: string; title: string; content: JSONContent | null; plainTextContent: string }>({

@@ -199,6 +199,7 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
 
   const normalizedValue = useMemo(() => normalizeTiptapDoc(value), [value]);
   const initialContent = normalizedValue ?? "";
+  const [contentLoadError, setContentLoadError] = useState<string | null>(null);
   const invalidValueSignature = useMemo(() => {
     if (!value || normalizedValue) return null;
     return `${typeof value}:${Object.keys(value).sort().join(",")}`;
@@ -212,27 +213,50 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
     }
     if (lastInvalidValueSignatureRef.current === invalidValueSignature) return;
     lastInvalidValueSignatureRef.current = invalidValueSignature;
-    log.warn("initialContent resolved to empty — value was present but not a valid TipTap doc", {
+    log.error("initialContent resolved to empty — value was present but not a valid TipTap doc", {
       valueType: typeof value,
       keys: Object.keys(value ?? {}),
     });
+    setContentLoadError(
+      "This page's content could not be parsed as a valid document. Attempting plain-text recovery if available.",
+    );
   }, [invalidValueSignature, value]);
 
   const textToParagraphDoc = useCallback((text: string): JSONContent | null => {
-    const paragraphs: JSONContent[] = text.split("\n")
-      .filter((line: string) => line.trim())
-      .map((line: string) => ({
-        type: "paragraph" as const,
-        content: [{ type: "text" as const, text: line.replace(/^#+\s*/, "").replace(/^\s*[-*+]\s*/, "").replace(/^\s*\d+\.\s*/, "").replace(/[*_~`[\]]/g, "") }],
-      }));
-    return paragraphs.length > 0 ? { type: "doc", content: paragraphs } : null;
+    const paragraphs: JSONContent[] = text
+      .split("\n")
+      .map((line: string) => line.replace(/\u0000/g, ""))
+      .filter((line: string) => line.length > 0)
+      .map((line: string) => {
+        // Keep readable text; never emit empty text nodes (ProseMirror rejects them).
+        const cleaned = line
+          .replace(/^#+\s*/, "")
+          .replace(/^\s*[-*+]\s*/, "")
+          .replace(/^\s*\d+\.\s*/, "")
+          .replace(/[*_~`[\]]/g, "");
+        return cleaned
+          ? {
+              type: "paragraph" as const,
+              content: [{ type: "text" as const, text: cleaned }],
+            }
+          : { type: "paragraph" as const };
+      });
+    if (paragraphs.length === 0) return null;
+    return normalizeTiptapDoc({ type: "doc", content: paragraphs });
   }, []);
 
   const applyPlainTextFallback = useCallback((ed: { commands: { setContent: (content: JSONContent, options?: { emitUpdate?: boolean }) => boolean }; getJSON: () => JSONContent; state: { doc: { textContent: string } } }) => {
     const fallback = plainTextFallbackRef.current || "";
-    if (!fallback.trim()) return;
+    if (!fallback.trim()) {
+      log.error("[LibraryContent] content load failed: empty editor and no plain-text fallback available");
+      setContentLoadError(
+        "This page's content could not be loaded into the editor, and no plain-text fallback was available.",
+      );
+      return;
+    }
     try {
-      const converted = markdownToTiptap(fallback);
+      // markdownToTiptap now emits schema-safe tables/cells and rejects empty text nodes.
+      const converted = normalizeTiptapDoc(markdownToTiptap(fallback)) ?? markdownToTiptap(fallback);
       ed.commands.setContent(converted, { emitUpdate: false });
 
       const afterJson = ed.getJSON();
@@ -241,17 +265,41 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
         log.warn("[LibraryContent] plain text fallback produced empty editor; applying last-resort paragraph fallback", { fallbackLength: fallback.length });
         const doc = textToParagraphDoc(fallback);
         if (doc) ed.commands.setContent(doc, { emitUpdate: false });
+        const recoveredJson = ed.getJSON();
+        const recoveredText = ed.state.doc.textContent.trim();
+        if (isEditorEmpty(recoveredJson) && !recoveredText) {
+          // Fail loudly — silent empty body is an engineering-principle violation.
+          log.error("[LibraryContent] content load failed after all fallbacks; editor remains empty", {
+            fallbackLength: fallback.length,
+          });
+          setContentLoadError(
+            "This page's content failed to render. The structured document was invalid and recovery fallbacks could not populate the editor.",
+          );
+        } else {
+          setContentLoadError(null);
+        }
       } else {
         log.warn("[LibraryContent] plain text fallback applied successfully", { fallbackLength: fallback.length });
+        setContentLoadError(null);
       }
     } catch (innerErr) {
-      log.warn("[LibraryContent] plain text fallback failed; applying last-resort paragraphs", innerErr);
+      log.error("[LibraryContent] plain text fallback failed; applying last-resort paragraphs", innerErr);
       try {
         const doc = textToParagraphDoc(fallback);
-        if (doc) ed.commands.setContent(doc, { emitUpdate: false });
+        if (doc) {
+          ed.commands.setContent(doc, { emitUpdate: false });
+          const recoveredText = ed.state.doc.textContent.trim();
+          if (recoveredText) {
+            setContentLoadError(null);
+            return;
+          }
+        }
       } catch (lastResortErr) {
         log.error("[LibraryContent] last-resort paragraph fallback also failed", lastResortErr);
       }
+      setContentLoadError(
+        "This page's content failed to render. The structured document was invalid and recovery fallbacks could not populate the editor.",
+      );
     }
   }, [textToParagraphDoc]);
 
@@ -341,13 +389,22 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
         const afterSet = editor.getJSON();
         const afterText = editor.state.doc.textContent.trim();
         if (!isEditorEmpty(normalizedValue) && isEditorEmpty(afterSet) && !afterText) {
-          log.warn(
+          // Contract failure: non-empty input produced empty editor. Recover, but log at error.
+          log.error(
             "setContent produced empty editor despite non-empty input, applying plain text fallback",
+            {
+              incomingType: normalizedValue.type,
+              incomingNodes: normalizedValue.content?.length ?? 0,
+            },
           );
           applyPlainTextFallback(editor);
+        } else {
+          setContentLoadError(null);
         }
       } catch (err) {
-        log.warn("setContent failed, falling back to plain text", err);
+        log.error("setContent failed, falling back to plain text", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         applyPlainTextFallback(editor);
       }
     }
@@ -687,6 +744,15 @@ export const RichTextEditor = forwardRef(function RichTextEditorInner(
         handleWikiKeyDown(e, editor);
       }}
     >
+      {contentLoadError && (
+        <div
+          className="mx-3 mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          data-testid="editor-content-load-error"
+          role="alert"
+        >
+          {contentLoadError}
+        </div>
+      )}
       {!readOnly && (
         <input
           ref={imageInputRef}
