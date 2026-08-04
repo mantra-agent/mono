@@ -19,6 +19,7 @@ import { registerGoalRoutes } from "./goal-routes";
 import { registerTagRoutes } from "./tag-routes";
 import { registerObjectGrantRoutes } from "./object-grant-routes";
 import { registerTeamRoutes } from "./team-routes";
+import { registerOrganizationRoutes } from "./organization-routes";
 import { registerDriveResourceRoutes } from "./drive-resource-routes";
 import { registerCalendarRoutes } from "./calendar-routes";
 import { registerObservationRoutes } from "./thought-routes";
@@ -213,6 +214,7 @@ export async function registerRoutes(
   registerTagRoutes(app);
   registerObjectGrantRoutes(app);
   registerTeamRoutes(app);
+  registerOrganizationRoutes(app);
   registerDriveResourceRoutes(app);
   registerCalendarRoutes(app);
   registerTimerRoutes(app);

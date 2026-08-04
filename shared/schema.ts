@@ -567,7 +567,7 @@ export const insertTimerRunSchema = insertResponsibilityRunSchema;
 export type TimerRunRow = ResponsibilityRunRow;
 export type InsertTimerRun = InsertResponsibilityRun;
 
-export const objectGrantSubjectTypes = ["user", "invited_subject", "team"] as const;
+export const objectGrantSubjectTypes = ["user", "invited_subject", "team", "organization"] as const;
 /**
  * Task assignment is the human-obligation axis and is deliberately narrower than grant subjects:
  * a task can be owed by a person, never by a team. Kept as its own single source so widening the
@@ -576,6 +576,8 @@ export const objectGrantSubjectTypes = ["user", "invited_subject", "team"] as co
 export const taskAssigneeSubjectTypes = ["user", "invited_subject"] as const;
 /** Team membership roles. `admin` may manage the team's roster; both are grant-expanded identically. */
 export const teamMemberRoles = ["admin", "member"] as const;
+/** Organization member roles. `admin` may manage the org roster/billing; both are grant-expanded identically. */
+export const organizationMemberRoles = ["admin", "member"] as const;
 export const objectGrantObjectTypes = ["project", "milestone", "task", "library_page", "vault", "drive_resource"] as const;
 export const objectGrantCapabilities = ["read", "write", "admin"] as const;
 export const objectGrantOriginTypes = ["meeting", "manual"] as const;
@@ -721,7 +723,7 @@ export const objectGrants = pgTable("object_grants", {
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (table) => [
-  check("object_grants_subject_type_check", sql`${table.subjectType} IN ('user', 'invited_subject', 'team')`),
+  check("object_grants_subject_type_check", sql`${table.subjectType} IN ('user', 'invited_subject', 'team', 'organization')`),
   check("object_grants_object_type_check", sql`${table.objectType} IN ('project', 'milestone', 'task', 'library_page', 'vault', 'drive_resource')`),
   check("object_grants_capability_check", sql`${table.capability} IN ('read', 'write', 'admin')`),
   check("object_grants_origin_type_check", sql`${table.originType} IN ('meeting', 'manual')`),
@@ -771,6 +773,45 @@ export type TeamRow = typeof teams.$inferSelect;
 export type InsertTeamRow = typeof teams.$inferInsert;
 export type TeamMemberRow = typeof teamMembers.$inferSelect;
 export type InsertTeamMemberRow = typeof teamMembers.$inferInsert;
+
+// ── Organizations: cross-account billing collection + grant subject ──────
+// An organization sits ABOVE accounts (the inverse of a team, which lives inside one account): it
+// collects member users for billing and is a grant-addressable subject. Like a team, an org grants
+// no access on its own — only an object_grant targeting ('organization', orgId) does, expanded to
+// member users at authorize() time. A user belongs to at most one org (0..1) — enforced by a unique
+// constraint on organization_members.user_id, making "one billing home per user" a structural truth.
+export const organizations = pgTable("organizations", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  /** The user who owns the org (billing authority). Ownership, not membership, roots management. */
+  ownerUserId: varchar("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+  /** Billing-collection intent: where invoices for the collected accounts are sent. */
+  billingEmail: text("billing_email"),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_organizations_owner").on(table.ownerUserId),
+]);
+
+export const organizationMembers = pgTable("organization_members", {
+  id: serial("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role", { enum: organizationMemberRoles }).notNull().default("member"),
+  addedByUserId: varchar("added_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  // 0..1 org per user: a user can be a member of at most one organization (their billing home).
+  uniqueIndex("idx_org_members_user_unique").on(table.userId),
+  index("idx_org_members_org").on(table.organizationId),
+  check("organization_members_role_check", sql`${table.role} IN ('admin', 'member')`),
+]);
+
+export type OrganizationRow = typeof organizations.$inferSelect;
+export type InsertOrganizationRow = typeof organizations.$inferInsert;
+export type OrganizationMemberRow = typeof organizationMembers.$inferSelect;
+export type InsertOrganizationMemberRow = typeof organizationMembers.$inferInsert;
 
 // ── Drive resources: Google Drive files/folders bound into a vault's Files branch ──
 // A drive_resource is an *explicit* binding created via the Google Picker (drive.file scope). It is

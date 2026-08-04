@@ -14,7 +14,7 @@ import type { Principal } from "./principal";
 const log = createLogger("ObjectGrantService");
 const MAX_MEETING_DEFAULT_GRANT_SUBJECTS = 500;
 
-export type ObjectGrantSubjectType = "user" | "invited_subject" | "team";
+export type ObjectGrantSubjectType = "user" | "invited_subject" | "team" | "organization";
 export type ObjectGrantOriginType = "meeting" | "manual";
 
 /** Every object the canonical grant service can share. Library pages, vaults, and drive resources key on their text id. */

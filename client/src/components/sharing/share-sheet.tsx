@@ -18,7 +18,7 @@ export type ShareableObjectType = "library_page" | "project" | "milestone" | "ta
 export type ShareCapability = "read" | "write" | "admin";
 
 interface GrantRow {
-  subjectType: "user" | "invited_subject" | "team";
+  subjectType: "user" | "invited_subject" | "team" | "organization";
   subjectId: string;
   capability: ShareCapability;
   createdAt: string;
@@ -27,6 +27,12 @@ interface GrantRow {
 }
 
 interface TeamOption {
+  id: string;
+  name: string;
+  memberCount: number;
+}
+
+interface OrganizationOption {
   id: string;
   name: string;
   memberCount: number;
@@ -73,6 +79,17 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
   });
   const teams = teamsData?.teams ?? [];
 
+  // Organizations the caller owns or belongs to — billing collections offered as grant subjects.
+  const { data: orgsData } = useQuery<{ organizations: OrganizationOption[] }>({
+    queryKey: ["/api/organizations"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/organizations");
+      return res.json();
+    },
+    enabled: open,
+  });
+  const organizations = orgsData?.organizations ?? [];
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey });
 
   const addMutation = useMutation<unknown, Error, { email: string; capability: ShareCapability }>({
@@ -107,6 +124,23 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
       invalidate();
     },
     onError: (err) => setError(err.message || "Failed to share with team"),
+  });
+
+  const addOrgMutation = useMutation<unknown, Error, { organizationId: string; capability: ShareCapability }>({
+    mutationFn: async ({ organizationId, capability }) => {
+      const res = await apiRequest("POST", grantsUrl(objectType, objectId), {
+        subjectType: "organization",
+        subjectId: organizationId,
+        capability,
+        ...(projectId != null ? { projectId } : {}),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      setError(null);
+      invalidate();
+    },
+    onError: (err) => setError(err.message || "Failed to share with organization"),
   });
 
   const revokeMutation = useMutation<unknown, Error, GrantRow>({
@@ -194,6 +228,30 @@ export function ShareSheet({ objectType, objectId, title, projectId, open, onOpe
               ))}
             </select>
             {addTeamMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+          </div>
+        )}
+
+        {/* Add an organization */}
+        {organizations.length > 0 && (
+          <div className="flex items-center gap-2">
+            <select
+              value=""
+              onChange={(e) => {
+                const organizationId = e.target.value;
+                if (organizationId) addOrgMutation.mutate({ organizationId, capability });
+              }}
+              className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-sm text-muted-foreground"
+              disabled={addOrgMutation.isPending}
+              data-testid="select-share-organization"
+            >
+              <option value="">Add an organization…</option>
+              {organizations.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.name} ({org.memberCount})
+                </option>
+              ))}
+            </select>
+            {addOrgMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
           </div>
         )}
 

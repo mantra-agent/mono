@@ -11,12 +11,13 @@ import {
 } from "./object-grant-service";
 import type { ObjectGrantCapability } from "./object-grant-access";
 import { teamService } from "./team-service";
+import { organizationService } from "./organization-service";
 
 const log = createLogger("ObjectGrantRoutes");
 
 const GRANTABLE_OBJECT_TYPES: GrantableObjectType[] = ["project", "milestone", "task", "library_page", "vault", "drive_resource"];
 const CAPABILITIES: ObjectGrantCapability[] = ["read", "write", "admin"];
-const SUBJECT_TYPES: ObjectGrantSubjectType[] = ["user", "invited_subject", "team"];
+const SUBJECT_TYPES: ObjectGrantSubjectType[] = ["user", "invited_subject", "team", "organization"];
 
 /** Library pages key on a text uuid; work objects key on an integer id. */
 function normalizeObjectId(objectType: GrantableObjectType, raw: string): number | string {
@@ -43,6 +44,7 @@ async function projectSubjects(
   const userIds = grants.filter(g => g.subjectType === "user").map(g => g.subjectId);
   const invitedIds = grants.filter(g => g.subjectType === "invited_subject").map(g => g.subjectId);
   const teamIds = grants.filter(g => g.subjectType === "team").map(g => g.subjectId);
+  const orgIds = grants.filter(g => g.subjectType === "organization").map(g => g.subjectId);
   const userRows = userIds.length
     ? await db.select({ id: users.id, email: users.email }).from(users).where(inArray(users.id, userIds))
     : [];
@@ -55,6 +57,7 @@ async function projectSubjects(
   const userMap = new Map(userRows.map(r => [r.id, r]));
   const invitedMap = new Map(invitedRows.map(r => [r.id, r]));
   const teamMap = teamIds.length ? await teamService.labelsFor(teamIds) : new Map<string, string>();
+  const orgMap = orgIds.length ? await organizationService.labelsFor(orgIds) : new Map<string, string>();
   return grants.map(g => {
     if (g.subjectType === "user") {
       const u = userMap.get(g.subjectId);
@@ -62,6 +65,9 @@ async function projectSubjects(
     }
     if (g.subjectType === "team") {
       return { ...g, label: teamMap.get(g.subjectId) ?? "Team", email: null };
+    }
+    if (g.subjectType === "organization") {
+      return { ...g, label: orgMap.get(g.subjectId) ?? "Organization", email: null };
     }
     const s = invitedMap.get(g.subjectId);
     return { ...g, label: s?.label ?? s?.email ?? g.subjectId, email: s?.email ?? null };
@@ -97,8 +103,8 @@ export function registerObjectGrantRoutes(app: Express) {
       const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
       const explicitSubjectType = req.body?.subjectType as ObjectGrantSubjectType | undefined;
       const subjectType = explicitSubjectType ?? (email ? "invited_subject" : undefined);
-      // Team subjects carry an explicit team id in subjectId; only user/invited subjects use email.
-      const subjectId = subjectType === "team"
+      // Team/organization subjects carry an explicit id in subjectId; only user/invited use email.
+      const subjectId = subjectType === "team" || subjectType === "organization"
         ? (typeof req.body?.subjectId === "string" ? req.body.subjectId.trim() : "")
         : email || (typeof req.body?.subjectId === "string" ? req.body.subjectId.trim() : "");
       if (!subjectType || !SUBJECT_TYPES.includes(subjectType) || !subjectId) {
@@ -107,6 +113,10 @@ export function registerObjectGrantRoutes(app: Express) {
       // Fail closed on cross-account team ids: only teams the caller's account owns may be granted.
       if (subjectType === "team" && !(await teamService.labelsFor([subjectId])).has(subjectId)) {
         throw Object.assign(new Error("Team not found"), { status: 404 });
+      }
+      // Fail closed on org ids: only orgs the caller owns or belongs to may be granted.
+      if (subjectType === "organization" && !(await organizationService.labelsFor([subjectId])).has(subjectId)) {
+        throw Object.assign(new Error("Organization not found"), { status: 404 });
       }
       const grant = await objectGrantService.grant({
         ...target,
