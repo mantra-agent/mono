@@ -3079,6 +3079,11 @@ export const ChatTurn = memo(function ChatTurn({
                     />
                   ));
                 }}
+                ActiveThinkingStatusComponent={ActiveThinkingStatus}
+                ExecutionTimelineComponent={ExecutionTimeline}
+                MarkdownContentComponent={MarkdownContent}
+                filterVisibleSteps={filterStepsByLayer}
+                getThinkingStartTime={findThinkingStartTime}
               />
             ) : (
               message.content && (
