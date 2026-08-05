@@ -36,6 +36,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useVaults, type Vault } from "@/hooks/use-vaults";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { createLogger } from "@/lib/logger";
 import { VaultMigrationControls } from "@/components/vault-migration-controls";
 import { TeamsPanel } from "@/components/teams/teams-panel";
@@ -454,6 +455,8 @@ function VaultRow({ vault, opportunities }: { vault: Vault; opportunities: Oppor
 export default function VaultsAdminPage() {
   usePageHeader({ title: "Vaults" });
   const { vaults, isLoading } = useVaults();
+  const { hasPermission } = useAuth();
+  const canManageMigration = hasPermission("system:write");
   const { data: opportunities = [], isLoading: opportunitiesLoading } = useQuery<OpportunitySummary[]>({
     queryKey: ["/api/exec/opportunities"],
   });
@@ -520,7 +523,7 @@ export default function VaultsAdminPage() {
             </CollapsibleContent>
           </Collapsible>
 
-          <VaultMigrationControls />
+          {canManageMigration ? <VaultMigrationControls /> : null}
 
           <div className="mt-6 border-t border-border pt-6">
             <TeamsPanel />
