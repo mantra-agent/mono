@@ -1052,7 +1052,7 @@ function DayTimeline({ rows, events, timerOccurrences = [], accountEmails, timez
                 return (
                   <ReferenceChip
                     key={`${timer.timerId}:${timer.minuteOfDay}`}
-                    reference={reference}
+                    resolved={reference}
                     className="max-w-[11rem] shrink-0 bg-background/90"
                   />
                 );
