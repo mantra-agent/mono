@@ -69,7 +69,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
     : contextPressure && contextPressure.inputTokens >= contextPressure.compactionThreshold
       ? "hsl(var(--warning))"
       : "hsl(var(--cta))";
-  const circumference = 2 * Math.PI * 15;
+  const circumference = 2 * Math.PI * 18;
 
   const mutation = useMutation({
     mutationFn: async (nextPersonaId: number | null) => {
@@ -119,15 +119,15 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
               {contextPressure && (
                 <svg
                   aria-hidden="true"
-                  className="pointer-events-none absolute -inset-1 h-[36px] w-[36px] -rotate-90 overflow-visible"
-                  viewBox="0 0 36 36"
+                  className="pointer-events-none absolute left-1/2 top-1/2 size-10 -translate-x-1/2 -translate-y-1/2 -rotate-90 overflow-visible"
+                  viewBox="0 0 40 40"
                   data-testid={`context-pressure-ring-${sessionId}`}
                 >
-                  <circle cx="18" cy="18" r="15" fill="none" stroke="hsl(var(--border))" strokeOpacity="0.45" strokeWidth="1.5" />
+                  <circle cx="20" cy="20" r="18" fill="none" stroke="hsl(var(--border))" strokeOpacity="0.45" strokeWidth="1.5" />
                   <circle
-                    cx="18"
-                    cy="18"
-                    r="15"
+                    cx="20"
+                    cy="20"
+                    r="18"
                     fill="none"
                     stroke={pressureColor}
                     strokeLinecap="round"
@@ -138,11 +138,11 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                   />
                   {thresholdRatio > 0 && thresholdRatio < 1 && (
                     <circle
-                      cx="18"
-                      cy="3"
+                      cx="20"
+                      cy="2"
                       r="1.25"
                       fill="hsl(var(--warning))"
-                      transform={`rotate(${thresholdRatio * 360} 18 18)`}
+                      transform={`rotate(${thresholdRatio * 360} 20 20)`}
                     />
                   )}
                 </svg>
