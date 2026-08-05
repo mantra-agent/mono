@@ -1324,6 +1324,12 @@ async function handlePeopleSetDailyContact(args: Record<string, any>): Promise<T
   return { result: `${resolved.name} [person:${resolved.id}] dailyContact set to ${value}` };
 }
 
+// Triage doctrine lives here — at the moment of use — not in the always-on
+// people schema. scan_imports is the entry call for import triage, so the model
+// reads how to triage well exactly when it is about to, and never carries it otherwise.
+const IMPORT_TRIAGE_GUIDANCE =
+  "Import triage: account for every candidate exactly once and name every skip. Generic, role-based, and automated senders should be skipped unless the user identifies a real relationship.";
+
 async function handlePeopleScanImports(args: Record<string, any>): Promise<ToolHandlerResult> {
   const { loadQueueState, getPendingCandidates } = await import("./import-queue");
   const queueState = await loadQueueState();
@@ -1345,7 +1351,7 @@ async function handlePeopleScanImports(args: Record<string, any>): Promise<ToolH
     }
     return parts.join("\n");
   });
-  return { result: `${pending.length} pending import candidates:\n\n${lines.join("\n\n")}` };
+  return { result: `${IMPORT_TRIAGE_GUIDANCE}\n\n${pending.length} pending import candidates:\n\n${lines.join("\n\n")}` };
 }
 
 
