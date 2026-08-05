@@ -133,7 +133,7 @@ function useDebouncedReferenceSearch(
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [query, typesKey, enabled, types]);
+  }, [query, typesKey, enabled]);
 
   return { suggestions, isLoading };
 }
@@ -234,7 +234,14 @@ function FieldPicker({
 
   useEffect(() => {
     setActiveIndex(0);
-  }, [input, visible.length, showCreate]);
+  }, [input]);
+
+  // Keep the highlight valid when the list shrinks, but never slam it back to
+  // the top on every refetch/length flicker — that made arrow-key nav unusable.
+  useEffect(() => {
+    const count = visible.length + (showCreate ? 1 : 0);
+    setActiveIndex((i) => (count > 0 ? Math.min(i, count - 1) : 0));
+  }, [visible.length, showCreate]);
 
   const commit = useCallback(
     (suggestion: ReferencePickerValue) => {
@@ -383,12 +390,12 @@ function FieldPicker({
       {open && (isLoading || visible.length > 0 || showCreate) && (
         <div
           className={cn(
-            "absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md",
+            "absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-md border border-border bg-background text-foreground shadow-md",
             dense ? "max-h-48" : "max-h-56",
           )}
           data-testid={testId ? `${testId}-suggestions` : undefined}
         >
-          <div className="flex items-center gap-2 border-b border-border/60 px-2 py-1.5 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 border-b border-border/60 px-2 py-1 text-xs text-muted-foreground">
             <Search className="h-3 w-3" />
             <span>{input.trim() ? `Matching “${input.trim()}”` : "Search references"}</span>
           </div>
@@ -412,7 +419,7 @@ function FieldPicker({
                   <button
                     type="button"
                     className={cn(
-                      "flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors",
+                      "flex w-full items-center gap-2 px-2 py-1 text-left text-sm text-muted-foreground transition-colors",
                       activeIndex === visible.length ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
                     )}
                     onMouseDown={(e) => {
