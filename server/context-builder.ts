@@ -39,7 +39,7 @@ import { listGmailAccounts } from "./gmail";
 import { getJournalEntriesSince } from "./thoughts";
 import { getRecentThoughts } from "./thoughts";
 import { detectSessionType, BLEND_WEIGHTS, modulateWeights } from "./memory/vnext-retrieval-policy";
-import { getSkillDefinitionsForContext, getToolSchemas } from "./tool-registry";
+import { getSkillDefinitionsForContext, getToolSchemas, getToolCatalog } from "./tool-registry";
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { requireCurrentPrincipal } from "./principal-context";
@@ -2108,6 +2108,24 @@ async function resolveTools(request: ContextRequest): Promise<string> {
     ? "Tools are available. In voice mode, prefer simple tool calls and concise responses."
     : "The current persona provides an initial callable tool set. If a needed tool is absent, call `tools` with action `get` and its exact name; when authority allows it, the full schema loads for the next step of this run.";
 
+  // Always-on tool index (TOC). Core tools carry full schemas up front; the rest
+  // advertise here by exact name and one-line summary so nothing is ever invisible
+  // — the model hydrates a full schema on intent via `tools` action `get`.
+  const catalog = getToolCatalog();
+  const core = catalog.filter(t => t.isCore);
+  const extended = catalog.filter(t => !t.isCore);
+  const fmtEntry = (t: { name: string; description: string }) => `- \`${t.name}\` — ${t.description}`;
+  const toc = mode === "voice" ? [] : [
+    "",
+    "**Tool index.** Every tool below is callable. Core tools load full schemas up front; the rest advertise here by exact name — call `tools` action `get` with that name to hydrate a full schema when you intend to use it.",
+    "",
+    `Core (${core.length}, always loaded):`,
+    ...core.map(fmtEntry),
+    "",
+    `Additional (${extended.length}, load on demand):`,
+    ...extended.map(fmtEntry),
+  ];
+
   return [
     preamble,
     "",
@@ -2122,6 +2140,7 @@ async function resolveTools(request: ContextRequest): Promise<string> {
     "- `#` is a composer/search trigger for references, especially work items; selected mentions still insert canonical `@type:id` text. Do not treat `#goal`/`#task` as the persisted reference grammar unless the shared parser explicitly supports it.",
     "- Prefer canonical `@type:id` syntax over legacy `[page:slug]` / `[person:id]` / `[goal:id]` / `[spec:slug]` / `Intention ID: <id>` forms. Legacy syntax is compatibility only.",
     "- Do not infer that a tool is unavailable merely because its schema is absent from the initial set. Use `tools.get` to verify authority and load that exact callable schema for the current interactive run.",
+    ...toc,
   ].join("\n");
 }
 
