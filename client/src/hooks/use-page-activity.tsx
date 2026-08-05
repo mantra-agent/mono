@@ -93,3 +93,17 @@ export function usePageActivity() {
   }
   return context;
 }
+
+export function usePageLoadActivity(key: string, active: boolean) {
+  const { startActivity, endActivity } = usePageActivity();
+
+  useEffect(() => {
+    if (!active) {
+      endActivity(key);
+      return;
+    }
+
+    startActivity(key);
+    return () => endActivity(key);
+  }, [active, endActivity, key, startActivity]);
+}

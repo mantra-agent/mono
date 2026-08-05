@@ -23,6 +23,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
+import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { cn } from "@/lib/utils";
 
 interface JobRolesResponse {
@@ -183,6 +184,7 @@ export default function JobRolesPage() {
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const { data, isLoading, error, refetch } = useQuery<JobRolesResponse>({ queryKey: ["/api/business/roles"] });
+  usePageLoadActivity("page:job-roles", isLoading);
   const grouped = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const roles = (data?.roles || []).filter((role) => !needle || `${role.title} ${role.description} ${role.team}`.toLowerCase().includes(needle));
@@ -190,7 +192,7 @@ export default function JobRolesPage() {
   }, [data?.roles, search]);
 
   let content: ReactNode;
-  if (isLoading) content = <div className="flex justify-center py-8"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>;
+  if (isLoading) content = null;
   else if (error) content = <div className="px-2 py-3 text-sm text-destructive">Roles unavailable. <button className="text-cta" onClick={() => void refetch()}>Try again</button></div>;
   else if (grouped.length === 0) content = <div className="px-2 py-1.5 text-sm text-muted-foreground">{search ? "No roles match this search." : "No roles defined yet."}</div>;
   else content = grouped.map(({ team, roles }) => <section key={team} className="space-y-0.5"><HierarchySectionHeader>{team} · {formatNumber(roles.length)}</HierarchySectionHeader>{roles.map((role) => <RoleRow key={role.id} role={role} open={openId === role.id} onToggle={() => setOpenId((current) => current === role.id ? null : role.id)} />)}</section>);

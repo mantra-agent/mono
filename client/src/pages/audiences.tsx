@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, Loader2, Plus, Search, Trash2, Users, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Plus, Search, Trash2, Users, X } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ export default function AudiencesPage() {
   const { hasPermission } = useAuth();
   const canWrite = hasPermission("system:write");
   const { data, isLoading } = useQuery<{ audiences: Audience[] }>({ queryKey: ["/api/communications/audiences"] });
+  usePageLoadActivity("page:audiences", isLoading);
   const people = usePeopleChoices();
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -57,7 +59,7 @@ export default function AudiencesPage() {
   });
 
   if (!hasPermission("system:read")) return <div className="p-6 text-sm text-muted-foreground">Audiences requires system:read.</div>;
-  if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  if (isLoading) return null;
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-background">

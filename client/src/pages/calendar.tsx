@@ -3,6 +3,7 @@ import { EventDetailView } from "@/components/calendar/event-detail-view";
 import { useEventMetadata } from "@/components/calendar/use-event-metadata";
 import { useState, useMemo } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { useTimezone } from "@/hooks/use-timezone";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -723,6 +724,7 @@ export default function CalendarPage() {
   const events = eventsData?.events || [];
   const timers = timersData?.timers || [];
   const isLoading = accountsLoading || calendarsLoading;
+  usePageLoadActivity("page:schedule", isLoading || eventsLoading);
   const accountEmails = useMemo(() => accounts.map(a => a.email), [accounts]);
 
   const calendarMap = useMemo(() => {
@@ -750,18 +752,7 @@ export default function CalendarPage() {
     );
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex h-full flex-col overflow-hidden" data-testid="schedule-loading">
-        <div className="border-b border-border p-2">
-          <Skeleton className="h-7 w-full rounded-md" />
-        </div>
-        <div className="space-y-2 p-3">
-          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-11 w-full rounded-md" />)}
-        </div>
-      </div>
-    );
-  }
+  if (isLoading) return null;
 
   if (!hasConnected) {
     const hasGmailAccounts = accounts.length > 0;

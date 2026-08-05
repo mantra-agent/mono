@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
+import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -475,6 +476,7 @@ export default function UsersAdminPage() {
   const canWrite = hasPermission("users:write");
   const canRead = hasPermission("users:read");
   const { data, isLoading } = useQuery<UsersResponse>({ queryKey: ["/api/auth/users"], enabled: canRead, refetchInterval: 15_000 });
+  usePageLoadActivity("page:users", isLoading);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedWaitlistId, setSelectedWaitlistId] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -490,7 +492,7 @@ export default function UsersAdminPage() {
   const selectedWaitlist = waitlist.find((application) => application.id === selectedWaitlistId) ?? null;
   const draftFor = useCallback((user: AdminUserRow) => drafts[user.id] ?? new Set(user.permissionOverrides), [drafts]);
   if (!canRead) return <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Users administration requires users:read.</div>;
-  if (isLoading) return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  if (isLoading) return null;
 
   const renderUserRow = (user: AdminUserRow) => {
     const selected = selectedUserId === user.id;
