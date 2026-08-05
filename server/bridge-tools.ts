@@ -6,7 +6,6 @@ import { MIME_MAP, TEXT_ARTIFACT_MIME_MAP } from "./lib/mime";
 import { getInstanceName } from "@shared/instance-config";
 import { objectStorageService } from "./object_storage";
 import { ObjectPermission, setObjectAclPolicy } from "./object_storage/objectAcl";
-import { contextBuilder } from "./context-builder";
 import {
   checkAccountPermission,
   checkPermissionAnyAccount,
