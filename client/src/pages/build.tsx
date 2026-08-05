@@ -3860,7 +3860,7 @@ function DesignReferencePlayground() {
         <li>
           <span className="text-foreground">Rows:</span> compact one-line{" "}
           <code className="rounded bg-muted px-1 font-mono">ReferenceSuggestionRow</code>{" "}
-          (icon · label · type).
+          (icon · label) on the black canvas — no type or detail badges.
         </li>
         <li>
           <span className="text-foreground">Chat:</span>{" "}
