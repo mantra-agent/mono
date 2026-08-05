@@ -5,6 +5,7 @@ import { createLogger } from "../log";
 import { createUserPrincipalFromUser } from "../principal";
 import type { Principal } from "../principal";
 import { tagService } from "../tag-service";
+import { semanticLibraryTags } from "@shared/library-tags";
 
 const log = createLogger("BackfillEntityArrayTags");
 
@@ -39,6 +40,7 @@ interface DomainSpec {
   titleColumn: string;
   /** Storage type of the domain's tags column — drives the non-empty SQL predicate. */
   tagsKind: "jsonb" | "text[]";
+  normalize?: (raw: unknown) => string[];
 }
 
 const DOMAINS: DomainSpec[] = [
@@ -55,6 +57,14 @@ const DOMAINS: DomainSpec[] = [
     entityType: "thesis",
     titleColumn: "title",
     tagsKind: "text[]",
+  },
+  {
+    migrationKey: "entity-array-tags-library-page-v1",
+    table: "library_pages",
+    entityType: "page",
+    titleColumn: "title",
+    tagsKind: "text[]",
+    normalize: (raw) => semanticLibraryTags(normalizeTags(raw)),
   },
   {
     migrationKey: "entity-array-tags-person-v1",
@@ -108,7 +118,7 @@ async function backfillDomain(
 
   let count = 0;
   for (const row of rows.rows) {
-    const tags = normalizeTags(row.tags);
+    const tags = domain.normalize ? domain.normalize(row.tags) : normalizeTags(row.tags);
     if (tags.length === 0) continue;
     await tagService.replaceEntityTags(domain.entityType, row.id, row.title || "", tags, principal);
     count += 1;
