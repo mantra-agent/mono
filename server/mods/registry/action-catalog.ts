@@ -59,6 +59,8 @@ const ACTION_ROWS: ActionRow[] = [
   { slug: "wellness", owner: "wellness", routeId: "wellness.route.wellness" },
   { slug: "people", owner: "network", routeId: "network.route.people" },
   { slug: "meetings", owner: "network", routeId: "network.route.meetings" },
+  { slug: "companies", owner: "network", routeId: "network.route.companies" },
+  { slug: "pipelines", owner: "network", routeId: "network.route.pipelines" },
   { slug: "decisions", owner: "core", routeId: "core.route.decisions" },
   { slug: "business-model", owner: "business", routeId: "business.route.business-model", permission: "system:read" },
   { slug: "advantage", owner: "business", routeId: "business.route.advantage" },

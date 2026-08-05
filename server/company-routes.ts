@@ -1,12 +1,13 @@
 import type { Express } from "express";
 import { requireAuth } from "./auth";
+import { requireActiveNetwork } from "./mods/network-route-access";
 import { companyStorage } from "./company-storage";
 import { createLogger } from "./log";
 
 const log = createLogger("CompanyRoutes");
 
 export function registerCompanyRoutes(app: Express): void {
-  app.use("/api/companies", requireAuth);
+  app.use("/api/companies", requireAuth, requireActiveNetwork);
 
   app.get("/api/companies", async (req, res) => {
     try {

@@ -556,10 +556,12 @@ async function getSkillTools(
   if (!principal) throw new Error("Skill tool discovery requires an explicit user principal");
   const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
   const { filterBusinessToolSchemas } = await import("./mods/business-tool-access");
+  const { filterNetworkToolSchemas } = await import("./mods/network-tool-access");
   const authorityToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), authority);
   const buildScopedTools = await filterBuildToolSchemas(principal, authorityToolDefs);
   const wellnessScopedTools = await filterWellnessToolSchemas(principal, buildScopedTools);
-  const allToolDefs = await filterBusinessToolSchemas(principal, wellnessScopedTools);
+  const businessScopedTools = await filterBusinessToolSchemas(principal, wellnessScopedTools);
+  const allToolDefs = await filterNetworkToolSchemas(principal, businessScopedTools);
   const tools = allToolDefs.map((t: AgentToolDefinition) => ({
     name: t.name,
     description: t.description,

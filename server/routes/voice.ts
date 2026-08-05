@@ -37,10 +37,12 @@ export async function registerVoiceRoutes(app: Express) {
       const { filterBuildToolSchemas } = await import("../mods/build-tool-access");
       const { filterWellnessToolSchemas } = await import("../mods/wellness-tool-access");
       const { filterBusinessToolSchemas } = await import("../mods/business-tool-access");
+      const { filterNetworkToolSchemas } = await import("../mods/network-tool-access");
       const authorityTools = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "voice" });
       const buildScopedTools = await filterBuildToolSchemas(req.principal!, authorityTools);
       const wellnessScopedTools = await filterWellnessToolSchemas(req.principal!, buildScopedTools);
-      const toolDefs = await filterBusinessToolSchemas(req.principal!, wellnessScopedTools);
+      const businessScopedTools = await filterBusinessToolSchemas(req.principal!, wellnessScopedTools);
+      const toolDefs = await filterNetworkToolSchemas(req.principal!, businessScopedTools);
       const queryId = `voice-query:${randomUUID()}`;
       const resolvedSpine = await contextBuilder.resolve({
         callType: "full",
