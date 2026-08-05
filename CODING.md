@@ -67,6 +67,19 @@ The no-test policy below remains unchanged. Approved read-only scanners, depende
 - Git MCP is the exclusive credentialed path for clone, branch/checkout writes, add, commit, push, PR, merge, and branch deletion
 - **Interactive-session credential verification (2026-07-21):** Git MCP authenticated the stage-bound `mantra-agent/mono` path through clone, branch creation, commit, push, PR creation, and merge to `main`; the merged history of this line is the durable verification artifact.
 
+## Code Discovery and GitNexus
+
+GitNexus and the `code` tool are exclusively for codebase knowledge-graph work: architecture, ownership, symbol relationships, execution flows, and change-risk analysis. Do not use them to discover or reason over Library pages, memory, tasks, goals, people, sessions, or other non-code product data; use the canonical tool for that domain.
+
+Use the narrowest discovery method that answers the question:
+
+1. For an exact string, identifier, filename, or path, use repository search first (`rg`, `git grep`, or direct file inspection). Exact textual lookup is the repository's job, and remains the fallback when a GitNexus query is noisy or misses a known target.
+2. Use GitNexus `query` to discover candidate code entities and flows when the owner or implementation location is not yet known.
+3. Use GitNexus `context` once a candidate symbol is known to inspect its definition and immediate callers, callees, imports, and local relationships.
+4. Use GitNexus `impact` before editing a touched symbol or shared flow to assess upstream or downstream change risk.
+
+GitNexus complements repository inspection; it does not replace reading the authoritative source before editing.
+
 ## Coding Task Gate
 
 Before any code diagnosis, system debugging, file edit, build, PR, or merge:
