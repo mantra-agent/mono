@@ -3054,10 +3054,16 @@ export class AgentExecutor extends EventEmitter {
       const compactionElapsed = Date.now() - iterStartTime;
       const isFirstIterationPreToolCompression = ctx.iteration === 0 && compactionResult.telemetry.preToolRunPressure;
       const pressureSuffix = isFirstIterationPreToolCompression
-        ? " · pre-run context was oversized; saved conversation needs durable compaction/artifactization"
+        ? " · pre-run request context compressed before the first model call"
         : " · current-run working context only; saved conversation unchanged";
-      ctx.publish("system_step", { step: "working_context_compression", status: "started", detail: `stage=${compactionResult.stage} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
-      ctx.publish("system_step", { step: "working_context_compression", status: "done", elapsedMs: compactionElapsed, detail: `stage=${compactionResult.stage} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
+      // Before the first model call, request-level pressure still belongs to the
+      // between-turn lifecycle. Reserve the amber working-context event for
+      // recovery after the turn has actually begun.
+      const compressionStep = isFirstIterationPreToolCompression
+        ? "session_compaction"
+        : "working_context_compression";
+      ctx.publish("system_step", { step: compressionStep, status: "started", detail: `stage=${compactionResult.stage} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
+      ctx.publish("system_step", { step: compressionStep, status: "done", elapsedMs: compactionElapsed, detail: `stage=${compactionResult.stage} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
 
       if (isFirstIterationPreToolCompression) {
         log.warn(`First-iteration working-context compression indicates missed durable context pressure sessionId=${options.sessionId || "none"} runId=${ctx.runId} tokensBefore=${tokensBefore} tokensAfter=${tokensAfter}`);
