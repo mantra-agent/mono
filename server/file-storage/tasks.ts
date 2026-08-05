@@ -40,8 +40,6 @@ const TASK_CLEARABLE_FIELDS: Array<keyof InsertTask> = [
   "assigneeSubjectType",
   "assigneeSubjectId",
   "deadline",
-  "projectId",
-  "milestoneId",
 ];
 
 const TASK_DESTRUCTIVE_FIELDS: Array<keyof InsertTask> = ["description"];
@@ -369,22 +367,22 @@ export class FileTaskStorage {
     return rowToTask(rows[0]);
   }
 
-  private async assertWorkPlacement(projectId: number | null | undefined, milestoneId: number | null | undefined): Promise<string | null> {
+  private async assertWorkPlacement(projectId: number | null | undefined, milestoneId: number | null | undefined): Promise<string> {
     const principal = requireCurrentUserPrincipal();
-    if (projectId != null && (!Number.isInteger(projectId) || projectId <= 0)) {
-      throw new Error("projectId must be a positive integer");
-    }
-    if (milestoneId != null && (!Number.isInteger(milestoneId) || milestoneId <= 0)) {
-      throw new Error("milestoneId must be a positive integer");
-    }
-    if (milestoneId != null && projectId == null) {
-      throw new ToolFailureError("milestoneId requires projectId", {
+    if (projectId == null || !Number.isInteger(projectId) || projectId <= 0) {
+      throw new ToolFailureError("Every task requires a valid projectId", {
         kind: "input",
-        code: "task_update_milestone_requires_project",
+        code: "task_project_required",
         retryable: false,
       });
     }
-    if (projectId == null) return null;
+    if (milestoneId == null || !Number.isInteger(milestoneId) || milestoneId <= 0) {
+      throw new ToolFailureError("Every task requires a valid milestoneId. Find an appropriate milestone or ask the user where the task belongs.", {
+        kind: "input",
+        code: "task_milestone_required",
+        retryable: false,
+      });
+    }
     const projectRows = await db.select({ id: projects.id, vaultId: projects.vaultId }).from(projects).where(
       combineWithProjectAccess(principal, "read", eq(projects.id, projectId)),
     ).limit(1);

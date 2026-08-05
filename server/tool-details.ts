@@ -127,7 +127,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       create: { description: "Create a new task. milestoneId is required; if the right milestone is unclear, ask Ray where it belongs before creating. The tool automatically appends the current source session as @session:id when available. Supports deadline (YYYY-MM-DD).", requiredParams: ["title", "description", "milestoneId"], optionalParams: ["status", "priority", "impact", "effort", "owner", "requiresReview", "projectId", "milestoneId", "deadline"] },
       complete: { description: "Mark a task as done. This is the ONLY way to complete tasks.", optionalParams: ["taskId", "title"] },
       delete: { description: "Permanently delete a task.", optionalParams: ["taskId", "title"] },
-      update: { description: "Update a task's properties — priority, status, owner, title, description, deadline, etc.", optionalParams: ["taskId", "title", "newTitle", "description", "priority", "status", "impact", "effort", "owner", "requiresReview", "projectId", "milestoneId", "deadline"] },
+      update: { description: "Update a task's properties. Project and milestone placement may be retained or moved, but never cleared; any move must resolve to a milestone belonging to the selected project.", optionalParams: ["taskId", "title", "newTitle", "description", "priority", "status", "impact", "effort", "owner", "requiresReview", "projectId", "milestoneId", "deadline"] },
     },
   },
   finance: {
