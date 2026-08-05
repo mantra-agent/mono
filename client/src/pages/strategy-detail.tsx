@@ -189,7 +189,7 @@ function statusIcon(status: string) {
 }
 
 export default function StrategyDetailPage() {
-  const [, params] = useRoute("/strategy/:id");
+  const [, params] = useRoute("/scenarios/:id");
   const [, setLocation] = useLocation();
   const goalId = params?.id || "";
   const { toast } = useToast();
@@ -232,7 +232,7 @@ export default function StrategyDetailPage() {
   );
 
   usePageHeader({
-    title: "Strategy",
+    title: "Scenarios",
     tabs: [
       { value: "title", label: strategy?.title || "Loading..." },
       { value: "moves", label: "Moves" },
@@ -616,8 +616,8 @@ export default function StrategyDetailPage() {
   if (!strategy) {
     return (
       <div className="flex flex-col items-center justify-center py-12 gap-4" data-testid="strategy-not-found">
-        <p className="text-muted-foreground">Strategy not found</p>
-        <Button variant="ghost" onClick={() => setLocation("/strategy")} data-testid="button-back-not-found">
+        <p className="text-muted-foreground">Scenario not found</p>
+        <Button variant="ghost" onClick={() => setLocation("/scenarios")} data-testid="button-back-not-found">
           Back to Strategies
         </Button>
       </div>
@@ -1982,7 +1982,7 @@ function StrategyDescriptionPanel({ goalId, strategy }: { goalId: string; strate
       <EditableField
         value={strategy.description}
         onSave={(v) => updateStrategyMutation.mutate({ description: v })}
-        placeholder="Describe the strategy..."
+        placeholder="Describe the scenario..."
         multiline
         testId="edit-strategy-description"
       />
@@ -2751,7 +2751,7 @@ function StrategySettingsPanel({ goalId, strategy }: { goalId: string; strategy:
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals", goalId] });
-      toast({ title: "Strategy updated" });
+      toast({ title: "Scenario updated" });
     },
     onError: (err: Error) => {
       toast({ title: "Update failed", description: err.message, variant: "destructive" });
@@ -2768,11 +2768,11 @@ function StrategySettingsPanel({ goalId, strategy }: { goalId: string; strategy:
 
       <div className="space-y-4">
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Strategy Name</label>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Scenario Name</label>
           <EditableField
             value={strategy.title}
             onSave={(v) => updateStrategyMutation.mutate({ title: v })}
-            placeholder="Strategy name..."
+            placeholder="Scenario name..."
             testId="edit-strategy-name"
           />
         </div>

@@ -287,8 +287,8 @@ function Router() {
         <Route path="/sessions">{() => <Redirect to={sessionRedirectFromQuery()} />}</Route>
         <Route path="/goals" component={Goals} />
         <Route path="/vision" component={VisionPage} />
-        <Route path="/strategy/:id" component={StrategyDetailPage} />
-        <Route path="/strategy" component={StrategyPage} />
+        <Route path="/scenarios/:id" component={StrategyDetailPage} />
+        <Route path="/scenarios" component={StrategyPage} />
         <Route path="/tags/:slug" component={TagsPage} />
         <Route path="/tags" component={TagsPage} />
         <Route path="/decisions" component={DecisionsPage} />

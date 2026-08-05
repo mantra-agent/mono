@@ -1027,8 +1027,8 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
-  strategy: {
-    description: "Strategic modeling — create strategies, manage actors, build move trees, run simulations, manage assumptions, track artifacts. Always call list_strategies first.",
+  scenarios: {
+    description: "Scenario modeling — create scenarios, manage actors, build move trees, run simulations, manage assumptions, track artifacts. Always call list_scenarios first.",
     category: "strategy",
 
     parameters: {
@@ -1037,7 +1037,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         action: {
           type: "string",
           enum: [
-            "list_strategies", "get_strategy", "create_strategy", "update_strategy", "delete_strategy",
+            "list_scenarios", "get_scenario", "create_scenario", "update_scenario", "delete_scenario",
             "list_actors", "get_actor", "add_actor", "update_actor", "remove_actor",
             "get_move_tree", "get_move", "get_move_path", "create_move", "update_move", "delete_move",
             "reparent_move", "list_child_moves", "set_actor_states",
@@ -1054,7 +1054,7 @@ export const TOOLS: Record<string, ToolMeta> = {
           ],
           description: "Action to perform — see tool description for required params per action",
         },
-        goalId: { type: "string", description: "Strategy ID — REQUIRED for most actions. Call list_strategies first to get available goalIds." },
+        goalId: { type: "string", description: "Scenario ID — REQUIRED for most actions. Call list_scenarios first to get available goalIds." },
         id: { type: "string", description: "Entity ID (actor, move, assumption, end condition, note, artifact, or simulation run)" },
         moveId: { type: "string", description: "Move instance ID or refId (short hash like 'emo1Jg')" },
         assumptionId: { type: "string", description: "Assumption ID (for link/unlink_assumption_to_move)" },
@@ -1063,7 +1063,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         newParentId: { type: "string", description: "New parent move instance ID for reparent_move (null or omit to move to root)" },
         actorId: { type: "string", description: "Actor ID" },
         moveDefinitionId: { type: "string", description: "Move definition ID (REQUIRED for create_move — use list_move_definitions to find one, or create_move_definition first)" },
-        title: { type: "string", description: "Title for strategy, move, or assumption" },
+        title: { type: "string", description: "Title for scenario, move, or assumption" },
         description: { type: "string", description: "Description text" },
         status: { type: "string", description: "Status: unexplored, explored, or terminal" },
         name: { type: "string", description: "Actor name" },

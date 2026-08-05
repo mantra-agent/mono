@@ -194,10 +194,10 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     whenToUse: "User mentions a git repository, wants to pull code, clone a project, review commit history, work with branches, commit changes, push code, open a pull request, merge PRs, or delete remote branches.",
     example: 'Clone: { "action": "clone", "url": "https://github.com/user/repo" }\nCommit: { "action": "commit", "directory": "repo", "message": "fix: improve error handling" }\nCreate PR: { "action": "create_pr", "directory": "repo", "title": "Fix error handling", "body": "Improved error messages" }',
   },
-  strategy: {
-    description: "Strategic modeling — create strategies, manage actors, build move trees, run simulations, manage assumptions, track notes and artifacts. Actions: list_strategies, get_strategy, create_strategy, and many more.",
-    whenToUse: "User wants to model a strategic scenario, negotiate, run simulations, analyze moves, or work with strategy artifacts.",
-    example: 'List strategies: { "action": "list_strategies" }',
+  scenarios: {
+    description: "Scenario modeling — create scenarios, manage actors, build move trees, run simulations, manage assumptions, track notes and artifacts. Actions: list_scenarios, get_scenario, create_scenario, and many more.",
+    whenToUse: "User wants to model a strategic scenario, negotiate, run simulations, analyze moves, or work with scenario artifacts.",
+    example: 'List scenarios: { "action": "list_scenarios" }',
   },
   decisions: {
     description: "Personal decision log — track open/closed strategic decisions with Data, Scenarios, and Plan sections, traffic-light status (closed only), append-only updates after lock, and links to strategies/projects. Actions: list, get, create, update, delete, lock, reopen, add_update, edit_update, delete_update, add_link, remove_link.",

@@ -89,10 +89,10 @@ export default function StrategyListTab() {
       queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals"] });
       setCreateOpen(false);
       toast({ title: `Created "${strategy.title}"` });
-      setLocation(`/strategy/${strategy.id}`);
+      setLocation(`/scenarios/${strategy.id}`);
     },
     onError: (err: Error) => {
-      toast({ title: "Failed to create strategy", description: err.message, variant: "destructive" });
+      toast({ title: "Failed to create scenario", description: err.message, variant: "destructive" });
     },
   });
 
@@ -117,7 +117,7 @@ export default function StrategyListTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/strategy/goals"] });
       setDeleteTarget(null);
-      toast({ title: "Strategy deleted" });
+      toast({ title: "Scenario deleted" });
     },
     onError: (err: Error) => {
       toast({ title: "Failed to delete", description: err.message, variant: "destructive" });
@@ -134,7 +134,7 @@ export default function StrategyListTab() {
       toast({ title: strategy.archived ? `Archived "${strategy.title}"` : `Unarchived "${strategy.title}"` });
     },
     onError: (err: Error) => {
-      toast({ title: "Failed to update strategy", description: err.message, variant: "destructive" });
+      toast({ title: "Failed to update scenario", description: err.message, variant: "destructive" });
     },
   });
 
@@ -167,7 +167,7 @@ export default function StrategyListTab() {
               <Swords className="h-6 w-6 text-primary/40" />
             </div>
             <div>
-              <h3 className="text-sm font-medium" data-testid="text-empty-title">No strategies yet</h3>
+              <h3 className="text-sm font-medium" data-testid="text-empty-title">No scenarios yet</h3>
               <p className="text-xs text-muted-foreground mt-1" data-testid="text-empty-description">
                 Create a strategy to start modeling scenarios, actors, and possible outcomes.
               </p>
@@ -182,7 +182,7 @@ export default function StrategyListTab() {
         <>
           {activeStrategies.length === 0 ? (
             <Card className="p-6" data-testid="empty-active-strategies">
-              <p className="text-sm text-muted-foreground text-center">No active strategies. Create a new one or unarchive an existing strategy.</p>
+              <p className="text-sm text-muted-foreground text-center">No active scenarios. Create a new one or unarchive an existing scenario.</p>
             </Card>
           ) : (
             <div className="grid gap-3 @sm:grid-cols-2 @lg:grid-cols-3" data-testid="strategies-grid">
@@ -190,7 +190,7 @@ export default function StrategyListTab() {
                 <StrategyCard
                   key={strategy.id}
                   strategy={strategy}
-                  onClick={() => setLocation(`/strategy/${strategy.id}`)}
+                  onClick={() => setLocation(`/scenarios/${strategy.id}`)}
                   onDelete={() => setDeleteTarget(strategy)}
                   onDuplicate={() => duplicateMutation.mutate(strategy.id)}
                   onArchive={() => archiveMutation.mutate({ id: strategy.id, archived: true })}
@@ -214,7 +214,7 @@ export default function StrategyListTab() {
                     <StrategyCard
                       key={strategy.id}
                       strategy={strategy}
-                      onClick={() => setLocation(`/strategy/${strategy.id}`)}
+                      onClick={() => setLocation(`/scenarios/${strategy.id}`)}
                       onDelete={() => setDeleteTarget(strategy)}
                       onDuplicate={() => duplicateMutation.mutate(strategy.id)}
                       onUnarchive={() => archiveMutation.mutate({ id: strategy.id, archived: false })}
@@ -237,7 +237,7 @@ export default function StrategyListTab() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle data-testid="text-delete-dialog-title">Delete Strategy</AlertDialogTitle>
+            <AlertDialogTitle data-testid="text-delete-dialog-title">Delete Scenario</AlertDialogTitle>
             <AlertDialogDescription data-testid="text-delete-dialog-description">
               Are you sure you want to delete "{deleteTarget?.title}"? This will permanently remove all actors, states, moves, and simulation data. This action cannot be undone.
             </AlertDialogDescription>
@@ -396,7 +396,7 @@ function CreateStrategyDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent data-testid="dialog-create-strategy">
         <DialogHeader>
-          <DialogTitle data-testid="text-create-dialog-title">New Strategy</DialogTitle>
+          <DialogTitle data-testid="text-create-dialog-title">New Scenario</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div>

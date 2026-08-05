@@ -492,11 +492,11 @@ export async function evaluateMoveWithAgent(
 
       const { getAllTools } = await import("./tool-registry");
       const allTools = await getAllTools();
-      const strategyToolReg = allTools.find(t => t.name === "strategy");
-      if (!strategyToolReg) throw new Error("Strategy tool not found in tool registry");
+      const strategyToolReg = allTools.find(t => t.name === "scenarios");
+      if (!strategyToolReg) throw new Error("Scenarios tool not found in tool registry");
 
       const tools = [{
-        name: "strategy",
+        name: "scenarios",
         description: strategyToolReg.description,
         parameters: {
           type: "object" as const,

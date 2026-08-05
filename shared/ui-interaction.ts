@@ -18,7 +18,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.pipelines.open": { href: "/pipelines" },
   "navigation.goals.open": { href: "/goals" },
   "navigation.decisions.open": { href: "/decisions" },
-  "navigation.strategy.open": { href: "/strategy" },
+  "navigation.scenarios.open": { href: "/scenarios" },
   "navigation.tags.open": { href: "/tags" },
   "navigation.businessModel.open": { href: "/business/model", permission: "system:read" },
   "navigation.advantage.open": { href: "/business/advantage" },
