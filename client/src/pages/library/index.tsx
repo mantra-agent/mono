@@ -70,7 +70,7 @@ function LibraryTopbarBreadcrumbs({ trail, onSelectLibrary }: {
 }) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1 text-sm font-medium text-foreground">
-      <button type="button" className="shrink-0 hover:text-cta" onClick={onSelectLibrary} data-testid="topbar-library-root">Files</button>
+      <button type="button" className="shrink-0 hover:text-cta" onClick={onSelectLibrary} data-testid="topbar-library-root">Library</button>
       {trail.length > 0 && (
         <>
           <span className="shrink-0 text-muted-foreground">/</span>
