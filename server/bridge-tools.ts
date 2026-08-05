@@ -16690,6 +16690,48 @@ const cognitionTools: Record<string, ToolHandler> = {
         return { result: `${all.length} personas:\n${lines.join("\n")}` };
       },
 
+      resolve_toolset: async (a) => {
+        // Evaluate the persona bound as the pure function it is: run the REAL
+        // runtime gate (filterToolsForPersonaBundle) over the full tool catalog,
+        // never a re-derivation of core ∪ bundle. This is the leading, pre-call
+        // gauge — deterministic and knowable before any inference runs.
+        const { filterToolsForPersonaBundle, getToolCatalog, CORE_TOOL_NAMES } = await import("./tool-registry");
+        let persona: import("./file-storage/persona-storage").PersonaEntry | null | undefined;
+        if (a.id) {
+          const { personaStorage } = await import("./file-storage/persona-storage");
+          persona = (await personaStorage.list()).find(p => p.id === Number(a.id));
+          if (!persona) return { result: `Persona ${a.id} not found`, error: true };
+        } else {
+          const { resolveSessionPersona } = await import("./session-persona");
+          persona = await resolveSessionPersona(args._sessionId);
+          if (!persona) return { result: "No persona available.", error: true };
+        }
+        const catalog = getToolCatalog();
+        const bundle = persona.toolBundle ?? [];
+        const resolved = filterToolsForPersonaBundle(catalog, bundle);
+        const resolvedNames = new Set(resolved.map(t => t.name));
+        const core = resolved.filter(t => CORE_TOOL_NAMES.has(t.name)).map(t => t.name);
+        const bundled = resolved.filter(t => !CORE_TOOL_NAMES.has(t.name)).map(t => t.name);
+        const onDemand = catalog.filter(t => !resolvedNames.has(t.name)).map(t => t.name);
+        const header = `**${persona.name}** (id=${persona.id}) — resolved tool set`;
+        if (bundle.length === 0) {
+          return { result: [
+            header,
+            `Tool bundle empty → passthrough: all ${catalog.length} tools load up front (no persona gating in effect).`,
+            `Session authority may still restrict which of these are actually callable.`,
+          ].join("\n") };
+        }
+        return { result: [
+          header,
+          `${resolved.length} resolved = ${core.length} core + ${bundled.length} bundled (of ${catalog.length} total; ${onDemand.length} load on demand via tools.get).`,
+          ``,
+          `Core (${core.length}): ${core.join(", ")}`,
+          `Bundled (${bundled.length}): ${bundled.join(", ")}`,
+          ``,
+          `On-demand (${onDemand.length}): ${onDemand.join(", ")}`,
+        ].join("\n") };
+      },
+
       create_persona: async (a) => {
         if (!a.name) return { result: "Missing persona name", error: true };
         const { personaStorage } = await import("./file-storage/persona-storage");
