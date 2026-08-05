@@ -2079,6 +2079,7 @@ async function resolvePlanningInstructions(): Promise<string> {
     "- Plan when work needs more than ~3 turns, spans systems, touches core architecture, needs research, or is expensive to reverse. Skip for single clear actions or brainstorming.",
     "- Before planning, resolve silently: goal/definition-of-done, assumptions, research needed, domain docs to load, simplest approach, and any genuine forks worth asking about.",
     "- Order steps by dependency; each step independently executable in a child session; begin execution immediately after creation.",
+    "- Every step must ship a durable, verifiable deliverable produced by at least one successful tool call — a merged PR, a written Library page or spec, a persisted artifact. A step whose instruction is 'write a paragraph and stop' or that only emits prose cannot complete: session end is not ship evidence, and the executor's hollow-completion guard will fail it. If a step's output is analysis, name where it gets persisted.",
     "- Surface Ray-facing decision artifacts to Home/Inbox on completion; pause abandoned plans with a note rather than leaving them running.",
   ].join("\n");
 }
