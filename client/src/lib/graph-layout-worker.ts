@@ -192,10 +192,12 @@ function start(message: InitMessage) {
     .force("y", forceY<LayoutNode>(0).strength(0.0015))
     .force("z", forceZ<LayoutNode>(0).strength(0.0015))
     .alphaMin(0.002)
-    // ~520 single-tick frames to settle. At a 60 Hz physics clock that is ~8.7s of
-    // continuous motion — same wall-clock settle as the old 2-ticks-per-33ms loop.
-    .alphaDecay(1 - Math.pow(0.002, 1 / 520))
-    .velocityDecay(0.3)
+    // ~240 single-tick frames to settle (~4s at 60 Hz). The prestabilize burst spends
+    // the first tens of ticks silently before admission, so visible motion is ~1.5-2.5s.
+    .alphaDecay(1 - Math.pow(0.002, 1 / 240))
+    // Damp harder than d3's 0.4 default so residual motion stops undulating instead of
+    // springing around equilibrium after the graph is roughly placed.
+    .velocityDecay(0.45)
     .stop();
 
   // Silent burst: leave the random cloud before the main thread ever paints nodes.

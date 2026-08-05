@@ -403,7 +403,7 @@ function syncCameraClippingPlanes(camera: THREE.PerspectiveCamera, target: THREE
   camera.updateProjectionMatrix();
 }
 
-function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, nodes: SceneNode[]) {
+function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, nodes: SceneNode[], paddingFactor = 1.16) {
   if (nodes.length === 0) return;
   const bounds = new THREE.Box3();
   let maxNodeRadius = 0;
@@ -413,7 +413,7 @@ function fitCamera(camera: THREE.PerspectiveCamera, controls: OrbitControls, nod
   });
   bounds.expandByScalar(maxNodeRadius);
   const sphere = bounds.getBoundingSphere(new THREE.Sphere());
-  const distance = Math.max(30, sphere.radius / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.16);
+  const distance = Math.max(30, sphere.radius / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * paddingFactor);
   const direction = camera.position.clone().sub(controls.target).normalize();
   if (direction.lengthSq() === 0) direction.set(0.62, 0.36, 1);
   controls.target.copy(sphere.center);
@@ -795,6 +795,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     // silent prestabilize burst. Labels stay closed until the layout rests (`end`).
     let layoutAdmitted = false;
     let layoutRested = false;
+    // Once the user grabs the camera we never auto-frame again — no yank mid-interaction.
+    let userHasAdjustedCamera = false;
     let layoutSegmentStart = 0;
     let layoutSegmentDuration = LAYOUT_INTERP_DEFAULT_MS;
     let lastLayoutPostAt = 0;
@@ -1773,6 +1775,19 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
         sortNodeInstancesByDepth();
         syncLinkVisibility();
         syncActivityRunState();
+        // The mount-time fit ran on an empty set — admission hides every node until the
+        // prestabilized cloud arrives here. Frame the graph now, on first paint, with
+        // extra padding so the remaining settle expansion never crops it. This is the
+        // only automatic camera move: nothing re-fits at rest, so there is no late
+        // camera motion after launch. Skip if the user already grabbed the camera.
+        if (!userHasAdjustedCamera) {
+          fitCamera(
+            camera,
+            controls,
+            sceneNodes.filter((_node, index) => isNodeVisible(index)),
+            1.4,
+          );
+        }
       }
       // Streaming posts track the real inter-post gap. The final `end` segment uses a
       // longer ease-out so the graph settles instead of slamming into the last solve.
@@ -2094,6 +2109,7 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function handleControlsStart() {
       cameraInteractionActive = true;
+      userHasAdjustedCamera = true;
       if (pointerFrame !== 0) cancelAnimationFrame(pointerFrame);
       pointerFrame = 0;
       if (hoveredIndex !== null) {
