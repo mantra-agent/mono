@@ -1513,26 +1513,17 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
-  agent_profile: {
-    description: "Read or update the agent's own profile — name, metadata, and relationship state. Actions: get (read current profile), update (change agentName or store metadata about self). The agent can rename itself using this tool.",
-    category: "cognition",
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["get", "update"], description: "Action to perform" },
-        agentName: { type: "string", description: "New name for the agent (for update, 1-80 chars)" },
-        metadata: { type: "object", description: "Metadata to merge into agent profile (for update)" },
-      },
-      required: ["action"],
-    },
-  },
   cognition: {
-    description: "Manage Agent's cognitive state — emotional states and personas. Actions: set_emotion (record new state), get_emotion (current), emotion_history (recent), get_persona (current active), list_personas, resolve_toolset (preview the exact tools a persona loads up front vs on demand), create_persona, update_persona. Use the `orient` tool to activate/switch personas.",
+    description: "Manage Agent's cognitive state, self-observations, personas, and own profile. Actions: set_emotion (record new state), get_emotion (current), emotion_history (recent), observe (record a constrained metacognitive observation), get_profile, update_profile, get_persona (current active), list_personas, resolve_toolset (preview the exact tools a persona loads up front vs on demand), create_persona, update_persona. Use the `orient` tool to activate/switch personas.",
     category: "cognition",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["set_emotion", "get_emotion", "emotion_history", "get_persona", "list_personas", "resolve_toolset", "create_persona", "update_persona"], description: "Action to perform" },
+        action: { type: "string", enum: ["set_emotion", "get_emotion", "emotion_history", "observe", "get_profile", "update_profile", "get_persona", "list_personas", "resolve_toolset", "create_persona", "update_persona"], description: "Action to perform" },
+        observation_type: { type: "string", enum: ["pattern", "gap", "change", "connection", "opportunity"], description: "Observation type (for observe)" },
+        observation: { type: "string", description: "Specific, evidence-based metacognitive observation in 1–3 short sentences (for observe)" },
+        agentName: { type: "string", description: "New name for the agent (for update_profile, 1-80 chars)" },
+        metadata: { type: "object", description: "Metadata to merge into the agent profile (for update_profile)" },
         state_name: { type: "string", description: "Emotional state name (for set_emotion, e.g., 'focused', 'curious', 'frustrated')" },
         valence: { type: "number", description: "Emotional valence -1 (negative) to 1 (positive) (for set_emotion)" },
         arousal: { type: "number", description: "Emotional arousal 0 (calm) to 1 (activated) (for set_emotion)" },
@@ -1551,21 +1542,7 @@ export const TOOLS: Record<string, ToolMeta> = {
       },
       required: ["action"],
     },
-    whenToUse: "When you want to set or query your emotional state or manage persisted persona configuration, including context_sections and tool_bundle. Use set_emotion when your cognitive state shifts. Use the `orient` tool to switch personas.",
-  },
-  observe: {
-    description: "Record an observation about your own cognition. Not what you thought, but what you notice about how you thought. What pattern fired? What gap appeared? What changed? What connection formed? What's now possible? 1-3 short sentences MAX. If it doesn't pass 'would this change how I act next time?', don't record it.",
-    category: "cognition",
-
-    parameters: {
-      type: "object",
-      properties: {
-        type: { type: "string", enum: ["pattern", "gap", "change", "connection", "opportunity"], description: "Observation type: pattern (what repeats), gap (expected X found Y), change (was one way now different), connection (how things link), opportunity (what's now possible)" },
-        content: { type: "string", description: "The observation to record. Should be specific, evidence-based, and non-redundant with recent observations." },
-      },
-      required: ["type", "content"],
-    },
-    whenToUse: "When you notice something about how you reasoned, decided, or acted — a pattern, a gap between expectation and reality, a shift, a connection between ideas, or an emerging opportunity. Metacognition, not reasoning.",
+    whenToUse: "When you want to manage cognitive state, record a constrained metacognitive observation, read or update your own profile, or manage persisted persona configuration. Use set_emotion when your cognitive state shifts. Use the `orient` tool to switch personas.",
   },
   finance: {
     description: "Query financial data from connected bank accounts.",
@@ -1803,7 +1780,7 @@ export const TOOLS: Record<string, ToolMeta> = {
  */
 export const TOOL_ALIASES: Record<string, string> = {
   projects: "work",        // Domain 2: Work → Projects
-  observations: "observe", // Domain 6: Observe → Observations
+  observations: "cognition", // Domain 6 compatibility → canonical Cognition
   create: "content",       // Domain 10: Content → Create
 };
 
@@ -2006,7 +1983,6 @@ export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "orient",
   "question",
   "cognition",
-  "observe",
   "memory",
   "goals",
   "tasks",
