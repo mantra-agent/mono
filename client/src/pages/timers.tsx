@@ -88,6 +88,33 @@ const log = createLogger("Timers");
 
 type TimerItem = TimerWithNextRun;
 
+// Ordering from most frequent to least frequent for the Recurring section sort.
+const FREQUENCY_RANK: Record<ScheduleFrequency, number> = {
+  every_x_minutes: 0,
+  every_x_hours: 1,
+  daily: 2,
+  weekly: 3,
+  every_x_weeks: 4,
+  monthly: 5,
+  quarterly: 6,
+  annually: 7,
+  custom: 8,
+  once: 9,
+};
+
+// A timer's sort key is its most frequent schedule (lowest rank).
+function timerFrequencyRank(timer: TimerItem): number {
+  return timer.schedules.reduce(
+    (min, s) => Math.min(min, FREQUENCY_RANK[s.frequency] ?? 99),
+    99,
+  );
+}
+
+// "Once" timers are non-reminders whose every schedule is one-shot.
+function isOnceTimer(timer: TimerItem): boolean {
+  return timer.schedules.length > 0 && timer.schedules.every((s) => s.frequency === "once");
+}
+
 
 const DAYS: { value: DayOfWeek; label: string; short: string }[] = [
   { value: "mon", label: "Monday", short: "Mon" },
@@ -966,7 +993,11 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
       return tokens.every((token) => searchableText.includes(token));
     });
   }, [allTimers, searchQuery, skillNameMap]);
-  const timers = filteredTimers.filter((timer) => timer.type !== "reminder");
+  const nonReminderTimers = filteredTimers.filter((timer) => timer.type !== "reminder");
+  const recurringTimers = nonReminderTimers
+    .filter((timer) => !isOnceTimer(timer))
+    .sort((a, b) => timerFrequencyRank(a) - timerFrequencyRank(b));
+  const onceTimers = nonReminderTimers.filter(isOnceTimer);
   const reminders = filteredTimers.filter((timer) => timer.type === "reminder");
 
   const toggleMutation = useMutation({
@@ -1090,7 +1121,7 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
     );
   }
 
-  const hasSearchResults = timers.length > 0 || reminders.length > 0;
+  const hasSearchResults = recurringTimers.length > 0 || onceTimers.length > 0 || reminders.length > 0;
 
   return (
     <div className="min-w-0 overflow-x-hidden bg-background p-2 text-foreground">
@@ -1152,10 +1183,17 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
         ) : (
           <>
             <TimerTreeSection
-              label="Timers"
-              timers={timers}
-              emptyLabel="No timers yet."
+              label="Recurring"
+              timers={recurringTimers}
+              emptyLabel="No recurring timers yet."
               renderTimer={renderTimer}
+            />
+            <TimerTreeSection
+              label="Once"
+              timers={onceTimers}
+              emptyLabel="No one-time timers."
+              renderTimer={renderTimer}
+              defaultOpen={false}
             />
             <TimerTreeSection
               label="Reminders"
