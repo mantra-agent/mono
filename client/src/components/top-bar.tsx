@@ -64,18 +64,24 @@ function getPageTitle(pathname: string) {
 }
 
 function PageTitle({ title, customContent, href, active }: { title: string; customContent?: ReactNode; href?: string; active?: boolean }) {
+  const titleClassName = cn(
+    "min-w-0 flex-1 truncate text-sm font-medium text-foreground",
+    active && "text-active animate-pulse",
+  );
+
   if (customContent) {
     return (
-      <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" data-testid="top-bar-page-title" title={title}>
+      <div className={titleClassName} data-testid="top-bar-page-title" title={title}>
         {customContent}
       </div>
     );
   }
+
   if (href) {
     return (
       <a
         href={href}
-        className="min-w-0 flex-1 truncate text-sm font-medium text-foreground transition-colors hover:text-cta"
+        className={cn(titleClassName, "transition-colors hover:text-cta")}
         data-testid="top-bar-page-title"
         title={title}
       >
@@ -85,10 +91,7 @@ function PageTitle({ title, customContent, href, active }: { title: string; cust
   }
   return (
     <div
-      className={cn(
-        "min-w-0 flex-1 truncate text-sm font-medium text-foreground",
-        active && "text-active animate-status-flash",
-      )}
+      className={titleClassName}
       data-testid="top-bar-page-title"
       title={title}
     >
