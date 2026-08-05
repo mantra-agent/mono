@@ -16655,6 +16655,16 @@ const cognitionTools: Record<string, ToolHandler> = {
     const action = args.action;
     if (!action) return { result: "Missing action parameter", error: true };
 
+    // Canonical model-visible home for self-observation and profile state. Delegate
+    // to existing handlers so validation, provenance, and profile permissions stay
+    // at their deterministic per-action authority boundaries.
+    if (action === "observe") {
+      return actionTools.observe({ ...args, type: args.observation_type, content: args.observation });
+    }
+    if (action === "get_profile" || action === "update_profile") {
+      return utilityTools.agent_profile({ ...args, action: action === "get_profile" ? "get" : "update" });
+    }
+
     const sub: Record<string, (a: Record<string, any>) => Promise<ToolHandlerResult>> = {
       set_emotion: async (a) => {
         const { fileEmotionalStateStorage } = await import("./file-storage/emotional-state");
