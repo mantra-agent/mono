@@ -102,12 +102,88 @@ const FREQUENCY_RANK: Record<ScheduleFrequency, number> = {
   once: 9,
 };
 
-// A timer's sort key is its most frequent schedule (lowest rank).
+// Approximate interval of a single schedule in minutes, used to sort the
+// Recurring section by true cadence so a 3h timer ranks above an 8h timer even
+// though both share the every_x_hours frequency.
+function scheduleIntervalMinutes(schedule: Schedule): number {
+  switch (schedule.frequency) {
+    case "every_x_minutes":
+      return schedule.interval || 30;
+    case "every_x_hours":
+      return (schedule.interval || 1) * 60;
+    case "daily":
+      return 1440;
+    case "weekly":
+      return 10080;
+    case "every_x_weeks":
+      return (schedule.interval || 1) * 10080;
+    case "monthly":
+      return 43200;
+    case "quarterly":
+      return 129600;
+    case "annually":
+      return 525600;
+    case "custom":
+      return Number.MAX_SAFE_INTEGER - 1;
+    case "once":
+      return Number.MAX_SAFE_INTEGER;
+    default:
+      return Number.MAX_SAFE_INTEGER;
+  }
+}
+
+// A timer's sort key is its most frequent schedule: first by cadence bucket
+// (FREQUENCY_RANK), then by the shortest actual interval within that bucket.
 function timerFrequencyRank(timer: TimerItem): number {
   return timer.schedules.reduce(
     (min, s) => Math.min(min, FREQUENCY_RANK[s.frequency] ?? 99),
     99,
   );
+}
+
+// Shortest actual interval across a timer's schedules, in minutes.
+function timerIntervalMinutes(timer: TimerItem): number {
+  return timer.schedules.reduce(
+    (min, s) => Math.min(min, scheduleIntervalMinutes(s)),
+    Number.MAX_SAFE_INTEGER,
+  );
+}
+
+// Compact frequency badge shown before a timer's name, e.g. "30 Min", "3 Hrs".
+function frequencyBadge(timer: TimerItem): string | null {
+  if (timer.schedules.length === 0) return null;
+  // Pick the most frequent schedule (shortest interval) to summarize.
+  const s = timer.schedules.reduce((best, cur) =>
+    scheduleIntervalMinutes(cur) < scheduleIntervalMinutes(best) ? cur : best,
+  );
+  switch (s.frequency) {
+    case "every_x_minutes":
+      return `${s.interval || 30} Min`;
+    case "every_x_hours": {
+      const h = s.interval || 1;
+      return `${h} ${h === 1 ? "Hr" : "Hrs"}`;
+    }
+    case "daily":
+      return "Daily";
+    case "weekly":
+      return "Weekly";
+    case "every_x_weeks": {
+      const w = s.interval || 1;
+      return `${w} ${w === 1 ? "Wk" : "Wks"}`;
+    }
+    case "monthly":
+      return "Monthly";
+    case "quarterly":
+      return "Quarterly";
+    case "annually":
+      return "Yearly";
+    case "custom":
+      return "Custom";
+    case "once":
+      return "Once";
+    default:
+      return null;
+  }
 }
 
 // "Once" timers are non-reminders whose every schedule is one-shot.
@@ -530,6 +606,17 @@ function TimerTreeRow({
               : <Circle className="h-3.5 w-3.5 text-muted-foreground/50" />}
           </button>
           <TypeIcon className="h-3.5 w-3.5 shrink-0" />
+          {(() => {
+            const badge = frequencyBadge(timer);
+            return badge ? (
+              <span
+                className="shrink-0 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                data-testid={`badge-frequency-${timer.id}`}
+              >
+                {badge}
+              </span>
+            ) : null;
+          })()}
           <span className="min-w-0 flex-1 truncate pr-14" data-testid={`text-name-${timer.id}`}>
             {timer.name}
           </span>
@@ -996,7 +1083,12 @@ export function TimersContent({ embedded }: { embedded?: boolean } = {}) {
   const nonReminderTimers = filteredTimers.filter((timer) => timer.type !== "reminder");
   const recurringTimers = nonReminderTimers
     .filter((timer) => !isOnceTimer(timer))
-    .sort((a, b) => timerFrequencyRank(a) - timerFrequencyRank(b));
+    .sort(
+      (a, b) =>
+        timerFrequencyRank(a) - timerFrequencyRank(b) ||
+        timerIntervalMinutes(a) - timerIntervalMinutes(b) ||
+        a.name.localeCompare(b.name),
+    );
   const onceTimers = nonReminderTimers.filter(isOnceTimer);
   const reminders = filteredTimers.filter((timer) => timer.type === "reminder");
 
