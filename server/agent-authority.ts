@@ -18,6 +18,20 @@ export type TrustedEngineeringDelegation = "plan" | "workflow" | "child";
 export interface AgentAuthorityContext {
   origin?: ToolInvocationOrigin;
   trustedDelegation?: TrustedEngineeringDelegation;
+  /**
+   * Attended-human provenance: there is an interactive human at the root of this
+   * run's spawn chain (an unbroken series of session.spawn_child spawns up to a
+   * `user` session). Such an autonomous child executes on behalf of a human who
+   * is in the loop, so for authority purposes it is treated like an interactive
+   * session — origin-based containment (the tier-2 external-effect block and the
+   * engineering-write delegation gate) is lifted, bounded by the principal's own
+   * permissions and the model-forbidden human gates, which always still apply.
+   *
+   * Derived fresh from the authoritative session tree at run-start and NEVER
+   * persisted or model-provided, so it cannot leak to a genuinely unattended run
+   * (timer, hook, scheduled skill, plan, or workflow), which keeps containment.
+   */
+  attended?: boolean;
   activity?: string;
   /** Canonical DB skill row ID, resolved by the autonomous runner. Never model-provided. */
   skillId?: string;
@@ -111,6 +125,10 @@ function isTrustedEngineeringDelegation(context: AgentAuthorityContext): boolean
   const userInteractiveTransport = context.origin === "interactive"
     || (context.origin === "voice" && Boolean(context.sessionId));
   return userInteractiveTransport
+    // An attended child inherits the interactive human's authority. Still ceiling-
+    // bounded: engineering writes require the build:write permission checked
+    // upstream, so attendedness alone never grants an unpermitted capability.
+    || context.attended === true
     || context.trustedDelegation === "plan"
     || context.trustedDelegation === "workflow"
     || context.trustedDelegation === "child";
@@ -169,7 +187,11 @@ export function authorizeToolInvocation(
   }
 
   const sideEffectTier = getSideEffectTier(toolName, action);
-  if (["autonomous", "timer", "hook"].includes(origin) && sideEffectTier === 2) {
+  // Origin-based containment for external effects applies only to UNATTENDED runs.
+  // An attended child (interactive human at the spawn-chain root) is treated like
+  // an interactive session here; the model-forbidden human gates above still block
+  // the most sensitive actions (twitter post, meeting mutations) for it regardless.
+  if (["autonomous", "timer", "hook"].includes(origin) && sideEffectTier === 2 && !context.attended) {
     const key = `${toolName}:${action || "*"}`;
     const wildcardKey = `${toolName}:*`;
     const trustedEngineeringWrite = isTrustedEngineeringDelegation(context)

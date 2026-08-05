@@ -540,18 +540,51 @@ export function getRegisteredSkillIds(): string[] {
   return Object.keys(SKILL_RUN_CONFIGS);
 }
 
+/**
+ * Attended-human provenance check for an autonomous child run.
+ *
+ * Returns true iff there is an UNBROKEN chain of interactive session.spawn_child
+ * spawns from this session up to an interactive human (`sessionType === "user"`)
+ * session. Such a child runs on behalf of a human who is in the loop at the root,
+ * so it inherits that human's authority for external effects and engineering
+ * writes (ceiling-bounded by the principal's permissions and the model-forbidden
+ * human gates, which always still apply).
+ *
+ * Any break in the chain — a plan-executor, workflow-executor, timer, hook, or
+ * scheduled-skill ancestor — makes the run genuinely unattended and keeps
+ * origin-based containment. Derived fresh from the authoritative session tree,
+ * fail-closed on any missing data, depth-capped, and NEVER persisted or
+ * model-provided, so an unattended run can never acquire attended authority.
+ */
+async function isAttendedSpawn(
+  conv: { spawnerTool?: string; parentSessionId?: string; sessionType?: string } | undefined,
+): Promise<boolean> {
+  let cursor = conv;
+  for (let depth = 0; cursor && depth < 8; depth++) {
+    const st = cursor.spawnerTool;
+    if (st !== "session.spawn_child" && st !== "session.spawn_child.engineering") return false;
+    if (!cursor.parentSessionId) return false;
+    const parent = await chatFileStorage.getSession(cursor.parentSessionId).catch(() => undefined);
+    if (!parent) return false;
+    if (parent.sessionType === "user") return true;
+    cursor = parent;
+  }
+  return false;
+}
+
 async function getSkillTools(
   activity: ActivityId,
   sessionKey: string,
   sessionId: string,
   authoritySkillId?: string,
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation,
+  attended?: boolean,
 ): Promise<{
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   toolExecutor: (name: string, args: Record<string, unknown>) => Promise<import("./agent-executor").ToolExecutorResult>;
 }> {
   const { filterToolSchemasForAuthority } = require("./agent-authority") as typeof import("./agent-authority");
-  const authority = { origin: "autonomous" as const, trustedDelegation, activity, skillId: authoritySkillId, sessionKey, sessionId };
+  const authority = { origin: "autonomous" as const, trustedDelegation, attended, activity, skillId: authoritySkillId, sessionKey, sessionId };
   const principal = getCurrentPrincipal();
   if (!principal) throw new Error("Skill tool discovery requires an explicit user principal");
   const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
@@ -1692,7 +1725,11 @@ export async function triggerResponseOnChildSession(sessionId: string): Promise<
       : conv.spawnerTool === "session.spawn_child.engineering"
         ? "child" as const
         : undefined;
-  const { tools, toolExecutor } = await getSkillTools(ACTIVITY_WORK, sessionKey, sessionId, undefined, trustedDelegation);
+  // A child spawned from an interactive human session inherits that human's
+  // authority for external effects and engineering writes. Genuinely unattended
+  // runs (plan/workflow/timer/hook/skill roots) resolve to false and stay contained.
+  const attended = await isAttendedSpawn(conv);
+  const { tools, toolExecutor } = await getSkillTools(ACTIVITY_WORK, sessionKey, sessionId, undefined, trustedDelegation, attended);
 
   let finalStatus: "succeeded" | "failed" = "succeeded";
   let finalSummary = "Child session response completed";
