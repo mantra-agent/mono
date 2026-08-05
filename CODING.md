@@ -18,6 +18,8 @@ The canonical persisted grammar is `@type:id`. The current shared registry inclu
 
 The composer supports both `@` and `#` as mention triggers. `#` biases toward work references such as tasks, projects, and goals, but selected mentions still insert canonical `@type:id` text. Do not introduce persisted `#type:id` grammar unless `shared/reference-parser.ts` is deliberately extended and every renderer/storage surface is updated with it.
 
+Do not wrap reference tokens in markdown emphasis (`**@page:id**`, `*@person:id*`, `_@goal:id_`, `~@task:id~`). Chips are already visually distinct, so emphasis adds nothing, and an emphasis marker written directly against a token abuts the id — the parser now trims trailing `* _ ~`, but the correct authoring habit is to leave chips unadorned. Emphasize surrounding words instead of the chip itself.
+
 Legacy forms like `[page:slug]`, `[person:id]`, `[goal:id]`, `[spec:slug]`, and `Intention ID: <id>` are compatibility only, not the target grammar.
 
 In product/UI work, “reference” means the existing canonical reference system, component, or pattern. Do not create a parallel reference-like block unless the shared system cannot represent the use case; state that limitation before introducing another pattern.

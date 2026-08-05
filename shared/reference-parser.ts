@@ -39,7 +39,13 @@ function parseCanonical(text: string, start: number, includeUnknownTypes = false
   const idStart = cursor;
   while (cursor < text.length && !ID_STOP.test(text[cursor])) cursor++;
   let id = text.slice(idStart, cursor);
-  while (/[.,;:!?)]$/.test(id)) {
+  // Strip trailing sentence punctuation and markdown emphasis/strikethrough
+  // markers (* _ ~) that abut the reference. Because these markers are not id
+  // stop characters, a closing `**`/`_`/`~` written directly after a reference
+  // (e.g. `**@page:abc**`) would otherwise be absorbed into the id — breaking
+  // both chip resolution and the surrounding emphasis. Trimming only from the
+  // end preserves interior characters (e.g. composite `a~b` ids).
+  while (/[.,;:!?)*_~]$/.test(id)) {
     id = id.slice(0, -1);
     cursor--;
   }
