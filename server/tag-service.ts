@@ -14,12 +14,8 @@ import type { Principal } from "./principal";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { pool } from "./db";
 import { createLogger } from "./log";
-import { getSetting } from "./system-settings";
 
 const log = createLogger("TagService");
-const LEGACY_TAG_INDEX_KEY = "system.tags.index";
-const LEGACY_ADOPTION_KEY = "legacy-json-v1";
-
 interface ScopedIdentity {
   accountId: string;
   userId: string;
@@ -40,11 +36,6 @@ interface AssignmentRow extends QueryResultRow {
   object_id: string;
   object_title: string;
   created_at: Date | string;
-}
-
-interface LegacyTagIndex {
-  tags?: Record<string, Partial<Tag>>;
-  usages?: Record<string, TagUsageEntry[]>;
 }
 
 export function normalizeTagSlug(value: string): string {
@@ -119,82 +110,6 @@ export class TagService {
     }
   }
 
-  private async ensureLegacyAdopted(principal: Principal): Promise<void> {
-    const identity = requireUserIdentity(principal);
-    const migration = await pool.query(
-      `SELECT status FROM tag_migrations WHERE account_id = $1 AND migration_key = $2`,
-      [identity.accountId, LEGACY_ADOPTION_KEY],
-    );
-    if (migration.rowCount) return;
-
-    const legacy = await getSetting<LegacyTagIndex>(LEGACY_TAG_INDEX_KEY);
-    await this.withMutation("adopt_legacy_registry", principal, async (client, scoped) => {
-      const existing = await client.query(
-        `SELECT status FROM tag_migrations WHERE account_id = $1 AND migration_key = $2 FOR UPDATE`,
-        [scoped.accountId, LEGACY_ADOPTION_KEY],
-      );
-      if (existing.rowCount) return;
-
-      if (!legacy || !legacy.tags || Object.keys(legacy.tags).length === 0) {
-        await this.recordMigration(client, scoped.accountId, "skipped", { reason: "empty" });
-        return;
-      }
-
-      const ownership = await client.query<{ account_id: string; owner_user_id: string | null }>(
-        `SELECT id AS account_id, owner_user_id FROM accounts ORDER BY created_at ASC`,
-      );
-      if (
-        ownership.rows.length !== 1 ||
-        ownership.rows[0].account_id !== scoped.accountId ||
-        ownership.rows[0].owner_user_id !== scoped.userId
-      ) {
-        await this.recordMigration(client, scoped.accountId, "ambiguous", {
-          reason: "legacy_registry_has_no_owner",
-          accountCount: ownership.rows.length,
-        });
-        log.warn("legacy Tag registry adoption skipped because ownership is ambiguous", {
-          accountId: scoped.accountId,
-          accountCount: ownership.rows.length,
-        });
-        return;
-      }
-
-      let tagCount = 0;
-      let assignmentCount = 0;
-      for (const [legacySlug, legacyTag] of Object.entries(legacy.tags)) {
-        const slug = normalizeTagSlug(legacyTag.slug || legacySlug);
-        if (!slug) continue;
-        const label = normalizeTagLabel(legacyTag.label || slug);
-        const tagId = await this.upsertTagRow(client, scoped, slug, label, legacyTag.color ?? null);
-        tagCount += 1;
-        for (const usage of legacy.usages?.[legacySlug] || legacy.usages?.[slug] || []) {
-          await this.insertAssignment(client, scoped, tagId, usage.entityType, usage.entityId, usage.entityTitle, "legacy_registry");
-          assignmentCount += 1;
-        }
-      }
-      await this.recordMigration(client, scoped.accountId, "completed", { tagCount, assignmentCount });
-      log.info("legacy Tag registry adopted into canonical store", {
-        accountId: scoped.accountId,
-        tagCount,
-        assignmentCount,
-      });
-    });
-  }
-
-  private async recordMigration(
-    client: PoolClient,
-    accountId: string,
-    status: "completed" | "skipped" | "ambiguous",
-    detail: Record<string, unknown>,
-  ): Promise<void> {
-    await client.query(
-      `INSERT INTO tag_migrations(account_id, migration_key, status, detail)
-       VALUES ($1, $2, $3, $4::jsonb)
-       ON CONFLICT (account_id, migration_key) DO NOTHING`,
-      [accountId, LEGACY_ADOPTION_KEY, status, JSON.stringify(detail)],
-    );
-  }
-
   private async queryTagRows(identity: ScopedIdentity, slug?: string): Promise<TagRow[]> {
     const params: unknown[] = [identity.accountId, identity.userId];
     let slugClause = "";
@@ -216,7 +131,6 @@ export class TagService {
   }
 
   async getIndex(principal = this.principal()): Promise<TagIndex> {
-    await this.ensureLegacyAdopted(principal);
     const identity = requireUserIdentity(principal);
     const tags = await this.queryTagRows(identity);
     const index: TagIndex = { tags: {}, usages: {}, coOccurrences: [] };
@@ -230,14 +144,12 @@ export class TagService {
   }
 
   async listTags(principal = this.principal()): Promise<TagWithUsage[]> {
-    await this.ensureLegacyAdopted(principal);
     const identity = requireUserIdentity(principal);
     const rows = await this.queryTagRows(identity);
     return Promise.all(rows.map(async row => ({ ...rowToTag(row), usages: await this.getUsage(row.slug, principal) })));
   }
 
   async getTag(slug: string, principal = this.principal()): Promise<TagWithUsage | null> {
-    await this.ensureLegacyAdopted(principal);
     const identity = requireUserIdentity(principal);
     const [row] = await this.queryTagRows(identity, slug);
     if (!row) return null;
@@ -246,7 +158,6 @@ export class TagService {
   }
 
   async searchTags(query: string, limit = 20, principal = this.principal()): Promise<TagSearchResult[]> {
-    await this.ensureLegacyAdopted(principal);
     const identity = requireUserIdentity(principal);
     const boundedLimit = Math.min(Math.max(limit, 1), 50);
     const normalizedQuery = query.trim().toLowerCase();
@@ -281,7 +192,6 @@ export class TagService {
   }
 
   async createTag(input: CreateTagInput, principal = this.principal()): Promise<Tag> {
-    await this.ensureLegacyAdopted(principal);
     return this.withMutation("create", principal, async (client, identity) => {
       const slug = normalizeTagSlug(input.slug || input.label);
       const label = normalizeTagLabel(input.label);
@@ -294,7 +204,6 @@ export class TagService {
   }
 
   async updateTag(slug: string, input: UpdateTagInput, principal = this.principal()): Promise<Tag | null> {
-    await this.ensureLegacyAdopted(principal);
     return this.withMutation("update", principal, async (client, identity) => {
       const tag = await this.resolveTag(client, identity, slug);
       if (!tag) return null;
@@ -331,7 +240,6 @@ export class TagService {
   }
 
   async deleteTag(slug: string, principal = this.principal()): Promise<boolean> {
-    await this.ensureLegacyAdopted(principal);
     return this.withMutation("delete", principal, async (client, identity) => {
       const tag = await this.resolveTag(client, identity, slug);
       if (!tag) return false;
@@ -344,7 +252,6 @@ export class TagService {
   }
 
   async resolveTagSlug(input: string, principal = this.principal()): Promise<string | null> {
-    await this.ensureLegacyAdopted(principal);
     const identity = requireUserIdentity(principal);
     const client = await pool.connect();
     try {
@@ -371,7 +278,6 @@ export class TagService {
     principal = this.principal(),
     source: "explicit" | "legacy_array" | "legacy_registry" | "migration" = "explicit",
   ): Promise<void> {
-    await this.ensureLegacyAdopted(principal);
     await this.withMutation("assign", principal, async (client, identity) => {
       let tag = await this.resolveTag(client, identity, tagSlug);
       if (!tag) {
@@ -439,7 +345,6 @@ export class TagService {
     tags: string[],
     principal = this.principal(),
   ): Promise<string[]> {
-    await this.ensureLegacyAdopted(principal);
     return this.withMutation("replace_entity_tags", principal, async (client, identity) => {
       await client.query(
         `DELETE FROM tag_assignments WHERE account_id = $1 AND owner_user_id = $2 AND object_type = $3 AND object_id = $4`,
@@ -462,7 +367,6 @@ export class TagService {
   }
 
   async mergeTags(sourceSlug: string, targetSlug: string, principal = this.principal()): Promise<Tag | null> {
-    await this.ensureLegacyAdopted(principal);
     return this.withMutation("merge", principal, async (client, identity) => {
       const source = await this.resolveTag(client, identity, sourceSlug);
       const target = await this.resolveTag(client, identity, targetSlug);
