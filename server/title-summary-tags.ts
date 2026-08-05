@@ -6,6 +6,8 @@ import { sanitizeSummary, validateSummary } from "./utils/sanitize-summary";
 import { contextBuilder } from "./context-builder";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
+import { buildTagGuidance } from "@shared/tag-taxonomy";
+import { gateProposedTags } from "./tag-proposal";
 
 const log = createLogger("TitleSummaryTags");
 const SINGLE_PASS_LIMIT = 30_000;
@@ -118,14 +120,11 @@ function parseSummarizationResponse(
 async function singlePassSummarize(
   entry: TitleSummaryTagsInput,
 ): Promise<TitleSummaryTagsResult> {
-  let existingTagHint = "";
+  let existingTagHint = buildTagGuidance([]);
   try {
     const { tagRegistry } = await import("./file-storage/tags");
     const existing = await tagRegistry.listTags();
-    if (existing.length > 0) {
-      const topTags = existing.slice(0, 50).map((tag) => tag.slug);
-      existingTagHint = `\n\nExisting tags in the system (prefer reusing these when they fit): ${topTags.join(", ")}`;
-    }
+    existingTagHint = buildTagGuidance(existing.slice(0, 50).map((tag) => tag.slug));
   } catch (error) {
     log.warn("tag hint lookup failed", error);
   }
@@ -269,9 +268,12 @@ async function progressiveSummarize(
 export async function generateTitleSummaryTags(
   entry: TitleSummaryTagsInput,
 ): Promise<TitleSummaryTagsResult> {
-  if (entry.content.length > SINGLE_PASS_LIMIT) {
+  const useProgressive = entry.content.length > SINGLE_PASS_LIMIT;
+  if (useProgressive) {
     log.debug(`content exceeds ${SINGLE_PASS_LIMIT} chars; using progressive summarization`);
-    return progressiveSummarize(entry);
   }
-  return singlePassSummarize(entry);
+  const result = useProgressive
+    ? await progressiveSummarize(entry)
+    : await singlePassSummarize(entry);
+  return { ...result, tags: gateProposedTags(result.tags).tags };
 }

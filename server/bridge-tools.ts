@@ -1186,13 +1186,16 @@ async function handlePeopleUpdate(args: Record<string, any>): Promise<ToolHandle
   let ignoredTags: { tag: string; reason: string }[] = [];
   if (Array.isArray(args.tags)) {
     const existing = await peopleStorage.getPerson(resolved.id);
-    const filtered = peopleMetadata.filterRedundantTags({
-      tags: args.tags.filter((t: unknown): t is string => typeof t === "string"),
-      companyName: updates.company ?? existing?.company,
-      role: updates.role ?? existing?.role,
-    });
-    updates.tags = filtered.savedTags;
-    ignoredTags = filtered.ignoredTags;
+    const { gateProposedTags } = await import("./tag-proposal");
+    const gated = gateProposedTags(
+      args.tags.filter((t: unknown): t is string => typeof t === "string"),
+      {
+        companyName: updates.company ?? existing?.company,
+        role: updates.role ?? existing?.role,
+      },
+    );
+    updates.tags = gated.tags;
+    ignoredTags = gated.ignored;
   }
 
   if (!requestedNewName && Object.keys(updates).length === 0 && !companyIdValue) {
@@ -1259,11 +1262,11 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
     const check = peopleMetadata.validateProfessionalRelations(professionalRelations, "agent");
     if (!check.ok) return { result: check.error!, error: true };
   }
-  const tagFilter = peopleMetadata.filterRedundantTags({
-    tags: Array.isArray(args.tags) ? args.tags.filter((t: unknown): t is string => typeof t === "string") : [],
-    companyName: args.company,
-    role: args.role,
-  });
+  const { gateProposedTags } = await import("./tag-proposal");
+  const tagFilter = gateProposedTags(
+    Array.isArray(args.tags) ? args.tags.filter((t: unknown): t is string => typeof t === "string") : [],
+    { companyName: args.company, role: args.role },
+  );
   const person = await peopleStorage.createPerson({
     name,
     nicknames: [],
@@ -1282,7 +1285,7 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
     importantDates: [],
     notes: [],
     interactions: [],
-    tags: tagFilter.savedTags,
+    tags: tagFilter.tags,
     quickSummary: typeof args.quickSummary === "string" ? args.quickSummary.trim() || undefined : undefined,
     private: false,
   });
@@ -1299,8 +1302,8 @@ async function handlePeopleCreate(args: Record<string, any>): Promise<ToolHandle
     event: "data:people_changed",
     payload: { source: "people_tool", action: "create", personId: person.id, personName: person.name },
   });
-  const ignoredNote = tagFilter.ignoredTags.length
-    ? `\n\nIgnored redundant tags: ${tagFilter.ignoredTags.map(t => `${t.tag} (${t.reason})`).join(", ")}`
+  const ignoredNote = tagFilter.ignored.length
+    ? `\n\nIgnored redundant tags: ${tagFilter.ignored.map(t => `${t.tag} (${t.reason})`).join(", ")}`
     : "";
   const result = `Person created: "${person.name}" [person:${person.id}] (cabinet: ${person.cabinetLevel})${args.email ? `, email: ${args.email}` : ""}${ignoredNote}`;
   return withPeopleSummaryStatus(result, person.quickSummary, Boolean(args.notes));

@@ -7,6 +7,7 @@ import { tagRegistry } from "./tags";
 import { contextBuilder } from "../context-builder";
 import { generateId } from "./utils";
 import { createLogger } from "../log";
+import { gateProposedTags } from "../tag-proposal";
 import { TTLCache } from "../utils/ttl-cache";
 import { principalCacheKey } from "./base";
 import { requireCurrentUserPrincipal } from "../principal-context";
@@ -59,7 +60,7 @@ Style guide: Layer 1 should follow the pattern of existing principles — an imp
 
 Layer 2: 2-4 paragraphs of expanded context that explain the reasoning, provide examples, define boundaries, and help someone deeply evaluate how this principle applies in ambiguous situations.
 
-Also extract 2-5 semantic tags that capture the domains this principle touches (e.g., "design", "decision-making", "communication", "engineering", "leadership").
+Also extract 2-5 semantic tags naming the cross-cutting DOMAINS this principle touches (e.g., "communication", "leadership", "health"). Tags are topics two unrelated principles could share — never structural types like "principle", "idea", "decision", or "note".
 
 Finally, identify any existing principles that are related (complementary, tension, or prerequisite relationships).
 
@@ -408,7 +409,7 @@ export class FilePrincipleStorage {
       title: parsed.title || "Untitled Principle",
       layer1: parsed.layer1 || "",
       layer2: parsed.layer2 || "",
-      autoTags: parsed.autoTags || [],
+      autoTags: gateProposedTags(parsed.autoTags).tags,
       relatedIds: (parsed.relatedIds || []).filter((rid: string) =>
         existingPrinciples.some((p) => p.id === rid)
       ),
