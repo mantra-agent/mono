@@ -66,6 +66,7 @@ import {
   Bot,
   Mic,
   Phone,
+  ChevronsDownUp,
 } from "lucide-react";
 import { resolveToolIcon } from "@/lib/tool-icons";
 import { resolvePersonaIcon } from "@/lib/persona-icons";
@@ -124,8 +125,8 @@ export function filterStepsByLayer(
       if (step.systemStepName === "session_compaction")
         return step.status === "active" || step.status === "error";
       if (step.systemStepName === "working_context_compression")
-        return layer >= 2;
-      if (step.systemStepName === "compaction") return layer >= 2;
+        return layer >= 1;
+      if (step.systemStepName === "compaction") return layer >= 1;
       if (
         step.systemStepName?.startsWith("voice_error") ||
         step.systemStepName === "voice_disconnect" ||
@@ -1165,7 +1166,7 @@ const SYSTEM_STEP_ICONS: Record<string, typeof Brain> = {
   llm_headers: Radio,
   compaction: Cog,
   session_compaction: Brain,
-  working_context_compression: AlertTriangle,
+  working_context_compression: ChevronsDownUp,
   first_token: Zap,
   model_call_timing: Gauge,
   greeting: MessageSquare,
@@ -1443,17 +1444,48 @@ function ToolIconStrip({
   iconOverrides?: Record<string, string>;
   showThinking?: boolean;
 }) {
+  const compactingSteps = steps.filter(
+    (step) =>
+      step.type === "system" &&
+      (step.systemStepName === "working_context_compression" ||
+        step.systemStepName === "compaction"),
+  );
   const toolSteps = steps.filter((s) => s.type === "tool_call");
   const thinkingStartTime =
     steps.find((s) => s.type === "thinking" && s.status === "active")
       ?.timestamp ?? Date.now();
-  if (toolSteps.length === 0 && !showThinking) return null;
+  if (compactingSteps.length === 0 && toolSteps.length === 0 && !showThinking)
+    return null;
 
   return (
     <div
       className="flex items-center gap-1.5 px-1.5 py-1 flex-wrap"
       data-testid="tool-icon-strip"
     >
+      {compactingSteps.map((step) => {
+        const isActive = step.status === "active";
+        const label =
+          step.systemStepLabel || SYSTEM_STEP_META.compaction.label;
+
+        return (
+          <Tooltip key={step.id}>
+            <TooltipTrigger asChild>
+              <div
+                className="relative flex items-center justify-center h-5 w-5 rounded-full shrink-0 bg-warning/15 animate-in fade-in duration-200"
+                data-testid={`tool-icon-${step.id}`}
+              >
+                <ChevronsDownUp className="h-3 w-3 text-warning" />
+                {isActive && (
+                  <span className="absolute inset-0 rounded-full animate-ping bg-warning/25" />
+                )}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs max-w-xs">
+              {label}
+            </TooltipContent>
+          </Tooltip>
+        );
+      })}
       {toolSteps.map((step) => {
         const ToolIcon = resolveToolIcon(step.toolName || "", iconOverrides);
         const isActive = step.status === "active";
@@ -1644,10 +1676,22 @@ export function ExecutionTimeline({
 
     return (
       <div className="mb-3 space-y-0.5" data-testid="execution-timeline">
-        {filteredSteps.some((s) => s.type === "system") &&
+        {filteredSteps.some(
+          (step) =>
+            step.type === "system" &&
+            step.systemStepName !== "working_context_compression" &&
+            step.systemStepName !== "compaction",
+        ) &&
           filteredSteps
-            .filter((s) => s.type === "system")
-            .map((s) => <SystemStepRow key={s.id} step={s} layer={layer} />)}
+            .filter(
+              (step) =>
+                step.type === "system" &&
+                step.systemStepName !== "working_context_compression" &&
+                step.systemStepName !== "compaction",
+            )
+            .map((step) => (
+              <SystemStepRow key={step.id} step={step} layer={layer} />
+            ))}
         {filteredSteps.some((s) => s.type === "compacting") &&
           filteredSteps
             .filter((s) => s.type === "compacting")
