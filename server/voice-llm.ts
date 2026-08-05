@@ -653,6 +653,7 @@ async function executeVoiceTurnBody(
     const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
     const { filterBusinessToolSchemas } = await import("./mods/business-tool-access");
     const { filterNetworkToolSchemas } = await import("./mods/network-tool-access");
+    const { filterPlanningToolSchemas } = await import("./mods/planning-tool-access");
     const buildVoiceTools = session.toolMode === "none"
       ? []
       : await filterBuildToolSchemas(session.principal, getVoiceTools());
@@ -662,9 +663,12 @@ async function executeVoiceTurnBody(
     const businessVoiceTools = session.toolMode === "none"
       ? []
       : await filterBusinessToolSchemas(session.principal, wellnessVoiceTools);
-    const voiceTools = session.toolMode === "none"
+    const networkVoiceTools = session.toolMode === "none"
       ? []
       : await filterNetworkToolSchemas(session.principal, businessVoiceTools);
+    const voiceTools = session.toolMode === "none"
+      ? []
+      : await filterPlanningToolSchemas(session.principal, networkVoiceTools);
     const tools = session.toolMode === "none"
       ? []
       : mergeVoiceTools(voiceTools, providerSystemTools);
