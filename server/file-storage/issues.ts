@@ -432,6 +432,33 @@ export class FileIssueStorage {
     }));
   }
 
+  async addNote(id: number, text: string, author: "user" | "agent" = "agent"): Promise<Issue | undefined> {
+    const content = typeof text === "string" ? text.trim() : "";
+    if (!content || content.length > 5_000) {
+      throw new Error("Issue note text must be 1-5000 characters");
+    }
+
+    return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+      await acquireAdvisoryTransactionLock(tx, ADVISORY_LOCK_NS.ISSUE, String(id));
+      const existing = await this.getIssue(id);
+      if (!existing) return undefined;
+
+      const existingNotes = Array.isArray(existing.notes)
+        ? existing.notes as IssueNote[]
+        : [];
+      // Append-only: each call adds a new immutable entry; existing entries are never rewritten.
+      const entry: IssueNote = {
+        id: `note-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        author,
+        content,
+        timestamp: new Date().toISOString(),
+      };
+      return this.updateIssueLocked(id, {
+        notes: [...existingNotes, entry],
+      });
+    }));
+  }
+
   async deleteIssue(id: number): Promise<boolean> {
     const result = await documentStorage.deleteDocument("issue", String(id));
     log.log(`deleteIssue id=${id} success=${result}`);

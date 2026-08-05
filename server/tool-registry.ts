@@ -787,14 +787,15 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   issues: {
-    description: "Track product Issues — create, page unresolved Issues, fetch one by ID, or resolve one with affirmative evidence. Create requires explicit reproSteps; platformEnvironmentId and buildId attach automatically from runtime identity when omitted.",
+    description: "Track product Issues — create, page unresolved Issues, fetch one by ID, resolve one with affirmative evidence, or append a dated log entry with add_note. Each add_note pushes an immutable, timestamped entry onto the Issue's append-only notes log (use get to read the full notes array back — e.g. to record what happened at each regression run). Create requires explicit reproSteps; platformEnvironmentId and buildId attach automatically from runtime identity when omitted.",
     category: "system",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["create", "list", "get", "resolve"], description: "Action to perform" },
-        id: { type: "string", description: "Issue ID (for get/resolve)" },
+        action: { type: "string", enum: ["create", "list", "get", "resolve", "add_note"], description: "Action to perform" },
+        id: { type: "string", description: "Issue ID (for get/resolve/add_note)" },
+        text: { type: "string", description: "Dated log entry text to append to the Issue's notes log, 1-5000 characters (for add_note)" },
         status: { type: "string", enum: ["open", "in_progress", "in_review", "resolved"], description: "Issue status filter (for list)" },
         excludeStatus: { type: "string", enum: ["open", "in_progress", "in_review", "resolved"], description: "Issue status to exclude (for list)" },
         offset: { type: "number", description: "Pagination offset (for list, default 0)" },
