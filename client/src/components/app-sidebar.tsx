@@ -175,7 +175,7 @@ function mergeResolvedNavigation(
         // Ownership derives from the full mod registry (composition.navOwnership),
         // so any static nav entry owned by an inactive mod is hidden — no
         // hand-maintained per-item map to drift out of sync with the registry.
-        const ownerMod = composition.navOwnership[item.target];
+        const ownerMod = composition.navOwnership?.[item.target];
         return !ownerMod || activeMods.has(ownerMod);
       }),
     }));
