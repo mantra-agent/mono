@@ -71,9 +71,12 @@ export interface ScorecardMeasureDefinition {
 }
 
 export interface AdvantageDefiningObjective {
-  goalId: string;
+  /** Stable slot id for this initiative — parity with standing-objective slot keys, so a project can be assigned to a slot. */
+  key: string;
+  /** Project hand-picked into this initiative slot (assignable like a KPI's standingObjectiveKey). */
+  projectId: number;
   owner: string;
-  /** Fallback intent when the linked goal has no description yet. */
+  /** Fallback intent when the linked project has no description yet. */
   intent?: string;
   nextEvidence?: string;
   measures: ScorecardMeasureDefinition[];
