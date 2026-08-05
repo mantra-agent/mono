@@ -6,6 +6,8 @@ import { relationshipTypes } from "@shared/schema";
 import { contextBuilder } from "../context-builder";
 import { createLogger } from "../log";
 import { extractJson } from "../utils/extract-json";
+import { buildTagGuidance } from "@shared/tag-taxonomy";
+import { gateProposedTags } from "../tag-proposal";
 
 const log = createLogger("GraphDiscovery");
 
@@ -63,15 +65,14 @@ export function parseLinkResults(
 export type TagLister = () => Promise<Array<{ slug: string }>>;
 
 async function getExistingTagHint(listTags?: TagLister): Promise<string> {
-  if (!listTags) return "";
+  if (!listTags) return buildTagGuidance([]);
   try {
     const existing = await listTags();
-    if (existing.length > 0) {
-      const topTags = existing.slice(0, 50).map(t => t.slug);
-      return `\n\nExisting tags in the system (prefer reusing these when they fit): ${topTags.join(", ")}`;
-    }
-  } catch (err) { log.warn("tag hint lookup failed", err); }
-  return "";
+    return buildTagGuidance(existing.slice(0, 50).map(t => t.slug));
+  } catch (err) {
+    log.warn("tag hint lookup failed", err);
+    return buildTagGuidance([]);
+  }
 }
 
 export async function evaluateLinks(
@@ -161,9 +162,7 @@ export async function extractCrossMemoryConcepts(
           .map((c: Record<string, unknown>) => ({
             title: (String(c.title || "")).trim(),
             summary: (String(c.summary || "")).trim(),
-            tags: Array.isArray(c.tags)
-              ? (c.tags as unknown[]).map((t: unknown) => String(t).trim().toLowerCase()).filter(Boolean).slice(0, 8)
-              : [],
+            tags: gateProposedTags(Array.isArray(c.tags) ? (c.tags as unknown[]) : []).tags,
             sourceIds: Array.isArray(c.sourceIds)
               ? (c.sourceIds as unknown[]).filter((id: unknown) => typeof id === "number" && allIds.includes(id)) as number[]
               : allIds,
