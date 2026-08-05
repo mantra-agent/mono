@@ -531,11 +531,14 @@ export interface ChatCompletionResult {
 
 const log = createLogger("ModelClient");
 
-function buildRequestContent(messages: Array<{ role: string; content: unknown }>): string | undefined {
+function buildRequestContent(messages: Array<{ role: string; content: unknown }>): { content?: string; chars: number } {
   try {
-    return JSON.stringify(messages.map(m => ({ role: m.role, content: m.content }))).slice(0, 50000);
+    const serialized = JSON.stringify(messages.map(m => ({ role: m.role, content: m.content })));
+    // `chars` is the full un-truncated length used for per-call context-token
+    // self-measurement; `content` is sliced only for capture/storage.
+    return { content: serialized.slice(0, 50000), chars: serialized.length };
   } catch {
-    return undefined;
+    return { content: undefined, chars: 0 };
   }
 }
 
@@ -620,6 +623,7 @@ async function recordInference(params: {
     visibleOutputTokens?: number;
   };
   requestContent?: string;
+  requestChars?: number;
   responseContent?: string;
   error?: Record<string, unknown>;
   latency?: { providerTtftMs?: number | null; firstSdkEventMs?: number | null; firstThinkingMs?: number | null; firstProgressMs?: number | null };
@@ -633,13 +637,49 @@ async function recordInference(params: {
     const { logApiCall } = await import("./cost-tracker");
     const meta = params.metadata;
     const reasoning = params.reasoning;
+
+    // Per-call token self-measurement for providers whose native usage is not
+    // per-call. claude-cli emits cumulative assistant.usage counters, so its rows
+    // are otherwise excluded from comparable aggregation. We own the exact rendered
+    // prompt and response at this boundary, so measure context (input) and output
+    // tokens ourselves with the canonical char→token estimator and stamp an
+    // explicit per_call semantic. The context-health consumer derives context size
+    // as totalTokens − outputTokens, so we set total = context + output to keep the
+    // row self-consistent. Gated to successful calls to avoid partial/aborted noise.
+    let effectiveUsage = params.usage;
+    let selfMeasuredMeta: Record<string, unknown> | undefined;
+    if (params.routing.provider === "claude-cli" && params.status === "success") {
+      const { estimateTokensFromChars, estimateTokens } = await import("./context-builder");
+      const contextTokens = typeof params.requestChars === "number" && params.requestChars > 0
+        ? estimateTokensFromChars(params.requestChars)
+        : (params.requestContent ? estimateTokens(params.requestContent) : 0);
+      if (contextTokens > 0) {
+        const outputTokens = params.responseContent ? estimateTokens(params.responseContent) : 0;
+        effectiveUsage = {
+          ...params.usage,
+          inputTokens: contextTokens,
+          outputTokens,
+          totalTokens: contextTokens + outputTokens,
+        };
+        selfMeasuredMeta = {
+          usageSemantics: "per_call",
+          tokenAccounting: {
+            contextTokenSource: "self_measured_chars",
+            providerReportedInputTokens: params.usage?.inputTokens ?? null,
+            providerReportedOutputTokens: params.usage?.outputTokens ?? null,
+            providerReportedTotalTokens: params.usage?.totalTokens ?? null,
+          },
+        };
+      }
+    }
+
     await logApiCall({
       apiCallId: params.apiCallId,
       startTime: params.startTime,
       profile: params.routing.tier,
       provider: params.routing.provider,
       model: params.routing.model,
-      usage: params.usage,
+      usage: effectiveUsage,
       sessionId: meta?.sessionId,
       runId: meta?.runId,
       sessionKey: meta?.sessionKey || meta?.sessionId || meta?.runId || meta?.source || "system",
@@ -649,6 +689,7 @@ async function recordInference(params: {
       signal: params.signal,
       metadata: {
         ...(meta || {}),
+        ...(selfMeasuredMeta || {}),
         activity: meta?.activity || params.routing.activity,
         source: meta?.source || "unknown",
         workloadSource: (meta as Record<string, unknown> | undefined)?.workloadSource || meta?.source || params.routing.activity || "unknown",
@@ -772,7 +813,7 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
   const { provider, model } = routing;
   const msgCount = options.messages.length;
   const start = Date.now();
-  const requestContent = buildRequestContent(options.messages);
+  const { content: requestContent, chars: requestChars } = buildRequestContent(options.messages);
   let result: ChatCompletionResult | undefined;
   const providerAttemptTracker = createProviderAttemptTracker();
   const attemptOptions = { ...options, providerAttemptTracker };
@@ -795,8 +836,8 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
     const elapsed = Date.now() - start;
     const usage = result.usage;
     log.debug(`chatCompletion done in ${elapsed}ms provider=${provider} model=${model} activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash} prompt=${usage?.promptTokens ?? "?"} completion=${usage?.completionTokens ?? "?"} total=${usage?.totalTokens ?? "?"}`);
-    const reasoning = buildReasoningAudit(options.thinking, provider);
-    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status: "success", usage, requestContent, responseContent: result.content, reasoning, stopReason: result.stopReason, termination: result.termination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
+    const reasoning = buildReasoningAudit(options.thinking, provider, grokImputedReasoningEffort(routing, model));
+    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status: "success", usage, requestContent, requestChars, responseContent: result.content, reasoning, stopReason: result.stopReason, termination: result.termination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
     return result;
   } catch (err: any) {
     const elapsed = Date.now() - start;
@@ -825,8 +866,8 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
       : undefined;
     const providerStopReason = err instanceof ModelProviderError ? providerFailureStopReason(err.providerFailure) : undefined;
     const providerTermination = err instanceof ModelProviderError ? providerFailureTerminationMetadata(err.providerFailure) : undefined;
-    const reasoning = buildReasoningAudit(options.thinking, provider);
-    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status, usage: result?.usage || providerUsage, requestContent, responseContent: result?.content, error: errorMetadata, reasoning, stopReason: providerStopReason, termination: providerTermination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
+    const reasoning = buildReasoningAudit(options.thinking, provider, grokImputedReasoningEffort(routing, model));
+    await recordInference({ startTime: providerAttemptTracker.current?.startTime ?? start, routing, metadata: options.metadata, status, usage: result?.usage || providerUsage, requestContent, requestChars, responseContent: result?.content, error: errorMetadata, reasoning, stopReason: providerStopReason, termination: providerTermination, signal: options.signal, apiCallId: providerAttemptTracker.current?.apiCallId });
     throw enrichModelError(err, routing, options.metadata);
   }
 }
@@ -856,6 +897,17 @@ function applyGrokConnectorConfig(params: Record<string, any>, model: string, op
   if (config?.reasoningEffort && supportsGrokReasoningEffort(model)) {
     params.reasoning_effort = config.reasoningEffort;
   }
+}
+
+// The exact reasoning_effort actually injected for a Grok call, so the reasoning
+// audit can label it instead of falling back to the `disabled` short-circuit.
+// Mirrors the gate in applyGrokConnectorConfig (grok-4.5 only).
+function grokImputedReasoningEffort(routing: ModelRoutingDecision, model: string): string | undefined {
+  if (routing.provider !== "grok-subscription") return undefined;
+  if (!supportsGrokReasoningEffort(model)) return undefined;
+  const config = routing.modelConfig as GrokSubscriptionTierModelConfig | undefined;
+  const effort = config?.reasoningEffort;
+  return typeof effort === "string" && effort.length > 0 ? effort : undefined;
 }
 
 function connectorMaxOutputTokens(config: OpenAITierModelConfig | undefined, runtimeMaxTokens?: number): number | undefined {
@@ -2278,7 +2330,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     await import("./thinking-config");
   const resolvedThinking = options.thinking
     ?? resolveThinkingConfig(model, thinkingBudgetToTier(options.thinkingBudget));
-  const reasoningAudit = buildReasoningAudit(resolvedThinking, provider);
+  const reasoningAudit = buildReasoningAudit(resolvedThinking, provider, grokImputedReasoningEffort(routing, model));
   const providerAttemptTracker = createProviderAttemptTracker();
   const optionsWithResolved: ChatCompletionStreamOptions = { ...options, thinking: resolvedThinking, providerAttemptTracker };
   const thinkingDesc = describeResolvedThinking(resolvedThinking);
@@ -2291,7 +2343,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
   );
 
   const t0 = Date.now();
-  const requestContent = buildRequestContent(options.messages);
+  const { content: requestContent, chars: requestChars } = buildRequestContent(options.messages);
   let responseContent = "";
   let streamUsage: { inputTokens: number; outputTokens: number; totalTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number; visibleOutputTokens?: number } | undefined;
   let streamStopReason: string | undefined;
@@ -2437,6 +2489,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
     status: "success",
     usage: streamUsage,
     requestContent,
+    requestChars,
     responseContent,
     reasoning: reasoningAudit,
     stopReason: streamStopReason,
@@ -2460,6 +2513,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       status,
       usage: streamUsage,
       requestContent,
+      requestChars,
       responseContent,
       reasoning: reasoningAudit,
       stopReason: streamStopReason,
