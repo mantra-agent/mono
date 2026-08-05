@@ -11957,6 +11957,10 @@ ${refs}` : ""),
             }
           }
 
+          if (args.tags !== undefined || args.title !== undefined) {
+            const { syncLibraryPageTags } = await import("./library-tag-sync");
+            syncLibraryPageTags(updated.id, updated.title, updated.tags);
+          }
           publishLibraryChanged(updated.surface ? "surfaced" : "updated", updated);
 
           // Record session artifact link
