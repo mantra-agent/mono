@@ -1516,8 +1516,16 @@ function GraphTab({
     [graphNodes],
   );
   const visibleGraphNodes = useMemo(
-    () => graphNodes.filter((node) => !hiddenNodeTypes.has(getMemoryGraphNodeTypeConfig(node.source).id)),
-    [graphNodes, hiddenNodeTypes],
+    () => graphNodes.filter((node) => {
+      const typeId = getMemoryGraphNodeTypeConfig(node.source).id;
+      if (hiddenNodeTypes.has(typeId)) return false;
+      // Tag nodes only connect via `tagged_with`, so a tag's degree is its
+      // connection count. The Mixer's Tag Degree Threshold hides sparsely
+      // connected tags client-side; their edges auto-hide with the node.
+      if (typeId === "tags" && node.degree < graphSettings.tagDegreeThreshold) return false;
+      return true;
+    }),
+    [graphNodes, hiddenNodeTypes, graphSettings.tagDegreeThreshold],
   );
   const visibleNodeIds = useMemo(
     () => new Set(visibleGraphNodes.map((node) => node.id)),

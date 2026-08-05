@@ -654,16 +654,18 @@ export async function assemblePersonalGraph(
   // ---- Bounded Tag layer (default-hidden semantic overlay) ----
   // Canonical Tag identities become graph nodes; each assignment to an
   // already-projected entity becomes a `tagged_with` edge, turning the shared
-  // tag vocabulary into visible connective tissue. Thresholded so only tags that
-  // link >= TAG_MIN_ENTITIES distinct projected nodes appear (a single-use tag
-  // would add a node and one dangling edge with no connective value) and capped
-  // to bound payload. Assignments whose entity is not a projected node are
-  // skipped — an edge never grants visibility. Best-effort: a tag-layer failure
-  // degrades to a graph without tags rather than a failed read.
+  // tag vocabulary into visible connective tissue. The server floors at the
+  // definitional minimum (>= 1 projected connection — an edge never grants
+  // visibility, and a zero-connection tag would be a floating orphan) and caps
+  // by connection count to bound payload. Density policy — how many connections
+  // a tag needs before it renders — is owned client-side by the Memory Graph
+  // Mixer's Tag Degree Threshold, applied over each tag node's computed degree.
+  // Best-effort: a tag-layer failure degrades to a graph without tags rather
+  // than a failed read.
   let tagNodeCount = 0;
   let tagEdgeCount = 0;
   try {
-    const TAG_MIN_ENTITIES = 2;
+    const TAG_MIN_ENTITIES = 1;
     const TAG_NODE_LIMIT = 200;
     const tagIndex = await tagService.getIndex(principal);
     const projectableTags = Object.values(tagIndex.tags)

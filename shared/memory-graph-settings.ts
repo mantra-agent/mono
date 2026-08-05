@@ -11,6 +11,7 @@ export interface MemoryGraphSettings {
   recencyBrightness: number;
   smallestNode: number;
   largestNode: number;
+  tagDegreeThreshold: number;
   baseColor: string;
   recentColor: string;
 }
@@ -52,6 +53,10 @@ export const MEMORY_GRAPH_SETTINGS_DEFAULTS: Readonly<MemoryGraphSettings> = {
   recencyBrightness: 0.7,
   smallestNode: 4.5,
   largestNode: 54,
+  // Minimum distinct entities a tag must link before its node renders. The
+  // server ships every tag with >= 1 projected connection; this Mixer knob owns
+  // the density policy client-side (raise to declutter hubs, lower to reveal).
+  tagDegreeThreshold: 2,
   // Defaults sampled from the theme tokens the graph previously read at runtime:
   // baseColor ≈ --cta (hsl 200 80% 50%), recentColor ≈ dark-mode --foreground.
   baseColor: "#1aa1e6",
@@ -71,6 +76,7 @@ export const MEMORY_GRAPH_SETTING_DEFINITIONS: readonly MemoryGraphSettingDefini
   { key: "recencyBrightness", label: "Recency Brightness", min: 0.22, max: 1, step: 0.01, precision: 2 },
   { key: "smallestNode", label: "Smallest Node", min: 0.5, max: 30, step: 0.5, precision: 1 },
   { key: "largestNode", label: "Largest Node", min: 5, max: 120, step: 1, precision: 0 },
+  { key: "tagDegreeThreshold", label: "Tag Degree Threshold", min: 1, max: 12, step: 1, precision: 0 },
 ] as const;
 
 export const MEMORY_GRAPH_COLOR_DEFINITIONS: readonly MemoryGraphColorDefinition[] = [
@@ -165,7 +171,8 @@ export function isAcceptedMemoryGraphSettingsSnapshot(value: unknown): boolean {
   const isCurrent = keys.length === COMPLETE_KEY_COUNT;
   const isLegacyWithoutColors = keys.length === NUMERIC_KEY_COUNT;
   const isLegacyWithoutPulseSize = keys.length === NUMERIC_KEY_COUNT - 1 && !("pulseSize" in input);
-  return (isCurrent || isLegacyWithoutColors || isLegacyWithoutPulseSize)
+  const isLegacyWithoutTagThreshold = keys.length === COMPLETE_KEY_COUNT - 1 && !("tagDegreeThreshold" in input);
+  return (isCurrent || isLegacyWithoutColors || isLegacyWithoutPulseSize || isLegacyWithoutTagThreshold)
     && hasValidMemoryGraphSettingValues(input);
 }
 
