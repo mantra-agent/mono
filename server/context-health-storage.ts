@@ -7,10 +7,12 @@ import {
   type ContextHealthExclusionReason,
   type ContextHealthModelSummary,
   type ContextHealthSummary,
+  type MidTurnCompactionSummary,
   type ContextUsageSemantics,
 } from "@shared/context-health";
 import { pool, withQueryAttributionAsync } from "./db";
 import { getModel } from "./model-registry";
+import { requireCurrentUserPrincipal } from "./principal-context";
 
 const CONTEXT_HEALTH_ROW_LIMIT = 10_000;
 
@@ -265,6 +267,98 @@ const boundedTrackedCallsSql = `
   LIMIT $2
 `;
 
+function emptyMidTurnCompaction(status: "empty" | "degraded", degradedReason: string | null = null): MidTurnCompactionSummary {
+  return {
+    totalCompactions: 0,
+    eligibleTurns: 0,
+    affectedTurns: 0,
+    compactionsPerTurn: null,
+    affectedTurnPct: null,
+    p95CompactionsPerTurn: null,
+    maxCompactionsPerTurn: null,
+    priorWindowCompactionsPerTurn: null,
+    trendPct: null,
+    status,
+    degradedReason,
+  };
+}
+
+async function getMidTurnCompactionSummary(windowHours: number): Promise<MidTurnCompactionSummary> {
+  const principal = requireCurrentUserPrincipal();
+  const result = await withQueryAttributionAsync(
+    { operation: "context_health_mid_turn_compaction", requestRoute: "context-health" },
+    () => pool.query<{
+      current_total: string;
+      current_turns: string;
+      current_affected: string;
+      current_p95: string | null;
+      current_max: string | null;
+      prior_total: string;
+      prior_turns: string;
+    }>(`
+      WITH eligible AS (
+        SELECT
+          CASE WHEN m.created_at >= NOW() - ($1 * INTERVAL '1 hour') THEN 'current' ELSE 'prior' END AS window_name,
+          COALESCE((
+            SELECT COUNT(*)::int
+            FROM jsonb_array_elements(COALESCE(m.system_steps, '[]'::jsonb)) AS step
+            WHERE step->>'name' = 'working_context_compression'
+              AND step->>'status' = 'completed'
+          ), 0) AS compactions
+        FROM messages m
+        INNER JOIN chat_sessions s ON s.id = m.session_id
+        WHERE s.owner_user_id = $2
+          AND m.role = 'assistant'
+          AND m.created_at >= NOW() - ($1 * INTERVAL '2 hours')
+      ), current_stats AS (
+        SELECT
+          COALESCE(SUM(compactions), 0)::bigint AS total,
+          COUNT(*)::bigint AS turns,
+          COUNT(*) FILTER (WHERE compactions > 0)::bigint AS affected,
+          percentile_disc(0.95) WITHIN GROUP (ORDER BY compactions)::int AS p95,
+          MAX(compactions)::int AS max
+        FROM eligible WHERE window_name = 'current'
+      ), prior_stats AS (
+        SELECT COALESCE(SUM(compactions), 0)::bigint AS total, COUNT(*)::bigint AS turns
+        FROM eligible WHERE window_name = 'prior'
+      )
+      SELECT
+        c.total::text AS current_total,
+        c.turns::text AS current_turns,
+        c.affected::text AS current_affected,
+        c.p95::text AS current_p95,
+        c.max::text AS current_max,
+        p.total::text AS prior_total,
+        p.turns::text AS prior_turns
+      FROM current_stats c CROSS JOIN prior_stats p
+    `, [windowHours, principal.userId]),
+  );
+  const row = result.rows[0];
+  if (!row) return emptyMidTurnCompaction("degraded", "aggregation_returned_no_row");
+
+  const totalCompactions = Number(row.current_total);
+  const eligibleTurns = Number(row.current_turns);
+  const affectedTurns = Number(row.current_affected);
+  if (!eligibleTurns) return emptyMidTurnCompaction("empty");
+  const currentRate = totalCompactions / eligibleTurns;
+  const priorTurns = Number(row.prior_turns);
+  const priorRate = priorTurns ? Number(row.prior_total) / priorTurns : null;
+
+  return {
+    totalCompactions,
+    eligibleTurns,
+    affectedTurns,
+    compactionsPerTurn: currentRate,
+    affectedTurnPct: (affectedTurns / eligibleTurns) * 100,
+    p95CompactionsPerTurn: row.current_p95 == null ? null : Number(row.current_p95),
+    maxCompactionsPerTurn: row.current_max == null ? null : Number(row.current_max),
+    priorWindowCompactionsPerTurn: priorRate,
+    trendPct: priorRate == null || priorRate === 0 ? null : ((currentRate - priorRate) / priorRate) * 100,
+    status: "healthy",
+    degradedReason: null,
+  };
+}
+
 export async function getContextHealthSummary(windowHours = 24): Promise<ContextHealthSummary> {
   const hours = Math.min(Math.max(Math.floor(windowHours), 1), 168);
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
@@ -307,6 +401,15 @@ export async function getContextHealthSummary(windowHours = 24): Promise<Context
   const byProvider = [...providerRows.entries()]
     .map(([provider, providerGroup]) => summarizeProvider(provider, providerGroup))
     .sort((a, b) => b.callCount - a.callCount || a.provider.localeCompare(b.provider));
+  let midTurnCompaction: MidTurnCompactionSummary;
+  try {
+    midTurnCompaction = await getMidTurnCompactionSummary(hours);
+  } catch (error) {
+    log.warn("Mid-turn compaction aggregation degraded", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    midTurnCompaction = emptyMidTurnCompaction("degraded", "aggregation_failed");
+  }
 
   return {
     generatedAt: Date.now(),
@@ -337,6 +440,7 @@ export async function getContextHealthSummary(windowHours = 24): Promise<Context
     p95TtftMs: percentile(global.ttfts, 0.95),
     contextTokenDistribution: distributionFromValues(global.contextTokens),
     exclusionReasons: exclusionReasonsFromMap(global.exclusions),
+    midTurnCompaction,
     measurementContract: CONTEXT_HEALTH_MEASUREMENT_CONTRACT,
     budgets: CONTEXT_HEALTH_BUDGETS,
     byProvider,

@@ -948,6 +948,31 @@ function ResourcesView({
                         testId="tile-context-calls"
                       />
                       <MetricRow
+                        label="Mid-turn compaction"
+                        value={contextHealth.midTurnCompaction.status === "degraded"
+                          ? "Degraded"
+                          : contextHealth.midTurnCompaction.status === "empty"
+                            ? "No eligible turns"
+                            : `${contextHealth.midTurnCompaction.compactionsPerTurn?.toFixed(2)} / turn · ${contextHealth.midTurnCompaction.affectedTurnPct?.toFixed(1)}% affected`}
+                        status={contextHealth.midTurnCompaction.status === "healthy" ? "ok" : "amber"}
+                        detail={
+                          <DetailList
+                            items={contextHealth.midTurnCompaction.status === "degraded"
+                              ? ["Scoped aggregation unavailable; no estimate shown."]
+                              : contextHealth.midTurnCompaction.status === "empty"
+                                ? [`No completed user turns in this ${contextHealth.windowHours}h window.`]
+                                : [
+                                  `${contextHealth.midTurnCompaction.totalCompactions} canonical working_context_compression events across ${contextHealth.midTurnCompaction.eligibleTurns} completed user turns; ${contextHealth.midTurnCompaction.affectedTurns} turns affected.`,
+                                  `p95 ${contextHealth.midTurnCompaction.p95CompactionsPerTurn} · max ${contextHealth.midTurnCompaction.maxCompactionsPerTurn} compactions per turn.`,
+                                  contextHealth.midTurnCompaction.priorWindowCompactionsPerTurn === null
+                                    ? "Prior-window trend unavailable."
+                                    : `Prior ${contextHealth.windowHours}h: ${contextHealth.midTurnCompaction.priorWindowCompactionsPerTurn.toFixed(2)} / turn${contextHealth.midTurnCompaction.trendPct === null ? "" : ` · ${contextHealth.midTurnCompaction.trendPct >= 0 ? "+" : ""}${contextHealth.midTurnCompaction.trendPct.toFixed(1)}%`}.`,
+                                  "Between-turn durable compaction is excluded.",
+                                ]}
+                          />
+                        }
+                      />
+                      <MetricRow
                         label="Comparable population"
                         value={`${contextHealth.comparableCallCount} in · ${contextHealth.excludedCallCount} out`}
                         status={contextHealth.comparableCallCount > 0 ? "ok" : "amber"}
