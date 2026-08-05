@@ -18,7 +18,7 @@ import { useFocusContext } from "@/hooks/use-focus-context";
 import { useToast } from "@/hooks/use-toast";
 import { SurfacedPersonRow, surfacedDateLabel } from "@/components/people/surfaced-person-row";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
-import { CompanyReferenceField } from "@/components/people/company-reference-field";
+import { ReferencePicker } from "@/components/references/reference-picker";
 import { PERSONAL_RELATION_OPTIONS, PROFESSIONAL_RELATION_OPTIONS } from "@shared/people-metadata";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useVaults, type Vault } from "@/hooks/use-vaults";
@@ -2341,10 +2341,28 @@ function PersonDetailView({ personId, onClose, onDelete, openNewInteraction, onN
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-company">Company</span>} icon={<Building2 className="h-3.5 w-3.5" />} hasValue={Boolean(person.company || person.companyId)} showEmpty={showEmptyProfileRows} mobileLayout="inline" testId="row-profile-company">
-            <CompanyReferenceField value={person.companyId ? `@company:${person.companyId}` : person.company || ""} onCommit={(value) => {
-              const match = value.match(/^@company:([^\s]+)$/);
-              updateMutation.mutate({ companyId: match ? match[1] : "" });
-            }} />
+            <ReferencePicker
+              mode="single"
+              types={["company"]}
+              allowCreate
+              createNoun="company"
+              placeholder="Select company"
+              dense
+              testId="picker-company"
+              value={
+                person.companyId
+                  ? [{ type: "company", id: person.companyId, label: person.company || person.companyId }]
+                  : person.company
+                    ? [{ type: "company", id: person.company, label: person.company }]
+                    : []
+              }
+              onChange={(next) => updateMutation.mutate({ companyId: next[0]?.id ?? "" })}
+              onCreate={async (name) => {
+                const created = await apiRequest("POST", "/api/companies", { name }).then((r) => r.json());
+                queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+                return { type: "company", id: String(created.id), label: created.name ?? name };
+              }}
+            />
           </ProfileTreeRow>
 
           <ProfileTreeRow label={<span data-testid="label-role">Role</span>} icon={<ContactRound className="h-3.5 w-3.5" />} hasValue={Boolean(person.role)} showEmpty={showEmptyProfileRows || editingRole} mobileLayout="inline" testId="row-profile-role">

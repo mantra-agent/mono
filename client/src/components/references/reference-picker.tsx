@@ -36,8 +36,16 @@ export type ReferencePickerProps = {
    * Matched against suggestion.id only — type-agnostic.
    */
   excludeIds?: string[];
-  /** Allow creating a new tag when types includes tag (or is unrestricted). */
+  /** Allow creating a new reference from the typed query (tag by default, or via onCreate). */
   allowCreate?: boolean;
+  /**
+   * Pluggable creator. When provided, the create affordance calls this with the
+   * trimmed query and commits the returned reference instead of creating a tag.
+   * Async-aware; may return a Promise. Default (unset) creates a tag.
+   */
+  onCreate?: (label: string) => ReferencePickerValue | Promise<ReferencePickerValue>;
+  /** Noun shown in the create affordance ("Create {noun} …"). Defaults to "tag". */
+  createNoun?: string;
   placeholder?: string;
   className?: string;
   testId?: string;
@@ -155,6 +163,8 @@ function FieldPicker({
   allowCreate,
   disabled,
   excludeIds,
+  onCreate,
+  createNoun,
 }: Required<
   Pick<
     ReferencePickerProps,
@@ -172,15 +182,20 @@ function FieldPicker({
   className?: string;
   testId?: string;
   excludeIds?: string[];
+  onCreate?: ReferencePickerProps["onCreate"];
+  createNoun?: string;
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const creatingRef = useRef(false);
   const createTag = useTagCreate();
   const tagOnly = !!types?.length && types.every((t) => t === "tag");
-  const canCreateTag =
-    allowCreate && (!types?.length || types.includes("tag")) && input.trim().length > 0;
+  const canCreate =
+    allowCreate &&
+    input.trim().length > 0 &&
+    (onCreate ? true : !types?.length || types.includes("tag"));
 
   const { suggestions, isLoading } = useDebouncedReferenceSearch(input, types, open);
 
@@ -197,12 +212,14 @@ function FieldPicker({
     });
   }, [suggestions, value, excluded]);
 
-  const exactTagExists = visible.some(
-    (s) => s.type === "tag" && s.label.toLowerCase() === input.trim().toLowerCase(),
+  const exactExists = visible.some((s) =>
+    onCreate
+      ? s.label.toLowerCase() === input.trim().toLowerCase()
+      : s.type === "tag" && s.label.toLowerCase() === input.trim().toLowerCase(),
   );
   const showCreate =
-    canCreateTag &&
-    !exactTagExists &&
+    canCreate &&
+    !exactExists &&
     !selectedHasLabel(value, input.trim());
 
   useEffect(() => {
@@ -232,12 +249,22 @@ function FieldPicker({
     [mode, onChange, value],
   );
 
-  const commitCreate = useCallback(() => {
+  const commitCreate = useCallback(async () => {
     const label = input.trim();
-    if (!label) return;
+    if (!label || creatingRef.current) return;
+    if (onCreate) {
+      creatingRef.current = true;
+      try {
+        const created = await onCreate(label);
+        if (created?.id) commit(created);
+      } finally {
+        creatingRef.current = false;
+      }
+      return;
+    }
     createTag.mutate(label);
     commit({ type: "tag", id: label, label, description: "New tag" });
-  }, [input, createTag, commit]);
+  }, [input, onCreate, createTag, commit]);
 
   const totalOptions = visible.length + (showCreate ? 1 : 0);
 
@@ -395,7 +422,7 @@ function FieldPicker({
                     onMouseEnter={() => setActiveIndex(visible.length)}
                   >
                     <Plus className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">Create tag “{input.trim()}”</span>
+                    <span className="truncate">Create {createNoun ?? "tag"} “{input.trim()}”</span>
                   </button>
                 )}
               </>
@@ -531,6 +558,8 @@ export function ReferencePicker({
   mode = "multi",
   variant = "inline",
   allowCreate = false,
+  onCreate,
+  createNoun,
   placeholder = "Add reference…",
   className,
   testId,
@@ -566,6 +595,8 @@ export function ReferencePicker({
       dense={isDense}
       showToken={showToken}
       allowCreate={allowCreate}
+      onCreate={onCreate}
+      createNoun={createNoun}
       disabled={disabled}
       excludeIds={excludeIds}
     />
