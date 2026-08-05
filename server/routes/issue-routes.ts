@@ -3,6 +3,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { documentStorage } from "../memory";
 import { requireAuth, requireAdmin } from "../auth";
+import { listRecentApplicationErrors } from "../error-telemetry";
 import { createLogger } from "../log";
 import { requireActiveBuild } from "../mods/build-route-access";
 
@@ -148,6 +149,17 @@ export function registerIssueRoutes(app: Express) {
     const buffer = Buffer.from(doc.content, "base64");
     res.type(mimeType);
     res.send(buffer);
+  });
+
+  app.get("/api/issues/errors/recent", requireAuth, async (req, res) => {
+    const parsedLimit = Number.parseInt(String(req.query.limit ?? "25"), 10);
+    const limit = Number.isFinite(parsedLimit) ? Math.min(100, Math.max(1, parsedLimit)) : 25;
+    try {
+      res.json(await listRecentApplicationErrors(limit, 0));
+    } catch (error) {
+      console.error("Failed to list recent application errors:", error instanceof Error ? error.name : "UnknownError");
+      res.status(500).json({ error: "Failed to list recent application errors" });
+    }
   });
 
   app.get("/api/issues", async (req, res) => {

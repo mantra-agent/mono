@@ -1,304 +1,122 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Bug, Circle, CircleCheck, CircleDashed, CircleDot, MessageSquare, MoreHorizontal, Plus, Search } from "lucide-react";
 import { IssueInlineProfile } from "@/components/issue-inline-profile";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { openIssueCaptureDialog } from "@/components/issue-capture";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { useToast } from "@/hooks/use-toast";
-import { useTimezone, formatDate } from "@/hooks/use-timezone";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Input } from "@/components/ui/input";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAgendaDiscussion } from "@/hooks/use-agenda-discussion";
 import { cn } from "@/lib/utils";
-import {
-  ChevronRight,
-  Circle,
-  CircleCheck,
-  CircleDashed,
-  CircleDot,
-  Loader2,
-  RefreshCw,
-} from "lucide-react";
-import type { Issue, IssueStatus } from "@shared/schema";
+import { queryClient } from "@/lib/queryClient";
 
-const STATUS_CYCLE: IssueStatus[] = ["open", "in_progress", "in_review", "resolved"];
-
-const STATUS_LABELS: Record<IssueStatus, string> = {
-  open: "Open",
-  in_progress: "In Progress",
-  in_review: "In Review",
-  resolved: "Resolved",
-};
-
-interface IssueTreeRowProps {
-  issue: Issue;
-  onCycleStatus: (id: number, nextStatus: IssueStatus) => void;
-  isUpdating: boolean;
+interface Issue {
+  id: string;
+  title: string;
+  description: string;
+  reproSteps?: string;
+  status: "open" | "in_progress" | "in_review" | "resolved";
+  createdAt?: string;
 }
 
-interface IssueTreeSectionProps {
-  label: string;
-  issues: Issue[];
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  testId: string;
-  count?: number;
-  loading?: boolean;
-  emptyLabel?: string;
-  renderIssue: (issue: Issue) => ReactNode;
+interface ErrorAggregate {
+  fingerprint: string;
+  error_class: string;
+  error_code: string | null;
+  source_file: string | null;
+  source_line: number | null;
+  source_site: string | null;
+  occurrence_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
 }
 
-function StatusIcon({ status, className }: { status: IssueStatus; className?: string }) {
-  switch (status) {
-    case "resolved":
-      return <CircleCheck className={cn(className, "text-success")} />;
-    case "in_review":
-      return <CircleDashed className={cn(className, "text-info")} />;
-    case "in_progress":
-      return <CircleDot className={cn(className, "text-warning")} />;
-    default:
-      return <Circle className={cn(className, "text-muted-foreground/50")} />;
-  }
+interface PersonaOption { id: number; name: string }
+
+const statusLabel = { open: "Open", in_progress: "In progress", in_review: "In review", resolved: "Resolved" } as const;
+const nextStatus = { open: "in_progress", in_progress: "in_review", in_review: "resolved", resolved: "open" } as const;
+
+function StatusIcon({ status, className }: { status: Issue["status"]; className?: string }) {
+  if (status === "resolved") return <CircleCheck className={cn(className, "text-success")} />;
+  if (status === "in_review") return <CircleDashed className={cn(className, "text-info")} />;
+  if (status === "in_progress") return <CircleDot className={cn(className, "text-warning")} />;
+  return <Circle className={cn(className, "text-muted-foreground")} />;
 }
 
-function formatIssueDate(date: Date, timezone: string) {
-  return formatDate(date.toString(), timezone, { month: "short", day: "numeric" });
-}
-
-function IssueTreeRow({ issue, onCycleStatus, isUpdating }: IssueTreeRowProps) {
-  const { timezone } = useTimezone();
-  const status = issue.status as IssueStatus;
-  const nextStatus = STATUS_CYCLE[(STATUS_CYCLE.indexOf(status) + 1) % STATUS_CYCLE.length];
-
+function RowMenu({ onDiscuss }: { onDiscuss: () => void }) {
   return (
-    <ProfileTreeRow
-      label={(
-        <span
-          className={cn(
-            "block max-w-full truncate font-medium text-foreground",
-            status === "resolved" && "text-muted-foreground line-through",
-          )}
-          data-testid={`label-issue-${issue.id}`}
-        >
-          {issue.title}
-        </span>
-      )}
-      icon={(
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={() => onCycleStatus(issue.id, nextStatus)}
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              disabled={isUpdating}
-              aria-label={`${STATUS_LABELS[status]}. Change status to ${STATUS_LABELS[nextStatus]}`}
-              data-testid={`button-cycle-status-${issue.id}`}
-            >
-              {isUpdating ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <StatusIcon status={status} className="h-3.5 w-3.5" />
-              )}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right" className="text-xs">
-            {STATUS_LABELS[status]}
-          </TooltipContent>
-        </Tooltip>
-      )}
-      hasValue
-      showEmpty
-      mobileLayout="inline"
-      expandedContent={<IssueInlineProfile issueId={issue.id} />}
-      expandedContentClassName="px-2 pb-3 pl-2"
-      testId={`issue-item-${issue.id}`}
-    >
-      {issue.createdAt ? (
-        <span className="truncate font-mono text-muted-foreground">
-          {formatIssueDate(issue.createdAt, timezone)}
-        </span>
-      ) : null}
-    </ProfileTreeRow>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="More actions" onClick={(event) => event.stopPropagation()}>
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={onDiscuss}><MessageSquare className="mr-2 h-4 w-4" />Discuss</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
-function IssueTreeSection({
-  label,
-  issues,
-  open,
-  onOpenChange,
-  testId,
-  count = issues.length,
-  loading = false,
-  emptyLabel = "No issues.",
-  renderIssue,
-}: IssueTreeSectionProps) {
+function IssueRow({ issue, onCycleStatus, onDiscuss }: { issue: Issue; onCycleStatus: (id: string, status: Issue["status"]) => void; onDiscuss: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const details: ReactNode = expanded ? <div className="px-8 pb-3"><IssueInlineProfile issueId={issue.id} /></div> : null;
   return (
-    <section className="min-w-0">
-      <button
-        type="button"
-        onClick={() => onOpenChange(!open)}
-        className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-        aria-expanded={open}
-        data-testid={testId}
-      >
-        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
-        <span className="truncate">{label}</span>
-        <span className="ml-auto font-normal tabular-nums text-muted-foreground/70">{count}</span>
-      </button>
-      {open ? (
-        <div className="ml-3 border-l border-border pl-2">
-          {loading ? (
-            <div className="space-y-1 py-1">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </div>
-          ) : issues.length > 0 ? (
-            issues.map(renderIssue)
-          ) : (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyLabel}</div>
-          )}
-        </div>
-      ) : null}
-    </section>
+    <>
+      <ProfileTreeRow
+        depth={0}
+        icon={
+          <Tooltip><TooltipTrigger asChild><button type="button" onClick={(event) => { event.stopPropagation(); onCycleStatus(issue.id, nextStatus[issue.status]); }} aria-label={`Move to ${statusLabel[nextStatus[issue.status]]}`}><StatusIcon status={issue.status} className="h-4 w-4" /></button></TooltipTrigger><TooltipContent>{statusLabel[issue.status]}</TooltipContent></Tooltip>
+        }
+        title={issue.title}
+        subtitle={issue.description}
+        isOpen={expanded}
+        onToggle={() => setExpanded((value) => !value)}
+        menuContent={<RowMenu onDiscuss={onDiscuss} />}
+      />
+      {details}
+    </>
   );
+}
+
+function TreeSection({ title, count, children }: { title: string; count: number; children: ReactNode }) {
+  return <section className="overflow-hidden rounded-lg border bg-card"><div className="flex items-center gap-2 border-b px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><span>{title}</span><span className="tabular-nums">{count}</span></div><div>{children}</div></section>;
+}
+
+function ErrorRow({ error, onDiscuss }: { error: ErrorAggregate; onDiscuss: () => void }) {
+  const source = error.source_file ? `${error.source_file}${error.source_line ? `:${error.source_line}` : ""}` : "Source unavailable";
+  return <ProfileTreeRow depth={0} icon={<AlertTriangle className="h-4 w-4 text-destructive" />} title={error.error_class} subtitle={`${error.occurrence_count} occurrence${error.occurrence_count === 1 ? "" : "s"} · ${source}`} menuContent={<RowMenu onDiscuss={onDiscuss} />} />;
 }
 
 export function IssuesTab() {
-  const { toast } = useToast();
-  const [updatingId, setUpdatingId] = useState<number | null>(null);
-  const [openOpen, setOpenOpen] = useState(true);
-  const [inProgressOpen, setInProgressOpen] = useState(true);
-  const [inReviewOpen, setInReviewOpen] = useState(true);
-  const [resolvedOpen, setResolvedOpen] = useState(false);
-
-  const { data: activeData, isLoading, isFetching, refetch } = useQuery<{ issues: Issue[] }>({
-    queryKey: ["/api/issues", "active"],
-    queryFn: async () => {
-      const response = await fetch("/api/issues?lightweight=true&exclude_status=resolved");
-      if (!response.ok) throw new Error(`Failed to fetch issues: ${response.statusText}`);
-      return response.json();
-    },
-    refetchInterval: 10000,
-  });
-
-  const { data: resolvedData, isLoading: resolvedLoading } = useQuery<{ issues: Issue[] }>({
-    queryKey: ["/api/issues", "resolved"],
-    queryFn: async () => {
-      const response = await fetch("/api/issues?lightweight=true&status=resolved");
-      if (!response.ok) throw new Error(`Failed to fetch issues: ${response.statusText}`);
-      return response.json();
-    },
-    enabled: resolvedOpen,
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: async ({ id, updates }: { id: number; updates: { status?: IssueStatus } }) => {
-      setUpdatingId(id);
-      const response = await apiRequest("PATCH", `/api/issues/${id}`, updates);
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/issues"] });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Failed to update issue", description: error.message, variant: "destructive" });
-    },
-    onSettled: () => setUpdatingId(null),
-  });
-
-  const activeIssues = activeData?.issues || [];
-  const openIssues = activeIssues.filter((issue) => issue.status === "open");
-  const inProgressIssues = activeIssues.filter((issue) => issue.status === "in_progress");
-  const inReviewIssues = activeIssues.filter((issue) => issue.status === "in_review");
-  const resolvedIssues = resolvedData?.issues || [];
-
-  const renderIssue = (issue: Issue) => (
-    <IssueTreeRow
-      key={issue.id}
-      issue={issue}
-      onCycleStatus={(id, nextStatus) => updateMutation.mutate({ id, updates: { status: nextStatus } })}
-      isUpdating={updatingId === issue.id}
-    />
-  );
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  const [search, setSearch] = useState("");
+  const discussion = useAgendaDiscussion();
+  const { data: personas = [] } = useQuery<PersonaOption[]>({ queryKey: ["/api/personas"] });
+  const engineerId = personas.find((persona) => persona.name.toLowerCase() === "engineer")?.id;
+  const { data: issues = [], isLoading } = useQuery<Issue[]>({ queryKey: ["/api/issues", "open"], queryFn: async () => { const response = await fetch("/api/issues?lightweight=true&exclude_status=resolved"); if (!response.ok) throw new Error("Failed to fetch issues"); return response.json(); } });
+  const { data: errors = [] } = useQuery<ErrorAggregate[]>({ queryKey: ["/api/issues/errors/recent"], queryFn: async () => { const response = await fetch("/api/issues/errors/recent?limit=25"); if (!response.ok) throw new Error("Failed to fetch recent errors"); return response.json(); } });
+  const updateStatus = useMutation({ mutationFn: async ({ id, status }: { id: string; status: Issue["status"] }) => { const response = await fetch(`/api/issues/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }); if (!response.ok) throw new Error("Failed to update issue"); }, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/issues"] }) });
+  const normalized = search.trim().toLowerCase();
+  const filteredIssues = useMemo(() => issues.filter((issue) => !normalized || `${issue.title} ${issue.description} ${issue.reproSteps ?? ""}`.toLowerCase().includes(normalized)), [issues, normalized]);
+  const filteredErrors = useMemo(() => errors.filter((error) => !normalized || `${error.error_class} ${error.error_code ?? ""} ${error.source_file ?? ""} ${error.source_line ?? ""}`.toLowerCase().includes(normalized)), [errors, normalized]);
+  const discuss = (title: string, message: string, suffix: string) => discussion.mutate({ title, message, clientTurnSuffix: suffix, personaId: engineerId });
 
   return (
-    <div className="min-w-0 overflow-x-hidden bg-background p-2 text-foreground">
-      <div className="mb-1 flex min-w-0 items-center justify-between gap-2 px-2 py-1">
-        <span className="text-xs text-muted-foreground" data-testid="badge-open-count">
-          {activeIssues.length} active
-        </span>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-7 w-7"
-          onClick={() => refetch()}
-          disabled={isFetching}
-          aria-label="Refresh issues"
-          data-testid="button-refresh-issues"
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
-        </Button>
+    <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search issues and errors..." className="pl-9" /></div>
+        <Button onClick={openIssueCaptureDialog}><Plus className="mr-2 h-4 w-4" />New Issue</Button>
       </div>
-
-      <div className="min-w-0 space-y-0">
-        {inReviewIssues.length > 0 ? (
-          <IssueTreeSection
-            label="In Review"
-            issues={inReviewIssues}
-            open={inReviewOpen}
-            onOpenChange={setInReviewOpen}
-            testId="button-toggle-inreview-group"
-            renderIssue={renderIssue}
-          />
-        ) : null}
-        {inProgressIssues.length > 0 ? (
-          <IssueTreeSection
-            label="In Progress"
-            issues={inProgressIssues}
-            open={inProgressOpen}
-            onOpenChange={setInProgressOpen}
-            testId="button-toggle-inprogress-group"
-            renderIssue={renderIssue}
-          />
-        ) : null}
-        {openIssues.length > 0 ? (
-          <IssueTreeSection
-            label="Open"
-            issues={openIssues}
-            open={openOpen}
-            onOpenChange={setOpenOpen}
-            testId="button-toggle-open-group"
-            renderIssue={renderIssue}
-          />
-        ) : (
-          <div className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-issues">
-            No active issues.
-          </div>
-        )}
-        <IssueTreeSection
-          label="Resolved"
-          issues={resolvedIssues}
-          open={resolvedOpen}
-          onOpenChange={setResolvedOpen}
-          testId="button-toggle-resolved-group"
-          count={resolvedData ? resolvedIssues.length : 0}
-          loading={resolvedLoading}
-          emptyLabel="No resolved issues."
-          renderIssue={renderIssue}
-        />
-      </div>
+      <TreeSection title="Errors" count={filteredErrors.length}>
+        {filteredErrors.length ? filteredErrors.map((error) => <ErrorRow key={error.fingerprint} error={error} onDiscuss={() => discuss(`Error: ${error.error_class}`, `Investigate this privacy-safe error aggregate:\n\n- Error: ${error.error_class}\n- Code: ${error.error_code ?? "Unavailable"}\n- Count: ${error.occurrence_count}\n- Source: ${error.source_file ?? "Unavailable"}${error.source_line ? `:${error.source_line}` : ""}\n- Fingerprint: ${error.fingerprint}`, `error-${error.fingerprint}`)} />) : <div className="px-8 py-3 text-sm text-muted-foreground">No recent errors.</div>}
+      </TreeSection>
+      <TreeSection title="Open" count={filteredIssues.length}>
+        {isLoading ? <div className="px-8 py-3 text-sm text-muted-foreground">Loading issues…</div> : filteredIssues.length ? filteredIssues.map((issue) => <IssueRow key={issue.id} issue={issue} onCycleStatus={(id, status) => updateStatus.mutate({ id, status })} onDiscuss={() => discuss(`Issue: ${issue.title}`, `Discuss and resolve @issue:${issue.id}.\n\n${issue.description}${issue.reproSteps ? `\n\nReproduction steps:\n${issue.reproSteps}` : ""}`, `issue-${issue.id}`)} />) : <div className="px-8 py-3 text-sm text-muted-foreground">No open issues.</div>}
+      </TreeSection>
     </div>
   );
 }
+
+export default IssuesTab;

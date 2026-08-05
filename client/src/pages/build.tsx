@@ -5360,7 +5360,7 @@ export default function DevPage() {
   );
 
   usePageHeader({
-    title: "Build",
+    title: "Issues",
     tabs,
     activeTab,
     onTabChange: handleTabChange,

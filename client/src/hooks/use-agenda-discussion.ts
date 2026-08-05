@@ -26,6 +26,8 @@ export interface AgendaDiscussionLaunch {
   message?: string;
   /** Stable suffix for the replay-safe clientTurnId. */
   clientTurnSuffix: string;
+  /** Optional persona to activate for the new discussion. */
+  personaId?: number;
 }
 
 type CreatedSession = { id: string };
@@ -36,9 +38,10 @@ export function useAgendaDiscussion() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ title, applyAgendaId, message, clientTurnSuffix }: AgendaDiscussionLaunch) => {
+    mutationFn: async ({ title, applyAgendaId, message, clientTurnSuffix, personaId }: AgendaDiscussionLaunch) => {
       const response = await apiRequest("POST", "/api/sessions", {
         title: title.trim().slice(0, 80) || "Agenda Discussion",
+        ...(personaId ? { personaId } : {}),
       });
       const session: CreatedSession = await response.json();
       // Instantiate the agenda into structured session state BEFORE posting any
