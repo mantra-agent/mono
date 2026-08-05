@@ -344,11 +344,13 @@ const adapters: AddressResolverAdapter[] = [
       bySession.set(sessionId, grouped);
     }
     for (const [sessionId, sessionRefs] of bySession) {
-      const session = await chatFileStorage.getSession(sessionId);
-      if (!session) continue;
+      // getSession returns session metadata only (no messages array); the
+      // question tool call lives in the message log, so read the snapshot.
+      const snapshot = await chatFileStorage.getSessionSnapshot(sessionId);
+      if (!snapshot) continue;
       for (const ref of sessionRefs) {
         const toolCallId = ref.id.slice(sessionId.length + 1);
-        for (const message of session.messages) {
+        for (const message of snapshot.messages) {
           if (!Array.isArray(message.toolCalls)) continue;
           const call = message.toolCalls.find((candidate) => {
             if (!candidate || typeof candidate !== "object") return false;
