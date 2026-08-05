@@ -16664,6 +16664,13 @@ const cognitionTools: Record<string, ToolHandler> = {
           parts.push(`Cognitive overrides: ${JSON.stringify(active.cognitiveOverrides)}`);
         }
         if (active.promptOverlay) parts.push(`Overlay: ${active.promptOverlay.slice(0, 200)}${active.promptOverlay.length > 200 ? "..." : ""}`);
+        const ctxKeys = active.contextSections ? Object.keys(active.contextSections) : [];
+        if (ctxKeys.length > 0) parts.push(`Context sections: ${JSON.stringify(active.contextSections)}`);
+        parts.push(
+          active.toolBundle && active.toolBundle.length > 0
+            ? `Tool bundle (${active.toolBundle.length}): ${active.toolBundle.join(", ")}`
+            : "Tool bundle: empty — passthrough (all tools loaded; no per-persona gating in effect)"
+        );
         return { result: parts.join("\n") };
       },
 
@@ -16673,9 +16680,10 @@ const cognitionTools: Record<string, ToolHandler> = {
         if (all.length === 0) return { result: "No personas found." };
         const { resolveSessionPersona } = await import("./session-persona");
         const active = await resolveSessionPersona(args._sessionId);
-        const lines = all.map(p =>
-          `- ${p.id === active?.id ? "▶ " : ""}**${p.name}** (id=${p.id}, ${p.source})${p.isDefault ? " [default]" : ""} — ${p.description}`
-        );
+        const lines = all.map(p => {
+          const bundle = p.toolBundle && p.toolBundle.length > 0 ? `${p.toolBundle.length} bundled` : "all (passthrough)";
+          return `- ${p.id === active?.id ? "▶ " : ""}**${p.name}** (id=${p.id}, ${p.source}, tools: ${bundle})${p.isDefault ? " [default]" : ""} — ${p.description}`;
+        });
         return { result: `${all.length} personas:\n${lines.join("\n")}` };
       },
 
