@@ -14,9 +14,8 @@ export {
   canManagePlatformVaults,
   ensurePlatformVaultMembershipSchema,
   loadVaultIdsByPlatformIds,
-  replacePlatformVaultMemberships,
   resolveCreationVaultId,
-  seedPlatformVaultMembership,
+  setPlatformVault,
 } from "../platform-vault-access";
 
 export function visiblePlatform(predicate?: SQL): SQL {

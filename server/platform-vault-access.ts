@@ -1,19 +1,12 @@
-import { and, eq, exists, inArray, type SQL } from "drizzle-orm";
-import { platformVaultMemberships, platforms, vaults } from "@shared/schema";
+import { and, eq, inArray, type SQL } from "drizzle-orm";
+import { platforms, vaults } from "@shared/schema";
 import { db, pool } from "./db";
 import type { Principal } from "./principal";
 import { requireCurrentPrincipal } from "./principal-context";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
-  ownedInsertValues,
 } from "./scoped-storage";
-
-export const platformVaultMembershipScopeColumns = {
-  scope: platformVaultMemberships.scope,
-  ownerUserId: platformVaultMemberships.ownerUserId,
-  accountId: platformVaultMemberships.accountId,
-};
 
 const platformScopeColumns = {
   scope: platforms.scope,
@@ -133,7 +126,11 @@ export async function ensurePlatformVaultMembershipSchema(): Promise<void> {
   }
 }
 
-function visiblePlatformMembershipExists(principal: Principal): SQL {
+// Single-vault visibility: a Platform is visible when its sole owning Vault
+// (platforms.vault_id) is currently visible to the principal. The legacy
+// platform_vault_memberships join table is no longer consulted — a Platform
+// belongs to exactly one Vault.
+function visiblePlatformVaultPredicate(principal: Principal): SQL {
   if (
     principal.actorType !== "user" ||
     !principal.userId ||
@@ -142,30 +139,13 @@ function visiblePlatformMembershipExists(principal: Principal): SQL {
   ) {
     return eq(platforms.id, -1);
   }
-
-  return exists(
-    db
-      .select({ platformId: platformVaultMemberships.platformId })
-      .from(platformVaultMemberships)
-      .innerJoin(vaults, eq(vaults.id, platformVaultMemberships.vaultId))
-      .where(
-        and(
-          eq(platformVaultMemberships.platformId, platforms.id),
-          eq(platformVaultMemberships.scope, "user"),
-          eq(platformVaultMemberships.ownerUserId, principal.userId),
-          eq(platformVaultMemberships.accountId, principal.accountId),
-          inArray(platformVaultMemberships.vaultId, principal.visibleVaultIds),
-          eq(vaults.accountId, principal.accountId),
-          eq(vaults.isArchived, false),
-        ),
-      ),
-  );
+  return inArray(platforms.vaultId, principal.visibleVaultIds);
 }
 
 export function visiblePlatform(predicate?: SQL): SQL {
   const principal = requireCurrentPrincipal();
   const ownership = combineWithVisibleScope(principal, platformScopeColumns, predicate);
-  return and(ownership, visiblePlatformMembershipExists(principal))!;
+  return and(ownership, visiblePlatformVaultPredicate(principal))!;
 }
 
 export function writablePlatform(predicate?: SQL): SQL {
@@ -179,7 +159,7 @@ export function canManagePlatformVaults(
     ownerUserId: string | null;
     accountId: string | null;
     scope: string | null;
-    vaultIds?: string[];
+    vaultId?: string | null;
   },
 ): boolean {
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
@@ -189,8 +169,7 @@ export function canManagePlatformVaults(
   if (platform.ownerUserId !== principal.userId || platform.accountId !== principal.accountId) {
     return false;
   }
-  const vaultIds = platform.vaultIds ?? [];
-  return vaultIds.some((vaultId) => principal.visibleVaultIds.includes(vaultId));
+  return !!platform.vaultId && principal.visibleVaultIds.includes(platform.vaultId);
 }
 
 export async function loadVaultIdsByPlatformIds(
@@ -201,51 +180,12 @@ export async function loadVaultIdsByPlatformIds(
   if (platformIds.length === 0) return result;
 
   const rows = await db
-    .select({
-      platformId: platformVaultMemberships.platformId,
-      vaultId: platformVaultMemberships.vaultId,
-      position: vaults.position,
-      isDefault: vaults.isDefault,
-      createdAt: vaults.createdAt,
-    })
-    .from(platformVaultMemberships)
-    .innerJoin(vaults, eq(platformVaultMemberships.vaultId, vaults.id))
-    .where(
-      and(
-        inArray(platformVaultMemberships.platformId, platformIds),
-        eq(vaults.isArchived, false),
-        principal.actorType === "user" && principal.userId && principal.accountId
-          ? and(
-              eq(platformVaultMemberships.scope, "user"),
-              eq(platformVaultMemberships.ownerUserId, principal.userId),
-              eq(platformVaultMemberships.accountId, principal.accountId),
-            )
-          : eq(platformVaultMemberships.id, -1),
-      ),
-    );
+    .select({ platformId: platforms.id, vaultId: platforms.vaultId })
+    .from(platforms)
+    .where(inArray(platforms.id, platformIds));
 
-  const grouped = new Map<number, typeof rows>();
   for (const row of rows) {
-    const list = grouped.get(row.platformId) ?? [];
-    list.push(row);
-    grouped.set(row.platformId, list);
-  }
-
-  for (const [platformId, memberships] of grouped) {
-    memberships.sort((a, b) => {
-      const defaultDelta = Number(b.isDefault) - Number(a.isDefault);
-      if (defaultDelta !== 0) return defaultDelta;
-      const posA = a.position ?? Number.MAX_SAFE_INTEGER;
-      const posB = b.position ?? Number.MAX_SAFE_INTEGER;
-      if (posA !== posB) return posA - posB;
-      const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return createdA - createdB || a.vaultId.localeCompare(b.vaultId);
-    });
-    result.set(
-      platformId,
-      memberships.map((membership) => membership.vaultId),
-    );
+    result.set(row.platformId, row.vaultId ? [row.vaultId] : []);
   }
 
   for (const platformId of platformIds) {
@@ -267,30 +207,12 @@ export function resolveCreationVaultId(explicitVaultId?: string): string {
   return vaultId;
 }
 
-export async function seedPlatformVaultMembership(args: {
-  platformId: number;
-  vaultId: string;
-  principal: Principal;
-}): Promise<void> {
-  const { platformId, vaultId, principal } = args;
-  if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
-    throw new Error("Platform Vault membership requires an authenticated user account");
-  }
-  await db.insert(platformVaultMemberships).values({
-    platformId,
-    vaultId,
-    ...ownedInsertValues(principal, {
-      scope: platformVaultMemberships.scope,
-      ownerUserId: platformVaultMemberships.ownerUserId,
-      accountId: platformVaultMemberships.accountId,
-    }),
-    createdByUserId: principal.userId,
-  });
-}
-
-export async function replacePlatformVaultMemberships(
+// Single-vault ownership: set the one Vault a Platform belongs to. Accepts an
+// array for route compatibility but a Platform belongs to exactly one Vault, so
+// only the first requested Vault is honored.
+export async function setPlatformVault(
   platformId: number,
-  vaultIds: string[],
+  requestedVaultIds: string[],
 ): Promise<{
   id: number;
   vaultId: string;
@@ -299,17 +221,15 @@ export async function replacePlatformVaultMemberships(
 }> {
   const principal = requireCurrentPrincipal();
   if (principal.actorType !== "user" || !principal.userId || !principal.accountId) {
-    throw new Error("Platform Vault membership requires an authenticated user account");
+    throw new Error("Platform Vault ownership requires an authenticated user account");
   }
 
-  const normalizedVisibleVaultIds = [
-    ...new Set(vaultIds.map((vaultId) => vaultId.trim()).filter(Boolean)),
-  ];
-  if (normalizedVisibleVaultIds.length === 0) {
-    throw new Error("A Platform must belong to at least one visible Vault");
+  const nextVaultId = requestedVaultIds.map((vaultId) => vaultId.trim()).filter(Boolean)[0];
+  if (!nextVaultId) {
+    throw new Error("A Platform must belong to exactly one Vault");
   }
-  if (normalizedVisibleVaultIds.some((vaultId) => !principal.visibleVaultIds.includes(vaultId))) {
-    throw new Error("Every selected Platform Vault must be currently visible");
+  if (!principal.visibleVaultIds.includes(nextVaultId)) {
+    throw new Error("The selected Platform Vault must be currently visible");
   }
 
   await db.transaction(async (tx) => {
@@ -332,74 +252,27 @@ export async function replacePlatformVaultMemberships(
     if (!platform) {
       throw new Error(`Platform ${platformId} not found or not administrable`);
     }
-
-    const existingMemberships = await tx
-      .select({ vaultId: platformVaultMemberships.vaultId })
-      .from(platformVaultMemberships)
-      .where(
-        and(
-          eq(platformVaultMemberships.platformId, platformId),
-          eq(platformVaultMemberships.scope, "user"),
-          eq(platformVaultMemberships.ownerUserId, principal.userId!),
-          eq(platformVaultMemberships.accountId, principal.accountId!),
-        ),
-      );
-    const existingVaultIds = existingMemberships.map((membership) => membership.vaultId);
-    if (
-      !canManagePlatformVaults(principal, {
-        ...platform,
-        vaultIds: existingVaultIds,
-      })
-    ) {
-      throw new Error(`Platform ${platformId} Vaults are not manageable`);
+    if (!canManagePlatformVaults(principal, platform)) {
+      throw new Error(`Platform ${platformId} Vault is not manageable`);
     }
 
-    const hiddenVaultIds = existingVaultIds.filter(
-      (vaultId) => !principal.visibleVaultIds.includes(vaultId),
-    );
-    const finalVaultIds = [...new Set([...hiddenVaultIds, ...normalizedVisibleVaultIds])];
-
-    const availableVaults = await tx
+    const [available] = await tx
       .select({ id: vaults.id })
       .from(vaults)
       .where(
         and(
-          inArray(vaults.id, finalVaultIds),
+          eq(vaults.id, nextVaultId),
           eq(vaults.accountId, principal.accountId!),
           eq(vaults.isArchived, false),
         ),
       );
-    if (availableVaults.length !== finalVaultIds.length) {
-      throw new Error("Every Platform Vault must be live and writable in the active account");
+    if (!available) {
+      throw new Error("The selected Platform Vault must be live and writable in the active account");
     }
 
     await tx
-      .delete(platformVaultMemberships)
-      .where(
-        and(
-          eq(platformVaultMemberships.platformId, platformId),
-          eq(platformVaultMemberships.scope, "user"),
-          eq(platformVaultMemberships.ownerUserId, principal.userId!),
-          eq(platformVaultMemberships.accountId, principal.accountId!),
-        ),
-      );
-    await tx.insert(platformVaultMemberships).values(
-      finalVaultIds.map((vaultId) => ({
-        platformId,
-        vaultId,
-        scope: "user" as const,
-        ownerUserId: principal.userId!,
-        accountId: principal.accountId!,
-        createdByUserId: principal.userId!,
-      })),
-    );
-
-    const primaryVaultId = finalVaultIds.includes(platform.vaultId ?? "")
-      ? (platform.vaultId as string)
-      : normalizedVisibleVaultIds[0];
-    await tx
       .update(platforms)
-      .set({ vaultId: primaryVaultId, updatedAt: new Date() })
+      .set({ vaultId: nextVaultId, updatedAt: new Date() })
       .where(
         and(
           eq(platforms.id, platformId),
@@ -408,7 +281,6 @@ export async function replacePlatformVaultMemberships(
       );
   });
 
-  const vaultIdsForPlatform = await loadVaultIdsByPlatformIds(principal, [platformId]);
   const [platform] = await db
     .select({
       id: platforms.id,
@@ -421,16 +293,12 @@ export async function replacePlatformVaultMemberships(
     .where(eq(platforms.id, platformId))
     .limit(1);
   if (!platform) {
-    throw new Error(`Platform ${platformId} not found after updating Vaults`);
+    throw new Error(`Platform ${platformId} not found after updating Vault`);
   }
-  const nextVaultIds = vaultIdsForPlatform.get(platformId) ?? [];
   return {
     id: platform.id,
-    vaultId: platform.vaultId ?? nextVaultIds[0] ?? "",
-    vaultIds: nextVaultIds,
-    canManageVaults: canManagePlatformVaults(principal, {
-      ...platform,
-      vaultIds: nextVaultIds,
-    }),
+    vaultId: platform.vaultId ?? "",
+    vaultIds: platform.vaultId ? [platform.vaultId] : [],
+    canManageVaults: canManagePlatformVaults(principal, platform),
   };
 }

@@ -21,9 +21,8 @@ import {
   getVisibleEnvironment,
   getWritableEnvironment,
   loadVaultIdsByPlatformIds,
-  replacePlatformVaultMemberships,
   resolveCreationVaultId,
-  seedPlatformVaultMembership,
+  setPlatformVault,
   visiblePlatform,
   writablePlatform,
 } from "../platforms/platform-access";
@@ -732,11 +731,6 @@ export function registerPlatformRoutes(app: Express): void {
           ...ownedInsertValues(principal, platformScopeColumns),
         })
         .returning();
-      await seedPlatformVaultMembership({
-        platformId: created.id,
-        vaultId,
-        principal,
-      });
       const vaultIds = [vaultId];
       res.status(201).json({
         ...created,
@@ -778,14 +772,16 @@ export function registerPlatformRoutes(app: Express): void {
   app.patch("/api/platforms/:id/vaults", async (req, res) => {
     try {
       const id = platformIdParam(req.params.id);
-      const vaultIds = Array.isArray(req.body?.vaultIds) ? req.body.vaultIds : null;
+      const singleVaultId = typeof req.body?.vaultId === "string" ? [req.body.vaultId] : null;
+      const vaultIds =
+        singleVaultId ?? (Array.isArray(req.body?.vaultIds) ? req.body.vaultIds : null);
       if (!vaultIds || !vaultIds.every((value: unknown) => typeof value === "string")) {
         return res.status(400).json({
-          error: "vaultIds must be an array of Vault IDs",
+          error: "vaultId must be a Vault ID",
           operation: "replace_platform_vaults",
         });
       }
-      const platform = await replacePlatformVaultMemberships(id, vaultIds);
+      const platform = await setPlatformVault(id, vaultIds);
       res.json(platform);
     } catch (error: unknown) {
       const err = routeError(error, "replace_platform_vaults");

@@ -15,9 +15,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -286,12 +287,14 @@ function EmptyTreeRow({ depth, title }: { depth: number; title: string }) {
 
 function EnvironmentRow({
   environment,
+  titleColor,
   buildStatus,
   unread,
   onOpen,
   onDelete,
 }: {
   environment: PlatformProductEnvironment;
+  titleColor?: string;
   buildStatus: BuildLifecycleStatus | undefined;
   unread: boolean;
   onOpen: () => void;
@@ -304,6 +307,7 @@ function EnvironmentRow({
       depth={2}
       icon={Server}
       title={environment.name}
+      titleColor={titleColor}
       onSelect={onOpen}
       isBuilding={isBuilding}
       unread={unread}
@@ -324,7 +328,12 @@ function EnvironmentRow({
       }
     >
       <span className="flex-1 min-w-0 pr-14">
-        <span className={cn("truncate", isBuilding && "text-active animate-pulse")}>{environment.name}</span>
+        <span
+          className={cn("truncate", isBuilding && "text-active animate-pulse")}
+          style={titleColor && !isBuilding ? { color: titleColor } : undefined}
+        >
+          {environment.name}
+        </span>
       </span>
     </PlatformTreeRow>
   );
@@ -590,15 +599,13 @@ export default function PlatformsPage() {
           ) : platforms.map(platform => {
             const platformOpen = !closedPlatforms.has(platform.id);
             const platformRenaming = renameTarget?.type === "platform" && renameTarget.id === platform.id;
-            const platformVaultIds = platform.vaultIds?.length
-              ? platform.vaultIds
-              : platform.vaultId
-                ? [platform.vaultId]
-                : [];
+            const platformVaultId = platform.vaultId ?? platform.vaultIds?.[0] ?? null;
+            const platformVaultIds = platformVaultId ? [platformVaultId] : [];
             const platformTitleColor = vaultTitleColor(
               platformVaultIds,
               vaultById,
               activeVaultId,
+              1,
             );
             return (
               <div key={platform.id} className="space-y-0 mt-0">
@@ -640,30 +647,28 @@ export default function PlatformsPage() {
                             Vaults
                           </DropdownMenuSubTrigger>
                           <DropdownMenuSubContent>
-                            {vaults.map((vault: Vault) => {
-                              const checked = platformVaultIds.includes(vault.id);
-                              return (
-                                <DropdownMenuCheckboxItem
+                            <DropdownMenuRadioGroup
+                              value={platformVaultId ?? ""}
+                              onValueChange={(nextVaultId) => {
+                                if (!nextVaultId || nextVaultId === platformVaultId) return;
+                                vaultMembershipMutation.mutate({
+                                  platformId: platform.id,
+                                  vaultIds: [nextVaultId],
+                                });
+                              }}
+                            >
+                              {vaults.map((vault: Vault) => (
+                                <DropdownMenuRadioItem
                                   key={vault.id}
-                                  checked={checked}
-                                  disabled={vaultMembershipMutation.isPending || (checked && platformVaultIds.length === 1)}
+                                  value={vault.id}
+                                  disabled={vaultMembershipMutation.isPending}
                                   onSelect={(event) => event.preventDefault()}
-                                  onCheckedChange={(nextChecked) => {
-                                    const nextVaultIds = nextChecked
-                                      ? Array.from(new Set([...platformVaultIds, vault.id]))
-                                      : platformVaultIds.filter((id) => id !== vault.id);
-                                    if (nextVaultIds.length === 0) return;
-                                    vaultMembershipMutation.mutate({
-                                      platformId: platform.id,
-                                      vaultIds: nextVaultIds,
-                                    });
-                                  }}
                                   data-testid={`menu-platform-vault-${platform.id}-${vault.id}`}
                                 >
                                   <span style={{ color: vault.color || undefined }}>{vault.name}</span>
-                                </DropdownMenuCheckboxItem>
-                              );
-                            })}
+                                </DropdownMenuRadioItem>
+                              ))}
+                            </DropdownMenuRadioGroup>
                           </DropdownMenuSubContent>
                         </DropdownMenuSub>
                       )}
@@ -692,6 +697,7 @@ export default function PlatformsPage() {
                             depth={1}
                             icon={Package}
                             title={product.name}
+                            titleColor={platformTitleColor ?? undefined}
                             unread={productUnread}
                             onSelect={() => toggleProduct(product.id)}
                             onRename={() => startRenameProduct(platform, product)}
@@ -735,6 +741,7 @@ export default function PlatformsPage() {
                                 <EnvironmentRow
                                   key={environment.id}
                                   environment={environment}
+                                  titleColor={platformTitleColor ?? undefined}
                                   buildStatus={buildStatusByEnvironment.get(environment.id)}
                                   unread={environmentHasUnreadBuild(environment.id)}
                                   onOpen={() => setLocation(`/platforms/environments/${environment.id}`)}
