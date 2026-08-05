@@ -60,7 +60,7 @@ export const metrics = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
   (t) => ({
-    accountSlug: uniqueIndex("metrics_account_slug_uidx").on(t.accountId, t.slug),
+    accountVaultSlug: uniqueIndex("metrics_account_vault_slug_uidx").on(t.accountId, t.vaultId, t.slug),
     accountVault: index("metrics_account_vault_idx").on(t.accountId, t.vaultId),
     scopeOwner: index("metrics_scope_owner_idx").on(t.scope, t.ownerUserId),
   }),
@@ -107,7 +107,7 @@ export const kpis = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
   },
   (t) => ({
-    accountSlug: uniqueIndex("kpis_account_slug_uidx").on(t.accountId, t.slug),
+    accountVaultSlug: uniqueIndex("kpis_account_vault_slug_uidx").on(t.accountId, t.vaultId, t.slug),
     accountVault: index("kpis_account_vault_idx").on(t.accountId, t.vaultId),
     metric: index("kpis_metric_idx").on(t.metricId),
     standingObj: uniqueIndex("kpis_vault_standing_objective_uidx").on(t.vaultId, t.standingObjectiveKey),

@@ -57,15 +57,19 @@ async function ensureReady(): Promise<void> {
 // it cannot run at boot. Run it lazily on the first authenticated read for an
 // account. The seed is itself idempotent (skips existing objective keys); the
 // in-memory guard just avoids re-running two list queries on every request.
-const seededAccounts = new Set<string>();
+const seededScopes = new Set<string>();
 
 async function ensureSeeded(): Promise<void> {
   const principal = getCurrentPrincipal();
   const accountId = principal?.accountId;
-  if (!accountId || seededAccounts.has(accountId)) return;
+  const activeVaultId = principal?.activeVaultId;
+  const seedScope = accountId && activeVaultId
+    ? `${accountId}:${activeVaultId}`
+    : null;
+  if (!seedScope || seededScopes.has(seedScope)) return;
   try {
     await seedDefaultMetricsAndKpis();
-    seededAccounts.add(accountId);
+    seededScopes.add(seedScope);
   } catch (error) {
     log.warn("lazy metrics/kpi seed failed; will retry next read", {
       accountId,

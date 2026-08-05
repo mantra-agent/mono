@@ -1069,6 +1069,12 @@ A03 durable orchestration state, A04 autonomous mutation authority, and A08 avai
 
 Controls: AGENT-04, OBS-01, DATA-01, REC-02. Owner: Agent Runtime / Orchestration. Severity: high. Rollback is the merged PR revert. Residual risk: an uncooperative child can force a fail-closed pause/block requiring later recovery, but cannot authorize an overlapping retry.
 
+## 11.20 Metrics/KPI default reconciliation vault scope, August 5, 2026
+
+A01/A02/S2 Metric and KPI definitions cross F04/F05 and B06/B11 when authenticated Business reads lazily reconcile canonical defaults. The prior account-only lazy guard and account-only slug indexes could cause one visible vault's defaults to satisfy another vault's reconciliation, while cleanup enumerated all visible rows before writable-scope deletion. That combination risked missing required per-vault defaults and attempting cross-vault mutation.
+
+**Closed in source.** `server/metrics-routes.ts` keys lazy reconciliation by account and active vault and skips mutation without both. `server/metrics-seed.ts` default-denies execution without an active vault, filters canonical existence checks and untouched legacy cleanup to that vault, and continues to mutate only through principal-scoped storage APIs. `server/metrics-storage.ts` and `shared/models/metrics.ts` now enforce account-and-vault slug uniqueness instead of account-only uniqueness. Cleanup still requires exact untouched legacy signatures, preserving user-created or modified rows. Controls: DATA-01, DATA-04, AGENT-03. Owner: Business / Metrics. Severity: medium. SLA: closed in source on August 5, 2026. Rollback is the merged PR revert. Residual risk: modified legacy seeded rows remain intentionally because provenance is insufficient to distinguish them safely from user-owned data.
+
 ## 11.19 Legacy JSON tag-registry retirement, August 5, 2026
 
 A02/S2 semantic tags cross F04/F05 and B06/B11 when authenticated TagService reads or mutations initialize. The retired compatibility path read the platform-global `system.tags.index` setting during user-scoped tag operations and attempted one-time ownership inference before copying entries into account/user-scoped SQL tables. Its ambiguity guard reduced immediate exposure, but retaining a global registry reader beside the canonical store preserved a second authority and a cross-account contamination risk.
