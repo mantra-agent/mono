@@ -773,7 +773,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["create", "list", "get", "resolve", "add_note"], description: "Action to perform" },
+        action: { type: "string", enum: ["create", "list", "get", "resolve", "add_note", "list_errors"], description: "Action to perform" },
         id: { type: "string", description: "Issue ID (for get/resolve/add_note)" },
         text: { type: "string", description: "Dated log entry text to append to the Issue's notes log, 1-5000 characters (for add_note)" },
         status: { type: "string", enum: ["open", "in_progress", "in_review", "resolved"], description: "Issue status filter (for list)" },

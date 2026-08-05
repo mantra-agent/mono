@@ -5179,6 +5179,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const { storage } = await import("./storage");
     const action = (args.action as string | undefined) || "create";
 
+    if (action === "list_errors") {
+      const { listRecentApplicationErrors } = await import("./error-telemetry");
+      const limit = Math.min(Math.max(Number(args.limit) || 25, 1), 100);
+      const offset = Math.max(Number(args.offset) || 0, 0);
+      const errors = await listRecentApplicationErrors(limit, offset);
+      return { result: errors.length > 0 ? errors : "No aggregated application errors found." };
+    }
+
     if (action === "list") {
       const allowedStatuses = new Set(["open", "in_progress", "in_review", "resolved"]);
       const status = typeof args.status === "string" && args.status.trim()
