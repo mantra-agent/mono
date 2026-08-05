@@ -1558,12 +1558,12 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   cognition: {
-    description: "Manage Agent's cognitive state — emotional states and personas. Actions: set_emotion (record new state), get_emotion (current), emotion_history (recent), get_persona (current active), list_personas, create_persona, update_persona. Use the `orient` tool to activate/switch personas.",
+    description: "Manage Agent's cognitive state — emotional states and personas. Actions: set_emotion (record new state), get_emotion (current), emotion_history (recent), get_persona (current active), list_personas, resolve_toolset (preview the exact tools a persona loads up front vs on demand), create_persona, update_persona. Use the `orient` tool to activate/switch personas.",
     category: "cognition",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["set_emotion", "get_emotion", "emotion_history", "get_persona", "list_personas", "create_persona", "update_persona"], description: "Action to perform" },
+        action: { type: "string", enum: ["set_emotion", "get_emotion", "emotion_history", "get_persona", "list_personas", "resolve_toolset", "create_persona", "update_persona"], description: "Action to perform" },
         state_name: { type: "string", description: "Emotional state name (for set_emotion, e.g., 'focused', 'curious', 'frustrated')" },
         valence: { type: "number", description: "Emotional valence -1 (negative) to 1 (positive) (for set_emotion)" },
         arousal: { type: "number", description: "Emotional arousal 0 (calm) to 1 (activated) (for set_emotion)" },
@@ -1571,7 +1571,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         context: { type: "string", description: "Context for the emotional state (for set_emotion)" },
         narrative: { type: "string", description: "A few sentences about what's alive emotionally — grounds the state in felt experience (for set_emotion)" },
         limit: { type: "number", description: "Max history entries (for emotion_history, default 10)" },
-        id: { type: "number", description: "Persona ID (for update_persona)" },
+        id: { type: "number", description: "Persona ID (for update_persona; optional for resolve_toolset — defaults to the active persona)" },
         name: { type: "string", description: "Persona name (for create_persona)" },
         description: { type: "string", description: "Persona description (for create_persona, update_persona)" },
         prompt_overlay: { type: "string", description: "Behavioral prompt overlay (for create_persona, update_persona)" },
