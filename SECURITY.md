@@ -640,6 +640,14 @@ An acceptance record must state: finding ID; exact failed invariant; business re
 
 ## 11. Verified reconnaissance and initial risk register
 
+### 2026-08-05 social publishing tool consolidation delta
+
+- **Assets / classes / flows:** A01 connected-account credentials and identity; A04 authorization policy; S2 social drafts and posts; F02/F03 agent tool invocation to the X provider across B04/B08.
+- **Threats:** confused-deputy publication or deletion by a caller authorized only for queue management (STRIDE elevation of privilege/tampering), cross-user account selection (information disclosure/spoofing), and untrusted X search/news content influencing later model actions (LLM prompt injection).
+- **Deterministic controls / owner:** `content` exposes collision-free `x_*` actions, while `agent-authority.ts` independently forbids model-originated `x_post`, `x_reply`, and `x_delete`; `autonomy-tiers.ts` preserves Tier 2 classification for those actions and read-only tiers for status/lookup/search. The existing Twitter bridge remains a hidden migration alias and retains principal-bound connected-account lookup plus provider-side posting, reply, deletion, and retrieval contracts. Tool registry and catalog advertisement no longer expose `twitter`. Owner: Agent Platform / Security Program Owner.
+- **Outcome / residual risk:** no authority widening and no new trust boundary; the change reduces model-visible surface area. Existing provider availability and retrieved-content risks remain governed by B04/B09 controls. No new risk-register finding is required.
+
+
 The following entries were verified from source and stage environment metadata on 2026-07-20. They are control-gap evidence, not claims that every possible exploit path has been demonstrated. Secret values were not inspected.
 
 | ID | Status / confidence | Asset / boundary / flow | Threat and evidence | Control / owner | Severity / SLA | Next action |
