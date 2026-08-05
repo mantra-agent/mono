@@ -33,9 +33,10 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   people: { default: 1, actions: { list: 0, get: 0, get_vault_memberships: 0, search: 0, agenda: 0, get_interactions: 0, scan_imports: 0, scan_ignored: 0, list_import_candidates: 0, get_import_candidate: 0, find_import_matches: 0, get_import_batch: 0 } },
   gmail: { default: 0, actions: { draft: 1 } },
   twitter: { default: 0, actions: { post: 2, reply: 2, delete: 2 } },
-  meetings: { default: 0, actions: { add: 2, update: 2, delete: 2 } },
-  // External effect: writes a timed event to the user's own Google Calendar.
+  meetings: { default: 0, actions: { add: 2, update: 2, delete: 2, create_calendar_block: 2, join: 2, leave: 2 } },
+  // Hidden migration aliases retain their independently gated external-effect tiers.
   create_calendar_block: { default: 2 },
+  meeting_bot: { default: 0, actions: { join: 2, leave: 2 } },
   content: { default: 1, actions: { list: 0, suggest_times: 0 } },
   finance: { default: 0 },
   health: { default: 1, actions: { summary: 0, metrics: 0, activity_status: 0, list_activities: 0, activity_logs: 0, get_gratitude: 0, list_gratitudes: 0 } },

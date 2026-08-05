@@ -11135,6 +11135,12 @@ ${refs}` : ""),
     const action = args.action;
     if (!action) return { result: "Missing action parameter", error: true };
     const sub: Record<string, (a: Record<string, any>) => Promise<ToolHandlerResult>> = {
+      create_calendar_block: (a) => bridgeHandlers.create_calendar_block(a),
+      join: (a) => bridgeHandlers.meeting_bot(a),
+      status: (a) => bridgeHandlers.meeting_bot(a),
+      diagnostics: (a) => bridgeHandlers.meeting_bot(a),
+      recap: (a) => bridgeHandlers.meeting_bot(a),
+      leave: (a) => bridgeHandlers.meeting_bot(a),
       add: (a) => bridgeHandlers.add_meeting(a),
       list: (a) => bridgeHandlers.list_meetings(a),
       update: (a) => bridgeHandlers.update_meeting(a),
