@@ -219,24 +219,13 @@ export function registerIssueRoutes(app: Express) {
       if (!issue) return res.status(404).json({ error: "Issue not found" });
 
       const noteSchema = z.object({
-        author: z.enum(["user", "agent"]),
-        content: z.string().max(10000),
-        attachments: z.array(z.object({ name: z.string(), url: z.string() })).optional(),
+        author: z.enum(["user", "agent"]).default("agent"),
+        content: z.string().max(5000),
       });
 
       const data = noteSchema.parse(req.body);
-      const existingNotes: any[] = Array.isArray(issue.notes) ? issue.notes as any[] : [];
-      const newNote = {
-        id: `note-${Date.now()}`,
-        author: data.author,
-        content: data.content,
-        timestamp: new Date().toISOString(),
-        attachments: data.attachments || [],
-      };
-
-      const updated = await storage.updateIssue(id, {
-        notes: [...existingNotes, newNote] as any,
-      });
+      // Canonical append-only path — same primitive the issues tool uses.
+      const updated = await storage.addIssueNote(id, data.content, data.author);
 
       res.json(updated);
     } catch (error: any) {

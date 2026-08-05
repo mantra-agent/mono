@@ -5280,7 +5280,30 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       }
     }
 
-    return { result: `Unknown issues action: ${action}. Available: create, list, get, resolve`, error: true };
+    if (action === "add_note") {
+      const rawId = args.id;
+      if (rawId === undefined || rawId === null || rawId === "") {
+        return { result: "Missing issue id", error: true };
+      }
+      const idNum = typeof rawId === "number" ? rawId : Number(String(rawId).trim());
+      if (!Number.isFinite(idNum) || !Number.isInteger(idNum) || idNum <= 0) {
+        return { result: `Invalid issue id '${rawId}'; expected a positive integer`, error: true };
+      }
+      const text = typeof args.text === "string" ? args.text.trim() : "";
+      if (!text || text.length > 5_000) {
+        return { result: "add_note requires a text entry of 1-5000 characters", error: true };
+      }
+      try {
+        const issue = await storage.addIssueNote(idNum, text, "agent");
+        if (!issue) return { result: `Issue ${idNum} not found`, error: true };
+        return { result: JSON.stringify(issue) };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { result: `Failed to add note to issue ${idNum}: ${message}`, error: true };
+      }
+    }
+
+    return { result: `Unknown issues action: ${action}. Available: create, list, get, resolve, add_note`, error: true };
   },
 
   async goals(args) {
