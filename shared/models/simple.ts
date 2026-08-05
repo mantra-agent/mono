@@ -173,27 +173,14 @@ export function dynamicSectionLabel(section: SimpleSection, now?: Date, timezone
   }).formatToParts(d);
   const get = (type: string) => parts.find(p => p.type === type)?.value ?? "";
 
-  // Get the current hour in the target timezone for time-of-day labels
-  const hourParts = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    hour: "numeric",
-    hour12: false,
-  }).formatToParts(d);
-  const hour = Number(hourParts.find(p => p.type === "hour")?.value ?? "12");
-
   switch (section) {
     case "now": {
       const weekday = new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short" }).format(d).toUpperCase();
       const month = new Intl.DateTimeFormat("en-US", { timeZone: timezone, month: "long" }).format(d).toUpperCase();
       return `TODAY, ${weekday}, ${month} ${get("day")}`;
     }
-    case "today": {
-      // Show the NEXT time-of-day period (Now already covers current)
-      if (hour < 12) return "Afternoon";
-      if (hour < 18) return "Tonight";
-      // Evening: no next period — section should be merged into "now" by the feed generator
-      return "Tonight";
-    }
+    case "today":
+      return "Due Today";
     case "this_month": {
       const monthIdx = Number(get("month")) - 1;
       return MONTHS[monthIdx] ?? SIMPLE_SECTION_LABELS.this_month;
