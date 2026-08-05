@@ -39,7 +39,7 @@ import { listGmailAccounts } from "./gmail";
 import { getJournalEntriesSince } from "./thoughts";
 import { getRecentThoughts } from "./thoughts";
 import { detectSessionType, BLEND_WEIGHTS, modulateWeights } from "./memory/vnext-retrieval-policy";
-import { getSkillDefinitionsForContext, getToolSchemas, getToolCatalog } from "./tool-registry";
+import { getSkillDefinitionsForContext, getToolSchemas, getToolCatalog, filterToolsForPersonaBundle } from "./tool-registry";
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
 import { createLogger } from "./log";
 import { requireCurrentPrincipal } from "./principal-context";
@@ -2133,17 +2133,46 @@ async function resolveTools(request: ContextRequest): Promise<string> {
   // — the model hydrates a full schema on intent via `tools` action `get`.
   const catalog = getToolCatalog();
   const core = catalog.filter(t => t.isCore);
-  const extended = catalog.filter(t => !t.isCore);
   const fmtEntry = (t: { name: string; description: string }) => `- \`${t.name}\` — ${t.description}`;
+
+  // Make the TOC bundle-aware: the active persona front-loads full schemas for
+  // core ∪ bundle, and everything else hydrates on demand via `tools.get`. Run
+  // the REAL runtime gate so the index reflects the actual shipped schema set —
+  // labeling every non-core tool "on demand" misreports the bundled tools the
+  // model already holds and invites redundant `tools.get` calls.
+  let bundle: string[] | null | undefined;
+  if (mode !== "voice" && request.sessionId) {
+    try {
+      const { resolveSessionPersona } = await import("./session-persona");
+      bundle = (await resolveSessionPersona(request.sessionId))?.toolBundle;
+    } catch (err: any) {
+      log.warn(`resolveTools bundle lookup failed: ${err?.message ?? err}`);
+    }
+  }
+  const frontLoaded = filterToolsForPersonaBundle(catalog, bundle);
+  const frontLoadedNames = new Set(frontLoaded.map(t => t.name));
+  const bundled = frontLoaded.filter(t => !t.isCore);
+  const onDemand = catalog.filter(t => !frontLoadedNames.has(t.name));
+
   const toc = mode === "voice" ? [] : [
     "",
-    "**Tool index.** Every tool below is callable. Core tools load full schemas up front; the rest advertise here by exact name — call `tools` action `get` with that name to hydrate a full schema when you intend to use it.",
+    "**Tool index.** Every tool below is callable. Core and this persona's bundled tools load full schemas up front; the rest advertise here by exact name — call `tools` action `get` with that name to hydrate a full schema when you intend to use it.",
     "",
     `Core (${core.length}, always loaded):`,
     ...core.map(fmtEntry),
     "",
-    `Additional (${extended.length}, load on demand):`,
-    ...extended.map(fmtEntry),
+    ...(onDemand.length === 0
+      ? [
+          `Additional (${bundled.length}, all loaded up front for this persona):`,
+          ...bundled.map(fmtEntry),
+        ]
+      : [
+          `Bundled by this persona (${bundled.length}, loaded up front):`,
+          ...bundled.map(fmtEntry),
+          "",
+          `On-demand (${onDemand.length}, call \`tools.get\` to load):`,
+          ...onDemand.map(fmtEntry),
+        ]),
   ];
 
   return [
