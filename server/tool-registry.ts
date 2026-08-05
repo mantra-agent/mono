@@ -1522,8 +1522,12 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "get", "create", "update", "set_persona", "delete", "search", "run", "runs", "scores"], description: "list: show all skills. get: read full skill details by name including structured checklist. create: add a new skill. update: modify an existing skill by id. set_persona: set or clear the current user's persona override for a skill. delete: remove a user-created skill by id. search: find skills by query string. run: spawn an autonomous skill execution by skill ID. runs: get recent skill_runs (status, duration, pass rate, timestamps) for a skill by name — matches the dashboard Run History panel. scores: get scoring history from skill_runs." },
-        id: { type: "string", description: "Skill UUID (for update, delete)" },
+        action: { type: "string", enum: ["list", "get", "create", "update", "edit", "set_persona", "delete", "search", "run", "runs", "scores"], description: "list: show all skills. get: read full skill details by name including structured checklist. create: add a new skill. update: modify an existing skill by id (wholesale field replacement). edit: surgical find/replace within one text field (default 'process') without resending the whole field — mirrors edit_library_page. set_persona: set or clear the current user's persona override for a skill. delete: remove a user-created skill by id. search: find skills by query string. run: spawn an autonomous skill execution by skill ID. runs: get recent skill_runs (status, duration, pass rate, timestamps) for a skill by name — matches the dashboard Run History panel. scores: get scoring history from skill_runs." },
+        id: { type: "string", description: "Skill UUID (for update, edit, delete)" },
+        field: { type: "string", enum: ["process", "outputSpec", "description", "whenToUse"], description: "Text field to surgically edit (for edit, default 'process')." },
+        old_string: { type: "string", description: "Exact text to find in the target field (for edit)." },
+        new_string: { type: "string", description: "Replacement text; empty string deletes the matched text (for edit)." },
+        replace_all: { type: "boolean", description: "Replace all occurrences (for edit, default false). Required when old_string appears more than once." },
         name: { type: "string", description: "Skill name (for get, create, search)" },
         query: { type: "string", description: "Search query (for search action)" },
         category: { type: "string", description: "Skill category (for list filter, or create/update)" },

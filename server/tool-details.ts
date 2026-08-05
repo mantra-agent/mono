@@ -220,7 +220,7 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: '{ "action": "list_inference_calls", "sessionId": "session-id", "limit": 50 }',
   },
   skills: {
-    description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, delete, search.",
+    description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, edit, delete, search. Use edit for surgical find/replace within a single field (default 'process') instead of resending the whole field via update.",
     whenToUse: "When Agent needs to create, review, or modify its own reusable skills.",
     example: '{ "action": "create", "name": "my-analysis", "process": "...", "description": "Custom analysis" }',
   },

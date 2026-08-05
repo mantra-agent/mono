@@ -8032,6 +8032,39 @@ ${lines.join("\n")}` };
           const forked = existing.scope === "global" && updated.id !== existing.id;
           return { result: `${forked ? "Created private override for" : "Updated"} skill "${updated.name}" (id: ${updated.id})` };
         }
+        case "edit": {
+          const id = args.id;
+          if (!id) return { result: "Missing skill id", error: true };
+          const existing = await storage.getSkill(id);
+          if (!existing) return { result: `Skill "${id}" not found`, error: true };
+          const oldString = args.old_string;
+          const newString = args.new_string;
+          if (oldString === undefined) return { result: "Missing old_string", error: true };
+          if (newString === undefined) return { result: "Missing new_string", error: true };
+          const editableFields = ["process", "outputSpec", "description", "whenToUse"];
+          const field = (args.field as string) || "process";
+          if (!editableFields.includes(field)) {
+            return { result: `Invalid field "${field}". Editable fields: ${editableFields.join(", ")}`, error: true };
+          }
+          const currentContent = String((existing as any)[field] || "");
+          if (!currentContent) return { result: `Skill "${existing.name}" has no ${field} content to edit.`, error: true };
+          const occurrences = currentContent.split(oldString).length - 1;
+          if (occurrences === 0) {
+            return { result: `old_string not found in skill "${existing.name}" ${field}`, error: true };
+          }
+          const replaceAll = args.replace_all === true;
+          if (occurrences > 1 && !replaceAll) {
+            return { result: `old_string found ${occurrences} times in "${existing.name}" ${field}. Use replace_all: true to replace all, or provide more context to make it unique.`, error: true };
+          }
+          const updatedContent = replaceAll ? currentContent.split(oldString).join(newString) : currentContent.replace(oldString, newString);
+          const replacements = replaceAll ? occurrences : 1;
+          const updated = await storage.updateSkill(id, { [field]: updatedContent } as any);
+          if (!updated) return { result: `Failed to edit skill "${id}"`, error: true };
+          const lengthDelta = updatedContent.length - currentContent.length;
+          toolExec.log(`skills.edit: skill=${updated.id} field=${field} replacements=${replacements} lengthDelta=${lengthDelta > 0 ? "+" : ""}${lengthDelta}`);
+          const forked = existing.scope === "global" && updated.id !== existing.id;
+          return { result: `${forked ? "Created private override for" : "Edited"} skill "${updated.name}" (id: ${updated.id}) — ${field}, ${replacements} replacement${replacements > 1 ? "s" : ""}` };
+        }
         case "set_persona": {
           const identifier = args.id || args.name;
           if (!identifier) return { result: "Missing skill id or name", error: true };
@@ -8264,7 +8297,7 @@ ${lines.join("\n")}` };
           };
         }
         default:
-          return { result: `Unknown skills action: ${action}. Available: list, get, create, update, set_persona, delete, search, run, runs, scores`, error: true };
+          return { result: `Unknown skills action: ${action}. Available: list, get, create, update, edit, set_persona, delete, search, run, runs, scores`, error: true };
       }
     } catch (err: any) {
       return { result: `Skills tool error: ${err.message}`, error: true };
@@ -16870,6 +16903,7 @@ function preservesEmptyString(toolName: string, args: Record<string, any>, key: 
   if (value !== "" || key !== "new_string") return false;
   const action = String(args.action || "");
   return (toolName === "scratch" && action === "edit")
+    || (toolName === "skills" && action === "edit")
     || (toolName === "library" && ["edit", "edit_library_page"].includes(action));
 }
 
