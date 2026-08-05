@@ -44,7 +44,8 @@ export const MANTRA_Q3_2026_ADVANTAGE_CYCLE: AdvantageOperatingCycle = {
     "Prove paid, retained value beyond Ray before capability breadth becomes a substitute for customer evidence.",
   definingObjectives: [
     {
-      goalId: "0b7635c0",
+      key: "funding-stability",
+      projectId: 33,
       owner: "Ray",
       nextEvidence: "Signed financing documents and cleared capital.",
       measures: [
@@ -67,7 +68,8 @@ export const MANTRA_Q3_2026_ADVANTAGE_CYCLE: AdvantageOperatingCycle = {
       ],
     },
     {
-      goalId: "9db73311",
+      key: "external-loops",
+      projectId: 50,
       owner: "Mantra · Ray accepts",
       nextEvidence: "A clean external goal-to-execution loop.",
       measures: [
@@ -98,7 +100,8 @@ export const MANTRA_Q3_2026_ADVANTAGE_CYCLE: AdvantageOperatingCycle = {
       ],
     },
     {
-      goalId: "27289016",
+      key: "paid-retention",
+      projectId: 32,
       owner: "Ray · Mantra instruments",
       nextEvidence: "The first external account begins a third weekly cycle.",
       measures: [
@@ -137,7 +140,8 @@ export const MANTRA_Q3_2026_ADVANTAGE_CYCLE: AdvantageOperatingCycle = {
       ],
     },
     {
-      goalId: "f367fd69",
+      key: "gtm-motion",
+      projectId: 42,
       owner: "Ray · Mantra",
       nextEvidence: "One entry motion produces comparable payment and retention evidence.",
       measures: [
@@ -168,7 +172,8 @@ export const MANTRA_Q3_2026_ADVANTAGE_CYCLE: AdvantageOperatingCycle = {
       ],
     },
     {
-      goalId: "5b5fdff1",
+      key: "leverage-cost",
+      projectId: 41,
       owner: "Mantra · Founding Engineer",
       nextEvidence: "Account-level human and platform costs begin recording.",
       measures: [

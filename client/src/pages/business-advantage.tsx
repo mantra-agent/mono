@@ -26,7 +26,7 @@ import {
   MANTRA_Q3_2026_ADVANTAGE_CYCLE,
   type AdvantageOperatingCycle,
 } from "@/lib/advantage-dashboard";
-import type { Goal, GoalIndexEntry } from "@shared/schema";
+import type { Goal, GoalIndexEntry, ProjectRow } from "@shared/schema";
 import type {
   AdvantageGoalProjection,
   ScorecardMeasureDefinition,
@@ -133,6 +133,19 @@ function GoalReferenceTitle({ goalId }: { goalId: string }) {
   );
 }
 
+function ProjectReferenceTitle({ projectId }: { projectId: number }) {
+  return (
+    <span className="block min-w-0 w-full max-w-none whitespace-normal break-words">
+      <ReferenceRenderer
+        refValue={createReferenceRef({ type: "project", id: String(projectId) })}
+        surface="simple-row"
+        className="mx-0 max-w-none text-sm leading-snug"
+        wrapLabel
+      />
+    </span>
+  );
+}
+
 function MeasureRows({
   measures,
   continues,
@@ -146,6 +159,7 @@ function MeasureRows({
         <ProfileTreeRow
           icon={<Gauge className="h-3.5 w-3.5" />}
           label="No scorecard measures"
+          mobileLayout="inline"
           hasValue
           showEmpty
         >
@@ -170,6 +184,7 @@ function MeasureRows({
             <ProfileTreeRow
               icon={<Target className="h-3.5 w-3.5" />}
               label={measure.label}
+              mobileLayout="inline"
               hasValue
               showEmpty
               defaultOpen={false}
@@ -299,31 +314,30 @@ function ThematicGoalDetails({
 
 function ObjectiveBranch({
   objective,
-  goal,
+  project,
   continues,
 }: {
   objective: AdvantageOperatingCycle["definingObjectives"][number];
-  goal: AdvantageGoalProjection | Goal | undefined;
+  project: ProjectRow | undefined;
   continues: boolean;
 }) {
   const description =
-    (goal && "description" in goal && typeof goal.description === "string"
-      ? goal.description
-      : "") ||
+    (project && typeof project.description === "string" ? project.description : "") ||
     objective.intent ||
     "";
 
-  // First-level goal chips match Session-menu titles: wrapped in a
+  // First-level project chips match Session-menu titles: wrapped in a
   // HierarchyTreeRow whose L connector is anchored to the row center, so the
   // horizontal arm lands on the chip itself, not the expanded body below.
   return (
     <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center">
       <ProfileTreeRow
-        label={<GoalReferenceTitle goalId={objective.goalId} />}
+        label={<ProjectReferenceTitle projectId={objective.projectId} />}
+        mobileLayout="inline"
         hasValue
         showEmpty
         defaultOpen
-        expandedContentClassName="pt-1"
+        expandedContentClassName="pt-1 pl-0"
         expandedContent={
           <div className="space-y-3">
             {description ? (
@@ -332,7 +346,7 @@ function ObjectiveBranch({
               </p>
             ) : (
               <p className="text-sm leading-6 text-muted-foreground">
-                No description on the linked goal yet.
+                No description on the linked project yet.
               </p>
             )}
             <div className="min-w-0">
@@ -343,6 +357,7 @@ function ObjectiveBranch({
                 <ProfileTreeRow
                   icon={<ShieldCheck className="h-3.5 w-3.5" />}
                   label="Owner"
+                  mobileLayout="inline"
                   hasValue
                   showEmpty
                 >
@@ -354,7 +369,7 @@ function ObjectiveBranch({
           </div>
         }
       >
-        {goal ? null : <span className="text-xs text-rose-300">Missing</span>}
+        {project ? null : <span className="text-xs text-rose-300">Missing</span>}
       </ProfileTreeRow>
     </HierarchyTreeRow>
   );
@@ -369,6 +384,17 @@ export default function BusinessAdvantagePage() {
   const graphQuery = useQuery<unknown>({
     queryKey: ["/api/life-goals/graph"],
   });
+  const projectsQuery = useQuery<ProjectRow[]>({
+    queryKey: ["/api/projects/projects"],
+  });
+
+  const projectsById = useMemo(() => {
+    const map = new Map<number, ProjectRow>();
+    for (const project of Array.isArray(projectsQuery.data) ? projectsQuery.data : []) {
+      map.set(project.id, project);
+    }
+    return map;
+  }, [projectsQuery.data]);
 
   const goalsById = useMemo(() => {
     const map = new Map<string, AdvantageGoalProjection>();
@@ -399,7 +425,7 @@ export default function BusinessAdvantagePage() {
   const standingObjectives = Array.isArray(cycle.standingOperatingObjectives)
     ? cycle.standingOperatingObjectives
     : [];
-  const isLoading = goalsQuery.isLoading || graphQuery.isLoading;
+  const isLoading = goalsQuery.isLoading || graphQuery.isLoading || projectsQuery.isLoading;
   const isError = goalsQuery.isError && graphQuery.isError;
 
   return (
@@ -408,7 +434,7 @@ export default function BusinessAdvantagePage() {
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Business · Advantage
+              Business · Focus
             </p>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               {cycle.label}
@@ -458,6 +484,7 @@ export default function BusinessAdvantagePage() {
             <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
               <ProfileTreeRow
                 label={<GoalReferenceTitle goalId={cycle.thematicGoalId} />}
+                mobileLayout="inline"
                 hasValue
                 showEmpty
                 defaultOpen
@@ -478,13 +505,13 @@ export default function BusinessAdvantagePage() {
         </section>
 
         <section className="space-y-3" data-testid="advantage-defining-objectives">
-          <HierarchySectionHeader>Defining Objectives</HierarchySectionHeader>
+          <HierarchySectionHeader>Initiatives</HierarchySectionHeader>
           <div className="min-w-0">
             {definingObjectives.map((objective, index) => (
               <ObjectiveBranch
-                key={objective.goalId}
+                key={objective.key}
                 objective={objective}
-                goal={goalsById.get(objective.goalId)}
+                project={projectsById.get(objective.projectId)}
                 continues={index < definingObjectives.length - 1}
               />
             ))}
@@ -492,7 +519,7 @@ export default function BusinessAdvantagePage() {
         </section>
 
         <section className="space-y-3" data-testid="advantage-standing-objectives">
-          <HierarchySectionHeader>Standing Operating Objectives</HierarchySectionHeader>
+          <HierarchySectionHeader>Key Performance Indicators</HierarchySectionHeader>
           <div className="min-w-0">
             {standingObjectives.map((item, index) => {
               const tone = measureTone(item.health);
@@ -507,6 +534,7 @@ export default function BusinessAdvantagePage() {
                   <ProfileTreeRow
                     icon={<ShieldCheck className="h-3.5 w-3.5" />}
                     label={item.label}
+                    mobileLayout="inline"
                     hasValue
                     showEmpty
                     defaultOpen={false}
@@ -555,6 +583,7 @@ export default function BusinessAdvantagePage() {
               <ProfileTreeRow
                 icon={<Gauge className="h-3.5 w-3.5" />}
                 label="Operating cycle"
+                mobileLayout="inline"
                 hasValue
                 showEmpty
               >
