@@ -1091,6 +1091,7 @@ function itemFromTask(task: Task, today: string, tomorrow: string, weekEnd: stri
     label: task.title,
     href: `/projects?tab=tasks&task=${task.id}`,
     observedAt: task.updatedAt,
+    vaultIds: task.vaultId ? [task.vaultId] : undefined,
   };
   const effectiveDeadline = resolveTaskDeadline(task, milestoneMap);
   const needsDate = taskNeedsDate(task, milestoneMap);
@@ -1199,6 +1200,7 @@ function itemFromMeeting(event: CalendarEvent, section: SimpleSection, index: nu
     label: event.summary,
     href: `/calendar`,
     observedAt: event.start.dateTime ?? event.start.date,
+    vaultIds: artifacts[0]?.vaultId ? [artifacts[0].vaultId] : undefined,
   };
   const timeLabel = formatMeetingTime(event, timezone, section !== "now" && section !== "earlier");
   const externalAttendees = dedupeMeetingInvitees(
@@ -1334,6 +1336,7 @@ function itemFromStandaloneMilestone(milestone: Milestone, project: Project, tod
     id: `${project.id}~${milestone.id}`,
     label: milestone.name,
     href: `/projects?project=${project.id}&milestone=${milestone.id}`,
+    vaultIds: project.vaultId ? [project.vaultId] : undefined,
   };
   const needsDate = milestone.status !== "completed" && !milestone.dueDate;
   const timeLabel = milestone.dueDate ? dateLabelForSection(milestone.dueDate, section) : undefined;
@@ -1397,6 +1400,7 @@ function itemFromProject(project: Project, section: SimpleSection, index: number
     label: project.title,
     href: `/projects?project=${project.id}`,
     observedAt: project.updatedAt,
+    vaultIds: project.vaultId ? [project.vaultId] : undefined,
   };
   const needsDate = !project.dueDate && project.status === "active";
   const timeLabel = project.dueDate ? dateLabelForSection(project.dueDate, section) : undefined;

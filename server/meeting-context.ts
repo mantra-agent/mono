@@ -30,6 +30,7 @@ export interface MeetingArtifactContext {
   source: string | null;
   summary: string | null;
   oneLiner: string | null;
+  vaultId: string;
 }
 
 function latestInteraction(interactions: Interaction[]): Interaction | null {
@@ -98,6 +99,7 @@ export async function resolveMeetingArtifactContext(links: CalendarEventArtifact
       oneLiner: libraryPages.oneLiner,
       summary: libraryPages.summary,
       plainTextContent: libraryPages.plainTextContent,
+      vaultId: libraryPages.vaultId,
     })
     .from(libraryPages)
     .where(and(
@@ -123,6 +125,7 @@ export async function resolveMeetingArtifactContext(links: CalendarEventArtifact
       source: link.source,
       summary: page.summary?.trim() || page.plainTextContent?.trim() || null,
       oneLiner: page.oneLiner?.trim() || null,
+      vaultId: page.vaultId,
     }];
   });
 }

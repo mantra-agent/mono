@@ -12,12 +12,14 @@ export function ReferenceChip({
   className,
   IconOverride,
   iconClassName,
+  color,
   wrapLabel = false,
 }: {
   resolved: ClientResolvedReference;
   className?: string;
   IconOverride?: LucideIcon;
   iconClassName?: string;
+  color?: string | null;
   /** When true, allow multi-line labels (tree/row titles). Default keeps single-line chips. */
   wrapLabel?: boolean;
 }) {
@@ -60,9 +62,12 @@ export function ReferenceChip({
         wrapLabel ? "whitespace-normal break-words" : "whitespace-nowrap break-normal",
         isDegraded
           ? "text-muted-foreground"
-          : "text-cta hover:text-active",
+          : color
+            ? "hover:opacity-80"
+            : "text-cta hover:text-active",
         className,
       )}
+      style={!isDegraded && color ? { color } : undefined}
       title={resolved.description || resolved.ref.canonical}
       data-testid={`reference-${resolved.ref.type}-${resolved.ref.id}`}
     >
