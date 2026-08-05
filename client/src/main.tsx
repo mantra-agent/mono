@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import { getProvisionalOnboardingToken } from "./lib/immersive-entrance";
+import { installSpaVersionSkewGuard } from "./lib/spa-version-skew";
 
 const root = createRoot(document.getElementById("root")!);
 // The standalone lightweight root serves the Recall meeting-bot visualizer
@@ -17,6 +18,8 @@ async function renderRoot(): Promise<void> {
     root.render(<VisualizerPage />);
     return;
   }
+
+  installSpaVersionSkewGuard();
 
   const [
     { default: App },

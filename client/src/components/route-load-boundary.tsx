@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { createLogger } from "@/lib/logger";
+import { attemptVersionSkewRecovery } from "@/lib/spa-version-skew";
 import { markNavigationFallback } from "@/lib/navigation-trace";
 import { cn } from "@/lib/utils";
 
@@ -157,6 +158,7 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    attemptVersionSkewRecovery(error);
     log.error("route render failed", {
       routeKey: this.props.routeKey,
       errorName: error.name,
