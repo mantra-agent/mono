@@ -217,14 +217,11 @@ function maybeToastBuildCompletion(payload: Record<string, unknown> | undefined)
       id: rawReference.id,
       metadata: rawReference.metadata,
     });
-    const label = typeof completion.label === "string" ? completion.label.trim() : "";
-    // Toast titles are string-only (React nodes coerce to [object Object]). Prefer the
-    // server identity label so the toast is readable before chip hydration; fall back to
-    // the canonical @build: chip text which now resolves via useReferenceLabel.
+    // Toast titles are string-only, but AppToastDisplay parses canonical references and
+    // renders them through ReferenceRenderer. Keep the build identity canonical here so
+    // the completion link is always a reference chip rather than stranded plain text.
     toast({
-      title: label
-        ? `Build completed — ${label}`
-        : `Build completed — ${serializeReference(reference)}`,
+      title: `Build completed — ${serializeReference(reference)}`,
     });
   }
 }
