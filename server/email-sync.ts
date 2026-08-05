@@ -386,6 +386,25 @@ export async function ingestSentGmailMessage(
     failOnPeopleSignalError: true,
   });
   log.info(`[ingestSentGmailMessage] account=${accountId} providerMessageId=${providerMessageId} threadId=${normalized.providerThreadId || "none"}`);
+
+  // Sending a reply is a thread-state mutation: the source inbound message now
+  // has a later outbound in its thread. The attention invariant "an inbound
+  // triaged message with a later outbound reply is done" is materialized by
+  // reconcileReplies — the same enforcement boundary the sync timer crosses via
+  // reconcileEmailAttentionState. Cross it here too so the synchronous human-send
+  // path (the documented primary mutation path) clears the thread from
+  // Review/Inbox before the send response returns, instead of leaving it until
+  // the next sync cycle where the client's post-send refetch races ahead of it.
+  // Best-effort: the periodic reconcile remains the durable recovery path.
+  try {
+    const reconciled = await reconcileReplies(accountId);
+    if (reconciled > 0) {
+      log.info(`[ingestSentGmailMessage] account=${accountId} reconciled ${reconciled} replied-in-thread inbound message(s)`);
+    }
+  } catch (reconcileErr: any) {
+    log.warn(`[ingestSentGmailMessage] account=${accountId} reply reconciliation deferred to sync: ${reconcileErr?.message || String(reconcileErr)}`);
+  }
+
   return normalized;
 }
 
