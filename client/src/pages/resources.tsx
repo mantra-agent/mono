@@ -228,9 +228,9 @@ function slowQueryStatus(slowQueries: SystemResourcesData["slowQueries"]): Statu
 }
 
 function frontendExperienceStatus(frontend: BrowserTelemetrySummary | null): Status {
-  if (!frontend || frontend.sampleHealth === "empty") return "amber";
-  if (frontend.recentDegradations.length > 0) return "amber";
+  if (!frontend || frontend.sampleHealth !== "healthy") return "amber";
   if (frontend.metrics.some(metric => metric.p95 !== null && metric.p95 > frontendMetricBudget(frontend, metric.kind, metric.name))) return "amber";
+  if (frontend.navigationTraces.p95Ms !== null && frontend.navigationTraces.p95Ms > frontend.budgets.navigation.p95Ms) return "amber";
   return "ok";
 }
 
@@ -902,13 +902,13 @@ function ResourcesView({
                         testId="tile-frontend-budgets"
                       />
                       <MetricRow
-                        label="Recent degradations"
+                        label="Recent degradation history"
                         value={String(frontendExperience.recentDegradations.length)}
-                        status={frontendExperience.recentDegradations.length ? "amber" : "ok"}
+                        status="ok"
                         detail={(
                           <DetailList
                             items={frontendExperience.recentDegradations.length
-                              ? frontendExperience.recentDegradations.slice(0, 8).map(item => `${formatMetricName(item.kind, item.name)} · ${formatMs(item.value)}${item.routeKey ? ` · ${item.routeKey}` : ""} · ${formatRelative(new Date(item.occurredAt).getTime(), now)}`)
+                              ? ["Informational history only; current p95 budget guards determine section health.", ...frontendExperience.recentDegradations.slice(0, 7).map(item => `${formatMetricName(item.kind, item.name)} · ${formatMs(item.value)}${item.routeKey ? ` · ${item.routeKey}` : ""} · ${formatRelative(new Date(item.occurredAt).getTime(), now)}`)]
                               : ["No threshold-only frontend degradations in this window."]}
                           />
                         )}
