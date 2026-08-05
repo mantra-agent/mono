@@ -34,7 +34,7 @@ import {
 } from "./tool-failure";
 import { extractToolFailureKind, inferFailureKind } from "@shared/tool-failure";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
-import { getToolSchemas, type ToolSchema } from "./tool-registry";
+import type { ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
 import { searchVnextMemory, type VnextSearchOptions } from "./memory/vnext-search";
 import { sensitiveOwnershipValues } from "./sensitive-scope";
@@ -16976,8 +16976,11 @@ function preservesEmptyString(toolName: string, args: Record<string, any>, key: 
 /** Audit-trail only. Models omit this under volume; fill at the boundary so a docs field never blocks execution. */
 const DEFAULT_TOOL_REASONING = "No model reasoning provided.";
 
-function normalizeToolArgs(toolName: string, args: Record<string, any>): Record<string, any> {
-  const schemas = getToolSchemas();
+function normalizeToolArgs(
+  toolName: string,
+  args: Record<string, any>,
+  schemas: ToolSchema[],
+): Record<string, any> {
   const schema = schemas.find(s => s.name === toolName);
   const required = new Set(schema?.parameters?.required ?? []);
 
@@ -17008,8 +17011,8 @@ function normalizeToolArgs(toolName: string, args: Record<string, any>): Record<
 function validateToolArgs(
   toolName: string,
   args: Record<string, any>,
+  schemas: ToolSchema[],
 ): { valid: boolean; error?: string } {
-  const schemas = getToolSchemas();
   const schema = schemas.find(s => s.name === toolName);
   if (!schema?.parameters) return { valid: true };
 
@@ -17335,16 +17338,18 @@ export async function executeTool(
 ): Promise<ToolResult> {
   const startTime = Date.now();
 
-  // Resolve tool name aliases (canonical → legacy handler)
-  const { TOOL_ALIASES } = require("./tool-registry");
+  // Resolve tool metadata lazily after bridge-tools has finished initializing.
+  // tool-registry imports bridgeHandlers, so a static import here creates a TDZ cycle.
+  const { TOOL_ALIASES, getToolSchemas } = await import("./tool-registry");
   const resolvedName = TOOL_ALIASES[toolName] || toolName;
+  const toolSchemas = getToolSchemas();
   const handler = DISPATCH_MAP[resolvedName];
   if (!handler) {
     const durationMs = Date.now() - startTime;
     toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=unknown_tool`);
     return { result: `Unknown tool: ${toolName}`, error: true, sideEffectOnly: true, durationMs };
   }
-  const normalizedArgs = normalizeToolArgs(resolvedName, args);
+  const normalizedArgs = normalizeToolArgs(resolvedName, args, toolSchemas);
   const { authorizeToolInvocation } = await import("./agent-authority");
   const authority = authorizeToolInvocation(resolvedName, normalizedArgs, {
     ...context?.authority,
@@ -17412,7 +17417,7 @@ export async function executeTool(
     toolExec.verbose(() => `normalized tool=${toolName} callId=${toolCallId} droppedEmptyKeys=${droppedEmptyKeys.join(",")}`);
   }
 
-  const validation = validateToolArgs(resolvedName, normalizedArgs);
+  const validation = validateToolArgs(resolvedName, normalizedArgs, toolSchemas);
   if (!validation.valid) {
     const durationMs = Date.now() - startTime;
     toolExec.log(`rejected tool=${toolName} callId=${toolCallId} reason=${validation.error}`);
