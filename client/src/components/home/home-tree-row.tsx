@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ChevronRight, Loader2, MessageSquare, MoreHorizontal, Plus, Trash2, User } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SimpleAction, SimpleFeed, SimpleFeedItem } from "@shared/models/simple";
@@ -242,11 +242,20 @@ function InlineDescriptionEditor({ target }: { target: DescriptionTarget }) {
   const [dirty, setDirty] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Adopt refreshed feed values only while the user has no pending local edit.
   useEffect(() => {
     if (!dirty) setValue(target.value);
   }, [target.value, dirty]);
+
+  // Hug actual content height: reset then grow to scrollHeight on every value change.
+  useLayoutEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  }, [value]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -270,11 +279,13 @@ function InlineDescriptionEditor({ target }: { target: DescriptionTarget }) {
   return (
     <div className={cn(SIMPLE_TEXT_FRAME_CLASS, "flex flex-col gap-2")}>
       <Textarea
+        ref={textareaRef}
         value={value}
         onChange={(event) => { setValue(event.target.value); setDirty(true); }}
         placeholder="Add a description…"
         maxLength={5000}
-        className="min-h-[5rem] w-full resize-none border-0 bg-transparent p-0 text-xs leading-relaxed md:text-xs text-white shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+        rows={1}
+        className="min-h-0 w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-xs leading-relaxed md:text-xs text-white shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
       />
       {dirty ? (
         <div className="flex items-center justify-end gap-2">
