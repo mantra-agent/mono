@@ -1687,7 +1687,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list_connections", "get_connection", "test_connection", "create_connection", "list_environments", "get_environment", "get_environment_status", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "save_context_artifact", "get_context_artifacts", "remove_context_artifact", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"], description: "Action to perform" },
+        action: { type: "string", enum: ["list_connections", "get_connection", "test_connection", "create_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "save_context_artifact", "get_context_artifacts", "remove_context_artifact", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"], description: "Action to perform" },
         id: { type: "number", description: "Connection ID, Platform ID, Product ID, or Environment ID depending on action" },
         deploymentId: { type: "string", description: "Existing Cloudflare Pages deployment ID to retry; omit to trigger production" },
         cloudflareRepair: { type: "object", description: "Safe mutable Cloudflare Pages project settings: buildCommand, destinationDirectory, rootDirectory, productionBranch, deployment and preview controls" },
@@ -1710,6 +1710,9 @@ export const TOOLS: Record<string, ToolMeta> = {
         providerEnvironmentName: { type: "string", description: "Railway environment name (for save_hosting_binding)" },
         serviceName: { type: "string", description: "Railway service name (for save_hosting_binding)" },
         publicUrl: { type: "string", description: "Public URL (for save_hosting_binding)" },
+        idempotencyKey: { type: "string", description: "Required replay-safe key for provision_database_roles" },
+        confirmation: { type: "string", description: "Exact explicit confirmation phrase required immediately before provision_database_roles mutation" },
+        allowLive: { type: "boolean", description: "Separate explicit authorization for live/production provisioning; omitted or false denies live" },
         kind: { type: "string", description: "Context artifact kind/category label. Common kinds: coding_process, design_system, planning_process, product_definition. Multiple artifacts per kind are allowed. (for save_context_artifact, remove_context_artifact)" },
         libraryPageId: { type: "string", description: "Library page ID to link (for save_context_artifact)" },
         workflowTemplateId: { type: "string", description: "Workflow template ID for build lifecycle, e.g. build-v1" },

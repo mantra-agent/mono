@@ -10083,7 +10083,7 @@ ${refs}` : ""),
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
 
-    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "save_context_artifact", "get_context_artifacts", "remove_context_artifact", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"]);
+    const allowed = new Set(["list_connections", "get_connection", "test_connection", "list_environments", "get_environment", "get_environment_status", "provision_database_roles", "get_build_lifecycle", "set_build_lifecycle", "disable_build_lifecycle", "delete_build_lifecycle", "get_build_status", "start_build_workflow", "list_environment_workflows", "create_platform", "update_platform", "create_product", "update_product", "create_environment", "update_environment", "delete_environment", "save_source_binding", "save_hosting_binding", "create_connection", "save_context_artifact", "get_context_artifacts", "remove_context_artifact", "get_cloudflare_pages_project", "deploy_cloudflare_pages", "cancel_cloudflare_pages_deployment", "poll_cloudflare_pages_deployment", "repair_cloudflare_pages_project"]);
     if (!allowed.has(action)) {
       return { result: `Unknown platforms action: ${action}. Allowed: ${[...allowed].join(", ")}`, error: true };
     }
@@ -10122,6 +10122,21 @@ ${refs}` : ""),
       const libraryScopeColumns = { scope: libraryPages.scope, ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, vaultId: libraryPages.vaultId };
       const visibleLib = (pred?: SQL) => combineWithVisibleScope(requireCurrentPrincipal(), libraryScopeColumns, pred);
       const positiveId = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null);
+
+      if (action === "provision_database_roles") {
+        const environmentId = positiveId(args.id);
+        if (!environmentId) return { result: "A valid Platform Environment id is required", error: true };
+        const principal = requireCurrentPrincipal();
+        const { provisionDatabaseRoles } = await import("./platform-role-provisioning");
+        const result = await provisionDatabaseRoles({
+          environmentId,
+          idempotencyKey: typeof args.idempotencyKey === "string" ? args.idempotencyKey.trim() : "",
+          confirmation: typeof args.confirmation === "string" ? args.confirmation : "",
+          allowLive: args.allowLive === true,
+          actorUserId: principal.userId ?? null,
+        });
+        return { result: JSON.stringify(result, null, 2) };
+      }
 
       // ── list_connections ──
       if (action === "list_connections") {
