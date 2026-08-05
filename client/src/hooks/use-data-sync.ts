@@ -30,10 +30,41 @@ const INVALIDATION_MAP: Record<string, string[][]> = {
 const suppressedEvents = new Map<string, number>();
 
 // Dedup guard for build-completion toasts: a single build can emit repeated
-// data:home_changed events, so we suppress duplicate toasts for the same
-// observation within a short window.
+// data:home_changed events, including after a hard refresh, so persist the
+// bounded set of observations already announced in this browser.
 const recentNotifications = new Set<string>();
 const NOTIFICATION_DEDUP_WINDOW_MS = 60_000;
+const BUILD_COMPLETION_STORAGE_KEY = "mantra:build-completion-notifications";
+const MAX_STORED_BUILD_COMPLETIONS = 50;
+
+function readStoredBuildCompletions(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(BUILD_COMPLETION_STORAGE_KEY) ?? "[]");
+    return Array.isArray(stored)
+      ? stored.filter((value): value is string => typeof value === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function markBuildCompletionNotified(observationId: string): boolean {
+  const stored = readStoredBuildCompletions();
+  if (stored.includes(observationId)) return false;
+
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(
+        BUILD_COMPLETION_STORAGE_KEY,
+        JSON.stringify([observationId, ...stored].slice(0, MAX_STORED_BUILD_COMPLETIONS)),
+      );
+    } catch {
+      // In-memory deduplication still protects the active page session.
+    }
+  }
+  return true;
+}
 
 export function suppressDataSyncEvent(eventName: string, durationMs = 3000) {
   suppressedEvents.set(eventName, Date.now() + durationMs);
@@ -208,7 +239,11 @@ function maybeToastBuildCompletion(payload: Record<string, unknown> | undefined)
     const rawReference = completion.reference;
     if (!rawReference || !isKnownReferenceType(rawReference.type) || typeof rawReference.id !== "string") continue;
     const observationId = typeof completion.observationId === "string" ? completion.observationId : rawReference.id;
-    if (!observationId || recentNotifications.has(`build:${observationId}`)) continue;
+    if (
+      !observationId
+      || recentNotifications.has(`build:${observationId}`)
+      || !markBuildCompletionNotified(observationId)
+    ) continue;
     recentNotifications.add(`build:${observationId}`);
     window.setTimeout(() => recentNotifications.delete(`build:${observationId}`), NOTIFICATION_DEDUP_WINDOW_MS);
 
