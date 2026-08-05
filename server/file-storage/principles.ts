@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { principleRevisions, principles } from "@shared/schema";
+import { buildTagGuidance } from "@shared/tag-taxonomy";
 import { and, eq, sql } from "drizzle-orm";
 import { chatCompletion } from "../model-client";
 import { ACTIVITY_WORK } from "../job-profiles";
@@ -60,7 +61,7 @@ Style guide: Layer 1 should follow the pattern of existing principles — an imp
 
 Layer 2: 2-4 paragraphs of expanded context that explain the reasoning, provide examples, define boundaries, and help someone deeply evaluate how this principle applies in ambiguous situations.
 
-Also extract 2-5 semantic tags naming the cross-cutting DOMAINS this principle touches (e.g., "communication", "leadership", "health"). Tags are topics two unrelated principles could share — never structural types like "principle", "idea", "decision", or "note".
+Also extract 2-5 semantic tags.
 
 Finally, identify any existing principles that are related (complementary, tension, or prerequisite relationships).
 
@@ -72,6 +73,16 @@ Respond in JSON format:
   "autoTags": ["tag1", "tag2"],
   "relatedIds": ["id1", "id2"]
 }`;
+
+async function getPrincipleTagGuidance(): Promise<string> {
+  try {
+    const existingTags = await tagRegistry.listTags();
+    return buildTagGuidance(existingTags.map((tag) => tag.name));
+  } catch (error) {
+    log.warn("Failed to load existing tags for principle guidance", error);
+    return buildTagGuidance([]);
+  }
+}
 
 const currentPrincipleProjection = {
   id: principles.id,
@@ -377,7 +388,8 @@ export class FilePrincipleStorage {
       .map((p) => `- [${p.id}] "${p.title}": ${p.layer1}`)
       .join("\n");
 
-    const systemPrompt = PRINCIPLE_FORGE_PROMPT +
+    const tagGuidance = await getPrincipleTagGuidance();
+    const systemPrompt = `${PRINCIPLE_FORGE_PROMPT}\n\n${tagGuidance}` +
       (existingPrinciples.length > 0 ? `\n\nExisting principles:\n${existingContext}\n` : "");
 
     const forgeSpine = await contextBuilder.resolve({ callType: 'world', llmMode: 'text' });
