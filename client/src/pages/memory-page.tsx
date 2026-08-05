@@ -1880,7 +1880,7 @@ function GraphTab({
                 side="right"
                 align="end"
                 sideOffset={8}
-                className="w-48 border-card-border bg-popover p-1.5"
+                className="w-48 border-card-border bg-popover p-1"
                 data-testid="memory-graph-label-filter"
               >
                 <div className="space-y-0.5" role="group" aria-label="Visible graph node types">
@@ -1889,7 +1889,7 @@ function GraphTab({
                     return (
                       <label
                         key={type.id}
-                        className="flex min-h-10 cursor-pointer items-center gap-2 rounded-md px-2 text-sm text-popover-foreground transition-colors hover:bg-accent"
+                        className="flex min-h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 py-0.5 text-sm text-popover-foreground transition-colors hover:bg-accent"
                         data-testid={`memory-graph-label-option-${type.id}`}
                       >
                         <Checkbox
