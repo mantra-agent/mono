@@ -351,15 +351,19 @@ export function MessageList({
   }
   if (!historical && reviewPlanId) sessionPlanIds.add(reviewPlanId);
 
-  const firstCompactionMessageIndex = messages.findIndex(
-    message => message.model === "compaction-marker",
-  );
-  const visibleMessages = firstCompactionMessageIndex > 0
-    ? messages.slice(firstCompactionMessageIndex)
-    : messages;
+  // Plan-widget ownership must be scanned across every message that ChatTurn
+  // can actually render, not a compaction-scoped slice. The compaction-hide
+  // splice below is keyed off the marker's sorted position (ts=0 → index 0),
+  // so it removes nothing and pre-compaction messages still render their inline
+  // plan widgets. Scoping this scan to post-compaction messages left those
+  // planIds unowned, so they fell into orphanedPlanIds and rendered a SECOND
+  // widget once the plan's child block / review reference kept the id in
+  // sessionPlanIds — the duplicate plan card seen on completion. Scanning all
+  // messages keeps the genuinely-compacted-away case correct (those messages
+  // are absent from `messages`, so the orphaned fallback still renders once).
   const toolMatchedPlanIds = new Set<string>();
   if (sessionPlanIds.size > 0) {
-    for (const msg of visibleMessages) {
+    for (const msg of messages) {
       if (msg.role !== "assistant" || !msg.toolCalls || !Array.isArray(msg.toolCalls)) continue;
       const segments = segmentsFromSavedMessage(msg);
       const { fromToolResults } = referenceIdsFromSegments(
