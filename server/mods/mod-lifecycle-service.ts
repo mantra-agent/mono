@@ -37,6 +37,10 @@ import {
   disableBusinessManagedResources,
   materializeBusinessManagedResources,
 } from "./business-managed-resources";
+import {
+  disableNetworkManagedResources,
+  materializeNetworkManagedResources,
+} from "./network-managed-resources";
 import { timerStorage } from "../file-storage/timers";
 import { isModPlatformEnabled } from "./mod-platform-config";
 
@@ -176,6 +180,13 @@ export class ModLifecycleService {
       await materializeBusinessManagedResources(tx, principal, installation);
       return;
     }
+    if (modKey === "network") {
+      // Network owns no ledger-materialized resources; documented no-op keeps
+      // dispatch symmetric with Build/Wellness/Business. No timezone / timer
+      // cache touch.
+      await materializeNetworkManagedResources(tx, principal, installation);
+      return;
+    }
     if (modKey !== "build" && modKey !== "wellness") return;
     const [profile] = await tx.select({ timezone: userProfiles.timezone })
       .from(userProfiles)
@@ -208,6 +219,9 @@ export class ModLifecycleService {
     }
     if (installation.modKey === "business") {
       await disableBusinessManagedResources(tx, principal, installation);
+    }
+    if (installation.modKey === "network") {
+      await disableNetworkManagedResources(tx, principal, installation);
     }
   }
 

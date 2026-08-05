@@ -17349,6 +17349,14 @@ export async function executeTool(
     toolExec.warn(`rejected tool=${toolName} callId=${toolCallId} reason=business_mod_inactive`);
     return { result: "Tool execution denied: Business Mod is inactive", error: true, sideEffectOnly: true, durationMs, failure: authorityDenialFailure("business_mod_inactive", { resourceKey: resolvedName }) };
   }
+  try {
+    const { requireNetworkToolAccess } = await import("./mods/network-tool-access");
+    await requireNetworkToolAccess(principal, resolvedName);
+  } catch {
+    const durationMs = Date.now() - startTime;
+    toolExec.warn(`rejected tool=${toolName} callId=${toolCallId} reason=network_mod_inactive`);
+    return { result: "Tool execution denied: Network Mod is inactive", error: true, sideEffectOnly: true, durationMs, failure: authorityDenialFailure("network_mod_inactive", { resourceKey: resolvedName }) };
+  }
   const droppedEmptyKeys = Object.keys(args ?? {}).filter((key) => !(key in normalizedArgs));
   if (droppedEmptyKeys.length > 0) {
     toolExec.verbose(() => `normalized tool=${toolName} callId=${toolCallId} droppedEmptyKeys=${droppedEmptyKeys.join(",")}`);

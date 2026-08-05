@@ -193,10 +193,15 @@ const network: ModDefinition = {
       clientRoute("network.route.people", "/people", "people"),
       clientRoute("network.route.person-detail", "/people/:id", "people"),
       clientRoute("network.route.meetings", "/meetings", "meetings"),
+      clientRoute("network.route.companies", "/companies", "companies"),
+      clientRoute("network.route.company-detail", "/companies/:id", "companies"),
+      clientRoute("network.route.pipelines", "/pipelines", "pipelines"),
     ],
     navigation: [
       nav("network.nav.people", "Network", "People", "Users", "navigation.people.open", "network.route.people", 1),
       nav("network.nav.meetings", "Network", "Meetings", "MessagesSquare", "navigation.meetings.open", "network.route.meetings", 2),
+      nav("network.nav.companies", "Network", "Companies", "Briefcase", "navigation.companies.open", "network.route.companies", 3),
+      nav("network.nav.pipelines", "Network", "Pipelines", "Waypoints", "navigation.pipelines.open", "network.route.pipelines", 4),
     ],
     widgets: [
       widget("network.widget.meeting", "home.primary", "meeting", "meetings", 5),
