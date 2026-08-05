@@ -602,3 +602,68 @@ export function validateShellCommand(command: string): ToolAuthorityDecision {
   }
   return { allowed: true };
 }
+
+/**
+ * Teaching-denial payloads: for each machine-readable deny `reason`, the legal alternative that
+ * actually accomplishes the intent. A wall with no door produces retry-thrash — the model reaches
+ * for a canonical, safety-oriented idiom (`$(...)`, `git merge-base`, `< file`), gets a bare code
+ * back, and retries variants until the watchdog kills it. Naming the sanctioned path alongside the
+ * rejection converts the wall into a door.
+ *
+ * This map is the single source of that guidance, colocated with the forbidden-token classes and
+ * git classifier that emit the reasons — never hand-authored in the consumer, which drifts from the
+ * policy it describes. Parameterized reasons (e.g. `command_not_allowlisted:<bin>`) are matched on
+ * the prefix before `:`. Entries only exist where a legal alternative is meaningful; `empty_command`
+ * and the like intentionally have none.
+ */
+const SHELL_DENIAL_GUIDANCE: Readonly<Record<string, string>> = {
+  "forbidden:command_substitution":
+    "Command substitution ($(...) or backticks) is blocked because the inner command never passes the allowlist. Run the inner command as its own shell call, then use its output.",
+  "forbidden:variable_expansion":
+    "Shell variable expansion ($VAR / ${...}) is blocked. Substitute the literal value yourself, or read the target path directly.",
+  "forbidden:redirection":
+    "File redirection (< or >) is blocked. Allowlisted readers take a path argument directly (e.g. `sed -n '1,40p' file`); discard output with the permitted `>/dev/null`.",
+  "forbidden:multiline_command":
+    "Newlines are blocked. Send one command per call, or join independent segments with `;`, `&&`, `||`, or `|`.",
+  "forbidden:background_execution":
+    "Background execution (bare `&`) is blocked. Run in the foreground; only the `2>&1` / `N>&M` FD-merge form of `&` is allowed.",
+  "forbidden:home_expansion":
+    "`~` home expansion is blocked. Use an explicit path under the workspace or `/app`.",
+  "forbidden:network_binary":
+    "Network binaries (curl/wget/nc/ssh/…) are blocked. Use the `web` tool for URLs and the `git` tool for remote git operations.",
+  "forbidden:interpreter":
+    "Language interpreters (python/node/…) are blocked. Use the allowlisted read-only binaries, or run code through `npm run build`.",
+  "forbidden:env_dump":
+    "`env`/`printenv` are blocked. Read specific values from tracked config files instead of dumping the environment.",
+  "forbidden:sensitive_path":
+    "That system path is blocked to prevent secret/host exposure. Inspect tracked files inside the session clone instead.",
+  "forbidden:dotfile_secret":
+    "That dotfile path is blocked to prevent credential exposure. Read tracked project files inside the session clone instead.",
+  git_write_blocked:
+    "Shell git is read-only. Use the git tool for clone/add/commit/push/PR/merge and branch mutation. Shell git allows only status, log, diff, show, branch, remote, rev-parse, grep.",
+  shell_git_read_only:
+    "Shell git admits only read-only subcommands (status/log/diff/show/branch/remote/rev-parse/grep). For history or ancestry, use `git log --oneline` piped to `grep`, or the git tool's log/show actions — `merge-base` and `rev-list` are not admitted.",
+  absolute_path_outside_workspace:
+    "Absolute paths must stay under `/app` or a system binary dir. Use a workspace-relative path such as `repos/…`.",
+  path_traversal_blocked:
+    "`..` path traversal is blocked. Use a direct workspace-relative path.",
+  command_not_allowlisted:
+    "That binary is not on the read-only allowlist. Use `scratch.read` for file contents, the `git`/`web` tools for their domains, or an allowlisted binary from the tool contract.",
+  npm_command_not_allowlisted:
+    "Only `npm run build` is permitted through shell.",
+  sed_read_expression_required:
+    "sed is read-only here: use `sed -n 'N,Mp' [file]`.",
+  which_binary_name_required:
+    "`which` needs a bare binary name, e.g. `which rg`.",
+  mutating_find_blocked:
+    "`find` may not use -exec/-delete/-ok. Use plain `find` to list paths.",
+};
+
+/**
+ * Resolve the teaching-denial guidance for a shell deny reason, or undefined when none applies.
+ * Parameterized reasons like `command_not_allowlisted:<bin>` match on the prefix before `:`.
+ */
+export function shellDenialGuidance(reason: string): string | undefined {
+  const key = reason.startsWith("command_not_allowlisted") ? "command_not_allowlisted" : reason;
+  return SHELL_DENIAL_GUIDANCE[key];
+}

@@ -13440,16 +13440,17 @@ const systemTools: Record<string, ToolHandler> = {
 
     const timeoutMs = Math.min(args.timeout || 30000, 120000);
 
-    const { validateShellCommand } = await import("./agent-authority");
+    const { validateShellCommand, shellDenialGuidance } = await import("./agent-authority");
     const shellPolicy = validateShellCommand(command);
     if (!shellPolicy.allowed) {
       eventBus.publish({ category: "agent", event: "tool:shell_denied", payload: { reason: shellPolicy.reason } });
-      const denyDetail =
-        shellPolicy.reason === "git_write_blocked"
-          ? "Shell git write/mutate commands are blocked. Use the git tool for clone/add/commit/push/PR/merge and branch mutation. Shell git is read-only: status, log, diff, show, branch, remote, rev-parse, grep."
-          : shellPolicy.reason === "shell_git_read_only"
-            ? "Shell git admits only the read-only subcommands listed in the tool contract (status/log/diff/show/branch/remote/rev-parse/grep). This subcommand is not in that set — do not retry variants."
-            : `Shell command blocked by deterministic allowlist: ${shellPolicy.reason}`;
+      // Teaching denial: name the sanctioned alternative alongside the machine reason so a rejected
+      // call adapts instead of thrashing on variants. Guidance is sourced from agent-authority,
+      // colocated with the policy that emits the reason — never hand-authored here, which drifts.
+      const guidance = shellDenialGuidance(shellPolicy.reason);
+      const denyDetail = guidance
+        ? `Shell command blocked by deterministic allowlist: ${shellPolicy.reason}. ${guidance}`
+        : `Shell command blocked by deterministic allowlist: ${shellPolicy.reason}`;
       return {
         result: denyDetail,
         error: true,
