@@ -221,9 +221,6 @@ export function filterToolSchemasForAuthority<T extends { name: string; descript
       );
       result.push({
         ...schema,
-        ...(authorityDescription
-          ? { description: `${schema.description || ""} ${authorityDescription}`.trim() }
-          : {}),
         parameters: {
           ...schema.parameters,
           properties: {
