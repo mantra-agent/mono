@@ -830,23 +830,6 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
-  twitter: {
-    description: "Post tweets, reply to tweets, look up individual tweets, delete tweets, and search or look up X news/articles via X (Twitter).",
-    category: "communication",
-
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", description: "Action to perform: status, post, reply, lookup, delete, news_search, news_lookup" },
-        text: { type: "string", description: "Tweet text content (for post/reply)" },
-        tweet_id: { type: "string", description: "Tweet ID or URL (for reply/lookup/delete)" },
-        query: { type: "string", description: "Search query (for news_search)" },
-        max_results: { type: "string", description: "Maximum number of results to return (for news_search, optional)" },
-        article_id: { type: "string", description: "X News/Grok Story ID for news_lookup. Browser URLs for Grok Stories are not durable; pass the raw ID when available." },
-      },
-      required: ["action"],
-    },
-  },
   gmail: {
     description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Before composing a draft or reply body, follow the current user's active canonical writing-style instruction and load its referenced Library page when configured; complete the standard's required style checks before invoking Gmail. Gmail persists the supplied body verbatim and does not rewrite prose. When the user asks to draft a reply, use reply with the canonical @email_thread or @email_message ref; reply resolves the recipient and subject and persists native Gmail thread metadata. Use draft only for new standalone emails. Use draft, reply, or update_draft so persisted drafts render as inline widgets; plain chat email text is only for brainstorming or explicit copy-only requests. For update_draft, provide exactly one populated body operation and omit the other two. Empty placeholder objects are ignored. The human sends via the widget's Send button. There is no tool-level send action.",
     category: "communication",
@@ -898,7 +881,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", description: "Action to perform: queue_draft, list, suggest_times" },
+        action: { type: "string", description: "Action to perform: queue_draft, list, suggest_times, x_status, x_post, x_reply, x_lookup, x_delete, x_news_search, x_news_lookup" },
         platform: { type: "string", description: "Platform (default: x)" },
         content: { type: "string", description: "Post text content (for queue_draft)" },
         threadParts: { type: "array", items: { type: "string" }, description: "Array of tweet parts for threads (for queue_draft)" },
@@ -908,6 +891,11 @@ export const TOOLS: Record<string, ToolMeta> = {
         startDate: { type: "string", description: "Start date ISO 8601 (for suggest_times)" },
         endDate: { type: "string", description: "End date ISO 8601 (for suggest_times)" },
         limit: { type: "number", description: "Max results (for list, default 20)" },
+        text: { type: "string", description: "Tweet text (for x_post/x_reply)" },
+        tweet_id: { type: "string", description: "Tweet ID or URL (for x_reply/x_lookup/x_delete)" },
+        query: { type: "string", description: "Search query (for x_news_search)" },
+        max_results: { type: "string", description: "Maximum results (for x_news_search, optional)" },
+        article_id: { type: "string", description: "X News/Grok Story ID (for x_news_lookup)" },
       },
       required: ["action"],
     },

@@ -11270,7 +11270,12 @@ ${refs}` : ""),
 
   async content(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = args.action;
-    if (!action) return { result: "Missing action parameter. Available: queue_draft, list, suggest_times", error: true };
+    if (!action) return { result: "Missing action parameter. Available: queue_draft, list, suggest_times, x_status, x_post, x_reply, x_lookup, x_delete, x_news_search, x_news_lookup", error: true };
+
+    const xAction = typeof action === "string" && action.startsWith("x_") ? action.slice(2) : null;
+    if (xAction) {
+      return bridgeHandlers.twitter({ ...args, action: xAction });
+    }
 
     if (action === "queue_draft") {
       const { createContent } = await import("./content-storage");
