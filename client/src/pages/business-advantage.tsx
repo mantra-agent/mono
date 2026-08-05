@@ -6,7 +6,6 @@ import {
   Circle,
   Gauge,
   Loader2,
-  RefreshCw,
   ShieldCheck,
   Target,
 } from "lucide-react";
@@ -18,7 +17,6 @@ import {
   PROFILE_DESCRIPTION_TEXT_CLASS,
 } from "@/components/profile-description-style";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
-import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
@@ -431,40 +429,6 @@ export default function BusinessAdvantagePage() {
   return (
     <div className="h-full overflow-auto" data-testid="page-business-advantage">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-8">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Business · Focus
-            </p>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-              {cycle.label}
-            </h1>
-            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-              Thematic goal, defining objectives, standing operating objectives, and the
-              scorecard that proves whether the quarter is working.
-            </p>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={() => {
-              void goalsQuery.refetch();
-              void graphQuery.refetch();
-            }}
-            disabled={goalsQuery.isFetching || graphQuery.isFetching}
-            data-testid="button-refresh-advantage"
-          >
-            {goalsQuery.isFetching || graphQuery.isFetching ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-            Refresh
-          </Button>
-        </header>
-
         {isLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -576,25 +540,6 @@ export default function BusinessAdvantagePage() {
           </div>
         </section>
 
-        <section className="space-y-3" data-testid="advantage-source">
-          <HierarchySectionHeader>Source</HierarchySectionHeader>
-          <div className="min-w-0">
-            <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
-              <ProfileTreeRow
-                icon={<Gauge className="h-3.5 w-3.5" />}
-                label="Operating cycle"
-                mobileLayout="inline"
-                hasValue
-                showEmpty
-              >
-                <ReferenceRenderer
-                  refValue={createReferenceRef({ type: "page", id: cycle.sourcePageId })}
-                  surface="simple-row"
-                />
-              </ProfileTreeRow>
-            </HierarchyTreeRow>
-          </div>
-        </section>
       </div>
     </div>
   );
