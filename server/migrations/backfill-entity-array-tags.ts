@@ -10,8 +10,8 @@ const log = createLogger("BackfillEntityArrayTags");
 
 /**
  * One-time backfill of canonical tag assignments for domains that carry their own
- * `tags[]` array but were never part of the legacy JSON registry (and therefore are
- * not covered by TagService.ensureLegacyAdopted): Companies and Theses.
+ * `tags[]` array and therefore need domain-owned migration into canonical
+ * TagService assignments: Companies and Theses.
  *
  * Idempotent and safe to re-run:
  *  - Each (account, domain) pair is gated by a tag_migrations record.

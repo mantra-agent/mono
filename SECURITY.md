@@ -1065,6 +1065,12 @@ A03 durable orchestration state, A04 autonomous mutation authority, and A08 avai
 
 Controls: AGENT-04, OBS-01, DATA-01, REC-02. Owner: Agent Runtime / Orchestration. Severity: high. Rollback is the merged PR revert. Residual risk: an uncooperative child can force a fail-closed pause/block requiring later recovery, but cannot authorize an overlapping retry.
 
+## 11.19 Legacy JSON tag-registry retirement, August 5, 2026
+
+A02/S2 semantic tags cross F04/F05 and B06/B11 when authenticated TagService reads or mutations initialize. The retired compatibility path read the platform-global `system.tags.index` setting during user-scoped tag operations and attempted one-time ownership inference before copying entries into account/user-scoped SQL tables. Its ambiguity guard reduced immediate exposure, but retaining a global registry reader beside the canonical store preserved a second authority and a cross-account contamination risk.
+
+**Closed in source.** `server/tag-service.ts` no longer imports system settings, models the legacy JSON registry, checks `legacy-json-v1`, or adopts global entries during canonical operations. The sole active store remains SQL `tags` and `tag_assignments`, scoped by `requireUserIdentity` and explicit account/user predicates. `server/file-storage/tags.ts` remains only as a caller compatibility facade and delegates every operation to TagService; it does not read or write JSON. The Companies/Theses `tags[]` backfill remains an explicitly separate, account-scoped migration. Controls: DATA-01, DATA-04, AGENT-03. Owner: Semantic Data / Tags. Severity: medium. SLA: closed in source on August 5, 2026. Rollback is the merged PR revert. Residual risk: the inert `system.tags.index` value and historical `tag_migrations` rows can remain until separately authorized data cleanup, but active code no longer reads either for legacy adoption.
+
 ## 11.17 Principal-scoped DOCX attachment reads, July 22, 2026
 
 Uploaded DOCX files are A02/S2 data crossing F07/B07 and B10 from private object storage into a model-invoked read tool. The prior DOCX reader accepted only workspace paths, so canonical attachment paths failed even when upload and ACL state were valid. A naive repair using public URLs or direct raw storage keys would create an IDOR and disclosure risk.
