@@ -136,6 +136,45 @@ function isAssistantMessage(message: ChatMessage): boolean {
   return message.role === "assistant";
 }
 
+/**
+ * A persisted `system_notice` message is the authoritative terminal record for
+ * a conversational turn that ended abnormally (watchdog/idle/pipeline aborts,
+ * model/provider errors, empty-response degradations, process restarts, or user
+ * stops). It carries a known reason, so these turns are always *classified*.
+ * Returns null for any message that is not a terminal notice.
+ */
+function parseTerminalNotice(
+  message: ChatMessage,
+): { outcome: "failed" | "excluded"; reason: string } | null {
+  if (message.role !== "system_notice") return null;
+
+  let payload: Record<string, unknown> | null = null;
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") {
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed && typeof parsed === "object") payload = parsed as Record<string, unknown>;
+    } catch {
+      payload = null;
+    }
+  } else if (content && typeof content === "object") {
+    payload = content as Record<string, unknown>;
+  }
+
+  const asStr = (v: unknown): string => (typeof v === "string" && v.trim() ? v.trim() : "");
+  const errorType = asStr(payload?.errorType);
+  const reason =
+    asStr(payload?.terminationReason) ||
+    asStr(payload?.abortReason) ||
+    asStr(payload?.degradationReason) ||
+    errorType ||
+    "unknown";
+
+  // User-initiated stops (cancel / supersede) are not failures — exclude them.
+  if (errorType === "user_stopped") return { outcome: "excluded", reason };
+  return { outcome: "failed", reason };
+}
+
 function countToolCalls(
   messages: ChatMessage[],
   windowStartMs: number,
@@ -144,10 +183,57 @@ function countToolCalls(
   const toolExecutions = emptyCounts();
   const conversationalTurns = emptyCounts();
 
+  // The turn outcome for the most recent in-window assistant message is held
+  // pending so a trailing terminal `system_notice` can override it — an aborted
+  // turn whose tools all completed must not be counted as a success.
+  let pendingTurn: "succeeded" | "failed" | "excluded" | null = null;
+  let pendingHasUnclassified = false;
+  // Guards against a rare run of consecutive notices for the same turn being
+  // counted as multiple turns; a real assistant message clears it.
+  let lastCountedNotice = false;
+
+  const commitPending = () => {
+    if (!pendingTurn) return;
+    if (pendingTurn === "failed") {
+      conversationalTurns.failed += 1;
+      if (pendingHasUnclassified) conversationalTurns.unclassifiedErrors += 1;
+      else conversationalTurns.amberFailures += 1;
+    } else {
+      conversationalTurns[pendingTurn] += 1;
+    }
+    pendingTurn = null;
+    pendingHasUnclassified = false;
+  };
+
   for (const message of messages) {
+    // Terminal notice: authoritative terminal outcome for the current turn.
+    const notice = parseTerminalNotice(message);
+    if (notice) {
+      const ts = messageTimestampMs(message);
+      if (ts == null || ts < windowStartMs || ts > windowEndMs) continue;
+      // Discard any provisional assistant outcome — the notice is authoritative.
+      const hadPending = pendingTurn != null;
+      pendingTurn = null;
+      pendingHasUnclassified = false;
+      if (lastCountedNotice && !hadPending) continue; // collapse duplicate notices
+      if (notice.outcome === "excluded") {
+        conversationalTurns.excluded += 1;
+      } else {
+        // Reason is known → classified (amber), never unclassified.
+        conversationalTurns.failed += 1;
+        conversationalTurns.amberFailures += 1;
+      }
+      lastCountedNotice = true;
+      continue;
+    }
+
     if (!isAssistantMessage(message)) continue;
     const ts = messageTimestampMs(message);
     if (ts == null || ts < windowStartMs || ts > windowEndMs) continue;
+
+    // New assistant turn starts: commit the previous provisional outcome.
+    commitPending();
+    lastCountedNotice = false;
 
     const toolCalls = Array.isArray(message.toolCalls) ? (message.toolCalls as ChatToolCall[]) : [];
     let turnFailed = false;
@@ -178,19 +264,18 @@ function countToolCalls(
       toolExecutions.excluded += 1;
     }
 
+    // Hold provisional turn outcome; a trailing terminal notice may override it.
     if (!turnHasTerminalTool) {
-      conversationalTurns.excluded += 1;
-      continue;
-    }
-    if (turnFailed) {
-      conversationalTurns.failed += 1;
-      // Turn is amber only when every failed tool was classified.
-      if (turnHasUnclassified) conversationalTurns.unclassifiedErrors += 1;
-      else conversationalTurns.amberFailures += 1;
+      pendingTurn = "excluded";
+    } else if (turnFailed) {
+      pendingTurn = "failed";
+      pendingHasUnclassified = turnHasUnclassified;
     } else {
-      conversationalTurns.succeeded += 1;
+      pendingTurn = "succeeded";
     }
   }
+
+  commitPending();
 
   return { toolExecutions, conversationalTurns };
 }
