@@ -1,3 +1,12 @@
+<!-- 2026-08-05 Privacy-safe proactive error telemetry delta:
+- Assets/data: cross-user server error signals (S2/S3-adjacent at capture), reduced to sanitized error identity, repository-relative source file/line/site, stable fingerprint, first/last seen, and count.
+- Flow/boundary: canonical Express 5xx error middleware -> deterministic in-process sanitizer/fingerprinter -> aggregate-only PostgreSQL table -> existing admin-only Issues tool `list_errors` action. Request bodies, headers, URLs, user/account IDs, raw stack bodies, and raw logs never enter this store or tool response.
+- Threats: STRIDE information disclosure and LLM/agentic context exfiltration through exception messages/stacks; cardinality/storage abuse through attacker-controlled errors; unauthorized cross-user observability.
+- Controls/owner: Core Reliability owns capture and aggregation. Deterministic redaction rejects secret/contact/URL-like identities, normalizes volatile IDs/numbers/quoted values, truncates bounded fields, stores only one sanitized source frame, fingerprints with SHA-256, and caps tool pagination. Existing Issues tool admin authority remains the independent disclosure gate; no route or Mod contribution bypasses it.
+- Evidence: `server/error-telemetry.ts`, canonical producer wiring in `server/index.ts`, and `issues.list_errors` in `server/bridge-tools.ts` / `server/tool-registry.ts`; production build is the release gate.
+- Residual risk: novel sensitive strings not matching deterministic patterns may survive in short normalized identities, and repeated distinct source identities may create bounded-but-growing cardinality. Mitigation owner: Core Reliability; review sanitizer patterns and retention/volume metrics before widening access. Severity: medium. SLA: 2026-08-19.
+-->
+
 <!-- 2026-08-05 Run convergence control delta:
 - Assets/data: autonomous run authority, model-facing S0-S3 context, admitted tool evidence, durable application mutations, run telemetry.
 - Boundaries/flows: untrusted model/tool output -> repeated invocation or working-set refresh -> model reconstruction; run-local control state -> structured event bus.
