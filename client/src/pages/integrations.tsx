@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useVaults } from "@/hooks/use-vaults";
+import { DriveSection } from "@/components/integrations/drive-section";
 import {
   Select,
   SelectContent,
@@ -2519,10 +2520,26 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
 }
 
 function GoogleDetail() {
-  const { data: gmailStatus, isLoading } = useQuery<{ oauthConfigured: boolean }>({
+  const { data: gmailStatus, isLoading } = useQuery<{
+    oauthConfigured: boolean;
+    drivePickerConfigured?: boolean;
+  }>({
     queryKey: ["/api/gmail/status"],
   });
+  const { data: googleAccountsData } = useQuery<{
+    accounts: Array<{ id: string; scopes?: { hasDrive?: boolean } }>;
+  }>({
+    queryKey: ["/api/gmail/accounts"],
+    enabled: Boolean(gmailStatus?.oauthConfigured),
+  });
+  const { activeVault: driveVault } = useVaults();
   const oauthConfigured = Boolean(gmailStatus?.oauthConfigured);
+  const driveAccount = googleAccountsData?.accounts?.find((account) => account.scopes?.hasDrive)
+    ?? googleAccountsData?.accounts?.[0];
+  const reconnectGoogle = useCallback(() => {
+    if (!driveAccount) return;
+    window.location.href = `/api/auth/google?accountId=${encodeURIComponent(driveAccount.id)}`;
+  }, [driveAccount]);
 
   if (isLoading) {
     return (
@@ -2536,6 +2553,17 @@ function GoogleDetail() {
   return (
     <div className="min-w-0 space-y-2">
       <GoogleAccountsSection oauthConfigured={oauthConfigured} />
+      {oauthConfigured && (
+        <IntegrationTreeSection label="Drive">
+          <DriveSection
+            vaultId={visibleVaults[0]?.id}
+            connectedAccountId={driveAccount?.id}
+            drivePickerConfigured={gmailStatus?.drivePickerConfigured !== false}
+            hasDriveScope={Boolean(driveAccount?.scopes?.hasDrive)}
+            onReconnect={reconnectGoogle}
+          />
+        </IntegrationTreeSection>
+      )}
       <IntegrationTreeSection
         label="Credentials"
         initialOpen={!isLoading && !oauthConfigured}
