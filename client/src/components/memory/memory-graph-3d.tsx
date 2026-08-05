@@ -294,13 +294,19 @@ const nodeFragmentShader = `
     float edge = 1.0 - facing;
     float pulse = clamp(vImpact, 0.0, 1.0);
     float pulseIllumination = pulse * uPulseBrightness;
-    float rampExponent = mix(1.6, 0.0, clamp(pulseIllumination, 0.0, 1.0));
+    // The hovered/selected node carries emphasis 1.0 (neighbors stay below 0.85). Give
+    // it the same treatment a pulse gets — flatten the rim ramp, whiten the tint, and
+    // force full opacity — so focus reads as a solid white ball, not a bright rim.
+    float focus = smoothstep(0.85, 1.0, vEmphasis);
+    float illumination = max(pulseIllumination, focus);
+    float rampExponent = mix(1.6, 0.0, clamp(illumination, 0.0, 1.0));
     float luminanceRamp = pow(max(edge, 0.0001), rampExponent);
     float emphasis = 1.0 + vEmphasis * 0.5;
-    float pulseGain = 1.0 + pulseIllumination * 0.85;
-    vec3 pulseTint = mix(vTint, vec3(1.0), pulse);
+    float pulseGain = 1.0 + max(pulseIllumination, focus * 0.85) * 0.85;
+    vec3 tintBase = mix(vTint, vec3(1.0), focus);
+    vec3 pulseTint = mix(tintBase, vec3(1.0), pulse);
     vec3 nodeColor = pulseTint * luminanceRamp * emphasis * pulseGain;
-    float nodeAlpha = mix(vVisibility, 1.0, clamp(pulseIllumination, 0.0, 1.0));
+    float nodeAlpha = mix(vVisibility, 1.0, clamp(illumination, 0.0, 1.0));
     gl_FragColor = vec4(nodeColor * uNodeBrightness, nodeAlpha);
   }
 `;

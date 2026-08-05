@@ -75,7 +75,14 @@ const PRESTABILIZE_TICKS_SMALL = 36;
 const PRESTABILIZE_TICKS_MEDIUM = 56;
 const PRESTABILIZE_TICKS_LARGE = 80;
 const PRESTABILIZE_TICKS_XLARGE = 110;
-const PRESTABILIZE_BUDGET_MS = 48;
+const PRESTABILIZE_BUDGET_MS = 220;
+
+// Admit only once residual motion is imperceptible. Below this alpha, per-frame
+// displacement is sub-pixel at normal zoom, so the graph reads as already-still on
+// first paint instead of crawling into place after admission. Graphs too large to
+// reach it inside the wall-clock budget degrade gracefully to live streaming.
+const VISIBLE_SETTLE_ALPHA = 0.06;
+const PRESTABILIZE_MAX_TICKS = 600;
 
 let simulation: Simulation<LayoutNode> | null = null;
 let nodes: LayoutNode[] = [];
@@ -148,11 +155,16 @@ function step() {
 }
 
 function prestabilize(sim: Simulation<LayoutNode>, nodeCount: number) {
-  const ticks = prestabilizeTicks(nodeCount);
+  const minTicks = prestabilizeTicks(nodeCount);
   const startedAt = performance.now();
-  for (let index = 0; index < ticks; index += 1) {
+  for (let index = 0; index < PRESTABILIZE_MAX_TICKS; index += 1) {
     if (sim.alpha() <= sim.alphaMin()) break;
     sim.tick(1);
+    // Floor first (always leave the random cloud), then keep ticking silently until
+    // the graph is visually at rest or the wall-clock budget is spent. This moves
+    // convergence off-screen so admission reveals an already-settled graph.
+    const settledEnough = index + 1 >= minTicks && sim.alpha() <= VISIBLE_SETTLE_ALPHA;
+    if (settledEnough) break;
     if (performance.now() - startedAt >= PRESTABILIZE_BUDGET_MS) break;
   }
 }
@@ -192,8 +204,9 @@ function start(message: InitMessage) {
     .force("y", forceY<LayoutNode>(0).strength(0.0015))
     .force("z", forceZ<LayoutNode>(0).strength(0.0015))
     .alphaMin(0.002)
-    // ~240 single-tick frames to settle (~4s at 60 Hz). The prestabilize burst spends
-    // the first tens of ticks silently before admission, so visible motion is ~1.5-2.5s.
+    // ~240 single-tick frames to fully settle (~4s at 60 Hz). Prestabilize now spends
+    // the silent budget driving alpha below VISIBLE_SETTLE_ALPHA before admission, so
+    // for graphs that fit the budget the remaining on-screen motion is negligible.
     .alphaDecay(1 - Math.pow(0.002, 1 / 240))
     // Damp harder than d3's 0.4 default so residual motion stops undulating instead of
     // springing around equilibrium after the graph is roughly placed.
