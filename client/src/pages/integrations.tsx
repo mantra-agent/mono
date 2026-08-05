@@ -2564,15 +2564,6 @@ function GoogleDetail() {
           />
         </IntegrationTreeSection>
       )}
-      <IntegrationTreeSection
-        label="Credentials"
-        initialOpen={!isLoading && !oauthConfigured}
-        testIdPrefix="google"
-      >
-        <div className="min-w-0 px-2 py-1.5">
-          <SecretsForSection section="google" />
-        </div>
-      </IntegrationTreeSection>
     </div>
   );
 }
