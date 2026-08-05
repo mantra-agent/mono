@@ -55,11 +55,11 @@ const MODEL_FORBIDDEN_ACTIONS: Record<string, ReadonlySet<string>> = {
 };
 
 const INTERNAL_EXTERNAL_EFFECT_ALLOWLIST = new Set([
-  "converse:initiate",
-  "converse:set_attention",
-  "message_parent:*",
-  "message_child:*",
-  "message_sibling:*",
+  "session:initiate",
+  "session:set_attention",
+  "session:message_parent",
+  "session:message_child",
+  "session:message_sibling",
   "session:send_message",
   "phone_call:prepare",
   "phone_call:confirm",
@@ -148,7 +148,7 @@ export function authorizeToolInvocation(
     return { allowed: false, reason: "human_gate_required" };
   }
 
-  if (origin === "timer" && toolName === "converse") {
+  if (origin === "timer" && toolName === "session" && (action === "initiate" || action === "set_attention")) {
     return { allowed: false, reason: "timer_attention_owned_by_scheduler" };
   }
 

@@ -4482,6 +4482,16 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async session(args) {
     const action = args.action;
+
+    // Canonical Session-family surface. Delegate to the mature implementations so
+    // retries, event emission, and relationship checks remain byte-for-byte shared.
+    if (action === "initiate" || action === "set_attention") {
+      return bridgeHandlers.converse({ ...args, action });
+    }
+    if (action === "message_parent") return handleCrossSessionMessage(args, "parent");
+    if (action === "message_child") return handleCrossSessionMessage(args, "child");
+    if (action === "message_sibling") return handleCrossSessionMessage(args, "sibling");
+
     const sessionId = args._sessionId;
     if (!sessionId) return { result: "No active session — session tool requires an active conversation context.", error: true };
 

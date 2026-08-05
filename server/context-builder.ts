@@ -2003,8 +2003,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   tasks: "Create, complete, delete, and update tasks. Actions: create, complete, delete, update.",
   observe: "Record an observation about your own cognition. Not what you thought, but what you notice about how you thought. What pattern fired? What gap appeared? What changed? What connection formed? What's now possible? 1-3 short sentences MAX. If it doesn't pass \"would this change how I act next time?\", don't record it.",
   orient: "Unified session orientation — set title, topics, and persona in a single call. All parameters optional for partial updates.",
-  session: "Manage session metadata and lifecycle. Actions: get, set_status, end, list, search, get_messages.",
-  converse: "Start a new conversation with the user or flag an existing one for attention. Actions: initiate, set_attention.",
+  session: "Manage session metadata, lifecycle, user conversation initiation/attention, and relationship-scoped cross-session messaging.",
   timers: "Manage scheduled timers and one-time reminders — list, get details, view runs, create, update, delete, or manually trigger. Actions: list, get, runs, create, update, delete, trigger.",
   health: "Query health metrics and fully manage the wellness calendar. Actions: summary (7-day health summary), metrics (raw metric rows), list_activities (all wellness activities), log_activity (record completion by ID or name), activity_status (grouped by overdue/due_soon/on_track/never_done), create_activity (name + intervalDays required, category auto-derived: 1d=daily, 2-7d=weekly, 8-30d=monthly, 31-90d=quarterly, 91+=annual), update_activity (modify by ID or name), delete_activity (archive by ID or name), activity_logs (completion history).",
 
