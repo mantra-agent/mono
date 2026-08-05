@@ -188,6 +188,13 @@ export interface ExecutorRunOptions {
   }>;
   /** Resolve one authority-allowed tool schema after tools.get requests progressive hydration. */
   refreshToolSchema?: (toolName: string) => Promise<ToolDefinition | null>;
+  /**
+   * Authority-allowed tools NOT in the persona-hydrated `tools` set. Registered
+   * with the provider as cheap passthrough stubs so a direct model call against
+   * one auto-hydrates and runs in-turn instead of hard-failing the run. After a
+   * stub is used, its real schema is hydrated via `refreshToolSchema`.
+   */
+  authorityStubTools?: ToolDefinition[];
 }
 
 function toolTransfersExecutionToChild(name: string, args: Record<string, unknown>): boolean {
@@ -878,6 +885,10 @@ interface RunIterationContext {
   iterationUsageMetadata?: Record<string, unknown>;
   pendingToolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }>;
   sdkHandledToolIds: Set<string>;
+  /** Stub (un-hydrated authority) tools called this iteration, awaiting real-schema hydration. */
+  autohydratePending: Set<string>;
+  /** Stub tools whose real schema has already been hydrated into the tool set this run. */
+  autohydratedToolNames: Set<string>;
   /** Cache tool call arguments in sdk_owned mode so tool_result_resolved can look them up. */
   toolCallArgsCache: Map<string, Record<string, unknown>>;
   /** Determines who owns tool execution for this run. */
@@ -1824,6 +1835,26 @@ export class AgentExecutor extends EventEmitter {
         const toolCallId = event.toolCallId || generateToolCallId();
         const normalizedName = normalizeMcpToolName(event.toolName) || "unknown";
         log.verbose(() => `tool_call_resolved id=${toolCallId} name=${normalizedName} iteration=${ctx.iteration} mode=${ctx.executionMode}`);
+        // Auto-hydrate detection: the model called an authority-allowed tool that
+        // the persona pre-load heuristic did not hydrate. It still executed in-turn
+        // via the stub (the bridge resolves any authority tool by name); flag it for
+        // performance tracking and queue its real schema for hydration so the rest
+        // of the turn is fully typed. This must never break an otherwise good turn.
+        if (
+          !ctx.autohydratedToolNames.has(normalizedName) &&
+          options.authorityStubTools?.some((t) => t.name === normalizedName) &&
+          !(options.tools || []).some((t) => t.name === normalizedName)
+        ) {
+          ctx.autohydratePending.add(normalizedName);
+          eventBus.publish({
+            category: "agent",
+            event: "agent.tool_autohydrate",
+            payload: { toolName: normalizedName, runId: ctx.runId, iteration: ctx.iteration, source: options.activity || "agent" },
+            runId: ctx.runId,
+            sessionKey: options.sessionKey,
+          });
+          log.warn(`autohydrate: un-hydrated authority tool "${normalizedName}" called directly runId=${ctx.runId} iteration=${ctx.iteration} — executed in-turn, hydrating real schema for subsequent calls`);
+        }
         if (ctx.executionMode === "sdk_owned") {
           // SDK owns execution — route directly to resolvedToolCalls for persistence.
           // Do NOT push to pendingToolCalls. This is the structural fix: SDK-handled
@@ -2853,6 +2884,8 @@ export class AgentExecutor extends EventEmitter {
       iterationUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       pendingToolCalls: [],
       sdkHandledToolIds: new Set(),
+      autohydratePending: new Set(),
+      autohydratedToolNames: new Set(),
       toolCallArgsCache: new Map(),
       executionMode: options.toolExecutor ? "sdk_owned" : "executor_owned",
       consecutiveFailureIterations: 0,
@@ -3289,6 +3322,7 @@ export class AgentExecutor extends EventEmitter {
         activity: options.activity,
         messages: providerMessages.map(m => ({ role: m.role as StreamMessage["role"], content: m.content, toolCallId: m.toolCallId, name: m.name })),
         tools: options.tools,
+        stubTools: options.authorityStubTools,
         toolExecutor: boundedToolExecutor,
         maxTokens,
         temperature: options.temperature,
@@ -4040,6 +4074,32 @@ export class AgentExecutor extends EventEmitter {
             },
           });
           log.log(`tool schema hydrated runId=${runId} sessionId=${options.sessionId || "none"} tool=${schema.name} toolCount=${existingTools.length}`);
+        }
+
+        // Auto-hydrate: load the real schema for any authority-allowed tool the
+        // model called directly via a stub this iteration, so subsequent calls in
+        // the turn are fully typed. Best-effort — a miss here never breaks the run.
+        if (ctx.autohydratePending.size > 0) {
+          const existingTools = options.tools ?? [];
+          for (const toolName of ctx.autohydratePending) {
+            if (ctx.autohydratedToolNames.has(toolName)) continue;
+            ctx.autohydratedToolNames.add(toolName);
+            if (!options.refreshToolSchema) continue;
+            try {
+              const schema = await options.refreshToolSchema(toolName);
+              if (!schema) {
+                log.warn(`autohydrate: no authority schema for "${toolName}" runId=${runId} — leaving stub in place`);
+                continue;
+              }
+              const existingIndex = existingTools.findIndex((tool) => tool.name === schema.name);
+              if (existingIndex >= 0) existingTools[existingIndex] = schema;
+              else existingTools.push(schema);
+              log.log(`autohydrate: real schema loaded runId=${runId} sessionId=${options.sessionId || "none"} tool=${schema.name} toolCount=${existingTools.length}`);
+            } catch (err) {
+              log.warn(`autohydrate: schema load failed tool="${toolName}" runId=${runId} err=${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+          ctx.autohydratePending.clear();
         }
 
         if (result.personaSwitchRequested) {

@@ -2216,6 +2216,14 @@ export interface ChatCompletionStreamOptions {
   metadata?: InferenceMetadata;
   messages: StreamMessage[];
   tools?: ToolDefinition[];
+  /**
+   * Authority-allowed tools that are NOT in `tools` (i.e. not pre-loaded by the
+   * active persona bundle). Registered with the SDK MCP server as cheap
+   * passthrough stubs so a direct model call against one auto-hydrates and runs
+   * within the same turn instead of hard-failing with "No such tool available".
+   * Authority is the real boundary; the pre-load set is only an assumed-needs guess.
+   */
+  stubTools?: ToolDefinition[];
   toolExecutor?: (name: string, args: Record<string, unknown>, context?: { toolCallId: string; order: number }) => Promise<{ result: string; providerResult?: string; historicalProviderResult?: string; canMateriallyShrinkOnRefresh?: boolean; refreshReductionTokens?: number; error?: boolean; sideEffectOnly?: boolean; continuation?: import("./agent-executor").ToolContinuation; normalizedArguments?: Record<string, unknown> }>;
   maxTokens?: number;
   temperature?: number;
