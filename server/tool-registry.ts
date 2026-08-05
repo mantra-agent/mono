@@ -322,22 +322,6 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
-  meeting_bot: {
-    description: "Send the Mantra Agent meeting bot into a live meeting via Recall.ai. Actions: join (bot joins a Zoom/Google Meet call and streams a live attributed transcript into a meeting session — pass a meeting 'url', or omit it to auto-resolve the current/next calendar event that has a meeting link), status (bot/meeting state for a meeting session), diagnostics (recent inbound Recall webhook delivery outcomes, including rejected signatures), recap (manually prepare/resurface the recap review draft widgets for a meeting session), leave (bot exits the call). The bot is listen-only and appears in the room as 'Mantra Agent'. Requires the Recall.ai integration to be configured in Settings → Integrations (never ask for the API key in chat).",
-    category: "calendar",
-    connectorKey: "recall",
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["join", "status", "diagnostics", "recap", "leave"], description: "Action to perform" },
-        url: { type: "string", description: "Zoom or Google Meet meeting URL (for join). Omit to resolve from the calendar." },
-        title: { type: "string", description: "Optional meeting session title (for join). Defaults to the calendar event summary or 'Meeting'." },
-        sessionId: { type: "string", description: "Meeting session ID (for status/leave/recap)." },
-        limit: { type: "number", description: "Maximum recent webhook deliveries for diagnostics (default 20, max 100)." },
-      },
-      required: ["action"],
-    },
-  },
   settings: {
     description: "Persist and retrieve key-value settings. Keys must start with an allowed prefix (memory.*, system.*, skill.*, hygiene.*).",
     category: "system",
@@ -929,13 +913,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   meetings: {
-    description: "Manage calendar events and query completed meeting records. Calendar actions create/list/update/delete events; records/count/get read the canonical completed meetings where Mantra captured notes. Before creating an event, verify the title, date, start time, duration/end time, and attendees; do not create until those details are confirmed.",
+    description: "Manage calendar events, create bounded focus blocks, dispatch the live meeting bot, and query completed meeting records. Calendar add/update/delete, create_calendar_block, and meeting-bot join/leave remain independently authorization-gated. Before creating an event, verify the title, date, start time, duration/end time, and attendees; do not create until those details are confirmed.",
     category: "calendar",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["add", "list", "update", "delete", "set_metadata", "get_metadata", "link_artifact", "unlink_artifact", "records", "count", "get"], description: "The action to perform. Use records/count/get for canonical completed meeting sessions and note totals." },
+        action: { type: "string", enum: ["add", "list", "update", "delete", "create_calendar_block", "join", "status", "diagnostics", "recap", "leave", "set_metadata", "get_metadata", "link_artifact", "unlink_artifact", "records", "count", "get"], description: "The action to perform. Use records/count/get for canonical completed meeting sessions and note totals." },
         summary: { type: "string", description: "Meeting title (for add/update)" },
         start: { type: "string", description: "Start time ISO 8601 (required for add)" },
         end: { type: "string", description: "End time ISO 8601 (default: +1h)" },
@@ -961,6 +945,10 @@ export const TOOLS: Record<string, ToolMeta> = {
         artifactKind: { type: "string", description: "Required explicit artifact kind for link_artifact. Use research, follow_up, recap, or another non-preparation kind. Agenda/brief calls resolve or claim the canonical preparation page and cannot replace it." },
         attendeeEmails: { type: "array", items: { type: "string" }, description: "Attendee emails for auto-linking people (for set_metadata)" },
         meetingId: { type: "string", description: "Canonical meeting session ID (for get)" },
+        timeZone: { type: "string", description: "IANA time zone for start/end (for create_calendar_block; default America/Chicago)" },
+        url: { type: "string", description: "Zoom or Google Meet URL (for join). Omit to resolve from the calendar." },
+        title: { type: "string", description: "Optional meeting session title (for join). Defaults to the calendar event summary or 'Meeting'." },
+        sessionId: { type: "string", description: "Meeting session ID (for status, leave, or recap)" },
         query: { type: "string", description: "Search completed meeting titles and participant names or emails (for records)" },
         notesFilter: { type: "string", enum: ["any", "with_notes", "without_notes"], description: "Optional transcript-note filter for records. Omit or use any to search all completed meetings." },
         startAfter: { type: "string", description: "Inclusive meeting start boundary ISO 8601 (for records)" },
@@ -968,24 +956,6 @@ export const TOOLS: Record<string, ToolMeta> = {
         offset: { type: "number", description: "Pagination offset for completed meeting records" },
       },
       required: ["action"],
-    },
-  },
-  create_calendar_block: {
-    description: "Create a single timed block on the user's OWN primary Google Calendar (e.g. travel, focus, or personal blocks). Timed events only. This tool cannot invite other people — it never touches attendees and only writes to the primary calendar. Requires a connected Google account with Calendar Create enabled and Calendar authorization; if either is missing it returns a clear error telling the user to enable/re-authorize Calendar in Settings → Integrations.",
-    category: "calendar",
-
-    parameters: {
-      type: "object",
-      properties: {
-        summary: { type: "string", description: "Event title (required)" },
-        start: { type: "string", description: "Start time as an ISO 8601 datetime, e.g. 2026-07-29T14:00:00 (required; timed events only)" },
-        end: { type: "string", description: "End time as an ISO 8601 datetime, e.g. 2026-07-29T15:00:00 (required; must be after start)" },
-        timeZone: { type: "string", description: "IANA time zone for start/end (default: America/Chicago)" },
-        location: { type: "string", description: "Optional location" },
-        description: { type: "string", description: "Optional event description/notes" },
-        accountId: { type: "string", description: "Optional connected Google account ID, label, or email to write to (defaults to the user's connected calendar account)" },
-      },
-      required: ["summary", "start", "end"],
     },
   },
   git: {
