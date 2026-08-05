@@ -10,6 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { useToast } from "@/hooks/use-toast";
+import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import { useVisibleVaults } from "@/pages/library/use-vault-sections";
 
@@ -22,6 +23,7 @@ function CompanyDetail({ id, onClose, onDelete }: { id: string; onClose: () => v
   const { isVaultEnabled, isLoading: vaultsLoading } = useVisibleVaults();
   const [personSearch, setPersonSearch] = useState("");
   const { data: company, isLoading } = useQuery<Company>({ queryKey: ["/api/companies", id] });
+  usePageLoadActivity(`page:company:${id}`, isLoading || vaultsLoading);
   const { data: peopleData } = useQuery<{ people: PersonIndex[] }>({ queryKey: ["/api/people"] });
   useFocusContext({ entity: { type: "company", id, label: company?.name }, subView: "detail" });
 
@@ -51,7 +53,7 @@ function CompanyDetail({ id, onClose, onDelete }: { id: string; onClose: () => v
     [company?.opportunities, vaultsLoading, isVaultEnabled],
   );
 
-  if (isLoading || vaultsLoading) return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  if (isLoading || vaultsLoading) return null;
   if (!company) return <div className="p-4"><Button variant="ghost" onClick={onClose}><ArrowLeft className="mr-2 h-4 w-4" />Back to Companies</Button></div>;
 
   const editable = (field: keyof Company, value: string | undefined, placeholder: string) => (
@@ -101,6 +103,7 @@ export default function CompaniesPage() {
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const { toast } = useToast();
   const { data, isLoading } = useQuery<{ companies: CompanyIndex[] }>({ queryKey: ["/api/companies"] });
+  usePageLoadActivity("page:companies", isLoading);
   const selectedName = data?.companies.find(company => company.id === selectedId)?.name;
   usePageHeader({ title: selectedName || "Companies" });
   useFocusContext(selectedId ? null : { subView: "companies" });
@@ -124,7 +127,7 @@ export default function CompaniesPage() {
         <button type="button" onClick={() => setShowQuickAdd(true)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80" data-testid="button-new-company-row">
           <Plus className="h-3.5 w-3.5 shrink-0" />
           <span>New Company</span>
-        </button>{isLoading ? <Loader2 className="mx-auto mt-8 h-4 w-4 animate-spin text-muted-foreground" /> : companies.map(company => <button key={company.id} onClick={() => select(company.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${selectedId === company.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70"}`}><Building2 className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{company.name}</span><span className="text-[10px]">{(company.peopleCount || 0) + (company.opportunityCount || 0)}</span></button>)}</div></ScrollArea>
+        </button>{isLoading ? null : companies.map(company => <button key={company.id} onClick={() => select(company.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${selectedId === company.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/70"}`}><Building2 className="h-3.5 w-3.5" /><span className="min-w-0 flex-1 truncate">{company.name}</span><span className="text-[10px]">{(company.peopleCount || 0) + (company.opportunityCount || 0)}</span></button>)}</div></ScrollArea>
     </div>
     <div className={`min-w-0 flex-1 overflow-y-auto ${selectedId ? "block" : "hidden @md:block"}`}>{selectedId ? <CompanyDetail id={selectedId} onClose={() => select(null)} onDelete={() => select(null)} /> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a company</div>}</div>
   </div>;

@@ -21,6 +21,7 @@ import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -154,6 +155,7 @@ export default function BusinessModelPage() {
   usePageHeader({ title: "Business Model" });
   const { toast } = useToast();
   const { data, isLoading, isFetching, error, refetch } = useQuery<FinancialModel>({ queryKey: ["/api/business/model"] });
+  usePageLoadActivity("page:business-model", isLoading || isFetching);
   const { data: rolesData } = useQuery<{ roles: JobRole[] }>({ queryKey: ["/api/business/roles"] });
   const [draft, setDraft] = useState<Assumptions | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -238,9 +240,7 @@ export default function BusinessModelPage() {
     );
   }
 
-  if (isLoading || !draft || !projection || !downsideProjection || !fullPlanScenario || !firstCloseScenario) {
-    return <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
-  }
+  if (isLoading || !draft || !projection || !downsideProjection || !fullPlanScenario || !firstCloseScenario) return null;
 
   return (
     <div className="w-full space-y-6 p-4" data-testid="business-model-page">

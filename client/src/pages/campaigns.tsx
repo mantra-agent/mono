@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlignLeft, ArrowLeft, ChevronRight, Eye, FileText, Loader2, Mail, Plus, Reply, Search, Send, Trash2, Type, Users, X } from "lucide-react";
+import { AlignLeft, ArrowLeft, ChevronRight, Eye, FileText, Mail, Plus, Reply, Search, Send, Trash2, Type, Users, X } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
+import { usePageLoadActivity } from "@/hooks/use-page-activity";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ export default function CampaignsPage() {
   const canWrite = hasPermission("system:write");
   const campaignsQuery = useQuery<{ campaigns: Campaign[] }>({ queryKey: ["/api/communications/campaigns"] });
   const audiencesQuery = useQuery<{ audiences: Audience[] }>({ queryKey: ["/api/communications/audiences"] });
+  usePageLoadActivity("page:campaigns", campaignsQuery.isLoading || audiencesQuery.isLoading);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -41,7 +43,7 @@ export default function CampaignsPage() {
   });
 
   if (!hasPermission("system:read")) return <div className="p-6 text-sm text-muted-foreground">Campaigns requires system:read.</div>;
-  if (campaignsQuery.isLoading || audiencesQuery.isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  if (campaignsQuery.isLoading || audiencesQuery.isLoading) return null;
 
   if (selected) {
     return <div className="flex h-full min-h-0 flex-col overflow-hidden">
