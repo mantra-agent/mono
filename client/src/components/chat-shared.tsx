@@ -2621,6 +2621,7 @@ export const ChatTurn = memo(function ChatTurn({
   sessionKey,
   compactReferences = false,
   suppressedEmailDraftIds,
+  suppressedQuestionToolCallIds,
   questionResponses,
   activeQuestionToolCallId,
   onQuestionSubmit,
@@ -2636,6 +2637,7 @@ export const ChatTurn = memo(function ChatTurn({
   sessionKey?: string | null;
   compactReferences?: boolean;
   suppressedEmailDraftIds?: string;
+  suppressedQuestionToolCallIds?: string;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
   activeQuestionToolCallId: string | null;
   onQuestionSubmit: (response: QuestionResponseMeta) => Promise<import("@/hooks/use-question-response").QuestionSubmitResult | boolean>;
@@ -2722,6 +2724,13 @@ export const ChatTurn = memo(function ChatTurn({
         suppressedEmailDraftIds ? suppressedEmailDraftIds.split("|") : [],
       ),
     [suppressedEmailDraftIds],
+  );
+  const suppressedQuestionIds = useMemo(
+    () =>
+      new Set<string>(
+        suppressedQuestionToolCallIds ? suppressedQuestionToolCallIds.split("|") : [],
+      ),
+    [suppressedQuestionToolCallIds],
   );
   const unpromotedDraftIds = draftIdsFromToolResults.filter(
     (id) => !draftIdsFromContent.includes(id) && !suppressedDraftIds.has(id),
@@ -3042,8 +3051,9 @@ export const ChatTurn = memo(function ChatTurn({
             ))}
             {questionPrompts
               .filter((prompt) =>
-                prompt.toolCallId === activeQuestionToolCallId ||
-                questionResponses?.has(prompt.toolCallId),
+                !suppressedQuestionIds.has(prompt.toolCallId) &&
+                (prompt.toolCallId === activeQuestionToolCallId ||
+                  questionResponses?.has(prompt.toolCallId)),
               )
               .map((prompt) => (
                 <QuestionWidget

@@ -816,6 +816,30 @@ export function MessageList({
     for (const id of ids) emailDraftOwnerByDraftId.set(id, it.msg.id);
   }
 
+  // Cross-message question widget dedup: a single logical assistant turn can be
+  // persisted as multiple checkpoint messages that each carry the same
+  // `question` tool call. Mirror the email-draft ownership rule — each question
+  // toolCallId renders exactly once, at its latest occurrence — so the widget is
+  // not duplicated across overlapping checkpoints of the same turn.
+  const questionOwnerByToolCallId = new Map<string, string>();
+  const questionToolCallIdsByMessageId = new Map<string, string[]>();
+  for (const it of items) {
+    if (it.kind !== "message") continue;
+    const toolCalls = it.msg.toolCalls;
+    if (!Array.isArray(toolCalls)) continue;
+    const ids: string[] = [];
+    for (const call of toolCalls) {
+      if (!call || typeof call !== "object") continue;
+      const c = call as { toolName?: unknown; toolCallId?: unknown; status?: unknown };
+      if (c.toolName !== "question" || typeof c.toolCallId !== "string") continue;
+      if (c.status === "error") continue;
+      ids.push(c.toolCallId);
+    }
+    if (ids.length === 0) continue;
+    questionToolCallIdsByMessageId.set(it.msg.id, ids);
+    for (const id of ids) questionOwnerByToolCallId.set(id, it.msg.id);
+  }
+
   const renderItem = (item: ListItem, isLast: boolean, isStreamingTarget: boolean): JSX.Element => {
     if (item.kind === "orphaned_plan") {
       return (
@@ -893,6 +917,9 @@ export function MessageList({
       }
     }
     const suppressed = draftIdsByMessageId.get(msg.id)?.filter((id) => emailDraftOwnerByDraftId.get(id) !== msg.id);
+    const suppressedQuestionIds = questionToolCallIdsByMessageId
+      .get(msg.id)
+      ?.filter((id) => questionOwnerByToolCallId.get(id) !== msg.id);
     const renderKey = finalizedTurnRenderKeysRef.current.byMessageId.get(msg.id) ?? msg.id;
     const renderArchivedMessages = (archivedMessages: Message[]) => {
       const archivedQuestionResponses = new Map(questionResponses ?? []);
@@ -937,6 +964,7 @@ export function MessageList({
         sessionKey={sessionKey ?? undefined}
         compactReferences={compactReferences}
         suppressedEmailDraftIds={suppressed && suppressed.length > 0 ? suppressed.join("|") : undefined}
+        suppressedQuestionToolCallIds={suppressedQuestionIds && suppressedQuestionIds.length > 0 ? suppressedQuestionIds.join("|") : undefined}
         questionResponses={questionResponses}
         activeQuestionToolCallId={activeQuestionToolCallId}
         onQuestionSubmit={onQuestionSubmit}
