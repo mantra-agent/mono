@@ -17,6 +17,8 @@ import {
   memo,
   createContext,
   useContext,
+  lazy,
+  Suspense,
   type ReactNode,
 } from "react";
 import { Link } from "wouter";
@@ -102,7 +104,10 @@ import type {
   StreamingContent,
 } from "@shared/streaming-types";
 import { initialStreamingContent } from "@shared/streaming-types";
-import { SegmentStream } from "@/components/segment-stream";
+const SegmentStream = lazy(async () => {
+  const module = await import("@/components/segment-stream");
+  return { default: module.SegmentStream };
+});
 import { usePlanEvents } from "@/hooks/use-plan-events";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 
@@ -3058,28 +3063,30 @@ export const ChatTurn = memo(function ChatTurn({
         <div className="space-y-2">
           <SuppressedEmailDraftsContext.Provider value={suppressedDraftIds}>
             {segments.length > 0 || isActiveStreaming ? (
-              <SegmentStream
-                segments={segments}
-                isStreaming={isActiveStreaming}
-                layer={layer}
-                stripTags={shouldStripTags}
-                contentCompact
-                planSessionId={message.sessionId}
-                renderAfterTimelineSegment={(segmentIndex) => {
-                  const planIds = planWidgetIdsBySegment.get(segmentIndex);
-                  if (!planIds || planIds.length === 0) return null;
-                  return planIds.map((id) => (
-                    <InlinePlanWidget
-                      key={`tool-plan-${id}`}
-                      planId={id}
-                      sessionId={message.sessionId}
-                      ownedChildBlocks={planOwnedChildBlocks}
-                      sessionTitleById={sessionTitleById}
-                      sessionStreams={sessionStreams}
-                    />
-                  ));
-                }}
-              />
+              <Suspense fallback={null}>
+                <SegmentStream
+                  segments={segments}
+                  isStreaming={isActiveStreaming}
+                  layer={layer}
+                  stripTags={shouldStripTags}
+                  contentCompact
+                  planSessionId={message.sessionId}
+                  renderAfterTimelineSegment={(segmentIndex) => {
+                    const planIds = planWidgetIdsBySegment.get(segmentIndex);
+                    if (!planIds || planIds.length === 0) return null;
+                    return planIds.map((id) => (
+                      <InlinePlanWidget
+                        key={`tool-plan-${id}`}
+                        planId={id}
+                        sessionId={message.sessionId}
+                        ownedChildBlocks={planOwnedChildBlocks}
+                        sessionTitleById={sessionTitleById}
+                        sessionStreams={sessionStreams}
+                      />
+                    ));
+                  }}
+                />
+              </Suspense>
             ) : (
               message.content && (
                 <div
