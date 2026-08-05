@@ -243,7 +243,7 @@ const navSections: NavSection[] = [
     items: [
       navItem("Goals", "navigation.goals.open", Target, "muted"),
       navItem("Decisions", "navigation.decisions.open", Scale),
-      navItem("Strategy", "navigation.strategy.open", Swords),
+      navItem("Scenarios", "navigation.scenarios.open", Swords),
       navItem("Tags", "navigation.tags.open", Tags),
     ],
   },

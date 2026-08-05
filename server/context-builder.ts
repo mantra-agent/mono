@@ -1997,7 +1997,7 @@ const TOOL_SHORT_DESCRIPTIONS: Record<string, string> = {
   scratch: "Manage temporary workspace files. Actions: read, write, edit, list, search.",
   shell: "Execute a shell command in the workspace directory.",
   skills: "Manage the Agent's skill library. Actions: list, get, create, update, delete, search.",
-  strategy: "Strategic modeling — strategies, actors, move trees, simulations, assumptions, artifacts.",
+  scenarios: "Scenario modeling — scenarios, actors, move trees, simulations, assumptions, artifacts.",
   system: "System operations — state snapshot, runtime logs, frontend performance, and context health. Actions: state, logs, frontend_performance, context_health.",
   issues: "Track product Issues — create, page unresolved Issues, fetch one by ID, or resolve one with affirmative evidence. Actions: create, list, get, resolve.",
   tasks: "Create, complete, delete, and update tasks. Actions: create, complete, delete, update.",

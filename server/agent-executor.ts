@@ -2044,7 +2044,7 @@ export class AgentExecutor extends EventEmitter {
       "set_goal", "update_goal", "delete_goal",
       "store_memory", "update_memory", "delete_memory",
       "set_belief", "update_belief",
-      "strategy",
+      "scenarios",
     ]);
 
     const UMBRELLA_WRITE_ACTIONS: Record<string, Set<string>> = {

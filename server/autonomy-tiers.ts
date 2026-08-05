@@ -56,8 +56,8 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   work: { default: 1, actions: { status: 0, list_projects: 0, get_project: 0, list_tasks: 0, read_file: 0 } },
   jobs: { default: 1, actions: { list: 0, get: 0 } },
   decisions: { default: 1, actions: { list: 0, get: 0 } },
-  strategy: { default: 1, actions: {
-    list_strategies: 0, get_strategy: 0, get_move_tree: 0, get_move: 0, get_move_path: 0,
+  scenarios: { default: 1, actions: {
+    list_scenarios: 0, get_scenario: 0, get_move_tree: 0, get_move: 0, get_move_path: 0,
     list_actors: 0, get_actor: 0, list_child_moves: 0, list_assumptions: 0,
     list_end_conditions: 0, list_notes: 0, list_context: 0, list_artifacts: 0,
     get_artifact: 0, list_move_definitions: 0, get_move_definition: 0, list_states: 0, get_state: 0,

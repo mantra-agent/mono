@@ -2827,7 +2827,7 @@ const gmailSubHandlers: Record<string, (args: Record<string, any>) => Promise<To
   email_cache: handleGmailEmailCache,
 };
 
-const STRATEGY_ACTIONS = "list_strategies, get_strategy, create_strategy, update_strategy, delete_strategy, list_actors, get_actor, add_actor, update_actor, remove_actor, get_move_tree, get_move, get_move_path, create_move, update_move, delete_move, reparent_move, list_child_moves, list_move_definitions, get_move_definition, create_move_definition, update_move_definition, delete_move_definition, set_actor_states, link_assumption_to_move, unlink_assumption_from_move, list_notes, add_note, update_note, delete_note, list_context, add_context, update_context, delete_context, add_end_condition, list_end_conditions, update_end_condition, delete_end_condition, add_assumption, list_assumptions, update_assumption, delete_assumption, cascade_assumption, list_artifacts, get_artifact, create_artifact, delete_artifact, evaluate_move, list_states, get_state, create_state, update_state, delete_state, set_end_condition_effect";
+const STRATEGY_ACTIONS = "list_scenarios, get_scenario, create_scenario, update_scenario, delete_scenario, list_actors, get_actor, add_actor, update_actor, remove_actor, get_move_tree, get_move, get_move_path, create_move, update_move, delete_move, reparent_move, list_child_moves, list_move_definitions, get_move_definition, create_move_definition, update_move_definition, delete_move_definition, set_actor_states, link_assumption_to_move, unlink_assumption_from_move, list_notes, add_note, update_note, delete_note, list_context, add_context, update_context, delete_context, add_end_condition, list_end_conditions, update_end_condition, delete_end_condition, add_assumption, list_assumptions, update_assumption, delete_assumption, cascade_assumption, list_artifacts, get_artifact, create_artifact, delete_artifact, evaluate_move, list_states, get_state, create_state, update_state, delete_state, set_end_condition_effect";
 
 async function handleStrategyListStrategies(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const list = await ss.getStrategies();
@@ -2838,7 +2838,7 @@ async function handleStrategyListStrategies(args: Record<string, any>, ss: any):
 
 async function handleStrategyGetStrategy(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const id = args.goalId;
-  if (!id) return { result: "Missing goalId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!id) return { result: "Missing goalId. Call list_scenarios first to get available strategy IDs.", error: true };
   const strategy = await ss.getStrategy(id);
   if (!strategy) return { result: `Strategy ${id} not found`, error: true };
   const actors = await ss.getActors(id);
@@ -2862,7 +2862,7 @@ async function handleStrategyCreateStrategy(args: Record<string, any>, ss: any):
     return existingNorm === normalizedTitle || existingNorm.includes(normalizedTitle) || normalizedTitle.includes(existingNorm);
   });
   if (similar) {
-    return { result: `A strategy with a similar title already exists: "${similar.title}" (ID: ${similar.id}). Use update_strategy with strategyId="${similar.id}" to modify it, or provide a distinctly different title to create_strategy.`, error: true };
+    return { result: `A scenario with a similar title already exists: "${similar.title}" (ID: ${similar.id}). Use update_scenario with strategyId="${similar.id}" to modify it, or provide a distinctly different title to create_scenario.`, error: true };
   }
   const strategy = await ss.createStrategy({ title, description: args.description || "" });
   return { result: `Strategy created: "${strategy.title}" (ID: ${strategy.id})` };
@@ -2870,7 +2870,7 @@ async function handleStrategyCreateStrategy(args: Record<string, any>, ss: any):
 
 async function handleStrategyUpdateStrategy(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const id = args.goalId;
-  if (!id) return { result: "Missing goalId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!id) return { result: "Missing goalId. Call list_scenarios first to get available strategy IDs.", error: true };
   const updates: Record<string, any> = {};
   if (args.title) updates.title = args.title;
   if (args.description) updates.description = args.description;
@@ -2881,7 +2881,7 @@ async function handleStrategyUpdateStrategy(args: Record<string, any>, ss: any):
 
 async function handleStrategyDeleteStrategy(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const id = args.goalId;
-  if (!id) return { result: "Missing goalId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!id) return { result: "Missing goalId. Call list_scenarios first to get available strategy IDs.", error: true };
   const deleted = await ss.deleteStrategy(id);
   if (!deleted) return { result: `Strategy ${id} not found`, error: true };
   return { result: `Strategy ${id} deleted` };
@@ -2889,7 +2889,7 @@ async function handleStrategyDeleteStrategy(args: Record<string, any>, ss: any):
 
 async function handleStrategyListActors(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const actors = await ss.getActors(goalId);
   if (actors.length === 0) return { result: "No actors for this strategy." };
   const lines = actors.map((a: any) => {
@@ -2913,7 +2913,7 @@ async function handleStrategyGetActor(args: Record<string, any>, ss: any): Promi
 
 async function handleStrategyAddActor(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const name = args.name;
   if (!name) return { result: "Missing actor name", error: true };
   const personId = args.personId;
@@ -2945,7 +2945,7 @@ async function handleStrategyRemoveActor(args: Record<string, any>, ss: any): Pr
 
 async function handleStrategyGetMoveTree(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const moves = await ss.getMoveTree(goalId);
   if (moves.length === 0) return { result: "No moves in this strategy's tree." };
   const treeActors = await ss.getActors(goalId);
@@ -3088,7 +3088,7 @@ async function applyMoveEcEffectsArg(args: Record<string, any>, moveId: string, 
 
 async function handleStrategyCreateMove(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const title = args.title;
   if (!title) return { result: "Missing move title", error: true };
   const moveDefinitionId = args.moveDefinitionId;
@@ -3278,7 +3278,7 @@ async function handleStrategyListChildMoves(args: Record<string, any>, ss: any):
 
 async function handleStrategyContextList(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const entries = await ss.getContextEntries(goalId);
   if (entries.length === 0) return { result: "No context entries for this strategy." };
   const lines = entries.map((e: any) => `- [${e.type}] ${e.content.slice(0, 100)}${e.content.length > 100 ? "..." : ""} (id: ${e.id})`);
@@ -3287,7 +3287,7 @@ async function handleStrategyContextList(args: Record<string, any>, ss: any): Pr
 
 async function handleStrategyContextAdd(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const content = args.content;
   if (!content) return { result: "Missing content", error: true };
   const entry = await ss.createContextEntry({ goalId, type: args.type || "historical", content });
@@ -3315,7 +3315,7 @@ async function handleStrategyContextDelete(args: Record<string, any>, ss: any): 
 
 async function handleStrategyListEndConditions(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const conditions = await ss.getEndConditions(goalId);
   if (conditions.length === 0) return { result: "No end conditions for this strategy." };
   const lines = conditions.map((c: any) => {
@@ -3328,7 +3328,7 @@ async function handleStrategyListEndConditions(args: Record<string, any>, ss: an
 
 async function handleStrategyAddEndCondition(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const description = args.description;
   if (!description) return { result: "Missing description", error: true };
   const condition = await ss.createEndCondition({ goalId, description, isRequired: args.isRequired ?? false, isSatisfied: args.isSatisfied ?? false });
@@ -3357,7 +3357,7 @@ async function handleStrategyDeleteEndCondition(args: Record<string, any>, ss: a
 
 async function handleStrategyListAssumptions(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const assumptions = await ss.getAssumptions(goalId);
   if (assumptions.length === 0) return { result: "No assumptions for this strategy." };
   const assumptionLinks = await ss.getAssumptionLinksForGoal(goalId);
@@ -3372,7 +3372,7 @@ async function handleStrategyListAssumptions(args: Record<string, any>, ss: any)
 
 async function handleStrategyAddAssumption(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const title = args.title;
   if (!title) return { result: "Missing assumption title", error: true };
   const assumption = await ss.createAssumption({ goalId, title, description: args.description || "", probability: args.probability ?? 0.5 });
@@ -3453,7 +3453,7 @@ async function handleStrategyUnlinkAssumptionFromMove(args: Record<string, any>,
 
 async function handleStrategyListArtifacts(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const artifacts = await ss.getArtifacts(goalId);
   if (artifacts.length === 0) return { result: "No artifacts for this strategy." };
   const lines = artifacts.map((a: any) => {
@@ -3512,7 +3512,7 @@ async function handleStrategyGetArtifact(args: Record<string, any>, ss: any): Pr
 
 async function handleStrategyCreateArtifact(args: Record<string, any>, ss: any): Promise<ToolHandlerResult> {
   const goalId = args.goalId;
-  if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+  if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
   const fileName = args.fileName;
   if (!fileName) return { result: "Missing fileName (e.g. 'analysis.md')", error: true };
   const content = args.content;
@@ -3552,7 +3552,7 @@ async function handleStrategyMoveDefinitions(action: string, args: Record<string
     case "list_move_definitions": {
       const goalId = args.goalId;
       const actorId = args.actorId;
-      if (!goalId && !actorId) return { result: "Missing strategyId or actorId. Call list_strategies first to get strategyIds, then list_actors to get actorIds.", error: true };
+      if (!goalId && !actorId) return { result: "Missing strategyId or actorId. Call list_scenarios first to get strategyIds, then list_actors to get actorIds.", error: true };
       const defs = actorId ? await ss.getMoveDefinitionsByActor(actorId) : await ss.getMoveDefinitions(goalId);
       if (defs.length === 0) return { result: "No move definitions found." };
       const lines = defs.map((d: any) => `- ${d.title} (id: ${d.id}, actorId: ${d.actorId})${d.description ? `: ${d.description.slice(0, 100)}` : ""}`);
@@ -3571,7 +3571,7 @@ async function handleStrategyMoveDefinitions(action: string, args: Record<string
       const goalId = args.goalId;
       const actorId = args.actorId;
       const title = args.title;
-      if (!goalId) return { result: "Missing strategyId. Call list_strategies first to get available strategy IDs.", error: true };
+      if (!goalId) return { result: "Missing strategyId. Call list_scenarios first to get available strategy IDs.", error: true };
       if (!actorId) return { result: "Missing actorId", error: true };
       if (!title) return { result: "Missing title", error: true };
       const def = await ss.createMoveDefinition({ goalId, actorId, title, description: args.description || "" });
@@ -3619,11 +3619,11 @@ async function handleStrategyEvaluateMove(args: Record<string, any>, ss: any): P
 type StrategySubHandler = (args: Record<string, any>, ss: any) => Promise<ToolHandlerResult>;
 
 const strategySubHandlers: Record<string, StrategySubHandler> = {
-  list_strategies: handleStrategyListStrategies,
-  get_strategy: handleStrategyGetStrategy,
-  create_strategy: handleStrategyCreateStrategy,
-  update_strategy: handleStrategyUpdateStrategy,
-  delete_strategy: handleStrategyDeleteStrategy,
+  list_scenarios: handleStrategyListStrategies,
+  get_scenario: handleStrategyGetStrategy,
+  create_scenario: handleStrategyCreateStrategy,
+  update_scenario: handleStrategyUpdateStrategy,
+  delete_scenario: handleStrategyDeleteStrategy,
   list_goals: handleStrategyListStrategies,
   get_goal: handleStrategyGetStrategy,
   create_goal: handleStrategyCreateStrategy,
@@ -6300,11 +6300,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
   },
 
-  async strategy(args) {
+  async scenarios(args) {
     const { strategyStorage } = await import("./strategy-storage");
-    const action = args.action || "list_strategies";
+    const action = args.action || "list_scenarios";
     const handler = strategySubHandlers[action];
-    if (!handler) return { result: `Unknown strategy action: ${action}. Available: ${STRATEGY_ACTIONS}`, error: true };
+    if (!handler) return { result: `Unknown scenarios action: ${action}. Available: ${STRATEGY_ACTIONS}`, error: true };
     try {
       return await handler(args, strategyStorage);
     } catch (err: any) {
