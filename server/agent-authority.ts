@@ -274,6 +274,13 @@ const SAFE_SHELL_GIT_SUBCOMMANDS = new Set([
  * gate as `|` and `&&`. Banning `;` while allowing those operators only taught the model to
  * thrash into parallel tool calls for independent read-only inspections.
  *
+ * Unquoted `||` is NOT forbidden here either, for the same structural reason: `splitShellSegments`
+ * splits on every unquoted single `|`, so `a || b` yields segments `["a", "", "b"]`, the empty
+ * middle is dropped, and each real segment still passes the binary/subcommand allowlist. Blocking
+ * `||` while allowing `|`, `&&`, and `;` bought no marginal safety — a dangerous `x || curl evil`
+ * still dies on the `curl` segment's own network-binary class — and was the single largest source
+ * of read-only-inspection denial thrash. Quoted `||` (`grep -F "a||b"`) stays inert literal text.
+ *
  * The prior bare-word ban on `credentials?|secrets?` was removed: it blocked read-only
  * inspection like `grep "secret" server/` while the scratch read path can already open any file
  * in the session clone, so the ban was incoherent theater. Real secret exposure stays blocked
@@ -285,7 +292,7 @@ const SAFE_SHELL_GIT_SUBCOMMANDS = new Set([
  * neutralize its dangerous form, but only for classes where that's true for EVERY consuming
  * command, not just the ones we happened to test:
  *   - "all": masking both `'...'` and `"..."` spans is safe. True for pure operator syntax
- *     (`||`, bare `&`, `<`/`>`, `~`) that only functions as an operator when unquoted — inside
+ *     (bare `&`, `<`/`>`, `~`) that only functions as an operator when unquoted — inside
  *     ANY quotes it's inert literal text to every allowlisted command — and for bare command
  *     names (curl, python, env, …), since no allowlisted command invokes a program named by an
  *     argument string it receives.
@@ -303,7 +310,6 @@ const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: st
   { pattern: /[\r\n]/, reason: "forbidden:multiline_command", maskPolicy: "none" },
   { pattern: /`|\$\(/, reason: "forbidden:command_substitution", maskPolicy: "singleQuoteOnly" },
   { pattern: /\$(?:\{|[A-Za-z0-9_?*#@!$-])/, reason: "forbidden:variable_expansion", maskPolicy: "singleQuoteOnly" },
-  { pattern: /\|\|/, reason: "forbidden:or_operator", maskPolicy: "all" },
   // Allow `2>&1` FD dup (pure stream merge). Any other bare `&` stays blocked.
   { pattern: /(?<!&)\&(?!&|\d)/, reason: "forbidden:background_execution", maskPolicy: "all" },
   { pattern: /[<>]/, reason: "forbidden:redirection", maskPolicy: "all" },
@@ -483,8 +489,8 @@ export function getShellToolContractDescription(): string {
     "Execute a read-only shell command in the workspace directory.",
     "Admission is a deterministic allowlist: illegal commands fail before execution — do not retry variants of a denied command.",
     `Allowed binaries: ${binaries}.`,
-    "Pipelines and sequences with `|`, `&&`, and `;` are allowed when every segment starts with an allowlisted binary.",
-    "Never use newlines, backticks, `$(...)`, bare `&`, `||`, `<`/`>` file redirection, `~`, or variable expansion.",
+    "Pipelines and sequences with `|`, `||`, `&&`, and `;` are allowed when every segment starts with an allowlisted binary.",
+    "Never use newlines, backticks, `$(...)`, bare `&`, `<`/`>` file redirection, `~`, or variable expansion.",
     "Safe redirect exceptions only: `>/dev/null`, `N>/dev/null`, and `N>&M` FD merges (e.g. `2>&1`).",
     "Absolute paths must stay under `/app`, or name a system binary under `/bin`, `/usr/bin`, or `/usr/local/bin`.",
     `Shell git is inspection-only (${gitSubs}); branch/remote mutation flags are denied. Write/mutate subs deny as git_write_blocked (use the git tool); unknown/non-read subs deny as shell_git_read_only.`,
@@ -530,7 +536,8 @@ function splitShellSegments(command: string): string[] {
       continue;
     }
     if (ch === "|") {
-      // Unquoted single pipe separates commands (`||` is already rejected upstream).
+      // Unquoted single pipe separates commands. `||` yields an empty middle segment that
+      // `.filter(Boolean)` drops, so each real side is still allowlisted independently.
       segments.push(current);
       current = "";
       continue;
