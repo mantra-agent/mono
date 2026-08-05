@@ -57,6 +57,7 @@ import { peopleStorage } from "./people-storage";
 import { chatFileStorage } from "./chat-file-storage";
 import { normalizeQuestionPrompt } from "@shared/question-prompt";
 import { decisionsStorage } from "./decisions-storage";
+import { fileIssueStorage } from "./file-storage";
 import { tagService } from "./tag-service";
 import { formatBuildDeploymentLabel } from "./mods/build-deployment-home";
 
@@ -603,6 +604,16 @@ const adapters: AddressResolverAdapter[] = [
   }),
   ...(["web_article", "x_item", "reddit_post", "rss_item"] as const).map(type => simpleAdapter(type, async (_principal, refs) => new Map(refs.map(ref => [requestedAddress(ref), resolved(ref, { label: ref.id, route: ref.id })])))),
   simpleAdapter("pr", async (_principal, refs) => new Map(refs.map(ref => [requestedAddress(ref), resolved(ref, { label: ref.id })]))),
+  simpleAdapter("issue", async (_principal, refs) => {
+    const entries = await Promise.all(refs.map(async ref => {
+      const id = Number(ref.id);
+      const issue = Number.isSafeInteger(id) ? await fileIssueStorage.getIssue(id) : undefined;
+      return issue
+        ? [requestedAddress(ref), resolved(ref, { label: issue.title || `Issue ${ref.id}`, summary: `Status: ${issue.status}`, updatedAt: issue.createdAt })] as const
+        : null;
+    }));
+    return new Map(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
+  }),
   simpleAdapter("email_thread", async (principal, refs) => {
     const parsed = refs.map(ref => ({ ref, colon: ref.id.indexOf(":") })).filter(item => item.colon > 0);
     const map = new Map<string, AddressResolutionResult>();

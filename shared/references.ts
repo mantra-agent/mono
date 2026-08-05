@@ -45,6 +45,7 @@ export const REFERENCE_TYPES = [
   "reddit_post",
   "rss_item",
   "pr",
+  "issue",
   "email_thread",
   "email_message",
   "email_draft",
@@ -159,6 +160,7 @@ export const REFERENCE_REGISTRY: Readonly<Record<KnownReferenceType, ReferenceTy
     const parts = id.split("/");
     return parts.length === 3 ? `https://github.com/${parts[0]}/${parts[1]}/pull/${parts[2]}` : undefined;
   }, graph: false }),
+  issue: definition("issue", "integer", INTEGER_PATTERN, { route: id => `/issues/${encodeURIComponent(id)}`, graph: false }),
   email_thread: definition("email_thread", "composite", EMAIL_THREAD_PATTERN, { route: () => "/comms", graph: false }),
   email_message: definition("email_message", "integer", INTEGER_PATTERN, { route: () => "/comms", graph: false }),
   email_draft: definition("email_draft", "uuid", UUID_PATTERN, { aliases: ["draft"], route: id => `/email?draft=${encodeURIComponent(id)}`, graph: false }),
