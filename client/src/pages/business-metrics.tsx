@@ -22,6 +22,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import {
+  HierarchySectionHeader,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
@@ -43,6 +48,12 @@ const ADAPTER_ICON: Record<MetricAdapterKind, typeof Database> = {
   expression: FunctionSquare,
 };
 
+const ADAPTER_SECTION_LABEL: Record<MetricAdapterKind, string> = {
+  manual: "Manual",
+  internal: "Internal",
+  expression: "Expression",
+};
+
 function relativeTime(iso: string | null | undefined): string {
   if (!iso) return "never";
   const then = new Date(iso).getTime();
@@ -60,9 +71,14 @@ function formatValue(value: number, unit: string): string {
   return unit ? `${formatted} ${unit}` : formatted;
 }
 
-function RecordSampleDialog({ metric }: { metric: Metric }) {
+/**
+ * Inline record-sample form. Recording an observation is the frequent,
+ * lightweight action, so it lives inside the row's expanded detail rather than
+ * behind a modal — the canonical inline-edit pattern shared with the account
+ * profile rows.
+ */
+function RecordSampleForm({ metric }: { metric: Metric }) {
   const { toast } = useToast();
-  const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
   const [evidence, setEvidence] = useState("");
 
@@ -81,7 +97,6 @@ function RecordSampleDialog({ metric }: { metric: Metric }) {
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/business/kpis/standing-scores"] });
       toast({ title: "Sample recorded", description: `${metric.name} updated.` });
-      setOpen(false);
       setValue("");
       setEvidence("");
     },
@@ -91,45 +106,76 @@ function RecordSampleDialog({ metric }: { metric: Metric }) {
   });
 
   const valid = value.trim() !== "" && Number.isFinite(Number(value));
+  const AdapterIcon = ADAPTER_ICON[metric.adapterKind] ?? Database;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm" data-testid={`record-sample-${metric.slug}`}>
-          <Plus className="mr-1 h-3.5 w-3.5" /> Sample
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Record sample — {metric.name}</DialogTitle>
-          <DialogDescription>Log an observed value. This updates any KPI bound to this metric.</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Input
-              type="number"
-              placeholder="Value"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              data-testid="sample-value"
-            />
-            <span className="text-sm text-muted-foreground">{metric.unit || "units"}</span>
-          </div>
-          <Textarea
-            placeholder="Evidence / source note (optional)"
-            value={evidence}
-            onChange={(e) => setEvidence(e.target.value)}
-            data-testid="sample-evidence"
-          />
+    <div className="max-w-xl space-y-3 py-1">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <div className="flex items-center gap-1.5">
+          <AdapterIcon className="h-3 w-3" />
+          <span className="capitalize text-foreground">{metric.adapterKind}</span>
         </div>
-        <DialogFooter>
-          <Button onClick={() => mutation.mutate()} disabled={!valid || mutation.isPending} data-testid="sample-submit">
-            {mutation.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-            Record
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <div>{DIRECTION_LABEL[metric.direction]}</div>
+        <div>Period · <span className="text-foreground">{metric.samplePeriod}</span></div>
+        <div>Unit · <span className="text-foreground">{metric.unit || "—"}</span></div>
+      </dl>
+
+      {metric.latestSample?.evidence ? (
+        <p className="rounded-md bg-muted/40 p-2 text-xs leading-relaxed text-muted-foreground">
+          {metric.latestSample.evidence}
+        </p>
+      ) : null}
+
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          placeholder="Value"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          data-testid={`sample-value-${metric.slug}`}
+        />
+        <span className="shrink-0 text-xs text-muted-foreground">{metric.unit || "units"}</span>
+      </div>
+      <Textarea
+        placeholder="Evidence / source note (optional)"
+        value={evidence}
+        onChange={(e) => setEvidence(e.target.value)}
+        data-testid={`sample-evidence-${metric.slug}`}
+      />
+      <Button
+        size="sm"
+        onClick={() => mutation.mutate()}
+        disabled={!valid || mutation.isPending}
+        data-testid={`sample-submit-${metric.slug}`}
+      >
+        {mutation.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Plus className="mr-1 h-3.5 w-3.5" />}
+        Record sample
+      </Button>
+    </div>
+  );
+}
+
+function MetricTreeRow({ metric }: { metric: Metric }) {
+  const AdapterIcon = ADAPTER_ICON[metric.adapterKind] ?? Database;
+  const sample = metric.latestSample;
+
+  return (
+    <ProfileTreeRow
+      label={metric.name}
+      icon={<AdapterIcon className="h-3.5 w-3.5" />}
+      hasValue
+      showEmpty
+      mobileLayout="inline"
+      testId={`metric-row-${metric.slug}`}
+      expandedContent={<RecordSampleForm metric={metric} />}
+    >
+      <span className="flex min-w-0 items-center justify-end gap-2">
+        <span className={cn("truncate font-mono", !sample && "text-muted-foreground")}>
+          {sample ? formatValue(sample.value, sample.unit) : "—"}
+        </span>
+        <span className="shrink-0 text-muted-foreground">{relativeTime(sample?.observedAt)}</span>
+      </span>
+    </ProfileTreeRow>
   );
 }
 
@@ -234,6 +280,16 @@ export default function BusinessMetricsPage() {
     return list.filter((m) => m.name.toLowerCase().includes(q) || m.slug.toLowerCase().includes(q));
   }, [data, query]);
 
+  const sections = useMemo(
+    () =>
+      METRIC_ADAPTER_KINDS.map((kind) => ({
+        kind,
+        label: ADAPTER_SECTION_LABEL[kind] ?? kind,
+        items: metrics.filter((m) => m.adapterKind === kind),
+      })).filter((section) => section.items.length > 0),
+    [metrics],
+  );
+
   return (
     <div className="mx-auto max-w-4xl p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -264,37 +320,16 @@ export default function BusinessMetricsPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {metrics.map((metric) => {
-            const AdapterIcon = ADAPTER_ICON[metric.adapterKind] ?? Database;
-            const sample = metric.latestSample;
-            return (
-              <div
-                key={metric.id}
-                className="flex items-center justify-between gap-4 rounded-lg border bg-card p-3"
-                data-testid={`metric-row-${metric.slug}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{metric.name}</span>
-                    <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                      <AdapterIcon className="h-3 w-3" /> {metric.adapterKind}
-                    </span>
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {DIRECTION_LABEL[metric.direction]} · {metric.samplePeriod}
-                    {metric.unit ? ` · ${metric.unit}` : ""}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className={cn("font-mono text-sm", !sample && "text-muted-foreground")}>
-                    {sample ? formatValue(sample.value, sample.unit) : "—"}
-                  </div>
-                  <div className="text-xs text-muted-foreground">{relativeTime(sample?.observedAt)}</div>
-                </div>
-                <RecordSampleDialog metric={metric} />
-              </div>
-            );
-          })}
+          {sections.map((section) => (
+            <div key={section.kind} className={HIERARCHY_TREE_STACK_CLASS}>
+              <HierarchySectionHeader data-testid={`metric-section-${section.kind}`}>
+                {section.label}
+              </HierarchySectionHeader>
+              {section.items.map((metric) => (
+                <MetricTreeRow key={metric.id} metric={metric} />
+              ))}
+            </div>
+          ))}
         </div>
       )}
     </div>
