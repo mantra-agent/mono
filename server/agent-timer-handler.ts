@@ -84,9 +84,11 @@ export class AgentTimerHandler implements TimerHandler {
     const { requireCurrentPrincipal } = await import("./principal-context");
     const { filterBuildToolSchemas } = await import("./mods/build-tool-access");
     const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
+    const { filterBusinessToolSchemas } = await import("./mods/business-tool-access");
     const authorityToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), { origin: "timer", sessionId, sessionKey });
     const buildScopedTools = await filterBuildToolSchemas(requireCurrentPrincipal(), authorityToolDefs);
-    const allToolDefs = await filterWellnessToolSchemas(requireCurrentPrincipal(), buildScopedTools);
+    const wellnessScopedTools = await filterWellnessToolSchemas(requireCurrentPrincipal(), buildScopedTools);
+    const allToolDefs = await filterBusinessToolSchemas(requireCurrentPrincipal(), wellnessScopedTools);
     const toolDefs = allToolDefs.map(
       (t: { name: string; description: string; parameters: unknown }) => ({
         name: t.name,

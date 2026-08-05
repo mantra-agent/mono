@@ -4,11 +4,16 @@ import { businessModelStorage } from "./business-model-storage";
 import { assumptionsPatchSchema } from "@shared/models/business-model";
 import { createLogger } from "./log";
 import { requirePermission } from "./permissions";
+import { requireActiveBusiness } from "./mods/business-route-access";
 
 const log = createLogger("BusinessModelRoutes");
 
 export function registerBusinessModelRoutes(app: Express): void {
-  app.use("/api/business", requireAuth);
+  // Group gate for the entire /api/business/* surface (model, roles, metrics,
+  // kpis). registerBusinessModelRoutes runs before the job-role and metrics
+  // registrars, so this app.use covers those route files too. Mirrors the
+  // Wellness `app.use("/api/wellness", requireAuth, requireActiveWellness)` seam.
+  app.use("/api/business", requireAuth, requireActiveBusiness);
 
   // GET → get-or-create the principal's model with default assumptions.
   app.get("/api/business/model", requirePermission("system:read"), async (_req, res) => {
