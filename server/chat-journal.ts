@@ -21,6 +21,7 @@ export type JournalEntryType =
   | "tool_result"
   | "tool_use_pause"
   | "run_start"
+  | "context_pressure"
   | "done"
   | "saved"
   | "error"
@@ -81,6 +82,8 @@ export interface JournalEntry {
   inputTokens?: number | null;
   outputTokens?: number | null;
   totalTokens?: number | null;
+  inputLimit?: number;
+  compactionThreshold?: number;
 }
 
 const activeRunJournals = new Map<string, JournalEntry[]>();
@@ -363,7 +366,11 @@ export function publishJournalToUI(entry: JournalEntry, category: EventCategory 
   if (category === "chat" && entry.sessionId) {
     try {
       const { sessionManager } = require("./session-manager");
-      sessionManager.applyEvent(entry.sessionId, entry);
+      sessionManager.applyEvent(entry.sessionId, {
+    ...entry,
+    inputLimit: entry.inputLimit,
+    compactionThreshold: entry.compactionThreshold,
+  });
     } catch (err) {
       // SessionManager not loaded yet or error — non-fatal, eventBus still works
       log.debug(`sessionManager.applyEvent skipped: ${err instanceof Error ? err.message : String(err)}`);

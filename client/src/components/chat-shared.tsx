@@ -3037,7 +3037,11 @@ export const ChatTurn = memo(function ChatTurn({
           <AlertCircle className="h-4 w-4 text-destructive" />
         </div>
       ) : (
-        <AgentPersonaControl sessionId={message.sessionId} persona={message.persona} />
+        <AgentPersonaControl
+          sessionId={message.sessionId}
+          persona={message.persona}
+          contextPressure={layer === 2 ? streaming?.contextPressure : null}
+        />
       )}
       <div className="min-w-0 flex-1 group">
         {isErrorMessage && (
