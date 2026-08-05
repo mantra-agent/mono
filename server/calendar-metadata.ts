@@ -641,9 +641,6 @@ export async function setMeetingAgendaPage(
           id: deterministicPageId,
           title: `${meetingTitle.trim() || "Meeting"} Preparation`,
           markdown: legacyAgenda?.trim() || "",
-          purpose: "meeting-notes",
-          pageContext: "/calendar",
-          contentSummary: `Private preparation page for ${meetingTitle.trim() || "meeting"}`,
           tags: ["meeting-preparation"],
         });
         selected = {

@@ -264,11 +264,8 @@ async function handleCreate(
   const page = await createFiledLibraryPage({
     title: `Plan: ${title}`,
     markdown: pageContent,
-    purpose: "plans",
     canonicalFolder: "plans",
     explicitVaultId: planVaultId,
-    pageContext: "/plans",
-    contentSummary: `Multi-step execution plan: ${title}`,
     tags: ["plan", "active"],
     createdBySessionId: sessionId,
   });

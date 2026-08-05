@@ -276,17 +276,12 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
       get: { description: "Get one canonical completed or attempted meeting session by ID.", requiredParams: ["meetingId"] },
     },
   },
-  priorities: {
-    description: "DEPRECATED — compatibility shim for check-in artifact metadata only. Use goals for all goal and priority operations.",
-    whenToUse: "Avoid for new work. Use the goals tool instead.",
-    example: 'Use goals: { "action": "list", "filters": { "horizon": "today" } }',
-  },
   library: {
     description: "Manage standard Library pages and annotations. Pages support Vault membership, tags, status fields, and hierarchical parent/child structure.",
     whenToUse: "When the user wants to create, browse, or manage structured knowledge pages.",
     example: '{ "action": "search", "query": "architecture" }',
     actions: {
-      create_library_page: { description: "Create a new Library page under an explicit parent when provided, otherwise at the active Vault root. Does not create or maintain Wiki, Index, or Log pages.", requiredParams: ["title"], optionalParams: ["plainTextContent", "purpose", "pageContext", "contentSummary", "parentId", "tags", "status", "surface", "surfaceDurationHours", "surfaceReason", "surfaceSection"] },
+      create_library_page: { description: "Create a new Library page under an explicit parent when provided, otherwise at the active Vault root. Does not create or maintain Wiki, Index, or Log pages.", requiredParams: ["title"], optionalParams: ["plainTextContent", "parentId", "tags", "status", "surface", "surfaceDurationHours", "surfaceReason", "surfaceSection"] },
       edit_library_page: { description: "Surgical find-and-replace edit on a library page's content. Preferred over update_library_page for targeted changes — avoids re-transmitting the entire document. Uses old_string/new_string semantics (same as scratch edit).", requiredParams: ["id", "old_string", "new_string"], optionalParams: ["replace_all", "surface", "surfaceDurationHours", "surfaceReason", "surfaceSection"] },
       dismiss_library_page: { description: "Clear surfacing fields so a Library page disappears from Home/Simple Inbox without deleting the page.", requiredParams: ["id"], optionalParams: [] },
       update_library_page: { description: "Full replacement of a library page's content and/or metadata. Use edit_library_page instead when making targeted changes to large pages.", requiredParams: ["id"], optionalParams: ["title", "plainTextContent", "parentId", "tags", "status", "oneLiner", "summary", "surface", "surfaceDurationHours", "surfaceReason", "surfaceSection"] },

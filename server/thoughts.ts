@@ -232,9 +232,6 @@ export async function saveJournalToLibrary(
   const page = await createFiledLibraryPage({
     title,
     markdown: content,
-    purpose: parentSlug,
-    pageContext: "/journal",
-    contentSummary: `Journal artifact: ${title}`,
     tags,
   });
 

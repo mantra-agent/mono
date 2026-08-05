@@ -273,9 +273,6 @@ After assembling the brief, output it directly as this session's response. Then:
 
 1. Use the \`library\` tool to archive and surface the brief. First check if the page exists with action "get_library_page" (id: "daily-brief-YYYY-MM-DD"). If it exists, use action "update_library_page"; if not, use action "create_library_page":
    - id: "daily-brief-YYYY-MM-DD" (using today's date)
-   - purpose: "daily-briefs"
-   - pageContext: "/home"
-   - contentSummary: "Morning daily brief for Ray"
    - title: "Daily Brief — [Day of Week], [Date]"
    - plainTextContent: The full brief content in markdown
    - surface: true
@@ -520,9 +517,6 @@ For other formats, use the appropriate native draft surface when one exists. Nev
 
 8. Archive to the Library.
 - Use the \`library\` tool (action: "create_library_page") with:
-  - purpose: "financial-reviews"
-  - pageContext: "/finance"
-  - contentSummary: "Periodic financial review"
   - title: Use the naming convention from the Library Index (e.g., "Monthly Financial Review — April 2026")
   - tags: ["financial-review"]
   - plainTextContent: The full brief in markdown`,
@@ -816,7 +810,7 @@ Be concise and factual.`,
       { check: "Relevant period data is loaded before writing: Library artifacts for adjacent cadences, goals/projects/tasks, calendar, people, memory, and observations as appropriate", weight: 3 },
       { check: "Brief is concise and evidence-backed, naming actual outcomes, open loops, patterns, and one practical next action without live-interview questions", weight: 3 },
       { check: "Useful cadence-specific logic is preserved: daily captures events/open threads/learning, weekly compares plan vs reality, monthly synthesizes weekly artifacts, quarterly/annual synthesize lower-cadence artifacts", weight: 3 },
-      { check: "Library artifact is created in the correct collection with cadence-specific title and tags, and linked through priorities/check-in artifact metadata when a supported link action exists", weight: 2 },
+      { check: "Library artifact is created in the correct collection with cadence-specific title and tags, and linked through goals check-in artifact metadata when a supported link action exists", weight: 2 },
       { check: "Artifact is surfaced to Home/Simple Inbox only when it contains a decision, risk, carry-forward, or review-worthy synthesis", weight: 2 },
       { check: "Final output includes the brief content or a compact faithful summary plus page reference, not merely a delivery confirmation", weight: 2 },
     ],
@@ -959,13 +953,13 @@ Save to Library:
 
 After writing the brief:
 
-1. Create the Library page with cadence-specific purpose/pageContext/contentSummary, title, tags, and full markdown content so the Library index resolves the parent.
-2. If a supported priorities/check-in link exists for the cadence, link the page.
+1. Create the Library page with a cadence-specific title, tags, and full markdown content; use an explicit parent when filing under a known collection.
+2. If a supported goals check-in link exists for the cadence, link the page.
 3. Surface to Home/Simple Inbox only when useful:
    - \`surfacePolicy === "always"\`; or
    - \`surfacePolicy !== "never"\` and the brief contains a decision, risk, stalled goal, carry-forward, or review-worthy synthesis.
 
-Use \`library(action: "create_library_page", purpose: "{cadence}-reflections", pageContext: "/home", contentSummary: "{cadence} reflection", surface: true, surfaceDurationHours: 48, surfaceReason: "Review {cadence} reflection: {one concrete reason}", surfaceSection: "inbox")\` when surfacing. For annual/quarterly artifacts, use 96 hours if the synthesis is strategic.
+Use \`library(action: "create_library_page", surface: true, surfaceDurationHours: 48, surfaceReason: "Review {cadence} reflection: {one concrete reason}", surfaceSection: "inbox")\` when surfacing. For annual/quarterly artifacts, use 96 hours if the synthesis is strategic.
 
 If the page has already been created but you later decide it should be surfaced, use \`library(action: "edit_library_page", surface: true, ...)\` rather than duplicating the page.
 
