@@ -633,6 +633,12 @@ const VARIABLES_QUERY = `
   }
 `;
 
+const VARIABLE_COLLECTION_UPSERT_MUTATION = `
+  mutation XyzRailwayVariableCollectionUpsert($input: VariableCollectionUpsertInput!) {
+    variableCollectionUpsert(input: $input)
+  }
+`;
+
 export async function fetchServiceVariables(
   projectId: string,
   environmentId: string,
@@ -645,6 +651,30 @@ export async function fetchServiceVariables(
     serviceId,
   }, token);
   return data.variables ?? {};
+}
+
+export async function upsertServiceVariables(
+  projectId: string,
+  environmentId: string,
+  serviceId: string,
+  variables: Record<string, string>,
+  token?: string,
+): Promise<void> {
+  await railwayRequest<{ variableCollectionUpsert: boolean }>(
+    VARIABLE_COLLECTION_UPSERT_MUTATION,
+    {
+      input: {
+        projectId,
+        environmentId,
+        serviceId,
+        variables,
+        replace: false,
+        skipDeploys: true,
+      },
+    },
+    token,
+  );
+  log.log(`Upserted ${Object.keys(variables).length} Railway variables without exposing values or triggering deployment`);
 }
 
 const DEPLOYMENTS_FOR_ENV_QUERY = `
