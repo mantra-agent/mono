@@ -29,10 +29,7 @@ async function createPage(title: string, parentId: string | null, placeholder: s
   const page = await createFiledLibraryPage({
     title,
     markdown: placeholder,
-    purpose: "opportunities",
     explicitParentId: parentId,
-    pageContext: "/exec",
-    contentSummary: `Opportunity artifact hierarchy page: ${title}`,
     tags: ["opportunity-artifact"],
   });
   log.log(`created page "${title}" id=${page.id} parent=${parentId ?? "vault-root"}`);

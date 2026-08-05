@@ -2098,7 +2098,7 @@ async function resolveGoalsInstructions(): Promise<string> {
     "- Core invariant: one goal per intended outcome per horizon. Repeated mentions are reinforcement or status, not new goals. Inspect existing goals for the horizon and compare by meaning before creating.",
     "- Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime.",
     "- create only when no equivalent active goal exists; otherwise update (clearer name), update status (active/on_track/at_risk/achieved/blocked/dormant), set_parent, or reinforce. A duplicate rejection is protection — update the existing goal instead.",
-    "- Use the goals tool directly; the priorities tool is a deprecated compatibility alias.",
+    "- Use the goals tool directly for every goal and priority operation.",
   ].join("\n");
 }
 
@@ -2133,6 +2133,7 @@ async function resolveTools(request: ContextRequest): Promise<string> {
   // — the model hydrates a full schema on intent via `tools` action `get`.
   const catalog = getToolCatalog();
   const core = catalog.filter(t => t.isCore);
+  const fmtName = (t: { name: string }) => `- \`${t.name}\``;
   const fmtEntry = (t: { name: string; description: string }) => `- \`${t.name}\` — ${t.description}`;
 
   // Make the TOC bundle-aware: the active persona front-loads full schemas for
@@ -2159,16 +2160,16 @@ async function resolveTools(request: ContextRequest): Promise<string> {
     "**Tool index.** Every tool below is callable. Core and this persona's bundled tools load full schemas up front; the rest advertise here by exact name — call `tools` action `get` with that name to hydrate a full schema when you intend to use it.",
     "",
     `Core (${core.length}, always loaded):`,
-    ...core.map(fmtEntry),
+    ...core.map(fmtName),
     "",
     ...(onDemand.length === 0
       ? [
           `Additional (${bundled.length}, all loaded up front for this persona):`,
-          ...bundled.map(fmtEntry),
+          ...bundled.map(fmtName),
         ]
       : [
           `Bundled by this persona (${bundled.length}, loaded up front):`,
-          ...bundled.map(fmtEntry),
+          ...bundled.map(fmtName),
           "",
           `On-demand (${onDemand.length}, call \`tools.get\` to load):`,
           ...onDemand.map(fmtEntry),

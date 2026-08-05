@@ -2053,7 +2053,6 @@ export class AgentExecutor extends EventEmitter {
       memory: new Set(["write"]),
       docx: new Set(["write", "edit", "clone"]),
       meetings: new Set(["add", "update", "delete"]),
-      priorities: new Set(["add", "update", "remove", "mark_status"]),
       stories: new Set(["capture", "update", "supersede", "delete"]),
       capabilities: new Set(["create", "update", "delete", "audit", "sync", "record_validation", "link_story", "unlink_story"]),
     };

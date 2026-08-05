@@ -1158,10 +1158,7 @@ export async function createWorkflowRun(input: {
   const page = await createFiledLibraryPage({
     title: `Workflow: ${input.title}`,
     markdown: initialContent,
-    purpose: "workflows",
     canonicalFolder: "workflows",
-    pageContext: "/workflows",
-    contentSummary: `Workflow checkpoint for ${input.title}: ${input.objective}`,
     tags: ["workflow", "checkpoint"],
     createdBySessionId: input.createdBySessionId || input.parentSessionId,
     slugSuffix: Math.random().toString(36).slice(2, 7),

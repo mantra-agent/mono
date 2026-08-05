@@ -11835,11 +11835,8 @@ ${refs}` : ""),
           const page = await createFiledLibraryPage({
             title,
             markdown: plain,
-            purpose: args.purpose || null,
             canonicalFolder: isCanonicalVaultFolder(args.canonicalFolder) ? args.canonicalFolder : null,
             explicitParentId: args.parentId || null,
-            pageContext: args.pageContext || null,
-            contentSummary: args.contentSummary || args.summary || null,
             tags,
             status,
             structuralRole: args.structuralRole || null,
@@ -15143,30 +15140,6 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     }
     return result;
   },
-  async priorities(args) {
-    const action = args.action;
-    if (!action) return { result: "Missing action parameter", error: true };
-
-    const migratedArtifactActions = new Set([
-      "set_review",
-      "set_daily_plan",
-      "get_daily_artifacts",
-      "set_weekly_reflection",
-      "set_weekly_plan",
-      "set_monthly_plan",
-      "set_monthly_reflection",
-      "set_quarterly_plan",
-      "set_quarterly_reflection",
-    ]);
-    if (migratedArtifactActions.has(action)) {
-      return bridgeHandlers.goals(args);
-    }
-
-    return {
-      result: `priorities.${action} has been removed. Use goals for goal and priority operations; check-in artifact actions still redirect through this deprecated compatibility shim.`,
-      error: true,
-    };
-  },
   async observe(args) {
     const type = args.type as string;
     if (!type || !["pattern", "gap", "change", "connection", "opportunity"].includes(type)) {
@@ -17003,7 +16976,6 @@ const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   people: new Set(["create", "update", "merge", "add_note", "update_note", "delete_note", "log_interaction", "update_interaction", "delete_interaction", "set_daily_contact", "add_vault_membership", "remove_vault_membership", "set_vault_memberships"]),
   calendar: new Set(["create", "update", "delete"]),
   memory: new Set(["write"]),
-  priorities: new Set([]),
   settings: new Set(["set", "delete"]),
   observe: new Set(["pattern", "gap", "change", "connection", "opportunity"]),
   cognition: new Set(["set_emotion", "create_persona", "update_persona"]),

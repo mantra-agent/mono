@@ -21,7 +21,6 @@ import {
 export interface CreateFiledLibraryPageInput {
   title: string;
   markdown: string;
-  purpose?: string | null;
   /**
    * Deterministic canonical folder placement. When set and no explicit parent
    * is supplied, the page is filed under the per-vault Plans/Workflows/Specs/
@@ -32,8 +31,6 @@ export interface CreateFiledLibraryPageInput {
   canonicalFolder?: CanonicalVaultFolder | null;
   explicitParentId?: string | null;
   explicitVaultId?: string | null;
-  pageContext?: string | null;
-  contentSummary?: string | null;
   tags?: string[];
   status?: string | null;
   structuralRole?: LibraryStructuralRole | null;
@@ -243,7 +240,6 @@ async function resolveStandardLibraryPlacement(
       confidence: 1,
       reason: "Caller supplied an explicit parent in the standard Library hierarchy.",
       lint: { requiresReview: false, code: "explicit_parent", message: null },
-      compatibility: { purpose: input.purpose ?? null },
     };
   }
 
@@ -272,7 +268,6 @@ async function resolveStandardLibraryPlacement(
       confidence: 1,
       reason: `Filed under the canonical ${def.title} folder for this vault.`,
       lint: { requiresReview: false, code: "none", message: null },
-      compatibility: { purpose: input.purpose ?? null },
     };
   }
 
@@ -288,7 +283,6 @@ async function resolveStandardLibraryPlacement(
       ? "Caller supplied an explicit destination vault."
       : "Saved at the current Vault root; automatic Library2 organization is disabled.",
     lint: { requiresReview: false, code: "none", message: null },
-    compatibility: { purpose: input.purpose ?? null },
   };
 }
 

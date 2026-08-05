@@ -157,10 +157,8 @@ async function generateRecap(
     : await createFiledLibraryPage({
         title: recap.title,
         markdown,
-        purpose: "meeting-notes",
         explicitParentId: node.id,
         explicitVaultId: vaultId,
-        contentSummary: recap.summary.slice(0, 500),
         tags: ["meeting", "recap"],
         createdBySessionId: sessionId,
         surface: true,

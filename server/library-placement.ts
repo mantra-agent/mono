@@ -38,9 +38,6 @@ export interface LibrarySemanticPlacementResult {
     code: "none" | "ambiguous_placement" | "missing_index" | "explicit_parent";
     message: string | null;
   };
-  compatibility: {
-    purpose: string | null;
-  };
 }
 
 export const LIBRARY_PLACEMENT_POLICY = {
@@ -281,7 +278,6 @@ export async function placeLibraryPageSemantically(input: LibrarySemanticPlaceme
       confidence: 1,
       reason: "Caller supplied an explicit parent; semantic placement records the decision but does not override human-selected structure.",
       lint: { requiresReview: false, code: "explicit_parent", message: null },
-      compatibility: { purpose: input.purpose ?? null },
     };
   }
 
@@ -297,7 +293,6 @@ export async function placeLibraryPageSemantically(input: LibrarySemanticPlaceme
       confidence: 1,
       reason: "Caller supplied an explicit destination vault; the page is filed at that vault's root.",
       lint: { requiresReview: false, code: "none", message: null },
-      compatibility: { purpose: input.purpose ?? null },
     };
   }
 
@@ -378,7 +373,6 @@ export async function placeLibraryPageSemantically(input: LibrarySemanticPlaceme
     confidence: adjudication.confidence,
     reason: `Semantic adjudication selected @page:${selected.page.id} from ${shortlist.length} lexically admitted candidate(s): ${adjudication.reason}`,
     lint: { requiresReview: false, code: "none", message: null },
-    compatibility: { purpose: input.purpose ?? null },
   };
 }
 
@@ -415,6 +409,5 @@ function reviewRequired(
       code,
       message: "Saved at the vault root with review-required placement metadata; this is lint residue, not a final filing location.",
     },
-    compatibility: { purpose: input.purpose ?? null },
   };
 }
