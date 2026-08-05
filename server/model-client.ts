@@ -3721,21 +3721,19 @@ export async function generateImageViaGrokSubscription(
     : "png";
   const aspectRatio = aspectRatioFromSize(options?.size);
 
+  // xAI Imagine rejects OpenAI-style `size` (400 "Argument not supported: size").
+  // Map caller size → aspect_ratio only; never forward size on the wire.
   const request: Record<string, unknown> = {
     model: GROK_IMAGE_MODEL,
     prompt,
     n: 1,
     response_format: "b64_json",
   };
-  if (options?.size) request.size = options.size;
   if (aspectRatio) request.aspect_ratio = aspectRatio;
-  if (options?.quality === "high" || options?.quality === "low") {
-    request.quality = options.quality;
-  }
 
   log.info("Generating image via Grok subscription (xAI Imagine)", {
     model: GROK_IMAGE_MODEL,
-    size: options?.size,
+    requestedSize: options?.size,
     aspectRatio,
   });
 
@@ -3952,6 +3950,8 @@ export async function editImageViaGrokSubscription(
     }),
   );
 
+  // xAI Imagine rejects OpenAI-style `size` (400 "Argument not supported: size").
+  // Map caller size → aspect_ratio only; never forward size on the wire.
   const request: Record<string, unknown> = {
     model: GROK_IMAGE_MODEL,
     image: files.length === 1 ? files[0] : files,
@@ -3959,13 +3959,12 @@ export async function editImageViaGrokSubscription(
     n: 1,
     response_format: "b64_json",
   };
-  if (options?.size) request.size = options.size;
   if (aspectRatio) request.aspect_ratio = aspectRatio;
 
   log.info("Editing image via Grok subscription (xAI Imagine)", {
     model: GROK_IMAGE_MODEL,
     sourceCount: imageBuffers.length,
-    size: options?.size,
+    requestedSize: options?.size,
     aspectRatio,
   });
 
