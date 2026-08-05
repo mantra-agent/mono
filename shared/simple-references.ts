@@ -4,7 +4,7 @@ import { createReferenceRef, type ReferenceRef } from "./references";
 export function sourceRefToReferenceRef(sourceRef: SimpleSourceRef): ReferenceRef | null {
   switch (sourceRef.type) {
     case "wellness":
-      return createReferenceRef({ type: "wellness_activity", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href } });
+      return createReferenceRef({ type: "wellness_activity", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, vaultIds: sourceRef.vaultIds } });
     case "task":
     case "project":
     case "milestone":
@@ -13,17 +13,17 @@ export function sourceRefToReferenceRef(sourceRef: SimpleSourceRef): ReferenceRe
     case "person":
     case "priority":
     case "build":
-      return createReferenceRef({ type: sourceRef.type, id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href } });
+      return createReferenceRef({ type: sourceRef.type, id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, vaultIds: sourceRef.vaultIds } });
     case "calendar":
     case "meeting":
-      return createReferenceRef({ type: "meeting", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href } });
+      return createReferenceRef({ type: "meeting", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, vaultIds: sourceRef.vaultIds } });
     case "email":
-      return createReferenceRef({ type: "email_thread", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href } });
+      return createReferenceRef({ type: "email_thread", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, vaultIds: sourceRef.vaultIds } });
     case "artifact":
     case "news":
       return createReferenceRef({ type: "file", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, sourceType: sourceRef.type } });
     case "agent":
-      return createReferenceRef({ type: "file", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href } });
+      return createReferenceRef({ type: "file", id: sourceRef.id, metadata: { label: sourceRef.label, href: sourceRef.href, vaultIds: sourceRef.vaultIds } });
     case "comms":
     case "finance":
       return sourceRef.href

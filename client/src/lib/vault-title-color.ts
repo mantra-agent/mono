@@ -47,6 +47,19 @@ export function resolveDrivingVault(
  * default text classes. `alpha` is 1 for an emphasized row and MUTED_TITLE_ALPHA
  * for a de-emphasized one.
  */
+/** Full vault color for reference chips, with white reserved for CTA-blue fallback. */
+export function vaultReferenceColor(
+  vaultIds: string[] | undefined,
+  vaultById: Map<string, Vault>,
+  activeVaultId: string | null,
+): string | null {
+  const color = resolveDrivingVault(vaultIds, vaultById, activeVaultId)?.color;
+  if (!color) return null;
+  const opaque = hexToRgba(color, 1);
+  if (!opaque || opaque === "rgba(255, 255, 255, 1)") return null;
+  return color;
+}
+
 export function vaultTitleColor(
   vaultIds: string[] | undefined,
   vaultById: Map<string, Vault>,

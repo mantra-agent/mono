@@ -50,6 +50,7 @@ export interface SimpleSourceRef {
   label?: string;
   href?: string;
   observedAt?: string;
+  vaultIds?: string[];
 }
 
 export const SIMPLE_WIDGET_TYPES = [

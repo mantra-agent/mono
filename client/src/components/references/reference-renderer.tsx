@@ -2,6 +2,8 @@ import type { ReferenceRef } from "@shared/references";
 import type { LucideIcon } from "lucide-react";
 import { ReferenceChip } from "./reference-chip";
 import { resolveReference } from "./reference-registry";
+import { useVaults } from "@/hooks/use-vaults";
+import { vaultReferenceColor } from "@/lib/vault-title-color";
 
 export type ReferenceSurface = "chat-inline" | "simple-chip" | "simple-row" | "card" | "expanded";
 
@@ -29,12 +31,24 @@ export function ReferenceRenderer({
   /** Allow multi-line labels for tree/row titles. */
   wrapLabel?: boolean;
 }) {
+  const { vaults, activeVaultId } = useVaults();
+  const vaultById = new Map(vaults.map(vault => [vault.id, vault]));
+  const vaultIds = Array.isArray(refValue.metadata?.vaultIds)
+    ? refValue.metadata.vaultIds.filter((id): id is string => typeof id === "string")
+    : undefined;
+  const usesVaultColor = (surface === "simple-chip" || surface === "simple-row")
+    && ["project", "milestone", "task", "meeting"].includes(refValue.type);
+  const color = usesVaultColor
+    ? vaultReferenceColor(vaultIds, vaultById, activeVaultId)
+    : null;
+
   return (
     <ReferenceChip
       resolved={resolveReference(refValue)}
       className={[SURFACE_CLASSES[surface], className].filter(Boolean).join(" ")}
       IconOverride={IconOverride}
       iconClassName={iconClassName}
+      color={color}
       wrapLabel={wrapLabel}
     />
   );
