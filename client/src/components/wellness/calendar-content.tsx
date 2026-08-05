@@ -773,6 +773,7 @@ function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus
   const [logCooldown, setLogCooldown] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
+  const tz = useCalendarTimezone();
   const isExpandable = EXPANDABLE_ACTIVITIES.has(activity.name.toLowerCase());
 
   const logMutation = useMutation({
@@ -827,6 +828,40 @@ function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus
     },
   });
 
+  const unlogMutation = useMutation({
+    mutationFn: async () => {
+      const today = formatLocalDate(new Date(), tz);
+      await apiRequest("DELETE", "/api/wellness/logs/by-date", { activityId: activity.id, date: today });
+    },
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["/api/wellness/status"] });
+      const previous = queryClient.getQueryData<ActivityWithStatus[]>(["/api/wellness/status"]);
+      if (previous) {
+        queryClient.setQueryData<ActivityWithStatus[]>(["/api/wellness/status"], (old) =>
+          old?.map((a) =>
+            a.id === activity.id
+              ? { ...a, doneToday: false, doneForCurrentPeriod: false, lastCompletedAt: null }
+              : a,
+          ),
+        );
+      }
+      return { previous };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/wellness/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wellness/pulse-buckets"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wellness/activities", activity.id, "trends"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wellness/logs", activity.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/wellness/logs", "all"] });
+    },
+    onError: (err: Error, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["/api/wellness/status"], context.previous);
+      }
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   return (
     <div>
       <div
@@ -841,16 +876,18 @@ function ActivityRow({ activity, onOpenDetails }: { activity: ActivityWithStatus
             className={activity.doneToday
               ? "h-4 w-4 rounded-full border border-success bg-transparent text-success inline-flex items-center justify-center transition-colors hover:bg-success/10"
               : "h-4 w-4 rounded-full border border-input bg-transparent inline-flex items-center justify-center transition-colors hover:border-success hover:bg-success/10"}
-            disabled={!isExpandable && (logCooldown || logMutation.isPending)}
+            disabled={!isExpandable && (logCooldown || logMutation.isPending || unlogMutation.isPending)}
             onClick={() => {
               if (isExpandable) {
                 setExpanded((prev) => !prev);
+              } else if (activity.doneToday) {
+                unlogMutation.mutate();
               } else {
                 logMutation.mutate(undefined);
               }
             }}
           >
-            {logMutation.isPending ? (
+            {logMutation.isPending || unlogMutation.isPending ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : activity.doneToday ? (
               <Check className="h-3 w-3" />

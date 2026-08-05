@@ -10,6 +10,16 @@ import { ArrowLeft, Trash2, Loader2 } from "lucide-react";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ActivityDetailPanel } from "./activity-detail-panel";
 import { WindowEditor } from "./window-editor";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // --- Types (shared with calendar-content) ---
 
@@ -245,6 +255,7 @@ export function ActivityDetailView({
   onDelete: (id: number) => void;
 }) {
   const { toast } = useToast();
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -253,6 +264,7 @@ export function ActivityDetailView({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/wellness/status"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wellness/pulse-buckets"] });
+      setShowDeleteDialog(false);
       toast({ title: "Activity deleted" });
       onDelete(activity.id);
     },
@@ -381,21 +393,35 @@ export function ActivityDetailView({
             size="sm"
             className="text-destructive hover:text-destructive"
             disabled={deleteMutation.isPending}
-            onClick={() => {
-              toast({
-                title: `Delete "${activity.name}"?`,
-                description: "This cannot be undone.",
-                action: (
-                  <Button variant="destructive" size="sm" onClick={() => deleteMutation.mutate()}>
-                    Delete
-                  </Button>
-                ),
-              });
-            }}
+            onClick={() => setShowDeleteDialog(true)}
           >
             {deleteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Trash2 className="h-3.5 w-3.5 mr-1" />}
             Delete activity
           </Button>
+          <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete "{activity.name}"?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This permanently deletes the activity and its history. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  disabled={deleteMutation.isPending}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    deleteMutation.mutate();
+                  }}
+                >
+                  {deleteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
     </div>
