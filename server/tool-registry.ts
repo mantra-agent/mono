@@ -192,13 +192,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   memory: {
-    description: "Unified memory system — read/write workspace knowledge files, search and inspect vNext claims, run vNext maintenance ops. Actions: read, write, read_entry, search, get, get_many, count, link_entity, get_entity_links, list_sources, add_source, delete_source, search_claims, vnext_claim_counts, vnext_claim_detail, run_vnext_lifecycle, run_full_sleep_cycle, compute_gsi, run_rem. Retired legacy memory_entries actions return migration guidance if called.",
+    description: "Unified memory system — read/write workspace knowledge files, search and inspect vNext claims, run vNext maintenance ops. Retired legacy memory_entries actions return migration guidance if called.",
     category: "memory",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["read", "write", "read_entry", "search", "create_link", "update_entry", "delete_entry", "get", "get_many", "find_duplicates", "count", "bulk_delete", "consolidate_short", "integrate_mid_to_long", "run_myelination", "run_memory_decay", "run_memory_reinforcement", "run_nrem", "run_capability_audit", "run_full_sleep_cycle", "compute_gsi", "run_rem", "link_entity", "get_entity_links", "list_sources", "add_source", "delete_source", "search_claims", "vnext_claim_counts", "vnext_claim_detail", "run_vnext_lifecycle"], description: "Action to perform" },
+        action: { type: "string", enum: ["read", "write", "read_entry", "search", "get", "get_many", "count", "link_entity", "get_entity_links", "list_sources", "add_source", "delete_source", "search_claims", "vnext_claim_counts", "vnext_claim_detail", "run_vnext_lifecycle", "run_full_sleep_cycle", "compute_gsi", "run_rem"], description: "Action to perform" },
         file: { type: "string", description: "File name (for read/write, e.g., PRINCIPLES.md)" },
         content: { type: "string", description: "Content to write (for write). Legacy update_entry is retired." },
         append: { type: "boolean", description: "Append instead of overwrite (for write, default false)" },
@@ -208,17 +208,10 @@ export const TOOLS: Record<string, ToolMeta> = {
         reason: { type: "string", description: "Legacy deletion reason. delete_entry and bulk_delete are retired." },
         query: { type: "string", description: "Search query (for vNEXT claim search). Use '*' with structured filters to retrieve claims without semantic ranking." },
         source: { type: "string", description: "Filter by source type for vNext search" },
-        layer: { type: "string", description: "Retired legacy memory layer filter. Rejected by vNext search." },
-        integrationStage: { type: "string", enum: ["stage_0", "stage_1", "stage_2", "stage_3", "stage_4"], description: "Retired legacy integration stage. Use vNext lifecycleStage." },
         limit: { type: "number", description: "Max results (for search default 20)" },
         startDate: { type: "string", description: "Start date for date range filter (for search, format: YYYY-MM-DD). Inclusive." },
         endDate: { type: "string", description: "End date for date range filter (for search, format: YYYY-MM-DD). Exclusive." },
         timezone: { type: "string", description: "IANA timezone string for interpreting startDate/endDate (e.g. 'America/Chicago'). Defaults to the server's configured timezone." },
-        tags: { type: "array", items: { type: "string" }, description: "Retired legacy update_entry tags parameter" },
-        oneLiner: { type: "string", description: "Retired legacy update_entry summary parameter" },
-        metadata: { type: "object", description: "Retired legacy update_entry metadata parameter" },
-        fromId: { type: "number", description: "Retired legacy source memory ID for create_link" },
-        toId: { type: "number", description: "Retired legacy target memory ID for create_link" },
         relationship: { type: "string", description: "Relationship type for vNext source refs; legacy create_link is retired" },
         strength: { type: "number", description: "Strength 0–1 for vNext source refs; legacy create_link is retired" },
         includeGSI: { type: "boolean", description: "Include GSI computation in sleep cycle (for run_full_sleep_cycle, default false)" },
@@ -252,7 +245,6 @@ export const TOOLS: Record<string, ToolMeta> = {
         maxRecallCount: { type: "number", description: "Filter: maximum recall count (for search)" },
         hasTitle: { type: "boolean", description: "Filter: true=has title, false=no title (for search)" },
         hasSummary: { type: "boolean", description: "Filter: true=has summary, false=no summary (for search)" },
-        hasDeletionScheduled: { type: "boolean", description: "Retired legacy deletionScheduled filter. Rejected by vNext search." },
         deletionExpired: { type: "boolean", description: "Filter: true=deletionScheduled is in the past (for search)" },
         createdBefore: { type: "string", description: "Filter: created before this ISO timestamp (for vNext search)" },
         createdAfter: { type: "string", description: "Filter: created after this ISO timestamp (for vNext search)" },
@@ -266,7 +258,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   railway: {
-    description: "Inspect and manage a Railway-hosted Platform Environment. Cross-environment operations require `platformEnvironmentId`, which resolves the hosting binding and authenticated connector through the canonical Platform Environment resolver. Omit it only for current-runtime self-inspection with status, logs, or build_logs. When Git auto-deploy is functioning, inspect that deployment and do not trigger a manual redeploy unless the user explicitly asks or a confirmed provider failure requires recovery. Actions: status, deployments, logs, build_logs, list_variables (names only), redeploy, restart. Destructive actions and secret values are intentionally not exposed.",
+    description: "Inspect and manage a Railway-hosted Platform Environment. Cross-environment operations require `platformEnvironmentId`, which resolves the hosting binding and authenticated connector through the canonical Platform Environment resolver. Omit it only for current-runtime self-inspection with status, logs, or build_logs. When Git auto-deploy is functioning, inspect that deployment and do not trigger a manual redeploy unless the user explicitly asks or a confirmed provider failure requires recovery. Destructive actions and secret values are intentionally not exposed.",
     category: "system",
     parameters: {
       type: "object",
@@ -298,7 +290,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   meta: {
-    description: "Queue and execute Meta/Ray-Ban DAT SDK calls through the mobile iOS bridge. Requires the mobile app debug overlay to be open so the phone can poll, execute native DAT calls locally, and post results back. When the user asks what they are looking at during a glasses session, capture first, analyze the image with the images tool, then answer from evidence; diagnose bridge failure before asking for manual debugging. Actions: queue, call, results, commands, status, preflight, initialize, listDevices, requestCamera, register, connect, capture.",
+    description: "Queue and execute Meta/Ray-Ban DAT SDK calls through the mobile iOS bridge. Requires the mobile app debug overlay to be open so the phone can poll, execute native DAT calls locally, and post results back. When the user asks what they are looking at during a glasses session, capture first, analyze the image with the images tool, then answer from evidence; diagnose bridge failure before asking for manual debugging.",
     category: "system",
     parameters: {
       type: "object",
@@ -315,7 +307,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   expo: {
-    description: "Inspect Expo/EAS projects and builds or launch one exact-source iOS preview build using the stored EXPO_ACCESS_TOKEN integration secret. Actions: status, projects, builds, build, build_logs, start_build, cancel. start_build requires the full expected main commit SHA, never cancels another build, and fails closed if main moved. Use build_logs to fetch Xcode/build log artifacts and extract actual failure lines instead of relying on Expo summary text.",
+    description: "Inspect Expo/EAS projects and builds or launch one exact-source iOS preview build using the stored EXPO_ACCESS_TOKEN integration secret. start_build requires the full expected main commit SHA, never cancels another build, and fails closed if main moved. Use build_logs to fetch Xcode/build log artifacts and extract actual failure lines instead of relying on Expo summary text.",
     category: "system",
     connectorKey: "expo",
     parameters: {
@@ -349,7 +341,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   settings: {
-    description: "Persist and retrieve key-value settings. Actions: get, set, delete. Keys must start with an allowed prefix (memory.*, system.*, skill.*, hygiene.*).",
+    description: "Persist and retrieve key-value settings. Keys must start with an allowed prefix (memory.*, system.*, skill.*, hygiene.*).",
     category: "system",
     parameters: {
       type: "object",
@@ -411,7 +403,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   goals: {
-    description: "Manage life goals — unified system covering all horizons from daily goals (today) to lifetime aspirations. Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime. Short horizons support periodDate for date-scoped queries. This is the canonical tool for all goal and priority operations. Actions: list, get, create, update, delete, search, set_parent, unlink_parent, list_relationships, add_relationship, remove_relationship, set_review, set_daily_plan, get_daily_artifacts, set_weekly/monthly/quarterly plan+reflection. add_relationship/remove_relationship/list_relationships manage first-class Goal↔Person and Goal↔Meeting links. Use canonical @goal:id syntax in messages to link to goals. Legacy [goal:id] syntax is accepted during migration.",
+    description: "Manage life goals — unified system covering all horizons from daily goals (today) to lifetime aspirations. Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime. Short horizons support periodDate for date-scoped queries. This is the canonical tool for all goal and priority operations. add_relationship/remove_relationship/list_relationships manage first-class Goal↔Person and Goal↔Meeting links. Use canonical @goal:id syntax in messages to link to goals. Legacy [goal:id] syntax is accepted during migration.",
     category: "work",
 
     parameters: {
@@ -610,7 +602,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   jobs: {
-    description: "Manage admin-only job role definitions used by future hiring plans and P&L headcount costs. Actions: list, get, create, update, delete. Every field is available to query and edit: title, description, team, annual salary minimum/maximum, target annual performance or bonus compensation as a percentage of base salary, and equity share count.",
+    description: "Manage admin-only job role definitions used by future hiring plans and P&L headcount costs. Every field is available to query and edit: title, description, team, annual salary minimum/maximum, target annual performance or bonus compensation as a percentage of base salary, and equity share count.",
     category: "work",
     parameters: {
       type: "object",
@@ -632,7 +624,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   companies: {
-    description: "Manage companies and company membership. Actions: list, get, create, update, delete, add_person, remove_person, add_opportunity, remove_opportunity. Use canonical @company:id references.",
+    description: "Manage companies and company membership. Use canonical @company:id references.",
     category: "communication",
     parameters: {
       type: "object",
@@ -655,7 +647,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   library: {
-    description: "Manage standard Library pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Actions: list_library_pages, get_library_page, create_library_page, update_library_page, edit_library_page, dismiss_library_page, delete_library_page, search_library_pages, search, browse_tree, tree, link_pages, annotate. Pages retain their Vault and parent hierarchy. Use 'browse_tree' or 'tree' to see the full page hierarchy grouped by Vault as an indented outline, 'list_vaults' to enumerate the account's Vaults (id, name, page count, visibility), and an optional vaultId filter on list/search/browse_tree to scope to one Vault; reads report each page's Vault. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
+    description: "Manage standard Library pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Pages retain their Vault and parent hierarchy. Use 'browse_tree' or 'tree' to see the full page hierarchy grouped by Vault as an indented outline, 'list_vaults' to enumerate the account's Vaults (id, name, page count, visibility), and an optional vaultId filter on list/search/browse_tree to scope to one Vault; reads report each page's Vault. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
     category: "knowledge",
 
     parameters: {
@@ -739,7 +731,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   tasks: {
-    description: "Create, complete, delete, and update tasks. Actions: create, complete, delete, update.",
+    description: "Create, complete, delete, and update tasks.",
     category: "work",
 
     parameters: {
@@ -769,7 +761,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   system: {
-    description: "System operations — get system state snapshot, retrieve runtime logs, check budget, inspect principal-scoped reliability outcomes, list recent tool failures for pattern diagnosis, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. Actions: state, logs, log_files, budget, frontend_performance, context_health, reliability, events, active_runs, clear_active_run, accounts, tool_stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename. For reliability, omit detail for the aggregate health summary; set detail='tool_failures' to list individual failed tool calls in the window (filterable by failureKind/tool/code).",
+    description: "System operations — get system state snapshot, retrieve runtime logs, check budget, inspect principal-scoped reliability outcomes, list recent tool failures for pattern diagnosis, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename. For reliability, omit detail for the aggregate health summary; set detail='tool_failures' to list individual failed tool calls in the window (filterable by failureKind/tool/code).",
     category: "system",
 
     parameters: {
@@ -795,7 +787,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   issues: {
-    description: "Track product Issues — create, page unresolved Issues, fetch one by ID, or resolve one with affirmative evidence. Create requires explicit reproSteps; platformEnvironmentId and buildId attach automatically from runtime identity when omitted. Actions: create, list, get, resolve.",
+    description: "Track product Issues — create, page unresolved Issues, fetch one by ID, or resolve one with affirmative evidence. Create requires explicit reproSteps; platformEnvironmentId and buildId attach automatically from runtime identity when omitted.",
     category: "system",
 
     parameters: {
@@ -818,7 +810,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   hooks: {
-    description: "Manage event hooks — create, list, get, update, delete, and test reactive hooks that fire actions when system events match patterns. Actions: list, get, create, update, delete, test.",
+    description: "Manage event hooks — create, list, get, update, delete, and test reactive hooks that fire actions when system events match patterns.",
     category: "system",
 
     parameters: {
@@ -843,7 +835,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   notion: {
-    description: "Search, read, and browse Notion pages and databases. Actions: status, search, get_page, get_content, list_databases, query_database.",
+    description: "Search, read, and browse Notion pages and databases.",
     category: "knowledge",
 
     parameters: {
@@ -859,7 +851,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   twitter: {
-    description: "Post tweets, reply to tweets, look up individual tweets, delete tweets, and search or look up X news/articles via X (Twitter). Actions: status, post, reply, lookup, delete, news_search, news_lookup.",
+    description: "Post tweets, reply to tweets, look up individual tweets, delete tweets, and search or look up X news/articles via X (Twitter).",
     category: "communication",
 
     parameters: {
@@ -876,7 +868,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   gmail: {
-    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Actions: status, search, read, batch_read, draft, reply, update_draft, recent, download_attachment, triage_log, email_cache. Before composing a draft or reply body, follow the current user's active canonical writing-style instruction and load its referenced Library page when configured; complete the standard's required style checks before invoking Gmail. Gmail persists the supplied body verbatim and does not rewrite prose. When the user asks to draft a reply, use reply with the canonical @email_thread or @email_message ref; reply resolves the recipient and subject and persists native Gmail thread metadata. Use draft only for new standalone emails. Use draft, reply, or update_draft so persisted drafts render as inline widgets; plain chat email text is only for brainstorming or explicit copy-only requests. For update_draft, provide exactly one populated body operation and omit the other two. Empty placeholder objects are ignored. The human sends via the widget's Send button. There is no tool-level send action.",
+    description: "Read, search, and draft emails via Gmail. Supports multiple accounts. Before composing a draft or reply body, follow the current user's active canonical writing-style instruction and load its referenced Library page when configured; complete the standard's required style checks before invoking Gmail. Gmail persists the supplied body verbatim and does not rewrite prose. When the user asks to draft a reply, use reply with the canonical @email_thread or @email_message ref; reply resolves the recipient and subject and persists native Gmail thread metadata. Use draft only for new standalone emails. Use draft, reply, or update_draft so persisted drafts render as inline widgets; plain chat email text is only for brainstorming or explicit copy-only requests. For update_draft, provide exactly one populated body operation and omit the other two. Empty placeholder objects are ignored. The human sends via the widget's Send button. There is no tool-level send action.",
     category: "communication",
     parameters: {
       type: "object",
@@ -921,7 +913,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   content: {
-    description: "Manage the social content queue — queue draft posts for review, list queued content, or get optimal posting time suggestions. Actions: queue_draft, list, suggest_times.",
+    description: "Manage the social content queue — queue draft posts for review, list queued content, or get optimal posting time suggestions.",
     category: "communication",
     parameters: {
       type: "object",
@@ -1140,7 +1132,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   exec: {
-    description: "Manage the Exec page — skills inventory, experience log, opportunities pipeline, verified metrics/education, and opportunity artifacts. Actions: list_skills, get_skill, create_skill, update_skill, delete_skill, list_experience, get_experience, create_experience, update_experience, delete_experience, list_opportunities, get_opportunity, create_opportunity, update_opportunity, delete_opportunity, list_opportunity_activities, create_or_link_opportunity_activity, update_opportunity_activity, unlink_opportunity_activity, list_passions, get_passion, create_passion, update_passion, delete_passion, list_metrics, create_metric, update_metric, delete_metric, list_education, create_education, update_education, delete_education, set_artifact, get_opportunity_artifacts, render_artifact_docx.",
+    description: "Manage the Exec page — skills inventory, experience log, opportunities pipeline, verified metrics/education, and opportunity artifacts.",
     category: "knowledge",
     parameters: {
       type: "object",
@@ -1225,7 +1217,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   theses: {
-    description: "Manage theses — hard-to-vary explanations backed by evidence and tested by predictions. Actions: list, get, create, update, delete, add_evidence, update_evidence, remove_evidence, add_prediction, resolve_prediction, remove_prediction.",
+    description: "Manage theses — hard-to-vary explanations backed by evidence and tested by predictions.",
     category: "knowledge",
     parameters: {
       type: "object",
@@ -1278,7 +1270,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   pronunciation: {
-    description: "Manage pronunciation dictionary entries — teach Agent how to correctly pronounce names, brands, and technical terms. Actions: list, add, update, remove. Entries are case-sensitive.",
+    description: "Manage pronunciation dictionary entries — teach Agent how to correctly pronounce names, brands, and technical terms. Entries are case-sensitive.",
     category: "voice",
 
     parameters: {
@@ -1391,7 +1383,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   router: {
-    description: "Call and inspect the model routing layer. Actions: eval, list_inference_calls, get_inference_call.",
+    description: "Call and inspect the model routing layer.",
     category: "knowledge",
 
     parameters: {
@@ -1451,7 +1443,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
 
   workflows: {
-    description: "Manage reusable workflow templates and workflow runs. When creating a run, preserve the user’s requested outcome and constraints; do not translate the request into a prescribed architecture or add adjacent work. Actions: list_templates, get_template, list_runs, get_run, create_run, start_run, pause_run, resume_run, cancel_run, start_stage_attempt, complete_stage_attempt, attach_artifact, capture_publish_stage_evidence, capture_acceptance_evidence, capture_calibration_evidence, approve_gate, reject_gate.",
+    description: "Manage reusable workflow templates and workflow runs. When creating a run, preserve the user’s requested outcome and constraints; do not translate the request into a prescribed architecture or add adjacent work.",
     category: "execution",
     parameters: {
       type: "object",
@@ -1494,7 +1486,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   agendas: {
-    description: "Manage reusable conversational agenda definitions. Definitions are editable templates; Session agendas are independent execution snapshots and are never rewritten by definition edits. These templates are the canonical source for recurring conversation flows (e.g. pitch, qualification, onboarding); search here and apply one with the session tool's apply_agenda_template action before hand-authoring a session agenda. Actions: list, get, search, create, update, delete. The reserved FTUE definition is editable but cannot be deleted.",
+    description: "Manage reusable conversational agenda definitions. Definitions are editable templates; Session agendas are independent execution snapshots and are never rewritten by definition edits. These templates are the canonical source for recurring conversation flows (e.g. pitch, qualification, onboarding); search here and apply one with the session tool's apply_agenda_template action before hand-authoring a session agenda. The reserved FTUE definition is editable but cannot be deleted.",
     category: "automation",
     parameters: {
       type: "object",
@@ -1524,7 +1516,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   skills: {
-    description: "Manage Agent's skill library — reusable instruction sets. Actions: list, get, create, update, set_persona, delete, search, run, runs, scores. The 'get' action returns full skill details including the structured weighted checklist used by the scorer. The 'run' action spawns an autonomous skill execution. The 'runs' action returns recent execution history (status, duration, score, timestamps, and failureReason/endReason for failed runs) from skill_runs — same data shown in the dashboard's Run History panel. The 'scores' action returns scored runs from skill_runs (the source of truth).",
+    description: "Manage Agent's skill library — reusable instruction sets. The 'get' action returns full skill details including the structured weighted checklist used by the scorer. The 'run' action spawns an autonomous skill execution. The 'runs' action returns recent execution history (status, duration, score, timestamps, and failureReason/endReason for failed runs) from skill_runs — same data shown in the dashboard's Run History panel. The 'scores' action returns scored runs from skill_runs (the source of truth).",
     category: "knowledge",
 
     parameters: {
@@ -1607,7 +1599,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     whenToUse: "When you notice something about how you reasoned, decided, or acted — a pattern, a gap between expectation and reality, a shift, a connection between ideas, or an emerging opportunity. Metacognition, not reasoning.",
   },
   finance: {
-    description: "Query financial data from connected bank accounts. Actions: summary, transactions, holdings, liabilities, debt_payments, categories, budget, income, recurring, forecast, accounts, assets, goals, import_transactions, link_account, refresh, amortize, list_amortizations, remove_amortization.",
+    description: "Query financial data from connected bank accounts.",
     category: "finance",
 
     parameters: {
@@ -1663,7 +1655,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   timers: {
-    description: "Manage scheduled timers and one-time reminders — list all or filter by name, get details by ID or name, view runs, create, update, delete, or manually trigger. Use type=reminder with frequency=once and fireAt for one-time reminders that auto-disable after firing. Actions: list, get, runs, create, update, delete, trigger.",
+    description: "Manage scheduled timers and one-time reminders — list all or filter by name, get details by ID or name, view runs, create, update, delete, or manually trigger. Use type=reminder with frequency=once and fireAt for one-time reminders that auto-disable after firing.",
     category: "system",
 
     parameters: {
@@ -1754,7 +1746,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
 
   backup: {
-    description: "Manage database backups — create snapshots, list history, inspect metadata, and delete old backups. Restore is intentionally not exposed to agents; humans must use the Dev page for restore operations. Actions: create, list, get, delete.",
+    description: "Manage database backups — create snapshots, list history, inspect metadata, and delete old backups. Restore is intentionally not exposed to agents; humans must use the Dev page for restore operations.",
     category: "system",
     parameters: {
       type: "object",
@@ -1822,7 +1814,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   platforms: {
-    description: "Manage platform infrastructure — provider connections, environments, bindings, build lifecycle configuration, workflow launch, and deployment status. Actions: list_connections, get_connection, test_connection, create_connection, list_environments, get_environment, get_environment_status, get_build_lifecycle, set_build_lifecycle, disable_build_lifecycle, delete_build_lifecycle, get_build_status, start_build_workflow, list_environment_workflows, create_platform, update_platform, create_product, update_product, create_environment, update_environment, delete_environment, save_source_binding, save_hosting_binding, save_context_artifact, get_context_artifacts, remove_context_artifact, get_cloudflare_pages_project, deploy_cloudflare_pages, cancel_cloudflare_pages_deployment, poll_cloudflare_pages_deployment, repair_cloudflare_pages_project.",
+    description: "Manage platform infrastructure — provider connections, environments, bindings, build lifecycle configuration, workflow launch, and deployment status.",
     category: "system",
     parameters: {
       type: "object",
