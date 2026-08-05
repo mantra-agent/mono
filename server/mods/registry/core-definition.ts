@@ -69,6 +69,7 @@ export const coreDefinition: CoreDefinition = {
       clientRoute("core.route.campaigns", "/campaigns", "campaigns", { requiredPermissions: ["system:read"] }),
       clientRoute("core.route.account", "/account", "user-details"),
       clientRoute("core.route.vaults", "/vaults", "vaults"),
+      clientRoute("core.route.decisions", "/decisions", "decisions"),
     ],
     navigation: [
       // Tools

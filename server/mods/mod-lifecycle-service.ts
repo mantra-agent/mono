@@ -33,6 +33,10 @@ import {
   disableWellnessManagedResources,
   materializeWellnessManagedResources,
 } from "./wellness-managed-resources";
+import {
+  disableBusinessManagedResources,
+  materializeBusinessManagedResources,
+} from "./business-managed-resources";
 import { timerStorage } from "../file-storage/timers";
 import { isModPlatformEnabled } from "./mod-platform-config";
 
@@ -165,6 +169,13 @@ export class ModLifecycleService {
     installation: ModInstallationRow,
     modKey: ModKey,
   ): Promise<void> {
+    if (modKey === "business") {
+      // Business owns no ledger-materialized resources; documented no-op keeps
+      // dispatch symmetric with Build/Wellness and gives future Business
+      // managed resources a canonical home. No timezone / timer cache touch.
+      await materializeBusinessManagedResources(tx, principal, installation);
+      return;
+    }
     if (modKey !== "build" && modKey !== "wellness") return;
     const [profile] = await tx.select({ timezone: userProfiles.timezone })
       .from(userProfiles)
@@ -193,6 +204,10 @@ export class ModLifecycleService {
     if (installation.modKey === "wellness") {
       await disableWellnessManagedResources(tx, principal, installation);
       timerStorage.invalidateCache();
+      return;
+    }
+    if (installation.modKey === "business") {
+      await disableBusinessManagedResources(tx, principal, installation);
     }
   }
 
