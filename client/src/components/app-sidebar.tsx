@@ -4,6 +4,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type RefCallback } from "react";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { useSessionActivity } from "@/hooks/use-session-activity";
+import { usePageActivity } from "@/hooks/use-page-activity";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
 import { useNativeMeetingTranscription } from "@/hooks/use-native-meeting-transcription";
@@ -400,6 +401,7 @@ export function NavigationOrbButton() {
   const { toggleSidebar, openMobile } = useSidebar();
   const { setWidgetOpen } = useFocusSession();
   const sessionActivity = useSessionActivity();
+  const { isPageActive } = usePageActivity();
   const voiceSession = useVoiceSessionOptional();
   const nativeTranscription = useNativeMeetingTranscription();
   const isMobile = useIsMobile();
@@ -446,6 +448,22 @@ export function NavigationOrbButton() {
     }
     toggleSidebar();
   }, [isMobile, openMobile, setWidgetOpen, toggleSidebar]);
+
+  if (isPageActive) {
+    return (
+      <button
+        type="button"
+        ref={targetRef}
+        onClick={handleClick}
+        aria-label={open || openMobile ? "Close navigation" : "Open navigation"}
+        className="relative ml-1 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-active hover:bg-white/5"
+        data-testid="nav-orb"
+        data-page-active="true"
+      >
+        <ActiveStatusSpinner className="h-4 w-4" />
+      </button>
+    );
+  }
 
   return (
     <NavigationOrb

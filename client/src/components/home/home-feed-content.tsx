@@ -1,7 +1,8 @@
-import { useRef, useState, type TouchEvent } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useRef, useState, type TouchEvent } from "react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useHomeFeed } from "@/hooks/use-home-feed";
+import { usePageActivity } from "@/hooks/use-page-activity";
 import { SimpleFeedView } from "./home-feed";
 
 const PULL_THRESHOLD = 64;
@@ -22,6 +23,7 @@ function nearestScrollContainer(element: HTMLElement | null): HTMLElement | null
 
 export function SimpleFeedContent() {
   const query = useHomeFeed();
+  const { startActivity, endActivity } = usePageActivity();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const touchStartYRef = useRef<number | null>(null);
   const [pullDistance, setPullDistance] = useState(0);
@@ -59,7 +61,11 @@ export function SimpleFeedContent() {
     setPullDistance(0);
   };
 
-  const refreshLabel = query.isFetching ? "Refreshing…" : pullDistance >= PULL_THRESHOLD ? "Release to refresh" : "Pull to refresh";
+  useEffect(() => {
+    if (query.isFetching) startActivity("home-feed");
+    else endActivity("home-feed");
+    return () => endActivity("home-feed");
+  }, [endActivity, query.isFetching, startActivity]);
 
   return (
     <div
@@ -70,20 +76,7 @@ export function SimpleFeedContent() {
       onTouchEnd={handleTouchEnd}
       onTouchCancel={handleTouchEnd}
     >
-      <div
-        className="flex items-center justify-center gap-2 overflow-hidden text-xs text-muted-foreground transition-[height,opacity] duration-200"
-        style={{ height: Math.max(pullDistance, query.isRefetching ? 32 : 0), opacity: pullDistance > 8 || query.isRefetching ? 1 : 0 }}
-        aria-live="polite"
-      >
-        <RefreshCw className={`h-3.5 w-3.5 ${query.isFetching ? "animate-spin" : ""}`} />
-        {refreshLabel}
-      </div>
-
-      {query.isLoading ? (
-        <div className="flex min-h-[360px] items-center justify-center text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin" />
-        </div>
-      ) : query.isError && !query.data ? (
+      {query.isLoading ? null : query.isError && !query.data ? (
         <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 text-center">
           <div className="text-lg font-semibold">Simple couldn't load</div>
           <Button variant="outline" size="sm" onClick={refresh} className="gap-2">

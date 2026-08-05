@@ -26,6 +26,7 @@ import { useFocusSession } from "@/hooks/use-focus-session";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/hooks/use-auth";
 import { useVoiceSessionOptional } from "@/hooks/use-voice-session";
+import { usePageActivity } from "@/hooks/use-page-activity";
 
 const log = createLogger("UiInteraction");
 const WS_OWNER = "ui-interaction";
@@ -124,6 +125,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
   const { hasPermission } = useAuth();
   const { setOpen, setOpenMobile, closeSidebar } = useSidebar();
   const { setWidgetOpen } = useFocusSession();
+  const { startNavigation } = usePageActivity();
   // Optional: when a voice transport is mounted, gate the guide reveal on the
   // agent finishing its spoken introduction. Absent voice, this stays false and
   // the guide reveals immediately (text-mode behavior).
@@ -186,10 +188,12 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
       else setOpen((open) => !open);
       return;
     }
+    const href = getUiInteractionTargetHref(target);
     if (isMobile) setWidgetOpen(false);
-    navigate(getUiInteractionTargetHref(target));
+    if (href !== location) startNavigation({ href });
+    navigate(href);
     closeSidebar();
-  }, [canInvoke, closeSidebar, isMobile, navigate, setOpen, setOpenMobile, setWidgetOpen]);
+  }, [canInvoke, closeSidebar, isMobile, location, navigate, setOpen, setOpenMobile, setWidgetOpen, startNavigation]);
 
   const revealControl = useCallback((target: UiInteractionTarget) => {
     if (target === "navigation.sidebar.toggle") return;

@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { createLogger } from "@/lib/logger";
+import { usePageActivity } from "@/hooks/use-page-activity";
 import { attemptVersionSkewRecovery } from "@/lib/spa-version-skew";
 import { markNavigationFallback } from "@/lib/navigation-trace";
 import { cn } from "@/lib/utils";
@@ -199,6 +200,7 @@ function getRouteLabel(routeKey: string): string {
 }
 
 function RouteLoadCycle({ routeKey, children }: RouteLoadBoundaryProps) {
+  const { startActivity, endActivity, completeNavigation } = usePageActivity();
   const [phase, setPhase] = useState<RouteLoadPhase>("loading");
   const [manualAttempt, setManualAttempt] = useState(0);
   const [recoveryKey, setRecoveryKey] = useState(0);
@@ -208,6 +210,7 @@ function RouteLoadCycle({ routeKey, children }: RouteLoadBoundaryProps) {
   useEffect(() => {
     readyRef.current = false;
     setPhase("loading");
+    startActivity("route");
 
     const delayedTimer = window.setTimeout(() => {
       if (readyRef.current) return;
@@ -233,18 +236,27 @@ function RouteLoadCycle({ routeKey, children }: RouteLoadBoundaryProps) {
     return () => {
       window.clearTimeout(delayedTimer);
       window.clearTimeout(failedTimer);
+      endActivity("route");
     };
-  }, [manualAttempt, routeKey]);
+  }, [endActivity, manualAttempt, routeKey, startActivity]);
 
   const handleReady = useCallback(() => {
     readyRef.current = true;
     setPhase("ready");
-  }, []);
+    endActivity("route");
+    completeNavigation(routeKey);
+  }, [completeNavigation, endActivity, routeKey]);
 
   const handleRetry = useCallback(() => {
     setRecoveryKey((value) => value + 1);
     setManualAttempt((value) => value + 1);
   }, []);
+
+  useEffect(() => {
+    if (phase !== "failed") return;
+    endActivity("route");
+    completeNavigation(routeKey);
+  }, [completeNavigation, endActivity, phase, routeKey]);
 
   if (phase === "failed") {
     return (
@@ -262,15 +274,7 @@ function RouteLoadCycle({ routeKey, children }: RouteLoadBoundaryProps) {
       routeKey={routeKey}
       routeLabel={routeLabel}
     >
-      <Suspense
-        fallback={(
-          <PageFallback
-            label={`Opening ${routeLabel}…`}
-            delayed={phase === "delayed"}
-            fullScreen={false}
-          />
-        )}
-      >
+      <Suspense fallback={null}>
         {children}
         <RouteReadyObserver onReady={handleReady} />
       </Suspense>
