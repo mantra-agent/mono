@@ -71,6 +71,8 @@ The no-test policy below remains unchanged. Approved read-only scanners, depende
 
 Before any code diagnosis, system debugging, file edit, build, PR, or merge:
 
+**Work-tracking gate.** Before doing non-trivial work, create or identify a task for it and attach it to the right project and milestone. Prefer an existing milestone; if the work does not fit cleanly into the current project stack, pause and ask Ray where it belongs before proceeding — that alignment conversation is part of the work. Before you finish, update the task to a truthful terminal state (completed, blocked, or an accurate status) with the outcome or blocker. Shipping a PR is not a substitute for tracking the work.
+
 1. Load root `AGENTS.md`.
 2. Load this root `CODING.md`.
 3. Load the relevant subdirectory `AGENTS.md` for any touched subtree. Relevant means: if you inspect, edit, or rely on files under `client/`, `server/`, `mobile/`, or a nested subtree that has its own `AGENTS.md`, load that subtree's nearest `AGENTS.md` before acting on that code. If a task crosses multiple subtrees, load each applicable file. If the path is unknown, load root `AGENTS.md` and `CODING.md` first, then load subdir instructions as soon as the path becomes known.
