@@ -463,6 +463,18 @@ export const SPINE_SECTIONS: SpineSectionConfig[] = [
     bootstrap: true,
   },
   {
+    id: "capabilities.decision_protocol",
+    layer: "instructions",
+    maxDefaultTokens: 220,
+    title: "Decision Protocol",
+    parentId: "capabilities",
+    sourceType: "dynamic",
+    freshnessPolicy: "per-session",
+    priority: 1.6,
+    includedIn: ["full"],
+    bootstrap: true,
+  },
+  {
     id: "capabilities.skills",
     title: "Skills",
     parentId: "capabilities",

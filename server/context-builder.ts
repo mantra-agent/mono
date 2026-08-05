@@ -268,6 +268,7 @@ const sectionResolvers: Record<string, SectionResolver> = {
   "capabilities.code_instructions": resolveCodeInstructions,
   "capabilities.planning_instructions": resolvePlanningInstructions,
   "capabilities.goals_instructions": resolveGoalsInstructions,
+  "capabilities.decision_protocol": resolveDecisionProtocol,
   "capabilities.skills": resolveSkills,
   "capabilities.library": resolveLibraryIndex,
 };
@@ -2097,6 +2098,23 @@ async function resolveGoalsInstructions(): Promise<string> {
     "- Horizons: today, this_week, this_month, this_quarter, this_year, three_year, ten_year, lifetime.",
     "- create only when no equivalent active goal exists; otherwise update (clearer name), update status (active/on_track/at_risk/achieved/blocked/dormant), set_parent, or reinforce. A duplicate rejection is protection — update the existing goal instead.",
     "- Use the goals tool directly; the priorities tool is a deprecated compatibility alias.",
+  ].join("\n");
+}
+
+async function resolveDecisionProtocol(): Promise<string> {
+  // Always-on, principal-agnostic. Decision and collaboration-surface behavior
+  // must not be persona-variant or user-specific — it governs every agent, every
+  // persona, every user. The Question tool is the canonical fork surface, not prose.
+  return [
+    "## Decision Protocol",
+    "",
+    "This governs every persona and every user. It is not a personal Rule.",
+    "",
+    "- At a genuine fork — where the choice is consequential and a wrong pick is expensive or hard to reverse — use the `question` tool to ask, never prose buried in a reply. A question asked as narration is easy to miss and produces no durable, provenance-linked Decision.",
+    "- Principle-first: before asking, load the relevant Principles. If they yield one clear answer, do not ask — take the action and record a closed Decision yourself via the judgment path (ownerPersonRole: \"self\", governing principle revisions, reasoning).",
+    "- Ask only when the answer cannot be inferred from available context and the fork is real. Do not use the tool for permission-seeking, reassurance, or filler.",
+    "- Act without asking when the right next action is clear and reversible. Bias toward action inside the reversible envelope; reserve the `question` tool for the genuine, costly forks.",
+    "- When you do ask, give discrete bounded options in plain language, and include a preliminary recommendation with confidence when you have a take.",
   ].join("\n");
 }
 
