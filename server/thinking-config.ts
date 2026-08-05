@@ -147,7 +147,24 @@ export interface ReasoningAudit {
 export function buildReasoningAudit(
   thinking: ResolvedThinking | undefined,
   provider: string,
+  grokConnectorEffort?: string,
 ): ReasoningAudit {
+  const isGrok = provider === "grok-subscription" || provider.startsWith("grok");
+
+  // Grok stays on the chat.completions surface, so its reasoning_effort is
+  // injected by the connector (applyGrokConnectorConfig) and never flows through
+  // the ResolvedThinking config — which resolves to `disabled` for Grok. Trust
+  // the actual connector value that was sent as ground truth, before any
+  // thinking-config-derived branch (including the `disabled` short-circuit).
+  if (isGrok && typeof grokConnectorEffort === "string" && grokConnectorEffort.length > 0) {
+    return {
+      effort: grokConnectorEffort,
+      thinkingSent: thinking ? describeResolvedThinking(thinking) : `grok_reasoning_effort(${grokConnectorEffort})`,
+      sourceKind: "imputed_from_tier",
+      nativeEffort: grokConnectorEffort,
+    };
+  }
+
   if (!thinking) {
     return {
       effort: "unknown",
@@ -180,7 +197,6 @@ export function buildReasoningAudit(
 
   // adaptive
   const nativeEffort = thinking.effort;
-  const isGrok = provider === "grok-subscription" || provider.startsWith("grok");
   return {
     effort,
     thinkingSent,
