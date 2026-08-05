@@ -16,6 +16,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { openIssueCaptureDialog } from "@/components/issue-capture";
 import { BootGate } from "@/components/boot-gate";
 import { PageHeaderProvider } from "@/hooks/use-page-header";
+import { PageActivityProvider } from "@/hooks/use-page-activity";
 import { VoiceSessionProvider } from "@/hooks/use-voice-session";
 import { TopBar } from "@/components/top-bar";
 import { VaultProvider } from "@/hooks/use-vaults";
@@ -516,6 +517,7 @@ function AppShell() {
   const mobileSurfaceActive = interfaceMode === "mobile_detail" || interfaceMode === "mobile_simple";
 
   return (
+    <PageActivityProvider>
     <ClientPresenceProvider>
       <PageHeaderProvider>
         <VoiceSessionProvider>
@@ -539,6 +541,7 @@ function AppShell() {
         </VoiceSessionProvider>
       </PageHeaderProvider>
     </ClientPresenceProvider>
+    </PageActivityProvider>
   );
 }
 

@@ -5,6 +5,7 @@ import { MessageSquare } from "lucide-react";
 import { ConnectionsIndicator } from "@/components/connections-indicator";
 import { useFocusSession } from "@/hooks/use-focus-session";
 import { usePageHeaderContext } from "@/hooks/use-page-header";
+import { usePageActivity } from "@/hooks/use-page-activity";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSessionActivityState } from "@/components/thought-indicator";
 import { useLocation } from "wouter";
@@ -62,7 +63,7 @@ function getPageTitle(pathname: string) {
   return navMatch.title === "Info" ? "Library" : navMatch.title;
 }
 
-function PageTitle({ title, customContent, href }: { title: string; customContent?: ReactNode; href?: string }) {
+function PageTitle({ title, customContent, href, active }: { title: string; customContent?: ReactNode; href?: string; active?: boolean }) {
   if (customContent) {
     return (
       <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" data-testid="top-bar-page-title" title={title}>
@@ -84,7 +85,10 @@ function PageTitle({ title, customContent, href }: { title: string; customConten
   }
   return (
     <div
-      className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+      className={cn(
+        "min-w-0 flex-1 truncate text-sm font-medium text-foreground",
+        active && "text-active animate-status-flash",
+      )}
       data-testid="top-bar-page-title"
       title={title}
     >
@@ -98,10 +102,12 @@ export function TopBar() {
   const [location] = useLocation();
   const isMobile = useIsMobile();
   const previewOwnsAgentIcon = location.startsWith("/interface-preview");
-  const pageTitle = getPageTitle(location.split("?")[0] || "/");
+  const { isPageActive, pendingNavigation } = usePageActivity();
+  const pendingPath = pendingNavigation?.href.split("?")[0];
+  const pageTitle = getPageTitle(pendingPath || location.split("?")[0] || "/");
   const { config: pageHeaderConfig } = usePageHeaderContext();
   const { route, widgetOpen, setWidgetOpen, clearSessionForRoute, requestSessionMenuReset, mobileSessionTitle } = useFocusSession();
-  const configuredTitle = pageHeaderConfig?.title || pageTitle;
+  const configuredTitle = pendingNavigation ? pageTitle : (pageHeaderConfig?.title || pageTitle);
   const displayTitle = isMobile && mobileSessionTitle ? mobileSessionTitle : configuredTitle;
   const { open, openMobile, isMobile: sidebarIsMobile, setOpenMobile } = useSidebar();
   const navOpen = sidebarIsMobile ? openMobile : open;
@@ -146,7 +152,12 @@ export function TopBar() {
         data-testid="top-bar"
       >
         {!previewOwnsAgentIcon && <NavigationOrbButton />}
-        {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} href={pageHeaderConfig?.titleHref} />}
+        {!navOpen && <PageTitle
+          title={displayTitle}
+          customContent={pendingNavigation ? undefined : pageHeaderConfig?.customContent}
+          href={pendingNavigation ? undefined : pageHeaderConfig?.titleHref}
+          active={isPageActive}
+        />}
       </div>
     );
   }
@@ -163,7 +174,12 @@ export function TopBar() {
       data-testid="top-bar"
     >
       {!previewOwnsAgentIcon && <NavigationOrbButton />}
-      {!navOpen && <PageTitle title={displayTitle} customContent={pageHeaderConfig?.customContent} href={pageHeaderConfig?.titleHref} />}
+      {!navOpen && <PageTitle
+          title={displayTitle}
+          customContent={pendingNavigation ? undefined : pageHeaderConfig?.customContent}
+          href={pendingNavigation ? undefined : pageHeaderConfig?.titleHref}
+          active={isPageActive}
+        />}
       {navOpen && <div className="flex-1" />}
       <ConnectionsIndicator />
       {converseButton}
