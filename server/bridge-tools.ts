@@ -15339,6 +15339,17 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to list accounts: ${msg}`, error: true };
       }
     }
+    if (action === "tool_output_pressure") {
+      try {
+        const principal = getCurrentPrincipal();
+        if (!principal) return { result: "Authenticated principal required", error: true };
+        const { rankToolOutputPressure } = await import("./tool-output-pressure");
+        const report = await rankToolOutputPressure({ principal, hours: args.hours as number | undefined, limit: args.limit as number | undefined, offset: args.offset as number | undefined });
+        return { result: JSON.stringify(report) };
+      } catch (err: unknown) {
+        return { result: `Failed to rank tool-output pressure: ${err instanceof Error ? err.message : String(err)}`, error: true };
+      }
+    }
     if (action === "reliability") {
       try {
         const detail =

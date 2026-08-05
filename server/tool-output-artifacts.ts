@@ -1,5 +1,7 @@
 import { createLogger } from "./log";
 import type { IndexSection } from "@shared/models/indexed-content";
+import type { Principal } from "./principal";
+import { getCurrentPrincipal } from "./principal-context";
 
 const log = createLogger("ToolOutputArtifacts");
 
@@ -136,6 +138,9 @@ export interface EnsureToolOutputArchiveResult {
 }
 
 interface ToolOutputArchiveArgs {
+  principal?: Principal;
+  sessionId?: string;
+  runId?: string;
   toolName: string;
   action?: string;
   sessionId?: string;
@@ -253,7 +258,18 @@ export async function maybeOffloadToolOutput(args: ToolOutputArchiveArgs & {
   const policy = { ...DEFAULT_TOOL_OUTPUT_POLICY, ...(args.policy || {}) };
   const size = estimateToolOutputSize(args.result);
   const shouldOffload = size.contentType === "binary" || size.estimatedTokens > policy.maxInlineTokens || size.chars > policy.maxInlineChars;
+  const recordAdmission = async (disposition: string, injected: ToolOutputSize): Promise<void> => {
+    const principal = args.principal || getCurrentPrincipal();
+    if (!principal) return;
+    try {
+      const { recordToolOutputAdmission } = await import("./tool-output-pressure");
+      await recordToolOutputAdmission({ principal, sessionId: args.sessionId, runId: args.runId, toolCallId: args.toolCallId, toolName: args.toolName, action: args.action, disposition, rawChars: size.chars, rawTokens: size.estimatedTokens, injectedChars: injected.chars, injectedTokens: injected.estimatedTokens });
+    } catch (error) {
+      log.warn(`tool_output.telemetry_write_failed tool=${args.toolName} error=${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   if (!shouldOffload) {
+    await recordAdmission("inline", size);
     log.log(`tool_output.admission disposition=inline tool=${args.toolName} action=${args.action || ""} toolCallId=${args.toolCallId || ""} rawChars=${size.chars} estimatedRawTokens=${size.estimatedTokens} injectedTokens=${size.estimatedTokens} sessionId=${args.sessionId || ""} runId=${args.runId || ""} artifactRef=`);
     return args.result;
   }
@@ -261,6 +277,7 @@ export async function maybeOffloadToolOutput(args: ToolOutputArchiveArgs & {
   const archived = await ensureToolOutputArchived({ ...args, maxPreviewChars: policy.maxPreviewChars });
   if (archived.formattedRef && archived.ref) {
     const injected = estimateToolOutputSize(archived.formattedRef);
+    await recordAdmission("archive", injected);
     log.log(`tool_output.admission disposition=archive tool=${args.toolName} action=${args.action || ""} toolCallId=${args.toolCallId || ""} rawChars=${size.chars} estimatedRawTokens=${size.estimatedTokens} injectedTokens=${injected.estimatedTokens} sessionId=${args.sessionId || ""} runId=${args.runId || ""} artifactRef=${archived.ref.refId}`);
     return archived.formattedRef;
   }
@@ -268,6 +285,7 @@ export async function maybeOffloadToolOutput(args: ToolOutputArchiveArgs & {
   // Fail closed: never re-inject oversized raw content when durable archival fails.
   const recovery = JSON.stringify({ error: Boolean(args.error), code: "tool_output_archive_unavailable", retryable: true, tool: args.toolName, action: args.action, rawChars: size.chars, estimatedRawTokens: size.estimatedTokens, recovery: "Retry after artifact storage recovers; oversized content was withheld from model context." });
   const injected = estimateToolOutputSize(recovery);
+  await recordAdmission("archive_failed", injected);
   log.warn(`tool_output.admission disposition=archive_failed tool=${args.toolName} action=${args.action || ""} toolCallId=${args.toolCallId || ""} rawChars=${size.chars} estimatedRawTokens=${size.estimatedTokens} injectedTokens=${injected.estimatedTokens} sessionId=${args.sessionId || ""} runId=${args.runId || ""} artifactRef=`);
   return recovery;
 }
