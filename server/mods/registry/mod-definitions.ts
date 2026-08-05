@@ -110,7 +110,7 @@ const business: ModDefinition = {
   key: "business",
   version: "1.1.0",
   name: "Business",
-  description: "Business operating surfaces: business model, advantage, roles, KPIs, and metrics.",
+  description: "Business operating surfaces: business model, mandate, roles, KPIs, and metrics.",
   outcome: {
     label: "Run my company",
     promise: "Operate the business: the operating model, competitive advantage, roles, KPIs, and metrics.",
@@ -129,7 +129,7 @@ const business: ModDefinition = {
       clientRoute("business.route.metrics", "/business/metrics", "business-metrics", { requiredPermissions: ["system:read"] }),
     ],
     navigation: [
-      nav("business.nav.advantage", "Business", "Advantage", "Target", "navigation.advantage.open", "business.route.advantage", 1),
+      nav("business.nav.advantage", "Business", "Mandate", "Target", "navigation.advantage.open", "business.route.advantage", 1),
       nav("business.nav.business-model", "Business", "Model", "LineChart", "navigation.businessModel.open", "business.route.business-model", 3, { requiredPermissions: ["system:read"] }),
       nav("business.nav.job-roles", "Business", "Roles", "Briefcase", "navigation.roles.open", "business.route.job-roles", 4, { requiredPermissions: ["system:read"] }),
       nav("business.nav.kpis", "Business", "KPIs", "Gauge", "navigation.kpis.open", "business.route.kpis", 5, { requiredPermissions: ["system:read"] }),
