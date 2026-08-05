@@ -1314,13 +1314,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     whenToUse: "On the first turn of every session to set title, topics, and persona together — persona is REQUIRED on the first call (before any title is set) and will be rejected without it. Also for mid-session re-orientation when the conversation's purpose shifts (persona optional on updates). The active persona determines which context sections and tools load — switch persona to change what's assembled.",
   },
   session: {
-    description: "Manage session metadata, agenda, and lifecycle. Agenda actions: list_agenda reads the current ordered items and stable IDs; set_agenda replaces the agenda; apply_agenda_template starts the session agenda from a saved reusable template (search the agendas tool to resolve the template ID); complete_agenda_item, skip_agenda_item, and defer_agenda_item perform the common lifecycle transitions with minimal arguments. Existing get_agenda and update_agenda_item remain supported. If an item ID is uncertain, call list_agenda first and wait for its result; never guess IDs or parallelize a dependent agenda read and write. Send sparse action-specific payloads only. Other actions read sessions, settle lifecycle, spawn children, or send cross-session messages. Child sessions never inherit the parent's agenda. For a coding mission, set delegation=engineering; the server grants Git-write authority only when the parent has trusted engineering authority and build:write, and the child must use its own session-scoped clone.",
+    description: "Manage session metadata, agenda, lifecycle, user conversation initiation/attention, and relationship-scoped messaging. Agenda actions: list_agenda reads the current ordered items and stable IDs; set_agenda replaces the agenda; apply_agenda_template starts the session agenda from a saved reusable template (search the agendas tool to resolve the template ID); complete_agenda_item, skip_agenda_item, and defer_agenda_item perform the common lifecycle transitions with minimal arguments. Existing get_agenda and update_agenda_item remain supported. If an item ID is uncertain, call list_agenda first and wait for its result; never guess IDs or parallelize a dependent agenda read and write. Send sparse action-specific payloads only. message_parent reaches only the direct parent; message_child and message_sibling require the corresponding direct tree relationship. Child sessions never inherit the parent's agenda. For a coding mission, set delegation=engineering; the server grants Git-write authority only when the parent has trusted engineering authority and build:write, and the child must use its own session-scoped clone.",
     category: "communication",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["get", "get_agenda", "list_agenda", "set_agenda", "apply_agenda_template", "update_agenda_item", "complete_agenda_item", "skip_agenda_item", "defer_agenda_item", "set_status", "end", "list", "search", "get_messages", "spawn_child", "send_message"], description: "Action to perform. Prefer list_agenda plus the narrow complete/skip/defer actions for agenda progress; legacy get_agenda/update_agenda_item remain supported. Use apply_agenda_template to start the session agenda from a saved reusable template instead of hand-authoring items." },
+        action: { type: "string", enum: ["get", "get_agenda", "list_agenda", "set_agenda", "apply_agenda_template", "update_agenda_item", "complete_agenda_item", "skip_agenda_item", "defer_agenda_item", "set_status", "end", "list", "search", "get_messages", "spawn_child", "send_message", "initiate", "set_attention", "message_parent", "message_child", "message_sibling"], description: "Action to perform. Prefer list_agenda plus the narrow complete/skip/defer actions for agenda progress; legacy get_agenda/update_agenda_item remain supported. Use apply_agenda_template to start the session agenda from a saved reusable template instead of hand-authoring items." },
         sessionId: { type: "string", description: "Target session ID. Agenda actions default to the current session; omit this field for the current conversation." },
         runStatus: { type: "string", enum: ["resolved", "saved", "failed"], description: "Lifecycle state to set for set_status. resolved is accepted as a legacy alias for saved; session.status is the source of truth." },
         summary: { type: "string", description: "Brief summary of the session (for end)" },
@@ -1337,28 +1337,14 @@ export const TOOLS: Record<string, ToolMeta> = {
         agendaId: { type: "string", description: "Agenda template (definition) ID to apply as this session's agenda, replacing any current items (for apply_agenda_template). Search the agendas tool first to resolve the template ID." },
         resolution: { type: "string", description: "Discrete resolution required only for complete_agenda_item. Omit it for skip_agenda_item and defer_agenda_item." },
         item: { type: "object", properties: { title: { type: "string", description: "Replacement 3–5 word title" }, description: { type: "string", description: "Replacement description" }, status: { type: "string", enum: ["open", "complete", "skipped", "deferred"] }, resolution: { type: "string", description: "Resolution required only when the resulting status is complete; omitted or blank optional fields are ignored, and non-complete statuses remove any prior resolution" } }, description: "Sparse agenda item patch for the backward-compatible update_agenda_item action. Send only fields that should change." },
-        content: { type: "string", description: "Message body to deliver for send_message." },
-        toSessionId: { type: "string", description: "Alternative target session ID for send_message." },
+        content: { type: "string", description: "Message body to deliver for send_message, message_parent, message_child, or message_sibling." },
+        toSessionId: { type: "string", description: "Target session ID for send_message, message_child, or message_sibling." },
+        toSpawnReason: { type: "string", description: "Resolve a direct child or sibling by its spawn reason for message_child or message_sibling." },
+        topic: { type: "string", description: "Short session topic for initiate." },
+        message: { type: "string", description: "Opening message for initiate." },
+        isPinned: { type: "boolean", description: "Whether set_attention pins or unpins the target session (default true)." },
       },
       required: ["action"],
-    },
-  },
-  converse: {
-    description: "Communication with the user. Actions: 'initiate' (default) starts a new session; 'set_attention' flags an existing session so the user sees a pin badge.",
-    category: "communication",
-
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["initiate", "set_attention"], description: "Action to perform (default: initiate)" },
-        topic: { type: "string", description: "Short session topic / title (for initiate)" },
-        message: { type: "string", description: "Opening message to the user (for initiate)" },
-        agenda: { type: "array", items: { type: "object", properties: { id: { type: "string", description: "Stable item ID (optional; generated if omitted)" }, title: { type: "string", description: "Simple 3–5 word title" }, description: { type: "string", description: "One to three sentence description" }, status: { type: "string", enum: ["open", "complete", "skipped", "deferred"] }, resolution: { type: "string", description: "Discrete resolution; required when status is complete" } }, required: ["title", "description"] }, description: "Optional ordered conversation agenda for the new session" },
-
-        sessionId: { type: "string", description: "The session ID to flag (for set_attention). If omitted, defaults to the current session." },
-        isPinned: { type: "boolean", description: "Whether to set or clear the pin flag (for set_attention, default true)" },
-      },
-      required: [],
     },
   },
   router: {
@@ -1742,43 +1728,6 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
 
-  message_sibling: {
-    description: "Send a message to a sibling session (a session with the same parent as the caller). Sender and receiver both record the message in their history. Scope: direct siblings only — no grandparents, cousins, or unrelated sessions. Provide either 'toSessionId' or 'toSpawnReason'.",
-    category: "system",
-    parameters: {
-      type: "object",
-      properties: {
-        toSessionId: { type: "string", description: "Target sibling session ID. Use this OR toSpawnReason." },
-        toSpawnReason: { type: "string", description: "Match a sibling by spawn reason (title or sessionKey, e.g. 'advocate-a' matches sessionKey 'auto:advocate-a'). Use this OR toSessionId." },
-        content: { type: "string", description: "Message body to deliver." },
-      },
-      required: ["content"],
-    },
-  },
-  message_parent: {
-    description: "Send a message to this session's direct parent. Both sessions record the message in their history. Only the immediate parent is reachable — grandparent and cross-tree messaging are rejected.",
-    category: "system",
-    parameters: {
-      type: "object",
-      properties: {
-        content: { type: "string", description: "Message body to deliver to the parent session." },
-      },
-      required: ["content"],
-    },
-  },
-  message_child: {
-    description: "Send a message to one of this session's direct children. Identify the child by 'toSessionId' or by 'toSpawnReason' (the same idempotency key used at spawn time). Only direct children are reachable — grandchildren and cross-tree messaging are rejected.",
-    category: "system",
-    parameters: {
-      type: "object",
-      properties: {
-        content: { type: "string", description: "Message body to deliver to the child session." },
-        toSessionId: { type: "string", description: "Direct child session ID. Either this or 'toSpawnReason' is required." },
-        toSpawnReason: { type: "string", description: "Spawn reason that uniquely identifies the target child. Either this or 'toSessionId' is required." },
-      },
-      required: ["content"],
-    },
-  },
   indexed_content: {
     description: "Retrieve archived content and structured indexes. Full originals are stored in object storage when content exceeds display limits — use this tool to list, inspect, or read specific sections of archived content by reference ID.",
     category: "system",
@@ -2054,7 +2003,6 @@ function withoutUnreadyIntegrationTools<T extends { name: string }>(schemas: T[]
  * run, while `orient` can replace the whole initial working set by switching mode.
  */
 export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "converse",
   "orient",
   "question",
   "cognition",

@@ -36,7 +36,6 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   meetings: { default: 0, actions: { add: 2, update: 2, delete: 2 } },
   // External effect: writes a timed event to the user's own Google Calendar.
   create_calendar_block: { default: 2 },
-  converse: { default: 2 },
   content: { default: 1, actions: { list: 0, suggest_times: 0 } },
   finance: { default: 0 },
   health: { default: 1, actions: { summary: 0, metrics: 0, activity_status: 0, list_activities: 0, activity_logs: 0, get_gratitude: 0, list_gratitudes: 0 } },
@@ -78,6 +77,11 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
     complete_agenda_item: 1,
     skip_agenda_item: 1,
     defer_agenda_item: 1,
+    initiate: 2,
+    set_attention: 2,
+    message_parent: 1,
+    message_child: 1,
+    message_sibling: 1,
   } },
   settings: { default: 1, actions: { get: 0 } },
   system: { default: 0 },
@@ -107,9 +111,6 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   notion: { default: 0 },
   git: { default: 0, actions: { clone: 1, add: 1, commit: 1, push: 2, create_pr: 2 } },
   tools: { default: 0 },
-  message_parent: { default: 1 },
-  message_sibling: { default: 1 },
-  message_child: { default: 1 },
   pronunciation: { default: 1, actions: { list: 0 } },
 };
 
