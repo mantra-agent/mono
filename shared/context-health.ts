@@ -68,6 +68,20 @@ export interface ContextHealthModelSummary {
   exclusionReasons: ContextHealthExclusionReason[];
 }
 
+export interface MidTurnCompactionSummary {
+  totalCompactions: number;
+  eligibleTurns: number;
+  affectedTurns: number;
+  compactionsPerTurn: number | null;
+  affectedTurnPct: number | null;
+  p95CompactionsPerTurn: number | null;
+  maxCompactionsPerTurn: number | null;
+  priorWindowCompactionsPerTurn: number | null;
+  trendPct: number | null;
+  status: "healthy" | "empty" | "degraded";
+  degradedReason: string | null;
+}
+
 export interface ContextHealthSummary {
   generatedAt: number;
   windowHours: number;
@@ -97,6 +111,7 @@ export interface ContextHealthSummary {
   p95TtftMs: number | null;
   contextTokenDistribution: ContextHealthDistributionBucket[];
   exclusionReasons: ContextHealthExclusionReason[];
+  midTurnCompaction: MidTurnCompactionSummary;
   measurementContract: typeof CONTEXT_HEALTH_MEASUREMENT_CONTRACT;
   budgets: typeof CONTEXT_HEALTH_BUDGETS;
   byProvider: ContextHealthProviderSummary[];
