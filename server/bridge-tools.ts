@@ -4978,18 +4978,13 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     const description = typeof args.description === "string" ? args.description.trim() : "";
 
     const owner = args.owner === "xyz" ? "agent" : (args.owner || "me");
-    // milestoneId is optional in the tool schema and storage. Only coerce when provided.
-    let milestoneId: number | null = null;
-    if (args.milestoneId !== undefined && args.milestoneId !== null && args.milestoneId !== "") {
-      const parsed = typeof args.milestoneId === "number" ? args.milestoneId : Number(args.milestoneId);
-      if (!Number.isInteger(parsed) || parsed <= 0) {
-        return {
-          result: `Invalid milestoneId: ${args.milestoneId}. Pass a positive integer milestone id, or omit milestoneId.`,
-          error: true,
-          failure: inputFailure("task_update_milestone_not_found", String(args.milestoneId)),
-        };
-      }
-      milestoneId = parsed;
+    const milestoneId = typeof args.milestoneId === "number" ? args.milestoneId : Number(args.milestoneId);
+    if (!Number.isInteger(milestoneId) || milestoneId <= 0) {
+      return {
+        result: `Invalid milestoneId: ${args.milestoneId ?? "missing"}. Every task requires a positive milestone id; find an appropriate milestone or ask the user where the task belongs.`,
+        error: true,
+        failure: inputFailure("task_milestone_required", String(args.milestoneId ?? "missing")),
+      };
     }
 
     let projectId: number | null = null;
@@ -5142,7 +5137,15 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (args.projectId !== undefined) command.projectId = args.projectId;
     if (args.milestoneId !== undefined) command.milestoneId = args.milestoneId;
     if (args.deadline !== undefined) command.deadline = args.deadline;
-    if (args.clearFields !== undefined) command.clearFields = args.clearFields;
+    const clearFields = normalizeStringArray(args.clearFields);
+    if (clearFields.includes("projectId") || clearFields.includes("milestoneId")) {
+      return {
+        result: "Task project and milestone placement cannot be cleared; move the task by setting a valid projectId and milestoneId together.",
+        error: true,
+        failure: inputFailure("task_placement_clear_forbidden"),
+      };
+    }
+    if (clearFields.length > 0) command.clearFields = clearFields;
     if (args.confirmDestructiveUpdate !== undefined) command.confirmDestructiveUpdate = args.confirmDestructiveUpdate;
     if (args.destructiveUpdateReason !== undefined) command.destructiveUpdateReason = args.destructiveUpdateReason;
 

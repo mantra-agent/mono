@@ -2074,7 +2074,7 @@ async function resolvePlanningInstructions(): Promise<string> {
     "",
     "Compact pointer — the full planning process is not inlined. The load-bearing rules:",
     "",
-    "- Work-tracking invariant: before non-trivial work, create or identify a task attached to a project and/or milestone. If placement is unclear, pause and align before doing untracked work.",
+    "- Work-tracking invariant: before non-trivial work, create or identify a task attached to a project and one of that project's milestones. Find the appropriate existing milestone first; if none clearly fits, ask the user where the task belongs before doing untracked work.",
     "- Close-out invariant: before ending non-trivial work, update its task to the truthful terminal state (completed, blocked, or an accurate status) with the outcome or blocker, so the canonical work record reflects reality.",
     `- Deadline invariant: ${AGENT_WORK_DEADLINE_INSTRUCTION}`,
     "- Plan when work needs more than ~3 turns, spans systems, touches core architecture, needs research, or is expensive to reverse. Skip for single clear actions or brainstorming.",
