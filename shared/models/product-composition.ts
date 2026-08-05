@@ -131,6 +131,12 @@ export interface ResolvedProductComposition {
   activeMods: Array<{ key: ModKey; version: string }>;
   routes: ResolvedClientRoute[];
   navigation: ResolvedNavigationItem[];
+  /**
+   * Ownership map for mod-owned nav targets across the FULL registry (active or
+   * not), so static client nav can hide a mod's entry whenever that mod is
+   * inactive. Core-owned nav targets are intentionally absent (never gated).
+   */
+  navOwnership: Partial<Record<UiInteractionTarget, ModKey>>;
   widgets: ResolvedWidget[];
   dashboardHeatmaps: ResolvedDashboardHeatmap[];
   actions: ResolvedAction[];
