@@ -13,6 +13,9 @@ import {
 import { pool, withQueryAttributionAsync } from "./db";
 import { getModel } from "./model-registry";
 import { requireCurrentUserPrincipal } from "./principal-context";
+import { createLogger } from "./log";
+
+const log = createLogger("ContextHealthStorage");
 
 const CONTEXT_HEALTH_ROW_LIMIT = 10_000;
 
