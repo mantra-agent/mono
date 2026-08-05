@@ -31,6 +31,7 @@ import {
   buildReleaseDraft,
   recordSuccessfulRelease,
   type ReleaseDraft,
+  type ReleaseNotes,
   type VersionIncrement,
 } from "./release-versioning";
 
@@ -742,11 +743,68 @@ function acquireStartSlot(): void {
   runStartLock = true;
 }
 
+export interface ReleaseDraftPreview {
+  increment: VersionIncrement;
+  currentVersion: string;
+  nextVersion: string;
+  notes: ReleaseNotes;
+  commitCount: number;
+}
+
+/**
+ * Read-only preview of the release the human is about to publish: resolves
+ * prereqs, compares live→dev, and builds the release notes draft WITHOUT
+ * acquiring the start slot, promoting anything, or persisting a run. Powers the
+ * review-and-approve modal — the human edits these notes and the approved
+ * result is passed back into startRun. Throws the same PublishNotReady /
+ * NothingToPublish errors as startRun so the client surfaces identical gating.
+ */
+export async function buildDraftPreview(
+  increment: VersionIncrement,
+  sourcePlatformEnvironmentId: number,
+  targetPlatformEnvironmentId: number,
+): Promise<ReleaseDraftPreview> {
+  const prereqs = await checkPrereqs(sourcePlatformEnvironmentId, targetPlatformEnvironmentId);
+  if (!prereqs.ready) {
+    throw new PublishNotReadyError(prereqs.reason ?? "Publish prerequisites not met.");
+  }
+  const repo = prereqs.repo!;
+  const devBranch = prereqs.devBranch!;
+  const liveBranch = prereqs.prodBranch;
+
+  const compare = await compareRefs(repo, liveBranch, devBranch);
+  if (compare.aheadBy === 0) {
+    throw new NothingToPublishError(`Nothing to publish — '${devBranch}' is not ahead of '${liveBranch}'.`);
+  }
+  const commits = compare.commits.map(toPublishCommit);
+
+  const { getBranchHead } = await import("../github-pr");
+  const devHead = await getBranchHead(repo, devBranch);
+  const targetCommitSha = devHead?.sha;
+  if (!targetCommitSha) throw new Error(`Couldn't resolve HEAD of '${devBranch}' for release notes.`);
+
+  const draft = await buildReleaseDraft(
+    targetPlatformEnvironmentId,
+    commits,
+    increment,
+    `preview_${Date.now()}`,
+    targetCommitSha,
+  );
+  return {
+    increment: draft.increment,
+    currentVersion: draft.currentVersion,
+    nextVersion: draft.nextVersion,
+    notes: draft.notes,
+    commitCount: commits.length,
+  };
+}
+
 export async function startRun(
   actor: { id: string; name: string | null },
   increment: VersionIncrement,
   sourcePlatformEnvironmentId: number,
   targetPlatformEnvironmentId: number,
+  approvedNotes?: ReleaseNotes,
 ): Promise<PublishRun> {
   await ensurePublishRunLoaded();
   acquireStartSlot();
@@ -795,29 +853,17 @@ export async function startRun(
     const runId = newRunId();
     const targetCommitSha = summary.devCommit?.sha;
     if (!targetCommitSha) throw new Error(`Couldn't resolve HEAD of '${devBranch}' for release notes.`);
-    let releaseDraft: ReleaseDraft;
-    try {
-      releaseDraft = await buildReleaseDraft(
-        targetPlatformEnvironmentId,
-        summary.commits,
-        increment,
-        runId,
-        targetCommitSha,
-      );
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      log.warn("Release notes generation failed; continuing publish with commit summaries", {
-        runId,
-        reason,
-      });
-      releaseDraft = await buildReleaseDraft(
-        targetPlatformEnvironmentId,
-        summary.commits,
-        increment,
-        runId,
-        targetCommitSha,
-      );
-    }
+    // buildReleaseDraft now handles LLM failure and empty-notes fallback
+    // internally. When the caller supplies human-approved notes from the
+    // review modal, they are used verbatim and no LLM call is made.
+    const releaseDraft = await buildReleaseDraft(
+      targetPlatformEnvironmentId,
+      summary.commits,
+      increment,
+      runId,
+      targetCommitSha,
+      approvedNotes,
+    );
 
     const run: PublishRun = {
       id: runId,

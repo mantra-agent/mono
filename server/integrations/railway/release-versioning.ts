@@ -84,6 +84,37 @@ async function generateNotes(commits: PublishCommit[], runId: string): Promise<R
   return parseNotes(result.content);
 }
 
+function isEmptyNotes(notes: ReleaseNotes): boolean {
+  return (
+    notes.newFeatures.length === 0 &&
+    notes.improvements.length === 0 &&
+    notes.fixes.length === 0
+  );
+}
+
+/**
+ * Deterministic fallback notes derived directly from commit subjects, grouped
+ * by conventional-commit prefix. Used to pre-fill the release-notes review
+ * modal when the LLM returns empty (or errors) but real commits shipped, so the
+ * change list is never silently blank when actual work occurred. The human can
+ * still edit or clear these in the review step before approving.
+ */
+export function commitDerivedNotes(commits: PublishCommit[]): ReleaseNotes {
+  const notes: ReleaseNotes = { newFeatures: [], improvements: [], fixes: [] };
+  for (const commit of commits) {
+    const subject = commit.message.split("\n")[0]?.trim() ?? "";
+    if (!subject) continue;
+    const match = subject.match(/^(\w+)(?:\([^)]*\))?!?:\s*(.+)$/);
+    const type = match ? match[1].toLowerCase() : "";
+    const description = (match ? match[2] : subject).replace(/\s*\(#\d+\)\s*$/, "").trim();
+    if (!description) continue;
+    if (type === "feat") notes.newFeatures.push(description);
+    else if (type === "fix") notes.fixes.push(description);
+    else notes.improvements.push(description);
+  }
+  return notes;
+}
+
 function renderSection(title: string, items: string[]): string {
   const body = items.length > 0 ? items.map((item) => `- ${item}`).join("\n") : "- None.";
   return `## ${title}\n\n${body}`;
@@ -120,11 +151,36 @@ export async function buildReleaseDraft(
   increment: VersionIncrement,
   runId: string,
   targetCommitSha: string,
+  overrideNotes?: ReleaseNotes,
 ): Promise<ReleaseDraft> {
   const latest = await latestRelease(environmentId);
   const currentVersion = latest?.version ?? "0.00";
   const nextVersion = incrementVersion(currentVersion, increment);
-  const notes = await generateNotes(commits, runId);
+  let notes: ReleaseNotes;
+  if (overrideNotes) {
+    // Human-approved notes from the review modal — use verbatim (cleaned).
+    notes = {
+      newFeatures: cleanItems(overrideNotes.newFeatures),
+      improvements: cleanItems(overrideNotes.improvements),
+      fixes: cleanItems(overrideNotes.fixes),
+    };
+  } else {
+    try {
+      notes = await generateNotes(commits, runId);
+    } catch (err) {
+      log.warn("Release notes generation failed; falling back to commit-derived notes", {
+        runId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      notes = { newFeatures: [], improvements: [], fixes: [] };
+    }
+    // A blank change list when real work shipped is a defect, not a result.
+    // Fall back to deterministic commit-derived notes so the review modal
+    // always opens pre-filled with something the human can trim.
+    if (isEmptyNotes(notes) && commits.length > 0) {
+      notes = commitDerivedNotes(commits);
+    }
+  }
   const promotedAt = new Date().toISOString();
   const releaseEntry = renderRelease(nextVersion, promotedAt, targetCommitSha, notes);
   const markdown = `${releaseEntry}\n`;

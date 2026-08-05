@@ -19,6 +19,7 @@ import {
   checkPrereqs,
   getDisplayRun,
   startRun,
+  buildDraftPreview,
   cancelRun,
   retryRun,
   toPublicRun,
@@ -102,6 +103,11 @@ export function registerRailwayRoutes(app: Express) {
     targetPlatformEnvironmentId: z.coerce.number().int().positive(),
   });
   const parsePublishContext = (input: unknown) => publishContextSchema.safeParse(input);
+  const releaseNotesSchema = z.object({
+    newFeatures: z.array(z.string()).default([]),
+    improvements: z.array(z.string()).default([]),
+    fixes: z.array(z.string()).default([]),
+  });
 
   const parseEnvironment = async (req: Request, res: Response) => {
     const parsed = environmentParamsSchema.safeParse(req.params);
@@ -368,12 +374,47 @@ export function registerRailwayRoutes(app: Express) {
     }
   });
 
-  app.post("/api/railway/publish/start", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  // Read-only preview: generate the release-notes draft the human is about to
+  // approve, WITHOUT promoting anything. Powers the review-and-approve modal.
+  app.post("/api/railway/publish/draft-notes", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const parsed = publishContextSchema.extend({ increment: z.enum(["minor", "major", "flagship"]) }).safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "Choose a version increment and provide source/target Platform Environment IDs." });
+      const preview = await buildDraftPreview(
+        parsed.data.increment as VersionIncrement,
+        parsed.data.sourcePlatformEnvironmentId,
+        parsed.data.targetPlatformEnvironmentId,
+      );
+      res.json({ ok: true, preview });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof NothingToPublishError) {
+        return res.status(409).json({ error: msg, code: "nothing_to_publish" });
+      }
+      if (err instanceof PublishNotReadyError) {
+        return res.status(422).json({ error: msg, code: "publish_not_ready" });
+      }
+      handleError(res, err, "release notes preview failed");
+    }
+  });
+
+  app.post("/api/railway/publish/start", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const parsed = publishContextSchema
+        .extend({
+          increment: z.enum(["minor", "major", "flagship"]),
+          approvedNotes: releaseNotesSchema.optional(),
+        })
+        .safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Choose a version increment and provide source/target Platform Environment IDs." });
       const actor = await resolvePublishActor(req);
-      const run = await startRun(actor, parsed.data.increment as VersionIncrement, parsed.data.sourcePlatformEnvironmentId, parsed.data.targetPlatformEnvironmentId);
+      const run = await startRun(
+        actor,
+        parsed.data.increment as VersionIncrement,
+        parsed.data.sourcePlatformEnvironmentId,
+        parsed.data.targetPlatformEnvironmentId,
+        parsed.data.approvedNotes,
+      );
       res.json({ ok: true, run: toPublicRun(run) });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
