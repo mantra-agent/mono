@@ -187,7 +187,6 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
           </span>
           <div className="relative min-w-0 flex-1 pl-2">
             <span className="inline-flex max-w-full items-center gap-1 text-sm">
-              <Mail className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               {replyReference ? (
                 <span className="inline-flex min-w-0 items-center" onClick={(e) => e.stopPropagation()}>
                   <ReferenceRenderer refValue={replyReference} surface="simple-row" className="mx-0" />
@@ -195,6 +194,7 @@ export function SurfacedEmailRow({ item, dateLabel }: SurfacedEmailRowProps) {
               ) : (
                 <span className="shrink-0 text-muted-foreground">Reply</span>
               )}
+              <span className="shrink-0 text-muted-foreground">from</span>
               {senderReference ? (
                 <span className="inline-flex min-w-0 items-center" onClick={(e) => e.stopPropagation()}>
                   <ReferenceRenderer refValue={senderReference} surface="simple-row" className="mx-0" />
