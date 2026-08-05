@@ -1,6 +1,5 @@
 import { getToolStats } from "./file-storage";
 import { createLogger } from "./log";
-import { bridgeHandlers } from "./bridge-tools";
 import { storage } from "./storage";
 import { TTLCache } from "./utils/ttl-cache";
 import type { SkillWithReferences } from "@shared/models/skills";
@@ -1787,12 +1786,14 @@ function toolMetaToSchema(name: string, meta: ToolMeta): ToolSchema {
 }
 
 function toolMetaToDefinition(name: string, meta: ToolMeta): ToolDefinition {
-  const isBridge = Object.prototype.hasOwnProperty.call(bridgeHandlers, name);
   const schema = toolMetaToSchema(name, meta);
   return {
     ...schema,
 
-    source: isBridge ? "bridge" : "agent",
+    // The unified registry contains built-in executable tools. Dispatch
+    // ownership belongs to bridge-tools; importing its handler object here
+    // recreates a synchronous ESM cycle and can trigger a bundled TDZ.
+    source: "bridge",
     usageCount: 0,
     lastUsed: null,
     errors: 0,
