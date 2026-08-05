@@ -204,6 +204,7 @@ import { useEventStream } from "@/hooks/use-event-stream";
 import { useTimezone } from "@/hooks/use-timezone";
 import { cn } from "@/lib/utils";
 import {
+  MEMORY_GRAPH_COLOR_DEFINITIONS,
   MEMORY_GRAPH_SETTING_DEFINITIONS,
   MEMORY_GRAPH_SETTINGS_DEFAULTS,
   formatMemoryGraphSettingValue,
@@ -1788,6 +1789,41 @@ function GraphTab({
                       data-testid={`memory-graph-setting-value-${definition.key}`}
                     >
                       {formatMemoryGraphSettingValue(definition.key, graphSettings[definition.key])}
+                    </output>
+                  </div>
+                ))}
+                {MEMORY_GRAPH_COLOR_DEFINITIONS.map((definition) => (
+                  <div
+                    key={definition.key}
+                    className="grid grid-cols-[minmax(0,1fr)_minmax(6rem,1.2fr)_3rem] items-center gap-2"
+                  >
+                    <Label
+                      htmlFor={`memory-graph-color-${definition.key}`}
+                      className="min-w-0 truncate text-sm"
+                      title={definition.label}
+                    >
+                      {definition.label}
+                    </Label>
+                    <input
+                      id={`memory-graph-color-${definition.key}`}
+                      type="color"
+                      value={graphSettings[definition.key]}
+                      onChange={(event) => {
+                        const settings = normalizeMemoryGraphSettings({ ...graphSettings, [definition.key]: event.target.value });
+                        setGraphSettings(settings);
+                        setAppliedGraphSettings(settings);
+                        saveGraphSettings(settings);
+                      }}
+                      className="h-6 w-full cursor-pointer rounded border border-card-border bg-transparent p-0"
+                      aria-label={definition.label}
+                      data-testid={`memory-graph-color-${definition.key}`}
+                    />
+                    <output
+                      htmlFor={`memory-graph-color-${definition.key}`}
+                      className="text-right font-mono text-xs uppercase tabular-nums text-muted-foreground"
+                      data-testid={`memory-graph-color-value-${definition.key}`}
+                    >
+                      {graphSettings[definition.key]}
                     </output>
                   </div>
                 ))}

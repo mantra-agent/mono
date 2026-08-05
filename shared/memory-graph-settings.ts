@@ -11,15 +11,28 @@ export interface MemoryGraphSettings {
   recencyBrightness: number;
   smallestNode: number;
   largestNode: number;
+  baseColor: string;
+  recentColor: string;
 }
 
+/** Numeric (slider) keys — every value is a bounded number. */
+export type NumericMemoryGraphSettingKey = Exclude<keyof MemoryGraphSettings, "baseColor" | "recentColor">;
+
+/** Color (picker) keys — every value is a #rrggbb hex string. */
+export type ColorMemoryGraphSettingKey = "baseColor" | "recentColor";
+
 export interface MemoryGraphSettingDefinition {
-  key: keyof MemoryGraphSettings;
+  key: NumericMemoryGraphSettingKey;
   label: string;
   min: number;
   max: number;
   step: number;
   precision: number;
+}
+
+export interface MemoryGraphColorDefinition {
+  key: ColorMemoryGraphSettingKey;
+  label: string;
 }
 
 /**
@@ -39,6 +52,10 @@ export const MEMORY_GRAPH_SETTINGS_DEFAULTS: Readonly<MemoryGraphSettings> = {
   recencyBrightness: 0.7,
   smallestNode: 4.5,
   largestNode: 54,
+  // Defaults sampled from the theme tokens the graph previously read at runtime:
+  // baseColor ≈ --cta (hsl 200 80% 50%), recentColor ≈ dark-mode --foreground.
+  baseColor: "#1aa1e6",
+  recentColor: "#e9eaed",
 };
 
 export const MEMORY_GRAPH_SETTING_DEFINITIONS: readonly MemoryGraphSettingDefinition[] = [
@@ -55,6 +72,22 @@ export const MEMORY_GRAPH_SETTING_DEFINITIONS: readonly MemoryGraphSettingDefini
   { key: "smallestNode", label: "Smallest Node", min: 0.5, max: 30, step: 0.5, precision: 1 },
   { key: "largestNode", label: "Largest Node", min: 5, max: 120, step: 1, precision: 0 },
 ] as const;
+
+export const MEMORY_GRAPH_COLOR_DEFINITIONS: readonly MemoryGraphColorDefinition[] = [
+  { key: "baseColor", label: "Base Color" },
+  { key: "recentColor", label: "Recent Color" },
+] as const;
+
+const COLOR_KEYS = new Set<string>(MEMORY_GRAPH_COLOR_DEFINITIONS.map((definition) => definition.key));
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+function isValidHexColor(value: unknown): value is string {
+  return typeof value === "string" && HEX_COLOR.test(value.trim());
+}
+
+function normalizeHexColor(value: unknown, fallback: string): string {
+  return isValidHexColor(value) ? value.trim().toLowerCase() : fallback;
+}
 
 const DEFINITION_BY_KEY = new Map(
   MEMORY_GRAPH_SETTING_DEFINITIONS.map((definition) => [definition.key, definition]),
@@ -80,6 +113,13 @@ export function normalizeMemoryGraphSettings(value: unknown): MemoryGraphSetting
     );
   }
 
+  for (const definition of MEMORY_GRAPH_COLOR_DEFINITIONS) {
+    settings[definition.key] = normalizeHexColor(
+      input[definition.key],
+      MEMORY_GRAPH_SETTINGS_DEFAULTS[definition.key],
+    );
+  }
+
   settings.smallestNode = Math.min(settings.smallestNode, settings.largestNode);
   settings.largestNode = Math.max(settings.largestNode, settings.smallestNode);
   return settings;
@@ -87,8 +127,12 @@ export function normalizeMemoryGraphSettings(value: unknown): MemoryGraphSetting
 
 function hasValidMemoryGraphSettingValues(input: Record<string, unknown>): boolean {
   for (const key of Object.keys(input)) {
-    const definition = DEFINITION_BY_KEY.get(key as keyof MemoryGraphSettings);
     const candidate = input[key];
+    if (COLOR_KEYS.has(key)) {
+      if (!isValidHexColor(candidate)) return false;
+      continue;
+    }
+    const definition = DEFINITION_BY_KEY.get(key as NumericMemoryGraphSettingKey);
     if (
       !definition
       || typeof candidate !== "number"
@@ -97,27 +141,34 @@ function hasValidMemoryGraphSettingValues(input: Record<string, unknown>): boole
       || candidate > definition.max
     ) return false;
   }
-  return (input.smallestNode as number) <= (input.largestNode as number);
+  if (typeof input.smallestNode === "number" && typeof input.largestNode === "number") {
+    return input.smallestNode <= input.largestNode;
+  }
+  return true;
 }
+
+const NUMERIC_KEY_COUNT = MEMORY_GRAPH_SETTING_DEFINITIONS.length;
+const COMPLETE_KEY_COUNT = NUMERIC_KEY_COUNT + MEMORY_GRAPH_COLOR_DEFINITIONS.length;
 
 export function isCompleteMemoryGraphSettings(value: unknown): value is MemoryGraphSettings {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const input = value as Record<string, unknown>;
-  return Object.keys(input).length === MEMORY_GRAPH_SETTING_DEFINITIONS.length
+  return Object.keys(input).length === COMPLETE_KEY_COUNT
     && hasValidMemoryGraphSettingValues(input);
 }
 
-/** Accepts the immediately preceding complete snapshot during rolling client upgrades. */
+/** Accepts recent complete snapshots during rolling client upgrades. */
 export function isAcceptedMemoryGraphSettingsSnapshot(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const input = value as Record<string, unknown>;
   const keys = Object.keys(input);
-  const isCurrent = keys.length === MEMORY_GRAPH_SETTING_DEFINITIONS.length;
-  const isLegacyWithoutPulseSize = keys.length === MEMORY_GRAPH_SETTING_DEFINITIONS.length - 1
-    && !("pulseSize" in input);
-  return (isCurrent || isLegacyWithoutPulseSize) && hasValidMemoryGraphSettingValues(input);
+  const isCurrent = keys.length === COMPLETE_KEY_COUNT;
+  const isLegacyWithoutColors = keys.length === NUMERIC_KEY_COUNT;
+  const isLegacyWithoutPulseSize = keys.length === NUMERIC_KEY_COUNT - 1 && !("pulseSize" in input);
+  return (isCurrent || isLegacyWithoutColors || isLegacyWithoutPulseSize)
+    && hasValidMemoryGraphSettingValues(input);
 }
 
-export function formatMemoryGraphSettingValue(key: keyof MemoryGraphSettings, value: number): string {
+export function formatMemoryGraphSettingValue(key: NumericMemoryGraphSettingKey, value: number): string {
   return value.toFixed(DEFINITION_BY_KEY.get(key)?.precision ?? 2);
 }
