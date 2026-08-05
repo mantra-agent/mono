@@ -402,6 +402,31 @@ function toolDefToZodShape(def: ToolDefinition): Record<string, z.ZodTypeAny> {
   return shape;
 }
 
+/**
+ * Cheap zod shape for an auto-hydrate stub tool. We deliberately do NOT emit the
+ * full nested JSON-Schema (that is the whole point of progressive hydration —
+ * keeping un-used tool schemas out of the prompt). Instead we declare only the
+ * top-level parameter keys as permissive `z.any().optional()`, which is enough
+ * for the SDK's `z.object(shape)` to preserve the model's arguments (an empty
+ * shape would strip them) while costing almost no tokens. The real, fully-typed
+ * schema is hydrated into the tool set after first use.
+ */
+function toolDefToStubZodShape(def: ToolDefinition): Record<string, z.ZodTypeAny> {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const key of Object.keys(def.parameters?.properties || {})) {
+    shape[key] = z.any().optional();
+  }
+  return shape;
+}
+
+/** Short, cheap description for an auto-hydrate stub — first sentence of the real one. */
+function buildStubDescription(def: ToolDefinition): string {
+  const raw = (def.description || "").trim();
+  const firstSentence = raw.split(/(?<=[.!?])\s/)[0] || raw;
+  const trimmed = firstSentence.length > 180 ? `${firstSentence.slice(0, 177)}…` : firstSentence;
+  return `${trimmed} (auto-loaded on demand)`;
+}
+
 // =====================================================================
 // Warm Claude CLI process pool (env-gated, default OFF).
 //
@@ -860,6 +885,7 @@ function createMcpTools(
   sdkToolFn: typeof import("@anthropic-ai/claude-agent-sdk").tool,
   notifyToolEvent?: () => void,
   requestContinuationHandoff?: (toolCallId: string, continuation: import("./agent-executor").ToolContinuation) => Promise<void>,
+  stubDefs: ToolDefinition[] = [],
 ) {
   let toolCallCounter = 0;
   let activeToolExecutions = 0;
@@ -901,13 +927,23 @@ function createMcpTools(
     }, 25);
   };
 
-  return toolDefs.map((def) => {
-    const zodShape = toolDefToZodShape(def);
+  const buildSdkTool = (def: ToolDefinition, isStub: boolean) => {
+    const zodShape = isStub ? toolDefToStubZodShape(def) : toolDefToZodShape(def);
+    const description = isStub ? buildStubDescription(def) : def.description;
     return sdkToolFn(
       def.name,
-      def.description,
+      description,
       zodShape,
       async (args: Record<string, unknown>) => {
+        if (isStub) {
+          // Auto-hydrate: the model called an authority-allowed tool that the
+          // persona pre-load heuristic did not include. We execute it in-turn
+          // (the bridge executor resolves any authority tool by name) instead of
+          // hard-failing the run. Logged so we can monitor how often the
+          // pre-load guess misses. The real schema is hydrated by the executor
+          // after this call so subsequent calls in the turn are fully typed.
+          log.warn(`autohydrate: model called un-hydrated authority tool "${def.name}" — auto-loading and executing in-turn (persona pre-load heuristic missed it)`);
+        }
         const invocationOrder = toolCallCounter++;
         const callId = pendingToolCallIdQueue.shift() || `sdk-tool-${Date.now()}-${invocationOrder}`;
         const executionStartedAt = Date.now();
@@ -1004,7 +1040,14 @@ function createMcpTools(
         }
       },
     );
-  });
+  };
+
+  const registeredNames = new Set(toolDefs.map((def) => def.name));
+  const uniqueStubDefs = stubDefs.filter((def) => !registeredNames.has(def.name));
+  return [
+    ...toolDefs.map((def) => buildSdkTool(def, false)),
+    ...uniqueStubDefs.map((def) => buildSdkTool(def, true)),
+  ];
 }
 
 export async function* cliSdkStream(
@@ -1056,6 +1099,8 @@ export async function* cliSdkStream(
       notifyToolEvent();
     });
 
+  const hydratedNames = new Set(toolDefs.map((def) => def.name));
+  const stubDefs = (options.stubTools || []).filter((def) => !hydratedNames.has(def.name));
   const sdkTools = createMcpTools(
     toolDefs,
     toolExecutor,
@@ -1064,6 +1109,7 @@ export async function* cliSdkStream(
     sdkToolFn,
     notifyToolEvent,
     requestContinuationHandoff,
+    stubDefs,
   );
 
   const mcpServer = sdkTools.length > 0

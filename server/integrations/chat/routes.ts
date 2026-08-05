@@ -2076,12 +2076,28 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       };
     };
 
+    // Authority is the hard boundary; the persona-hydrated `toolDefs` is only an
+    // assumed-needs pre-load. Register everything else the session is authorized
+    // to use as cheap stubs so a direct model call auto-hydrates and runs in-turn
+    // instead of hard-failing the run. Best-effort: on failure we fall back to the
+    // prior (pre-load-only) behavior rather than breaking the turn.
+    let authorityStubTools: ToolDefinition[] | undefined;
+    try {
+      const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId);
+      const hydratedNames = new Set(toolDefs.map((tool) => tool.name));
+      authorityStubTools = authorityDefinitions.filter((def) => !hydratedNames.has(def.name));
+    } catch (err) {
+      chatLog.log(`autohydrate: failed to resolve authority stub tools sessionId=${sessionId} err=${err instanceof Error ? err.message : String(err)}`);
+      authorityStubTools = undefined;
+    }
+
     return agentExecutor.run({
       sessionKey,
       sessionId,
       runId,
       messages,
       tools: toolDefs,
+      authorityStubTools,
       toolExecutor,
       activity: ACTIVITY_CHAT,
       routingDecision,
