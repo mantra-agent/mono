@@ -1,6 +1,5 @@
-import { Fragment, useEffect, useMemo, type ReactNode } from "react";
-import type { MessageSegment } from "@shared/streaming-types";
-import { ActiveThinkingStatus, ExecutionTimeline, MarkdownContent, filterStepsByLayer, findThinkingStartTime } from "@/components/chat-shared";
+import { Fragment, useEffect, useMemo, type ComponentType, type ReactNode } from "react";
+import type { ExecutionStep, MessageSegment } from "@shared/streaming-types";
 import { createLogger } from "@/lib/logger";
 import type { VisibilityLayer } from "@/hooks/use-visibility-layer";
 
@@ -41,7 +40,12 @@ function stepOwnsActiveStatus(step: Extract<MessageSegment, { type: "timeline" }
   return step.type === "system" && step.systemStepName === "session_compaction";
 }
 
-function normalizeRenderSegments(segments: MessageSegment[], layer: VisibilityLayer, isStreaming: boolean): RenderSegment[] {
+function normalizeRenderSegments(
+  segments: MessageSegment[],
+  layer: VisibilityLayer,
+  isStreaming: boolean,
+  filterVisibleSteps: (steps: ExecutionStep[], layer: VisibilityLayer, isMainSession?: boolean) => ExecutionStep[],
+): RenderSegment[] {
   if (layer === 0) {
     if (isStreaming) return [];
     const finalContentIndex = segments.findLastIndex(
@@ -74,7 +78,7 @@ function normalizeRenderSegments(segments: MessageSegment[], layer: VisibilityLa
       return;
     }
 
-    const visibleSteps = filterStepsByLayer(seg.steps, layer, true);
+    const visibleSteps = filterVisibleSteps(seg.steps, layer, true);
     if (visibleSteps.length === 0) return;
 
     flushContent();
@@ -99,6 +103,11 @@ export interface SegmentStreamProps {
   contentCompact?: boolean;
   planSessionId?: string;
   renderAfterTimelineSegment?: (sourceIndex: number) => ReactNode;
+  ActiveThinkingStatusComponent: ComponentType<{ startTime: Date | null; showTimer?: boolean }>;
+  ExecutionTimelineComponent: ComponentType<{ steps: ExecutionStep[]; compact?: boolean; layer: VisibilityLayer; planSessionId?: string }>;
+  MarkdownContentComponent: ComponentType<{ content: string; className?: string; compact?: boolean }>;
+  filterVisibleSteps: (steps: ExecutionStep[], layer: VisibilityLayer, isMainSession?: boolean) => ExecutionStep[];
+  getThinkingStartTime: (segments: MessageSegment[]) => Date | null;
 }
 
 /**
@@ -106,10 +115,25 @@ export interface SegmentStreamProps {
  * Handles the "Thinking..." indicator and empty-streaming fallback.
  * Extracted from ChatTurn's assistant branch for reuse.
  */
-export function SegmentStream({ segments, isStreaming, layer, stripTags = false, suppressTrailingThinking = false, contentClassName, contentCompact = false, planSessionId, renderAfterTimelineSegment }: SegmentStreamProps) {
+export function SegmentStream({
+  segments,
+  isStreaming,
+  layer,
+  stripTags = false,
+  suppressTrailingThinking = false,
+  contentClassName,
+  contentCompact = false,
+  planSessionId,
+  renderAfterTimelineSegment,
+  ActiveThinkingStatusComponent,
+  ExecutionTimelineComponent,
+  MarkdownContentComponent,
+  filterVisibleSteps,
+  getThinkingStartTime,
+}: SegmentStreamProps) {
   const renderSegments = useMemo(
-    () => normalizeRenderSegments(segments, layer, isStreaming),
-    [segments, isStreaming, layer],
+    () => normalizeRenderSegments(segments, layer, isStreaming, filterVisibleSteps),
+    [segments, isStreaming, layer, filterVisibleSteps],
   );
   const graphSteps = useMemo(() => {
     const byId = new Map<string, Extract<MessageSegment, { type: "timeline" }>["steps"][number]>();
@@ -160,7 +184,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
           if (seg.type === "timeline") {
             return (
               <Fragment key={`timeline-${seg.sourceIndexes.join("-")}`}>
-                <ExecutionTimeline
+                <ExecutionTimelineComponent
                   steps={seg.segment.steps}
                   graphSteps={graphSteps}
                   isStreaming={isStreaming}
@@ -177,7 +201,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
             );
           }
           if (seg.type === "content") {
-            const content = <MarkdownContent content={seg.content} stripTags={stripTags} compact={contentCompact || !!contentClassName} planSessionId={planSessionId} />;
+            const content = <MarkdownContentComponent content={seg.content} stripTags={stripTags} compact={contentCompact || !!contentClassName} planSessionId={planSessionId} />;
             return contentClassName ? (
               <div key={`content-${seg.sourceIndexes.join("-") || i}`} className={contentClassName}>
                 {content}
@@ -192,7 +216,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
           seg.type === "timeline" && seg.segment.steps.some(stepOwnsActiveStatus)
         ) && (
           <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1" data-testid="thinking-status-trailing">
-            <ActiveThinkingStatus startTime={findThinkingStartTime(segments)} showTimer={layer >= 3} />
+            <ActiveThinkingStatusComponent startTime={getThinkingStartTime(segments)} showTimer={layer >= 3} />
           </div>
         )}
       </>
@@ -203,7 +227,7 @@ export function SegmentStream({ segments, isStreaming, layer, stripTags = false,
   if (isStreaming) {
     return (
       <div className="animate-in fade-in slide-in-from-bottom-1 duration-200 px-1.5 py-1">
-        <ActiveThinkingStatus startTime={findThinkingStartTime(segments)} showTimer={layer >= 3} />
+        <ActiveThinkingStatusComponent startTime={getThinkingStartTime(segments)} showTimer={layer >= 3} />
       </div>
     );
   }
