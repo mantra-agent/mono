@@ -46,6 +46,27 @@ export * from "./models/outbox";
 export * from "./models/metrics";
 
 
+export const toolOutputAdmissions = pgTable("tool_output_admissions", {
+  id: serial("id").primaryKey(),
+  ownerAccountId: varchar("owner_account_id").notNull(),
+  ownerUserId: varchar("owner_user_id").notNull(),
+  sessionId: varchar("session_id"),
+  runId: varchar("run_id"),
+  toolCallId: varchar("tool_call_id"),
+  toolName: varchar("tool_name").notNull(),
+  action: varchar("action").notNull().default(""),
+  disposition: varchar("disposition").notNull(),
+  rawChars: integer("raw_chars").notNull(),
+  rawTokens: integer("raw_tokens").notNull(),
+  injectedChars: integer("injected_chars").notNull(),
+  injectedTokens: integer("injected_tokens").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => ({
+  ownerTimeIdx: index("tool_output_admissions_owner_time_idx").on(table.ownerAccountId, table.ownerUserId, table.createdAt),
+  ownerToolIdx: index("tool_output_admissions_owner_tool_idx").on(table.ownerAccountId, table.ownerUserId, table.toolName, table.action),
+  ownerRunIdx: index("tool_output_admissions_owner_run_idx").on(table.ownerAccountId, table.ownerUserId, table.runId),
+}));
+
 export const mobileStartupTelemetry = pgTable("mobile_startup_telemetry", {
   id: serial("id").primaryKey(),
   kind: text("kind").notNull(),
