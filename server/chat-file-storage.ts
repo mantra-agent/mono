@@ -52,6 +52,7 @@ import type {
   SystemStepRecord,
 } from "@shared/models/chat";
 import type { QuestionPrompt } from "@shared/question-prompt";
+import type { ContextPressureSnapshot } from "@shared/streaming-types";
 import { decisionsStorage } from "./decisions-storage";
 
 const log = createLogger("ChatStorage");
@@ -424,6 +425,8 @@ export interface FileMessage {
   inputTokens?: number | null;
   outputTokens?: number | null;
   totalTokens?: number | null;
+  /** Final provider-bound context pressure observed for this assistant turn. */
+  contextPressure?: ContextPressureSnapshot | null;
   segmentChronology?: SegmentChronologyEntry[] | null;
   isError?: boolean;
   crossSession?: CrossSessionMeta;
@@ -1444,6 +1447,7 @@ export interface IChatFileStorage {
     visibility?: MessageVisibility,
     turnId?: string,
     persona?: PersonaSnapshot,
+    contextPressure?: ContextPressureSnapshot,
   ): Promise<FileMessage | null>;
   createAssistantArtifactMessageOnce(
     sessionId: string,
@@ -2345,6 +2349,7 @@ export const chatFileStorage: IChatFileStorage = {
     visibility?: MessageVisibility,
     turnId?: string,
     frozenPersona?: PersonaSnapshot,
+    contextPressure?: ContextPressureSnapshot,
   ) {
     return withConvLock(sessionId, async () => {
       const data = await readConv(sessionId);
@@ -2398,6 +2403,7 @@ export const chatFileStorage: IChatFileStorage = {
         inputTokens: tokenUsage?.inputTokens ?? null,
         outputTokens: tokenUsage?.outputTokens ?? null,
         totalTokens: tokenUsage?.totalTokens ?? null,
+        contextPressure: contextPressure ?? null,
         segmentChronology:
           alignedSegmentChronology && alignedSegmentChronology.length > 0
             ? alignedSegmentChronology
@@ -3565,6 +3571,7 @@ export const chatFileStorage: IChatFileStorage = {
       inputTokens?: number;
       outputTokens?: number;
       totalTokens?: number;
+      contextPressure?: ContextPressureSnapshot;
       segmentChronology?: SegmentChronologyEntry[];
       assistantState?: AssistantMessageState;
       /** Atomically settle the owning Session with the terminal assistant write. */
@@ -3608,6 +3615,8 @@ export const chatFileStorage: IChatFileStorage = {
         msg.outputTokens = updates.outputTokens;
       if (updates.totalTokens !== undefined)
         msg.totalTokens = updates.totalTokens;
+      if (updates.contextPressure !== undefined)
+        msg.contextPressure = updates.contextPressure;
       if (updates.segmentChronology !== undefined) {
         const alignedSegmentChronology = alignAssistantChronology(
           updates.segmentChronology,

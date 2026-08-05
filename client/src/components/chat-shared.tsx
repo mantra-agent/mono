@@ -96,6 +96,7 @@ import type {
 import { SYSTEM_STEP_META } from "@shared/event-catalog";
 
 import type {
+  ContextPressureSnapshot,
   ExecutionStep,
   MessageSegment,
   StreamingContent,
@@ -252,6 +253,7 @@ export interface ChatMessage {
   inputTokens?: number | null;
   outputTokens?: number | null;
   totalTokens?: number | null;
+  contextPressure?: ContextPressureSnapshot | null;
   segmentChronology?: SegmentChronologyEntry[] | null;
   assistantState?: AssistantMessageState;
   assistantRunId?: string;
@@ -3040,7 +3042,11 @@ export const ChatTurn = memo(function ChatTurn({
         <AgentPersonaControl
           sessionId={message.sessionId}
           persona={message.persona}
-          contextPressure={layer === 2 ? streaming?.contextPressure : null}
+          contextPressure={
+            layer === 2
+              ? (streaming?.contextPressure ?? message.contextPressure ?? null)
+              : null
+          }
         />
       )}
       <div className="min-w-0 flex-1 group">

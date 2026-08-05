@@ -2973,6 +2973,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // deleted above, no message to save, no journal entry to create.
       if (!isSuperseded) {
       const persistenceStartedAt = Date.now();
+      const finalContextPressure =
+        sessionManager.getSnapshot(sessionId)?.streamingContent.contextPressure ??
+        undefined;
       chatLog.log(
         `saving message sessionId=${sessionId} thinkingLen=${persistedThinking?.length || 0} toolCallsCount=${persistedToolCalls?.length || 0} contentLen=${responseContent.length} systemSteps=${mergedSystemSteps.length}`,
       );
@@ -2989,6 +2992,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             inputTokens: turnTokenUsage.inputTokens,
             outputTokens: turnTokenUsage.outputTokens,
             totalTokens: turnTokenUsage.totalTokens,
+            contextPressure: finalContextPressure,
             segmentChronology: persistedChronology,
             assistantState:
               result.status === "succeeded" || result.status === "degraded" ? "complete" : "failed",
@@ -3012,6 +3016,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             undefined,
             undefined,
             turnTokenUsage,
+            undefined,
+            undefined,
+            undefined,
+            finalContextPressure,
           );
       const msg = terminalDraftWrite?.message ?? createdTerminalMessage;
       if (terminalDraftWrite) {
