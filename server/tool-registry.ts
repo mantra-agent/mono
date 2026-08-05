@@ -2077,7 +2077,6 @@ function withoutUnreadyIntegrationTools<T extends { name: string }>(schemas: T[]
  */
 export const CORE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "converse",
-  "ui",
   "orient",
   "question",
   "cognition",
