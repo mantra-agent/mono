@@ -32,7 +32,7 @@ import {
   type ToolFailure,
   type ToolFailureCode,
 } from "./tool-failure";
-import { extractToolFailureKind } from "@shared/tool-failure";
+import { extractToolFailureKind, inferFailureKind } from "@shared/tool-failure";
 import { TRIAGE_LOOKBACK_HOURS, TRIAGE_MAX_RESULTS } from "./skill-defaults";
 import { getToolSchemas, type ToolSchema } from "./tool-registry";
 import { getSecretSync } from "./secrets-store";
@@ -17410,7 +17410,14 @@ export async function executeTool(
     const outcome = await handler(enrichedArgs);
     const durationMs = Date.now() - startTime;
     // Handlers emit ToolFailure on `failure.kind`; accept flattened failureKind too.
-    const outcomeFailureKind = extractToolFailureKind(outcome);
+    const explicitFailureKind = extractToolFailureKind(outcome);
+    // Last-resort inference: a failed outcome no classifier claimed is phrase-
+    // matched against a tight avoidable-failure allow-list so predictable
+    // failures render amber instead of red. Never overrides an explicit kind.
+    const outcomeFailureKind =
+      outcome.error && !explicitFailureKind
+        ? inferFailureKind(outcome.result)
+        : explicitFailureKind;
     recordToolCallEnd(toolCallId, !!outcome.error, outcomeFailureKind);
     _wwTrackEnd?.(toolCallId);
     const sideEffectOnly = !outcome.error && isSideEffectOnly(resolvedName, normalizedArgs);
@@ -17433,12 +17440,23 @@ ${outcome.result}`
     } else {
       toolExec.log(`complete tool=${toolName} callId=${toolCallId} duration=${durationMs}ms error=${!!outcome.error} sideEffectOnly=${sideEffectOnly} resultLen=${resultWithPrelude?.length}`);
     }
-    return { ...outcome, result: resultWithPrelude, sideEffectOnly, durationMs };
+    // Keep the returned payload's failureKind consistent with what telemetry
+    // recorded, but only when inference supplied one the outcome lacked.
+    const inferredFailureKindAddon =
+      outcome.error && !explicitFailureKind && outcomeFailureKind
+        ? { failureKind: outcomeFailureKind }
+        : {};
+    return { ...outcome, result: resultWithPrelude, sideEffectOnly, durationMs, ...inferredFailureKindAddon };
   } catch (err: any) {
     const durationMs = Date.now() - startTime;
     const thrownFailure = toolFailureFromError(err);
+    // Explicit classifier first; fall back to phrase inference on the error
+    // message so predictable thrown failures render amber instead of red.
     const thrownFailureKind =
-      thrownFailure?.kind ?? extractToolFailureKind(err);
+      thrownFailure?.kind ??
+      extractToolFailureKind(err) ??
+      inferFailureKind(err?.message) ??
+      undefined;
     recordToolCallEnd(toolCallId, true, thrownFailureKind);
     _wwTrackEnd?.(toolCallId);
     toolExec.error(`complete tool=${toolName} callId=${toolCallId} duration=${durationMs}ms error=true exception=${err.message}`);

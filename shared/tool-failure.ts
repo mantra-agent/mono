@@ -48,3 +48,52 @@ export function extractToolFailureKind(value: unknown): string | null {
 
   return null;
 }
+
+/**
+ * Last-resort classification for a failed tool outcome that no explicit
+ * classifier claimed. Phrase-matches a tight allow-list of avoidable-failure
+ * signals in the failure text so predictable, caller-correctable failures
+ * render amber instead of red.
+ *
+ * Contract:
+ * - Runs ONLY when a failure already lacks a failureKind. It never overrides
+ *   an explicit classifier (single source of truth stays the handler).
+ * - Genuinely unrecognized failures return null and stay red — a true surprise
+ *   worth investigating (fail loudly).
+ * - Ordering is deliberate: permission and transient signals are matched before
+ *   the broad input signal, because auth/network failures often also contain
+ *   generic "invalid"/"not found" wording.
+ */
+export function inferFailureKind(text: unknown): ToolFailureKind | null {
+  if (typeof text !== "string" || !text) return null;
+  const t = text.toLowerCase();
+
+  // Permission — authority walls, forbidden actions, revoked/denied access.
+  if (
+    /\b(?:access denied|permission denied|denied|forbidden|unauthorized|not allowed|not permitted|authentication failed)\b/.test(
+      t,
+    )
+  ) {
+    return "permission";
+  }
+
+  // Transient — network, availability, rate, timeout. A later retry may succeed.
+  if (
+    /\b(?:timed out|timeout|unavailable|rate limit|rate-limited|too many requests|network is unreachable|could not resolve host|connection (?:reset|refused|timed out)|temporarily|502|503|504|429)\b/.test(
+      t,
+    )
+  ) {
+    return "transient";
+  }
+
+  // Input — caller-correctable argument/target problems.
+  if (
+    /\b(?:missing|required|invalid|must be|not found|does not exist|doesn't exist|no such|unknown id|already exists|malformed|out of range)\b/.test(
+      t,
+    )
+  ) {
+    return "input";
+  }
+
+  return null;
+}
