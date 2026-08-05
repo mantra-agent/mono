@@ -3092,7 +3092,7 @@ export class AgentExecutor extends EventEmitter {
     }
 
     const requestTokens = estimateTotalTokens(messages) + toolDefinitionTokens;
-    publish("context_pressure", {
+    ctx.publish("context_pressure", {
       inputTokens: requestTokens,
       inputLimit: contextBudget.operatingInputLimit,
       compactionThreshold: Math.floor(contextBudget.compactionTarget * 0.65),
