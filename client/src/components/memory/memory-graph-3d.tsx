@@ -227,10 +227,18 @@ function recencyToVisibility(recency: number, brightnessCeiling: number): number
   return RECENCY_OPACITY_FLOOR + (ceiling - RECENCY_OPACITY_FLOOR) * Math.pow(heat, 1.4);
 }
 
-function recencyToWhiteMix(recency: number, brightnessCeiling: number): number {
+// How far each node travels from Base toward Recent along the mixer gradient.
+// recencyBrightness reshapes the *distribution* instead of clamping it: it maps to an
+// exponent on the recency curve. High brightness → low exponent → the curve bends up
+// so more nodes pull toward Recent; low brightness → high exponent → only the very
+// newest reach Recent, maximizing contrast. The full Base↔Recent range stays reachable
+// at any setting (no ceiling multiply).
+function recencyToRecentMix(recency: number, recencyBrightness: number): number {
   const heat = THREE.MathUtils.smoothstep(THREE.MathUtils.clamp(recency, 0, 1), 0.08, 1);
-  const ceiling = THREE.MathUtils.clamp(brightnessCeiling, RECENCY_OPACITY_FLOOR, 1);
-  return Math.pow(heat, 1.15) * ceiling;
+  const span = 1 - RECENCY_OPACITY_FLOOR;
+  const t = (THREE.MathUtils.clamp(recencyBrightness, RECENCY_OPACITY_FLOOR, 1) - RECENCY_OPACITY_FLOOR) / span;
+  const exponent = THREE.MathUtils.lerp(2.6, 0.5, t);
+  return Math.pow(heat, exponent);
 }
 
 function composeActivityColor(
@@ -310,6 +318,14 @@ const nodeFragmentShader = `
     gl_FragColor = vec4(nodeColor * uNodeBrightness, nodeAlpha);
   }
 `;
+
+function setColorFromHex(target: THREE.Color, hex: string, fallback: THREE.Color): void {
+  try {
+    target.set(hex);
+  } catch {
+    target.copy(fallback);
+  }
+}
 
 function colorFromToken(token: string): THREE.Color {
   const rootStyles = getComputedStyle(document.documentElement);
@@ -640,12 +656,22 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
     const signalColor = colorFromToken("--cta");
     const selectedColor = colorFromToken("--foreground");
     const deletionColor = colorFromToken("--destructive");
-    // Recency is luminance: cold nodes remain deep CTA blue, while recent nodes
-    // approach the foreground white. Visibility remains a separate depth/presence
-    // channel so old nodes stay ghosted without recency collapsing into opacity.
-    const nodeBaseColors = sceneNodes.map((node) => signalColor.clone().lerp(
-      selectedColor,
-      recencyToWhiteMix(node.recency, activeSettings.recencyBrightness),
+    // Base/Recent are the user-editable endpoints of the recency gradient (mixer).
+    // They default to the CTA/foreground tokens, so absent custom colors match the
+    // prior look. baseNodeColor/recentNodeColor are mutated in place on color changes.
+    const baseNodeColor = new THREE.Color();
+    const recentNodeColor = new THREE.Color();
+    function applyMixerColors(s: MemoryGraphSettings) {
+      setColorFromHex(baseNodeColor, s.baseColor, signalColor);
+      setColorFromHex(recentNodeColor, s.recentColor, selectedColor);
+    }
+    applyMixerColors(activeSettings);
+    // Recency is luminance: cold nodes stay near Base, recent nodes approach Recent.
+    // Visibility remains a separate depth/presence channel so old nodes stay ghosted
+    // without recency collapsing into opacity.
+    const nodeBaseColors = sceneNodes.map((node) => baseNodeColor.clone().lerp(
+      recentNodeColor,
+      recencyToRecentMix(node.recency, activeSettings.recencyBrightness),
     ));
     const nodeGeometry = new THREE.IcosahedronGeometry(1, 2);
     const nodeVisibility = new Float32Array(sceneNodes.length);
@@ -1248,9 +1274,9 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
 
     function syncNodeBaseColors() {
       sceneNodes.forEach((node, index) => {
-        nodeBaseColors[index].copy(signalColor).lerp(
-          selectedColor,
-          recencyToWhiteMix(node.recency, activeSettings.recencyBrightness),
+        nodeBaseColors[index].copy(baseNodeColor).lerp(
+          recentNodeColor,
+          recencyToRecentMix(node.recency, activeSettings.recencyBrightness),
         );
       });
       simulationLinks.forEach((link, linkIndex) => {
@@ -2081,6 +2107,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
       const forcesChanged = previousSettings.linkAttractionFactor !== nextSettings.linkAttractionFactor
         || previousSettings.nodeRepulsionFactor !== nextSettings.nodeRepulsionFactor;
       const recencyChanged = previousSettings.recencyBrightness !== nextSettings.recencyBrightness;
+      const colorsChanged = previousSettings.baseColor !== nextSettings.baseColor
+        || previousSettings.recentColor !== nextSettings.recentColor;
       const complexityChanged = previousSettings.linkComplexity !== nextSettings.linkComplexity;
 
       nodeMaterial.uniforms.uNodeBrightness.value = nextSettings.nodeBrightnessFactor;
@@ -2098,7 +2126,8 @@ export const MemoryGraph3D = forwardRef<MemoryGraph3DHandle, MemoryGraph3DProps>
             + Math.pow(degreeRatio, 0.6) * (nextSettings.largestNode - nextSettings.smallestNode);
         });
       }
-      if (recencyChanged) syncNodeBaseColors();
+      if (colorsChanged) applyMixerColors(nextSettings);
+      if (recencyChanged || colorsChanged) syncNodeBaseColors();
       if (complexityChanged) curveSegments = nextSettings.linkComplexity;
 
       syncNodeAppearance();
