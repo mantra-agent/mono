@@ -1,6 +1,7 @@
 // Use createLogger for logging ONLY
 import type { Express } from "express";
 import { requireAuth } from "./auth";
+import { requireActivePlanning } from "./mods/planning-route-access";
 import { strategyStorage, migrateStrategySchema } from "./strategy-storage";
 import { peopleStorage } from "./people-storage";
 import {
@@ -162,7 +163,7 @@ function computeOptimalPaths(
 const log = createLogger("StrategyRoutes");
 
 export function registerStrategyRoutes(app: Express): void {
-  app.use("/api/strategy", requireAuth);
+  app.use("/api/strategy", requireAuth, requireActivePlanning);
 
   migrateStrategySchema().catch(err => {
     log.error("schema migration error:", err.message);

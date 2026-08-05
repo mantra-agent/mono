@@ -557,11 +557,13 @@ async function getSkillTools(
   const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
   const { filterBusinessToolSchemas } = await import("./mods/business-tool-access");
   const { filterNetworkToolSchemas } = await import("./mods/network-tool-access");
+  const { filterPlanningToolSchemas } = await import("./mods/planning-tool-access");
   const authorityToolDefs = filterToolSchemasForAuthority(getToolDefinitions(), authority);
   const buildScopedTools = await filterBuildToolSchemas(principal, authorityToolDefs);
   const wellnessScopedTools = await filterWellnessToolSchemas(principal, buildScopedTools);
   const businessScopedTools = await filterBusinessToolSchemas(principal, wellnessScopedTools);
-  const allToolDefs = await filterNetworkToolSchemas(principal, businessScopedTools);
+  const networkScopedTools = await filterNetworkToolSchemas(principal, businessScopedTools);
+  const allToolDefs = await filterPlanningToolSchemas(principal, networkScopedTools);
   const tools = allToolDefs.map((t: AgentToolDefinition) => ({
     name: t.name,
     description: t.description,

@@ -40,11 +40,14 @@ const planning: ModDefinition = {
       clientRoute("planning.route.schedule", "/schedule", "calendar"),
       clientRoute("planning.route.schedule-event", "/schedule/:eventId", "calendar"),
       clientRoute("planning.route.projects", "/projects", "work"),
+      clientRoute("planning.route.scenarios", "/scenarios", "strategy"),
+      clientRoute("planning.route.scenario-detail", "/scenarios/:id", "strategy-detail"),
     ],
     navigation: [
       nav("planning.nav.schedule", "Tools", "Schedule", "Calendar", "navigation.schedule.open", "planning.route.schedule", 6),
       nav("planning.nav.projects", "Tools", "Projects", "Briefcase", "navigation.projects.open", "planning.route.projects", 7),
       nav("planning.nav.goals", "Planning", "Goals", "Target", "navigation.goals.open", "planning.route.goals", 1),
+      nav("planning.nav.scenarios", "Planning", "Scenarios", "Swords", "navigation.scenarios.open", "planning.route.scenarios", 2),
     ],
     widgets: [
       widget("planning.widget.priority-task", "home.primary", "priority_task", "tasks", 2),

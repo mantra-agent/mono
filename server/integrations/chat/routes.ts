@@ -1442,6 +1442,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const { filterWellnessToolSchemas } = await import("../../mods/wellness-tool-access");
     const { filterBusinessToolSchemas } = await import("../../mods/business-tool-access");
     const { filterNetworkToolSchemas } = await import("../../mods/network-tool-access");
+    const { filterPlanningToolSchemas } = await import("../../mods/planning-tool-access");
     const authorityTools = filterToolSchemasForAuthority(getToolDefinitions(), {
       origin: "interactive",
       sessionId,
@@ -1449,7 +1450,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     const buildScopedTools = await filterBuildToolSchemas(requireCurrentPrincipal(), authorityTools);
     const wellnessScopedTools = await filterWellnessToolSchemas(requireCurrentPrincipal(), buildScopedTools);
     const businessScopedTools = await filterBusinessToolSchemas(requireCurrentPrincipal(), wellnessScopedTools);
-    const modScopedTools = await filterNetworkToolSchemas(requireCurrentPrincipal(), businessScopedTools);
+    const networkScopedTools = await filterNetworkToolSchemas(requireCurrentPrincipal(), businessScopedTools);
+    const modScopedTools = await filterPlanningToolSchemas(requireCurrentPrincipal(), networkScopedTools);
     return modScopedTools.map((tool) => ({
       name: tool.name,
       description: tool.description,
