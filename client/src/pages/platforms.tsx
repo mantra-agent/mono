@@ -230,7 +230,7 @@ function PlatformTreeRow({
                   className={cn("truncate", isBuilding && "text-active animate-pulse")}
                   style={titleColor && !isBuilding ? { color: titleColor } : undefined}
                 >
-                  {title}
+                  {sectionHeader ? title.toUpperCase() : title}
                 </span>
               </button>
             </span>
