@@ -6389,7 +6389,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
   return (
     <div className="space-y-4">
-      {provider !== "recall" && provider !== "railway" && (
+      {provider !== "google" && provider !== "recall" && provider !== "railway" && (
         <div className="flex items-center gap-3">
           <Icon className="h-6 w-6" />
           <h2 className="text-lg font-semibold">{integration.name}</h2>
