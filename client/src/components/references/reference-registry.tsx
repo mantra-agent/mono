@@ -1,6 +1,7 @@
 import {
   Briefcase,
   Brain,
+  Bug,
   Building2,
   CalendarDays,
   Compass,
@@ -282,6 +283,11 @@ const registry: Record<string, RegistryEntry> = {
       if (parts.length === 3) return `https://github.com/${parts[0]}/${parts[1]}/pull/${parts[2]}`;
       return undefined;
     },
+  },
+  issue: {
+    Icon: Bug,
+    fallbackLabel: ref => metadataString(ref, "label") || `Issue ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/issues/${encodeURIComponent(ref.id)}`,
   },
 };
 
