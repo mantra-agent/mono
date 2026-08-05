@@ -1,7 +1,8 @@
-import type {
-  AdvantageOperatingCycle,
-  ScorecardMeasureDefinition,
-  ScorecardMeasureState,
+import {
+  ADVANTAGE_STANDING_OBJECTIVES,
+  type AdvantageOperatingCycle,
+  type ScorecardMeasureDefinition,
+  type ScorecardMeasureState,
 } from "@shared/models/advantage-dashboard";
 
 function unmeasured(
@@ -212,80 +213,12 @@ export const MANTRA_Q3_2026_ADVANTAGE_CYCLE: AdvantageOperatingCycle = {
       ],
     },
   ],
-  standingOperatingObjectives: [
-    {
-      key: "trust-security",
-      label: "Trust and security",
-      owner: "Security",
-      cadence: "Continuous",
-      definition:
-        "Zero severity-1 privacy/security incidents, zero wrong-person mutations, and full audit coverage on consequential actions.",
-      health: unmeasuredHealth("Security"),
-    },
-    {
-      key: "reliability-performance",
-      label: "Reliability and performance",
-      owner: "Platform",
-      cadence: "Daily",
-      definition:
-        "Customer-facing availability, action success rate, and median recovery time stay inside the operating band.",
-      health: unmeasuredHealth("Platform"),
-    },
-    {
-      key: "customer-health",
-      label: "Customer health and support",
-      owner: "Customer success",
-      cadence: "Weekly",
-      definition:
-        "Active paying accounts, weekly active accounts, and open customer blockers stay healthy enough to support retention evidence.",
-      health: unmeasuredHealth("Customer success"),
-    },
-    {
-      key: "revenue-runway",
-      label: "Revenue, cash, and runway",
-      owner: "Finance",
-      cadence: "Monthly",
-      definition:
-        "Product ARR, cash runway against the funded plan, and cleared Seed financing remain on the operating path.",
-      health: unmeasuredHealth("Finance"),
-    },
-    {
-      key: "delivery-economics",
-      label: "Delivery economics",
-      owner: "Operations",
-      cadence: "Weekly",
-      definition:
-        "Human hours and platform cost per account decline as workflow reuse rises.",
-      health: unmeasuredHealth("Operations"),
-    },
-    {
-      key: "product-release",
-      label: "Product and release health",
-      owner: "Engineering",
-      cadence: "Per deploy",
-      definition:
-        "Production deploys stay healthy, critical defects stay controlled, and completed work links to the thematic goal or defining objectives.",
-      health: unmeasuredHealth("Engineering"),
-    },
-    {
-      key: "founder-team",
-      label: "Founder and team capacity",
-      owner: "Ray",
-      cadence: "Weekly",
-      definition:
-        "Ray time stays majority judgment/GTM, sole-owner domains decline, and Founding Engineer status advances.",
-      health: unmeasuredHealth("Ray"),
-    },
-    {
-      key: "corporate-stewardship",
-      label: "Corporate stewardship",
-      owner: "Operations",
-      cadence: "Weekly",
-      definition:
-        "Legal, tax, payroll, insurance, contracts, and investor actions stay current with zero overdue obligations.",
-      health: unmeasuredHealth("Operations"),
-    },
-  ],
+  standingOperatingObjectives: ADVANTAGE_STANDING_OBJECTIVES.map(
+    (objective) => ({
+      ...objective,
+      health: unmeasuredHealth(objective.owner),
+    }),
+  ),
 };
 
 export type { AdvantageOperatingCycle };

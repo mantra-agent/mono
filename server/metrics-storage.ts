@@ -279,6 +279,41 @@ export const metricsStorage = {
     return rows.map(mapSample);
   },
 
+  async deleteSample(id: string): Promise<MetricSample> {
+    const principal = currentPrincipal();
+    if (!principal.accountId) {
+      throw Object.assign(new Error("Account required"), { status: 400 });
+    }
+    await ensureMetricsSamplesSchema();
+    const [existing] = await metricsDb
+      .select()
+      .from(metricSamples)
+      .where(
+        and(
+          eq(metricSamples.id, id),
+          eq(metricSamples.accountId, principal.accountId),
+        ),
+      )
+      .limit(1);
+    if (!existing) {
+      throw Object.assign(new Error("Metric sample not found"), { status: 404 });
+    }
+    await this.get(existing.metricId);
+    const [row] = await metricsDb
+      .delete(metricSamples)
+      .where(
+        and(
+          eq(metricSamples.id, id),
+          eq(metricSamples.accountId, principal.accountId),
+        ),
+      )
+      .returning();
+    if (!row) {
+      throw Object.assign(new Error("Metric sample not found"), { status: 404 });
+    }
+    return mapSample(row);
+  },
+
   async recordSample(input: MetricSampleCreate): Promise<MetricSample> {
     const principal = currentPrincipal();
     const parsed = metricSampleCreateSchema.parse(input);
@@ -514,7 +549,10 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS metrics_account_slug_uidx ON metrics(account_id, slug)`);
+  await db.execute(sql`DROP INDEX IF EXISTS metrics_account_slug_uidx`);
+  await db.execute(
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS metrics_account_vault_slug_uidx ON metrics(account_id, vault_id, slug)`,
+  );
   await db.execute(sql`CREATE INDEX IF NOT EXISTS metrics_account_vault_idx ON metrics(account_id, vault_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS metrics_scope_owner_idx ON metrics(scope, owner_user_id)`);
 
@@ -544,7 +582,10 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS kpis_account_slug_uidx ON kpis(account_id, slug)`);
+  await db.execute(sql`DROP INDEX IF EXISTS kpis_account_slug_uidx`);
+  await db.execute(
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS kpis_account_vault_slug_uidx ON kpis(account_id, vault_id, slug)`,
+  );
   await db.execute(sql`CREATE INDEX IF NOT EXISTS kpis_account_vault_idx ON kpis(account_id, vault_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS kpis_metric_idx ON kpis(metric_id)`);
   await db.execute(
