@@ -15,6 +15,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sparkles } from "lucide-react";
 import type { ChatSession } from "@shared/models/chat";
+import type { ContextPressureSnapshot } from "@shared/streaming-types";
 
 interface PersonaOption {
   id: number;
@@ -27,6 +28,7 @@ interface AgentPersonaControlProps {
   sessionId: string;
   /** The persona frozen on this assistant turn — drives the icon shown. */
   persona?: { id: number; name: string; icon: string } | null;
+  contextPressure?: ContextPressureSnapshot | null;
 }
 
 /**
@@ -35,7 +37,7 @@ interface AgentPersonaControlProps {
  * auto-switching for this session); picking Auto hands the dial back to the agent.
  * Mirrors the session-scoped model-tier override pattern in the bottom bar.
  */
-export function AgentPersonaControl({ sessionId, persona }: AgentPersonaControlProps) {
+export function AgentPersonaControl({ sessionId, persona, contextPressure }: AgentPersonaControlProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
 
@@ -56,6 +58,18 @@ export function AgentPersonaControl({ sessionId, persona }: AgentPersonaControlP
   const tooltipLabel = pinned && persona?.id === activePersonaId
     ? `${personaLabel} · pinned by you`
     : personaLabel;
+  const pressureRatio = contextPressure
+    ? Math.min(contextPressure.inputTokens / Math.max(contextPressure.inputLimit, 1), 1)
+    : 0;
+  const thresholdRatio = contextPressure
+    ? Math.min(contextPressure.compactionThreshold / Math.max(contextPressure.inputLimit, 1), 1)
+    : 0;
+  const pressureColor = pressureRatio >= 0.9
+    ? "hsl(var(--destructive))"
+    : contextPressure && contextPressure.inputTokens >= contextPressure.compactionThreshold
+      ? "hsl(var(--warning))"
+      : "hsl(var(--cta))";
+  const circumference = 2 * Math.PI * 15;
 
   const mutation = useMutation({
     mutationFn: async (nextPersonaId: number | null) => {
@@ -98,10 +112,41 @@ export function AgentPersonaControl({ sessionId, persona }: AgentPersonaControlP
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="relative mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 transition-colors hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={`Persona: ${personaLabel}. Click to change the persona for this conversation.`}
               data-testid={`button-agent-persona-${sessionId}`}
             >
+              {contextPressure && (
+                <svg
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -inset-1 h-[36px] w-[36px] -rotate-90 overflow-visible"
+                  viewBox="0 0 36 36"
+                  data-testid={`context-pressure-ring-${sessionId}`}
+                >
+                  <circle cx="18" cy="18" r="15" fill="none" stroke="hsl(var(--border))" strokeOpacity="0.45" strokeWidth="1.5" />
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="15"
+                    fill="none"
+                    stroke={pressureColor}
+                    strokeLinecap="round"
+                    strokeWidth="1.5"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={circumference * (1 - pressureRatio)}
+                    className="transition-[stroke,stroke-dashoffset] duration-300 ease-out"
+                  />
+                  {thresholdRatio > 0 && thresholdRatio < 1 && (
+                    <circle
+                      cx="18"
+                      cy="3"
+                      r="1.25"
+                      fill="hsl(var(--warning))"
+                      transform={`rotate(${thresholdRatio * 360} 18 18)`}
+                    />
+                  )}
+                </svg>
+              )}
               <PersonaIcon className="h-4 w-4 text-primary" />
             </button>
           </DropdownMenuTrigger>

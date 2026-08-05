@@ -232,6 +232,7 @@ export type ExecutorStreamEventType =
   | "tool_result"
   | "tool_use_pause"
   | "run_start"
+  | "context_pressure"
   | "done"
   | "error"
   | "compacting"
@@ -380,6 +381,9 @@ export interface SystemStepRecord {
   diagnosticVisibility?: DiagnosticVisibility;
   childMode?: DiagnosticChildMode;
   occurredAt?: number;
+  inputTokens?: number;
+  inputLimit?: number;
+  compactionThreshold?: number;
 }
 
 export interface ExecutorStreamEvent {

@@ -74,6 +74,9 @@ export type SessionStreamEvent = {
   error?: string;
   model?: string;
   autoTier?: string;
+  inputTokens?: number;
+  inputLimit?: number;
+  compactionThreshold?: number;
   persona?: { id: number; name: string; icon: string };
   runId?: string;
   turnId?: string;
@@ -455,6 +458,25 @@ class SessionManager {
           outputTokens: event.outputTokens ?? prev.outputTokens ?? null,
           totalTokens: event.totalTokens ?? prev.totalTokens ?? null,
         };
+        break;
+
+      case "context_pressure":
+        if (
+          typeof event.inputTokens === "number"
+          && typeof event.inputLimit === "number"
+          && typeof event.compactionThreshold === "number"
+        ) {
+          prev = {
+            ...prev,
+            contextPressure: {
+              inputTokens: Math.max(0, event.inputTokens),
+              inputLimit: Math.max(1, event.inputLimit),
+              compactionThreshold: Math.max(0, event.compactionThreshold),
+            },
+          };
+        } else {
+          changed = false;
+        }
         break;
 
       case "done":

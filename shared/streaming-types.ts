@@ -53,6 +53,12 @@ export type MessageSegment =
 
 export type StreamingSource = "text" | "voice" | "meeting" | null;
 
+export interface ContextPressureSnapshot {
+  inputTokens: number;
+  inputLimit: number;
+  compactionThreshold: number;
+}
+
 export interface StreamingContent {
   segments: MessageSegment[];
   source: StreamingSource;
@@ -71,6 +77,7 @@ export interface StreamingContent {
   inputTokens?: number | null;
   outputTokens?: number | null;
   totalTokens?: number | null;
+  contextPressure?: ContextPressureSnapshot | null;
 }
 
 /**
@@ -102,4 +109,5 @@ export const initialStreamingContent: StreamingContent = {
   inputTokens: null,
   outputTokens: null,
   totalTokens: null,
+  contextPressure: null,
 };
