@@ -27,6 +27,15 @@ import { ModelProviderError, isModelContextOverflow, type StreamEvent as ModelSt
 import { ContextOperatingBudgetExceededError, estimateToolDefinitionTokens, getContextRequestBudget, type ContextRequestBudget } from "./context-budget";
 import { estimateToolOutputSize } from "./tool-output-artifacts";
 import {
+  createRunConvergenceState,
+  evidenceHash,
+  getRunConvergenceConfig,
+  isDurableMutation,
+  normalizedInvocationSignature,
+  terminalDirective,
+  type RunConvergenceState,
+} from "./run-convergence";
+import {
   ACTIVE_HISTORY_BUDGET_TOKENS,
   CURRENT_CYCLE_TOOL_RESULT_BUDGET_TOKENS,
   MATERIAL_REFRESH_REDUCTION_TOKENS,
@@ -958,6 +967,7 @@ interface RunIterationContext {
   currentCycleToolResultTokens: number;
   currentCycleRefreshReductionTokens: number;
   iterationToolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; order: number }>;
+  convergence: RunConvergenceState;
 }
 
 const ZOMBIE_CHECK_INTERVAL_MS = 60_000;
@@ -2912,6 +2922,7 @@ export class AgentExecutor extends EventEmitter {
       chronologyContentIdx: -1,
       chronologyContentBuf: "",
       chronologyIterationContentPrefix: "",
+      convergence: createRunConvergenceState(),
     };
 
     if (options.signal) {
@@ -3320,7 +3331,7 @@ export class AgentExecutor extends EventEmitter {
         },
         activity: options.activity,
         messages: providerMessages.map(m => ({ role: m.role as StreamMessage["role"], content: m.content, toolCallId: m.toolCallId, name: m.name })),
-        tools: options.tools,
+        tools: ctx.convergence.terminalRequired ? [] : options.tools,
         stubTools: options.authorityStubTools,
         toolExecutor: boundedToolExecutor,
         maxTokens,
@@ -3781,6 +3792,35 @@ export class AgentExecutor extends EventEmitter {
         };
       }
       if (continuation === "working_set_refresh") {
+        ctx.convergence.refreshCount++;
+        if (progressEvidence.length === 0) ctx.convergence.noProgressRefreshes++;
+        const refreshReason = ctx.convergence.noProgressRefreshes >= convergenceConfig.maxNoProgressRefreshes
+          ? `no_progress_refreshes:${ctx.convergence.noProgressRefreshes}`
+          : undefined;
+        if (refreshReason) {
+          ctx.convergence.terminalRequired = true;
+          ctx.convergence.terminalReason = refreshReason;
+          messages.push({ role: "user", content: terminalDirective(refreshReason) });
+          eventBus.publish({
+            category: "agent",
+            event: "agent.run_convergence_refresh_prevented",
+            payload: {
+              runId: ctx.runId,
+              sessionId: options.sessionId || null,
+              iteration: ctx.iteration,
+              refreshCount: ctx.convergence.refreshCount,
+              noProgressRefreshes: ctx.convergence.noProgressRefreshes,
+              repeatedSignatures: maxRepeatedSignature,
+              progressEvidence: ctx.convergence.lastProgressEvidence,
+              terminalReason: refreshReason,
+              thresholds: convergenceConfig,
+            },
+            runId: ctx.runId,
+            sessionKey: options.sessionKey,
+          });
+          ctx.publish("tool_use_pause", { content: "" });
+          return { finalContent: cleanText, shouldContinue: true, hasRunStage2, continuationType: "tool_call" };
+        }
         // Force-receipt every tool result just appended so the next projectWorkingSet
         // emits historical/receipt form instead of re-sending multi-MB exact payloads.
         for (const block of toolResults) {
@@ -3805,6 +3845,63 @@ export class AgentExecutor extends EventEmitter {
 
       const batchResolvedCalls = ctx.resolvedToolCalls.slice(-unresolvedToolCalls.length);
       const failedCalls = batchResolvedCalls.filter(tc => tc.error);
+      const convergenceConfig = getRunConvergenceConfig();
+      const progressEvidence: string[] = [];
+      let maxRepeatedSignature = 0;
+      for (const outcome of batchResolvedCalls) {
+        const signature = normalizedInvocationSignature(outcome.name, outcome.args);
+        const signatureCount = (ctx.convergence.signatureCounts.get(signature) || 0) + 1;
+        ctx.convergence.signatureCounts.set(signature, signatureCount);
+        maxRepeatedSignature = Math.max(maxRepeatedSignature, signatureCount);
+        const failed = outcome.result.startsWith("Error:");
+        if (isDurableMutation(outcome.name, outcome.args, failed)) {
+          progressEvidence.push(`durable_state:${outcome.name}:${signature}`);
+          continue;
+        }
+        if (!failed) {
+          const hash = evidenceHash(outcome.result);
+          if (!ctx.convergence.evidenceHashes.has(hash)) {
+            ctx.convergence.evidenceHashes.add(hash);
+            progressEvidence.push(`new_evidence:${outcome.name}:${hash}`);
+          }
+        }
+      }
+      if (progressEvidence.length > 0) {
+        ctx.convergence.noProgressCycles = 0;
+        ctx.convergence.noProgressRefreshes = 0;
+        ctx.convergence.lastProgressEvidence = progressEvidence.slice(-8);
+      } else {
+        ctx.convergence.noProgressCycles++;
+      }
+      const convergenceReason = maxRepeatedSignature >= convergenceConfig.maxRepeatedSignature
+        ? `repeated_invocation_signature:${maxRepeatedSignature}`
+        : ctx.convergence.noProgressCycles >= convergenceConfig.maxNoProgressCycles
+          ? `no_progress_cycles:${ctx.convergence.noProgressCycles}`
+          : undefined;
+      if (convergenceReason && !ctx.convergence.terminalRequired) {
+        ctx.convergence.terminalRequired = true;
+        ctx.convergence.terminalReason = convergenceReason;
+        messages.push({ role: "user", content: terminalDirective(convergenceReason) });
+      }
+      eventBus.publish({
+        category: "agent",
+        event: convergenceReason ? "agent.run_convergence_terminal_required" : "agent.run_convergence_observed",
+        payload: {
+          runId: ctx.runId,
+          sessionId: options.sessionId || null,
+          iteration: ctx.iteration,
+          refreshCount: ctx.convergence.refreshCount,
+          noProgressRefreshes: ctx.convergence.noProgressRefreshes,
+          noProgressCycles: ctx.convergence.noProgressCycles,
+          maxRepeatedSignature,
+          progressEvidence: progressEvidence.slice(-8),
+          terminalReason: convergenceReason || null,
+          thresholds: convergenceConfig,
+        },
+        runId: ctx.runId,
+        sessionKey: options.sessionKey,
+      });
+
       ctx.diagnosticLastStep = "tool_batch";
       ctx.diagnosticLastToolCallId = batchResolvedCalls[batchResolvedCalls.length - 1]?.id;
       ctx.diagnosticLastToolBatchCompletedAt = Date.now();
@@ -3928,6 +4025,30 @@ export class AgentExecutor extends EventEmitter {
       return { finalContent: "", shouldContinue: true, hasRunStage2 };
     }
 
+    if (ctx.convergence.terminalRequired) {
+      eventBus.publish({
+        category: "agent",
+        event: "agent.run_convergence_terminal_outcome",
+        payload: {
+          runId: ctx.runId,
+          sessionId: options.sessionId || null,
+          iteration: ctx.iteration,
+          refreshCount: ctx.convergence.refreshCount,
+          noProgressRefreshes: ctx.convergence.noProgressRefreshes,
+          noProgressCycles: ctx.convergence.noProgressCycles,
+          repeatedSignatures: Math.max(0, ...ctx.convergence.signatureCounts.values()),
+          progressEvidence: ctx.convergence.lastProgressEvidence,
+          terminalReason: ctx.convergence.terminalReason || "unknown",
+          terminalOutcome: /\b(blocked|need|clarif|dependency)\b/i.test(cleanText)
+            ? "blocked"
+            : /\b(fail|unable|cannot)\b/i.test(cleanText)
+              ? "fail"
+              : "synthesize",
+        },
+        runId: ctx.runId,
+        sessionKey: options.sessionKey,
+      });
+    }
     return { finalContent: cleanText, shouldContinue: false, hasRunStage2, exitCause: "natural_stop" };
   }
 
