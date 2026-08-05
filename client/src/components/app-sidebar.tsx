@@ -84,7 +84,6 @@ import {
   type UiInteractionTarget,
 } from "@shared/ui-interaction";
 import type { ResolvedProductComposition } from "@shared/models/product-composition";
-import type { ModKey } from "@shared/models/mods";
 
 interface NavItem {
   title: string;
@@ -161,14 +160,6 @@ const MOD_NAV_ICONS = {
   Zap,
 } satisfies Record<string, LucideIcon>;
 
-// Static nav entries whose visibility is owned by a mod: they appear only when
-// that mod is active. This mirrors the section-level "Build" gate below, but at
-// item granularity, so disabling a mod removes its nav entry entirely rather
-// than leaving a permission-denied surface behind.
-const STATIC_NAV_MOD_OWNERSHIP: Partial<Record<UiInteractionTarget, ModKey>> = {
-  "navigation.wellness.open": "wellness",
-};
-
 function mergeResolvedNavigation(
   staticSections: NavSection[],
   composition: ResolvedProductComposition | undefined,
@@ -181,7 +172,10 @@ function mergeResolvedNavigation(
     .map((section) => ({
       ...section,
       items: section.items.filter((item) => {
-        const ownerMod = STATIC_NAV_MOD_OWNERSHIP[item.target];
+        // Ownership derives from the full mod registry (composition.navOwnership),
+        // so any static nav entry owned by an inactive mod is hidden — no
+        // hand-maintained per-item map to drift out of sync with the registry.
+        const ownerMod = composition.navOwnership[item.target];
         return !ownerMod || activeMods.has(ownerMod);
       }),
     }));
