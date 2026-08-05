@@ -59,6 +59,7 @@ import {
 } from "@shared/models/product-composition";
 import { resolveConnectorReadiness, type ConnectorReadiness } from "./connector-readiness";
 import { isModPlatformEnabled } from "../mod-platform-config";
+import type { UiInteractionTarget } from "@shared/ui-interaction";
 
 const log = createLogger("mod-composition-resolver");
 
@@ -323,9 +324,19 @@ function compose(
   const onboarding: ResolvedOnboardingStep[] = [];
   const slots: ResolvedSlotContribution[] = [];
   const diagnostics: ContributionDiagnostic[] = [];
+  const navOwnership: Partial<Record<UiInteractionTarget, ModKey>> = {};
 
   for (const bundle of bundles) {
     for (const contribution of listContributions(bundle.contributions)) {
+      // Ownership is a property of the full registry, not of the active/visible
+      // subset: record which mod owns each nav target regardless of whether the
+      // mod is active or the principal is permitted. This lets static client nav
+      // hide a mod's entry the moment that mod is inactive (no permission-denied
+      // ghost). Core-owned nav is never gated, so it is intentionally excluded.
+      if (contribution.kind === "navigation" && bundle.owner !== "core") {
+        navOwnership[contribution.target] = bundle.owner;
+      }
+
       const resolution = resolveContribution(
         contribution,
         bundle.active,
@@ -459,6 +470,7 @@ function compose(
     activeMods: activeModList,
     routes,
     navigation,
+    navOwnership,
     widgets,
     dashboardHeatmaps,
     actions,
