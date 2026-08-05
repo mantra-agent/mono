@@ -145,14 +145,16 @@ export function getInFlightHighThreshold(): number {
 }
 
 import { getAppNamePrefix } from "@shared/instance-config";
+import { appPoolConfig, assertRawDatabaseCallerAllowed } from "./database-authority";
 export const APP_NAME_PREFIX = getAppNamePrefix();
 export const BOOT_ID =
   process.env.WATCHDOG_BOOT_ID ||
   `${Date.now().toString(36)}-${process.pid}`;
 export const APP_NAME = `${APP_NAME_PREFIX}-${BOOT_ID}`;
 
+assertRawDatabaseCallerAllowed("app", "server/db.ts");
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  ...appPoolConfig(process.env.DATABASE_URL ?? ""),
   max: GENERAL_DB_POOL_MAX,
   min: GENERAL_DB_POOL_MIN,
   idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,

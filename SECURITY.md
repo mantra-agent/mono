@@ -709,6 +709,12 @@ The identity/data audit traced browser auth, session persistence, service bearer
 
 Security gate: assets A02/A03/A08, S2 session transcripts and derived archives, flows F03/F06/F07, boundaries B06/B07/B08. Credible threats were cross-process tampering/lost update, duplicate provider-cost exhaustion, orphaned private archives, and disclosure through a streaming draft snapshot. Deterministic controls are scoped database ownership, partial unique indexes, transaction locks, exact-prefix revalidation, object ACLs, idempotent operation keys, hard time/model/input budgets, structured lifecycle telemetry, and bounded recovery. The user-visible compaction activity remains a data-minimized projection of the same operation: `/ws/events` first proves session visibility, then loads active state with the exact owner/account principal, and exposes only public status copy keyed by operation ID. Archive, summary, model, snapshot, lease, and failure details remain server-only. Residual risk is limited to object deletion retries after provider failure; failed cleanup remains logged and the private ACL continues to deny unauthorized access.
 
+## 11.11 Dormant tenant-isolation foundation, August 5, 2026
+
+Task @task:1825 adds a checked-in policy manifest, explicit app/system/migrator pool authority map, transaction-bound `withDatabasePrincipal` settings, fail-closed account/user/Vault context helpers, additive quarantine metadata for identity/account/Vault roots, and a first `ACCOUNT_DIRECT` policy for `email_messages` in versioned migration source. The migration explicitly leaves RLS disabled and has not been applied to any hosted database. Existing application authorization remains authoritative.
+
+**Threat/control outcome:** this reduces A01/A07 rollout ambiguity and stale/absent-principal risk by making role topology, raw-client exceptions, ownership roots, and transaction-local context reviewable in code. It does not yet reduce the hosted-database blast radius: stage/live roles, ownership backfills, Jeremie quarantine records, policy activation, rollback rehearsal, and runtime denial evidence remain behind the separate deployment gate. No public or multi-tenant-readiness claim follows from this foundation.
+
 ## 12. Security review and verification policy
 
 The repository's no-test policy remains in force. Do not add or run test harnesses, unit/integration/end-to-end tests, Playwright test mode, ad hoc exploit scripts, or typecheck-only gates unless Ray explicitly changes that policy for the current work.
