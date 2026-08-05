@@ -274,7 +274,7 @@ function InlineDescriptionEditor({ target }: { target: DescriptionTarget }) {
         onChange={(event) => { setValue(event.target.value); setDirty(true); }}
         placeholder="Add a description…"
         maxLength={5000}
-        className="min-h-[5rem] w-full resize-none border-0 bg-transparent p-0 text-xs leading-relaxed text-white shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+        className="min-h-[5rem] w-full resize-none border-0 bg-transparent p-0 text-xs leading-relaxed md:text-xs text-white shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
       />
       {dirty ? (
         <div className="flex items-center justify-end gap-2">
