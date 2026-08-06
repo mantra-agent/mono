@@ -74,7 +74,7 @@ function assertSafeInputs(input: SetNpmPackageSpecInput): void {
     throw new Error("invalid_repository_directory");
   }
   if (!SAFE_RELATIVE_PATH.test(input.manifestPath) || basename(input.manifestPath) !== "package.json") {
-    throw new Error("nested_package_manifest_required");
+    throw new Error("package_manifest_required");
   }
   if (!NPM_DEPENDENCY_SECTIONS.includes(input.section)) {
     throw new Error("unsupported_dependency_section");
@@ -173,15 +173,24 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
 
   const manifestPath = resolve(repositoryRoot, input.manifestPath);
   const packageRoot = dirname(manifestPath);
-  if (packageRoot === repositoryRoot) throw new Error("nested_package_manifest_required");
-  if (!manifestPath.startsWith(`${repositoryRoot}${sep}`)) throw new Error("manifest_outside_repository");
+  if (manifestPath !== join(repositoryRoot, "package.json") && !manifestPath.startsWith(`${repositoryRoot}${sep}`)) {
+    throw new Error("manifest_outside_repository");
+  }
 
   const lockfilePath = join(packageRoot, "package-lock.json");
   const packageNodeModules = join(packageRoot, "node_modules");
+  const isRepositoryRootPackage = packageRoot === repositoryRoot;
   await assertRegularFileInsideRepository(manifestPath, repositoryRoot, "manifest");
   await assertRegularFileInsideRepository(lockfilePath, repositoryRoot, "lockfile");
   await assertSafeProjectNpmConfig(packageRoot, repositoryRoot);
-  if (await pathExists(packageNodeModules)) throw new Error("package_node_modules_must_be_absent");
+  if (await pathExists(packageNodeModules)) {
+    if (!isRepositoryRootPackage) throw new Error("package_node_modules_must_be_absent");
+    const stats = await lstat(packageNodeModules);
+    const canonicalNodeModules = await realpath(packageNodeModules);
+    if (!stats.isSymbolicLink() || canonicalNodeModules !== resolve(WORKSPACE_DIR, "node_modules")) {
+      throw new Error("repository_root_node_modules_must_use_immutable_toolchain");
+    }
+  }
 
   const originalManifest = await readFile(manifestPath, "utf-8");
   const originalLockfile = await readFile(lockfilePath, "utf-8");
@@ -296,7 +305,9 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
     if (!mutationCommitted) {
       await restoreFile(manifestPath, originalManifest);
       await restoreFile(lockfilePath, originalLockfile);
-      if (await pathExists(packageNodeModules)) await rm(packageNodeModules, { recursive: true, force: true });
+      if (!isRepositoryRootPackage && await pathExists(packageNodeModules)) {
+        await rm(packageNodeModules, { recursive: true, force: true });
+      }
     }
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
   }
