@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/select";
 
 import { Switch } from "@/components/ui/switch";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Slider } from "@/components/ui/slider";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { cn } from "@/lib/utils";
@@ -52,7 +53,7 @@ import {
   RefreshCw,
   Settings,
   ChevronRight,
-  Clock,
+  MoreHorizontal,
   Hash,
   Play,
   Pause,
@@ -2181,7 +2182,7 @@ function TwitterAccountsSection() {
 }
 
 
-function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }) {
+function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oauthConfigured: boolean; drivePickerConfigured: boolean }) {
   const { toast } = useToast();
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedVaultId, setSelectedVaultId] = useState("");
@@ -2199,7 +2200,6 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
       id: string;
       email: string;
       label: string;
-      addedAt: string;
       scopes?: { hasGmailRead: boolean; hasSend: boolean; hasDrive?: boolean; missingScopes?: string[] };
       missingScopes?: string[];
       healthy?: boolean;
@@ -2347,7 +2347,10 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
         <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-no-google-accounts">
           No Google accounts connected.
         </p>
-      ) : accounts.map((account) => {
+      ) : (
+        <div className="space-y-0">
+          <div className="px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Accounts</div>
+          {accounts.map((account) => {
         const missingScopes = account.missingScopes || account.scopes?.missingScopes || [];
         const needsReauth = missingScopes.length > 0 || Boolean(account.scopes && !account.scopes.hasGmailRead);
         const tokenExpired = account.healthy === false;
@@ -2369,6 +2372,24 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
             label={account.email}
             initialOpen={showReauth || vaultRequired}
             testIdPrefix={`google-account-${account.id}`}
+            expanderRight
+            actions={(
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="mr-1 h-8 w-8 text-muted-foreground" aria-label={`Actions for ${account.email}`} data-testid={`button-google-account-actions-${account.id}`}>
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => startOAuth(permAccount?.vaultId || vaults[0]?.id)} disabled={!permAccount?.vaultId && vaults.length === 0}>
+                    <RefreshCw className="mr-2 h-4 w-4" /> Reconnect
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => { setAccountPendingRemoval(account); setRemovalConfirmation(""); }}>
+                    <Trash2 className="mr-2 h-4 w-4" /> Remove
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           >
             <ProfileTreeRow label={<span>Status</span>} icon={statusIcon} hasValue showEmpty mobileLayout="inline" testId={`row-google-status-${account.id}`}>
               <span className={cn(showReauth && "text-destructive", isHealthy && "text-active")}>{status}</span>
@@ -2377,14 +2398,13 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
               {permAccount?.vault ? (
                 <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} />{permAccount.vault.name}</span>
               ) : (
-                <span className="text-muted-foreground">Not assigned</span>
+                <button type="button" className="text-cta hover:text-cta/80" onClick={() => setEditingVaultAccountId(permAccount?.id ?? null)} disabled={!permAccount} data-testid={`button-assign-google-vault-${account.id}`}>
+                  Not Assigned
+                </button>
               )}
             </ProfileTreeRow>
             <ProfileTreeRow label={<span>Drive</span>} icon={<HardDrive className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId={`row-google-drive-${account.id}`}>
               <span>{account.scopes?.hasDrive ? "Connected" : "Reconnect to enable"}</span>
-            </ProfileTreeRow>
-            <ProfileTreeRow label={<span>Added</span>} icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId={`row-google-added-${account.id}`}>
-              <span>{new Date(account.addedAt).toLocaleDateString()}</span>
             </ProfileTreeRow>
             <div className="min-w-0 space-y-4 px-2 py-1.5 pl-8">
                 <div className="flex flex-wrap items-center gap-2">
@@ -2452,9 +2472,20 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                   </p>
                 ) : null}
             </div>
+            {permAccount?.vaultId ? (
+              <DriveSection
+                vaultId={permAccount.vaultId}
+                connectedAccountId={permAccount.accountId}
+                drivePickerConfigured={drivePickerConfigured}
+                hasDriveScope={Boolean(account.scopes?.hasDrive)}
+                onReconnect={() => startOAuth(permAccount.vaultId!)}
+              />
+            ) : null}
           </IntegrationTreeSection>
         );
-      })}
+          })}
+        </div>
+      )}
 
       <AlertDialog
         open={Boolean(accountPendingRemoval)}
@@ -2579,18 +2610,7 @@ function GoogleDetail() {
 
   return (
     <div className="min-w-0 space-y-2">
-      <GoogleAccountsSection oauthConfigured={oauthConfigured} />
-      {oauthConfigured && (
-        <IntegrationTreeSection label="Drive">
-          <DriveSection
-            vaultId={activeVaultId ?? undefined}
-            connectedAccountId={driveAccount?.id}
-            drivePickerConfigured={gmailStatus?.drivePickerConfigured !== false}
-            hasDriveScope={Boolean(driveAccount?.scopes?.hasDrive)}
-            onReconnect={reconnectGoogle}
-          />
-        </IntegrationTreeSection>
-      )}
+      <GoogleAccountsSection oauthConfigured={oauthConfigured} drivePickerConfigured={gmailStatus?.drivePickerConfigured !== false} />
     </div>
   );
 }
@@ -3193,23 +3213,31 @@ function IntegrationTreeSection({
   children,
   initialOpen = false,
   testIdPrefix = "recall",
+  actions,
+  expanderRight = false,
 }: {
   label: string;
   children: React.ReactNode;
   initialOpen?: boolean;
   testIdPrefix?: string;
+  actions?: React.ReactNode;
+  expanderRight?: boolean;
 }) {
   const [open, setOpen] = useState(initialOpen);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger
-        className="flex min-h-11 w-full items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate"
-        data-testid={`button-${testIdPrefix}-section-${label.toLowerCase().replaceAll(" ", "-")}`}
-      >
-        <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
-        {label}
-      </CollapsibleTrigger>
+      <div className="flex items-center">
+        <CollapsibleTrigger
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate"
+          data-testid={`button-${testIdPrefix}-section-${label.toLowerCase().replaceAll(" ", "-")}`}
+        >
+          {!expanderRight ? <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} /> : null}
+          <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+          {expanderRight ? <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} /> : null}
+        </CollapsibleTrigger>
+        {actions}
+      </div>
       <CollapsibleContent>
         <div className="mt-0 space-y-0">{children}</div>
       </CollapsibleContent>

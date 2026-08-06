@@ -27,8 +27,9 @@ export function registerDriveResourceRoutes(app: Express) {
   app.get("/api/drive/resources", async (req, res) => {
     try {
       const vaultId = typeof req.query.vaultId === "string" ? req.query.vaultId : "";
+      const connectedAccountId = typeof req.query.connectedAccountId === "string" ? req.query.connectedAccountId : undefined;
       if (!vaultId) throw Object.assign(new Error("vaultId is required"), { status: 400 });
-      res.json({ resources: await driveResourceService.list(vaultId) });
+      res.json({ resources: await driveResourceService.list(vaultId, connectedAccountId) });
     } catch (error) {
       handleError(res, error, "Failed to list drive resources");
     }

@@ -65,12 +65,16 @@ export class DriveResourceService {
    * Do not filter binds by principal.accountId — that hid shared-vault grantees
    * (Step 11 under-permissive gap).
    */
-  async list(vaultId: string): Promise<DriveResourceRow[]> {
+  async list(vaultId: string, connectedAccountId?: string): Promise<DriveResourceRow[]> {
     await this.assertVaultAccess(vaultId, "read");
     return db
       .select()
       .from(driveResources)
-      .where(eq(driveResources.vaultId, vaultId))
+      .where(
+        connectedAccountId
+          ? and(eq(driveResources.vaultId, vaultId), eq(driveResources.connectedAccountId, connectedAccountId))
+          : eq(driveResources.vaultId, vaultId),
+      )
       .orderBy(driveResources.name);
   }
 
