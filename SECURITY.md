@@ -1,3 +1,11 @@
+<!-- 2026-08-06 GitNexus exact-identifier ranking repair:
+- Assets/data: repository symbol names, file paths, graph relationships, and code-query text (S1 internal engineering metadata); no user content or new persistence.
+- Flow/boundary: authenticated code.query -> GitNexus semantic/lexical producer -> ranked symbol response. Tool authority, repository scope, and graph access are unchanged.
+- Threats: crafted query text causing Cypher alteration remains a pre-existing injection risk in lexical query construction; exact ranking could also amplify path disclosure if authorization were bypassed.
+- Controls/owner: existing code-tool authorization and environment-bound index remain canonical; this repair only performs deterministic in-memory comparison after retrieval, introduces no command/network execution, and preserves bounded result limits. Owner Platform Engineering; injection hardening remains separately owned and is not widened here.
+- Residual: exact-match scoring is case-insensitive and recognizes exact symbol names, full paths, and exact TypeScript basenames; extensionless non-TypeScript files rely on exact basename/path equality. Severity low for this bounded ranking-only change; SLA satisfied in this PR.
+-->
+
 <!-- 2026-08-06 bounded Drive Office text extraction:
 - Assets/data: user-selected uploaded DOCX/XLSX bytes (S2), extracted UTF-8 text, encrypted Drive archive envelopes, source fingerprints, and bounded warning metadata. PDF handling is unchanged and out of scope.
 - Flow/boundary: principal/vault/bind authorization in FilesApi -> full provider download -> file-text-extraction (DOCX canonical parser or XLSX ZIP/XML-to-CSV) -> AES-GCM archive + indexed_content; failed extraction returns to the existing base64 archive path.
