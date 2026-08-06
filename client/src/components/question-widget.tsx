@@ -21,6 +21,16 @@ export interface QuestionWidgetPrompt extends QuestionPrompt {
   toolCallId: string;
 }
 
+export interface QuestionRenderProvenance {
+  messageListInstanceId: string;
+  historical: boolean;
+  carrierMessageId: string;
+  source: "persisted" | "streaming";
+  segmentIndex: number;
+  stepIndex: number;
+  occurrence: number;
+}
+
 type PrincipleListItem = {
   id: string;
   title: string;
@@ -186,11 +196,13 @@ export function QuestionWidget({
   response,
   onSubmit,
   onCancel,
+  renderProvenance,
 }: {
   prompt: QuestionWidgetPrompt;
   response?: QuestionResponseMeta;
   onSubmit: (response: QuestionResponseMeta) => Promise<QuestionSubmitResult | boolean>;
   onCancel?: () => Promise<boolean>;
+  renderProvenance?: QuestionRenderProvenance;
 }) {
   const recommendation = prompt.recommendation;
   const [selected, setSelected] = useState<string[]>(
@@ -243,12 +255,14 @@ export function QuestionWidget({
     log.info("QUESTION_TRACE:WIDGET_MOUNT", {
       widgetInstanceId: widgetInstanceIdRef.current,
       questionToolCallId: prompt.toolCallId,
+      renderProvenance: renderProvenance ?? null,
       mountedAt: Date.now(),
     });
     return () => {
       log.info("QUESTION_TRACE:WIDGET_UNMOUNT", {
         widgetInstanceId: widgetInstanceIdRef.current,
         questionToolCallId: prompt.toolCallId,
+        renderProvenance: renderProvenance ?? null,
         ...latestWidgetStateRef.current,
         unmountedAt: Date.now(),
       });

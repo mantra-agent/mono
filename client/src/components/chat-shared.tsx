@@ -164,7 +164,12 @@ import { useToast } from "@/hooks/use-toast";
 import { ReferenceText } from "@/components/references/reference-text";
 import type { ReferenceSurface } from "@/components/references/reference-renderer";
 import { EmailDraftWidget } from "@/components/email-draft-widget";
-import { QuestionWidget, questionPromptFromToolCall } from "@/components/question-widget";
+import {
+  QuestionWidget,
+  questionPromptFromToolCall,
+  type QuestionRenderProvenance,
+  type QuestionWidgetPrompt,
+} from "@/components/question-widget";
 import { PlanWidget } from "@/components/plan-widget";
 import { WorkflowWidget } from "@/components/workflow-widget";
 import type { WorkflowWidgetRun } from "@/components/workflow-shared";
@@ -2665,6 +2670,8 @@ export const ChatTurn = memo(function ChatTurn({
   isLast,
   streaming,
   sessionKey,
+  messageListInstanceId,
+  historical = false,
   compactReferences = false,
   suppressedEmailDraftIds,
   suppressedQuestionToolCallIds,
@@ -2681,6 +2688,8 @@ export const ChatTurn = memo(function ChatTurn({
   isLast: boolean;
   streaming?: StreamingContent;
   sessionKey?: string | null;
+  messageListInstanceId: string;
+  historical?: boolean;
   compactReferences?: boolean;
   suppressedEmailDraftIds?: string;
   suppressedQuestionToolCallIds?: string;
@@ -2783,17 +2792,39 @@ export const ChatTurn = memo(function ChatTurn({
   );
   const hasUnpromotedDraftWidget = unpromotedDraftIds.length > 0;
   const failedGmailDraftSteps = gmailDraftFailureSteps(segments);
-  const questionPrompts = segments.flatMap((segment) =>
-    segment.type === "timeline"
-      ? segment.steps.flatMap((step) => {
-          const prompt = questionPromptFromToolCall(step);
-          return prompt ? [prompt] : [];
-        })
-      : [],
-  );
+  const questionPromptOccurrences = useMemo(() => {
+    const occurrenceByToolCallId = new Map<string, number>();
+    const occurrences: Array<{
+      prompt: QuestionWidgetPrompt;
+      renderProvenance: QuestionRenderProvenance;
+    }> = [];
+    segments.forEach((segment, segmentIndex) => {
+      if (segment.type !== "timeline") return;
+      segment.steps.forEach((step, stepIndex) => {
+        const prompt = questionPromptFromToolCall(step);
+        if (!prompt) return;
+        const occurrence = (occurrenceByToolCallId.get(prompt.toolCallId) ?? 0) + 1;
+        occurrenceByToolCallId.set(prompt.toolCallId, occurrence);
+        occurrences.push({
+          prompt,
+          renderProvenance: {
+            messageListInstanceId,
+            historical,
+            carrierMessageId: message.id,
+            source: hasStreamingSegments ? "streaming" : "persisted",
+            segmentIndex,
+            stepIndex,
+            occurrence,
+          },
+        });
+      });
+    });
+    return occurrences;
+  }, [segments, messageListInstanceId, historical, message.id, hasStreamingSegments]);
+  const lastQuestionCandidateSignatureRef = useRef<string | null>(null);
   useEffect(() => {
-    if (questionPrompts.length === 0) return;
-    const candidates = questionPrompts.map((prompt) => {
+    if (questionPromptOccurrences.length === 0) return;
+    const candidates = questionPromptOccurrences.map(({ prompt, renderProvenance }) => {
       const hasResponse = Boolean(questionResponses?.has(prompt.toolCallId));
       const isActive = prompt.toolCallId === activeQuestionToolCallId;
       const suppressed = suppressedQuestionIds.has(prompt.toolCallId);
@@ -2806,12 +2837,15 @@ export const ChatTurn = memo(function ChatTurn({
         hasResponse,
         willRender,
         selectedOptionIds: questionResponses?.get(prompt.toolCallId)?.selectedOptionIds ?? null,
+        renderProvenance,
       };
     });
     if (!candidates.some((c) => c.willRender || c.hasResponse || c.isActive || c.suppressed)) {
       return;
     }
-    log.debug("QUESTION_WIDGET:CHATTURN_CANDIDATES", {
+    const trace = {
+      messageListInstanceId,
+      historical,
       messageId: message.id,
       messageRole: message.role,
       isLast,
@@ -2821,13 +2855,19 @@ export const ChatTurn = memo(function ChatTurn({
       suppressedQuestionToolCallIds: suppressedQuestionToolCallIds ?? null,
       inlineQuestionResponseToolCallId: message.questionResponse?.questionToolCallId ?? null,
       candidates,
-    });
+    };
+    const signature = JSON.stringify(trace);
+    if (lastQuestionCandidateSignatureRef.current === signature) return;
+    lastQuestionCandidateSignatureRef.current = signature;
+    log.info("QUESTION_TRACE:CHATTURN_CANDIDATES", trace);
   }, [
-    questionPrompts,
+    questionPromptOccurrences,
     questionResponses,
     activeQuestionToolCallId,
     suppressedQuestionIds,
     suppressedQuestionToolCallIds,
+    messageListInstanceId,
+    historical,
     message.id,
     message.role,
     message.questionResponse?.questionToolCallId,
@@ -3152,19 +3192,20 @@ export const ChatTurn = memo(function ChatTurn({
             {layer <= 1 && failedGmailDraftSteps.map((step) => (
               <GmailDraftFailureNotice key={`gmail-draft-error-${step.id}`} step={step} />
             ))}
-            {questionPrompts
-              .filter((prompt) =>
+            {questionPromptOccurrences
+              .filter(({ prompt }) =>
                 !suppressedQuestionIds.has(prompt.toolCallId) &&
                 (prompt.toolCallId === activeQuestionToolCallId ||
                   questionResponses?.has(prompt.toolCallId)),
               )
-              .map((prompt) => (
+              .map(({ prompt, renderProvenance }) => (
                 <QuestionWidget
-                  key={prompt.toolCallId}
+                  key={`${prompt.toolCallId}-${renderProvenance.segmentIndex}-${renderProvenance.stepIndex}`}
                   prompt={prompt}
                   response={questionResponses?.get(prompt.toolCallId)}
                   onSubmit={onQuestionSubmit}
                   onCancel={onQuestionCancel}
+                  renderProvenance={renderProvenance}
                 />
               ))}
             {layer > 0 && workflowWidgetIds.map((id) => (

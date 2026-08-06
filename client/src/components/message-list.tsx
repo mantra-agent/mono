@@ -42,7 +42,6 @@ function draftIdsForSavedMessage(msg: Message): string[] {
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("MessageList");
-const lastQuestionOwnershipSignatureBySession = new Map<string, string>();
 
 interface MessageListProps {
   messages: Message[];
@@ -249,6 +248,11 @@ export function MessageList({
   onQuestionCancel,
   historical = false,
 }: MessageListProps) {
+  const messageListInstanceIdRef = useRef(
+    `message-list-${Math.random().toString(36).slice(2, 10)}`,
+  );
+  const messageListInstanceId = messageListInstanceIdRef.current;
+  const lastQuestionOwnershipSignatureRef = useRef<string | null>(null);
   const { layer } = useVisibilityLayer();
   const liveBlocks = useLiveSessionBlocks(historical ? null : activeSession);
   const childBlocks = historical ? [] : liveBlocks.childBlocks;
@@ -878,10 +882,11 @@ export function MessageList({
     questionOwnerByToolCallId.size > 0 ||
     (questionResponses?.size ?? 0) > 0
   ) {
-    const signatureKey = activeSession ?? "no-session";
-    if (lastQuestionOwnershipSignatureBySession.get(signatureKey) !== questionOwnershipSignature) {
-      lastQuestionOwnershipSignatureBySession.set(signatureKey, questionOwnershipSignature);
+    if (lastQuestionOwnershipSignatureRef.current !== questionOwnershipSignature) {
+      lastQuestionOwnershipSignatureRef.current = questionOwnershipSignature;
       log.info("QUESTION_TRACE:RENDER_AUTHORITY", {
+        messageListInstanceId,
+        historical,
         activeSession,
         streamingTargetIdx,
         streamingTargetMessageId:
@@ -1029,6 +1034,8 @@ export function MessageList({
         isLast={isLast}
         streaming={isStreamingTarget ? effectiveStreaming : undefined}
         sessionKey={sessionKey ?? undefined}
+        messageListInstanceId={messageListInstanceId}
+        historical={historical}
         compactReferences={compactReferences}
         suppressedEmailDraftIds={suppressed && suppressed.length > 0 ? suppressed.join("|") : undefined}
         suppressedQuestionToolCallIds={suppressedQuestionIds && suppressedQuestionIds.length > 0 ? suppressedQuestionIds.join("|") : undefined}
