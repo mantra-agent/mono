@@ -2753,6 +2753,10 @@ export class AgentExecutor extends EventEmitter {
     startTime: number;
     modelString: string;
     maxTokens: number;
+    /** Reserve value for getContextRequestBudget (explicit config or maxTokens). */
+    outputReserveTokens: number;
+    /** True when outputReserveTokens came from an explicit per-tier maxOutputTokens. */
+    outputReserveIsExplicit: boolean;
     thinkingBudget: number;
     thinking: ResolvedThinking;
     routingTier: string;
@@ -3052,7 +3056,20 @@ export class AgentExecutor extends EventEmitter {
       persona,
     });
 
-    return { runId, abortController, startTime, modelString, maxTokens, thinkingBudget, thinking, routingTier, routingDecision, ctx };
+    return {
+      runId,
+      abortController,
+      startTime,
+      modelString,
+      maxTokens,
+      outputReserveTokens,
+      outputReserveIsExplicit,
+      thinkingBudget,
+      thinking,
+      routingTier,
+      routingDecision,
+      ctx,
+    };
   }
 
   private async handleEmergencyCompaction(
@@ -4180,7 +4197,16 @@ export class AgentExecutor extends EventEmitter {
   async run(options: ExecutorRunOptions): Promise<ExecutorRunResult> {
     const initialized = await this.initializeRun(options);
     const { runId, abortController, startTime, ctx } = initialized;
-    let { modelString, maxTokens, thinkingBudget, thinking, routingTier, routingDecision } = initialized;
+    let {
+      modelString,
+      maxTokens,
+      outputReserveTokens,
+      outputReserveIsExplicit,
+      thinkingBudget,
+      thinking,
+      routingTier,
+      routingDecision,
+    } = initialized;
 
     const messages = [...options.messages];
     let hasRunStage2 = false;
