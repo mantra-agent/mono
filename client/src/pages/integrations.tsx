@@ -2187,7 +2187,6 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
   const { toast } = useToast();
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedVaultId, setSelectedVaultId] = useState("");
-  const [editingVaultAccountId, setEditingVaultAccountId] = useState<string | null>(null);
   const [accountPendingRemoval, setAccountPendingRemoval] = useState<{ id: string; email: string } | null>(null);
   const [removalConfirmation, setRemovalConfirmation] = useState("");
   const { vaults, activeVaultId } = useVaults();
@@ -2375,6 +2374,9 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
             initialOpen={showReauth || vaultRequired}
             testIdPrefix={`google-account-${account.id}`}
             expanderRight
+            variant="item"
+            icon={<Mail className="h-3.5 w-3.5" />}
+            persistKey={`google-account-${account.id}`}
             actions={(
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2411,11 +2413,9 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
               <ProfileTreeRow label={<span>Vault</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(permAccount?.vault)} showEmpty mobileLayout="inline" testId={`row-google-vault-${account.id}`}>
                 {permAccount?.vault ? (
                   <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} />{permAccount.vault.name}</span>
-                ) : editingVaultAccountId === account.id && permAccount ? (
+                ) : permAccount && vaults.length > 0 ? (
                   <Select
-                    value={selectedVaultId}
                     onValueChange={async (vaultId) => {
-                      setSelectedVaultId(vaultId);
                       try {
                         await apiRequest("PUT", `/api/connected-accounts/${permAccount.accountId}/vault`, {
                           vaultId,
@@ -2423,7 +2423,6 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
                         queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
                         queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
                         queryClient.invalidateQueries({ queryKey: ["/api/gmail/status"] });
-                        setEditingVaultAccountId(null);
                         toast({ title: "Vault assigned" });
                       } catch (error) {
                         const message = error instanceof Error ? error.message : "Unknown error";
@@ -2431,8 +2430,8 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
                       }
                     }}
                   >
-                    <SelectTrigger className="h-8 w-44" aria-label="Select Vault" data-testid={`select-assign-google-vault-${account.id}`}>
-                      <SelectValue placeholder="Select Vault" />
+                    <SelectTrigger className="h-8 w-44" aria-label="Assign vault" data-testid={`select-assign-google-vault-${account.id}`}>
+                      <SelectValue placeholder="Assign" />
                     </SelectTrigger>
                     <SelectContent>
                       {vaults.map((vault) => (
@@ -2441,18 +2440,7 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
                     </SelectContent>
                   </Select>
                 ) : (
-                  <button
-                    type="button"
-                    className="text-cta hover:text-cta/80 disabled:pointer-events-none disabled:opacity-50"
-                    onClick={() => {
-                      setSelectedVaultId(activeVaultId || vaults[0]?.id || "");
-                      setEditingVaultAccountId(account.id);
-                    }}
-                    disabled={!permAccount || vaults.length === 0}
-                    data-testid={`button-assign-google-vault-${account.id}`}
-                  >
-                    Not Assigned
-                  </button>
+                  <span className="text-muted-foreground">—</span>
                 )}
               </ProfileTreeRow>
             </HierarchyTreeRow>
@@ -3212,6 +3200,9 @@ function IntegrationTreeSection({
   testIdPrefix = "recall",
   actions,
   expanderRight = false,
+  icon,
+  variant = "section",
+  persistKey,
 }: {
   label: string;
   children: React.ReactNode;
@@ -3219,17 +3210,40 @@ function IntegrationTreeSection({
   testIdPrefix?: string;
   actions?: React.ReactNode;
   expanderRight?: boolean;
+  icon?: React.ReactNode;
+  variant?: "section" | "item";
+  persistKey?: string;
 }) {
-  const [open, setOpen] = useState(initialOpen);
+  const storageKey = persistKey ? `integrations:section-open:${persistKey}` : null;
+  const [open, setOpen] = useState(() => {
+    if (storageKey && typeof window !== "undefined") {
+      const stored = window.localStorage.getItem(storageKey);
+      if (stored === "1") return true;
+      if (stored === "0") return false;
+    }
+    return initialOpen;
+  });
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (storageKey && typeof window !== "undefined") {
+      window.localStorage.setItem(storageKey, next ? "1" : "0");
+    }
+  };
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
+    <Collapsible open={open} onOpenChange={handleOpenChange}>
       <div className="flex items-center">
         <CollapsibleTrigger
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate"
+          className={cn(
+            "flex min-h-11 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-2 hover-elevate",
+            variant === "item"
+              ? "text-sm font-medium text-foreground"
+              : "text-xs font-bold uppercase tracking-wider text-muted-foreground",
+          )}
           data-testid={`button-${testIdPrefix}-section-${label.toLowerCase().replaceAll(" ", "-")}`}
         >
           {!expanderRight ? <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} /> : null}
+          {icon ? <span className="shrink-0 text-muted-foreground">{icon}</span> : null}
           <span className="min-w-0 flex-1 truncate text-left">{label}</span>
           {expanderRight ? <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} /> : null}
         </CollapsibleTrigger>
