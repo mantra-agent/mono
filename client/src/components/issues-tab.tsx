@@ -22,7 +22,7 @@ import { useTimezone, formatDate } from "@/hooks/use-timezone";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import {
-  AlertTriangle,
+  CircleX,
   ChevronRight,
   Circle,
   CircleCheck,
@@ -151,9 +151,18 @@ function ErrorTreeRow({
   error: AggregatedApplicationError;
   onDiscuss: () => void;
 }) {
+  const { timezone } = useTimezone();
   const source = error.sourceFile
     ? `${error.sourceFile}${error.sourceLine ? `:${error.sourceLine}` : ""}`
-    : error.sourceSite || "Source unavailable";
+    : null;
+  const details = [
+    ["Identity", error.errorIdentity],
+    ["Source", source],
+    ["Logger / site", [error.sourceSite, error.errorIdentity.split(":", 1)[0]].filter(Boolean).join(" · ")],
+    ["First seen", formatDate(error.firstSeenAt, timezone)],
+    ["Last seen", formatDate(error.lastSeenAt, timezone)],
+    ["Count", error.occurrenceCount.toLocaleString()],
+  ].filter((detail): detail is [string, string] => typeof detail[1] === "string" && detail[1].length > 0);
 
   return (
     <ProfileTreeRow
@@ -162,12 +171,22 @@ function ErrorTreeRow({
           {error.errorIdentity}
         </span>
       )}
-      icon={<AlertTriangle className="h-3.5 w-3.5 text-amber-500" />}
+      icon={<CircleX className="h-3.5 w-3.5 text-destructive" />}
       hasValue
       showEmpty
       mobileLayout="inline"
       menuVisibility="always"
       testId={`error-item-${error.fingerprint}`}
+      expandedContent={(
+        <dl className="grid gap-1.5 text-xs">
+          {details.map(([label, value]) => (
+            <div key={label} className="grid grid-cols-[5rem_minmax(0,1fr)] gap-2">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="min-w-0 break-words text-foreground">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
       menuContent={(
         <DropdownMenuItem
           onSelect={(event) => {
@@ -181,8 +200,8 @@ function ErrorTreeRow({
         </DropdownMenuItem>
       )}
     >
-      <span className="truncate text-xs text-muted-foreground" title={source}>
-        {error.occurrenceCount} occurrence{error.occurrenceCount === 1 ? "" : "s"} · {source}
+      <span className="truncate text-xs tabular-nums text-muted-foreground">
+        {error.occurrenceCount.toLocaleString()}
       </span>
     </ProfileTreeRow>
   );
