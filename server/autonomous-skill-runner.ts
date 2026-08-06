@@ -155,6 +155,8 @@ async function persistExecutorResult(
     arguments?: Record<string, unknown>;
     result?: unknown;
     error?: string | Record<string, unknown>;
+    failureKind?: import("@shared/tool-failure").ToolFailureKind;
+    failureCode?: string;
     status: string;
     outcome: import("./agent-executor").ToolOutcome;
   }> | undefined;
@@ -167,6 +169,7 @@ async function persistExecutorResult(
       result: tc.result,
       error: tc.error && typeof tc.error !== "boolean" ? String(tc.error) : undefined,
       ...(tc.failureKind ? { failureKind: tc.failureKind } : {}),
+      ...(tc.failureCode ? { failureCode: tc.failureCode } : {}),
       status: tc.error ? "error" : "done",
       outcome: tc.outcome,
     }));

@@ -1095,5 +1095,7 @@ export interface ToolCallInfo {
   error?: string | Record<string, unknown>;
   /** Structured failure kind for UI tone (permission vs actual error). */
   failureKind?: import("../tool-failure").ToolFailureKind;
+  /** Stable producer code for reliability filtering and trend analysis. */
+  failureCode?: string;
   parentId?: string;
 }

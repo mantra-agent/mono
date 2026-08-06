@@ -311,6 +311,8 @@ export interface ExecutorRunResult {
     outcome: ToolOutcome;
     error?: boolean;
     failureKind?: import("@shared/tool-failure").ToolFailureKind;
+    /** Stable producer code preserved for reliability filtering and trend analysis. */
+    failureCode?: string;
     durationMs: number;
     parentId?: string;
   }>;
@@ -2501,6 +2503,7 @@ export class AgentExecutor extends EventEmitter {
       outcome,
       error: error || undefined,
       ...(failureKind ? { failureKind } : {}),
+      ...(failure?.code ? { failureCode: failure.code } : {}),
       durationMs,
       parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}`,
     });

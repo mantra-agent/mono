@@ -2882,6 +2882,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             arguments?: Record<string, unknown>;
             result?: unknown;
             error?: string;
+            failureKind?: import("@shared/tool-failure").ToolFailureKind;
+            failureCode?: string;
             status: string;
             outcome: import("../../agent-executor").ToolOutcome;
             parentId?: string;
@@ -2898,6 +2900,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               ? String(tc.error)
               : undefined,
           ...(tc.failureKind ? { failureKind: tc.failureKind } : {}),
+          ...(tc.failureCode ? { failureCode: tc.failureCode } : {}),
           status: tc.error ? "error" : "done",
           outcome: tc.outcome,
           parentId: tc.parentId,
