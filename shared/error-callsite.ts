@@ -117,7 +117,18 @@ export function deriveSafeErrorClassifier(input: {
   const directError = input.error;
   const nestedFromArgs = (input.args ?? [])
     .map((arg) => asRecord(arg))
-    .find((arg) => arg && ("error" in arg || "code" in arg || "kind" in arg || "name" in arg));
+    .find(
+      (arg) =>
+        arg &&
+        ("error" in arg ||
+          "code" in arg ||
+          "kind" in arg ||
+          "name" in arg ||
+          "errorCode" in arg ||
+          "errorName" in arg ||
+          "failureCode" in arg ||
+          "failureKind" in arg),
+    );
   const nestedError = asRecord(directError)?.error ?? nestedFromArgs?.error;
   const errorLike =
     directError instanceof Error
@@ -134,7 +145,15 @@ export function deriveSafeErrorClassifier(input: {
   const explicitCode = normalizeErrorCode(
     errorLike instanceof Error && "code" in errorLike
       ? (errorLike as Error & { code?: unknown }).code
-      : errorLike?.code ?? nestedFromArgs?.code ?? nestedFromArgs?.kind ?? nestedFromArgs?.errorCode,
+      : errorLike?.code ??
+        errorLike?.failureCode ??
+        nestedFromArgs?.code ??
+        nestedFromArgs?.failureCode ??
+        nestedFromArgs?.errorCode ??
+        errorLike?.kind ??
+        errorLike?.failureKind ??
+        nestedFromArgs?.kind ??
+        nestedFromArgs?.failureKind,
   );
 
   const messageCode = codeFromMessage(input.message);
