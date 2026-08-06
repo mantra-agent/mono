@@ -1,3 +1,11 @@
+<!-- 2026-08-06 ModelClient provider-failure classifier repair:
+- Assets/data: sanitized external-provider failure envelopes (S1 operational metadata), provider/model identifiers, HTTP status, allowlisted provider codes, and aggregate error fingerprints.
+- Flow/boundary: untrusted model-provider response -> `model-client.ts` normalization -> structured server logger args -> privacy-safe application-error classifier/projection.
+- Threats: provider-controlled diagnostic text entering aggregate identity (spoofing/information disclosure), secret-bearing response bodies reaching telemetry, or distinct permanent failures collapsing into `UNCLASSIFIED` and hiding an outage (repudiation/availability).
+- Controls/owner: `model-client.ts` continues to sanitize and bound diagnostics; aggregate identity now receives only an explicit machine `errorCode`, preferring the allowlisted provider code and otherwise deriving from normalized internal failure kind plus numeric status; raw provider text remains excluded from classifier identity. Owner Model Runtime. Severity: low. SLA: immediate. Status: repaired in source, pending production build/merge.
+- Residual: providers that omit both a code and status zero group under `<kind>_unknown`; the full sanitized envelope remains available for diagnosis without widening aggregate identity.
+-->
+
 <!-- 2026-08-06 Gmail reply-all recipient repair:
 - Assets/data: cached Gmail message envelope fields (S2), connected-account sender identity, native draft To/Cc recipients, and Gmail thread identifiers.
 - Flow/boundary: principal-scoped `email_messages` lookup -> principal-visible connected Gmail sender account -> deterministic recipient derivation -> principal-scoped `EmailDraftStorage.create`.
