@@ -40,7 +40,7 @@ import {
 } from "@/components/chat-shared";
 import type { QuestionResponseMeta } from "@shared/models/chat";
 import type { SessionStreamMap, SessionStreamState } from "@/hooks/use-session-subscription";
-import { initialStreamingContent } from "@shared/streaming-types";
+import { initialStreamingContent, type StreamingContent } from "@shared/streaming-types";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { useFocusSessionOptional } from "@/hooks/use-focus-session";
 import { emitSessionListChanged, emitSessionChanged } from "@/hooks/use-data-sync";
@@ -62,6 +62,27 @@ import {
 } from "@/lib/transcript-projection";
 
 const log = createLogger("SessionTranscriptPanel");
+
+function questionToolCallIdsFromToolCalls(toolCalls: unknown): string[] {
+  if (!Array.isArray(toolCalls)) return [];
+  const ids: string[] = [];
+  for (const rawCall of toolCalls) {
+    if (!rawCall || typeof rawCall !== "object") continue;
+    const call = rawCall as Record<string, unknown>;
+    if (call.toolName === "question" && typeof call.toolCallId === "string") {
+      ids.push(call.toolCallId);
+    }
+  }
+  return ids;
+}
+
+function questionToolCallIdsFromStreaming(streaming: StreamingContent): string[] {
+  return Array.from(new Set(streaming.segments.flatMap((segment) =>
+    segment.type === "timeline"
+      ? questionToolCallIdsFromToolCalls(segment.steps)
+      : [],
+  )));
+}
 
 const ENTITY_CHIP_STYLES: Record<
   LinkedEntity["kind"],
@@ -155,6 +176,7 @@ export function SessionTranscriptPanel({
   const isAgentRunning = agentStatus?.status === "running";
   const voiceSession = useVoiceSessionOptional();
   const isWidget = mode === "widget";
+  const panelInstanceIdRef = useRef(`panel-${Math.random().toString(36).slice(2, 10)}`);
   const sessionTitleById = useMemo(
     () => Object.fromEntries(sessions.map((session) => [session.id, session.title])),
     [sessions],
@@ -429,6 +451,87 @@ export function SessionTranscriptPanel({
     displayLiveStreamRenderId,
     isStreaming,
   } = projection;
+
+  const questionProjectionTrace = useMemo(() => {
+    const persistedCarriers = displayMessages.flatMap((message) =>
+      questionToolCallIdsFromToolCalls(message.toolCalls).map((questionToolCallId) => ({
+        questionToolCallId,
+        messageId: message.id,
+        turnId: message.turnId ?? null,
+        assistantRunId: message.assistantRunId ?? null,
+      })),
+    );
+    const responseIds = Array.from(new Set(displayMessages.flatMap((message) =>
+      message.questionResponse?.questionToolCallId
+        ? [message.questionResponse.questionToolCallId]
+        : [],
+    )));
+    const rawStreamQuestionIds = questionToolCallIdsFromStreaming(rawStreaming);
+    const displayStreamQuestionIds = questionToolCallIdsFromStreaming(displayStreaming);
+    const questionIds = Array.from(new Set([
+      ...persistedCarriers.map((carrier) => carrier.questionToolCallId),
+      ...responseIds,
+      ...rawStreamQuestionIds,
+      ...displayStreamQuestionIds,
+    ])).sort();
+    return {
+      questionIds,
+      persistedCarriers,
+      responseIds,
+      rawStreamQuestionIds,
+      displayStreamQuestionIds,
+    };
+  }, [displayMessages, rawStreaming, displayStreaming]);
+  const questionProjectionSignature = JSON.stringify({
+    activeSession,
+    mode,
+    ...questionProjectionTrace,
+    subStatus: sessionSub.status,
+    subRunActive: sessionSub.runActive,
+    handoffPhase: sessionSub.handoffPhase,
+    terminalDurableRevision: sessionSub.durableRevision,
+    persistedDurableRevision: ownedSessionData?.durableRevision ?? 0,
+    frozenRenderId: frozenStreamHandoff?.renderId ?? null,
+    captureFrozen: projection.shouldCaptureFrozenHandoff,
+    clearFrozen: projection.shouldClearFrozenHandoff,
+    displayLiveStreamRenderId,
+  });
+  const previousQuestionProjectionSignatureRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (questionProjectionTrace.questionIds.length === 0) return;
+    if (previousQuestionProjectionSignatureRef.current === questionProjectionSignature) return;
+    previousQuestionProjectionSignatureRef.current = questionProjectionSignature;
+    log.info("QUESTION_TRACE:PROJECTION", {
+      panelInstanceId: panelInstanceIdRef.current,
+      activeSession,
+      mode,
+      ...questionProjectionTrace,
+      subStatus: sessionSub.status,
+      subRunActive: sessionSub.runActive,
+      handoffPhase: sessionSub.handoffPhase,
+      terminalDurableRevision: sessionSub.durableRevision,
+      persistedDurableRevision: ownedSessionData?.durableRevision ?? 0,
+      frozenRenderId: frozenStreamHandoff?.renderId ?? null,
+      captureFrozen: projection.shouldCaptureFrozenHandoff,
+      clearFrozen: projection.shouldClearFrozenHandoff,
+      displayLiveStreamRenderId,
+      tracedAt: Date.now(),
+    });
+  }, [
+    activeSession,
+    mode,
+    questionProjectionSignature,
+    questionProjectionTrace,
+    sessionSub.status,
+    sessionSub.runActive,
+    sessionSub.handoffPhase,
+    sessionSub.durableRevision,
+    ownedSessionData?.durableRevision,
+    frozenStreamHandoff?.renderId,
+    projection.shouldCaptureFrozenHandoff,
+    projection.shouldClearFrozenHandoff,
+    displayLiveStreamRenderId,
+  ]);
 
   // The visible pending turn for the optimistic user bubble
   const visiblePendingTurn = contextPendingTurn && (

@@ -42,6 +42,7 @@ function draftIdsForSavedMessage(msg: Message): string[] {
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("MessageList");
+const lastQuestionOwnershipSignatureBySession = new Map<string, string>();
 
 interface MessageListProps {
   messages: Message[];
@@ -842,6 +843,55 @@ export function MessageList({
     if (ids.length === 0) continue;
     questionToolCallIdsByMessageId.set(it.msg.id, ids);
     for (const id of ids) questionOwnerByToolCallId.set(id, it.msg.id);
+  }
+  const streamingQuestionToolCallIds = Array.from(new Set(
+    effectiveStreaming.segments.flatMap((segment) =>
+      segment.type === "timeline"
+        ? segment.steps.flatMap((step) =>
+            step.toolName === "question" && typeof step.toolCallId === "string"
+              ? [step.toolCallId]
+              : [],
+          )
+        : [],
+    ),
+  ));
+  const questionOwnershipSignature = JSON.stringify({
+    activeSession,
+    streamingTargetIdx,
+    streamingQuestionToolCallIds,
+    owners: Array.from(questionOwnerByToolCallId.entries()),
+    carriers: Array.from(questionToolCallIdsByMessageId.entries()),
+    responseIds: Array.from(questionResponses?.keys() ?? []),
+  });
+  if (
+    streamingQuestionToolCallIds.length > 0 ||
+    questionOwnerByToolCallId.size > 0 ||
+    (questionResponses?.size ?? 0) > 0
+  ) {
+    const signatureKey = activeSession ?? "no-session";
+    if (lastQuestionOwnershipSignatureBySession.get(signatureKey) !== questionOwnershipSignature) {
+      lastQuestionOwnershipSignatureBySession.set(signatureKey, questionOwnershipSignature);
+      log.info("QUESTION_TRACE:RENDER_AUTHORITY", {
+        activeSession,
+        streamingTargetIdx,
+        streamingTargetMessageId:
+          streamingTargetIdx >= 0 && items[streamingTargetIdx]?.kind === "message"
+            ? items[streamingTargetIdx].msg.id
+            : null,
+        streamingQuestionToolCallIds,
+        persistedCarriers: Array.from(questionToolCallIdsByMessageId.entries()).map(
+          ([messageId, questionToolCallIds]) => ({ messageId, questionToolCallIds }),
+        ),
+        persistedOwners: Array.from(questionOwnerByToolCallId.entries()).map(
+          ([questionToolCallId, messageId]) => ({ questionToolCallId, messageId }),
+        ),
+        responseIds: Array.from(questionResponses?.keys() ?? []),
+        liveStreamRenderId: liveStreamRenderId ?? null,
+        streamSource: effectiveStreaming.source ?? null,
+        streamTurnId: effectiveStreaming.turnId ?? null,
+        tracedAt: Date.now(),
+      });
+    }
   }
 
   const renderItem = (item: ListItem, isLast: boolean, isStreamingTarget: boolean): JSX.Element => {
