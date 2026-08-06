@@ -502,6 +502,11 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   // events. Window focus and WebSocket reconnect invalidation are recovery paths.
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<Session[]>({
     queryKey: ["/api/sessions"],
+    queryFn: async () => {
+      const response = await fetch("/api/sessions?view=primary", { credentials: "include" });
+      if (!response.ok) throw new Error(`Failed to load sessions (${response.status})`);
+      return response.json() as Promise<Session[]>;
+    },
     refetchOnWindowFocus: true,
   });
 
