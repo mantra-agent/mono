@@ -730,6 +730,78 @@ export function SessionGroupSection({
   );
 }
 
+function DeferredSessionGroup({
+  label,
+  view,
+  sessions,
+  activeSession,
+  liveVoiceConversationId,
+  onSelect,
+  onDelete,
+  onRename,
+  onArchive,
+  onTogglePin,
+  vaultById,
+  activeVaultId,
+}: {
+  label: "Past" | "Snooze" | "Archive";
+  view: "past" | "snooze" | "archive";
+  sessions: ChatSession[];
+  activeSession: string | null;
+  liveVoiceConversationId?: string | null;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+  onRename: (id: string, title: string) => void;
+  onArchive: (id: string) => void;
+  onTogglePin?: (id: string, pinned: boolean) => void;
+  vaultById: Map<string, Vault>;
+  activeVaultId: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data = [], isLoading } = useQuery<ChatSession[]>({
+    queryKey: [`/api/sessions?view=${view}`],
+    enabled: open,
+    staleTime: 30_000,
+  });
+  const combined = useMemo(() => {
+    const byId = new Map(sessions.map((session) => [session.id, session]));
+    for (const session of data) byId.set(session.id, session);
+    return [...byId.values()];
+  }, [data, sessions]);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className={cn(HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")} data-testid={`button-group-${label.toLowerCase()}`}>
+        <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+        {label}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="space-y-0 mt-0">
+          {isLoading && data.length === 0 ? (
+            <div className="flex items-center px-3 py-1.5"><Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50" /></div>
+          ) : data.map((conv) => (
+            <SessionTreeNode
+              key={conv.id}
+              conv={conv}
+              sessions={combined}
+              depth={0}
+              activeSession={activeSession}
+              liveVoiceConversationId={liveVoiceConversationId}
+              onSelect={onSelect}
+              onDelete={onDelete}
+              onRename={onRename}
+              onArchive={onArchive}
+              onTogglePin={onTogglePin}
+              vaultById={vaultById}
+              activeVaultId={activeVaultId}
+            />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 /** Autonomous sessions group at the bottom — collapsed by default, shows last 48h with Load More. */
 function AutoSessionsGroup({
   sessions,
@@ -938,6 +1010,7 @@ export function ConversationSidebar({
   }, [filteredConversations]);
 
   const groups = groupSessions(filteredConversations, { liveVoiceConversationId, recentStickyIds: recentStickyIds.current });
+  const immediateGroups = groups.filter(({ label }) => label !== "Past" && label !== "Snooze" && label !== "Archive");
 
   useEffect(() => {
     if (scrollResetKey === undefined) return;
@@ -990,22 +1063,45 @@ export function ConversationSidebar({
               <p className="text-xs text-muted-foreground">No matching sessions</p>
             </div>
           ) : (
-            groups.map((group) => (
-              <SessionGroupSection
-                key={group.label}
-                group={group}
-                sessions={sessionsWithChildCounts}
-                activeSession={activeSession}
-                liveVoiceConversationId={liveVoiceConversationId}
-                onSelect={onSelect}
-                onDelete={(id) => onDelete(id)}
-                onRename={(id, title) => onRename(id, title)}
-                onArchive={(id) => onArchive(id)}
-                onTogglePin={handleTogglePin}
-                vaultById={vaultById}
-                activeVaultId={activeVaultId}
-              />
-            ))
+            <>
+              {immediateGroups.map((group) => (
+                <SessionGroupSection
+                  key={group.label}
+                  group={group}
+                  sessions={sessionsWithChildCounts}
+                  activeSession={activeSession}
+                  liveVoiceConversationId={liveVoiceConversationId}
+                  onSelect={onSelect}
+                  onDelete={(id) => onDelete(id)}
+                  onRename={(id, title) => onRename(id, title)}
+                  onArchive={(id) => onArchive(id)}
+                  onTogglePin={handleTogglePin}
+                  vaultById={vaultById}
+                  activeVaultId={activeVaultId}
+                />
+              ))}
+              {!searchQuery.trim() && ([
+                ["Past", "past"],
+                ["Snooze", "snooze"],
+                ["Archive", "archive"],
+              ] as const).map(([label, view]) => (
+                <DeferredSessionGroup
+                  key={view}
+                  label={label}
+                  view={view}
+                  sessions={sessionsWithChildCounts}
+                  activeSession={activeSession}
+                  liveVoiceConversationId={liveVoiceConversationId}
+                  onSelect={onSelect}
+                  onDelete={onDelete}
+                  onRename={onRename}
+                  onArchive={onArchive}
+                  onTogglePin={handleTogglePin}
+                  vaultById={vaultById}
+                  activeVaultId={activeVaultId}
+                />
+              ))}
+            </>
           )}
           {/* System sessions group at the bottom */}
           {!convsLoading && vaultVisibleSessions.length > 0 && (

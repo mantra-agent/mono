@@ -472,12 +472,32 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         principal,
         all.map((session) => session.id),
       );
-      // /api/sessions is the canonical session index. It must return every
-      // persisted chat session regardless of lifecycle status; clients can
-      // choose how to render saved, streaming, idle, failed, or future states.
-      const visible = all;
+      // The session menu loads its immediately useful working set first, then
+      // requests collapsed historical sections on disclosure. Keep the
+      // unqualified route as the full canonical index for non-menu consumers.
+      const view = typeof req.query.view === "string" ? req.query.view : "all";
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1_000;
+      const isSnoozed = (session: (typeof all)[number]) => reminderMap.get(session.id)?.active === true;
+      const isPrimary = (session: (typeof all)[number]) => {
+        if (session.archivedAt || isSnoozed(session)) return false;
+        const updatedMs = new Date(session.updatedAt || session.createdAt).getTime();
+        return updatedMs >= sevenDaysAgo ||
+          session.isPinned === true ||
+          session.status === "streaming" ||
+          session.awaitingReview === true ||
+          session.awaitingQuestionResponse === true;
+      };
+      const visible = view === "primary"
+        ? all.filter(isPrimary)
+        : view === "past"
+          ? all.filter((session) => !session.archivedAt && !isSnoozed(session) && !isPrimary(session))
+          : view === "snooze"
+            ? all.filter(isSnoozed)
+            : view === "archive"
+              ? all.filter((session) => !!session.archivedAt)
+              : all;
       const allIds = new Set(all.map((s) => s.id));
-      const visibleIds = allIds;
+      const visibleIds = new Set(visible.map((s) => s.id));
       const childCounts = new Map<string, number>();
       let orphanCount = 0;
       for (const s of visible) {
