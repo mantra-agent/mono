@@ -1,5 +1,5 @@
 // Use createLogger for logging ONLY
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Loader2,
@@ -7,10 +7,10 @@ import {
   Folder,
   ChevronRight,
   ChevronDown,
-  ExternalLink,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { hexToRgba } from "@/lib/vault-title-color";
 
 /**
  * Read-only connector tree primitive.
@@ -54,18 +54,41 @@ export function resourceIcon(r: { resourceType: "file" | "folder" }) {
   );
 }
 
-function OpenLink({ href }: { href: string }) {
+function titleStyleForVault(vaultColor?: string | null): CSSProperties | undefined {
+  if (!vaultColor) return undefined;
+  const color = hexToRgba(vaultColor, 1) ?? vaultColor;
+  return { color };
+}
+
+/** File/folder title — clickable provider link when a webViewLink exists. */
+function ResourceTitle({
+  name,
+  href,
+  titleStyle,
+}: {
+  name: string;
+  href: string | null;
+  titleStyle?: CSSProperties;
+}) {
+  const className = "min-w-0 flex-1 truncate text-sm";
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className={cn(className, "hover:underline")}
+        style={titleStyle}
+        title={name}
+      >
+        {name}
+      </a>
+    );
+  }
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
-      title="Open in provider"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <ExternalLink className="h-3.5 w-3.5" />
-    </a>
+    <span className={className} style={titleStyle} title={name}>
+      {name}
+    </span>
   );
 }
 
@@ -76,14 +99,17 @@ function FolderChildren({
   provider,
   providerFileId,
   depth,
+  vaultColor,
 }: {
   vaultId: string;
   driveResourceId?: string;
   provider?: "google" | "box" | "mantra";
   providerFileId?: string;
   depth: number;
+  vaultColor?: string | null;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const titleStyle = titleStyleForVault(vaultColor);
 
   const childrenQuery = useQuery<{ children: FilesChild[]; nextPageToken: string | null }>({
     queryKey: [
@@ -160,15 +186,7 @@ function FolderChildren({
                 <span className="w-3.5 shrink-0" />
               )}
               {resourceIcon(c)}
-              <span className="min-w-0 flex-1 truncate text-sm" title={c.name}>
-                {c.name}
-              </span>
-              {c.viaFolderBind && (
-                <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  via folder
-                </span>
-              )}
-              {c.webViewLink && <OpenLink href={c.webViewLink} />}
+              <ResourceTitle name={c.name} href={c.webViewLink} titleStyle={titleStyle} />
             </div>
             {isFolder && isOpen && (
               <FolderChildren
@@ -177,6 +195,7 @@ function FolderChildren({
                 provider={c.provider}
                 providerFileId={c.providerFileId}
                 depth={depth + 1}
+                vaultColor={vaultColor}
               />
             )}
           </li>
@@ -195,12 +214,15 @@ export function DriveResourceTree({
   vaultId,
   resources,
   emptyLabel = "No files",
+  vaultColor,
 }: {
   vaultId: string;
   resources: DriveResource[];
   emptyLabel?: string;
+  vaultColor?: string | null;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const titleStyle = titleStyleForVault(vaultColor);
 
   if (resources.length === 0) {
     return (
@@ -238,10 +260,7 @@ export function DriveResourceTree({
                 <span className="w-3.5 shrink-0" />
               )}
               {resourceIcon(r)}
-              <span className="min-w-0 flex-1 truncate text-sm" title={r.name}>
-                {r.name}
-              </span>
-              {r.webViewLink && <OpenLink href={r.webViewLink} />}
+              <ResourceTitle name={r.name} href={r.webViewLink} titleStyle={titleStyle} />
             </div>
             {isFolder && isOpen && (
               <FolderChildren
@@ -250,6 +269,7 @@ export function DriveResourceTree({
                 provider={r.provider}
                 providerFileId={r.providerFileId}
                 depth={1}
+                vaultColor={vaultColor}
               />
             )}
           </li>
@@ -259,25 +279,23 @@ export function DriveResourceTree({
   );
 }
 
-/** A row in the flat cross-vault RECENT list. */
+/** A row in the flat cross-vault RECENT list (no vault badge). */
 export function RecentResourceRow({
   resource,
-  vaultName,
+  vaultColor,
 }: {
   resource: DriveResource;
-  vaultName: string;
+  vaultColor?: string | null;
 }) {
   return (
     <div className="group flex items-center gap-2 rounded px-2 py-1 hover:bg-muted/60">
       <span className="w-3.5 shrink-0" />
       {resourceIcon(resource)}
-      <span className="min-w-0 flex-1 truncate text-sm" title={resource.name}>
-        {resource.name}
-      </span>
-      <span className={cn("shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground")}>
-        {vaultName}
-      </span>
-      {resource.webViewLink && <OpenLink href={resource.webViewLink} />}
+      <ResourceTitle
+        name={resource.name}
+        href={resource.webViewLink}
+        titleStyle={titleStyleForVault(vaultColor)}
+      />
     </div>
   );
 }
