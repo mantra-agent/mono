@@ -455,12 +455,14 @@ const REGISTRY: Record<string, ModelInfo> = {
     requiresSubscription: true,
     codexModelId: "gpt-5.3-codex-spark",
   },
+  // grok-subscription rides api.x.ai with SuperGrok billing. Current windows:
+  // grok-4.5 = 500k (not the 2M Fast-family figure); grok-4.3 = 1M.
   "grok-4.5": {
     id: "grok-4.5",
     name: "Grok 4.5 (Subscription)",
     provider: "grok-subscription",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 2000000,
+    contextWindow: 500000,
     maxOutputTokens: 128000,
     reasoning: true,
     thinking: { level: "basic", description: "xAI Grok 4.5 flagship via SuperGrok subscription" },
