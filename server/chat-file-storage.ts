@@ -538,6 +538,43 @@ async function computeRootAndDepth(
   }
 }
 
+/**
+ * In-memory root/depth from an already-fetched parent map.
+ * Used by the session index path so /api/sessions does not issue one
+ * recursive ancestry SQL per row (observed multi-second N+1 under load).
+ */
+function computeRootAndDepthFromParentMap(
+  sessionId: string,
+  parentById: Map<string, string | undefined>,
+  memo: Map<string, { rootSessionId: string; depth: number }>,
+): { rootSessionId: string; depth: number } {
+  const cached = memo.get(sessionId);
+  if (cached) return cached;
+
+  const seen = new Set<string>();
+  const chain: string[] = [];
+  let current = sessionId;
+
+  while (!seen.has(current)) {
+    seen.add(current);
+    chain.push(current);
+    const parentId = parentById.get(current);
+    if (!parentId) break;
+    current = parentId;
+    if (chain.length > 128) break;
+  }
+
+  const rootSessionId = chain[chain.length - 1] || sessionId;
+  for (let i = 0; i < chain.length; i++) {
+    const id = chain[i]!;
+    memo.set(id, {
+      rootSessionId,
+      depth: chain.length - 1 - i,
+    });
+  }
+  return memo.get(sessionId) || { rootSessionId: sessionId, depth: 0 };
+}
+
 function toLastMessageRole(role: string | undefined): LastMessageRole | undefined {
   if (!role) return undefined;
   if (role === "user" || role === "assistant" || role === "system" || role === "tool") {
@@ -1258,6 +1295,17 @@ async function applySessionTreeRowsToMetadataList(
     const rows = await getSessionTreeRows(sessions.map((session) => session.id));
     if (rows.length === 0) return sessions;
     const bySessionId = new Map(rows.map((row) => [row.sessionId, row]));
+    // Parent edges from the tree table are authoritative; fall back to the
+    // metadata parent so limited index windows can still stitch local chains
+    // without one recursive SQL per session.
+    const parentById = new Map<string, string | undefined>();
+    for (const session of sessions) {
+      parentById.set(session.id, session.parentSessionId || undefined);
+    }
+    for (const row of rows) {
+      parentById.set(row.sessionId, row.parentSessionId || undefined);
+    }
+    const rootDepthMemo = new Map<string, { rootSessionId: string; depth: number }>();
     const repaired: FileSession[] = [];
     for (const session of sessions) {
       const row = bySessionId.get(session.id);
@@ -1265,35 +1313,21 @@ async function applySessionTreeRowsToMetadataList(
         repaired.push(session);
         continue;
       }
-      const { rootSessionId, depth } = await computeRootAndDepth(row.parentSessionId || undefined);
-      const repairedSession = {
+      const { rootSessionId, depth } = computeRootAndDepthFromParentMap(
+        session.id,
+        parentById,
+        rootDepthMemo,
+      );
+      repaired.push({
         ...applyTreeRowToSessionMetadata(session, row),
         rootSessionId: rootSessionId || row.parentSessionId || session.id,
         depth,
-      };
-      repaired.push(repairedSession);
-      const original = docs.find((doc) => doc.docId === session.id);
-      if (!original) continue;
-      const needsRepair =
-        session.parentSessionId !== repairedSession.parentSessionId ||
-        session.spawnReason !== repairedSession.spawnReason ||
-        session.spawnerTool !== repairedSession.spawnerTool ||
-        session.spawnerSkillRun !== repairedSession.spawnerSkillRun ||
-        session.rootSessionId !== repairedSession.rootSessionId ||
-        session.depth !== repairedSession.depth;
-      if (!needsRepair) continue;
-      await documentStorage.updateDocument("chat", session.id, {
-        metadata: {
-          ...original.metadata,
-          parentSessionId: repairedSession.parentSessionId,
-          spawnReason: repairedSession.spawnReason,
-          spawnerTool: repairedSession.spawnerTool,
-          spawnerSkillRun: repairedSession.spawnerSkillRun,
-          rootSessionId: repairedSession.rootSessionId,
-          depth: repairedSession.depth,
-        },
       });
     }
+    // Intentionally no metadata rewrite on the index read path. Persisting
+    // tree overlays here turned every /api/sessions miss into N sequential
+    // document updates and multi-second ancestry SQL under load. Create/move
+    // paths remain the writers for tree fields.
     return repaired;
   } catch (err) {
     log.warn(
