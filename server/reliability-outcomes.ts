@@ -570,12 +570,15 @@ function collectTurnFailures(
     lastCountedNotice = false;
     const timestampMs = messageTimestampMs(message);
     if (timestampMs == null || timestampMs < windowStartMs || timestampMs > windowEndMs) continue;
+    const toolCalls = Array.isArray(message.toolCalls)
+      ? (message.toolCalls as ChatToolCall[])
+      : [];
     pending = {
       timestamp: new Date(timestampMs).toISOString(),
       sessionId,
       runId: stringValue(message.assistantRunId),
       turnId: stringValue(message.turnId),
-      failedTools: asToolCalls(message.toolCalls).filter((toolCall) => toolCall.status === "error"),
+      failedTools: toolCalls.filter((toolCall) => toolCall.status === "error"),
     };
   }
 
