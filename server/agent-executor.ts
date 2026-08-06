@@ -3829,6 +3829,37 @@ export class AgentExecutor extends EventEmitter {
           awaitUserRequested: true,
         };
       }
+      // Derive convergence evidence for THIS tool batch before any branch that
+      // consumes it. The working_set_refresh continuation below reads
+      // progressEvidence, convergenceConfig, and maxRepeatedSignature; these were
+      // previously declared further down (normal path), so the refresh branch hit
+      // a lexical TDZ ("Cannot access 'progressEvidence' before initialization")
+      // on every cycle-budget-forced refresh. Computing here keeps the persona/
+      // schema/await early-returns above untouched while making the binding order
+      // honest for both the refresh branch and the normal path.
+      const batchResolvedCalls = ctx.resolvedToolCalls.slice(-unresolvedToolCalls.length);
+      const failedCalls = batchResolvedCalls.filter(tc => tc.error);
+      const convergenceConfig = getRunConvergenceConfig();
+      const progressEvidence: string[] = [];
+      let maxRepeatedSignature = 0;
+      for (const outcome of batchResolvedCalls) {
+        const signature = normalizedInvocationSignature(outcome.name, outcome.args);
+        const signatureCount = (ctx.convergence.signatureCounts.get(signature) || 0) + 1;
+        ctx.convergence.signatureCounts.set(signature, signatureCount);
+        maxRepeatedSignature = Math.max(maxRepeatedSignature, signatureCount);
+        const failed = outcome.result.startsWith("Error:");
+        if (isDurableMutation(outcome.name, outcome.args, failed)) {
+          progressEvidence.push(`durable_state:${outcome.name}:${signature}`);
+          continue;
+        }
+        if (!failed) {
+          const hash = evidenceHash(outcome.result);
+          if (!ctx.convergence.evidenceHashes.has(hash)) {
+            ctx.convergence.evidenceHashes.add(hash);
+            progressEvidence.push(`new_evidence:${outcome.name}:${hash}`);
+          }
+        }
+      }
       if (continuation === "working_set_refresh") {
         ctx.convergence.refreshCount++;
         if (progressEvidence.length === 0) ctx.convergence.noProgressRefreshes++;
@@ -3881,29 +3912,6 @@ export class AgentExecutor extends EventEmitter {
         };
       }
 
-      const batchResolvedCalls = ctx.resolvedToolCalls.slice(-unresolvedToolCalls.length);
-      const failedCalls = batchResolvedCalls.filter(tc => tc.error);
-      const convergenceConfig = getRunConvergenceConfig();
-      const progressEvidence: string[] = [];
-      let maxRepeatedSignature = 0;
-      for (const outcome of batchResolvedCalls) {
-        const signature = normalizedInvocationSignature(outcome.name, outcome.args);
-        const signatureCount = (ctx.convergence.signatureCounts.get(signature) || 0) + 1;
-        ctx.convergence.signatureCounts.set(signature, signatureCount);
-        maxRepeatedSignature = Math.max(maxRepeatedSignature, signatureCount);
-        const failed = outcome.result.startsWith("Error:");
-        if (isDurableMutation(outcome.name, outcome.args, failed)) {
-          progressEvidence.push(`durable_state:${outcome.name}:${signature}`);
-          continue;
-        }
-        if (!failed) {
-          const hash = evidenceHash(outcome.result);
-          if (!ctx.convergence.evidenceHashes.has(hash)) {
-            ctx.convergence.evidenceHashes.add(hash);
-            progressEvidence.push(`new_evidence:${outcome.name}:${hash}`);
-          }
-        }
-      }
       if (progressEvidence.length > 0) {
         ctx.convergence.noProgressCycles = 0;
         ctx.convergence.noProgressRefreshes = 0;
