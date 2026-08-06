@@ -8,7 +8,7 @@ import { withTimeout, isTimeoutError, CONTEXT_ASSEMBLY_TIMEOUT_MS } from "./time
 import { createLogger } from "./log";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { isRecapFtueSession } from "./ftue-session";
-import { getConversationRetentionBudget } from "./context-budget";
+import { getBetweenTurnFireThreshold } from "./context-budget";
 
 const log = createLogger("AgentContext");
 
@@ -104,8 +104,12 @@ function truncateConversationHistory(
   return [messages[messages.length - 1]];
 }
 
+/**
+ * Between-turn fire line on the provider window scale.
+ * Callers must compare full next-input tokens (not history-only).
+ */
 export function getBetweenTurnCompactionThreshold(contextWindow: number): number {
-  return getConversationRetentionBudget(contextWindow);
+  return getBetweenTurnFireThreshold(contextWindow);
 }
 
 type CompactableHistoryMessage = {
@@ -167,18 +171,30 @@ export async function runBetweenTurnCompaction(
   contextWindow: number,
   callerGeneration?: number,
   onActivity?: (update: CompactionActivityUpdate) => void,
+  /**
+   * Full next-input estimate when the caller already measured it (preferred).
+   * When omitted, falls back to history-only for join/retry paths that cannot
+   * assemble the envelope — production chat should always pass fullInputTokens.
+   */
+  fullInputTokens?: number,
 ): Promise<CompactionOutcome> {
-  let totalTokens = 0;
-  for (const msg of conversationHistory) {
-    totalTokens += estimateHistoryTokens(msg);
+  const threshold = getBetweenTurnCompactionThreshold(contextWindow);
+  let measuredTokens = 0;
+  if (typeof fullInputTokens === "number" && Number.isFinite(fullInputTokens)) {
+    measuredTokens = Math.max(0, Math.floor(fullInputTokens));
+  } else {
+    for (const msg of conversationHistory) {
+      measuredTokens += estimateHistoryTokens(msg);
+    }
   }
 
-  const threshold = getBetweenTurnCompactionThreshold(contextWindow);
-  if (totalTokens <= threshold) {
+  if (measuredTokens <= threshold) {
     return { outcome: "below_threshold" };
   }
 
-  log.log(`betweenTurnCompaction: triggered sessionId=${sessionId} totalTokens=${totalTokens} threshold=${threshold} messages=${conversationHistory.length}`);
+  log.log(
+    `betweenTurnCompaction: triggered sessionId=${sessionId} measuredTokens=${measuredTokens} threshold=${threshold} measurand=${typeof fullInputTokens === "number" ? "full_input" : "history_fallback"} messages=${conversationHistory.length}`,
+  );
 
   const emitActivity = (update: CompactionActivityUpdate) => {
     try {
@@ -189,18 +205,16 @@ export async function runBetweenTurnCompaction(
   };
 
   // The persisted doc is the coordinate space for the whole operation.
-  // The token trigger above is model-space (what the LLM actually saw), but
-  // the split, the archive, and the write-back all operate on the exact doc
-  // entries so losslessness and the widget counts are true by construction.
+  // Fire threshold is full-request model-space; split/archive/write-back key
+  // off durable message IDs. Landing is minimum viable live context — no
+  // history keep-budget (omit retentionTokenBudget so snapshot keeps ~2 recent).
   const { chatFileStorage } = await import("./chat-file-storage");
   const docMessages = await chatFileStorage.getMessagesBySession(sessionId);
 
   const { buildCompactionSnapshot, isCommittedContextMessage } = await import(
     "./compaction-snapshot"
   );
-  const snapshot = buildCompactionSnapshot(sessionId, docMessages, {
-    retentionTokenBudget: threshold,
-  });
+  const snapshot = buildCompactionSnapshot(sessionId, docMessages);
   if (!snapshot) return { outcome: "below_threshold" };
   const removed = [...snapshot.removedMessages];
   const boundaryIndex = removed.length;

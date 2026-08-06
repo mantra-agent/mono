@@ -63,7 +63,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   // Debug detail: input tokens, % of the true provider window, the real max, and model.
   const retentionDetail =
     contextPressure?.retentionBudget && contextPressure.contextWindow
-      ? ` · rest ${formatTokensK(contextPressure.retentionBudget)}`
+      ? ` · fire ${formatTokensK(contextPressure.retentionBudget)}`
       : "";
   const pressureDetail =
     contextPressure && contextPressure.contextWindow
@@ -92,7 +92,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
     contextPressure && contextPressure.contextWindow
       ? Math.min(contextPressure.inputLimit / scaleLimit, 1)
       : 0;
-  // Between-turn rest floor: attractor after turn-end compaction. Softer than the
+  // Between-turn fire altitude (0.3 × window, full next input). Softer than the
   // amber ladder and red cliff — same scale, different policy weight.
   const retentionRatio =
     contextPressure && contextPressure.contextWindow && contextPressure.retentionBudget

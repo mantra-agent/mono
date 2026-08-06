@@ -1524,6 +1524,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     callerGeneration?: number,
     contextBuildId?: string,
     onCompactionActivity?: (update: import("../../agent-context").CompactionActivityUpdate) => void,
+    /**
+     * Set after a full-input between-turn compact so the one re-entry does not
+     * fire again. Production callers omit this.
+     */
+    betweenTurnPass?: {
+      attempted: boolean;
+      applied: boolean;
+    },
   ): Promise<{
     messages: ExecutorMessage[];
     conversationHistory: ConversationHistoryMessage[];
@@ -1643,78 +1651,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     rebuildConversationHistory(existingMessages);
     endLoad();
 
-    let durableCompactionAttempted = false;
-    let durableCompactionApplied = false;
-    let preRunConversationTokens = 0;
-    let preRunCompactionThreshold = 0;
-
-    try {
-      const endTokens = beginSubStep("ctx_history_tokens");
-      const {
-        runBetweenTurnCompaction,
-        estimateTokens,
-        getBetweenTurnCompactionThreshold,
-      } = await import("../../agent-context");
-      const { getContextWindow } = await import("../../model-registry");
-      const bareModel = (resolvedModel || "").includes("/")
-        ? (resolvedModel || "").split("/").slice(1).join("/")
-        : resolvedModel || "";
-      const contextWindow = getContextWindow(bareModel);
-      const estimateConversationTokens = () =>
-        conversationHistory.reduce((sum, m: any) => {
-          let tokens =
-            sum +
-            estimateTokens(m.content || "") +
-            (m.thinking ? estimateTokens(m.thinking) : 0);
-          if (Array.isArray(m.toolCalls)) {
-            for (const tc of m.toolCalls) {
-              if (typeof tc.result === "string")
-                tokens += estimateTokens(tc.result);
-              else if (tc.result != null)
-                tokens += estimateTokens(JSON.stringify(tc.result));
-            }
-          }
-          return tokens;
-        }, 0);
-
-      preRunConversationTokens = estimateConversationTokens();
-      preRunCompactionThreshold = getBetweenTurnCompactionThreshold(contextWindow);
-      durableCompactionAttempted =
-        preRunConversationTokens > preRunCompactionThreshold;
-      endTokens();
-
-      const endCompaction = durableCompactionAttempted
-        ? beginSubStep("ctx_history_compact")
-        : undefined;
-      const compacted = durableCompactionAttempted
-        ? await runBetweenTurnCompaction(
-            sessionId,
-            conversationHistory,
-            contextWindow,
-            callerGeneration,
-            onCompactionActivity,
-          )
-        : { outcome: "below_threshold" as const };
-      durableCompactionApplied = compacted.outcome === "compacted" ||
-        (compacted.outcome === "joined" && compacted.terminalOutcome === "compacted");
-      if (durableCompactionApplied) {
-        chatLog.log(
-          `betweenTurnCompaction ran, reloading messages sessionId=${sessionId}`,
-        );
-        existingMessages = await chatStorage.getMessagesBySession(sessionId);
-        rebuildConversationHistory(existingMessages);
-        chatLog.log(
-          `betweenTurnCompaction reloaded ${conversationHistory.length} messages sessionId=${sessionId}`,
-        );
-      }
-      endCompaction?.();
-    } catch (compactErr: unknown) {
-      // Close any sub-step left open by the failure so the diagnostic timeline stays coherent.
-      openSubStep?.();
-      chatLog.warn(
-        `betweenTurnCompaction failed (non-fatal) sessionId=${sessionId}: ${compactErr instanceof Error ? compactErr.message : String(compactErr)}`,
-      );
-    }
+    // Between-turn fire runs after full next-input assembly (system + history +
+    // tools) further below — history-only pre-check deleted.
+    let durableCompactionAttempted = betweenTurnPass?.attempted ?? false;
+    let durableCompactionApplied = betweenTurnPass?.applied ?? false;
 
     onProgress?.("ctx_history", "done", Date.now() - histStart);
 
@@ -1991,11 +1931,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       ? (resolvedModel || "").split("/").slice(1).join("/")
       : resolvedModel || "";
     const contextWindow = getContextWindow(bareModel);
-    const { estimateToolDefinitionTokens, getContextRequestBudget } = await import("../../context-budget");
+    const {
+      estimateToolDefinitionTokens,
+      getContextRequestBudget,
+      getBetweenTurnFireThreshold,
+    } = await import("../../context-budget");
     const maxTokens = (await import("../../model-registry")).getMaxOutputTokens(bareModel);
     const requestBudget = getContextRequestBudget(contextWindow, maxTokens);
     const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
-    const executorStage1Threshold = Math.floor(requestBudget.compactionTarget * 0.65);
+    const betweenTurnFireThreshold = getBetweenTurnFireThreshold(contextWindow);
     const fullPreExecutorTokens = estimateExecutorMessagesTokens(messages) + toolDefinitionTokens;
     const toolResultCount = messages.reduce((sum, msg) => {
       if (!Array.isArray(msg.content)) return sum;
@@ -2004,15 +1948,57 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       );
     }, 0);
 
-    if (fullPreExecutorTokens > executorStage1Threshold) {
+    // Full next-input fire: rest altitude = 30% of window. One shot only
+    // (betweenTurnPass set after compact). Landing is min-viable live context
+    // inside runBetweenTurnCompaction — no history keep-budget.
+    if (!betweenTurnPass && fullPreExecutorTokens > betweenTurnFireThreshold) {
       durableCompactionAttempted = true;
-      chatLog.warn(
-        `fullPreExecutorContextPressure sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${executorStage1Threshold}; exact transcript preserved for executor working-set projection`,
-      );
+      const endCompaction = beginSubStep("ctx_history_compact");
+      try {
+        const { runBetweenTurnCompaction } = await import("../../agent-context");
+        const compacted = await runBetweenTurnCompaction(
+          sessionId,
+          conversationHistory,
+          contextWindow,
+          callerGeneration,
+          onCompactionActivity,
+          fullPreExecutorTokens,
+        );
+        durableCompactionApplied =
+          compacted.outcome === "compacted" ||
+          (compacted.outcome === "joined" &&
+            compacted.terminalOutcome === "compacted");
+        if (durableCompactionApplied) {
+          chatLog.log(
+            `betweenTurnCompaction full-input fire applied sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${betweenTurnFireThreshold}; rebuilding after min-viable land`,
+          );
+          endCompaction();
+          return buildChatHistory(
+            sessionId,
+            enrichedContent,
+            resolvedModel,
+            onProgress,
+            currentMessageIds,
+            callerGeneration,
+            contextBuildId,
+            onCompactionActivity,
+            { attempted: true, applied: true },
+          );
+        }
+        chatLog.log(
+          `betweenTurnCompaction full-input fire no-op sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${betweenTurnFireThreshold} outcome=${compacted.outcome}`,
+        );
+        endCompaction();
+      } catch (compactErr: unknown) {
+        endCompaction();
+        chatLog.warn(
+          `betweenTurnCompaction failed (non-fatal) sessionId=${sessionId}: ${compactErr instanceof Error ? compactErr.message : String(compactErr)}`,
+        );
+      }
     }
 
     chatLog.log(
-      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} threshold=${executorStage1Threshold} target=${requestBudget.compactionTarget} operating=${requestBudget.operatingInputLimit} hard=${requestBudget.hardInputLimit} reserve=${requestBudget.outputReserve} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
+      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurnFire=${betweenTurnFireThreshold} target=${requestBudget.compactionTarget} operating=${requestBudget.operatingInputLimit} hard=${requestBudget.hardInputLimit} reserve=${requestBudget.outputReserve} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
     );
     return {
       messages,
@@ -2021,7 +2007,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       toolDefs,
       contextPressure: {
         preRunTokens: fullPreExecutorTokens,
-        threshold: executorStage1Threshold,
+        threshold: betweenTurnFireThreshold,
         durableCompactionAttempted,
         durableCompactionApplied,
         contextTokens: fullPreExecutorTokens,
