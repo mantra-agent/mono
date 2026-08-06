@@ -138,8 +138,8 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                   />
                   {thresholdRatio > 0 && thresholdRatio < 1 && (
                     <circle
-                      cx="20"
-                      cy="2"
+                      cx="38"
+                      cy="20"
                       r="1.25"
                       fill="hsl(var(--warning))"
                       transform={`rotate(${thresholdRatio * 360} 20 20)`}
