@@ -97,7 +97,9 @@ export function ProfileTreeRow({
                 mobileLayout === "inline"
                   ? "col-span-1 justify-end overflow-hidden pl-0 text-right"
                   : "col-span-2 justify-start pl-6 text-left",
-                "sm:col-span-1 sm:w-48 sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right",
+                valueLayout === "compact"
+                  ? "sm:col-span-1 sm:w-auto sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right"
+                  : "sm:col-span-1 sm:w-48 sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right",
                 "[&_input]:h-5 [&_input]:w-48 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
                 "[&_input[type=date]]:[color-scheme:dark] [&_input[type=date]::-webkit-calendar-picker-indicator]:h-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:w-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:opacity-60 [&_input[type=date]::-webkit-calendar-picker-indicator]:invert",
                 "[&_textarea]:bg-muted/50 [&_textarea]:text-xs",
