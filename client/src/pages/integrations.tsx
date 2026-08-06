@@ -46,6 +46,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   RotateCcw,
   Shield,
+  HardDrive,
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
@@ -1881,19 +1882,6 @@ interface ConnectedAccountWithPerms {
   permissions: GooglePermissions;
 }
 
-const GMAIL_PERMISSIONS: Array<{ key: keyof GooglePermissions; label: string; description: string }> = [
-  { key: "gmailRead", label: "Read emails", description: "Search and read email messages" },
-  { key: "gmailSend", label: "Send emails", description: "Send emails on your behalf" },
-  { key: "gmailDraft", label: "Create drafts", description: "Create draft emails for review" },
-  { key: "gmailDownloadAttachments", label: "Download attachments", description: "Download email attachments to workspace" },
-];
-
-const CALENDAR_PERMISSIONS: Array<{ key: keyof GooglePermissions; label: string; description: string }> = [
-  { key: "calendarView", label: "View events", description: "List and read calendar events" },
-  { key: "calendarCreate", label: "Create events", description: "Schedule new meetings and events" },
-  { key: "calendarEdit", label: "Edit events", description: "Update existing calendar events" },
-  { key: "calendarDelete", label: "Delete events", description: "Remove events from calendar" },
-];
 
 
 function TwitterAccountsSection() {
@@ -2243,21 +2231,6 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
     },
   });
 
-  const permMutation = useMutation({
-    mutationFn: async ({ accountId, perms, label }: { accountId: string; perms: Partial<GooglePermissions>; label: string }) => {
-      const res = await apiRequest("PUT", `/api/connected-accounts/${accountId}/permissions`, perms);
-      return { data: await res.json(), label };
-    },
-    onSuccess: ({ label }) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
-      toast({ title: "Permission updated", description: label });
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to update permission", description: err.message, variant: "destructive" });
-      queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
-    },
-  });
-
   const accounts = accountsData?.accounts || [];
   const permAccounts = (permsData?.accounts || []).filter((account) => account.provider === "google");
   const needsAttention = !oauthConfigured || accounts.some((account) => {
@@ -2265,13 +2238,6 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
     const bound = permAccounts.find((candidate) => candidate.email === account.email);
     return !bound?.vaultId || account.healthy === false || missingScopes.length > 0 || Boolean(account.scopes && !account.scopes.hasGmailRead);
   });
-
-  const handlePermToggle = (accountId: string, key: keyof GooglePermissions, currentValue: boolean) => {
-    const permLabel = [...GMAIL_PERMISSIONS, ...CALENDAR_PERMISSIONS].find((permission) => permission.key === key)?.label || key;
-    const accountEmail = permAccounts.find((account) => account.accountId === accountId)?.email || accountId;
-    const label = `${!currentValue ? "Enabled" : "Disabled"}: ${permLabel} for ${accountEmail}`;
-    permMutation.mutate({ accountId, perms: { [key]: !currentValue }, label });
-  };
 
   const startOAuth = async (vaultId: string, accountId?: string) => {
     try {
@@ -2297,7 +2263,42 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
   };
 
   return (
-    <IntegrationTreeSection label="Accounts" initialOpen testIdPrefix="google">
+    <>
+      {oauthConfigured ? (
+        showAddForm ? (
+          <IntegrationTreeSection label="New account" initialOpen testIdPrefix="google-new">
+            <ProfileTreeRow
+              label={<span>Vault</span>}
+              icon={<Shield className="h-3.5 w-3.5" />}
+              hasValue={Boolean(selectedVaultId)}
+              showEmpty
+              mobileLayout="inline"
+              testId="row-new-google-account-vault"
+            >
+              <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
+                <SelectTrigger data-testid="select-google-account-vault" className="w-48" aria-label="Select account Vault"><SelectValue placeholder="Select Vault" /></SelectTrigger>
+                <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </ProfileTreeRow>
+            <div className="flex flex-wrap items-center gap-2 px-2 py-1.5">
+              <Button disabled={!selectedVaultId} onClick={() => startOAuth(selectedVaultId)} data-testid="button-connect-google-account">Connect to Vault</Button>
+              <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>Cancel</Button>
+            </div>
+          </IntegrationTreeSection>
+        ) : (
+          <div className="px-2 py-1">
+            <button
+              type="button"
+              onClick={() => setShowAddForm(true)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+              data-testid="button-add-google-account"
+            >
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              <span>New Account</span>
+            </button>
+          </div>
+        )
+      ) : null}
       {!oauthConfigured ? (
         <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-google-oauth-required">
           Add the Google client ID and client secret under Credentials before connecting an account.
@@ -2321,22 +2322,36 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
         const vaultRequired = !permAccount?.vaultId;
         const status = vaultRequired ? "Vault required" : tokenExpired ? "Token expired" : needsReauth ? "Missing permissions" : isHealthy ? "Verified" : "Connected";
 
+        const statusIcon = showReauth
+          ? <XCircle className="h-3.5 w-3.5 text-destructive" />
+          : isHealthy
+            ? <CheckCircle2 className="h-3.5 w-3.5 text-active" />
+            : <Mail className="h-3.5 w-3.5" />;
+
         return (
-          <ProfileTreeRow
+          <IntegrationTreeSection
             key={account.id}
-            label={<span className="block truncate whitespace-nowrap" title={account.email}>{account.email}</span>}
-            icon={showReauth
-              ? <XCircle className="h-3.5 w-3.5 text-destructive" />
-              : isHealthy
-                ? <CheckCircle2 className="h-3.5 w-3.5 text-active" />
-                : <Mail className="h-3.5 w-3.5" />}
-            value={permAccount?.vault ? `Vault: ${permAccount.vault.name}` : status}
-            showEmpty
-            testId={`google-account-${account.id}`}
-            defaultOpen={showReauth || vaultRequired}
-            expandedContentClassName="min-w-0 space-y-4"
-            expandedContent={
-              <>
+            label={account.email}
+            initialOpen={showReauth || vaultRequired}
+            testIdPrefix={`google-account-${account.id}`}
+          >
+            <ProfileTreeRow label={<span>Status</span>} icon={statusIcon} hasValue showEmpty mobileLayout="inline" testId={`row-google-status-${account.id}`}>
+              <span className={cn(showReauth && "text-destructive", isHealthy && "text-active")}>{status}</span>
+            </ProfileTreeRow>
+            <ProfileTreeRow label={<span>Vault</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(permAccount?.vault)} showEmpty mobileLayout="inline" testId={`row-google-vault-${account.id}`}>
+              {permAccount?.vault ? (
+                <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} />{permAccount.vault.name}</span>
+              ) : (
+                <span className="text-muted-foreground">Not assigned</span>
+              )}
+            </ProfileTreeRow>
+            <ProfileTreeRow label={<span>Drive</span>} icon={<HardDrive className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId={`row-google-drive-${account.id}`}>
+              <span>{account.scopes?.hasDrive ? "Connected" : "Reconnect to enable"}</span>
+            </ProfileTreeRow>
+            <ProfileTreeRow label={<span>Added</span>} icon={<Clock className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId={`row-google-added-${account.id}`}>
+              <span>{new Date(account.addedAt).toLocaleDateString()}</span>
+            </ProfileTreeRow>
+            <div className="min-w-0 space-y-4 px-2 py-1.5 pl-8">
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="outline"
@@ -2362,10 +2377,9 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                     Remove
                   </Button>
                 </div>
-                <p className="text-muted-foreground" data-testid={`text-account-date-${account.id}`}>
-                  {permAccount?.vault ? <><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} /> {permAccount.vault.name} · </> : null}Added {new Date(account.addedAt).toLocaleDateString()}
-                  {account.healthError ? <span className="text-destructive"> · {account.healthError}</span> : null}
-                </p>
+                {account.healthError ? (
+                  <p className="text-xs text-destructive" data-testid={`text-account-health-${account.id}`}>{account.healthError}</p>
+                ) : null}
                 {vaultRequired && permAccount ? (
                   <div className="space-y-2">
                     <p className="text-sm text-foreground">Choose where this account and its email data belong.</p>
@@ -2387,86 +2401,11 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                     Missing: {missingScopes.map((scope) => scope.split("/").pop() || scope).join(", ")}
                   </p>
                 ) : null}
-                <p className="text-xs text-muted-foreground" data-testid={`text-drive-status-${account.id}`}>
-                  Drive: {account.scopes?.hasDrive
-                    ? "Connected — files you pick are readable in Files"
-                    : "Reconnect this account to enable Drive file picking"}
-                </p>
-                {permAccount ? (
-                  <div className="space-y-4">
-                    {[
-                      { label: "Gmail", permissions: GMAIL_PERMISSIONS },
-                      { label: "Calendar", permissions: CALENDAR_PERMISSIONS },
-                    ].map((group) => (
-                      <div key={group.label} className="space-y-1">
-                        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{group.label}</p>
-                        {group.permissions.map((permission) => (
-                          <div
-                            key={permission.key}
-                            className="flex min-h-11 items-center justify-between gap-3"
-                            data-testid={`perm-row-${permAccount.accountId}-${permission.key}`}
-                          >
-                            <p className="min-w-0 text-sm font-medium">{permission.label}</p>
-                            <Switch
-                              checked={permAccount.permissions[permission.key]}
-                              onCheckedChange={() => handlePermToggle(
-                                permAccount.accountId,
-                                permission.key,
-                                permAccount.permissions[permission.key],
-                              )}
-                              disabled={permMutation.isPending}
-                              data-testid={`switch-perm-${permAccount.accountId}-${permission.key}`}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </>
-            }
-          />
+            </div>
+          </IntegrationTreeSection>
         );
       })}
 
-      {oauthConfigured ? (
-        showAddForm ? (
-          <ProfileTreeRow
-            label="New Google account"
-            icon={<Plus className="h-3.5 w-3.5" />}
-            value={selectedVaultId ? `Vault: ${vaults.find((vault) => vault.id === selectedVaultId)?.name || "Selected"}` : "Choose Vault"}
-            showEmpty
-            testId="row-new-google-account"
-            defaultOpen
-            expandedContentClassName="min-w-0 space-y-3"
-            expandedContent={
-              <>
-                <p className="text-sm text-foreground">Connect this Google account and its Gmail and Calendar data to a Vault.</p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
-                    <SelectTrigger data-testid="select-google-account-vault" className="w-48" aria-label="Select account Vault"><SelectValue placeholder="Select Vault" /></SelectTrigger>
-                    <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
-                  </Select>
-                  <Button disabled={!selectedVaultId} onClick={() => startOAuth(selectedVaultId)} data-testid="button-connect-google-account">Connect to Vault</Button>
-                  <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>Cancel</Button>
-                </div>
-              </>
-            }
-          />
-        ) : (
-          <div className="px-2 py-1">
-            <button
-              type="button"
-              onClick={() => setShowAddForm(true)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
-              data-testid="button-add-google-account"
-            >
-              <Plus className="h-3.5 w-3.5 shrink-0" />
-              <span>New Account</span>
-            </button>
-          </div>
-        )
-      ) : null}
       <AlertDialog
         open={Boolean(accountPendingRemoval)}
         onOpenChange={(open) => {
@@ -2515,7 +2454,7 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </IntegrationTreeSection>
+    </>
   );
 }
 
