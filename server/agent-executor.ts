@@ -3135,6 +3135,7 @@ export class AgentExecutor extends EventEmitter {
       compactionThreshold: Math.floor(contextBudget.compactionTarget * 0.65),
       contextWindow: contextBudget.contextWindow,
       modelName: pressureModelName,
+      outputReserve: contextBudget.outputReserve,
     });
     if (requestTokens > contextBudget.operatingInputLimit) {
       throw new ContextOperatingBudgetExceededError(requestTokens, contextBudget);

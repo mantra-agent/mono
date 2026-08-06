@@ -61,6 +61,8 @@ export interface ContextPressureSnapshot {
   contextWindow?: number;
   /** Human-readable model display name, for debug display. */
   modelName?: string;
+  /** Tokens reserved for model output (off-limits to input) — the roped-off wedge at top of the gauge. */
+  outputReserve?: number;
 }
 
 export interface StreamingContent {

@@ -82,6 +82,18 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const thresholdRatio = contextPressure
     ? Math.min(contextPressure.compactionThreshold / scaleLimit, 1)
     : 0;
+  // Operating limit: the self-imposed routine budget (e.g. 120k of a 200k window).
+  // Shown as an explicit radial tick so its position on the true-window scale is legible.
+  const operatingRatio =
+    contextPressure && contextPressure.contextWindow
+      ? Math.min(contextPressure.inputLimit / scaleLimit, 1)
+      : 0;
+  // Output reserve: the roped-off top of the window (window − hardInputLimit) that input
+  // can never touch. Drawn as a muted wedge counting back counter-clockwise from 12 o'clock.
+  const reserveRatio =
+    contextPressure && contextPressure.contextWindow && contextPressure.outputReserve
+      ? Math.min(contextPressure.outputReserve / scaleLimit, 1)
+      : 0;
   // Color stays pegged to the operational events (compaction + operating gate),
   // NOT the visual scale — otherwise rescaling to the window would neuter the
   // red/amber warnings, since the hard gate lives well below the full window.
@@ -149,6 +161,19 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                   data-testid={`context-pressure-ring-${sessionId}`}
                 >
                   <circle cx="20" cy="20" r="18" fill="none" stroke="hsl(var(--border))" strokeOpacity="0.45" strokeWidth="1.5" />
+                  {reserveRatio > 0 && reserveRatio < 1 && (
+                    <circle
+                      cx="20"
+                      cy="20"
+                      r="18"
+                      fill="none"
+                      stroke="hsl(var(--muted-foreground))"
+                      strokeOpacity="0.5"
+                      strokeWidth="1.5"
+                      strokeDasharray={`${reserveRatio * circumference} ${circumference}`}
+                      transform={`rotate(${(1 - reserveRatio) * 360} 20 20)`}
+                    />
+                  )}
                   <circle
                     cx="20"
                     cy="20"
@@ -168,6 +193,17 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                       r="1.25"
                       fill="hsl(var(--warning))"
                       transform={`rotate(${thresholdRatio * 360} 20 20)`}
+                    />
+                  )}
+                  {operatingRatio > 0 && operatingRatio < 1 && (
+                    <line
+                      x1="36"
+                      y1="20"
+                      x2="40.5"
+                      y2="20"
+                      stroke="hsl(var(--destructive))"
+                      strokeWidth="1.25"
+                      transform={`rotate(${operatingRatio * 360} 20 20)`}
                     />
                   )}
                 </svg>
