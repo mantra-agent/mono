@@ -988,7 +988,6 @@ export function BottomBar({
                   activeIndex={mention.activeIndex}
                   onSelect={mention.insertSuggestion}
                   onHover={mention.setActiveIndex}
-                  anchorRef={inputAnchorRef}
                   testIdSuffix="-bottom-bar"
                 />
               )}
