@@ -91,7 +91,7 @@ export async function readFromObjectStorage(objectPath: string, charOffset?: num
     const cleanPath = objectPath.startsWith("/objects/") ? objectPath : `/objects/${objectPath}`;
     const objectFile = await objectStorageService.getObjectEntityFile(cleanPath);
     const [buffer] = await objectFile.download();
-    const content = buffer.toString("utf-8");
+    const content = await decodeArchivedObjectBuffer(buffer, objectPath);
     if (charOffset !== undefined && charLength !== undefined) {
       return content.slice(charOffset, charOffset + charLength);
     }
@@ -102,6 +102,99 @@ export async function readFromObjectStorage(objectPath: string, charOffset?: num
   } catch (err: any) {
     log.warn(`readFromObjectStorage: failed to read ${objectPath}: ${err.message}`);
     return null;
+  }
+}
+
+/**
+ * Drive-file archives: AES-GCM envelope JSON (same envelope as meeting audio /
+ * credentials) before R2 putObject. Bodies are never written as plaintext.
+ * Encoding:
+ *   - text/* → utf-8 plaintext inside the envelope
+ *   - binary → base64 text inside the envelope (indexed_content sections stay text-safe)
+ */
+export async function persistEncryptedDriveFileToObjectStorage(
+  content: string,
+  objectFileName?: string,
+): Promise<string | null> {
+  try {
+    const { storageBackend, vaultObjectKeyAuto } = await import("./object_storage");
+    const { setObjectAclPolicy } = await import("./object_storage/objectAcl");
+    const { randomUUID } = await import("crypto");
+    const {
+      encryptBuffer,
+      getEncryptionKey,
+    } = await import("./encryption");
+    const filename = objectFileName ?? `${randomUUID()}.enc.json`;
+    const key = vaultObjectKeyAuto("drive_file", filename);
+    const plaintext = Buffer.from(content, "utf-8");
+    const envelope = await encryptBuffer(plaintext, getEncryptionKey());
+    plaintext.fill(0);
+    const body = Buffer.from(JSON.stringify(envelope), "utf8");
+    await storageBackend.putObject(key, body, {
+      contentType: "application/vnd.mantra.encrypted-drive-file+json",
+    });
+    const principal = requireCurrentPrincipal();
+    await setObjectAclPolicy(
+      key,
+      privateVaultAclPolicy({
+        ownerUserId: principal.userId,
+        accountId: principal.accountId,
+        vaultId: principal.activeVaultId,
+      }),
+    );
+    const objectKey = `/objects/drive_file/${filename}`;
+    log.log(
+      `persistEncryptedDriveFileToObjectStorage: stored envelope ${body.length} bytes at ${objectKey}`,
+    );
+    return objectKey;
+  } catch (err: any) {
+    log.warn(
+      `persistEncryptedDriveFileToObjectStorage: object storage unavailable, skipping: ${err.message}`,
+    );
+    return null;
+  }
+}
+
+async function decodeArchivedObjectBuffer(buffer: Buffer, objectPath: string): Promise<string> {
+  // Encrypted drive-file / meeting-style envelopes are JSON with v/salt/iv/ct/tag.
+  const asText = buffer.toString("utf-8");
+  const looksLikeEnvelope =
+    asText.startsWith("{") &&
+    asText.includes('"ct"') &&
+    asText.includes('"iv"') &&
+    asText.includes('"tag"');
+  if (!looksLikeEnvelope) {
+    return asText;
+  }
+  try {
+    const parsed = JSON.parse(asText) as unknown;
+    const {
+      decryptBuffer,
+      getEncryptionKey,
+      getPreviousEncryptionKey,
+      isEncryptedEnvelope,
+    } = await import("./encryption");
+    if (!isEncryptedEnvelope(parsed)) {
+      return asText;
+    }
+    try {
+      const plain = await decryptBuffer(parsed, getEncryptionKey());
+      return plain.toString("utf-8");
+    } catch {
+      const previous = getPreviousEncryptionKey();
+      if (!previous) throw new Error("drive archive decrypt failed");
+      const plain = await decryptBuffer(parsed, previous);
+      return plain.toString("utf-8");
+    }
+  } catch (err: any) {
+    // Not a decryptable envelope — treat as plain archive (legacy tool-output path).
+    if (objectPath.includes("drive_file")) {
+      log.warn(
+        `decodeArchivedObjectBuffer: drive_file envelope decrypt failed path=${objectPath}: ${err.message}`,
+      );
+      throw err;
+    }
+    return asText;
   }
 }
 
@@ -481,7 +574,7 @@ export async function readVisibleIndexedContent(options: {
   });
   if (!allowed) return null;
   const [buffer] = await objectFile.download();
-  const fullContent = buffer.toString("utf-8");
+  const fullContent = await decodeArchivedObjectBuffer(buffer, row.objectStoragePath);
   const content = options.charOffset === undefined
     ? fullContent
     : fullContent.slice(
