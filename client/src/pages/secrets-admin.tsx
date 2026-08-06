@@ -16,6 +16,30 @@ export default function SecretsAdminPage() {
         <SecretsForSection section="elevenlabs" excludeNames={["VOICE_V3_WEBHOOK_SECRET"]} />
         <VoiceV3WebhookSecretCard />
       </ProfileDetailSection>
+
+      <ProfileDetailSection title="Cartesia" defaultOpen testId="secrets-section-cartesia">
+        <SecretsForSection section="cartesia" />
+      </ProfileDetailSection>
+
+      <ProfileDetailSection title="Deepgram" defaultOpen testId="secrets-section-deepgram">
+        <SecretsForSection section="deepgram" />
+      </ProfileDetailSection>
+
+      <ProfileDetailSection title="Brave Search" defaultOpen testId="secrets-section-brave">
+        <SecretsForSection section="brave" />
+      </ProfileDetailSection>
+
+      <ProfileDetailSection title="SendGrid" defaultOpen testId="secrets-section-sendgrid">
+        <SecretsForSection section="sendgrid" />
+      </ProfileDetailSection>
+
+      <ProfileDetailSection title="Expo" defaultOpen testId="secrets-section-expo">
+        <SecretsForSection section="expo" />
+      </ProfileDetailSection>
+
+      <ProfileDetailSection title="Sentry" defaultOpen testId="secrets-section-sentry">
+        <SecretsForSection section="sentry" />
+      </ProfileDetailSection>
     </div>
   );
 }
