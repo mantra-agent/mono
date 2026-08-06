@@ -1005,12 +1005,11 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
   const { data, isLoading, error, refetch, isFetching } = usePublishSummary(sourcePlatformEnvironmentId, targetPlatformEnvironmentId);
   const { data: prodStatus } = useProdStatus(targetPlatformEnvironmentId);
   const { toast } = useToast();
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  // Single publish modal: version pick → preparing → editable notes → approve.
+  // Stays open across the whole path so preparing never looks like a no-op.
+  const [publishOpen, setPublishOpen] = useState(false);
   const [versionIncrement, setVersionIncrement] = useState<VersionIncrement>("minor");
-  // Release-notes review modal: opens after the draft is generated, holds the
-  // three sections as editable newline-separated text, and gates the actual
-  // publish behind an explicit human Approve.
-  const [reviewOpen, setReviewOpen] = useState(false);
+  const [notesReady, setNotesReady] = useState(false);
   const [reviewVersion, setReviewVersion] = useState<string | null>(null);
   const [reviewNotes, setReviewNotes] = useState<{
     newFeatures: string;
@@ -1019,6 +1018,23 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
   }>({ newFeatures: "", improvements: "", fixes: "" });
   const [reconcileConfirmOpen, setReconcileConfirmOpen] = useState(false);
   const [redeployConfirmOpen, setRedeployConfirmOpen] = useState(false);
+
+  function resetPublishModalState() {
+    setVersionIncrement("minor");
+    setNotesReady(false);
+    setReviewVersion(null);
+    setReviewNotes({ newFeatures: "", improvements: "", fixes: "" });
+  }
+
+  function openPublishModal() {
+    resetPublishModalState();
+    setPublishOpen(true);
+  }
+
+  function closePublishModal() {
+    setPublishOpen(false);
+    resetPublishModalState();
+  }
 
   const prodDeploying = isProdDeploying(prodStatus);
 
@@ -1037,9 +1053,9 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
     return items.join("\n");
   }
 
-  // Step 1: generate the draft (no promotion). On success, open the review
-  // modal pre-filled — including the empty case, which the user can still
-  // approve as-is.
+  // Step 1: generate the draft (no promotion). Stays in the same modal —
+  // preparing state is visible, then the editable notes appear in place.
+  // On failure we still unlock empty notes so the human can approve blank.
   const draftMut = useMutation<
     { preview: { nextVersion: string; notes: ReleaseNotes } },
     Error,
@@ -1061,12 +1077,15 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         improvements: itemsToLines(notes.improvements ?? []),
         fixes: itemsToLines(notes.fixes ?? []),
       });
-      setReviewOpen(true);
+      setNotesReady(true);
     },
     onError: (err) => {
+      setReviewVersion(null);
+      setReviewNotes({ newFeatures: "", improvements: "", fixes: "" });
+      setNotesReady(true);
       toast({
         title: "Couldn't prepare release notes",
-        description: errorMessage(err),
+        description: `${errorMessage(err)} — empty list is ready to edit or approve as-is.`,
         variant: "destructive",
       });
     },
@@ -1088,7 +1107,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
       return res.json();
     },
     onSuccess: () => {
-      setReviewOpen(false);
+      closePublishModal();
       queryClient.invalidateQueries({
         queryKey: [summaryPath],
       });
@@ -1102,6 +1121,8 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
       });
     },
   });
+
+  const publishBusy = draftMut.isPending || startMut.isPending;
 
   const cancelMut = useMutation<unknown, Error, void>({
     mutationFn: async () => {
@@ -1450,9 +1471,9 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         }
       : {
           label: "Publish",
-          onClick: () => setConfirmOpen(true),
-          disabled: !canStart || startMut.isPending,
-          pending: startMut.isPending,
+          onClick: openPublishModal,
+          disabled: !canStart || publishBusy,
+          pending: publishBusy,
           icon: <Play className="h-4 w-4" />,
           testId: "button-primary-action",
           tooltip: inSyncReason ?? disabledReason ?? undefined,
@@ -1573,123 +1594,172 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         testId="publish-pipeline-cockpit"
       />
 
-      {/* Publish confirm dialog */}
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent data-testid="dialog-confirm-publish">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Publish to live?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will fast-forward <code>{data.prodBranch}</code> to{" "}
-              <code>{data.devBranch}</code>'s HEAD (no PR, no squash commit),
-              wait for Railway to deploy, and health-check{" "}
-              {data.prodUrl ?? "the prod URL"}.{" "}
-              {data.aheadBy > 0
-                ? `${data.aheadBy} commit${data.aheadBy === 1 ? "" : "s"} will go out.`
-                : ""}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-2">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Version increment</div>
-            <div className="grid grid-cols-3 gap-2">
-              {(["minor", "major", "flagship"] as VersionIncrement[]).map((increment) => (
-                <Button
-                  key={increment}
-                  type="button"
-                  variant={versionIncrement === increment ? "default" : "outline"}
-                  className="min-h-11 capitalize"
-                  onClick={() => setVersionIncrement(increment)}
-                  data-testid={`button-version-${increment}`}
-                >
-                  {increment}
-                </Button>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Current {data.versioning.currentVersion}. Release notes are drafted from the commits since the last live publish — you'll review and approve them before anything is promoted.
-            </p>
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="button-cancel-confirm">
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                setConfirmOpen(false);
-                draftMut.mutate(versionIncrement);
-              }}
-              disabled={draftMut.isPending}
-              data-testid="button-confirm-publish"
-            >
-              {draftMut.isPending ? "Preparing…" : "Review notes"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Release-notes review + approve modal */}
-      <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
-        <DialogContent className="max-w-2xl" data-testid="dialog-review-notes">
+      {/* Single publish modal: version → prepare notes → review/edit → approve */}
+      <Dialog
+        open={publishOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            if (publishBusy) return;
+            closePublishModal();
+            return;
+          }
+          setPublishOpen(true);
+        }}
+      >
+        <DialogContent className="max-w-2xl" data-testid="dialog-publish">
           <DialogHeader>
             <DialogTitle>
-              Review release notes{reviewVersion ? ` — v${reviewVersion}` : ""}
+              {notesReady
+                ? `Review release notes${reviewVersion ? ` — v${reviewVersion}` : ""}`
+                : "Publish to live"}
             </DialogTitle>
             <DialogDescription>
-              Edit the change list before publishing. One item per line. Empty
-              sections are fine — you can approve as-is. Approving promotes{" "}
-              <code>{data.devBranch}</code> → <code>{data.prodBranch}</code>.
+              {notesReady ? (
+                <>
+                  Edit the change list before publishing. One item per line. Empty
+                  sections are fine — you can approve as-is. Approving promotes{" "}
+                  <code>{data.devBranch}</code> → <code>{data.prodBranch}</code>.
+                </>
+              ) : (
+                <>
+                  This will fast-forward <code>{data.prodBranch}</code> to{" "}
+                  <code>{data.devBranch}</code>&apos;s HEAD (no PR, no squash
+                  commit), wait for Railway to deploy, and health-check{" "}
+                  {data.prodUrl ?? "the prod URL"}.{" "}
+                  {data.aheadBy > 0
+                    ? `${data.aheadBy} commit${data.aheadBy === 1 ? "" : "s"} will go out.`
+                    : ""}{" "}
+                  Release notes are drafted next — nothing is promoted until you
+                  approve.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            {(
-              [
-                ["newFeatures", "New Features"],
-                ["improvements", "Improvements"],
-                ["fixes", "Fixes"],
-              ] as const
-            ).map(([key, label]) => (
-              <div key={key} className="space-y-1.5">
-                <Label htmlFor={`review-${key}`} className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {label}
-                </Label>
-                <Textarea
-                  id={`review-${key}`}
-                  value={reviewNotes[key]}
-                  onChange={(e) =>
-                    setReviewNotes((prev) => ({ ...prev, [key]: e.target.value }))
-                  }
-                  rows={4}
-                  placeholder="One item per line…"
-                  className="font-mono text-sm"
-                  data-testid={`textarea-notes-${key}`}
-                />
+
+          {!notesReady && !draftMut.isPending && (
+            <div className="space-y-2">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Version increment
               </div>
-            ))}
-          </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(["minor", "major", "flagship"] as VersionIncrement[]).map((increment) => (
+                  <Button
+                    key={increment}
+                    type="button"
+                    variant={versionIncrement === increment ? "default" : "outline"}
+                    className="min-h-11 capitalize"
+                    onClick={() => setVersionIncrement(increment)}
+                    data-testid={`button-version-${increment}`}
+                  >
+                    {increment}
+                  </Button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Current {data.versioning.currentVersion}. Notes draft from commits
+                since the last live publish.
+              </p>
+            </div>
+          )}
+
+          {draftMut.isPending && (
+            <div
+              className="flex items-center gap-3 rounded-md border border-border bg-muted/40 px-4 py-6"
+              data-testid="publish-notes-preparing"
+            >
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Preparing release notes…</p>
+                <p className="text-xs text-muted-foreground">
+                  Drafting the change list from commits since the last live
+                  publish. This modal stays open.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {notesReady && (
+            <div className="space-y-4">
+              {(
+                [
+                  ["newFeatures", "New Features"],
+                  ["improvements", "Improvements"],
+                  ["fixes", "Fixes"],
+                ] as const
+              ).map(([key, label]) => (
+                <div key={key} className="space-y-1.5">
+                  <Label
+                    htmlFor={`review-${key}`}
+                    className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                  >
+                    {label}
+                  </Label>
+                  <Textarea
+                    id={`review-${key}`}
+                    value={reviewNotes[key]}
+                    onChange={(e) =>
+                      setReviewNotes((prev) => ({ ...prev, [key]: e.target.value }))
+                    }
+                    rows={4}
+                    placeholder="One item per line…"
+                    className="font-mono text-sm"
+                    disabled={startMut.isPending}
+                    data-testid={`textarea-notes-${key}`}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setReviewOpen(false)}
-              disabled={startMut.isPending}
-              data-testid="button-cancel-review"
+              onClick={closePublishModal}
+              disabled={publishBusy}
+              data-testid="button-cancel-publish"
             >
               Cancel
             </Button>
-            <Button
-              onClick={() =>
-                startMut.mutate({
-                  increment: versionIncrement,
-                  approvedNotes: {
-                    newFeatures: linesToItems(reviewNotes.newFeatures),
-                    improvements: linesToItems(reviewNotes.improvements),
-                    fixes: linesToItems(reviewNotes.fixes),
-                  },
-                })
-              }
-              disabled={startMut.isPending}
-              data-testid="button-approve-publish"
-            >
-              {startMut.isPending ? "Publishing…" : "Approve & Publish"}
-            </Button>
+            {!notesReady ? (
+              <Button
+                onClick={() => draftMut.mutate(versionIncrement)}
+                disabled={draftMut.isPending}
+                data-testid="button-prepare-notes"
+              >
+                {draftMut.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Preparing…
+                  </>
+                ) : (
+                  "Prepare notes"
+                )}
+              </Button>
+            ) : (
+              <Button
+                onClick={() =>
+                  startMut.mutate({
+                    increment: versionIncrement,
+                    approvedNotes: {
+                      newFeatures: linesToItems(reviewNotes.newFeatures),
+                      improvements: linesToItems(reviewNotes.improvements),
+                      fixes: linesToItems(reviewNotes.fixes),
+                    },
+                  })
+                }
+                disabled={startMut.isPending}
+                data-testid="button-approve-publish"
+              >
+                {startMut.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Publishing…
+                  </>
+                ) : (
+                  "Approve & Publish"
+                )}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
