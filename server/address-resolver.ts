@@ -15,6 +15,7 @@ import {
   companies,
   emailDrafts,
   emailMessages,
+  documentArtifacts,
   inferencePayloadCaptures,
   jobRoles,
   milestones,
@@ -595,6 +596,29 @@ const adapters: AddressResolverAdapter[] = [
       }
     }));
     return new Map(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
+  }),
+  simpleAdapter("document", async (principal, refs) => {
+    const rows = await db.select({
+      id: documentArtifacts.id,
+      title: documentArtifacts.title,
+      mimeType: documentArtifacts.mimeType,
+      byteSize: documentArtifacts.byteSize,
+      updatedAt: documentArtifacts.updatedAt,
+    }).from(documentArtifacts).where(combineWithVisibleScope(principal, {
+      ownerUserId: documentArtifacts.ownerUserId,
+      accountId: documentArtifacts.accountId,
+      vaultId: documentArtifacts.vaultId,
+    }, inArray(documentArtifacts.id, refs.map(ref => ref.id))));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => {
+      const row = byId.get(ref.id);
+      return row ? [[requestedAddress(ref), resolved(ref, {
+        label: row.title,
+        summary: row.mimeType,
+        updatedAt: row.updatedAt,
+        canonicalId: row.id,
+      })]] : [];
+    }));
   }),
   simpleAdapter("news", async (principal, refs) => {
     const rows = await db.select({ id: signalItems.id, title: signalItems.title, curatedTitle: signalItems.curatedTitle, snippet: signalItems.snippet, curatedReason: signalItems.curatedReason, url: signalItems.url, createdAt: signalItems.createdAt }).from(signalItems)

@@ -1031,6 +1031,36 @@ class FilesApi {
   }
 
   /**
+   * Return complete provider bytes after the same live vault/bind/whitelist authorization
+   * used by every Files read. Feature services must use this instead of provider clients.
+   */
+  async readAuthorizedBytes(input: {
+    vaultId?: string;
+    driveResourceId?: string;
+    provider?: FilesProvider;
+    providerFileId?: string;
+  }): Promise<{ metadata: FilesMetadata; buffer: Buffer; contentType: string }> {
+    const metadata = await this.getMetadata(input);
+    if (metadata.resourceType === "folder") {
+      throw httpError(400, "Cannot read a folder");
+    }
+    const { adapter, ctx } = await adapterContextForConnector(
+      metadata.provider,
+      metadata.connectedAccountId,
+    );
+    const bytes = await adapter.readBytes(ctx, metadata.providerFileId, {
+      maxBytes: null,
+      mimeType: metadata.mimeType,
+    });
+    if (bytes.truncated) throw httpError(502, "Provider returned incomplete file bytes");
+    return {
+      metadata,
+      buffer: bytes.buffer,
+      contentType: bytes.contentType || expectedReadContentType(metadata.mimeType),
+    };
+  }
+
+  /**
    * Authorize a bound drive_resource for the current principal.
    * Used by routes that only need the bind row after the grant check.
    */

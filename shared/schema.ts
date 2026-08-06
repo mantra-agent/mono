@@ -28,6 +28,7 @@ export * from "./models/indexed-content";
 export * from "./models/compaction";
 export * from "./models/export";
 export * from "./models/media";
+export * from "./models/documents";
 export * from "./models/exec";
 export * from "./models/signal";
 export * from "./models/opportunities";
