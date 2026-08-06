@@ -52,6 +52,7 @@ type ChatToolCall = {
   result?: unknown;
   output?: unknown;
   failureKind?: unknown;
+  failureCode?: unknown;
   toolCallId?: unknown;
   id?: unknown;
   startedAt?: unknown;
@@ -349,6 +350,9 @@ function extractErrorText(toolCall: ChatToolCall): string {
 }
 
 function extractFailureCode(toolCall: ChatToolCall, errorText: string): string | null {
+  if (typeof toolCall.failureCode === "string" && toolCall.failureCode.trim()) {
+    return toolCall.failureCode.trim();
+  }
   const errorRecord = asRecord(toolCall.error);
   if (errorRecord) {
     const code = errorRecord.code ?? errorRecord.failureCode;

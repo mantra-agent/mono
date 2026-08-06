@@ -2,6 +2,10 @@ import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { db } from "./db";
 import { toolOutputAdmissions } from "@shared/schema";
 import type { Principal } from "./principal";
+import { createLogger } from "./log";
+import { getPostgresErrorDetails } from "./postgres-errors";
+
+const log = createLogger("ToolOutputPressure");
 
 const MAX_LIMIT = 50;
 const MAX_OFFSET = 5_000;
@@ -49,37 +53,52 @@ export async function rankToolOutputPressure(args: {
   const offset = Math.min(MAX_OFFSET, Math.max(0, Math.floor(args.offset || 0)));
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
-  const rows = await db.execute(sql`
-    WITH scoped AS (
-      SELECT tool_name, action, run_id, disposition, raw_chars, raw_tokens,
-             injected_tokens, created_at
-      FROM tool_output_admissions
-      WHERE owner_account_id = ${args.principal.accountId}
-        AND owner_user_id = ${args.principal.userId}
-        AND created_at >= ${since}
-    ), ranked AS (
-      SELECT tool_name, action,
-        count(*)::int AS result_count,
-        count(DISTINCT run_id)::int AS affected_run_count,
-        coalesce(sum(raw_tokens), 0)::bigint AS total_raw_tokens,
-        coalesce(sum(injected_tokens), 0)::bigint AS total_injected_tokens,
-        percentile_cont(0.95) WITHIN GROUP (ORDER BY raw_chars)::int AS p95_result_chars,
-        max(raw_chars)::int AS max_result_chars,
-        round(avg((disposition <> 'inline')::int)::numeric, 4) AS archive_rate
-      FROM scoped GROUP BY tool_name, action
-    ), repeats AS (
-      SELECT tool_name, action, coalesce(sum(result_count - 1), 0)::int AS repeated_result_count
-      FROM (
-        SELECT tool_name, action, run_id, count(*)::int AS result_count
-        FROM scoped WHERE run_id IS NOT NULL
-        GROUP BY tool_name, action, run_id HAVING count(*) > 1
-      ) r GROUP BY tool_name, action
-    )
-    SELECT ranked.*, coalesce(repeats.repeated_result_count, 0)::int AS repeated_result_count
-    FROM ranked LEFT JOIN repeats USING (tool_name, action)
-    ORDER BY total_raw_tokens DESC, max_result_chars DESC, tool_name, action
-    LIMIT ${limit} OFFSET ${offset}
-  `);
+  let rows;
+  try {
+    rows = await db.execute(sql`
+      WITH scoped AS (
+        SELECT
+          ${toolOutputAdmissions.toolName} AS tool_name,
+          ${toolOutputAdmissions.action} AS action,
+          ${toolOutputAdmissions.runId} AS run_id,
+          ${toolOutputAdmissions.disposition} AS disposition,
+          ${toolOutputAdmissions.rawChars} AS raw_chars,
+          ${toolOutputAdmissions.rawTokens} AS raw_tokens,
+          ${toolOutputAdmissions.injectedTokens} AS injected_tokens
+        FROM ${toolOutputAdmissions}
+        WHERE ${toolOutputAdmissions.ownerAccountId} = ${args.principal.accountId}
+          AND ${toolOutputAdmissions.ownerUserId} = ${args.principal.userId}
+          AND ${toolOutputAdmissions.createdAt} >= ${since}
+      ), ranked AS (
+        SELECT tool_name, action,
+          count(*)::int AS result_count,
+          count(DISTINCT run_id)::int AS affected_run_count,
+          coalesce(sum(raw_tokens), 0)::bigint AS total_raw_tokens,
+          coalesce(sum(injected_tokens), 0)::bigint AS total_injected_tokens,
+          percentile_disc(0.95) WITHIN GROUP (ORDER BY raw_chars) AS p95_result_chars,
+          max(raw_chars)::int AS max_result_chars,
+          round(avg((disposition <> 'inline')::int)::numeric, 4) AS archive_rate
+        FROM scoped GROUP BY tool_name, action
+      ), repeats AS (
+        SELECT tool_name, action, coalesce(sum(result_count - 1), 0)::int AS repeated_result_count
+        FROM (
+          SELECT tool_name, action, run_id, count(*)::int AS result_count
+          FROM scoped WHERE run_id IS NOT NULL
+          GROUP BY tool_name, action, run_id HAVING count(*) > 1
+        ) r GROUP BY tool_name, action
+      )
+      SELECT ranked.*, coalesce(repeats.repeated_result_count, 0)::int AS repeated_result_count
+      FROM ranked LEFT JOIN repeats USING (tool_name, action)
+      ORDER BY total_raw_tokens DESC, max_result_chars DESC, tool_name, action
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+  } catch (error) {
+    const details = getPostgresErrorDetails(error);
+    log.error(
+      `tool_output.pressure_query_failed pgCode=${details.code} errorType=${details.errorType} causeDepth=${details.causeDepth} hours=${hours} limit=${limit} offset=${offset}`,
+    );
+    throw new Error(`Tool-output pressure query failed (pgCode=${details.code}, errorType=${details.errorType})`);
+  }
 
   return {
     windowHours: hours,
