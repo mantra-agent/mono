@@ -78,7 +78,7 @@ function fingerprintSql(sqlText: string): string {
 
 function sqlSnippetFromText(sqlText: string): string {
   const compact = sqlText.replace(/\s+/g, " ").trim();
-  return safeTruncate(compact, SLOW_QUERY_SQL_SNIPPET_CHARS, "db.slowQuery.sql");
+  return safeTruncate(compact, SLOW_QUERY_SQL_SNIPPET_CHARS, "db.slowQuery.sql", false);
 }
 
 function describeQuerySql(args: unknown[]): {

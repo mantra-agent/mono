@@ -189,9 +189,16 @@ export function safeStringify(value: unknown, opts: SafeStringifyOptions = {}): 
 // Truncates an existing string to a byte budget — useful when a payload was
 // already serialized upstream (e.g. an external API response) and just needs
 // bounding before logging or persisting.
-export function safeTruncate(s: string, maxBytes: number = DEFAULT_MAX_BYTES, label?: string): string {
+export function safeTruncate(
+  s: string,
+  maxBytes: number = DEFAULT_MAX_BYTES,
+  label?: string,
+  warnOnTruncate: boolean = true,
+): string {
   if (typeof s !== "string") return "";
   if (s.length <= maxBytes) return s;
-  log.warn(`safeTruncate truncated label=${label || "n/a"} size=${s.length} maxBytes=${maxBytes}`);
+  if (warnOnTruncate) {
+    log.warn(`safeTruncate truncated label=${label || "n/a"} size=${s.length} maxBytes=${maxBytes}`);
+  }
   return s.slice(0, maxBytes) + STR_TRUNC_MARKER;
 }

@@ -1,3 +1,12 @@
+<!-- 2026-08-06 slow-query truncation telemetry delta:
+- Assets/data: database query structure and production logs; SQL snippets remain bounded operational telemetry and may expose schema shape.
+- Flow/boundary: node-postgres query text -> slow-query formatter -> bounded in-memory resource telemetry; `safeTruncate` no longer emits a second log event for this expected truncation path.
+- Threats: information disclosure through unbounded SQL text and availability/observability degradation through attacker- or workload-amplified warning volume.
+- Controls/owner: Core Application Platform keeps the existing 220-character truncation boundary and query fingerprinting; only the redundant per-occurrence warning is suppressed at the slow-query producer, while other `safeTruncate` callers retain warning behavior by default.
+- Evidence: live logs emitted hundreds of identical `safeTruncate truncated label=db.slowQuery.sql` warnings in under one second for a small set of repeated query lengths; the bounded slow-query record remained the intended telemetry artifact.
+- Severity/owner/SLA/status: medium; Core Application Platform; immediate; repaired in source pending production build, merge, deployment, and live log verification. Residual risk: slow-query volume itself may remain high and requires separate fingerprint-level diagnosis.
+-->
+
 <!-- 2026-08-06 Google Picker CSP delta:
 - Assets/data: authenticated browser session and S0-S3 UI data share the SPA execution context with the Google Picker loader.
 - Flow/boundary: Mantra response CSP -> browser loads `https://apis.google.com/js/api.js` -> Google Picker iframe uses the existing HTTPS frame/connect policy.
