@@ -1030,7 +1030,7 @@ function DayTimeline({ rows, events, timerOccurrences = [], accountEmails, timez
               className={cn(
                 "relative border-b border-l border-border/30",
                 !hourBoundary && "border-b-border/10",
-                slotTimers.length > 0 && "z-20 flex items-center gap-1 overflow-x-auto px-1",
+                slotTimers.length > 0 && "z-30 flex items-center gap-1 overflow-x-auto px-1",
               )}
               style={{ gridColumn: 2, gridRow: index + 1 }}
             >
