@@ -93,15 +93,64 @@ function ErrorRow({ error, onDiscuss }: { error: ErrorAggregate; onDiscuss: () =
 export function IssuesTab() {
   const [search, setSearch] = useState("");
   const discussion = useAgendaDiscussion();
-  const { data: personas = [] } = useQuery<PersonaOption[]>({ queryKey: ["/api/personas"] });
+  const { data: personasData } = useQuery<PersonaOption[]>({ queryKey: ["/api/personas"] });
+  const personas = Array.isArray(personasData) ? personasData : [];
   const engineerId = personas.find((persona) => persona.name.toLowerCase() === "engineer")?.id;
-  const { data: issues = [], isLoading } = useQuery<Issue[]>({ queryKey: ["/api/issues", "open"], queryFn: async () => { const response = await fetch("/api/issues?lightweight=true&exclude_status=resolved"); if (!response.ok) throw new Error("Failed to fetch issues"); return response.json(); } });
-  const { data: errors = [] } = useQuery<ErrorAggregate[]>({ queryKey: ["/api/issues/errors/recent"], queryFn: async () => { const response = await fetch("/api/issues/errors/recent?limit=25"); if (!response.ok) throw new Error("Failed to fetch recent errors"); return response.json(); } });
-  const updateStatus = useMutation({ mutationFn: async ({ id, status }: { id: string; status: Issue["status"] }) => { const response = await fetch(`/api/issues/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }); if (!response.ok) throw new Error("Failed to update issue"); }, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/issues"] }) });
+  // /api/issues returns { issues: Issue[] }, not a bare array — match issue-detail / issue-inline-profile.
+  const { data: issuesData, isLoading } = useQuery<{ issues: Issue[] }>({
+    queryKey: ["/api/issues", "open"],
+    queryFn: async () => {
+      const response = await fetch("/api/issues?lightweight=true&exclude_status=resolved");
+      if (!response.ok) throw new Error("Failed to fetch issues");
+      return response.json();
+    },
+  });
+  const issues = Array.isArray(issuesData?.issues) ? issuesData.issues : [];
+  const { data: errorsData } = useQuery<ErrorAggregate[]>({
+    queryKey: ["/api/issues/errors/recent"],
+    queryFn: async () => {
+      const response = await fetch("/api/issues/errors/recent?limit=25");
+      if (!response.ok) throw new Error("Failed to fetch recent errors");
+      return response.json();
+    },
+  });
+  const errors = Array.isArray(errorsData) ? errorsData : [];
+  const updateStatus = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: Issue["status"] }) => {
+      const response = await fetch(`/api/issues/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) throw new Error("Failed to update issue");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/issues"] }),
+  });
   const normalized = search.trim().toLowerCase();
-  const filteredIssues = useMemo(() => issues.filter((issue) => !normalized || `${issue.title} ${issue.description} ${issue.reproSteps ?? ""}`.toLowerCase().includes(normalized)), [issues, normalized]);
-  const filteredErrors = useMemo(() => errors.filter((error) => !normalized || `${error.error_class} ${error.error_code ?? ""} ${error.source_file ?? ""} ${error.source_line ?? ""}`.toLowerCase().includes(normalized)), [errors, normalized]);
-  const discuss = (title: string, message: string, suffix: string) => discussion.mutate({ title, message, clientTurnSuffix: suffix, personaId: engineerId });
+  const filteredIssues = useMemo(
+    () =>
+      issues.filter(
+        (issue) =>
+          !normalized ||
+          `${issue.title} ${issue.description} ${issue.reproSteps ?? ""}`
+            .toLowerCase()
+            .includes(normalized),
+      ),
+    [issues, normalized],
+  );
+  const filteredErrors = useMemo(
+    () =>
+      errors.filter(
+        (error) =>
+          !normalized ||
+          `${error.error_class} ${error.error_code ?? ""} ${error.source_file ?? ""} ${error.source_line ?? ""}`
+            .toLowerCase()
+            .includes(normalized),
+      ),
+    [errors, normalized],
+  );
+  const discuss = (title: string, message: string, suffix: string) =>
+    discussion.mutate({ title, message, clientTurnSuffix: suffix, personaId: engineerId });
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 p-4 sm:p-6">
