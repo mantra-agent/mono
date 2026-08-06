@@ -7,7 +7,8 @@ export const businessPlans = pgTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
-    thematicGoalId: text("thematic_goal_id").notNull(),
+    // Null until the user assigns a thematic goal through the Business Plan UI.
+    thematicGoalId: text("thematic_goal_id"),
     initiativeProjectIds: jsonb("initiative_project_ids").$type<number[]>().notNull().default([]),
     kpiIds: jsonb("kpi_ids").$type<string[]>().notNull().default([]),
     vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "restrict" }),
@@ -27,13 +28,15 @@ export const businessPlans = pgTable(
 export const businessPlanCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   vaultId: z.string().min(1).optional(),
-  thematicGoalId: z.string().min(1).optional(),
+  // Optional; omitted/null means an empty plan with no assignments.
+  thematicGoalId: z.string().min(1).nullable().optional(),
 });
 
 export const businessPlanPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   vaultId: z.string().min(1).optional(),
-  thematicGoalId: z.string().min(1).optional(),
+  // null clears the thematic goal; omit leaves it unchanged.
+  thematicGoalId: z.string().min(1).nullable().optional(),
   initiativeProjectIds: z.array(z.number().int().positive()).max(24).optional(),
   kpiIds: z.array(z.string().min(1)).max(24).optional(),
 }).refine((patch) => Object.keys(patch).length > 0, "At least one change is required");
