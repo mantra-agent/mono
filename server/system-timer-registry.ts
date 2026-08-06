@@ -150,7 +150,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     skillId: "brief-daily",
     prompt: "",
     schedules: [
-      { id: "sys-skill-brief-daily-1", frequency: "daily", timeOfDay: "07:00" },
+      { id: "sys-skill-brief-daily-1", frequency: "daily", timeOfDay: "05:00" },
     ],
     enabled: true,
     timezone: "__USER_TZ__",
