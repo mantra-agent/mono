@@ -1,3 +1,13 @@
+<!-- 2026-08-06 Google Picker drive.file grant identity delta:
+- Assets/data: user-selected Google file IDs, short-lived `drive.file` access tokens, connected-account identity, and Vault-scoped Drive bindings.
+- Flow/boundary: authenticated SPA mints a Picker token -> Picker receives OAuth token, browser-safe developer key, and exact Google Cloud project number -> explicit user selection grants this OAuth app per-file access -> binding stores the selecting connected account -> Files API mints that same account's token for reads.
+- Threats: STRIDE authorization failure/confused deputy if Picker omits the app project identity or a replayed binding retains another connector; the former creates unusable bindings and opaque provider 404s, while the latter could route reads through the wrong principal.
+- Controls/owner: Google Integration owns the Picker contract. `PickerBuilder.setAppId` receives the server-derived OAuth project number required for `drive.file`; idempotent rebind refreshes `connectedAccountId`; existing API-policy authentication, connected-account ownership, Vault gates, explicit selection, short-lived access token, and read-only adapter controls remain independently authoritative.
+- Evidence: Picker successfully returned and bound two file IDs, but Google Files API returned `404 File not found` through the same-account read path. Google Workspace's canonical `PickerBuilder.setAppId` reference states the Cloud project number is required for `drive.file`. Source inspection showed the server returned `appId` but the client discarded it.
+- Severity/owner/SLA/status: high functional availability with authorization-integrity implications; Google Integration; immediate; repaired in source pending build, merge, deployment, one-time re-selection, and successful content reads.
+- Residual risk: files selected before this repair were never granted to the OAuth app and must be explicitly re-selected; Mantra cannot manufacture that user grant server-side.
+-->
+
 <!-- 2026-08-06 Drive API policy classification delta:
 - Assets/data: Google OAuth access tokens, browser-safe Picker key, user-selected Drive file metadata, connected-account identity, and Vault-scoped Drive bindings.
 - Flow/boundary: authenticated SPA -> global API policy -> `/api/drive/*` route -> principal-scoped connected-account token refresh / Vault-gated Drive resource service -> Google Picker or Files API.

@@ -105,6 +105,7 @@ export class DriveResourceService {
       .onConflictDoUpdate({
         target: [driveResources.vaultId, driveResources.provider, driveResources.providerFileId],
         set: {
+          connectedAccountId: input.connectedAccountId,
           name,
           mimeType: input.mimeType ?? null,
           iconUrl: input.iconUrl ?? null,
