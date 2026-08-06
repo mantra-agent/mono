@@ -80,10 +80,12 @@ export function registerDriveResourceRoutes(app: Express) {
         res.json({ configured: false });
         return;
       }
+      // developerKey is the Picker SDK field name; apiKey kept for compatibility.
       res.json({
         configured: true,
         accessToken,
         expiresAt,
+        developerKey: apiKey,
         apiKey,
         appId,
       });
@@ -100,7 +102,7 @@ export function registerDriveResourceRoutes(app: Express) {
         res.json({ configured: false });
         return;
       }
-      res.json({ configured: true, apiKey, appId });
+      res.json({ configured: true, developerKey: apiKey, apiKey, appId });
     } catch (error) {
       handleError(res, error, "Failed to load picker config");
     }

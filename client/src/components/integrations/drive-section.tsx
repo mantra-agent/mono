@@ -168,9 +168,20 @@ export function DriveSection({
     try {
       await loadPicker();
       const response = await apiRequest("POST", "/api/drive/picker-token", { connectedAccountId });
-      const { accessToken, developerKey } = await response.json();
+      const payload = await response.json() as {
+        accessToken?: string;
+        developerKey?: string;
+        apiKey?: string;
+        configured?: boolean;
+      };
+      const developerKey = payload.developerKey || payload.apiKey;
+      if (!payload.accessToken || !developerKey) {
+        throw new Error(payload.configured === false
+          ? "Drive picker isn't configured on this deployment"
+          : "Drive picker token response was incomplete");
+      }
       openGooglePicker({
-        accessToken,
+        accessToken: payload.accessToken,
         developerKey,
         onPicked: (documents) => bindMutation.mutate(documents),
         onClosed: () => setPicking(false),

@@ -46,6 +46,12 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "QUICKBOOKS_ENV", section: "quickbooks", label: "QuickBooks Environment", description: "sandbox | production" },
   { name: "GOOGLE_CLIENT_ID", section: "google", label: "Google OAuth Client ID" },
   { name: "GOOGLE_CLIENT_SECRET", section: "google", label: "Google OAuth Client Secret" },
+  {
+    name: "GOOGLE_PICKER_API_KEY",
+    section: "google",
+    label: "Google Picker API Key",
+    description: "Browser key for the Google Picker SDK (Drive file chooser). Distinct from the OAuth client ID.",
+  },
   { name: "EXPO_ACCESS_TOKEN", section: "expo", label: "Expo Access Token", description: "Personal access token from expo.dev/accounts/[account]/settings/access-tokens. Enables EAS builds, project linking, and deployment status." },
   { name: "EXPO_PUBLIC_SENTRY_DSN", section: "sentry", label: "Sentry DSN", description: "Client-safe DSN used by the mobile app to send crash reports to Sentry." },
   { name: "SENTRY_AUTH_TOKEN", section: "sentry", label: "Sentry Auth Token", description: "Secret token used by EAS/Sentry tooling to upload source maps and debug artifacts. Store as an EAS secret too." },
