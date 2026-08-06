@@ -479,12 +479,16 @@ const REGISTRY: Record<string, ModelInfo> = {
     thinking: { level: "basic", description: "xAI Grok 4.3 via SuperGrok subscription" },
     requiresSubscription: true,
   },
+  // claude-cli rides Claude Code + OAuth (Max/Team). Current Claude Code policy:
+  // Fable 5 / Sonnet 5 / Opus 4.6+ use 1M on Anthropic API; Max/Team auto-upgrades Opus
+  // to 1M. Haiku and older pins stay 200k. CLAUDE_CODE_DISABLE_1M_CONTEXT=1 would force
+  // 200k budgeting — Mantra does not set it.
   "claude-sub": {
     id: "claude-sub",
     name: "Claude (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
+    contextWindow: 1000000,
     maxOutputTokens: 64000,
     reasoning: false,
     thinking: { level: "extended", description: "Extended thinking via Claude subscription (auto-selects model based on tier)" },
@@ -495,7 +499,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "Claude Sonnet (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
+    contextWindow: 1000000,
     maxOutputTokens: 64000,
     reasoning: false,
     thinking: { level: "extended", description: "Extended thinking via Claude subscription" },
@@ -507,7 +511,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "Claude Opus (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
+    contextWindow: 1000000,
     maxOutputTokens: 128000,
     reasoning: false,
     thinking: { level: "extended", description: "Deep extended thinking via Claude subscription" },
@@ -519,7 +523,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "Claude Opus Latest (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
+    contextWindow: 1000000,
     maxOutputTokens: 128000,
     reasoning: false,
     thinking: { level: "extended", description: "Deep extended thinking via Claude subscription using Claude Code's documented Opus alias" },
@@ -531,7 +535,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "Claude Fable (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000, // CLI subscription path enforces 200k; 1M requires the [1m] variant + context-1m beta (not requested by our adapter)
+    contextWindow: 1000000,
     maxOutputTokens: 128000,
     reasoning: false,
     thinking: { level: "extended", description: "Mythos-class adaptive thinking via Claude subscription", adaptiveOnly: true },
@@ -543,7 +547,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "Claude Opus 4.6 (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000, // CLI subscription path enforces 200k; 1M requires the [1m] variant + context-1m beta (not requested by our adapter)
+    contextWindow: 1000000,
     maxOutputTokens: 128000,
     reasoning: false,
     thinking: { level: "extended", description: "Deep extended thinking via Claude subscription" },
@@ -555,7 +559,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "Claude Opus 4.5 (Subscription)",
     provider: "claude-cli",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
+    contextWindow: 200000, // older pin; not on the current auto-1M flagship set
     maxOutputTokens: 128000,
     reasoning: false,
     thinking: { level: "extended", description: "Deep extended thinking via Claude subscription" },
