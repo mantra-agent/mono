@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { pool } from "./db";
 import { enqueueTelemetryWrite } from "./telemetry-write";
+import { deriveSafeErrorCallsite } from "@shared/error-callsite";
 const MAX_IDENTITY_LENGTH = 160;
 const MAX_SOURCE_LENGTH = 240;
 const SECRET_LIKE = /(?:bearer\s+\S+|api[_-]?key|authorization|cookie|password|secret|token|session|email|https?:\/\/|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/i;
@@ -55,22 +56,6 @@ function normalizeIdentity(error: unknown): string {
   return `${name}:${code}`.slice(0, MAX_IDENTITY_LENGTH);
 }
 
-function sourceLocation(error: unknown): { file: string | null; line: number | null; site: string } {
-  const stack = error instanceof Error ? error.stack : undefined;
-  const frames = stack?.split("\n").slice(1) ?? [];
-  for (const frame of frames) {
-    const match = frame.match(/(?:at\s+([^\s(]+)\s+\()?(.+?):(\d+):(\d+)\)?$/);
-    if (!match) continue;
-    const fullPath = match[2].replace(/\\/g, "/");
-    const marker = fullPath.lastIndexOf("/server/");
-    const file = (marker >= 0 ? fullPath.slice(marker + 1) : fullPath.split("/").slice(-2).join("/"))
-      .slice(0, MAX_SOURCE_LENGTH);
-    if (SECRET_LIKE.test(file)) continue;
-    return { file, line: Number(match[3]), site: (match[1] || "anonymous").slice(0, 120) };
-  }
-  return { file: null, line: null, site: "unknown" };
-}
-
 export interface ApplicationErrorProjection {
   logger: string;
   deliveryId?: string;
@@ -88,8 +73,8 @@ function normalizeProjection(input: ApplicationErrorProjection) {
   const candidateFile = (input.sourceFile ?? "").replace(/\\/g, "/").slice(0, MAX_SOURCE_LENGTH);
   const file = candidateFile && !SECRET_LIKE.test(candidateFile) && !candidateFile.includes("..") ? candidateFile : null;
   const line = Number.isInteger(input.sourceLine) && input.sourceLine! > 0 && input.sourceLine! <= 10_000_000 ? input.sourceLine! : null;
-  const candidateSite = (input.sourceSite ?? "unknown").slice(0, 160);
-  const site = /^[A-Za-z0-9_.$<>:-]{1,160}$/.test(candidateSite) ? candidateSite : "unknown";
+  const candidateSite = (input.sourceSite ?? "").slice(0, 160);
+  const site = /^[A-Za-z0-9_.$<>:-]{1,160}$/.test(candidateSite) ? candidateSite : "";
   const deliveryId = /^[0-9a-f-]{36}$/i.test(input.deliveryId ?? "") ? input.deliveryId! : null;
   return { identity: `${logger}:${name}:${code}`.slice(0, MAX_IDENTITY_LENGTH), file, line, site, deliveryId };
 }
@@ -125,8 +110,8 @@ export function enqueueApplicationErrorProjection(input: ApplicationErrorProject
 
 export function captureApplicationError(error: unknown, logger = "ExpressFallback"): void {
   const [errorName, errorCode] = normalizeIdentity(error).split(":");
-  const source = sourceLocation(error);
-  enqueueApplicationErrorProjection({ logger, errorName, errorCode, sourceFile: source.file, sourceLine: source.line, sourceSite: source.site });
+  const callsite = deriveSafeErrorCallsite(error instanceof Error ? error.stack : undefined);
+  enqueueApplicationErrorProjection({ logger, errorName, errorCode, ...callsite });
 }
 
 export async function listRecentApplicationErrors(limit = 25, offset = 0): Promise<AggregatedApplicationError[]> {
@@ -135,7 +120,7 @@ export async function listRecentApplicationErrors(limit = 25, offset = 0): Promi
     `SELECT fingerprint, error_identity, source_file, source_line, source_site,
             first_seen_at, last_seen_at, occurrence_count
        FROM application_error_aggregates
-      ORDER BY last_seen_at DESC
+      ORDER BY occurrence_count DESC, last_seen_at DESC, fingerprint ASC
       LIMIT $1 OFFSET $2`,
     [Math.min(100, Math.max(1, limit)), Math.max(0, offset)],
   );
