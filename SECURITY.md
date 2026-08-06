@@ -1,3 +1,13 @@
+<!-- 2026-08-06 Google Picker CSP delta:
+- Assets/data: authenticated browser session and S0-S3 UI data share the SPA execution context with the Google Picker loader.
+- Flow/boundary: Mantra response CSP -> browser loads `https://apis.google.com/js/api.js` -> Google Picker iframe uses the existing HTTPS frame/connect policy.
+- Threats: STRIDE spoofing/tampering and supply-chain script compromise could execute third-party code in the signed-in browser context; an overbroad Google wildcard would unnecessarily increase that blast radius.
+- Controls/owner: Core Application Platform owns the composition-root CSP. `script-src` permits the exact `https://apis.google.com` origin required by Picker, with no wildcard or relaxation of `object-src`, `frame-ancestors`, `form-action`, or other directives. The Picker API key remains HTTP-referrer/API restricted and OAuth remains independently scope-gated.
+- Evidence: confirmed client telemetry `client:DriveSection` reported `Google API script failed to load`; `server/index.ts` previously allowed only self/inline/blob scripts while `client/src/components/integrations/drive-section.tsx` loads the official Google API URL. Google Workspace's maintained Picker CSP guidance names `https://apis.google.com` as the required script origin. Production build is the release gate.
+- Severity/owner/SLA/status: medium; Core Application Platform; immediate; repaired in source pending build, merge, deployment, and authenticated Picker acceptance.
+- Residual risk: trusting Google's loader gives that origin script execution authority in the SPA; this is bounded to the exact origin but cannot eliminate upstream supply-chain risk. Runtime acceptance must confirm Picker's transitive resources do not require a narrower additional directive.
+-->
+
 <!-- 2026-08-05 Privacy-safe proactive error telemetry delta:
 - Assets/data: cross-user server error signals (S2/S3-adjacent at capture), reduced to sanitized error identity, repository-relative source file/line/site, stable fingerprint, first/last seen, and count.
 - Flow/boundary: canonical Express 5xx error middleware -> deterministic in-process sanitizer/fingerprinter -> aggregate-only PostgreSQL table -> existing admin-only Issues tool `list_errors` action. Request bodies, headers, URLs, user/account IDs, raw stack bodies, and raw logs never enter this store or tool response.
