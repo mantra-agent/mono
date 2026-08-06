@@ -1855,6 +1855,37 @@ function extractReplyAddress(fromAddress: string | null): string | undefined {
   return plainMatch?.[0];
 }
 
+function extractReplyAddresses(addresses: string | null): string[] {
+  if (!addresses) return [];
+  return Array.from(addresses.matchAll(/[^\s,;<>]+@[^\s,;<>]+/g), (match) => match[0]);
+}
+
+function deriveReplyAllRecipients(
+  latest: { fromAddress: string | null; toAddresses: string | null; ccAddresses: string | null },
+  senderEmail: string | null | undefined,
+): { to: string[]; cc: string[] } {
+  const excluded = senderEmail?.trim().toLowerCase();
+  const seen = new Set<string>();
+  const uniqueExternal = (addresses: Array<string | undefined>): string[] => {
+    const recipients: string[] = [];
+    for (const address of addresses) {
+      const normalized = address?.trim().toLowerCase();
+      if (!normalized || normalized === excluded || seen.has(normalized)) continue;
+      seen.add(normalized);
+      recipients.push(address!.trim());
+    }
+    return recipients;
+  };
+
+  return {
+    to: uniqueExternal([
+      extractReplyAddress(latest.fromAddress),
+      ...extractReplyAddresses(latest.toAddresses),
+    ]),
+    cc: uniqueExternal(extractReplyAddresses(latest.ccAddresses)),
+  };
+}
+
 async function handleGmailReply(args: Record<string, any>): Promise<ToolHandlerResult> {
   const ref = optionalDraftText(args.ref);
   const body = optionalDraftText(args.body);
@@ -1904,19 +1935,32 @@ async function handleGmailReply(args: Record<string, any>): Promise<ToolHandlerR
     accountId: emailMessages.accountId,
     subject: emailMessages.subject,
     fromAddress: emailMessages.fromAddress,
+    toAddresses: emailMessages.toAddresses,
+    ccAddresses: emailMessages.ccAddresses,
   }).from(emailMessages)
     .where(combineWithVisibleScope(principal, emailScope, andOp(...conditions)))
     .orderBy(descOp(emailMessages.date))
     .limit(1);
   if (!latest) return { result: `Email thread ${providerThreadId} not found.`, error: true };
 
-  const to = extractReplyAddress(latest.fromAddress);
-  if (!to) return { result: "Could not derive a reply recipient from the latest message", error: true };
+  const { assertAvailableGmailSenderAccount } = await import("./gmail");
+  let senderAccount: Awaited<ReturnType<typeof assertAvailableGmailSenderAccount>>;
+  try {
+    senderAccount = await assertAvailableGmailSenderAccount(principal, accountId || latest.accountId);
+  } catch (error: any) {
+    return { result: error?.message || "Selected Gmail sender account is unavailable.", error: true };
+  }
+
+  const recipients = deriveReplyAllRecipients(latest, senderAccount.email);
+  if (recipients.to.length === 0) {
+    return { result: "Could not derive an external reply recipient from the latest message", error: true };
+  }
   const subject = latest.subject?.toLowerCase().startsWith("re:") ? latest.subject : `Re: ${latest.subject || ""}`;
   return handleGmailDraft({
     ...args,
-    account: latest.accountId,
-    to,
+    account: senderAccount.id,
+    to: recipients.to,
+    cc: recipients.cc,
     subject,
     body,
     thread_id: providerThreadId,
@@ -1927,7 +1971,7 @@ async function handleGmailDraft(args: Record<string, any>): Promise<ToolHandlerR
   const permCheck = await checkGmailPermission(args.account, "gmailDraft", "create drafts");
   if (permCheck.denied) return permCheck.result;
 
-  const { to, subject, body } = args;
+  const { to, cc, subject, body } = args;
   if (!to || !subject || !body) return { result: "Missing to, subject, or body", error: true };
   const draftAccountId = permCheck.resolvedAccountId || await resolveGmailAccountId(args.account);
 
@@ -1939,6 +1983,7 @@ async function handleGmailDraft(args: Record<string, any>): Promise<ToolHandlerR
     const draft = await emailDraftStorage.create(principal, {
       gmailAccountId: draftAccountId || undefined,
       to: Array.isArray(to) ? to : [to],
+      cc: optionalDraftRecipients(cc),
       subject,
       body,
       threadId: args.thread_id || undefined,
