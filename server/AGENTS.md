@@ -186,13 +186,14 @@ Access control is server-owned and permission-based. Future code must plug into 
 - `sensitive-scope.ts` — Principal-aware sensitive ownership helpers and privileged-mode audit gates
 - `auth.ts` — Auth/session integration and `/api/auth/me` response shape
 - `authorize.ts` — Live object/vault grant predicates and authorizable object types (includes `drive_resource`)
-- `files-api.ts` — Connector-global external-file read boundary (multi-provider); vault-scoped whitelist enforcement. Single authorize path: vault gate → bind/ownership/grant → whitelist → adapter
+- `files-api.ts` — Connector-global external-file read boundary (multi-provider); vault-scoped whitelist enforcement. Single authorize path: vault gate → bind/ownership/grant → whitelist → adapter. Large reads stage full bytes (up to 50MB) into vault-scoped `indexed_content` with fingerprint operationKey `drive-file:{provider}:{id}:v={md5|modifiedTime}:ct={contentType}` so newer sources miss cache and re-download; agent pages via `indexed_content`
 - `files-providers.ts` — Provider adapters only (GoogleDriveAdapter, BoxAdapter stub 501, MantraStorageAdapter). No authorize logic; owner token minted by FilesApi
 - `drive-resource-service.ts` / `drive-resource-routes.ts` — Vault bind CRUD + Files API list/read/metadata HTTP surface
 
 ### Invariants
 - Resolve every request or server action to a `Principal` before making authorization decisions.
 - External file reads go only through `filesApi` (`server/files-api.ts`). Never call Google/Box/object-storage provider clients from feature code or agent tools for bound-file access.
+- Drive content cache invalidation is source-fingerprint based (md5Checksum preferred, else modifiedTime) embedded in `indexed_content.operationKey` — not a separate cache table. Do not reintroduce a hard 2MB product ceiling on Drive downloads; 2MB is the inline tool-preview budget only.
 - `drive_resource` is a vault-scoped bind pointer (`provider` + `provider_file_id`). Providers: `google` | `box` | `mantra`. Folder bind = recursive whitelist of the bound tree only (Google). Mantra is flat object-storage keys (explicit file binds; no ambient prefix crawl). Box fails closed 501 until OAuth exists.
 - Access path: vault gate → bind or live `drive_resource`/`vault` grant → explicit bound-root ancestry coverage → owner connector token (system-elevated mint for Google) → `getFilesProviderAdapter(provider)` transport. Refresh tokens never leave the server; only a short-lived access token reaches Google Picker. Fail closed on disconnect, missing `drive.readonly`, connector mismatch, unknown provider, or non-whitelist. Never ambient crawl. Folder ancestry walks are bounded, cycle-safe, and traverse every returned parent path; My Drive and shared-drive transport uses the adapter's `supportsAllDrives` contract.
 - Vault-scoped list reads (`driveResourceService.list`, `filesApi.listBound`) authorize the vault, then return every bind in that vault — never filter binds by the caller's `accountId` (that hid shared-vault grantees).

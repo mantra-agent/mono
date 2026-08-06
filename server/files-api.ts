@@ -45,7 +45,12 @@ import {
 
 const log = createLogger("FilesApi");
 
-const MAX_READ_BYTES = 2 * 1024 * 1024;
+/** Inline tool-return preview cap — not a product/download ceiling. */
+const MAX_INLINE_READ_BYTES = 2 * 1024 * 1024;
+/** Full provider download staged to object storage for paginated access. */
+const MAX_STAGE_BYTES = 50 * 1024 * 1024;
+/** Text returned inline when the full staged body is this small or smaller. */
+const MAX_INLINE_TEXT_CHARS = 100_000;
 const MAX_LIST_PAGE = 100;
 const MAX_PARENT_WALK = 32;
 
@@ -81,13 +86,28 @@ export interface FilesMetadata {
   connectedAccountId: string;
 }
 
+export interface FilesReadArchiveRef {
+  id: string;
+  objectStoragePath: string;
+  byteCount: number;
+  reused: boolean;
+  operationKey: string;
+}
+
 export interface FilesReadResult {
   metadata: FilesMetadata;
   contentType: string;
+  /** Inline text preview when small and text-like; otherwise null — use archive. */
   text: string | null;
+  /** Inline base64 only for small binaries; large bodies are archived. */
   base64: string | null;
   byteLength: number;
+  /** True when the provider body exceeded MAX_STAGE_BYTES and was cut. */
   truncated: boolean;
+  /** Object-storage archive with sectioned/paginated access via indexed_content. */
+  archive: FilesReadArchiveRef | null;
+  /** hit = served from fingerprint cache without re-download; miss = freshly staged; none = archive unavailable. */
+  cache: "hit" | "miss" | "none";
 }
 
 function httpError(status: number, message: string): Error {
@@ -267,6 +287,99 @@ function isTextLike(mime: string | null | undefined): boolean {
     m === "application/csv" ||
     m === "text/csv"
   );
+}
+
+/**
+ * Expected post-export content type for cache keys — must match adapter export map
+ * so a Docs→text/plain cache entry is not reused as the native editor blob.
+ */
+function expectedReadContentType(sourceMime: string | null | undefined): string {
+  if (!sourceMime) return "application/octet-stream";
+  switch (sourceMime) {
+    case "application/vnd.google-apps.document":
+    case "application/vnd.google-apps.presentation":
+      return "text/plain";
+    case "application/vnd.google-apps.spreadsheet":
+      return "text/csv";
+    case "application/vnd.google-apps.drawing":
+      return "image/png";
+    default:
+      return sourceMime;
+  }
+}
+
+/**
+ * Source-fingerprint operation key. md5 preferred; modifiedTime fallback.
+ * When either changes, the key changes → cache miss → re-download.
+ */
+export function buildDriveFileCacheKey(input: {
+  provider: string;
+  providerFileId: string;
+  md5Checksum?: string | null;
+  modifiedTime?: string | null;
+  contentType: string;
+}): string {
+  const version =
+    (typeof input.md5Checksum === "string" && input.md5Checksum.trim()) ||
+    (typeof input.modifiedTime === "string" && input.modifiedTime.trim()) ||
+    "unversioned";
+  return `drive-file:${input.provider}:${input.providerFileId}:v=${version}:ct=${input.contentType}`;
+}
+
+async function lookupDriveFileArchive(operationKey: string): Promise<FilesReadArchiveRef | null> {
+  const { db } = await import("./db");
+  const { indexedContent } = await import("@shared/schema");
+  const { combineWithSensitiveVisible } = await import("./sensitive-scope");
+  const ownerColumns = {
+    ownerUserId: indexedContent.ownerUserId,
+    principalAccountId: indexedContent.principalAccountId,
+    vaultId: indexedContent.vaultId,
+  };
+  const [existing] = await db
+    .select()
+    .from(indexedContent)
+    .where(
+      combineWithSensitiveVisible(
+        ownerColumns,
+        and(
+          eq(indexedContent.sourceType, "drive_file"),
+          eq(indexedContent.operationKey, operationKey),
+        ),
+      ),
+    )
+    .limit(1);
+  if (!existing) return null;
+  return {
+    id: existing.id,
+    objectStoragePath: existing.objectStoragePath,
+    byteCount: existing.byteCount,
+    reused: true,
+    operationKey,
+  };
+}
+
+async function stageDriveFileArchive(opts: {
+  content: string;
+  sourceLabel: string;
+  operationKey: string;
+  objectFileName?: string;
+}): Promise<FilesReadArchiveRef | null> {
+  const { indexAndArchiveHeuristic } = await import("./content-indexer");
+  const archived = await indexAndArchiveHeuristic({
+    content: opts.content,
+    sourceType: "drive_file",
+    sourceLabel: opts.sourceLabel,
+    operationKey: opts.operationKey,
+    objectFileName: opts.objectFileName,
+  });
+  if (!archived) return null;
+  return {
+    id: archived.id,
+    objectStoragePath: archived.objectStoragePath,
+    byteCount: archived.byteCount,
+    reused: !!archived.reused,
+    operationKey: opts.operationKey,
+  };
 }
 
 class FilesApi {
@@ -507,7 +620,16 @@ class FilesApi {
 
   /**
    * Read file bytes/text (v1 read-only). Folders rejected.
-   * Google editors exported to text/csv; binary returned as base64.
+   *
+   * Large-file path:
+   * 1. Fingerprint the source (md5Checksum preferred, else modifiedTime).
+   * 2. On cache hit, serve the vault-scoped object-storage archive without re-download.
+   * 3. On miss, download up to MAX_STAGE_BYTES, stage via indexAndArchiveHeuristic with
+   *    operationKey = drive-file:{provider}:{id}:v={fingerprint}:ct={contentType}, return
+   *    a small inline preview + archive handle for indexed_content pagination.
+   * 4. When the source is newer (fingerprint changes), the key misses and we re-download.
+   *
+   * Google editors are exported to text/csv before staging; small bodies stay inline.
    */
   async read(input: {
     vaultId?: string;
@@ -520,6 +642,60 @@ class FilesApi {
       throw httpError(400, "Cannot read a folder — use listChildren");
     }
 
+    const contentType = expectedReadContentType(metadata.mimeType);
+    const operationKey = buildDriveFileCacheKey({
+      provider: metadata.provider,
+      providerFileId: metadata.providerFileId,
+      md5Checksum: metadata.md5Checksum,
+      modifiedTime: metadata.modifiedTime,
+      contentType,
+    });
+
+    // Cache hit: skip provider download entirely.
+    try {
+      const cached = await lookupDriveFileArchive(operationKey);
+      if (cached) {
+        log.log("Files read cache hit", {
+          provider: metadata.provider,
+          providerFileId: metadata.providerFileId,
+          archiveId: cached.id,
+          byteCount: cached.byteCount,
+        });
+        let text: string | null = null;
+        let base64: string | null = null;
+        if (isTextLike(contentType) && cached.byteCount <= MAX_INLINE_TEXT_CHARS) {
+          const { readFromObjectStorage } = await import("./content-indexer");
+          text = await readFromObjectStorage(cached.objectStoragePath);
+        } else if (
+          !isTextLike(contentType) &&
+          // Archive stores base64 text (~4/3 binary size); only re-inline when small.
+          cached.byteCount <= Math.ceil((MAX_INLINE_READ_BYTES * 4) / 3)
+        ) {
+          const { readFromObjectStorage } = await import("./content-indexer");
+          const body = await readFromObjectStorage(cached.objectStoragePath);
+          if (body != null) base64 = body;
+        }
+        return {
+          metadata,
+          contentType,
+          text,
+          base64,
+          // For binary archives this is the base64 text length (paginated body size).
+          byteLength: cached.byteCount,
+          truncated: false,
+          archive: cached,
+          cache: "hit",
+        };
+      }
+    } catch (err) {
+      // Cache lookup is best-effort; fall through to provider download.
+      log.warn("Files read cache lookup failed", {
+        provider: metadata.provider,
+        providerFileId: metadata.providerFileId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     const { adapter, ctx } = await adapterContextForConnector(
       metadata.provider,
       metadata.connectedAccountId,
@@ -527,25 +703,64 @@ class FilesApi {
 
     try {
       const bytes = await adapter.readBytes(ctx, metadata.providerFileId, {
-        maxBytes: MAX_READ_BYTES,
+        maxBytes: MAX_STAGE_BYTES,
         mimeType: metadata.mimeType,
       });
 
-      const truncated = bytes.truncated || bytes.byteLength > MAX_READ_BYTES;
+      const truncated = bytes.truncated || bytes.byteLength > MAX_STAGE_BYTES;
       const buf = truncated
-        ? bytes.buffer.subarray(0, Math.min(bytes.buffer.length, MAX_READ_BYTES))
+        ? bytes.buffer.subarray(0, Math.min(bytes.buffer.length, MAX_STAGE_BYTES))
         : bytes.buffer;
-      const contentType = bytes.contentType || metadata.mimeType || "application/octet-stream";
-      const text = isTextLike(contentType) ? buf.toString("utf8") : null;
-      const base64 = text == null ? buf.toString("base64") : null;
+      const resolvedContentType =
+        bytes.contentType || contentType || metadata.mimeType || "application/octet-stream";
+      const textLike = isTextLike(resolvedContentType);
+      // Text archives as utf-8; binary as base64 so indexed_content sections stay text-safe.
+      const archiveBody = textLike ? buf.toString("utf8") : buf.toString("base64");
+      const safeName = (metadata.name || "file")
+        .replace(/[^a-zA-Z0-9._-]+/g, "_")
+        .slice(0, 80);
+      const objectFileName = `${safeName || "file"}.${textLike ? "txt" : "b64.txt"}`;
+
+      let archive: FilesReadArchiveRef | null = null;
+      let cache: FilesReadResult["cache"] = "none";
+      try {
+        archive = await stageDriveFileArchive({
+          content: archiveBody,
+          sourceLabel: `${metadata.provider}:${metadata.name || metadata.providerFileId}`,
+          operationKey,
+          objectFileName,
+        });
+        if (archive) cache = archive.reused ? "hit" : "miss";
+      } catch (err) {
+        log.warn("Files read archive stage failed", {
+          provider: metadata.provider,
+          providerFileId: metadata.providerFileId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      // Inline preview: full body when small; otherwise null and agent uses archive.
+      let text: string | null = null;
+      let base64: string | null = null;
+      if (textLike) {
+        const fullText = buf.toString("utf8");
+        text =
+          fullText.length <= MAX_INLINE_TEXT_CHARS
+            ? fullText
+            : fullText.slice(0, MAX_INLINE_TEXT_CHARS);
+      } else if (buf.length <= MAX_INLINE_READ_BYTES) {
+        base64 = buf.toString("base64");
+      }
 
       return {
         metadata,
-        contentType,
+        contentType: resolvedContentType,
         text,
         base64,
         byteLength: buf.length,
         truncated,
+        archive,
+        cache,
       };
     } catch (err) {
       const status = (err as { status?: number }).status;

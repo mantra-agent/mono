@@ -14793,31 +14793,38 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           provider: provider as any,
           providerFileId,
         });
-        // Cap large text/base64 bodies so tool results stay agent-usable.
+        // Prefer archive handle for large bodies; keep a small inline preview.
         const MAX_CHARS = 100_000;
-        if (
-          (payload.encoding === "text" || payload.encoding === "base64") &&
-          typeof payload.content === "string"
-        ) {
-          const truncated = payload.content.length > MAX_CHARS;
-          return {
-            result: JSON.stringify(
-              {
-                ...payload,
-                content: truncated ? payload.content.slice(0, MAX_CHARS) : payload.content,
-                truncated: truncated || undefined,
-                originalLength: truncated ? payload.content.length : undefined,
-                note:
-                  truncated && payload.encoding === "base64"
-                    ? "Binary body truncated for tool result size; use getMetadata for full size."
-                    : undefined,
-              },
-              null,
-              2,
-            ),
-          };
-        }
-        return { result: JSON.stringify(payload, null, 2) };
+        const text =
+          typeof payload.text === "string" && payload.text.length > MAX_CHARS
+            ? payload.text.slice(0, MAX_CHARS)
+            : payload.text;
+        const base64 =
+          typeof payload.base64 === "string" && payload.base64.length > MAX_CHARS
+            ? payload.base64.slice(0, MAX_CHARS)
+            : payload.base64;
+        const archiveNote = payload.archive
+          ? `Full body archived at indexed_content id=${payload.archive.id} (cache=${payload.cache}). Use indexed_content.get / read_section to page. Binary archives store base64 text.`
+          : payload.truncated
+            ? "Provider body exceeded the 50MB stage cap; content is truncated."
+            : undefined;
+        return {
+          result: JSON.stringify(
+            {
+              metadata: payload.metadata,
+              contentType: payload.contentType,
+              text,
+              base64,
+              byteLength: payload.byteLength,
+              truncated: payload.truncated || undefined,
+              cache: payload.cache,
+              archive: payload.archive,
+              note: archiveNote,
+            },
+            null,
+            2,
+          ),
+        };
       } catch (err: any) {
         return {
           result: `Bound-drive read failed: ${err.message}`,
