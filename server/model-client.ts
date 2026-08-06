@@ -1818,6 +1818,8 @@ function modelProviderErrorFromAttempt(
     ...base,
     userMessage: buildProviderUserMessage(base),
   };
+  const errorCode = providerFailure.providerCode
+    ?? `${providerFailure.kind}_${providerFailure.status || "unknown"}`;
   log.error(`model.provider_failure ${safeStringify({
     ...providerFailure,
     bodySnippet: sanitizeProviderDiagnostic(err.bodySnippet),
@@ -1825,7 +1827,7 @@ function modelProviderErrorFromAttempt(
     maxBytes: 16 * 1024,
     maxStrLen: MAX_PROVIDER_DIAGNOSTIC_CHARS,
     label: "model-client.providerFailure",
-  })}`);
+  })}`, { errorCode });
   return new ModelProviderError(providerFailure, err.bodySnippet);
 }
 
