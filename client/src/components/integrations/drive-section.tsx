@@ -1,7 +1,9 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Folder, Loader2, Plus } from "lucide-react";
+import { FileText, Folder, HardDrive, Loader2, Plus } from "lucide-react";
 import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { apiRequest } from "@/lib/queryClient";
 import { createLogger } from "@/lib/logger";
 import { useToast } from "@/hooks/use-toast";
@@ -205,80 +207,85 @@ export function DriveSection({
     }
   }, [bindMutation, connectedAccountId, toast]);
 
-  if (!drivePickerConfigured) {
-    return (
-      <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-drive-picker-not-configured">
-        Drive picker isn't configured on this deployment.
-      </p>
-    );
-  }
-
-  if (!connectedAccountId) {
-    return (
-      <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-drive-account-required">
-        Connect a Google account to choose Drive files.
-      </p>
-    );
-  }
-
-  if (!hasDriveScope) {
-    return null;
-  }
-
-  if (!vaultId) {
-    return (
-      <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-drive-vault-required">
-        Create or join a Vault before choosing Drive files.
-      </p>
-    );
-  }
-
   const resources = resourcesQuery.data?.resources ?? [];
+  const canBrowse = Boolean(drivePickerConfigured && connectedAccountId && hasDriveScope && vaultId);
+  const driveStatus = !hasDriveScope
+    ? "Reconnect to enable"
+    : !drivePickerConfigured
+      ? "Picker not configured"
+      : !connectedAccountId
+        ? "Account required"
+        : !vaultId
+          ? "Vault required"
+          : resourcesQuery.isLoading
+            ? "Loading…"
+            : resources.length === 0
+              ? "No files included"
+              : `${resources.length} included`;
 
   return (
-    <div className="space-y-1 py-1" data-testid="drive-integration-section">
-      <button
-        type="button"
-        className={HIERARCHY_PRIMARY_ACTION_CLASS}
-        onClick={handlePick}
-        disabled={picking || bindMutation.isPending}
-        data-testid="button-drive-choose-files"
+    <div data-testid="drive-integration-section">
+      <ProfileTreeRow
+        label={<span>Drive</span>}
+        icon={<HardDrive className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        testId="row-google-drive"
       >
-        {picking || bindMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-        <span>{picking ? "Picking…" : "Choose Files"}</span>
-      </button>
+        <span className={!hasDriveScope ? "text-muted-foreground" : undefined}>{driveStatus}</span>
+      </ProfileTreeRow>
 
-      {resourcesQuery.isLoading ? (
-        <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Loading Drive files…
-        </div>
-      ) : resources.length === 0 ? (
-        <p className="px-2 py-2 text-sm text-muted-foreground" data-testid="text-drive-empty">
-          No files included.
-        </p>
-      ) : (
-        <ul className="space-y-0" data-testid="list-drive-resources">
-          {resources.map((resource) => {
+      {canBrowse && resourcesQuery.isLoading ? (
+        <HierarchyTreeRow continues connectorAnchor="first-row-center">
+          <div className="flex min-h-10 items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Loading Drive files…
+          </div>
+        </HierarchyTreeRow>
+      ) : null}
+
+      {canBrowse
+        ? resources.map((resource) => {
             const Icon = resource.resourceType === "folder" ? Folder : FileText;
             return (
-              <li key={resource.id} className="flex min-h-10 items-center gap-2 px-2 py-1.5">
-                <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <a
-                  className="min-w-0 flex-1 truncate text-sm hover:text-cta"
-                  href={resource.webUrl ?? `https://drive.google.com/open?id=${encodeURIComponent(resource.providerFileId)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={resource.name}
-                  data-testid={`link-drive-open-${resource.id}`}
-                >
-                  {resource.name}
-                </a>
-              </li>
+              <HierarchyTreeRow
+                key={resource.id}
+                continues
+                connectorAnchor="first-row-center"
+              >
+                <div className="flex min-h-10 items-center gap-2 px-2 py-1.5" data-testid={`row-drive-resource-${resource.id}`}>
+                  <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <a
+                    className="min-w-0 flex-1 truncate text-sm hover:text-cta"
+                    href={resource.webUrl ?? `https://drive.google.com/open?id=${encodeURIComponent(resource.providerFileId)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={resource.name}
+                    data-testid={`link-drive-open-${resource.id}`}
+                  >
+                    {resource.name}
+                  </a>
+                </div>
+              </HierarchyTreeRow>
             );
-          })}
-        </ul>
-      )}
+          })
+        : null}
+
+      {canBrowse ? (
+        <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
+          <button
+            type="button"
+            className={HIERARCHY_PRIMARY_ACTION_CLASS}
+            onClick={handlePick}
+            disabled={picking || bindMutation.isPending}
+            data-testid="button-drive-choose-files"
+          >
+            {picking || bindMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            <span>{picking ? "Picking…" : "Choose Files"}</span>
+          </button>
+        </HierarchyTreeRow>
+      ) : null}
     </div>
   );
 }

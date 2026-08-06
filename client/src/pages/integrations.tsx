@@ -96,6 +96,7 @@ import {
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HIERARCHY_SECTION_HEADER_CLASS,
@@ -2401,32 +2402,23 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
               </DropdownMenu>
             )}
           >
-            <ProfileTreeRow label={<span>Status</span>} icon={statusIcon} hasValue showEmpty mobileLayout="inline" testId={`row-google-status-${account.id}`}>
-              <span className={cn(showReauth && "text-destructive", isHealthy && "text-active")}>{status}</span>
-            </ProfileTreeRow>
-            <ProfileTreeRow label={<span>Vault</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(permAccount?.vault)} showEmpty mobileLayout="inline" testId={`row-google-vault-${account.id}`}>
-              {permAccount?.vault ? (
-                <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} />{permAccount.vault.name}</span>
-              ) : editingVaultAccountId === account.id && permAccount ? (
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
-                    <SelectTrigger className="h-8 w-44" aria-label="Select Vault" data-testid={`select-assign-google-vault-${account.id}`}>
-                      <SelectValue placeholder="Select Vault" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {vaults.map((vault) => (
-                        <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    size="sm"
-                    disabled={!selectedVaultId}
-                    data-testid={`button-save-google-vault-${account.id}`}
-                    onClick={async () => {
+            <HierarchyTreeRow continues connectorAnchor="first-row-center">
+              <ProfileTreeRow label={<span>Status</span>} icon={statusIcon} hasValue showEmpty mobileLayout="inline" testId={`row-google-status-${account.id}`}>
+                <span className={cn(showReauth && "text-destructive", isHealthy && "text-active")}>{status}</span>
+              </ProfileTreeRow>
+            </HierarchyTreeRow>
+            <HierarchyTreeRow continues connectorAnchor="first-row-center">
+              <ProfileTreeRow label={<span>Vault</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(permAccount?.vault)} showEmpty mobileLayout="inline" testId={`row-google-vault-${account.id}`}>
+                {permAccount?.vault ? (
+                  <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} />{permAccount.vault.name}</span>
+                ) : editingVaultAccountId === account.id && permAccount ? (
+                  <Select
+                    value={selectedVaultId}
+                    onValueChange={async (vaultId) => {
+                      setSelectedVaultId(vaultId);
                       try {
                         await apiRequest("PUT", `/api/connected-accounts/${permAccount.accountId}/vault`, {
-                          vaultId: selectedVaultId,
+                          vaultId,
                         });
                         queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
                         queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
@@ -2439,47 +2431,53 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
                       }
                     }}
                   >
-                    Assign
-                  </Button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="text-cta hover:text-cta/80 disabled:pointer-events-none disabled:opacity-50"
-                  onClick={() => {
-                    setSelectedVaultId(activeVaultId || vaults[0]?.id || "");
-                    setEditingVaultAccountId(account.id);
-                  }}
-                  disabled={!permAccount || vaults.length === 0}
-                  data-testid={`button-assign-google-vault-${account.id}`}
-                >
-                  Not Assigned
-                </button>
-              )}
-            </ProfileTreeRow>
-            <ProfileTreeRow label={<span>Drive</span>} icon={<HardDrive className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId={`row-google-drive-${account.id}`}>
-              <span>{account.scopes?.hasDrive ? "Connected" : "Reconnect to enable"}</span>
-            </ProfileTreeRow>
+                    <SelectTrigger className="h-8 w-44" aria-label="Select Vault" data-testid={`select-assign-google-vault-${account.id}`}>
+                      <SelectValue placeholder="Select Vault" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {vaults.map((vault) => (
+                        <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <button
+                    type="button"
+                    className="text-cta hover:text-cta/80 disabled:pointer-events-none disabled:opacity-50"
+                    onClick={() => {
+                      setSelectedVaultId(activeVaultId || vaults[0]?.id || "");
+                      setEditingVaultAccountId(account.id);
+                    }}
+                    disabled={!permAccount || vaults.length === 0}
+                    data-testid={`button-assign-google-vault-${account.id}`}
+                  >
+                    Not Assigned
+                  </button>
+                )}
+              </ProfileTreeRow>
+            </HierarchyTreeRow>
             {(account.healthError || missingScopes.length > 0) ? (
-              <div className="min-w-0 space-y-1 px-2 py-1.5 pl-8">
-                {account.healthError ? (
-                  <p className="text-xs text-destructive" data-testid={`text-account-health-${account.id}`}>{account.healthError}</p>
-                ) : null}
-                {missingScopes.length > 0 ? (
-                  <p className="text-xs text-destructive" data-testid={`text-missing-scopes-${account.id}`}>
-                    Missing: {missingScopes.map((scope) => scope.split("/").pop() || scope).join(", ")}
-                  </p>
-                ) : null}
-              </div>
+              <HierarchyTreeRow continues connectorAnchor="first-row-center">
+                <div className="min-w-0 space-y-1 px-2 py-1.5">
+                  {account.healthError ? (
+                    <p className="text-xs text-destructive" data-testid={`text-account-health-${account.id}`}>{account.healthError}</p>
+                  ) : null}
+                  {missingScopes.length > 0 ? (
+                    <p className="text-xs text-destructive" data-testid={`text-missing-scopes-${account.id}`}>
+                      Missing: {missingScopes.map((scope) => scope.split("/").pop() || scope).join(", ")}
+                    </p>
+                  ) : null}
+                </div>
+              </HierarchyTreeRow>
             ) : null}
-            {permAccount?.vaultId ? (
+            <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
               <DriveSection
-                vaultId={permAccount.vaultId}
-                connectedAccountId={permAccount.accountId}
+                vaultId={permAccount?.vaultId ?? undefined}
+                connectedAccountId={permAccount?.accountId}
                 drivePickerConfigured={drivePickerConfigured}
                 hasDriveScope={Boolean(account.scopes?.hasDrive)}
               />
-            ) : null}
+            </HierarchyTreeRow>
           </IntegrationTreeSection>
         );
           })}
