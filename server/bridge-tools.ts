@@ -5251,7 +5251,18 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       const limit = Math.min(Math.max(Number(args.limit) || 25, 1), 100);
       const offset = Math.max(Number(args.offset) || 0, 0);
       const errors = await listRecentApplicationErrors(limit, offset);
-      return { result: errors.length > 0 ? errors : "No aggregated application errors found." };
+      if (errors.length === 0) {
+        return { result: "No aggregated application errors found." };
+      }
+      return {
+        result: JSON.stringify({
+          errors,
+          offset,
+          nextOffset: errors.length === limit ? offset + errors.length : null,
+          hasMore: errors.length === limit,
+          count: errors.length,
+        }),
+      };
     }
 
     if (action === "list") {
