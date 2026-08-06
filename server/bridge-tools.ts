@@ -7074,6 +7074,46 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return null;
     }
 
+    async function resolveImplicitSessionCloneDirectory(): Promise<
+      | { directory: string }
+      | { error: string; code: "git_directory_not_found" | "git_directory_ambiguous" }
+      | null
+    > {
+      const explicitDirectory = typeof args.directory === "string" ? args.directory.trim() : "";
+      if (!callingSessionId || explicitDirectory.length > 0) return null;
+
+      let entries: Awaited<ReturnType<typeof readdir>>;
+      try {
+        entries = await readdir(REPOS_DIR, { withFileTypes: true });
+      } catch {
+        return {
+          error: "No session-owned repository clone exists. Clone the repository first with git(action: \"clone\", ...).",
+          code: "git_directory_not_found",
+        };
+      }
+
+      const candidates = entries
+        .filter((entry) => entry.isDirectory() && isOwnedBySession(entry.name))
+        .map((entry) => entry.name)
+        .sort();
+      const repositories: string[] = [];
+      for (const candidate of candidates) {
+        if (await dirExists(resolve(REPOS_DIR, candidate, ".git"))) repositories.push(candidate);
+      }
+
+      if (repositories.length === 1) return { directory: repositories[0] };
+      if (repositories.length === 0) {
+        return {
+          error: "No session-owned repository clone exists. Clone the repository first with git(action: \"clone\", ...).",
+          code: "git_directory_not_found",
+        };
+      }
+      return {
+        error: `Multiple session-owned repository clones exist: ${repositories.join(", ")}. Pass directory to choose one.`,
+        code: "git_directory_ambiguous",
+      };
+    }
+
     async function resolveReadOnlyRepoDir(directory?: string): Promise<string | null> {
       if (directory === undefined || directory === null || SELF_DIR_ALIASES.has(directory)) {
         const gitDir = resolve(WORKSPACE_DIR, ".git");
@@ -7352,6 +7392,12 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     try {
+      const implicitSessionClone = action === "clone" ? null : await resolveImplicitSessionCloneDirectory();
+      if (implicitSessionClone && "error" in implicitSessionClone) {
+        return contractReject(implicitSessionClone.error, implicitSessionClone.code);
+      }
+      if (implicitSessionClone) args.directory = implicitSessionClone.directory;
+
       switch (action) {
         case "clone": {
           const url = args.url;
@@ -7610,8 +7656,23 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const dir = resolveRepoDir(args.directory);
           if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Checkout only works on cloned repos in repos/.", "git_directory_not_found");
 
+          const prNumber = Number(args.pr_number);
+          if (Number.isInteger(prNumber) && prNumber > 0) {
+            if (args.file) return contractReject("file cannot be combined with pr_number checkout", "git_invalid_action");
+            const localBranch = `pr-${prNumber}`;
+            const remoteUrl = await getRemoteUrl(dir);
+            const authEnv = await getAuthEnv(remoteUrl);
+            try {
+              await git(["fetch", "origin", `pull/${prNumber}/head`], dir, authEnv);
+            } finally {
+              cleanupAskpass(authEnv);
+            }
+            await git(["checkout", "-B", localBranch, "FETCH_HEAD"], dir);
+            return { result: `Checked out PR #${prNumber} on local branch: ${localBranch}` };
+          }
+
           const ref = sanitizeRef(args.ref);
-          if (!ref) return contractReject("Missing or invalid ref/branch to checkout", "git_invalid_action");
+          if (!ref) return contractReject("Missing or invalid ref/branch to checkout; pass pr_number to check out a pull request", "git_invalid_action");
 
           const checkoutArgs = ["checkout", ref];
           if (args.file) checkoutArgs.push("--", String(args.file));

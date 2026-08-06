@@ -190,9 +190,9 @@ export const TOOL_DETAILS: Record<string, ToolDetailEntry> = {
     example: 'Search: { "action": "search", "query": "from:sarah", "account": "Work" }\nDraft: { "action": "draft", "to": "sarah@example.com", "subject": "Following up", "body": "..." }',
   },
   git: {
-    description: "Interact with Git repositories — clone, pull, browse history, diff, branch, checkout, show, and write changes (add, commit, push, create_pr, merge_pr, delete_branch). Write actions (add, commit, push, create_pr) only work on cloned repos in repos/, not the workspace root.",
-    whenToUse: "User mentions a git repository, wants to pull code, clone a project, review commit history, work with branches, commit changes, push code, open a pull request, merge PRs, or delete remote branches.",
-    example: 'Clone: { "action": "clone", "url": "https://github.com/user/repo" }\nCommit: { "action": "commit", "directory": "repo", "message": "fix: improve error handling" }\nCreate PR: { "action": "create_pr", "directory": "repo", "title": "Fix error handling", "body": "Improved error messages" }',
+    description: "Interact with Git repositories — clone, pull, browse history, diff, branch, checkout, show, and write changes (add, commit, push, create_pr, merge_pr, delete_branch). Omit directory to use this session's sole clone; if multiple clones exist, choose the directory returned by clone. Use pr_number with checkout for pull requests. Write actions never target the workspace root.",
+    whenToUse: "User mentions a git repository, wants to pull code, clone a project, review commit history, work with branches, check out a pull request, commit changes, push code, open a pull request, merge PRs, or delete remote branches.",
+    example: 'Clone: { "action": "clone", "url": "https://github.com/user/repo" }\nCheckout PR: { "action": "checkout", "pr_number": 123 }\nCommit in sole session clone: { "action": "commit", "message": "fix: improve error handling" }\nCreate PR: { "action": "create_pr", "title": "Fix error handling", "body": "Improved error messages" }',
   },
   scenarios: {
     description: "Scenario modeling — create scenarios, manage actors, build move trees, run simulations, manage assumptions, track notes and artifacts. Actions: list_scenarios, get_scenario, create_scenario, and many more.",
