@@ -180,6 +180,10 @@ export async function registerSystemRoutes(app: Express, serverStartTime: Date) 
       for (const entry of entries) {
         if (entry && typeof entry.level === "string" && typeof entry.source === "string" && typeof entry.message === "string") {
           appendClientLog(entry.level, entry.source, entry.message);
+          if (entry.level === "error" && entry.aggregate && typeof entry.aggregate === "object") {
+            const { enqueueApplicationErrorProjection } = await import("../error-telemetry");
+            enqueueApplicationErrorProjection(entry.aggregate);
+          }
         }
       }
       res.status(204).end();

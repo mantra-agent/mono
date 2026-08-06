@@ -1,3 +1,11 @@
+<!-- 2026-08-06 Canonical createLogger error aggregation correction:
+- Boundary/owner: Core Reliability now derives one bounded aggregate projection at the canonical client and server `createLogger` error-emission boundary; the former Express 5xx producer is removed to prevent duplicate counting. Browser projections travel only through the authenticated, rate-limited `/api/client-logs` route; server projections use the shared telemetry-write lane.
+- Stored data: normalized logger/source, error class and allowlisted code identity, and bounded safe file/line/site when available. Raw messages, stacks, context, URLs, identities, headers, secrets, user content, and arbitrary metadata remain ordinary ephemeral/file logs only and never enter `application_error_aggregates` or its replay ledger.
+- Threats/controls: deterministic allowlists and length bounds reduce STRIDE information disclosure and attacker-controlled cardinality; UUID delivery claims make beacon/keepalive retries replay-safe; fingerprint upserts group repeated identical crashes; aggregation failure is best-effort and excludes TelemetryWrite logger errors to prevent recursion.
+- Evidence: `client/src/lib/logger.ts`, authenticated ingestion in `server/routes/system.ts`, `server/log.ts`, `server/error-telemetry.ts`, and existing admin-gated Issues Errors API/tool.
+- Residual limitations: errors never emitted through `createLogger` are intentionally outside this contract; browser source file/line/site are unavailable unless safely derived at the logger boundary; delivery can still be lost on abrupt process/browser termination or telemetry-lane overflow.
+-->
+
 <!-- 2026-08-05 Privacy-safe proactive error telemetry delta:
 - Assets/data: cross-user server error signals (S2/S3-adjacent at capture), reduced to sanitized error identity, repository-relative source file/line/site, stable fingerprint, first/last seen, and count.
 - Flow/boundary: canonical Express 5xx error middleware -> deterministic in-process sanitizer/fingerprinter -> aggregate-only PostgreSQL table -> existing admin-only Issues tool `list_errors` action. Request bodies, headers, URLs, user/account IDs, raw stack bodies, and raw logs never enter this store or tool response.

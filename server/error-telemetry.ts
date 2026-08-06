@@ -1,8 +1,6 @@
 import { createHash } from "crypto";
 import { pool } from "./db";
-import { createLogger } from "./log";
-
-const telemetryLog = createLogger("ErrorTelemetry");
+import { enqueueTelemetryWrite } from "./telemetry-write";
 const MAX_IDENTITY_LENGTH = 160;
 const MAX_SOURCE_LENGTH = 240;
 const SECRET_LIKE = /(?:bearer\s+\S+|api[_-]?key|authorization|cookie|password|secret|token|session|email|https?:\/\/|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/i;
@@ -32,6 +30,10 @@ function ensureSchema(): Promise<void> {
         first_seen_at timestamptz NOT NULL DEFAULT now(),
         last_seen_at timestamptz NOT NULL DEFAULT now(),
         occurrence_count bigint NOT NULL DEFAULT 1
+      );
+      CREATE TABLE IF NOT EXISTS application_error_deliveries (
+        delivery_id uuid PRIMARY KEY,
+        received_at timestamptz NOT NULL DEFAULT now()
       );
       CREATE INDEX IF NOT EXISTS application_error_aggregates_last_seen_idx
         ON application_error_aggregates (last_seen_at DESC);
@@ -69,28 +71,62 @@ function sourceLocation(error: unknown): { file: string | null; line: number | n
   return { file: null, line: null, site: "unknown" };
 }
 
-export async function captureApplicationError(error: unknown): Promise<void> {
-  const identity = normalizeIdentity(error);
-  const source = sourceLocation(error);
+export interface ApplicationErrorProjection {
+  logger: string;
+  deliveryId?: string;
+  errorName?: string;
+  errorCode?: string;
+  sourceFile?: string | null;
+  sourceLine?: number | null;
+  sourceSite?: string;
+}
+
+function normalizeProjection(input: ApplicationErrorProjection) {
+  const logger = /^[A-Za-z0-9_.:-]{1,80}$/.test(input.logger) ? input.logger : "UnknownLogger";
+  const name = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(input.errorName ?? "") ? input.errorName! : "Error";
+  const code = /^[A-Z][A-Z0-9_]{1,48}$/.test(input.errorCode ?? "") ? input.errorCode! : "UNCLASSIFIED";
+  const candidateFile = (input.sourceFile ?? "").replace(/\\/g, "/").slice(0, MAX_SOURCE_LENGTH);
+  const file = candidateFile && !SECRET_LIKE.test(candidateFile) && !candidateFile.includes("..") ? candidateFile : null;
+  const line = Number.isInteger(input.sourceLine) && input.sourceLine! > 0 && input.sourceLine! <= 10_000_000 ? input.sourceLine! : null;
+  const candidateSite = (input.sourceSite ?? "unknown").slice(0, 160);
+  const site = /^[A-Za-z0-9_.$<>:-]{1,160}$/.test(candidateSite) ? candidateSite : "unknown";
+  const deliveryId = /^[0-9a-f-]{36}$/i.test(input.deliveryId ?? "") ? input.deliveryId! : null;
+  return { identity: `${logger}:${name}:${code}`.slice(0, MAX_IDENTITY_LENGTH), file, line, site, deliveryId };
+}
+
+async function persistProjection(projection: ReturnType<typeof normalizeProjection>): Promise<void> {
   const fingerprint = createHash("sha256")
-    .update(`${identity}\n${source.file ?? "unknown"}\n${source.line ?? 0}\n${source.site}`)
+    .update(`${projection.identity}\n${projection.file ?? "unknown"}\n${projection.line ?? 0}\n${projection.site}`)
     .digest("hex");
-  try {
-    await ensureSchema();
-    await pool.query(
-      `INSERT INTO application_error_aggregates
-         (fingerprint, error_identity, source_file, source_line, source_site)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (fingerprint) DO UPDATE SET
-         last_seen_at = now(),
-         occurrence_count = application_error_aggregates.occurrence_count + 1`,
-      [fingerprint, identity, source.file, source.line, source.site],
+  await ensureSchema();
+  if (projection.deliveryId) {
+    const claimed = await pool.query(
+      `INSERT INTO application_error_deliveries (delivery_id) VALUES ($1)
+       ON CONFLICT DO NOTHING RETURNING delivery_id`,
+      [projection.deliveryId],
     );
-  } catch (captureError) {
-    telemetryLog.warn("Privacy-safe application error aggregation failed", {
-      errorType: captureError instanceof Error ? captureError.name : "UnknownError",
-    });
+    if (claimed.rowCount === 0) return;
   }
+  await pool.query(
+    `INSERT INTO application_error_aggregates
+       (fingerprint, error_identity, source_file, source_line, source_site)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (fingerprint) DO UPDATE SET
+       last_seen_at = now(),
+       occurrence_count = application_error_aggregates.occurrence_count + 1`,
+    [fingerprint, projection.identity, projection.file, projection.line, projection.site],
+  );
+}
+
+export function enqueueApplicationErrorProjection(input: ApplicationErrorProjection): void {
+  const projection = normalizeProjection(input);
+  enqueueTelemetryWrite("application-error-aggregate.capture", () => persistProjection(projection));
+}
+
+export function captureApplicationError(error: unknown, logger = "ExpressFallback"): void {
+  const [errorName, errorCode] = normalizeIdentity(error).split(":");
+  const source = sourceLocation(error);
+  enqueueApplicationErrorProjection({ logger, errorName, errorCode, sourceFile: source.file, sourceLine: source.line, sourceSite: source.site });
 }
 
 export async function listRecentApplicationErrors(limit = 25, offset = 0): Promise<AggregatedApplicationError[]> {
