@@ -20,6 +20,16 @@ export type ToolFailureCode =
   | "orient_no_session"
   | "shell_policy_denied"
   | "tool_schema_invalid"
+  // Plan contract rejects
+  | "plan_input_invalid"
+  | "plan_principal_required"
+  // Files contract/provider rejects
+  | "files_input_invalid"
+  | "files_access_denied"
+  | "files_provider_transient"
+  // Progressive tool-schema loading rejects
+  | "tools_input_invalid"
+  | "tools_authority_denied"
   // Git contract rejects (caller input / wrong target — amber)
   | "git_missing_url"
   | "git_invalid_url"
