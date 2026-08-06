@@ -7,9 +7,7 @@ import { kpiStorage } from "./metrics-storage";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { assertWritable, combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "./scoped-storage";
 
-const DEFAULT_THEMATIC_GOAL_ID = "80215d57";
-const DEFAULT_INITIATIVE_PROJECT_IDS = [33, 50, 32, 42, 41];
-const DEFAULT_PLAN_NAME = "Mantra Q3 2026";
+const DEFAULT_PLAN_NAME = "Business Plan";
 
 const planScope = {
   scope: businessPlans.scope,
@@ -27,7 +25,7 @@ export async function ensureBusinessPlansSchema(): Promise<void> {
     CREATE TABLE IF NOT EXISTS business_plans (
       id text PRIMARY KEY,
       name text NOT NULL,
-      thematic_goal_id text NOT NULL,
+      thematic_goal_id text,
       initiative_project_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
       kpi_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
       vault_id text NOT NULL REFERENCES vaults(id) ON DELETE RESTRICT,
@@ -39,6 +37,9 @@ export async function ensureBusinessPlansSchema(): Promise<void> {
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `);
+  // Existing installs created thematic_goal_id as NOT NULL during bootstrap.
+  // Drop that constraint so plans can exist with no assigned goal until the user picks one.
+  await db.execute(sql`ALTER TABLE business_plans ALTER COLUMN thematic_goal_id DROP NOT NULL`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_plans_owner ON business_plans(owner_user_id, account_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_business_plans_vault ON business_plans(vault_id)`);
 }
@@ -86,16 +87,10 @@ async function assertKpis(kpiIds: string[]): Promise<void> {
   for (const id of kpiIds) await kpiStorage.get(id);
 }
 
-async function defaultKpiIds(): Promise<string[]> {
-  return (await kpiStorage.list())
-    .filter((kpi) => kpi.status === "active" && kpi.standingObjectiveKey)
-    .map((kpi) => kpi.id);
-}
-
 async function insertPlan(input: {
   name: string;
   vaultId: string;
-  thematicGoalId: string;
+  thematicGoalId: string | null;
   initiativeProjectIds: number[];
   kpiIds: string[];
 }): Promise<BusinessPlan> {
@@ -124,49 +119,35 @@ export const businessPlanStorage = {
       .orderBy(asc(businessPlans.createdAt));
     if (rows.length > 0) return rows;
 
+    // First-open bootstrap: empty named shell only. Never auto-assign goals/initiatives/KPIs.
     const vaultId = principal.activeVaultId ?? principal.visibleVaultIds[0];
     if (!vaultId) throw Object.assign(new Error("A visible Vault is required"), { status: 409 });
     await assertVault(vaultId);
-    const visibleGoals = await goalStorage.listGoals({ includeDormant: true });
-    const thematicGoalId = visibleGoals.some((goal) => goal.id === DEFAULT_THEMATIC_GOAL_ID)
-      ? DEFAULT_THEMATIC_GOAL_ID
-      : visibleGoals[0]?.id;
-    if (!thematicGoalId) {
-      throw Object.assign(new Error("Create a Goal before creating a Business Plan"), { status: 409 });
-    }
-    const visibleProjectIds = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(combineWithVisibleScope(principal, {
-        scope: projects.scope,
-        ownerUserId: projects.ownerUserId,
-        accountId: projects.accountId,
-        vaultId: projects.vaultId,
-      }));
-    const visibleProjectSet = new Set(visibleProjectIds.map((project) => project.id));
-    const initiativeProjectIds = DEFAULT_INITIATIVE_PROJECT_IDS.filter((id) => visibleProjectSet.has(id));
     return [await insertPlan({
       name: DEFAULT_PLAN_NAME,
       vaultId,
-      thematicGoalId,
-      initiativeProjectIds,
-      kpiIds: await defaultKpiIds(),
+      thematicGoalId: null,
+      initiativeProjectIds: [],
+      kpiIds: [],
     })];
   },
 
   async create(input: BusinessPlanCreate): Promise<BusinessPlan> {
     const principal = requireCurrentUserPrincipal();
-    const source = (await this.list())[0];
-    const vaultId = input.vaultId ?? principal.activeVaultId ?? source.vaultId;
-    const thematicGoalId = input.thematicGoalId ?? source.thematicGoalId;
+    const vaultId = input.vaultId ?? principal.activeVaultId ?? principal.visibleVaultIds[0];
+    if (!vaultId) throw Object.assign(new Error("A visible Vault is required"), { status: 409 });
     await assertVault(vaultId);
-    await assertGoal(thematicGoalId);
+
+    // Explicit null/omitted thematic goal stays empty. Never clone prior plan assignments.
+    const thematicGoalId = input.thematicGoalId ?? null;
+    if (thematicGoalId) await assertGoal(thematicGoalId);
+
     return insertPlan({
       name: input.name,
       vaultId,
       thematicGoalId,
-      initiativeProjectIds: [...source.initiativeProjectIds],
-      kpiIds: [...source.kpiIds],
+      initiativeProjectIds: [],
+      kpiIds: [],
     });
   },
 
@@ -178,7 +159,7 @@ export const businessPlanStorage = {
     assertWritable(principal, current as unknown as Record<string, unknown> | undefined, "Business Plan");
 
     if (patch.vaultId) await assertVault(patch.vaultId);
-    if (patch.thematicGoalId) await assertGoal(patch.thematicGoalId);
+    if (typeof patch.thematicGoalId === "string") await assertGoal(patch.thematicGoalId);
     if (patch.initiativeProjectIds) await assertProjects(patch.initiativeProjectIds);
     if (patch.kpiIds) await assertKpis(patch.kpiIds);
 
