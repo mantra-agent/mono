@@ -306,10 +306,10 @@ async function getMidTurnCompactionSummary(windowHours: number): Promise<MidTurn
             SELECT COUNT(*)::int
             FROM jsonb_array_elements(COALESCE(m.system_steps, '[]'::jsonb)) AS step
             WHERE step->>'name' = 'working_context_compression'
-              AND step->>'status' = 'completed'
+              AND step->>'status' = 'done'
           ), 0) AS compactions
         FROM messages m
-        INNER JOIN chat_sessions s ON s.id = m.session_id
+        INNER JOIN sessions s ON s.id = m.conversation_id
         WHERE s.owner_user_id = $2
           AND m.role = 'assistant'
           AND m.created_at >= NOW() - ($1 * INTERVAL '2 hours')
