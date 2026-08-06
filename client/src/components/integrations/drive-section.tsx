@@ -4,6 +4,7 @@ import { ExternalLink, HardDrive, Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/queryClient";
 import { createLogger } from "@/lib/logger";
+import { useToast } from "@/hooks/use-toast";
 
 const log = createLogger("DriveSection");
 
@@ -123,6 +124,7 @@ export function DriveSection({
   onReconnect: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [picking, setPicking] = useState(false);
 
   const resourcesQuery = useQuery<{ resources: DriveResource[] }>({
@@ -187,10 +189,16 @@ export function DriveSection({
         onClosed: () => setPicking(false),
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
       log.error("Drive picker failed", { error: String(error) });
+      toast({
+        title: "Couldn't open Google Drive",
+        description: message,
+        variant: "destructive",
+      });
       setPicking(false);
     }
-  }, [bindMutation, connectedAccountId]);
+  }, [bindMutation, connectedAccountId, toast]);
 
   if (!drivePickerConfigured) {
     return (
