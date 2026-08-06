@@ -94,6 +94,17 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
     contextPressure && contextPressure.contextWindow && contextPressure.outputReserve
       ? Math.min(contextPressure.outputReserve / scaleLimit, 1)
       : 0;
+  // Mid-turn compaction ladder: stage 1 (0.65× target) is the existing dot; stages 2
+  // (0.80×) and 3 (target) are the upper rungs. Drawn as graduated amber ticks so the
+  // staged recovery zone reads as one family, distinct from the red operating gate.
+  const stage2Ratio =
+    contextPressure && contextPressure.compactionTarget
+      ? Math.min((contextPressure.compactionTarget * 0.8) / scaleLimit, 1)
+      : 0;
+  const stage3Ratio =
+    contextPressure && contextPressure.compactionTarget
+      ? Math.min(contextPressure.compactionTarget / scaleLimit, 1)
+      : 0;
   // Color stays pegged to the operational events (compaction + operating gate),
   // NOT the visual scale — otherwise rescaling to the window would neuter the
   // red/amber warnings, since the hard gate lives well below the full window.
@@ -192,7 +203,27 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                       cy="20"
                       r="1.25"
                       fill="hsl(var(--warning))"
+                      fillOpacity="0.55"
                       transform={`rotate(${thresholdRatio * 360} 20 20)`}
+                    />
+                  )}
+                  {stage2Ratio > 0 && stage2Ratio < 1 && (
+                    <circle
+                      cx="38"
+                      cy="20"
+                      r="1.25"
+                      fill="hsl(var(--warning))"
+                      fillOpacity="0.78"
+                      transform={`rotate(${stage2Ratio * 360} 20 20)`}
+                    />
+                  )}
+                  {stage3Ratio > 0 && stage3Ratio < 1 && (
+                    <circle
+                      cx="38"
+                      cy="20"
+                      r="1.4"
+                      fill="hsl(var(--warning))"
+                      transform={`rotate(${stage3Ratio * 360} 20 20)`}
                     />
                   )}
                   {operatingRatio > 0 && operatingRatio < 1 && (

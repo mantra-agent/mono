@@ -63,6 +63,8 @@ export interface ContextPressureSnapshot {
   modelName?: string;
   /** Tokens reserved for model output (off-limits to input) — the roped-off wedge at top of the gauge. */
   outputReserve?: number;
+  /** Soft mid-turn compaction target (stage-3 threshold). Stage 2 = 0.80×, stage 1 = 0.65× of this. Drives the amber ladder ticks. */
+  compactionTarget?: number;
 }
 
 export interface StreamingContent {
