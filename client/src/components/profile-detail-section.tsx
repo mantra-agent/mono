@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { HIERARCHY_SECTION_HEADER_CLASS } from "@/components/hierarchy-section-header";
 
 interface ProfileDetailSectionProps {
   title: ReactNode;
@@ -26,11 +27,11 @@ export function ProfileDetailSection({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
-      <div className="group flex w-full items-center gap-1.5 px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
+      <div className={cn("group", HIERARCHY_SECTION_HEADER_CLASS, "hover-elevate")}>
         <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
           <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
-          <span className="min-w-0 flex-1 text-left">{title}</span>
-          {count !== undefined && <span className="ml-auto text-[10px] font-normal text-muted-foreground/70">{count}</span>}
+          <span className="min-w-0 flex-1 text-left uppercase">{title}</span>
+          {count !== undefined && <span className="ml-auto text-[10px] font-normal normal-case text-muted-foreground/70">{count}</span>}
         </CollapsibleTrigger>
         {headerAction}
       </div>
