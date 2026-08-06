@@ -70,15 +70,28 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
         })`
       : "";
   const tooltipLabel = `${baseTooltipLabel}${pressureDetail}`;
+  // Visual scale: the ring measures against the TRUE provider context window
+  // (e.g. 200k), so the arc and markers read on the denominator a human assumes.
+  // Falls back to the operating limit only when the window is unavailable.
+  const scaleLimit = contextPressure
+    ? Math.max(contextPressure.contextWindow ?? contextPressure.inputLimit, 1)
+    : 1;
   const pressureRatio = contextPressure
-    ? Math.min(contextPressure.inputTokens / Math.max(contextPressure.inputLimit, 1), 1)
+    ? Math.min(contextPressure.inputTokens / scaleLimit, 1)
     : 0;
   const thresholdRatio = contextPressure
-    ? Math.min(contextPressure.compactionThreshold / Math.max(contextPressure.inputLimit, 1), 1)
+    ? Math.min(contextPressure.compactionThreshold / scaleLimit, 1)
     : 0;
-  const pressureColor = pressureRatio >= 0.9
+  // Color stays pegged to the operational events (compaction + operating gate),
+  // NOT the visual scale — otherwise rescaling to the window would neuter the
+  // red/amber warnings, since the hard gate lives well below the full window.
+  const nearOperatingGate =
+    !!contextPressure && contextPressure.inputTokens >= contextPressure.inputLimit * 0.9;
+  const pastCompaction =
+    !!contextPressure && contextPressure.inputTokens >= contextPressure.compactionThreshold;
+  const pressureColor = nearOperatingGate
     ? "hsl(var(--destructive))"
-    : contextPressure && contextPressure.inputTokens >= contextPressure.compactionThreshold
+    : pastCompaction
       ? "hsl(var(--warning))"
       : "hsl(var(--cta))";
   const circumference = 2 * Math.PI * 18;
