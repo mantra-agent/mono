@@ -8,7 +8,7 @@ import { withTimeout, isTimeoutError, CONTEXT_ASSEMBLY_TIMEOUT_MS } from "./time
 import { createLogger } from "./log";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { isRecapFtueSession } from "./ftue-session";
-import { getBetweenTurnFireThreshold } from "./context-budget";
+import { getContextPressureThresholds } from "./context-budget";
 
 const log = createLogger("AgentContext");
 
@@ -104,12 +104,9 @@ function truncateConversationHistory(
   return [messages[messages.length - 1]];
 }
 
-/**
- * Between-turn fire line on the provider window scale.
- * Callers must compare full next-input tokens (not history-only).
- */
-export function getBetweenTurnCompactionThreshold(contextWindow: number): number {
-  return getBetweenTurnFireThreshold(contextWindow);
+/** Between-turn threshold on the usable hard-input scale. */
+export function getBetweenTurnCompactionThreshold(hardInputLimit: number): number {
+  return getContextPressureThresholds(hardInputLimit).betweenTurnFire;
 }
 
 type CompactableHistoryMessage = {
@@ -168,7 +165,7 @@ const COMPACTION_JOIN_WAIT_MS = 3 * 60_000;
 export async function runBetweenTurnCompaction(
   sessionId: string,
   conversationHistory: CompactableHistoryMessage[],
-  contextWindow: number,
+  hardInputLimit: number,
   callerGeneration?: number,
   onActivity?: (update: CompactionActivityUpdate) => void,
   /**
@@ -178,7 +175,7 @@ export async function runBetweenTurnCompaction(
    */
   fullInputTokens?: number,
 ): Promise<CompactionOutcome> {
-  const threshold = getBetweenTurnCompactionThreshold(contextWindow);
+  const threshold = getBetweenTurnCompactionThreshold(hardInputLimit);
   let measuredTokens = 0;
   if (typeof fullInputTokens === "number" && Number.isFinite(fullInputTokens)) {
     measuredTokens = Math.max(0, Math.floor(fullInputTokens));
@@ -205,7 +202,7 @@ export async function runBetweenTurnCompaction(
   };
 
   // The persisted doc is the coordinate space for the whole operation.
-  // Fire threshold is full-request model-space; split/archive/write-back key
+  // Threshold is full-request model-space; split/archive/write-back key
   // off durable message IDs. Landing keeps the two newest committed context
   // messages; there is no history keep-budget path.
   const { chatFileStorage } = await import("./chat-file-storage");

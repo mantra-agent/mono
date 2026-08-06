@@ -1491,7 +1491,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   async function buildChatHistory(
     sessionId: string,
     enrichedContent: string,
-    resolvedModel?: string,
+    resolvedModel: string | undefined,
+    hardInputLimit: number,
     onProgress?: (
       step: string,
       status: "started" | "done",
@@ -1912,10 +1913,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       applyTokenEstimateCalibration,
       estimateMessagesInputTokens,
       estimateToolDefinitionTokens,
-      getBetweenTurnFireThreshold,
+      getContextPressureThresholds,
     } = await import("../../context-budget");
     const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
-    const betweenTurnFireThreshold = getBetweenTurnFireThreshold(contextWindow);
+    const betweenTurnThreshold = getContextPressureThresholds(hardInputLimit).betweenTurnFire;
     const rawPreExecutorTokens = estimateMessagesInputTokens(messages) + toolDefinitionTokens;
     const fullPreExecutorTokens = await applyTokenEstimateCalibration(
       bareModel,
@@ -1928,10 +1929,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       );
     }, 0);
 
-    // Full next-input fire: rest altitude = 30% of window. One shot only
+    // Full next-input threshold = 30% of the hard input limit. One shot only
     // (betweenTurnPass set after compact). Landing is min-viable live context
     // inside runBetweenTurnCompaction — no history keep-budget.
-    if (!betweenTurnPass && fullPreExecutorTokens > betweenTurnFireThreshold) {
+    if (!betweenTurnPass && fullPreExecutorTokens > betweenTurnThreshold) {
       durableCompactionAttempted = true;
       const endCompaction = beginSubStep("ctx_history_compact");
       try {
@@ -1939,7 +1940,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         const compacted = await runBetweenTurnCompaction(
           sessionId,
           conversationHistory,
-          contextWindow,
+          hardInputLimit,
           callerGeneration,
           onCompactionActivity,
           fullPreExecutorTokens,
@@ -1950,13 +1951,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             compacted.terminalOutcome === "compacted");
         if (durableCompactionApplied) {
           chatLog.log(
-            `betweenTurnCompaction full-input fire applied sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${betweenTurnFireThreshold}; rebuilding after min-viable land`,
+            `betweenTurnCompaction full-input threshold applied sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${betweenTurnThreshold}; rebuilding after min-viable land`,
           );
           endCompaction();
           return buildChatHistory(
             sessionId,
             enrichedContent,
             resolvedModel,
+            hardInputLimit,
             onProgress,
             currentMessageIds,
             callerGeneration,
@@ -1966,7 +1968,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           );
         }
         chatLog.log(
-          `betweenTurnCompaction full-input fire no-op sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${betweenTurnFireThreshold} outcome=${compacted.outcome}`,
+          `betweenTurnCompaction full-input threshold no-op sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${betweenTurnThreshold} outcome=${compacted.outcome}`,
         );
         endCompaction();
       } catch (compactErr: unknown) {
@@ -1978,7 +1980,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
 
     chatLog.log(
-      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurnFire=${betweenTurnFireThreshold} window=${contextWindow} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
+      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurn=${betweenTurnThreshold} hardInput=${hardInputLimit} window=${contextWindow} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
     );
     return {
       messages,
@@ -1987,14 +1989,14 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       toolDefs,
       contextPressure: {
         preRunTokens: fullPreExecutorTokens,
-        threshold: betweenTurnFireThreshold,
+        threshold: betweenTurnThreshold,
         durableCompactionAttempted,
         durableCompactionApplied,
         contextTokens: fullPreExecutorTokens,
         messageCount: messages.length,
         toolCount: toolResultCount,
         contextWindow,
-        contextLimit: contextWindow,
+        contextLimit: hardInputLimit,
       },
     };
   }
@@ -2566,6 +2568,21 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         preChronology.push({ s: "system", i: idx });
       };
 
+      const budgetModel = chatModel.includes("/")
+        ? chatModel.split("/").slice(1).join("/")
+        : chatModel;
+      const { getContextWindow, getMaxOutputTokens } = await import("../../model-registry");
+      const { getContextRequestBudget } = await import("../../context-budget");
+      const configuredMaxOutput = (
+        chatRoutingDecision?.modelConfig as { maxOutputTokens?: number } | undefined
+      )?.maxOutputTokens;
+      const outputReserveIsExplicit =
+        typeof configuredMaxOutput === "number" && configuredMaxOutput > 0;
+      const historyBudget = getContextRequestBudget(
+        getContextWindow(budgetModel),
+        outputReserveIsExplicit ? configuredMaxOutput : getMaxOutputTokens(budgetModel),
+        outputReserveIsExplicit,
+      );
       const {
         messages,
         conversationHistory,
@@ -2576,6 +2593,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         sessionId,
         content,
         chatModel,
+        historyBudget.hardInputLimit,
         onCtxProgress,
         currentMessageIds,
         lease.generation,

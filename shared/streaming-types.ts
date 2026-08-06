@@ -56,9 +56,9 @@ export type StreamingSource = "text" | "voice" | "meeting" | null;
 export interface ContextPressureSnapshot {
   /** Calibrated full assembled input: messages plus tool definitions. */
   inputTokens: number;
-  /** True provider context window — the sole gauge denominator. */
+  /** True provider context window, retained for diagnostics. */
   contextWindow: number;
-  /** Provider admission cliff: contextWindow − outputReserve. */
+  /** Usable input envelope and sole gauge denominator: contextWindow − outputReserve. */
   hardInputLimit: number;
   /** Tokens reserved for model output, rendered as the roped-off top wedge. */
   outputReserve: number;
