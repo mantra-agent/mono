@@ -413,6 +413,65 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     enabled: true,
     timezone: "__USER_TZ__",
   },
+  {
+    legacyMatch: (t) =>
+      t.type === "skill" &&
+      (t.skillId === "autonomy" || t.name === "Manage Schedule" || t.name === "autonomy"),
+
+    systemKey: "autonomy-loop",
+    name: "Manage Schedule",
+    description:
+      "Runs the autonomy scan-and-execute loop every 3 hours. Self-selects operating mode each run: Quick Scan (daytime heartbeat), Maintenance Pass (follow-through sweep, people cadence, wellness, goal audit), or Deep Work (nightly meeting briefs, enrichment, analysis, planning artifacts, bounded fixes).",
+    type: "skill",
+    skillId: "autonomy",
+    prompt: "",
+    schedules: [
+      { id: "sys-skill-autonomy-1", frequency: "every_x_hours", interval: 3 },
+    ],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
+  {
+    legacyMatch: (t) =>
+      t.type === "skill" &&
+      (t.skillId === "streamline" ||
+        t.name === "Manage Bandwidth" ||
+        t.name === "Streamline - Weekly Bandwidth Maintenance"),
+
+    systemKey: "weekly-streamline",
+    name: "Manage Bandwidth",
+    description:
+      "Runs Streamline Thursday night before Friday planning to quietly reconcile commitments, dates, priorities, dependencies, and task-effort estimates; starts a conversation only when a genuine tradeoff requires judgment.",
+    type: "skill",
+    skillId: "streamline",
+    prompt: "",
+    schedules: [
+      { id: "sys-skill-streamline-1", frequency: "weekly", timeOfDay: "20:00", daysOfWeek: ["thu"] },
+    ],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
+  {
+    legacyMatch: (t) =>
+      t.type === "skill" &&
+      (t.skillId === "coach" ||
+        t.skillId === "coaching-model-1-0" ||
+        t.name === "Coaching Session" ||
+        t.name === "Coaching Model 1.0"),
+
+    systemKey: "biweekly-coaching",
+    name: "Coaching Session",
+    description:
+      "Biweekly Friday coaching check-in. Runs the coach skill: asks how Ray is doing and his top three struggles, then coaches for growth Bill Campbell-style.",
+    type: "skill",
+    skillId: "coach",
+    prompt: "",
+    schedules: [
+      { id: "biweekly-friday", frequency: "every_x_weeks", interval: 2, timeOfDay: "10:00", daysOfWeek: ["fri"] },
+    ],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
 ];
 
 const TIMER_NAME_RENAMES: Record<string, string> = {
@@ -492,14 +551,28 @@ export class SystemTimerRegistry {
         !RETIRED_SYSTEM_TIMERS.some((retired) => timer.systemKey === retired.systemKey || retired.legacyMatch(timer)),
       );
       const timezone = profile.timezone || getTimezone();
+      const claimed = new Set<string>();
       for (const definition of this.managedUserDefinitions()) {
-        const matched = remaining.find((timer) => timer.systemKey === definition.systemKey);
+        // Prefer an exact systemKey match. Otherwise adopt a pre-existing ad-hoc
+        // timer that carries no systemKey yet but matches this definition's
+        // legacyMatch, so a newly introduced default claims and normalizes the
+        // user's existing timer in place instead of creating a duplicate.
+        let matched = remaining.find(
+          (timer) => timer.systemKey === definition.systemKey && !claimed.has(timer.id),
+        );
+        if (!matched) {
+          matched = remaining.find(
+            (timer) =>
+              !claimed.has(timer.id) && !timer.systemKey && definition.legacyMatch(timer),
+          );
+        }
         const materialized = materializeDefinition(definition, timezone);
         if (!matched) {
           await timerStorage.createManagedUser(materialized, definition.systemKey, principal);
           log.info(`Created managed user timer systemKey=${definition.systemKey} owner=${principal.userId}`);
           continue;
         }
+        claimed.add(matched.id);
         const updates = this.updatesFor(matched, definition, timezone);
         if (Object.keys(updates).length > 0) {
           await timerStorage.update(matched.id, updates);
