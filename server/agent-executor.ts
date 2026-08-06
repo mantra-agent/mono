@@ -169,6 +169,8 @@ export type ToolExecutorResult = {
    * dispatch may only set this field when the handler lacked failure.kind.
    */
   failureKind?: ToolFailureKind;
+  /** Flattened producer code when present without a nested failure object. */
+  failureCode?: string;
   /** One discriminated recovery decision computed by the run-scoped ledger. */
   recoveryDecision?: ToolRecoveryDecision;
   outcome?: ToolOutcome;
@@ -2053,7 +2055,12 @@ export class AgentExecutor extends EventEmitter {
           result: event.result,
           error: event.error ? event.result : undefined,
           // SSOT: accept failure.kind or flattened failureKind from dispatch.
-            failureKind: resolvedToolFailureKind(event),
+          failureKind: resolvedToolFailureKind(event),
+          ...(event.failure?.code
+            ? { failureCode: event.failure.code }
+            : typeof event.failureCode === "string" && event.failureCode.trim()
+              ? { failureCode: event.failureCode.trim() }
+              : {}),
         });
         const toolStepStartResolved = ctx.activeToolUseSteps.get(toolCallId || "");
         if (toolStepStartResolved && toolCallId) {
@@ -2410,6 +2417,12 @@ export class AgentExecutor extends EventEmitter {
         error: toolResult.error ? toolResult.result : undefined,
         // SSOT: accept failure.kind or flattened failureKind from dispatch.
         failureKind: resolvedToolFailureKind(toolResult),
+        ...(toolResult.failure?.code
+          ? { failureCode: toolResult.failure.code }
+          : typeof toolResult.failureCode === "string" &&
+              toolResult.failureCode.trim()
+            ? { failureCode: toolResult.failureCode.trim() }
+            : {}),
       });
       const toolStepStart = ctx.activeToolUseSteps.get(tc.id);
       if (toolStepStart) {

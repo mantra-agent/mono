@@ -1,3 +1,10 @@
+<!-- 2026-08-06 stream/draft failureCode durability:
+- Assets/data: stable ToolFailure codes on stream steps, draft toolCalls, and reliability reads. No args/result bodies, secrets, or cross-principal aggregates.
+- Flow/boundary: producer failure.code -> stream tool_result -> session reducer/draft projection -> terminal toolCalls -> reliability extractFailureCode.
+- Threats: diagnostic corruption if interrupt/partial drafts keep kind-only rows; false-negative coded filters; information disclosure if codes include secrets (they must remain stable enums).
+- Controls/owner: ChatStreamEvent/ExecutionStep carry failureCode; resolveToolResult + projectAssistantDraft persist it; both executor publish paths emit it; mergeToolCalls enriches same-id rows; extractFailureCode reads nested failure and known shell teaching prose. Owner Platform Reliability; SLA immediate.
+- Residual: historical null-code rows remain until natural turnover; teaching-prose fallback is shell-specific only.
+-->
 <!-- 2026-08-06 tool_output_admissions boot ensure + residual failureCode durability:
 - Assets/data: principal-scoped tool-output admission metrics table; stable ToolFailure codes on session tool-call metadata. No arguments, result bodies, secrets, or cross-principal aggregates.
 - Flow/boundary: boot ensure -> admissions insert/rank path; executor failureCode -> interactive merge/rebuild map -> reliability reader.

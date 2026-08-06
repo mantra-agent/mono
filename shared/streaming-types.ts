@@ -24,6 +24,8 @@ export interface ExecutionStep {
   error?: string;
   /** Structured failure kind for UI tone (permission vs actual error). */
   failureKind?: import("./tool-failure").ToolFailureKind;
+  /** Stable producer code for reliability filtering; travels with stream/draft tool steps. */
+  failureCode?: string;
   status?: "active" | "done" | "error";
   narrative?: string;
   systemStepName?: string;

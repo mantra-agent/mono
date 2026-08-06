@@ -459,6 +459,8 @@ export type ChatStreamEvent =
       result?: unknown;
       error?: string;
       failureKind?: import("../tool-failure").ToolFailureKind;
+      /** Stable producer code; must survive draft checkpoints and interrupt terminalization. */
+      failureCode?: string;
     })
   | (ChatStreamEventBase & { type: "tool_use_pause"; content?: string })
   | (ChatStreamEventBase & { type: "run_start"; runId: string })
