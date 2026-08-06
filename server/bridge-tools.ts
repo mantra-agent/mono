@@ -14793,7 +14793,8 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           provider: provider as any,
           providerFileId,
         });
-        // Prefer archive handle for large bodies; keep a small inline preview.
+        // Completeness contract: sourceBytes/stagedBytes/complete/next are authoritative.
+        // Inline text/base64 are previews only; full body is always via archive when next is set.
         const MAX_CHARS = 100_000;
         const text =
           typeof payload.text === "string" && payload.text.length > MAX_CHARS
@@ -14803,11 +14804,6 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
           typeof payload.base64 === "string" && payload.base64.length > MAX_CHARS
             ? payload.base64.slice(0, MAX_CHARS)
             : payload.base64;
-        const archiveNote = payload.archive
-          ? `Full body archived at indexed_content id=${payload.archive.id} (cache=${payload.cache}). Use indexed_content.get / read_section to page. Binary archives store base64 text.`
-          : payload.truncated
-            ? "Provider body exceeded the 50MB stage cap; content is truncated."
-            : undefined;
         return {
           result: JSON.stringify(
             {
@@ -14815,11 +14811,23 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
               contentType: payload.contentType,
               text,
               base64,
+              sourceBytes: payload.sourceBytes,
+              stagedBytes: payload.stagedBytes,
               byteLength: payload.byteLength,
+              complete: payload.complete,
               truncated: payload.truncated || undefined,
+              next: payload.next,
               cache: payload.cache,
-              archive: payload.archive,
-              note: archiveNote,
+              archive: payload.archive
+                ? {
+                    id: payload.archive.id,
+                    byteCount: payload.archive.byteCount,
+                    encoding: payload.archive.encoding,
+                    encryption: payload.archive.encryption,
+                    retrieval: payload.archive.retrieval,
+                    reused: payload.archive.reused,
+                  }
+                : null,
             },
             null,
             2,
