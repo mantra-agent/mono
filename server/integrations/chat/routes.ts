@@ -1924,7 +1924,34 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     } = await import("../../context-budget");
     const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
     const betweenTurnThreshold = getContextPressureThresholds(hardInputLimit).betweenTurnHistoryReset;
-    const rawPreExecutorTokens = estimateMessagesInputTokens(messages) + toolDefinitionTokens;
+    // One measurand: judge between-turn on the input the provider actually
+    // receives, not the raw durable rebuild. The executor slims already-consumed
+    // tool results to receipts on every request via working-set projection, so the
+    // gauge and the mid-turn ladder already read that projected input while the
+    // durable transcript keeps exact bytes. Project the rebuilt history once here
+    // so the between-turn decision, the executor's request, and the gauge all read
+    // the same number. Handing the executor the projected array makes its own
+    // re-projection a cheap, idempotent no-op (receipts/checkpoints are guarded).
+    // The durable transcript is untouched — only the in-memory provider input is
+    // projected. Falls back to the raw rebuild if projection fails.
+    const { projectWorkingSet } = await import("../../working-set-projector");
+    let projectedMessages = messages;
+    try {
+      const projection = await projectWorkingSet({
+        messages,
+        runId: contextBuildId || `between-turn:${sessionId}`,
+        sessionId,
+        source: "between_turn_measure",
+      });
+      projectedMessages = projection.messages;
+    } catch (projErr: unknown) {
+      chatLog.warn(
+        `between-turn working-set projection failed (using raw rebuild) sessionId=${sessionId}: ${projErr instanceof Error ? projErr.message : String(projErr)}`,
+      );
+      projectedMessages = messages;
+    }
+    const rawPreExecutorTokens =
+      estimateMessagesInputTokens(projectedMessages) + toolDefinitionTokens;
     const fullPreExecutorTokens = await applyTokenEstimateCalibration(
       bareModel,
       rawPreExecutorTokens,
@@ -2003,10 +2030,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
 
     chatLog.log(
-      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurn=${betweenTurnThreshold} hardInput=${hardInputLimit} window=${contextWindow} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
+      `historyRebuilt messageCount=${projectedMessages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurn=${betweenTurnThreshold} hardInput=${hardInputLimit} window=${contextWindow} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} measurand=projected sessionId=${sessionId}`,
     );
     return {
-      messages,
+      messages: projectedMessages,
       conversationHistory,
       enrichedContent,
       toolDefs,
@@ -2016,7 +2043,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         durableCompactionAttempted,
         durableCompactionApplied,
         contextTokens: fullPreExecutorTokens,
-        messageCount: messages.length,
+        messageCount: projectedMessages.length,
         toolCount: toolResultCount,
         contextWindow,
         contextLimit: hardInputLimit,
