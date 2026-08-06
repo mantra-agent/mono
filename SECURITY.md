@@ -1,3 +1,11 @@
+<!-- 2026-08-06 Gmail reply-all recipient repair:
+- Assets/data: cached Gmail message envelope fields (S2), connected-account sender identity, native draft To/Cc recipients, and Gmail thread identifiers.
+- Flow/boundary: principal-scoped `email_messages` lookup -> principal-visible connected Gmail sender account -> deterministic recipient derivation -> principal-scoped `EmailDraftStorage.create`.
+- Threats: cross-principal or cross-account thread lookup (information disclosure), sender self-address inclusion, duplicate recipients, recipient omission, or loss of Gmail thread identity (spoofing/disclosure/integrity).
+- Controls/owner: `combineWithVisibleScope` remains default-deny for cached messages; account and provider-thread predicates bind the envelope; `assertAvailableGmailSenderAccount` authorizes the selected account and supplies canonical self identity; normalized deduplication excludes self across To/Cc; draft persistence retains `threadId`; `EmailDraftStorage` remains the scoped mutation owner. Owner Gmail Tooling. Severity: medium. SLA: immediate. Status: repaired in source, pending production build/merge and non-destructive behavioral proof.
+- Residual: cached RFC address fields are parsed conservatively from ordinary mailbox-list text; malformed or exotic group syntax may omit an address rather than widening recipients.
+-->
+
 <!-- 2026-08-06 GitNexus exact-identifier ranking repair:
 - Assets/data: repository symbol names, file paths, graph relationships, and code-query text (S1 internal engineering metadata); no user content or new persistence.
 - Flow/boundary: authenticated code.query -> GitNexus semantic/lexical producer -> ranked symbol response. Tool authority, repository scope, and graph access are unchanged.
