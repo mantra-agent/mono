@@ -27,6 +27,7 @@ import {
   classifyGitError,
   classifyGitHubApiStatus,
   inputFailure,
+  internalFailure,
   permissionFailure,
   transientFailure,
   type ToolFailure,
@@ -145,6 +146,45 @@ function classifyFilesToolError(err: unknown): ToolFailure | undefined {
     return inputFailure("files_input_invalid", `http_${status}`);
   }
   return undefined;
+}
+
+/** Classify HTTP status from web.fetch non-ok responses. */
+function classifyWebFetchHttpStatus(status: number): ToolFailure {
+  if (status === 408 || status === 429 || status >= 500) {
+    return transientFailure("web_fetch_transient", `http_${status}`);
+  }
+  return inputFailure("web_fetch_http_error", `http_${status}`);
+}
+
+/** Classify thrown web.fetch errors (timeouts / network). */
+function classifyWebFetchThrownError(err: unknown): ToolFailure | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const name = (err as { name?: unknown }).name;
+  if (name === "AbortError") {
+    return transientFailure("web_fetch_timeout");
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  if (/timed?\s*out|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up|network/i.test(message)) {
+    return transientFailure("web_fetch_transient", message.slice(0, 120));
+  }
+  return undefined;
+}
+
+/**
+ * Classify system-tool caught errors. Schema gaps and runtime defects are
+ * internal; only leave truly untyped surprises unclassified.
+ */
+function classifySystemToolError(err: unknown): ToolFailure {
+  const message = err instanceof Error ? err.message : String(err);
+  if (
+    /pgCode=42P01|undefined_table|relation .* does not exist/i.test(message)
+  ) {
+    return internalFailure("system_schema_missing", message.slice(0, 160));
+  }
+  if (/is not defined|Cannot read propert|TypeError|ReferenceError/i.test(message)) {
+    return internalFailure("system_internal_error", message.slice(0, 160));
+  }
+  return internalFailure("system_internal_error", message.slice(0, 160));
 }
 
 const PEOPLE_AGENDA_SURFACE_LIMIT = 3;
@@ -14077,7 +14117,9 @@ const webTools: Record<string, ToolHandler> = {
 
   async web_fetch(args) {
     const url = args.url;
-    if (!url) return { result: "Missing URL", error: true };
+    if (!url) {
+      return contractReject("Missing URL", "web_input_invalid");
+    }
 
     try {
       const { assertSafeUntrustedHttpUrl, fetchUntrustedUrl } = await import("./untrusted-url");
@@ -14174,7 +14216,11 @@ const webTools: Record<string, ToolHandler> = {
         if (isBlockDetected(response.status, bodySnippet)) {
           rawText = await retryWithBrowser(`blocked by ${response.status}`);
         } else {
-          return { result: `Fetch error: ${response.status} ${response.statusText}`, error: true };
+          return {
+            result: `Fetch error: ${response.status} ${response.statusText}`,
+            error: true,
+            failure: classifyWebFetchHttpStatus(response.status),
+          };
         }
       } else {
         const contentType = response.headers.get("content-type") || "";
@@ -14253,7 +14299,11 @@ const webTools: Record<string, ToolHandler> = {
       if (err.name === "AbortError") {
         return { result: `Fetch timed out for ${url}`, error: true };
       }
-      return { result: `Fetch error: ${err.message}`, error: true };
+      return {
+      result: `Fetch error: ${err.message}`,
+      error: true,
+      failure: classifyWebFetchThrownError(err),
+    };
     }
   },
 
@@ -14884,7 +14934,9 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
   },
   async web(args) {
     const action = args.action;
-    if (!action) return { result: "Missing action parameter", error: true };
+    if (!action) {
+      return contractReject("Missing action parameter", "web_input_invalid");
+    }
     const sub: Record<string, ToolHandler> = {
       search: webTools.web_search,
       fetch: webTools.web_fetch,
@@ -14892,7 +14944,9 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       screenshot: webTools.web_test, // deprecated alias
     };
     const handler = sub[action];
-    if (!handler) return { result: `Unknown web action: ${action}`, error: true };
+    if (!handler) {
+      return contractReject(`Unknown web action: ${action}`, "web_input_invalid");
+    }
     return handler(args);
   },
   async memory(args) {
@@ -15520,12 +15574,22 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       try {
         const { getCurrentPrincipal } = await import("./principal-context");
         const principal = getCurrentPrincipal();
-        if (!principal) return { result: "Authenticated principal required", error: true };
+        if (!principal) {
+          return {
+            result: "Authenticated principal required",
+            error: true,
+            failure: permissionFailure("system_principal_required"),
+          };
+        }
         const { rankToolOutputPressure } = await import("./tool-output-pressure");
         const report = await rankToolOutputPressure({ principal, hours: args.hours as number | undefined, limit: args.limit as number | undefined, offset: args.offset as number | undefined });
         return { result: JSON.stringify(report) };
       } catch (err: unknown) {
-        return { result: `Failed to rank tool-output pressure: ${err instanceof Error ? err.message : String(err)}`, error: true };
+        return {
+          result: `Failed to rank tool-output pressure: ${err instanceof Error ? err.message : String(err)}`,
+          error: true,
+          failure: classifySystemToolError(err),
+        };
       }
     }
     if (action === "reliability") {
@@ -15557,17 +15621,21 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         }
 
         if (detail !== "summary") {
-          return {
-            result: `Unknown reliability detail '${detail}'. Use 'summary', 'turn_failures', or 'tool_failures'.`,
-            error: true,
-          };
+          return contractReject(
+            `Unknown reliability detail '${detail}'. Use 'summary', 'turn_failures', or 'tool_failures'.`,
+            "system_input_invalid",
+          );
         }
 
         const { getReliabilityOutcomeSummary } = await import("./reliability-outcomes");
         const summary = await getReliabilityOutcomeSummary(args.hours);
         return { result: JSON.stringify(summary, null, 2) };
       } catch (e) {
-        return { result: `Failed to load reliability outcomes: ${e instanceof Error ? e.message : String(e)}`, error: true };
+        return {
+          result: `Failed to load reliability outcomes: ${e instanceof Error ? e.message : String(e)}`,
+          error: true,
+          failure: classifySystemToolError(e),
+        };
       }
     }
     if (action === "tool_stats") {

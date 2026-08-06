@@ -30,6 +30,16 @@ export type ToolFailureCode =
   // Progressive tool-schema loading rejects
   | "tools_input_invalid"
   | "tools_authority_denied"
+  // Web fetch/search rejects
+  | "web_input_invalid"
+  | "web_fetch_http_error"
+  | "web_fetch_timeout"
+  | "web_fetch_transient"
+  // System tool rejects / defects
+  | "system_input_invalid"
+  | "system_principal_required"
+  | "system_schema_missing"
+  | "system_internal_error"
   // Git contract rejects (caller input / wrong target — amber)
   | "git_missing_url"
   | "git_invalid_url"
@@ -98,6 +108,15 @@ export function permissionFailure(code: ToolFailureCode, detail?: string): ToolF
  */
 export function transientFailure(code: ToolFailureCode, detail?: string): ToolFailure {
   return makeFailure("transient", code, true, detail ? { detail } : undefined);
+}
+
+/**
+ * True internal defects — schema gaps, missing symbols, invariant breaks.
+ * Classified so dashboards separate them from untyped surprises, but still
+ * non-retryable and not caller-correctable.
+ */
+export function internalFailure(code: ToolFailureCode, detail?: string): ToolFailure {
+  return makeFailure("internal", code, false, detail ? { detail } : undefined);
 }
 
 /**
