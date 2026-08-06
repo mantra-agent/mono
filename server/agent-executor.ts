@@ -3136,6 +3136,7 @@ export class AgentExecutor extends EventEmitter {
       contextWindow: contextBudget.contextWindow,
       modelName: pressureModelName,
       outputReserve: contextBudget.outputReserve,
+      compactionTarget: contextBudget.compactionTarget,
     });
     if (requestTokens > contextBudget.operatingInputLimit) {
       throw new ContextOperatingBudgetExceededError(requestTokens, contextBudget);
