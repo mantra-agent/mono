@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { ChatEmptyState } from "@/components/chat-empty-state";
 import {
@@ -843,6 +843,60 @@ export function MessageList({
     questionToolCallIdsByMessageId.set(it.msg.id, ids);
     for (const id of ids) questionOwnerByToolCallId.set(id, it.msg.id);
   }
+
+  // Temporary diagnostics for the live double-answered-card bug. Keep this
+  // cheap: only emit when a question tool call is present in the list.
+  const questionOwnershipSignature = Array.from(questionOwnerByToolCallId.entries())
+    .map(([toolCallId, ownerMessageId]) => `${toolCallId}->${ownerMessageId}`)
+    .join("|");
+  useEffect(() => {
+    if (questionOwnerByToolCallId.size === 0) return;
+    const responseIds = Array.from(questionResponses?.keys() ?? []);
+    const messageCarriers = Array.from(questionToolCallIdsByMessageId.entries()).map(
+      ([messageId, toolCallIds]) => ({
+        messageId,
+        toolCallIds,
+        suppressedToolCallIds: toolCallIds.filter(
+          (id) => questionOwnerByToolCallId.get(id) !== messageId,
+        ),
+        ownsToolCallIds: toolCallIds.filter(
+          (id) => questionOwnerByToolCallId.get(id) === messageId,
+        ),
+        hasInlineQuestionResponse: Boolean(
+          messages.find((m) => m.id === messageId)?.questionResponse,
+        ),
+        role: messages.find((m) => m.id === messageId)?.role ?? null,
+      }),
+    );
+    log.debug("QUESTION_WIDGET:OWNERSHIP", {
+      activeSession,
+      historical,
+      activeQuestionToolCallId,
+      responseIds,
+      ownership: Array.from(questionOwnerByToolCallId.entries()).map(
+        ([toolCallId, ownerMessageId]) => ({ toolCallId, ownerMessageId }),
+      ),
+      messageCarriers,
+      messageCount: messages.length,
+      itemCount: items.length,
+      streamingTargetIdx,
+      streamingSegmentCount: effectiveStreaming.segments.length,
+      streamingSource: effectiveStreaming.source ?? null,
+      streamingTurnId: effectiveStreaming.turnId ?? null,
+    });
+  }, [
+    activeSession,
+    historical,
+    activeQuestionToolCallId,
+    questionOwnershipSignature,
+    questionResponses,
+    messages,
+    items.length,
+    streamingTargetIdx,
+    effectiveStreaming.segments.length,
+    effectiveStreaming.source,
+    effectiveStreaming.turnId,
+  ]);
 
   const renderItem = (item: ListItem, isLast: boolean, isStreamingTarget: boolean): JSX.Element => {
     if (item.kind === "orphaned_plan") {

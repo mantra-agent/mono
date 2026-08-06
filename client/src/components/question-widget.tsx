@@ -224,6 +224,36 @@ export function QuestionWidget({
   );
   const recommendedConfidence = recommendation?.confidence;
   const [localDecisionId, setLocalDecisionId] = useState<string | undefined>(response?.decisionId);
+  const isAnswered = Boolean(response) || prompt.status === "answered";
+  const isSubmitting = submitting || cancelling;
+
+  useEffect(() => {
+    log.debug("QUESTION_WIDGET:MOUNT_STATE", {
+      toolCallId: prompt.toolCallId,
+      status: prompt.status,
+      isAnswered,
+      isSubmitting,
+      hasResponse: Boolean(response),
+      selectedOptionIds: response?.selectedOptionIds ?? selected,
+      decisionId: localDecisionId ?? response?.decisionId ?? null,
+    });
+    return () => {
+      log.debug("QUESTION_WIDGET:UNMOUNT", {
+        toolCallId: prompt.toolCallId,
+        status: prompt.status,
+        isAnswered,
+        decisionId: localDecisionId ?? response?.decisionId ?? null,
+      });
+    };
+  }, [
+    prompt.toolCallId,
+    prompt.status,
+    isAnswered,
+    isSubmitting,
+    response,
+    selected,
+    localDecisionId,
+  ]);
 
   const cancel = async () => {
     if (!onCancel) return;

@@ -2791,6 +2791,50 @@ export const ChatTurn = memo(function ChatTurn({
         })
       : [],
   );
+  useEffect(() => {
+    if (questionPrompts.length === 0) return;
+    const candidates = questionPrompts.map((prompt) => {
+      const hasResponse = Boolean(questionResponses?.has(prompt.toolCallId));
+      const isActive = prompt.toolCallId === activeQuestionToolCallId;
+      const suppressed = suppressedQuestionIds.has(prompt.toolCallId);
+      const willRender = !suppressed && (isActive || hasResponse);
+      return {
+        toolCallId: prompt.toolCallId,
+        status: prompt.status,
+        suppressed,
+        isActive,
+        hasResponse,
+        willRender,
+        selectedOptionIds: questionResponses?.get(prompt.toolCallId)?.selectedOptionIds ?? null,
+      };
+    });
+    if (!candidates.some((c) => c.willRender || c.hasResponse || c.isActive || c.suppressed)) {
+      return;
+    }
+    log.debug("QUESTION_WIDGET:CHATTURN_CANDIDATES", {
+      messageId: message.id,
+      messageRole: message.role,
+      isLast,
+      renderArchivedMessages: Boolean(renderArchivedMessages),
+      hasStreaming: Boolean(streaming),
+      streamingSource: streaming?.source ?? null,
+      suppressedQuestionToolCallIds: suppressedQuestionToolCallIds ?? null,
+      inlineQuestionResponseToolCallId: message.questionResponse?.questionToolCallId ?? null,
+      candidates,
+    });
+  }, [
+    questionPrompts,
+    questionResponses,
+    activeQuestionToolCallId,
+    suppressedQuestionIds,
+    suppressedQuestionToolCallIds,
+    message.id,
+    message.role,
+    message.questionResponse?.questionToolCallId,
+    isLast,
+    renderArchivedMessages,
+    streaming,
+  ]);
   // Content @plan refs render as plain chips only, never as widgets, so a
   // content mention must not suppress the tool-result widget promotion.
   const planWidgetOwnerSegmentById = new Map<string, number>();
