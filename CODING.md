@@ -92,7 +92,7 @@ Before any code diagnosis, system debugging, file edit, build, PR, or merge:
 4. Check loaded AGENTS.md files for existing patterns that apply to your change before designing.
 5. For every new or materially changed product capability, classify it before implementation as Core or owned by exactly one Mod. Name the owner, every contribution surface, install/disable/reinstall behavior, and the independent authority gates in the implementation plan. If the canonical Mod registry cannot express the capability, extend its contribution protocol before wiring the feature; never bypass composition with parallel hard-coded registration. For changes that do not affect product ownership, state that explicitly.
 6. Apply the Engineering Principles in root `AGENTS.md`.
-7. Load `DESIGN.md` for UI/product-facing work.
+7. Load `DESIGN.md` before any UI or product-facing work, and after your first implementation pass audit the result against `DESIGN.md` for violations (page-header/subtitle rules, card-vs-tree layout, tokens, spacing) and cure them before you build and ship.
 8. Before making changes, write the implementation plan/design and compare it against root `AGENTS.md`, auditing specifically for Engineering Principle violations. Cure architectural violations in the plan before editing.
 9. Use Code/GitNexus for architecture and navigation before touching code.
 10. Run impact analysis before editing touched symbols, shared modules, data flows, tool contracts, or cross-boundary behavior. For docs-only changes, note that impact is low/no-code rather than forcing symbol analysis to invent relevance.
@@ -133,7 +133,7 @@ Before any code diagnosis, system debugging, file edit, build, PR, or merge:
 7. Inspect the existing implementation and identify the smallest coherent change.
 8. If the change depends on an external system, library, SDK, hosted API, provider behavior, platform constraint, or integration contract, review the current authoritative API documentation with the `web` tool before finalizing the implementation plan. Capture the relevant contract in the plan instead of guessing from memory.
 9. Before making changes, write the implementation plan/design and compare it against root `AGENTS.md`, auditing specifically for Engineering Principle violations. Cure violations in the plan before editing.
-10. Make the scoped changes with `scratch.write`/`scratch.edit` inside the current session-owned clone. Shell is intentionally read-only. If the change spreads beyond the planned files, pause and reassess.
+10. Make the scoped changes with `scratch.write`/`scratch.edit` inside the current session-owned clone. Shell is intentionally read-only. If the change spreads beyond the planned files, pause and reassess. For UI/user-facing work, after this first pass re-read the relevant `DESIGN.md` rules and audit your own output against them for violations (page-header/subtitle rules, card-vs-tree layout, tokens, spacing); cure any before building.
 11. If you introduced a new reusable pattern, document it concisely in the relevant subdirectory AGENTS.md.
 12. Do not add tests, fixtures, or typecheck-only gates.
 13. Run `npm run build`. If it fails, fix the build and rerun until it passes.
