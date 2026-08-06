@@ -174,6 +174,7 @@ function builtinSkillDefinitionPatch(def: (typeof BUILTIN_SKILL_DEFAULTS)[number
     status: "active",
     addToMemory: def.addToMemory ?? true,
     pinnedToContext: def.pinnedToContext ?? false,
+    ...(def.sessionType ? { sessionType: def.sessionType } : {}),
     updatedAt: new Date(),
   };
 }
@@ -579,6 +580,7 @@ export async function seedBuiltinSkills(): Promise<void> {
         addToMemory: def.addToMemory ?? true,
         budgetBehavior: null,
         pinnedToContext: def.pinnedToContext ?? false,
+        sessionType: def.sessionType ?? null,
         customized: false,
         scope: "global",
         successCount: 0,
