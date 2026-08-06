@@ -31,6 +31,34 @@ interface VaultSnapshot {
   activeVaultId: string | null;
 }
 
+interface KpisResponse {
+  kpis: Kpi[];
+}
+
+interface GoalsResponse {
+  goals: Goal[];
+}
+
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function kpiList(value: unknown): Kpi[] {
+  if (Array.isArray(value)) return value as Kpi[];
+  if (value && typeof value === "object" && Array.isArray((value as KpisResponse).kpis)) {
+    return (value as KpisResponse).kpis;
+  }
+  return [];
+}
+
+function goalList(value: unknown): Goal[] {
+  if (Array.isArray(value)) return value as Goal[];
+  if (value && typeof value === "object" && Array.isArray((value as GoalsResponse).goals)) {
+    return (value as GoalsResponse).goals;
+  }
+  return [];
+}
+
 function referenceValue(type: "goal" | "project" | "kpi", id: string, label: string): ReferencePickerValue {
   return { type, id, label };
 }
@@ -133,36 +161,23 @@ export default function BusinessAdvantagePage() {
 
   const plansQuery = useQuery<BusinessPlan[]>({ queryKey: ["/api/business/plans"] });
   const vaultsQuery = useQuery<VaultSnapshot>({ queryKey: ["/api/vaults"] });
-  const goalsQuery = useQuery<Goal[]>({
-    queryKey: ["/api/life-goals"],
-    queryFn: async () => {
-      const response = await fetch("/api/life-goals", { credentials: "include" });
-      if (!response.ok) throw new Error("Failed to load goals");
-      const payload = await response.json() as Goal[] | { goals?: Goal[] };
-      return Array.isArray(payload) ? payload : payload.goals ?? [];
-    },
-  });
+  // Shared keys must tolerate the canonical response envelopes used elsewhere.
+  // `/api/business/kpis` is cached as `{ kpis }` by the KPI page; `/api/life-goals`
+  // is cached as `{ goals }`. Never assume the shared cache holds a bare array.
+  const goalsQuery = useQuery<Goal[] | GoalsResponse>({ queryKey: ["/api/life-goals"] });
   const projectsQuery = useQuery<ProjectRow[]>({ queryKey: ["/api/projects/projects"] });
-  const kpisQuery = useQuery<Kpi[]>({
-    queryKey: ["/api/business/kpis"],
-    queryFn: async () => {
-      const response = await fetch("/api/business/kpis", { credentials: "include" });
-      if (!response.ok) throw new Error("Failed to load KPIs");
-      const payload = await response.json() as Kpi[] | { kpis?: Kpi[] };
-      return Array.isArray(payload) ? payload : payload.kpis ?? [];
-    },
-  });
+  const kpisQuery = useQuery<Kpi[] | KpisResponse>({ queryKey: ["/api/business/kpis"] });
 
-  const plans = plansQuery.data ?? [];
+  const plans = asArray<BusinessPlan>(plansQuery.data);
   const plan = plans.find((candidate) => candidate.id === selectedPlanId) ?? plans[0];
 
   useEffect(() => {
     if (plan && selectedPlanId !== plan.id) setSelectedPlanId(plan.id);
   }, [plan, selectedPlanId]);
 
-  const goalsById = useMemo(() => new Map((goalsQuery.data ?? []).map((goal) => [goal.id, goal])), [goalsQuery.data]);
-  const projectsById = useMemo(() => new Map((projectsQuery.data ?? []).map((project) => [project.id, project])), [projectsQuery.data]);
-  const kpisById = useMemo(() => new Map((kpisQuery.data ?? []).map((kpi) => [kpi.id, kpi])), [kpisQuery.data]);
+  const goalsById = useMemo(() => new Map(goalList(goalsQuery.data).map((goal) => [goal.id, goal])), [goalsQuery.data]);
+  const projectsById = useMemo(() => new Map(asArray<ProjectRow>(projectsQuery.data).map((project) => [project.id, project])), [projectsQuery.data]);
+  const kpisById = useMemo(() => new Map(kpiList(kpisQuery.data).map((kpi) => [kpi.id, kpi])), [kpisQuery.data]);
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<BusinessPlan> }) => {
@@ -170,8 +185,8 @@ export default function BusinessAdvantagePage() {
       return response.json() as Promise<BusinessPlan>;
     },
     onSuccess: (updated) => {
-      queryClient.setQueryData<BusinessPlan[]>(["/api/business/plans"], (current = []) =>
-        current.map((candidate) => candidate.id === updated.id ? updated : candidate),
+      queryClient.setQueryData<BusinessPlan[]>(["/api/business/plans"], (current) =>
+        asArray<BusinessPlan>(current).map((candidate) => candidate.id === updated.id ? updated : candidate),
       );
     },
   });
@@ -186,7 +201,7 @@ export default function BusinessAdvantagePage() {
       return response.json() as Promise<BusinessPlan>;
     },
     onSuccess: (created) => {
-      queryClient.setQueryData<BusinessPlan[]>(["/api/business/plans"], (current = []) => [...current, created]);
+      queryClient.setQueryData<BusinessPlan[]>(["/api/business/plans"], (current) => [...asArray<BusinessPlan>(current), created]);
       setSelectedPlanId(created.id);
     },
   });
@@ -201,7 +216,9 @@ export default function BusinessAdvantagePage() {
 
   const update = (patch: Partial<BusinessPlan>) => updateMutation.mutate({ id: plan.id, patch });
   const thematicGoal = goalsById.get(plan.thematicGoalId);
-  const visibleVaults = (vaultsQuery.data?.vaults ?? []).filter((vault) => vaultsQuery.data?.visibleVaultIds.includes(vault.id));
+  const visibleVaults = asArray<VaultRow>(vaultsQuery.data?.vaults).filter((vault) =>
+    asArray<string>(vaultsQuery.data?.visibleVaultIds).includes(vault.id),
+  );
 
   return (
     <div className="h-full overflow-y-auto bg-background">
