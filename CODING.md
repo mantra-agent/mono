@@ -119,7 +119,8 @@ Before any code diagnosis, system debugging, file edit, build, PR, or merge:
 4. Identify the single source of truth and the invariant that failed.
 5. Prefer fixing the producer/state model over patching the renderer/consumer.
 6. Use impact analysis before touching symbols or shared flows.
-7. For media-page issues, start with structured client logs filtered to the relevant MediaUpload/MediaGrid logger, then inspect server media/upload logs. Railway output alone is capped and does not contain the authoritative client trace.
+7. Logs are split across streams, and the `system.logs` tool defaults to server stdout. Browser-emitted logs live under `source: client` with logger prefixes like `client:RouteLoadBoundary`, `client:AuthClient`, `client:SharedWS`. For any browser-surfaced symptom — "page won't load", "module failed to load", "route render failed", chunk-load failures, blank/boundary screens, or anything the user saw in the UI — pull `source: client` first and treat server stdout as secondary. A clean server log is not evidence of client health: never reason from the wrong stream to a conclusion of innocence. When the error name or symptom points at the browser, switch the log source before forming a hypothesis.
+8. For media-page issues, start with structured client logs filtered to the relevant MediaUpload/MediaGrid logger, then inspect server media/upload logs. Railway output alone is capped and does not contain the authoritative client trace.
 
 ## Standard Coding Ship Path
 
