@@ -3043,7 +3043,7 @@ export const ChatTurn = memo(function ChatTurn({
           sessionId={message.sessionId}
           persona={message.persona}
           contextPressure={
-            layer === 2
+            layer >= 2
               ? (streaming?.contextPressure ?? message.contextPressure ?? null)
               : null
           }
