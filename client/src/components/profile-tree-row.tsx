@@ -29,6 +29,7 @@ export function ProfileTreeRow({
   testId,
   defaultOpen = false,
   mobileLayout = "stacked",
+  valueLayout = "default",
 }: {
   label: ReactNode;
   icon?: ReactNode;
@@ -43,6 +44,8 @@ export function ProfileTreeRow({
   testId?: string;
   defaultOpen?: boolean;
   mobileLayout?: "stacked" | "inline";
+  /** Controls inline label/value allocation; `compact` lets labels use remaining width. */
+  valueLayout?: "default" | "compact";
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -62,7 +65,9 @@ export function ProfileTreeRow({
             "group relative grid w-full items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70",
             showValue
               ? mobileLayout === "inline"
-                ? "grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] gap-y-0"
+                ? valueLayout === "compact"
+                  ? "grid-cols-[minmax(0,1fr)_max-content_auto_auto] gap-y-0"
+                  : "grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] gap-y-0"
                 : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1"
               : mobileLayout === "inline"
                 ? "grid-cols-[minmax(0,1fr)_auto_auto] gap-y-0"

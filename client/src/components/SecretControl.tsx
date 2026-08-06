@@ -95,6 +95,7 @@ export function SecretControl({ name }: SecretControlProps) {
         hasValue
         showEmpty
         mobileLayout="inline"
+        valueLayout="compact"
         testId={`secret-loading-${name}`}
       >
         <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
@@ -151,6 +152,7 @@ export function SecretControl({ name }: SecretControlProps) {
         hasValue
         showEmpty
         mobileLayout="inline"
+        valueLayout="compact"
         menuContent={menuContent}
         menuVisibility="hover"
         testId={`secret-control-${name}`}
