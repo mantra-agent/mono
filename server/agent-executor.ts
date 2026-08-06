@@ -2791,6 +2791,13 @@ export class AgentExecutor extends EventEmitter {
       ? (routingDecision.modelConfig as { maxOutputTokens?: number } | undefined)?.maxOutputTokens
       : undefined;
     if (cliMaxOutputCap) maxTokens = Math.min(maxTokens, cliMaxOutputCap);
+    // An explicit per-tier output configuration (any provider) is the user's
+    // chosen operating output ceiling. Honor it as the budget's output reserve
+    // so the derived hard input limit and the gauge's reserved-output wedge
+    // reflect the real setting instead of the fixed 32k default clamp.
+    const configuredMaxOutput = (routingDecision.modelConfig as { maxOutputTokens?: number } | undefined)?.maxOutputTokens;
+    let outputReserveIsExplicit = typeof configuredMaxOutput === "number" && configuredMaxOutput > 0;
+    let outputReserveTokens = outputReserveIsExplicit ? (configuredMaxOutput as number) : maxTokens;
 
     const emit = (event: StreamEvent) => {
       options.onEvent?.(event);
@@ -4187,7 +4194,8 @@ export class AgentExecutor extends EventEmitter {
       const { chatCompletionStream } = await import("./model-client");
       let contextBudget = getContextRequestBudget(
         getContextWindow(modelString),
-        maxTokens,
+        outputReserveTokens,
+        outputReserveIsExplicit,
       );
       let lastExitCause: "natural_stop" | "aborted" | "circuit_breaker" | "yield_to_interactive" | undefined;
 
@@ -4310,9 +4318,14 @@ export class AgentExecutor extends EventEmitter {
             ? (routingDecision.modelConfig as { maxOutputTokens?: number } | undefined)?.maxOutputTokens
             : undefined;
           if (cliCapAfterSwitch) maxTokens = Math.min(maxTokens, cliCapAfterSwitch);
+          // Re-derive the explicit output-reserve signal for the switched model/tier.
+          const configuredMaxOutputAfterSwitch = (routingDecision.modelConfig as { maxOutputTokens?: number } | undefined)?.maxOutputTokens;
+          outputReserveIsExplicit = typeof configuredMaxOutputAfterSwitch === "number" && configuredMaxOutputAfterSwitch > 0;
+          outputReserveTokens = outputReserveIsExplicit ? (configuredMaxOutputAfterSwitch as number) : maxTokens;
           contextBudget = getContextRequestBudget(
             getContextWindow(modelString),
-            maxTokens,
+            outputReserveTokens,
+            outputReserveIsExplicit,
           );
           const systemIndex = messages.findIndex((message) => message.role === "system");
           const systemMessage: ExecutorMessage = { role: "system", content: refreshed.systemPrompt };
