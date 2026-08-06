@@ -3,7 +3,7 @@ import { mkdirSync, createWriteStream, type WriteStream } from "fs";
 import { readFile, readdir, stat, unlink } from "fs/promises";
 import { join, resolve } from "path";
 import { redactBoundedText, redactSensitiveValue } from "./sensitive-data-redaction";
-import { deriveSafeErrorCallsite } from "@shared/error-callsite";
+import { deriveSafeErrorCallsite, deriveSafeErrorClassifier } from "@shared/error-callsite";
 
 /** Severity ranking for threshold-based filtering: selecting a level shows that level and above. */
 const LOG_LEVEL_RANK: Record<string, number> = { verbose: -1, debug: 0, log: 1, info: 1, warn: 2, error: 3 };
@@ -511,12 +511,25 @@ export function createLogger(module: string) {
           const errorArg = args.find((arg) => arg instanceof Error) as Error | undefined
             ?? args.map((arg) => arg && typeof arg === "object" ? (arg as { error?: unknown }).error : undefined)
               .find((value) => value instanceof Error) as Error | undefined;
-          const code = errorArg && "code" in errorArg ? String((errorArg as Error & { code?: unknown }).code ?? "") : undefined;
-          const callsite = deriveSafeErrorCallsite(errorArg?.stack ?? new Error().stack);
+          const nestedError = args
+            .map((arg) => (arg && typeof arg === "object" ? (arg as { error?: unknown }).error : undefined))
+            .find((value) => value && typeof value === "object");
+          const classifier = deriveSafeErrorClassifier({
+            message: msg,
+            error: errorArg ?? nestedError,
+            args,
+          });
+          const stack =
+            errorArg?.stack
+            ?? (nestedError && typeof nestedError === "object" && "stack" in nestedError
+              ? String((nestedError as { stack?: unknown }).stack ?? "")
+              : undefined)
+            ?? new Error().stack;
+          const callsite = deriveSafeErrorCallsite(stack);
           enqueueApplicationErrorProjection({
             logger: module,
-            errorName: errorArg?.name,
-            errorCode: code,
+            errorName: classifier.errorName,
+            errorCode: classifier.errorCode,
             ...callsite,
           });
         })

@@ -66,6 +66,14 @@
 - Residual limitations: errors never emitted through `createLogger` are intentionally outside this contract; browser source file/line/site are unavailable unless safely derived at the logger boundary; delivery can still be lost on abrupt process/browser termination or telemetry-lane overflow.
 -->
 
+<!-- 2026-08-06 Error aggregate dismiss + classifier provenance:
+- Boundary/owner: Core Reliability. Identity classification is shared (`shared/error-callsite.ts`) and applied at both client/server `createLogger` error emission points. React crash boundaries must pass the real Error instance so name/stack/callsite are available.
+- Classifier: prefers explicit machine codes, then nested structured fields, then a short tokenized log-message code. Never persists raw message/stack/URL/user content. `UNCLASSIFIED` remains only when no safe code can be derived.
+- Dismiss: authenticated `POST /api/issues/errors/:fingerprint/dismiss` sets `dismissed_at`; list endpoints exclude dismissed rows. Recurrence clears dismiss so the error resurfaces.
+- Evidence: `shared/error-callsite.ts`, `client/src/lib/logger.ts`, `server/log.ts`, `server/error-telemetry.ts`, `server/routes/issue-routes.ts`, `client/src/App.tsx`, `client/src/components/route-load-boundary.tsx`, `client/src/components/issues-tab.tsx`.
+- Residual: historical `App:Error:UNCLASSIFIED` rows remain until dismissed or superseded by better-classified recurrences; abrupt crash still may lose an in-flight delivery.
+-->
+
 <!-- 2026-08-05 Privacy-safe proactive error telemetry delta:
 - Assets/data: cross-user server error signals (S2/S3-adjacent at capture), reduced to sanitized error identity, repository-relative source file/line/site, stable fingerprint, first/last seen, and count.
 - Flow/boundary: canonical Express 5xx error middleware -> deterministic in-process sanitizer/fingerprinter -> aggregate-only PostgreSQL table -> existing admin-only Issues tool `list_errors` action. Request bodies, headers, URLs, user/account IDs, raw stack bodies, and raw logs never enter this store or tool response.

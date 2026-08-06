@@ -177,7 +177,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     return { hasError: true, error };
   }
   componentDidCatch(error: Error, info: ErrorInfo) {
-    log.error("App crash", {
+    // Pass the real Error instance so createLogger can classify/name/code/callsite.
+    // serializeCaughtValue remains available for the structured diagnostic payload.
+    log.error("App crash", error, {
       crashId: createCrashId(),
       error: serializeCaughtValue(error),
       componentStack: info.componentStack,
