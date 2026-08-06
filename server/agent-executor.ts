@@ -949,6 +949,14 @@ interface RunIterationContext {
   operationRecovery: ToolOperationRecovery;
   terminalToolFailure?: { toolName: string; result: string; failure: ToolFailure };
   diagnosticLastStep?: "model_response" | "tool_batch" | "terminal";
+  /**
+   * Bounded ring buffer of recent execution breadcrumbs (phase transitions and
+   * tool dispatch). Dumped on the error path to triangulate the crash lead-up,
+   * such as a runtime circular-import TDZ that surfaces mid-run at a lazy
+   * `await import(...)`. Entries carry tool name + call id only — never tool
+   * input — so no user content is logged. Capped in pushExecTrace().
+   */
+  execTrace: Array<{ t: number; label: string; meta?: string }>;
   diagnosticLastModelStopReason?: string;
   diagnosticLastAssistantTextLength: number;
   /** Visible (thinking-stripped, trimmed) text length of the LAST completed model turn. Classifier discriminant for empty final turns. */
@@ -1008,6 +1016,22 @@ export type PendingSessionEnd = {
   summary?: string;
   requestedAt: number;
 };
+
+/**
+ * Push a bounded execution breadcrumb onto the run's trace ring. Additive
+ * diagnostics only — records phase + tool name/call-id, NEVER tool input, so no
+ * user content (S1–S3) enters logs. The ring is capped at TRACE_RING_MAX and
+ * dumped on the executor error path to triangulate the operation in flight when
+ * a runtime crash (e.g. a lazy-import circular-dependency TDZ) fires. Module-
+ * level so it is `this`-independent at every call site.
+ */
+const TRACE_RING_MAX = 60;
+function pushExecTrace(ctx: RunIterationContext, label: string, meta?: string): void {
+  const ring = ctx.execTrace;
+  if (!ring) return;
+  ring.push({ t: Date.now(), label, meta });
+  if (ring.length > TRACE_RING_MAX) ring.shift();
+}
 
 export class AgentExecutor extends EventEmitter {
   private activeRuns = new Map<string, ActiveRunProgress>();
@@ -2130,6 +2154,7 @@ export class AgentExecutor extends EventEmitter {
     log.verbose(() => `Tool execution plan: mode=${executionMode} batches=${batches.length} concurrent=${concurrentCount} serial=${serialCount}`);
 
     const executeOne = async (tc: typeof toolCalls[0]) => {
+      pushExecTrace(ctx, "tool:start", `${tc.name}#${tc.id}`);
       eventBus.publish({
         category: "tool",
         event: "agent.tool_call",
@@ -2885,6 +2910,7 @@ export class AgentExecutor extends EventEmitter {
 
     const ctx: RunIterationContext = {
       runId, modelString, emit, journal, publish,
+      execTrace: [],
       allThinking: [], resolvedToolCalls: [],
       totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       resolvedModel: modelString, resolvedProvider: routingDecision.provider, routingDecision, routingTier,
@@ -3437,6 +3463,7 @@ export class AgentExecutor extends EventEmitter {
       log.debug(`Stream loop ended iteration=${ctx.iteration} events=${streamEventCount} elapsed=${ctx.lastStreamDiagnostics.elapsedMs}ms aborted=${ctx.aborted} abortReason=${ctx.abortReason ?? "none"} runId=${ctx.runId}`);
       ctx.diagnosticLastStep = "model_response";
       ctx.diagnosticLastModelStopReason = ctx.iterationStopReason || "end_turn";
+      pushExecTrace(ctx, "model_response", `iter=${ctx.iteration} stop=${ctx.diagnosticLastModelStopReason}`);
 
       // Exact-through-first-success: once the provider has seen tool results, mark them
       // consumed so the next projectWorkingSet emits receipt/ref form. Without this ledger
@@ -3914,6 +3941,7 @@ export class AgentExecutor extends EventEmitter {
       });
 
       ctx.diagnosticLastStep = "tool_batch";
+      pushExecTrace(ctx, "tool_batch", `iter=${ctx.iteration} calls=${unresolvedToolCalls.length} failed=${failedCalls.length}`);
       ctx.diagnosticLastToolCallId = batchResolvedCalls[batchResolvedCalls.length - 1]?.id;
       ctx.diagnosticLastToolBatchCompletedAt = Date.now();
       ctx.diagnosticFailedToolCount += failedCalls.length;
@@ -4358,6 +4386,11 @@ export class AgentExecutor extends EventEmitter {
       return result;
     } catch (err: unknown) {
       const errorMsg = (err instanceof Error ? err.message : String(err)) || "Executor error";
+      // Preserve the FULL stack, not just the message. For a runtime circular-
+      // import TDZ ("Cannot access 'X' before initialization") the stack frame is
+      // the only artifact that names the offending module — even minified, the
+      // bundled symbol maps to one source module. errorMsg alone discards it.
+      const errorStack = err instanceof Error && err.stack ? err.stack : undefined;
 
       // An AbortSignal can make the model adapter throw before the stream loop
       // observes the signal. Preserve the controller's canonical reason here
@@ -4384,6 +4417,12 @@ export class AgentExecutor extends EventEmitter {
       }
 
       log.error(`run ERROR runId=${runId} model=${modelString} abortReason=${ctx.abortReason ?? "none"}: ${errorMsg}`);
+      if (errorStack) {
+        log.error(`agent.run.error_stack runId=${runId}: ${errorStack}`);
+      }
+      log.error(
+        `agent.run.error_trace runId=${runId} lastStep=${ctx.diagnosticLastStep ?? "none"} ${safeStringify(ctx.execTrace ? ctx.execTrace.slice(-40) : [], { maxBytes: 8192, label: "agent-executor.execTrace" })}`,
+      );
       if (!ctx.providerFailure) {
         ctx.publish("error", { error: errorMsg });
       }
@@ -4403,6 +4442,8 @@ export class AgentExecutor extends EventEmitter {
         assistantTextLength: mergeIterationResults(iterationResults).length,
         lastAssistantTextLength: ctx.diagnosticLastAssistantTextLength,
         error: errorMsg,
+        errorStack: errorStack ? errorStack.slice(0, 4000) : undefined,
+        execTrace: ctx.execTrace ? ctx.execTrace.slice(-40) : undefined,
         providerFailure: ctx.providerFailure,
         source: options.activity || "agent",
       };
