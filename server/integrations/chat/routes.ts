@@ -1924,16 +1924,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     } = await import("../../context-budget");
     const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
     const betweenTurnThreshold = getContextPressureThresholds(hardInputLimit).betweenTurnHistoryReset;
-    // One measurand: judge between-turn on the input the provider actually
-    // receives, not the raw durable rebuild. The executor slims already-consumed
-    // tool results to receipts on every request via working-set projection, so the
-    // gauge and the mid-turn ladder already read that projected input while the
-    // durable transcript keeps exact bytes. Project the rebuilt history once here
-    // so the between-turn decision, the executor's request, and the gauge all read
-    // the same number. Handing the executor the projected array makes its own
-    // re-projection a cheap, idempotent no-op (receipts/checkpoints are guarded).
-    // The durable transcript is untouched — only the in-memory provider input is
-    // projected. Falls back to the raw rebuild if projection fails.
+    // Judge between-turn on the provider-facing projection, not the raw durable
+    // rebuild. This projection is measurement-only: buildChatHistory still returns
+    // the original rebuilt messages, leaving the executor's pre-inference boundary
+    // as the sole owner of request transformation. The durable transcript is never
+    // mutated, and projection failure falls back to measuring the raw rebuild.
     const { projectWorkingSet } = await import("../../working-set-projector");
     let projectedMessages = messages;
     try {
@@ -2033,7 +2028,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       `historyRebuilt messageCount=${projectedMessages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurn=${betweenTurnThreshold} hardInput=${hardInputLimit} window=${contextWindow} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} measurand=projected sessionId=${sessionId}`,
     );
     return {
-      messages: projectedMessages,
+      messages,
       conversationHistory,
       enrichedContent,
       toolDefs,
@@ -2043,7 +2038,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         durableCompactionAttempted,
         durableCompactionApplied,
         contextTokens: fullPreExecutorTokens,
-        messageCount: projectedMessages.length,
+        messageCount: messages.length,
         toolCount: toolResultCount,
         contextWindow,
         contextLimit: hardInputLimit,
