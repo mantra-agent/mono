@@ -23,11 +23,18 @@ const TOKEN_ESTIMATE_CHARS_PER_TOKEN_JSON = 5.5;
 /** EMA weight for new actual/estimate observations (higher = faster adapt). */
 const TOKEN_ESTIMATE_CALIBRATION_EMA_ALPHA = 0.25;
 /** Persist only when the learned ratio moves enough to matter. */
-const TOKEN_ESTIMATE_CALIBRATION_PERSIST_RATIO_DELTA = 0.02;
+const TOKEN_ESTIMATE_CALIBRATION_PERSIST_RATIO_DELTA = 0.05;
 /** Or after this many in-memory samples since the last durable checkpoint. */
 const TOKEN_ESTIMATE_CALIBRATION_PERSIST_SAMPLE_INTERVAL = 20;
 /** Or after this much wall time since the last durable checkpoint. */
 const TOKEN_ESTIMATE_CALIBRATION_PERSIST_INTERVAL_MS = 5 * 60 * 1000;
+/**
+ * Burst guard: never checkpoint the same model more than once per this window,
+ * even when a materiality gate trips. Process-local floor that stops a rapid
+ * run of early-EMA samples from stampeding system_settings. The wall-time
+ * ceiling above always overrides it, so a genuinely stale ratio still lands.
+ */
+const TOKEN_ESTIMATE_CALIBRATION_MIN_PERSIST_SPACING_MS = 30 * 1000;
 /** Clamp learned ratio so a single bad sample can't collapse or explode estimates. */
 const TOKEN_ESTIMATE_CALIBRATION_RATIO_MIN = 0.4;
 const TOKEN_ESTIMATE_CALIBRATION_RATIO_MAX = 1.5;
@@ -61,6 +68,20 @@ function shouldPersistCalibration(
   next: TokenEstimateCalibration,
 ): boolean {
   if (!previousPersisted) return true;
+
+  const previousAt = Date.parse(previousPersisted.updatedAt);
+  const nextAt = Date.parse(next.updatedAt);
+  const elapsedMs = Number.isFinite(previousAt) && Number.isFinite(nextAt)
+    ? nextAt - previousAt
+    : Number.POSITIVE_INFINITY;
+
+  // Wall-time ceiling: always checkpoint a stale ratio, regardless of spacing.
+  if (elapsedMs >= TOKEN_ESTIMATE_CALIBRATION_PERSIST_INTERVAL_MS) return true;
+
+  // Burst guard sits above the materiality gates: even a material move waits
+  // out the spacing floor so a rapid run of samples can't stampede the DB.
+  if (elapsedMs < TOKEN_ESTIMATE_CALIBRATION_MIN_PERSIST_SPACING_MS) return false;
+
   if (
     Math.abs(next.ratio - previousPersisted.ratio)
     >= TOKEN_ESTIMATE_CALIBRATION_PERSIST_RATIO_DELTA
@@ -73,10 +94,7 @@ function shouldPersistCalibration(
   ) {
     return true;
   }
-  const previousAt = Date.parse(previousPersisted.updatedAt);
-  const nextAt = Date.parse(next.updatedAt);
-  if (!Number.isFinite(previousAt) || !Number.isFinite(nextAt)) return true;
-  return nextAt - previousAt >= TOKEN_ESTIMATE_CALIBRATION_PERSIST_INTERVAL_MS;
+  return false;
 }
 
 function calibrationSettingKey(modelKey: string): string {
