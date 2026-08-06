@@ -1104,6 +1104,12 @@ A03 durable orchestration state, A04 autonomous mutation authority, and A08 avai
 
 Controls: AGENT-04, OBS-01, DATA-01, REC-02. Owner: Agent Runtime / Orchestration. Severity: high. Rollback is the merged PR revert. Residual risk: an uncooperative child can force a fail-closed pause/block requiring later recovery, but cannot authorize an overlapping retry.
 
+## 11.21 Business Plan ownership and slot assignment, August 6, 2026
+
+A01/A02/S2 Business Plans cross F04/F05 and B06/B11 because a Plan contains strategic Goal, Project, and KPI identifiers and can move between Vaults. Credible abuse cases are assigning another account's object by ID, moving a Plan into a hidden or foreign Vault, or reading/updating a Plan outside the current principal's visible Vault set (STRIDE: information disclosure, tampering, elevation of privilege).
+
+**Closed in source.** `business_plans` carries non-null owner, account, scope, and Vault columns. `server/business-plan-storage.ts` is the sole ordinary mutation boundary: every list/update query composes principal and visible-Vault predicates; every insert stamps canonical ownership; Vault moves require a live, same-account, currently visible Vault; and Goal, Project, and KPI slot assignments are resolved through their principal-scoped domain boundaries before persistence. Routes remain behind the Business Mod's authentication gate and named `system:read` / `system:write` permissions. Controls: DATA-01, DATA-04, AUTHZ-01, AGENT-03. Owner: Business / Planning. Severity: high if bypassed; closed in source on August 6, 2026. Rollback is the merged PR revert. Residual risk: the schema converges through additive ordered-boot DDL rather than a transactional migration runner, consistent with the repository's current distributed schema model.
+
 ## 11.20 Metrics/KPI default reconciliation vault scope, August 5, 2026
 
 A01/A02/S2 Metric and KPI definitions cross F04/F05 and B06/B11 when authenticated Business reads lazily reconcile canonical defaults. The prior account-only lazy guard and account-only slug indexes could cause one visible vault's defaults to satisfy another vault's reconciliation, while cleanup enumerated all visible rows before writable-scope deletion. That combination risked missing required per-vault defaults and attempting cross-vault mutation.

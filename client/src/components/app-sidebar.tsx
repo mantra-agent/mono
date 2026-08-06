@@ -257,7 +257,7 @@ const navSections: NavSection[] = [
     label: "Business",
     defaultOpen: false,
     items: [
-      navItem("Mandate", "navigation.advantage.open", Target),
+      navItem("Plan", "navigation.advantage.open", Target),
       navItem("Pipelines", "navigation.pipelines.open", Waypoints),
       navItem("Model", "navigation.businessModel.open", LineChart),
       navItem("Roles", "navigation.roles.open", Briefcase),

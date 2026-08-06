@@ -19,6 +19,7 @@ export const REFERENCE_TYPE_LABELS: Record<string, string> = {
   goal: "Goal",
   task: "Task",
   project: "Project",
+  kpi: "KPI",
   milestone: "Milestone",
   meeting: "Meeting",
   decision: "Decision",
@@ -82,6 +83,12 @@ interface ProjectResult {
   id: number;
   title?: string;
   status?: string;
+}
+interface KpiResult {
+  id: string;
+  name?: string;
+  description?: string;
+  targetLabel?: string;
 }
 
 interface WellnessActivityResult {
@@ -163,7 +170,7 @@ export async function loadReferenceSuggestions(
 
   logger.debug("search", { query, allowedTypes, triggerChar });
 
-  const [library, people, tags, companies, goals, tasks, projects, wellnessActivities] =
+  const [library, people, tags, companies, goals, tasks, projects, kpis, wellnessActivities] =
     await Promise.all([
       allow("page") && query
         ? fetchJson<LibraryPageResult[]>(`/api/info/library?search=${encoded}`, signal)
@@ -191,6 +198,9 @@ export async function loadReferenceSuggestions(
         : Promise.resolve(null),
       allow("project")
         ? fetchJson<ProjectResult[]>(`/api/projects/projects`, signal)
+        : Promise.resolve(null),
+      allow("kpi")
+        ? fetchJson<KpiResult[]>(`/api/business/kpis${query ? `?q=${encoded}` : ""}`, signal)
         : Promise.resolve(null),
       allow("wellness_activity")
         ? fetchJson<WellnessActivityResult[]>(`/api/wellness/activities`, signal)
@@ -263,6 +273,15 @@ export async function loadReferenceSuggestions(
       id: String(project.id),
       label: String(project.title || project.id),
       description: project.status ? `Project · ${project.status}` : "Project",
+    });
+  }
+
+  for (const kpi of kpis || []) {
+    suggestions.push({
+      type: "kpi",
+      id: kpi.id,
+      label: kpi.name || kpi.id,
+      description: kpi.targetLabel || kpi.description || "KPI",
     });
   }
 

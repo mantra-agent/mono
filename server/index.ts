@@ -393,6 +393,8 @@ app.use((req, res, next) => {
   await ensureMilestonesSchema(pool);
   const { ensureMetricsDefinitionsSchema } = await import("./metrics-storage");
   await ensureMetricsDefinitionsSchema();
+  const { ensureBusinessPlansSchema } = await import("./business-plan-storage");
+  await ensureBusinessPlansSchema();
   await beginRuntimeProcessLifecycle();
   // Persona templates and skill recommendations are a runtime invariant, not
   // optional background maintenance. Complete them before accepting requests
