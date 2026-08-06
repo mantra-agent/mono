@@ -533,6 +533,8 @@ app.use((req, res, next) => {
   await ensureOrganizationsSchema(workVaultPool);
   const { ensureDriveResourcesSchema } = await import("./drive-resources-schema");
   await ensureDriveResourcesSchema(workVaultPool);
+  const { ensureDocumentArtifactsSchema } = await import("./document-artifacts-schema");
+  await ensureDocumentArtifactsSchema(workVaultPool);
   const { ensureAgendaDefinitionSchema } = await import("./agenda-schema");
   await ensureAgendaDefinitionSchema();
   const { ensureInvitedSubjectSchema } = await import("./invited-subject-schema");
