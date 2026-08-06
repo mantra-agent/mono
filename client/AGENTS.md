@@ -126,6 +126,10 @@ Skill persona controls edit the current user's override, not the shared skill de
 
 Memory UI should distinguish memory entries from session mirrors and archive/raw session data. When graph/search behavior excludes raw sessions, explain the policy in UI rather than making it look like data disappeared.
 
+## Business Plan UI
+
+`/business/advantage` is the Business Plan screen (formerly Mandate). The Plan name is the Plan selector and inline editor; its adjacent ellipsis owns Vault placement. Thematic Goal, Initiative Project, and KPI rows use `ProfileTreeRow.menuContent` plus the universal `ReferencePicker` restricted to the relevant reference type for replacement. Do not add local selectors or a parallel Plan switcher.
+
 ## Page Architecture
 
 56 pages organized by domain. Each page is a route-level component:

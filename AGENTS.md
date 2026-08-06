@@ -333,6 +333,7 @@ Plus: `registerChatRoutes`, `registerPeopleRoutes`, `registerGoalRoutes`, `regis
 | Library | PostgreSQL | `library_pages` (TipTap JSON) |
 | Email | PostgreSQL | `email_messages`, `email_enrichments` (7 tables) |
 | Finance | PostgreSQL (Plaid) | 26 tables in `shared/models/finance.ts` |
+| Business Plans | PostgreSQL | `business_plans`; `/business/advantage` is the Business Plan screen (formerly Mandate) |
 | Wellness | PostgreSQL | `wellness_activities`, `wellness_logs` |
 | Social content | PostgreSQL | `content_queue` |
 | Decisions | PostgreSQL | `decisions`, `decision_updates`, `decision_links` |

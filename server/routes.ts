@@ -13,6 +13,7 @@ import { setWsConnectionCount } from "./performance-monitor";
 import { registerPeopleRoutes } from "./people-routes";
 import { registerCompanyRoutes } from "./company-routes";
 import { registerBusinessModelRoutes } from "./business-model-routes";
+import { registerBusinessPlanRoutes } from "./business-plan-routes";
 import { registerJobRoleRoutes } from "./job-role-routes";
 import { registerMetricsRoutes } from "./metrics-routes";
 import { peopleStorage } from "./people-storage";
@@ -207,6 +208,7 @@ export async function registerRoutes(
   registerPeopleRoutes(app, peopleStorage);
   registerCompanyRoutes(app);
   registerBusinessModelRoutes(app);
+  registerBusinessPlanRoutes(app);
   registerJobRoleRoutes(app);
   registerMetricsRoutes(app);
   registerGoalRoutes(app);

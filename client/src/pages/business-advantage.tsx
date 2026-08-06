@@ -1,545 +1,318 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Circle,
-  Gauge,
-  Loader2,
-  ShieldCheck,
-  Target,
-} from "lucide-react";
+import { Check, ChevronDown, Gauge, Loader2, MoreHorizontal, Plus } from "lucide-react";
 import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
-import {
-  PROFILE_DESCRIPTION_FRAME_CLASS,
-  PROFILE_DESCRIPTION_TEXT_CLASS,
-} from "@/components/profile-description-style";
+import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
-import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
-import { apiRequest } from "@/lib/queryClient";
+import { Button } from "@/components/ui/button";
 import {
-  MANTRA_Q3_2026_ADVANTAGE_CYCLE,
-  type AdvantageOperatingCycle,
-} from "@/lib/advantage-dashboard";
-import type { Goal, GoalIndexEntry, ProjectRow } from "@shared/schema";
-import type {
-  AdvantageGoalProjection,
-  ScorecardMeasureDefinition,
-  ScorecardMeasureState,
-} from "@shared/models/advantage-dashboard";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { apiRequest } from "@/lib/queryClient";
+import type { BusinessPlan, Goal, Kpi, ProjectRow } from "@shared/schema";
 import { createReferenceRef } from "@shared/references";
 
-function extractGoalRows(payload: unknown): unknown[] {
-  if (Array.isArray(payload)) return payload;
-  if (payload && typeof payload === "object") {
-    const record = payload as { goals?: unknown; nodes?: unknown };
-    if (Array.isArray(record.goals)) return record.goals;
-    if (Array.isArray(record.nodes)) return record.nodes;
-  }
-  return [];
+interface VaultRow {
+  id: string;
+  name: string;
 }
 
-function asGoalList(payload: unknown): AdvantageGoalProjection[] {
-  return extractGoalRows(payload)
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const row = item as Partial<GoalIndexEntry> & Partial<Goal> & { id?: unknown };
-      if (typeof row.id !== "string" || typeof row.shortName !== "string") return null;
-      return {
-        id: row.id,
-        shortName: row.shortName,
-        description: typeof row.description === "string" ? row.description : undefined,
-        status: typeof row.status === "string" ? row.status : undefined,
-        horizon: typeof row.horizon === "string" ? row.horizon : undefined,
-        owner: typeof row.owner === "string" ? row.owner : undefined,
-        parentId:
-          typeof row.parentId === "string" || row.parentId === null
-            ? row.parentId
-            : undefined,
-      } satisfies AdvantageGoalProjection;
-    })
-    .filter((row): row is AdvantageGoalProjection => Boolean(row));
+interface VaultSnapshot {
+  vaults: VaultRow[];
+  visibleVaultIds: string[];
+  activeVaultId: string | null;
 }
 
-function asFullGoalMap(payload: unknown): Map<string, AdvantageGoalProjection> {
-  const map = new Map<string, AdvantageGoalProjection>();
-  for (const goal of asGoalList(payload)) {
-    map.set(goal.id, goal);
-  }
-  return map;
+function referenceValue(type: "goal" | "project" | "kpi", id: string, label: string): ReferencePickerValue {
+  return { type, id, label };
 }
 
-function measureTone(state: ScorecardMeasureState): {
+function ReplaceControl({
+  type,
+  value,
+  label,
+  onReplace,
+}: {
+  type: "goal" | "project" | "kpi";
+  value: string;
   label: string;
-  className: string;
-  Icon: typeof CheckCircle2;
-} {
-  switch (state.kind) {
-    case "on_track":
-      return {
-        label: "On track",
-        className: "text-emerald-300",
-        Icon: CheckCircle2,
-      };
-    case "at_risk":
-      return {
-        label: "At risk",
-        className: "text-amber-300",
-        Icon: AlertTriangle,
-      };
-    case "off_track":
-      return {
-        label: "Off track",
-        className: "text-rose-300",
-        Icon: AlertTriangle,
-      };
-    case "achieved":
-      return {
-        label: "Achieved",
-        className: "text-emerald-300",
-        Icon: ShieldCheck,
-      };
-    case "blocked":
-      return {
-        label: "Blocked",
-        className: "text-rose-300",
-        Icon: AlertTriangle,
-      };
-    case "unmeasured":
-    default:
-      return {
-        label: "Unmeasured",
-        className: "text-muted-foreground",
-        Icon: Circle,
-      };
-  }
-}
-
-function GoalReferenceTitle({ goalId }: { goalId: string }) {
-  return (
-    <span className="block min-w-0 w-full max-w-none whitespace-normal break-words">
-      <ReferenceRenderer
-        refValue={createReferenceRef({ type: "goal", id: goalId })}
-        surface="simple-row"
-        className="mx-0 max-w-none text-sm leading-snug"
-        wrapLabel
-      />
-    </span>
-  );
-}
-
-function ProjectReferenceTitle({ projectId }: { projectId: number }) {
-  return (
-    <span className="block min-w-0 w-full max-w-none whitespace-normal break-words">
-      <ReferenceRenderer
-        refValue={createReferenceRef({ type: "project", id: String(projectId) })}
-        surface="simple-row"
-        className="mx-0 max-w-none text-sm leading-snug"
-        wrapLabel
-      />
-    </span>
-  );
-}
-
-function MeasureRows({
-  measures,
-  continues,
-}: {
-  measures: ScorecardMeasureDefinition[];
-  continues: boolean;
+  onReplace: (id: string) => void;
 }) {
-  if (measures.length === 0) {
-    return (
-      <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center">
-        <ProfileTreeRow
-          icon={<Gauge className="h-3.5 w-3.5" />}
-          label="No scorecard measures"
-          mobileLayout="inline"
-          hasValue
-          showEmpty
-        >
-          <span className="text-muted-foreground">—</span>
-        </ProfileTreeRow>
-      </HierarchyTreeRow>
-    );
-  }
-
   return (
-    <>
-      {measures.map((measure, index) => {
-        const tone = measureTone(measure.state);
-        const Icon = tone.Icon;
-        const isLast = index === measures.length - 1;
-        return (
-          <HierarchyTreeRow
-            key={measure.key}
-            continues={continues || !isLast}
-            connectorAnchor="first-row-center"
-          >
-            <ProfileTreeRow
-              icon={<Target className="h-3.5 w-3.5" />}
-              label={measure.label}
-              mobileLayout="inline"
-              hasValue
-              showEmpty
-              defaultOpen={false}
-              expandedContent={
-                <div className="space-y-1.5 text-sm leading-6 text-muted-foreground">
-                  <p>
-                    <span className="font-medium text-foreground/80">Target · </span>
-                    {measure.target}
-                  </p>
-                  <p>
-                    <span className="font-medium text-foreground/80">Cadence · </span>
-                    {measure.cadence}
-                  </p>
-                  <p>
-                    <span className="font-medium text-foreground/80">Definition · </span>
-                    {measure.definition}
-                  </p>
-                  {"instrumentationOwner" in measure.state && measure.state.instrumentationOwner ? (
-                    <p>
-                      <span className="font-medium text-foreground/80">Owner · </span>
-                      {measure.state.instrumentationOwner}
-                    </p>
-                  ) : null}
-                  {"evidence" in measure.state && measure.state.evidence ? (
-                    <p>
-                      <span className="font-medium text-foreground/80">Evidence · </span>
-                      {measure.state.evidence}
-                    </p>
-                  ) : null}
-                </div>
-              }
-            >
-              <span className={cn("inline-flex items-center gap-1.5 text-xs", tone.className)}>
-                <Icon className="h-3.5 w-3.5 shrink-0" />
-                <span>{tone.label}</span>
-              </span>
-            </ProfileTreeRow>
-          </HierarchyTreeRow>
-        );
-      })}
-    </>
+    <div className="w-72 p-2" onClick={(event) => event.stopPropagation()}>
+      <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">Change {type === "kpi" ? "KPI" : type}</p>
+      <ReferencePicker
+        value={[referenceValue(type, value, label)]}
+        onChange={(next) => {
+          const selected = next[0];
+          if (selected) onReplace(selected.id);
+        }}
+        types={[type]}
+        mode="single"
+        variant="compact"
+        placeholder={`Choose ${type === "kpi" ? "KPI" : type}`}
+        showToken={false}
+      />
+    </div>
   );
 }
 
-function ThematicGoalDetails({
-  goalId,
-  description,
+function PlanTitle({
+  plan,
+  plans,
+  onSelect,
+  onRename,
+  onCreate,
 }: {
-  goalId: string;
-  description: string;
+  plan: BusinessPlan;
+  plans: BusinessPlan[];
+  onSelect: (id: string) => void;
+  onRename: (name: string) => void;
+  onCreate: () => void;
 }) {
-  const queryClient = useQueryClient();
-  const [draft, setDraft] = useState(description);
-  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(plan.name);
+  useEffect(() => setDraft(plan.name), [plan.id, plan.name]);
 
-  useEffect(() => {
-    setDraft(description);
-  }, [goalId, description]);
-
-  const saveMutation = useMutation({
-    mutationFn: async (nextDescription: string) => {
-      const res = await apiRequest("PATCH", `/api/life-goals/${goalId}`, {
-        description: nextDescription,
-      });
-      return res.json() as Promise<Goal>;
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["/api/life-goals"] });
-      void queryClient.invalidateQueries({ queryKey: ["/api/life-goals/graph"] });
-      setEditing(false);
-    },
-  });
-
-  const save = () => {
+  const commit = () => {
     const next = draft.trim();
-    if (!next) return;
-    if (next === description.trim()) {
-      setEditing(false);
-      setDraft(description);
-      return;
-    }
-    saveMutation.mutate(next);
+    if (!next) return setDraft(plan.name);
+    if (next !== plan.name) onRename(next);
   };
 
-  // Expand the thematic goal row itself into details — no nested section disclosure.
-  return editing ? (
-    <div className="space-y-2" data-testid="advantage-thematic-details">
-      <Textarea
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      <Input
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
-        onBlur={save}
+        onBlur={commit}
         onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
           if (event.key === "Escape") {
-            event.preventDefault();
-            setDraft(description);
-            setEditing(false);
+            setDraft(plan.name);
+            event.currentTarget.blur();
           }
         }}
-        disabled={saveMutation.isPending}
-        className={cn(
-          PROFILE_DESCRIPTION_FRAME_CLASS,
-          PROFILE_DESCRIPTION_TEXT_CLASS,
-          "min-h-[96px] resize-y",
-        )}
-        data-testid="advantage-thematic-details-editor"
-        autoFocus
+        aria-label="Business Plan name"
+        className="h-9 min-w-0 max-w-md border-transparent bg-transparent px-2 text-lg font-semibold hover:border-input focus-visible:border-input"
       />
-      {saveMutation.isError ? (
-        <p className="text-xs text-rose-300">Could not save details. Try again.</p>
-      ) : null}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" aria-label="Switch Business Plan">
+            <ChevronDown className="h-3.5 w-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-72">
+          <DropdownMenuLabel>Business Plans</DropdownMenuLabel>
+          {plans.map((candidate) => (
+            <DropdownMenuItem key={candidate.id} onSelect={() => onSelect(candidate.id)}>
+              <Check className={`mr-2 h-3.5 w-3.5 ${candidate.id === plan.id ? "opacity-100" : "opacity-0"}`} />
+              <span className="truncate">{candidate.name}</span>
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={onCreate}>
+            <Plus className="mr-2 h-3.5 w-3.5" /> New Business Plan
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
-  ) : (
-    <button
-      type="button"
-      onClick={() => setEditing(true)}
-      className={cn(
-        PROFILE_DESCRIPTION_FRAME_CLASS,
-        PROFILE_DESCRIPTION_TEXT_CLASS,
-        "w-full text-left transition-colors hover:border-primary/40",
-      )}
-      data-testid="advantage-thematic-details-display"
-    >
-      {description.trim() || "Add details…"}
-    </button>
-  );
-}
-
-function ObjectiveBranch({
-  objective,
-  project,
-  continues,
-}: {
-  objective: AdvantageOperatingCycle["definingObjectives"][number];
-  project: ProjectRow | undefined;
-  continues: boolean;
-}) {
-  const description =
-    (project && typeof project.description === "string" ? project.description : "") ||
-    objective.intent ||
-    "";
-
-  // First-level project chips match Session-menu titles: wrapped in a
-  // HierarchyTreeRow whose L connector is anchored to the row center, so the
-  // horizontal arm lands on the chip itself, not the expanded body below.
-  return (
-    <HierarchyTreeRow continues={continues} connectorAnchor="first-row-center">
-      <ProfileTreeRow
-        label={<ProjectReferenceTitle projectId={objective.projectId} />}
-        mobileLayout="inline"
-        hasValue
-        showEmpty
-        defaultOpen
-        expandedContentClassName="pt-1 pl-0"
-        expandedContent={
-          <div className="space-y-3">
-            {description ? (
-              <p className="whitespace-normal text-sm leading-6 text-foreground/90">
-                {description}
-              </p>
-            ) : (
-              <p className="text-sm leading-6 text-muted-foreground">
-                No description on the linked project yet.
-              </p>
-            )}
-            <div className="min-w-0">
-              <HierarchyTreeRow
-                continues={objective.measures.length > 0}
-                connectorAnchor="first-row-center"
-              >
-                <ProfileTreeRow
-                  icon={<ShieldCheck className="h-3.5 w-3.5" />}
-                  label="Owner"
-                  mobileLayout="inline"
-                  hasValue
-                  showEmpty
-                >
-                  <span className="text-xs text-muted-foreground">{objective.owner}</span>
-                </ProfileTreeRow>
-              </HierarchyTreeRow>
-              <MeasureRows measures={objective.measures} continues={false} />
-            </div>
-          </div>
-        }
-      >
-        {project ? null : <span className="text-xs text-rose-300">Missing</span>}
-      </ProfileTreeRow>
-    </HierarchyTreeRow>
   );
 }
 
 export default function BusinessAdvantagePage() {
-  const cycle = MANTRA_Q3_2026_ADVANTAGE_CYCLE;
+  const queryClient = useQueryClient();
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
-  const goalsQuery = useQuery<unknown>({
-    queryKey: ["/api/life-goals", { periodScoped: false, includeDormant: false }],
+  const plansQuery = useQuery<BusinessPlan[]>({ queryKey: ["/api/business/plans"] });
+  const vaultsQuery = useQuery<VaultSnapshot>({ queryKey: ["/api/vaults"] });
+  const goalsQuery = useQuery<Goal[]>({
+    queryKey: ["/api/life-goals"],
+    queryFn: async () => {
+      const response = await fetch("/api/life-goals", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to load goals");
+      const payload = await response.json() as Goal[] | { goals?: Goal[] };
+      return Array.isArray(payload) ? payload : payload.goals ?? [];
+    },
   });
-  const graphQuery = useQuery<unknown>({
-    queryKey: ["/api/life-goals/graph"],
+  const projectsQuery = useQuery<ProjectRow[]>({ queryKey: ["/api/projects/projects"] });
+  const kpisQuery = useQuery<Kpi[]>({ queryKey: ["/api/business/kpis"] });
+
+  const plans = plansQuery.data ?? [];
+  const plan = plans.find((candidate) => candidate.id === selectedPlanId) ?? plans[0];
+
+  useEffect(() => {
+    if (plan && selectedPlanId !== plan.id) setSelectedPlanId(plan.id);
+  }, [plan, selectedPlanId]);
+
+  const goalsById = useMemo(() => new Map((goalsQuery.data ?? []).map((goal) => [goal.id, goal])), [goalsQuery.data]);
+  const projectsById = useMemo(() => new Map((projectsQuery.data ?? []).map((project) => [project.id, project])), [projectsQuery.data]);
+  const kpisById = useMemo(() => new Map((kpisQuery.data ?? []).map((kpi) => [kpi.id, kpi])), [kpisQuery.data]);
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<BusinessPlan> }) => {
+      const response = await apiRequest("PATCH", `/api/business/plans/${id}`, patch);
+      return response.json() as Promise<BusinessPlan>;
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData<BusinessPlan[]>(["/api/business/plans"], (current = []) =>
+        current.map((candidate) => candidate.id === updated.id ? updated : candidate),
+      );
+    },
   });
-  const projectsQuery = useQuery<ProjectRow[]>({
-    queryKey: ["/api/projects/projects"],
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/business/plans", {
+        name: "New Business Plan",
+        vaultId: plan?.vaultId,
+        thematicGoalId: plan?.thematicGoalId,
+      });
+      return response.json() as Promise<BusinessPlan>;
+    },
+    onSuccess: (created) => {
+      queryClient.setQueryData<BusinessPlan[]>(["/api/business/plans"], (current = []) => [...current, created]);
+      setSelectedPlanId(created.id);
+    },
   });
 
-  const projectsById = useMemo(() => {
-    const map = new Map<number, ProjectRow>();
-    for (const project of Array.isArray(projectsQuery.data) ? projectsQuery.data : []) {
-      map.set(project.id, project);
-    }
-    return map;
-  }, [projectsQuery.data]);
+  if (plansQuery.isLoading || vaultsQuery.isLoading || goalsQuery.isLoading || projectsQuery.isLoading || kpisQuery.isLoading) {
+    return <div className="flex min-h-[50vh] items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  }
 
-  const goalsById = useMemo(() => {
-    const map = new Map<string, AdvantageGoalProjection>();
-    for (const goal of asGoalList(goalsQuery.data)) {
-      map.set(goal.id, goal);
-    }
-    // Graph payload includes description on each goal entry.
-    for (const [id, goal] of asFullGoalMap(graphQuery.data)) {
-      const existing = map.get(id);
-      map.set(id, existing ? { ...existing, ...goal } : goal);
-    }
-    return map;
-  }, [goalsQuery.data, graphQuery.data]);
+  if (!plan) {
+    return <div className="px-4 py-6 text-sm text-muted-foreground">No Business Plan is available.</div>;
+  }
 
-  const thematicGoal = goalsById.get(cycle.thematicGoalId);
-  const thematicDescription =
-    (thematicGoal &&
-    "description" in thematicGoal &&
-    typeof thematicGoal.description === "string"
-      ? thematicGoal.description
-      : "") ||
-    cycle.thematicGoalStatement ||
-    "";
-
-  const definingObjectives = Array.isArray(cycle.definingObjectives)
-    ? cycle.definingObjectives
-    : [];
-  const standingObjectives = Array.isArray(cycle.standingOperatingObjectives)
-    ? cycle.standingOperatingObjectives
-    : [];
-  const isLoading = goalsQuery.isLoading || graphQuery.isLoading || projectsQuery.isLoading;
-  const isError = goalsQuery.isError && graphQuery.isError;
+  const update = (patch: Partial<BusinessPlan>) => updateMutation.mutate({ id: plan.id, patch });
+  const thematicGoal = goalsById.get(plan.thematicGoalId);
+  const visibleVaults = (vaultsQuery.data?.vaults ?? []).filter((vault) => vaultsQuery.data?.visibleVaultIds.includes(vault.id));
 
   return (
-    <div className="h-full overflow-auto" data-testid="page-business-advantage">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-8">
-        {isLoading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Loading goal hierarchy…
-          </div>
-        ) : null}
+    <div className="h-full overflow-y-auto bg-background">
+      <div className="w-full max-w-xl space-y-6 px-4 py-4 sm:px-6">
+        <div className="flex items-center justify-between gap-2">
+          <PlanTitle
+            plan={plan}
+            plans={plans}
+            onSelect={setSelectedPlanId}
+            onRename={(name) => update({ name })}
+            onCreate={() => createMutation.mutate()}
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" aria-label="Business Plan actions">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuLabel>Move to Vault</DropdownMenuLabel>
+              {visibleVaults.map((vault) => (
+                <DropdownMenuItem key={vault.id} onSelect={() => update({ vaultId: vault.id })}>
+                  <Check className={`mr-2 h-3.5 w-3.5 ${vault.id === plan.vaultId ? "opacity-100" : "opacity-0"}`} />
+                  <span className="truncate">{vault.name}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
-        {isError ? (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-            Could not load goals for this operating cycle.
-          </div>
-        ) : null}
-
-        <section className="space-y-3" data-testid="advantage-thematic-goal">
+        <section className="space-y-3">
           <HierarchySectionHeader>Thematic Goal</HierarchySectionHeader>
-          <div className="min-w-0">
-            <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
-              <ProfileTreeRow
-                label={<GoalReferenceTitle goalId={cycle.thematicGoalId} />}
-                mobileLayout="inline"
-                hasValue
-                showEmpty
-                defaultOpen
-                expandedContentClassName="pt-1"
-                expandedContent={
-                  <ThematicGoalDetails
-                    goalId={cycle.thematicGoalId}
-                    description={thematicDescription}
-                  />
-                }
-              >
-                {thematicGoal ? null : (
-                  <span className="text-xs text-rose-300">Missing</span>
-                )}
-              </ProfileTreeRow>
-            </HierarchyTreeRow>
-          </div>
+          <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
+            <ProfileTreeRow
+              label={<ReferenceRenderer reference={createReferenceRef("goal", plan.thematicGoalId)} showIcon={false} />}
+              mobileLayout="inline"
+              hasValue
+              showEmpty
+              defaultOpen
+              menuContent={<ReplaceControl type="goal" value={plan.thematicGoalId} label={thematicGoal?.shortName ?? "Goal"} onReplace={(thematicGoalId) => update({ thematicGoalId })} />}
+              expandedContent={thematicGoal?.description ? <p className="text-sm leading-6 text-foreground/90">{thematicGoal.description}</p> : null}
+            />
+          </HierarchyTreeRow>
         </section>
 
-        <section className="space-y-3" data-testid="advantage-defining-objectives">
+        <section className="space-y-3">
           <HierarchySectionHeader>Initiatives</HierarchySectionHeader>
           <div className="min-w-0">
-            {definingObjectives.map((objective, index) => (
-              <ObjectiveBranch
-                key={objective.key}
-                objective={objective}
-                project={projectsById.get(objective.projectId)}
-                continues={index < definingObjectives.length - 1}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="space-y-3" data-testid="advantage-standing-objectives">
-          <HierarchySectionHeader>Key Performance Indicators</HierarchySectionHeader>
-          <div className="min-w-0">
-            {standingObjectives.map((item, index) => {
-              const tone = measureTone(item.health);
-              const Icon = tone.Icon;
-              const isLast = index === standingObjectives.length - 1;
+            {plan.initiativeProjectIds.map((projectId, index) => {
+              const project = projectsById.get(projectId);
               return (
-                <HierarchyTreeRow
-                  key={item.key}
-                  continues={!isLast}
-                  connectorAnchor="first-row-center"
-                >
+                <HierarchyTreeRow key={`${projectId}-${index}`} continues={index < plan.initiativeProjectIds.length - 1} connectorAnchor="first-row-center">
                   <ProfileTreeRow
-                    icon={<ShieldCheck className="h-3.5 w-3.5" />}
-                    label={item.label}
+                    label={<ReferenceRenderer reference={createReferenceRef("project", String(projectId))} showIcon={false} />}
                     mobileLayout="inline"
                     hasValue
                     showEmpty
-                    defaultOpen={false}
-                    expandedContent={
-                      <div className="space-y-1.5 text-sm leading-6 text-muted-foreground">
-                        <p>
-                          <span className="font-medium text-foreground/80">Owner · </span>
-                          {item.owner}
-                        </p>
-                        <p>
-                          <span className="font-medium text-foreground/80">Cadence · </span>
-                          {item.cadence}
-                        </p>
-                        <p className="whitespace-normal">{item.definition}</p>
-                        {"evidence" in item.health && item.health.evidence ? (
-                          <p>
-                            <span className="font-medium text-foreground/80">
-                              Evidence ·{" "}
-                            </span>
-                            {item.health.evidence}
-                          </p>
-                        ) : null}
-                      </div>
+                    menuContent={
+                      <ReplaceControl
+                        type="project"
+                        value={String(projectId)}
+                        label={project?.title ?? `Project ${projectId}`}
+                        onReplace={(id) => {
+                          const next = [...plan.initiativeProjectIds];
+                          next[index] = Number(id);
+                          update({ initiativeProjectIds: next });
+                        }}
+                      />
                     }
-                  >
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1.5 text-xs",
-                        tone.className,
-                      )}
-                    >
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
-                      <span>{tone.label}</span>
-                    </span>
-                  </ProfileTreeRow>
+                    expandedContent={project?.description ? <p className="text-sm leading-6 text-foreground/90">{project.description}</p> : null}
+                  />
                 </HierarchyTreeRow>
               );
             })}
           </div>
         </section>
 
+        <section className="space-y-3">
+          <HierarchySectionHeader>Key Performance Indicators</HierarchySectionHeader>
+          <div className="min-w-0">
+            {plan.kpiIds.map((kpiId, index) => {
+              const kpi = kpisById.get(kpiId);
+              return (
+                <HierarchyTreeRow key={`${kpiId}-${index}`} continues={index < plan.kpiIds.length - 1} connectorAnchor="first-row-center">
+                  <ProfileTreeRow
+                    icon={<Gauge className="h-3.5 w-3.5" />}
+                    label={<ReferenceRenderer reference={createReferenceRef("kpi", kpiId)} showIcon={false} />}
+                    mobileLayout="inline"
+                    hasValue
+                    showEmpty
+                    menuContent={
+                      <ReplaceControl
+                        type="kpi"
+                        value={kpiId}
+                        label={kpi?.name ?? "KPI"}
+                        onReplace={(id) => {
+                          const next = [...plan.kpiIds];
+                          next[index] = id;
+                          update({ kpiIds: next });
+                        }}
+                      />
+                    }
+                    expandedContent={kpi ? (
+                      <div className="space-y-1 text-sm leading-6 text-muted-foreground">
+                        <p><span className="font-medium text-foreground/80">Target · </span>{kpi.targetLabel}</p>
+                        <p><span className="font-medium text-foreground/80">Cadence · </span>{kpi.cadence}</p>
+                        {kpi.description ? <p><span className="font-medium text-foreground/80">Definition · </span>{kpi.description}</p> : null}
+                      </div>
+                    ) : null}
+                  />
+                </HierarchyTreeRow>
+              );
+            })}
+          </div>
+        </section>
+
+        {updateMutation.isError || createMutation.isError ? (
+          <p className="text-sm text-destructive">The Business Plan could not be saved.</p>
+        ) : null}
       </div>
     </div>
   );
