@@ -81,6 +81,7 @@ export type SessionStreamEvent = {
   modelName?: string;
   outputReserve?: number;
   compactionTarget?: number;
+  retentionBudget?: number;
   persona?: { id: number; name: string; icon: string };
   runId?: string;
   turnId?: string;
@@ -483,6 +484,7 @@ class SessionManager {
               ...(typeof event.modelName === "string" ? { modelName: event.modelName } : {}),
               ...(typeof event.outputReserve === "number" ? { outputReserve: event.outputReserve } : {}),
               ...(typeof event.compactionTarget === "number" ? { compactionTarget: event.compactionTarget } : {}),
+              ...(typeof event.retentionBudget === "number" ? { retentionBudget: event.retentionBudget } : {}),
             },
           };
         } else {
