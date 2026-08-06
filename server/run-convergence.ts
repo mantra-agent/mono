@@ -4,14 +4,11 @@ import { safeStringify } from "./utils/safe-stringify";
 export type ConvergenceTerminalMove = "synthesize" | "blocked" | "fail";
 
 export interface RunConvergenceConfig {
-  maxNoProgressRefreshes: number;
   maxRepeatedSignature: number;
   maxNoProgressCycles: number;
 }
 
 export interface RunConvergenceState {
-  refreshCount: number;
-  noProgressRefreshes: number;
   noProgressCycles: number;
   signatureCounts: Map<string, number>;
   evidenceHashes: Set<string>;
@@ -27,7 +24,6 @@ const boundedInt = (name: string, fallback: number, min = 1, max = 100): number 
 
 export function getRunConvergenceConfig(): RunConvergenceConfig {
   return {
-    maxNoProgressRefreshes: boundedInt("AGENT_CONVERGENCE_MAX_NO_PROGRESS_REFRESHES", 3),
     maxRepeatedSignature: boundedInt("AGENT_CONVERGENCE_MAX_REPEATED_SIGNATURE", 4),
     maxNoProgressCycles: boundedInt("AGENT_CONVERGENCE_MAX_NO_PROGRESS_CYCLES", 5),
   };
@@ -35,8 +31,6 @@ export function getRunConvergenceConfig(): RunConvergenceConfig {
 
 export function createRunConvergenceState(): RunConvergenceState {
   return {
-    refreshCount: 0,
-    noProgressRefreshes: 0,
     noProgressCycles: 0,
     signatureCounts: new Map(),
     evidenceHashes: new Set(),

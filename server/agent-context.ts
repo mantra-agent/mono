@@ -190,7 +190,7 @@ export async function runBetweenTurnCompaction(
   }
 
   log.log(
-    `betweenTurnCompaction: triggered sessionId=${sessionId} measuredTokens=${measuredTokens} threshold=${threshold} measurand=${typeof fullInputTokens === "number" ? "projected_input" : "history_fallback"} messages=${conversationHistory.length}`,
+    `betweenTurnCompaction: triggered sessionId=${sessionId} measuredTokens=${measuredTokens} threshold=${threshold} measurand=${typeof fullInputTokens === "number" ? "raw_input" : "history_fallback"} messages=${conversationHistory.length}`,
   );
 
   const emitActivity = (update: CompactionActivityUpdate) => {

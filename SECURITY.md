@@ -28,6 +28,13 @@
 - Controls/owner: requireAuth plus combineWithVisibleScope remain deterministic authorization boundaries; supported views are an enum; SQL is parameterized; primary reads are capped at 250 and historical views at 5,000; event-carried deltas invalidate every deferred projection. Owner Platform Engineering; SLA immediate.
 - Rollback: revert the view-specific storage method and route selection to the full canonical session index. Residual risk: historical sections remain capped at 5,000 and reminder IDs are resolved before document filtering, but only principal-visible documents can be returned.
 -->
+<!-- 2026-08-06 raw provider context + independent tool-output archival:
+- Assets/data: exact principal-scoped conversation context and oversized tool evidence sent to model providers or archived in indexed_content.
+- Flow/boundary: durable history rebuild -> raw-input pressure measurement -> AgentExecutor -> provider; tool result -> principal-scoped archival side effect + exact transcript/provider reinjection.
+- Threats: availability/cost pressure from large raw contexts; disclosure risk is unchanged because no new content or principal crosses the existing provider/archive boundaries; archive failure must not mutate exact transcript evidence.
+- Controls/owner: existing principal-scoped archive operation keys, raw 30/50/70/100 pressure ladder, hard-input rejection, and emergency provider-overflow recovery. Owner Agent Runtime. Severity: medium. Status: source implemented, production build/merge pending.
+- Residual: tool-heavy turns may compact broader context earlier because precise provider-view receipts/checkpoints are intentionally removed; durable transcript remains unchanged.
+-->
 <!-- 2026-08-06 stream/draft failureCode durability:
 - Assets/data: stable ToolFailure codes on stream steps, draft toolCalls, and reliability reads. No args/result bodies, secrets, or cross-principal aggregates.
 - Flow/boundary: producer failure.code -> stream tool_result -> session reducer/draft projection -> terminal toolCalls -> reliability extractFailureCode.
