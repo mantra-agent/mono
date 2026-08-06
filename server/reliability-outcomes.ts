@@ -359,10 +359,18 @@ function extractFailureCode(toolCall: ChatToolCall, errorText: string): string |
   if (typeof toolCall.failureCode === "string" && toolCall.failureCode.trim()) {
     return toolCall.failureCode.trim();
   }
+  const nestedFailure = asRecord((toolCall as { failure?: unknown }).failure);
+  if (nestedFailure && typeof nestedFailure.code === "string" && nestedFailure.code.trim()) {
+    return nestedFailure.code.trim();
+  }
   const errorRecord = asRecord(toolCall.error);
   if (errorRecord) {
     const code = errorRecord.code ?? errorRecord.failureCode;
     if (typeof code === "string" && code.trim()) return code.trim();
+    const failure = asRecord(errorRecord.failure);
+    if (failure && typeof failure.code === "string" && failure.code.trim()) {
+      return failure.code.trim();
+    }
   }
 
   const resultRecord = asRecord(toolCall.result);
@@ -381,6 +389,14 @@ function extractFailureCode(toolCall: ChatToolCall, errorText: string): string |
 
   const codeEqMatch = errorText.match(/\bcode\s*=\s*([a-z][a-z0-9_]{2,64})\b/i);
   if (codeEqMatch?.[1]) return codeEqMatch[1];
+
+  // Teaching denials lead with prose; recover the stable shell code.
+  if (
+    /Shell command blocked by deterministic allowlist/i.test(errorText) ||
+    /deterministic allowlist/i.test(errorText)
+  ) {
+    return "shell_policy_denied";
+  }
 
   return null;
 }

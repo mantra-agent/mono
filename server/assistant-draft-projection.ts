@@ -58,6 +58,7 @@ export function projectAssistantDraft(
           result: step.result,
           error: step.error,
           ...(step.failureKind ? { failureKind: step.failureKind } : {}),
+          ...(step.failureCode ? { failureCode: step.failureCode } : {}),
           parentId: step.parentId,
         });
         segmentChronology.push({ s: "tool", i: toolIndex });

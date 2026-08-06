@@ -345,6 +345,7 @@ class SessionManager {
           event.ts,
           event.arguments,
           event.failureKind,
+          event.failureCode,
         );
         break;
 

@@ -582,16 +582,40 @@ function mergeToolCalls(
     t.toolCallId
       ? `id:${t.toolCallId}`
       : `nm:${t.toolName}|${JSON.stringify(t.arguments ?? null)}`;
-  const seen = new Set(existingArr.map(keyOf));
-  const result = [...existingArr];
+  const byKey = new Map<string, ToolCallInfo>();
+  for (const tc of existingArr) {
+    byKey.set(keyOf(tc), tc);
+  }
   for (const tc of incoming) {
     const k = keyOf(tc);
-    if (!seen.has(k)) {
-      seen.add(k);
-      result.push(tc);
+    const prev = byKey.get(k);
+    if (!prev) {
+      byKey.set(k, tc);
+      continue;
     }
+    // Prefer richer metadata from later writers (executor over stream draft).
+    byKey.set(k, {
+      ...prev,
+      ...tc,
+      ...(tc.failureKind || prev.failureKind
+        ? { failureKind: tc.failureKind ?? prev.failureKind }
+        : {}),
+      ...(tc.failureCode || prev.failureCode
+        ? { failureCode: tc.failureCode ?? prev.failureCode }
+        : {}),
+      ...(tc.result !== undefined || prev.result !== undefined
+        ? { result: tc.result ?? prev.result }
+        : {}),
+      ...(tc.error !== undefined || prev.error !== undefined
+        ? { error: tc.error ?? prev.error }
+        : {}),
+      ...(tc.arguments !== undefined || prev.arguments !== undefined
+        ? { arguments: tc.arguments ?? prev.arguments }
+        : {}),
+      status: tc.status ?? prev.status,
+    });
   }
-  return result;
+  return Array.from(byKey.values());
 }
 
 function hasRenderableAssistantPayload(input: {
