@@ -38,8 +38,6 @@ import { createMeetingArtifactChild, createMeetingPersonChild, dedupeMeetingInvi
 import type { SimpleSourceRef } from "@shared/models/simple";
 import { SimpleTreeRow } from "@/components/home/home-tree-row";
 import { sourceRefToReferenceRef } from "@shared/simple-references";
-import { ReferenceChip } from "@/components/references/reference-chip";
-import { resolveReference } from "@/components/references/reference-registry";
 import { ReferenceRenderer } from "@/components/references/reference-renderer";
 import type { Schedule, TimerWithNextRun } from "@shared/models/timers";
 
@@ -1034,20 +1032,18 @@ function DayTimeline({ rows, events, timerOccurrences = [], accountEmails, timez
               )}
               style={{ gridColumn: 2, gridRow: index + 1 }}
             >
-              {slotTimers.map(timer => {
-                const reference = resolveReference({
-                  type: "timer",
-                  id: timer.timerId,
-                  metadata: { label: timer.name },
-                });
-                return (
-                  <ReferenceChip
-                    key={`${timer.timerId}:${timer.minuteOfDay}`}
-                    resolved={reference}
-                    className="max-w-[11rem] shrink-0 bg-background/90 text-sm"
-                  />
-                );
-              })}
+              {slotTimers.map(timer => (
+                <ReferenceRenderer
+                  key={`${timer.timerId}:${timer.minuteOfDay}`}
+                  refValue={{
+                    type: "timer",
+                    id: timer.timerId,
+                    metadata: { label: timer.name },
+                  }}
+                  surface="simple-row"
+                  className="max-w-[11rem] shrink-0 bg-background/90"
+                />
+              ))}
             </span>
           </div>
         );
