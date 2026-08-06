@@ -2532,7 +2532,7 @@ function GoogleDetail() {
     queryKey: ["/api/gmail/accounts"],
     enabled: Boolean(gmailStatus?.oauthConfigured),
   });
-  const { activeVault: driveVault } = useVaults();
+  const { activeVaultId } = useVaults();
   const oauthConfigured = Boolean(gmailStatus?.oauthConfigured);
   const driveAccount = googleAccountsData?.accounts?.find((account) => account.scopes?.hasDrive)
     ?? googleAccountsData?.accounts?.[0];
@@ -2556,7 +2556,7 @@ function GoogleDetail() {
       {oauthConfigured && (
         <IntegrationTreeSection label="Drive">
           <DriveSection
-            vaultId={visibleVaults[0]?.id}
+            vaultId={activeVaultId ?? undefined}
             connectedAccountId={driveAccount?.id}
             drivePickerConfigured={gmailStatus?.drivePickerConfigured !== false}
             hasDriveScope={Boolean(driveAccount?.scopes?.hasDrive)}
