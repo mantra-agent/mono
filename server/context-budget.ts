@@ -5,7 +5,7 @@
  */
 export const BETWEEN_TURN_HISTORY_RESET_FRACTION = 0.3;
 export const MID_TURN_TOOL_SOFT_TRIM_FRACTION = 0.5;
-export const MID_TURN_HISTORY_HARD_TRIM_FRACTION = 0.62;
+export const MID_TURN_HISTORY_HARD_TRIM_FRACTION = 0.7;
 export const MID_TURN_HISTORY_RESET_FRACTION = 1;
 /**
  * Baseline chars→tokens for prose / mixed message content.
