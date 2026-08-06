@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, FileText, Folder, Loader2, Plus, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { FileText, Folder, Loader2, Plus } from "lucide-react";
 import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
 import { apiRequest } from "@/lib/queryClient";
 import { createLogger } from "@/lib/logger";
@@ -126,13 +125,11 @@ export function DriveSection({
   connectedAccountId,
   drivePickerConfigured,
   hasDriveScope,
-  onReconnect,
 }: {
   vaultId?: string;
   connectedAccountId?: string;
   drivePickerConfigured: boolean;
   hasDriveScope: boolean;
-  onReconnect: () => void;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -168,12 +165,6 @@ export function DriveSection({
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/drive/resources", vaultId] }),
     onError: (error) => log.error("Drive bind failed", { error: String(error) }),
-  });
-
-  const unbindMutation = useMutation({
-    mutationFn: async (id: string) => apiRequest("DELETE", `/api/drive/resources/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/drive/resources", vaultId] }),
-    onError: (error) => log.error("Drive unbind failed", { error: String(error) }),
   });
 
   const handlePick = useCallback(async () => {
@@ -231,14 +222,7 @@ export function DriveSection({
   }
 
   if (!hasDriveScope) {
-    return (
-      <div className="flex items-center justify-between gap-3 px-2 py-1.5">
-        <p className="text-sm text-muted-foreground">Reconnect Google to grant read-only folder access. Then reselect any folders you want to bind.</p>
-        <Button variant="outline" size="sm" onClick={onReconnect} data-testid="button-drive-reconnect-google">
-          Reconnect Google
-        </Button>
-      </div>
-    );
+    return null;
   }
 
   if (!vaultId) {
@@ -274,7 +258,7 @@ export function DriveSection({
           No files included.
         </p>
       ) : (
-        <ul className="divide-y divide-border/20" data-testid="list-drive-resources">
+        <ul className="space-y-0" data-testid="list-drive-resources">
           {resources.map((resource) => {
             const Icon = resource.resourceType === "folder" ? Folder : FileText;
             return (
@@ -290,10 +274,6 @@ export function DriveSection({
                 >
                   {resource.name}
                 </a>
-                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => unbindMutation.mutate(resource.id)} disabled={unbindMutation.isPending} aria-label={`Remove ${resource.name}`} data-testid={`button-drive-remove-${resource.id}`}>
-                  <X className="h-3.5 w-3.5" />
-                </Button>
               </li>
             );
           })}

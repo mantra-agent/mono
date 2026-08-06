@@ -2186,6 +2186,7 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
   const { toast } = useToast();
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedVaultId, setSelectedVaultId] = useState("");
+  const [editingVaultAccountId, setEditingVaultAccountId] = useState<string | null>(null);
   const [accountPendingRemoval, setAccountPendingRemoval] = useState<{ id: string; email: string } | null>(null);
   const [removalConfirmation, setRemovalConfirmation] = useState("");
   const { vaults, activeVaultId } = useVaults();
@@ -2381,10 +2382,19 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => startOAuth(permAccount?.vaultId || vaults[0]?.id)} disabled={!permAccount?.vaultId && vaults.length === 0}>
+                  <DropdownMenuItem
+                    onClick={() => startOAuth(permAccount?.vaultId || vaults[0]?.id, account.id)}
+                    disabled={!permAccount?.vaultId && vaults.length === 0}
+                  >
                     <RefreshCw className="mr-2 h-4 w-4" /> Reconnect
                   </DropdownMenuItem>
-                  <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => { setAccountPendingRemoval(account); setRemovalConfirmation(""); }}>
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => {
+                      setAccountPendingRemoval({ id: account.id, email: account.email });
+                      setRemovalConfirmation("");
+                    }}
+                  >
                     <Trash2 className="mr-2 h-4 w-4" /> Remove
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -2397,8 +2407,52 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
             <ProfileTreeRow label={<span>Vault</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(permAccount?.vault)} showEmpty mobileLayout="inline" testId={`row-google-vault-${account.id}`}>
               {permAccount?.vault ? (
                 <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} />{permAccount.vault.name}</span>
+              ) : editingVaultAccountId === account.id && permAccount ? (
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
+                    <SelectTrigger className="h-8 w-44" aria-label="Select Vault" data-testid={`select-assign-google-vault-${account.id}`}>
+                      <SelectValue placeholder="Select Vault" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {vaults.map((vault) => (
+                        <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    disabled={!selectedVaultId}
+                    data-testid={`button-save-google-vault-${account.id}`}
+                    onClick={async () => {
+                      try {
+                        await apiRequest("PUT", `/api/connected-accounts/${permAccount.accountId}/vault`, {
+                          vaultId: selectedVaultId,
+                        });
+                        queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/gmail/status"] });
+                        setEditingVaultAccountId(null);
+                        toast({ title: "Vault assigned" });
+                      } catch (error) {
+                        const message = error instanceof Error ? error.message : "Unknown error";
+                        toast({ title: "Failed to assign vault", description: message, variant: "destructive" });
+                      }
+                    }}
+                  >
+                    Assign
+                  </Button>
+                </div>
               ) : (
-                <button type="button" className="text-cta hover:text-cta/80" onClick={() => setEditingVaultAccountId(permAccount?.id ?? null)} disabled={!permAccount} data-testid={`button-assign-google-vault-${account.id}`}>
+                <button
+                  type="button"
+                  className="text-cta hover:text-cta/80 disabled:pointer-events-none disabled:opacity-50"
+                  onClick={() => {
+                    setSelectedVaultId(activeVaultId || vaults[0]?.id || "");
+                    setEditingVaultAccountId(account.id);
+                  }}
+                  disabled={!permAccount || vaults.length === 0}
+                  data-testid={`button-assign-google-vault-${account.id}`}
+                >
                   Not Assigned
                 </button>
               )}
@@ -2406,79 +2460,24 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
             <ProfileTreeRow label={<span>Drive</span>} icon={<HardDrive className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId={`row-google-drive-${account.id}`}>
               <span>{account.scopes?.hasDrive ? "Connected" : "Reconnect to enable"}</span>
             </ProfileTreeRow>
-            <div className="min-w-0 space-y-4 px-2 py-1.5 pl-8">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => permAccount?.vaultId && startOAuth(permAccount.vaultId, account.id)}
-                    disabled={!permAccount?.vaultId}
-                    data-testid={`button-reauth-account-${account.id}`}
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    Reconnect
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setAccountPendingRemoval({ id: account.id, email: account.email });
-                      setRemovalConfirmation("");
-                    }}
-                    disabled={removeMutation.isPending}
-                    data-testid={`button-remove-account-${account.id}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Remove
-                  </Button>
-                </div>
+            {(account.healthError || missingScopes.length > 0) ? (
+              <div className="min-w-0 space-y-1 px-2 py-1.5 pl-8">
                 {account.healthError ? (
                   <p className="text-xs text-destructive" data-testid={`text-account-health-${account.id}`}>{account.healthError}</p>
                 ) : null}
-                {vaultRequired && permAccount ? (
-                  <div className="space-y-2">
-                    <p className="text-sm text-foreground">Choose where this account and its email data belong.</p>
-                    <div className="flex flex-wrap gap-2">
-                      <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
-                        <SelectTrigger className="w-48" aria-label="Select Vault"><SelectValue placeholder="Select Vault" /></SelectTrigger>
-                        <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
-                      </Select>
-                      <Button
-                        disabled={!selectedVaultId}
-                        data-testid={`button-assign-google-vault-${account.id}`}
-                        onClick={async () => {
-                          try {
-                            await apiRequest("PUT", `/api/connected-accounts/${permAccount.accountId}/vault`, {
-                              vaultId: selectedVaultId,
-                            });
-                            queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
-                            queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
-                            queryClient.invalidateQueries({ queryKey: ["/api/gmail/status"] });
-                            toast({ title: "Vault assigned" });
-                          } catch (error) {
-                            const message = error instanceof Error ? error.message : "Unknown error";
-                            toast({ title: "Failed to assign vault", description: message, variant: "destructive" });
-                          }
-                        }}
-                      >
-                        Assign Vault
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
                 {missingScopes.length > 0 ? (
-                  <p className="text-destructive" data-testid={`text-missing-scopes-${account.id}`}>
+                  <p className="text-xs text-destructive" data-testid={`text-missing-scopes-${account.id}`}>
                     Missing: {missingScopes.map((scope) => scope.split("/").pop() || scope).join(", ")}
                   </p>
                 ) : null}
-            </div>
+              </div>
+            ) : null}
             {permAccount?.vaultId ? (
               <DriveSection
                 vaultId={permAccount.vaultId}
                 connectedAccountId={permAccount.accountId}
                 drivePickerConfigured={drivePickerConfigured}
                 hasDriveScope={Boolean(account.scopes?.hasDrive)}
-                onReconnect={() => startOAuth(permAccount.vaultId!)}
               />
             ) : null}
           </IntegrationTreeSection>
