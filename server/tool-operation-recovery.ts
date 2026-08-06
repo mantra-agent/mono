@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { readFile } from "fs/promises";
 import { resolveWorkspacePath } from "./fs-utils";
 import { isDeterministicToolFailure, type ToolFailure } from "./tool-failure";
 
@@ -76,12 +77,64 @@ function isScratchConflict(failure: ToolFailure | null | undefined): failure is 
   return failure?.code === "scratch_edit_not_found" || failure?.code === "scratch_edit_ambiguous";
 }
 
+const SCRATCH_CONFLICT_EXCERPT_RADIUS = 4;
+const SCRATCH_CONFLICT_EXCERPT_MAX_CHARS = 900;
+
 function scratchReadRequiredMessage(path: string): string {
-  return `Scratch edit conflict for ${path}. Read the current file before retrying this exact edit once.`;
+  return [
+    `Scratch edit conflict for ${path}.`,
+    "Do not retry this same old_string.",
+    "Call scratch(action: \"read\") on this path, rebuild old_string from the current file bytes, then edit once.",
+  ].join(" ");
 }
 
 function scratchQuarantinedMessage(path: string): string {
   return `Scratch edit conflict for ${path} persisted after a current read and one retry. This exact operation is quarantined for the rest of the run; do not retry it again.`;
+}
+
+/** Prefer a locus near the intended old_string; fall back to file head. */
+function buildScratchConflictExcerpt(content: string, oldString: string): string {
+  const lines = content.split("\n");
+  if (lines.length === 0) return "(empty file)";
+
+  const needle = oldString.trim();
+  let center = 0;
+  if (needle.length > 0) {
+    const firstNeedleLine = needle.split("\n").map((line) => line.trim()).find((line) => line.length > 0) ?? "";
+    if (firstNeedleLine.length > 0) {
+      const hit = lines.findIndex((line) => line.includes(firstNeedleLine));
+      if (hit >= 0) center = hit;
+    }
+  }
+
+  const start = Math.max(0, center - SCRATCH_CONFLICT_EXCERPT_RADIUS);
+  const end = Math.min(lines.length, center + SCRATCH_CONFLICT_EXCERPT_RADIUS + 1);
+  let excerpt = lines
+    .slice(start, end)
+    .map((line, index) => `${start + index + 1}|${line}`)
+    .join("\n");
+  if (excerpt.length > SCRATCH_CONFLICT_EXCERPT_MAX_CHARS) {
+    excerpt = `${excerpt.slice(0, SCRATCH_CONFLICT_EXCERPT_MAX_CHARS)}\n…`;
+  }
+  return `Current file excerpt (lines ${start + 1}-${end} of ${lines.length}):\n${excerpt}`;
+}
+
+async function appendScratchConflictExcerpt(
+  result: RecoverableToolResult,
+  args: Record<string, unknown>,
+  path: string,
+): Promise<RecoverableToolResult> {
+  try {
+    const content = await readFile(path, "utf-8");
+    const oldString = typeof args.old_string === "string" ? args.old_string : "";
+    const excerpt = buildScratchConflictExcerpt(content, oldString);
+    return {
+      ...result,
+      result: `${result.result}\n\n${excerpt}`,
+    };
+  } catch {
+    return result;
+  }
 }
 
 export class ToolOperationRecovery {
@@ -138,32 +191,45 @@ export class ToolOperationRecovery {
         phase: "read_required",
         path: target,
       });
-      return {
-        result: `${result.result}\n\n${scratchReadRequiredMessage(target)}`,
-        error: true,
-        failure: result.failure,
-        recoveryDecision: "read_required",
-      };
+      return appendScratchConflictExcerpt(
+        {
+          result: `${result.result}\n\n${scratchReadRequiredMessage(target)}`,
+          error: true,
+          failure: result.failure,
+          recoveryDecision: "read_required",
+        },
+        args,
+        target,
+      );
     }
 
     if (existing.phase === "read_required") {
-      return {
-        result: scratchReadRequiredMessage(target),
-        error: true,
-        failure: result.failure,
-        recoveryDecision: "read_required",
-      };
+      // Blind retry before a fresh read — hard non-retry signal with locus.
+      return appendScratchConflictExcerpt(
+        {
+          result: scratchReadRequiredMessage(target),
+          error: true,
+          failure: result.failure,
+          recoveryDecision: "read_required",
+        },
+        args,
+        target,
+      );
     }
 
     if (existing.phase === "retry_allowed") {
       existing.phase = "quarantined";
       this.scratchStates.set(key, existing);
-      return {
-        result: `${result.result}\n\n${scratchQuarantinedMessage(target)}`,
-        error: true,
-        failure: result.failure,
-        recoveryDecision: "quarantined",
-      };
+      return appendScratchConflictExcerpt(
+        {
+          result: `${result.result}\n\n${scratchQuarantinedMessage(target)}`,
+          error: true,
+          failure: result.failure,
+          recoveryDecision: "quarantined",
+        },
+        args,
+        target,
+      );
     }
 
     return {

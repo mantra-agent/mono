@@ -7139,24 +7139,14 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return null;
     }
 
-    async function resolveImplicitSessionCloneDirectory(): Promise<
-      | { directory: string }
-      | { error: string; code: "git_directory_not_found" | "git_directory_ambiguous" }
-      | null
-    > {
-      const explicitDirectory = typeof args.directory === "string" ? args.directory.trim() : "";
-      if (!callingSessionId || explicitDirectory.length > 0) return null;
-
+    async function listSessionOwnedRepositories(): Promise<string[]> {
+      if (!callingSessionId) return [];
       let entries: Awaited<ReturnType<typeof readdir>>;
       try {
         entries = await readdir(REPOS_DIR, { withFileTypes: true });
       } catch {
-        return {
-          error: "No session-owned repository clone exists. Clone the repository first with git(action: \"clone\", ...).",
-          code: "git_directory_not_found",
-        };
+        return [];
       }
-
       const candidates = entries
         .filter((entry) => entry.isDirectory() && isOwnedBySession(entry.name))
         .map((entry) => entry.name)
@@ -7165,7 +7155,67 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       for (const candidate of candidates) {
         if (await dirExists(resolve(REPOS_DIR, candidate, ".git"))) repositories.push(candidate);
       }
+      return repositories;
+    }
 
+    function nearMissSessionClone(requested: string, repositories: string[]): string | null {
+      const needle = requested.trim().replace(/^repos\//, "");
+      if (!needle || repositories.length === 0) return null;
+      const prefixHits = repositories.filter(
+        (name) => name.startsWith(needle) || needle.startsWith(name),
+      );
+      if (prefixHits.length === 1) return prefixHits[0];
+      const suffixHits = repositories.filter(
+        (name) => name.endsWith(needle) || needle.endsWith(name),
+      );
+      if (suffixHits.length === 1) return suffixHits[0];
+      return null;
+    }
+
+    /** Explicit-miss recovery: teach omit-directory / exact sole clone, not workspace "." */
+    async function gitDirectoryNotFoundMessage(requested?: string): Promise<string> {
+      const requestedLabel = typeof requested === "string" ? requested.trim() : "";
+      const repositories = await listSessionOwnedRepositories();
+      const head = requestedLabel
+        ? `Repository directory not found: \`${requestedLabel}\`.`
+        : "Repository directory not found.";
+
+      if (repositories.length === 1) {
+        const sole = repositories[0];
+        const near = requestedLabel ? nearMissSessionClone(requestedLabel, repositories) : null;
+        const nearLine =
+          near && near !== requestedLabel
+            ? ` Closest session clone looks like \`${near}\`.`
+            : "";
+        return (
+          `${head}${nearLine} Omit \`directory\` to use your sole session clone (\`${sole}\`), ` +
+          `or pass that exact name. Do not use "." unless you intentionally want the workspace root (read-only depth-1 deploy checkout).`
+        );
+      }
+
+      if (repositories.length > 1) {
+        return (
+          `${head} This session owns multiple clones (${repositories.join(", ")}). ` +
+          `Pass \`directory\` with one exact name. Do not use "." for write work.`
+        );
+      }
+
+      return (
+        `${head} No session-owned repository clone exists. ` +
+        `Clone first with git(action: "clone", ...), then omit \`directory\` or pass the returned clone name. ` +
+        `Do not use "." unless you intentionally want the workspace root.`
+      );
+    }
+
+    async function resolveImplicitSessionCloneDirectory(): Promise<
+      | { directory: string }
+      | { error: string; code: "git_directory_not_found" | "git_directory_ambiguous" }
+      | null
+    > {
+      const explicitDirectory = typeof args.directory === "string" ? args.directory.trim() : "";
+      if (!callingSessionId || explicitDirectory.length > 0) return null;
+
+      const repositories = await listSessionOwnedRepositories();
       if (repositories.length === 1) return { directory: repositories[0] };
       if (repositories.length === 0) {
         return {
@@ -7615,7 +7665,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const dir = resolveRepoDir(args.directory);
           if (!dir || !await dirExists(dir)) {
             return contractReject(
-              "Repository directory not found. Specify the directory name inside repos/.",
+              await gitDirectoryNotFoundMessage(args.directory),
               "git_directory_not_found",
             );
           }
@@ -7635,7 +7685,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         case "status": {
           const dir = await resolveReadOnlyRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const currentBranch = await git(["branch", "--show-current"], dir);
           const status = await git(["status", "--short"], dir);
@@ -7647,7 +7697,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         case "log": {
           const dir = await resolveReadOnlyRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           // If workspace root is shallow, warn the caller
           if (SELF_DIR_ALIASES.has(args.directory || ".") || !args.directory) {
@@ -7670,7 +7720,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         case "diff": {
           const dir = await resolveReadOnlyRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const diffArgs = ["diff"];
           const r1 = sanitizeRef(args.ref1);
@@ -7687,7 +7737,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const subAction = args.branchAction || "list";
           if (subAction === "list") {
             const dir = await resolveReadOnlyRepoDir(args.directory);
-            if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
+            if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
             const output = await git(["branch", "-a"], dir);
             return { result: output };
           }
@@ -7695,7 +7745,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const branchOwnerErr = requireWriteOwnership(args.directory);
           if (branchOwnerErr) return contractReject(branchOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Branch create/switch only works on cloned repos in repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
           switch (subAction) {
             case "create": {
               const name = sanitizeBranch(args.name);
@@ -7719,7 +7769,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const checkoutOwnerErr = requireWriteOwnership(args.directory);
           if (checkoutOwnerErr) return contractReject(checkoutOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Checkout only works on cloned repos in repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const prNumber = Number(args.pr_number);
           if (Number.isInteger(prNumber) && prNumber > 0) {
@@ -7750,7 +7800,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
         case "show": {
           const dir = await resolveReadOnlyRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Use \".\" for the workspace repo, or specify a cloned repo name in repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const ref = sanitizeRef(args.ref) || "HEAD";
           const output = await git(["show", "--stat", "--format=Commit: %H%nAuthor: %an <%ae>%nDate: %ci%n%n%s%n%n%b", ref], dir);
@@ -7762,7 +7812,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const addOwnerErr = requireWriteOwnership(args.directory);
           if (addOwnerErr) return contractReject(addOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const files: string[] = Array.isArray(args.files) && args.files.length > 0
             ? args.files.map((f: string) => String(f))
@@ -7777,7 +7827,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const commitOwnerErr = requireWriteOwnership(args.directory);
           if (commitOwnerErr) return contractReject(commitOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const message = args.message;
           if (!message || typeof message !== "string" || !message.trim()) {
@@ -7799,7 +7849,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const pushOwnerErr = requireWriteOwnership(args.directory);
           if (pushOwnerErr) return contractReject(pushOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const pushRemoteUrl = await getRemoteUrl(dir);
           const authEnv = await getAuthEnv(pushRemoteUrl);
@@ -7833,7 +7883,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const prOwnerErr = requireWriteOwnership(args.directory);
           if (prOwnerErr) return contractReject(prOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const title = args.title;
           if (!title || typeof title !== "string" || !title.trim()) {
@@ -7885,7 +7935,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const mergeOwnerErr = requireWriteOwnership(args.directory);
           if (mergeOwnerErr) return contractReject(mergeOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const prNumber = args.pr_number;
           if (!prNumber) return contractReject("Missing pr_number parameter", "git_invalid_action");
@@ -7954,7 +8004,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           const delBranchOwnerErr = requireWriteOwnership(args.directory);
           if (delBranchOwnerErr) return contractReject(delBranchOwnerErr, "git_session_ownership");
           const dir = resolveRepoDir(args.directory);
-          if (!dir || !await dirExists(dir)) return contractReject("Repository directory not found. Specify the directory name inside repos/.", "git_directory_not_found");
+          if (!dir || !await dirExists(dir)) return contractReject(await gitDirectoryNotFoundMessage(args.directory), "git_directory_not_found");
 
           const branchName = sanitizeBranch(args.branch);
           if (!branchName) return { result: "Missing or invalid branch name", error: true };
