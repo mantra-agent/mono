@@ -170,6 +170,8 @@ export default function BusinessAdvantagePage() {
 
   const plans = asArray<BusinessPlan>(plansQuery.data);
   const plan = plans.find((candidate) => candidate.id === selectedPlanId) ?? plans[0];
+  const initiativeProjectIds = asArray<number>(plan?.initiativeProjectIds);
+  const kpiIds = asArray<string>(plan?.kpiIds);
 
   useEffect(() => {
     if (plan && selectedPlanId !== plan.id) setSelectedPlanId(plan.id);
@@ -253,7 +255,16 @@ export default function BusinessAdvantagePage() {
           <HierarchySectionHeader>Thematic Goal</HierarchySectionHeader>
           <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
             <ProfileTreeRow
-              label={<ReferenceRenderer reference={createReferenceRef("goal", plan.thematicGoalId)} showIcon={false} />}
+              label={
+                <ReferenceRenderer
+                  refValue={createReferenceRef({
+                    type: "goal",
+                    id: plan.thematicGoalId,
+                    metadata: { label: thematicGoal?.shortName ?? "Goal" },
+                  })}
+                  surface="simple-chip"
+                />
+              }
               mobileLayout="inline"
               hasValue
               showEmpty
@@ -267,12 +278,21 @@ export default function BusinessAdvantagePage() {
         <section className="space-y-3">
           <HierarchySectionHeader>Initiatives</HierarchySectionHeader>
           <div className="min-w-0">
-            {plan.initiativeProjectIds.map((projectId, index) => {
+            {initiativeProjectIds.map((projectId, index) => {
               const project = projectsById.get(projectId);
               return (
-                <HierarchyTreeRow key={`${projectId}-${index}`} continues={index < plan.initiativeProjectIds.length - 1} connectorAnchor="first-row-center">
+                <HierarchyTreeRow key={`${projectId}-${index}`} continues={index < initiativeProjectIds.length - 1} connectorAnchor="first-row-center">
                   <ProfileTreeRow
-                    label={<ReferenceRenderer reference={createReferenceRef("project", String(projectId))} showIcon={false} />}
+                    label={
+                      <ReferenceRenderer
+                        refValue={createReferenceRef({
+                          type: "project",
+                          id: String(projectId),
+                          metadata: { label: project?.title ?? `Project ${projectId}` },
+                        })}
+                        surface="simple-chip"
+                      />
+                    }
                     mobileLayout="inline"
                     hasValue
                     showEmpty
@@ -282,7 +302,7 @@ export default function BusinessAdvantagePage() {
                         value={String(projectId)}
                         label={project?.title ?? `Project ${projectId}`}
                         onReplace={(id) => {
-                          const next = [...plan.initiativeProjectIds];
+                          const next = [...initiativeProjectIds];
                           next[index] = Number(id);
                           update({ initiativeProjectIds: next });
                         }}
@@ -299,13 +319,22 @@ export default function BusinessAdvantagePage() {
         <section className="space-y-3">
           <HierarchySectionHeader>Key Performance Indicators</HierarchySectionHeader>
           <div className="min-w-0">
-            {plan.kpiIds.map((kpiId, index) => {
+            {kpiIds.map((kpiId, index) => {
               const kpi = kpisById.get(kpiId);
               return (
-                <HierarchyTreeRow key={`${kpiId}-${index}`} continues={index < plan.kpiIds.length - 1} connectorAnchor="first-row-center">
+                <HierarchyTreeRow key={`${kpiId}-${index}`} continues={index < kpiIds.length - 1} connectorAnchor="first-row-center">
                   <ProfileTreeRow
                     icon={<Gauge className="h-3.5 w-3.5" />}
-                    label={<ReferenceRenderer reference={createReferenceRef("kpi", kpiId)} showIcon={false} />}
+                    label={
+                      <ReferenceRenderer
+                        refValue={createReferenceRef({
+                          type: "kpi",
+                          id: kpiId,
+                          metadata: { label: kpi?.name ?? "KPI" },
+                        })}
+                        surface="simple-chip"
+                      />
+                    }
                     mobileLayout="inline"
                     hasValue
                     showEmpty
@@ -315,7 +344,7 @@ export default function BusinessAdvantagePage() {
                         value={kpiId}
                         label={kpi?.name ?? "KPI"}
                         onReplace={(id) => {
-                          const next = [...plan.kpiIds];
+                          const next = [...kpiIds];
                           next[index] = id;
                           update({ kpiIds: next });
                         }}
