@@ -68,6 +68,8 @@ interface MessageListProps {
   liveStreamRenderId?: string | null;
   compactReferences?: boolean;
   questionResponses?: ReadonlyMap<string, QuestionResponseMeta>;
+  /** Question IDs already owned by a newer transcript page. Historical subtrees must not repaint them. */
+  claimedQuestionToolCallIds?: ReadonlySet<string>;
   onQuestionSubmit: (response: QuestionResponseMeta) => Promise<import("@/hooks/use-question-response").QuestionSubmitResult | boolean>;
   onQuestionCancel?: () => Promise<boolean>;
   historical?: boolean;
@@ -242,6 +244,7 @@ export function MessageList({
   liveStreamRenderId,
   compactReferences = false,
   questionResponses,
+  claimedQuestionToolCallIds,
   onQuestionSubmit,
   onQuestionCancel,
   historical = false,
@@ -821,11 +824,10 @@ export function MessageList({
     for (const id of ids) emailDraftOwnerByDraftId.set(id, it.msg.id);
   }
 
-  // Cross-message question widget dedup: a single logical assistant turn can be
-  // persisted as multiple checkpoint messages that each carry the same
-  // `question` tool call. Mirror the email-draft ownership rule — each question
-  // toolCallId renders exactly once, at its latest occurrence — so the widget is
-  // not duplicated across overlapping checkpoints of the same turn.
+  // Question ownership spans the visible transcript and every recursively loaded
+  // history page. Newer pages claim IDs first; each page then assigns its
+  // remaining IDs to the latest local occurrence. Historical pages inherit the
+  // full claim set so the same logical Question can never be painted twice.
   const questionOwnerByToolCallId = new Map<string, string>();
   const questionToolCallIdsByMessageId = new Map<string, string[]>();
   for (const it of items) {
@@ -842,7 +844,15 @@ export function MessageList({
     }
     if (ids.length === 0) continue;
     questionToolCallIdsByMessageId.set(it.msg.id, ids);
-    for (const id of ids) questionOwnerByToolCallId.set(id, it.msg.id);
+    for (const id of ids) {
+      if (!claimedQuestionToolCallIds?.has(id)) {
+        questionOwnerByToolCallId.set(id, it.msg.id);
+      }
+    }
+  }
+  const claimedQuestionIdsForHistory = new Set(claimedQuestionToolCallIds ?? []);
+  for (const id of questionOwnerByToolCallId.keys()) {
+    claimedQuestionIdsForHistory.add(id);
   }
   const streamingQuestionToolCallIds = Array.from(new Set(
     effectiveStreaming.segments.flatMap((segment) =>
@@ -973,7 +983,9 @@ export function MessageList({
     const suppressed = draftIdsByMessageId.get(msg.id)?.filter((id) => emailDraftOwnerByDraftId.get(id) !== msg.id);
     const suppressedQuestionIds = questionToolCallIdsByMessageId
       .get(msg.id)
-      ?.filter((id) => questionOwnerByToolCallId.get(id) !== msg.id);
+      ?.filter((id) =>
+        claimedQuestionToolCallIds?.has(id) || questionOwnerByToolCallId.get(id) !== msg.id,
+      );
     const renderKey = finalizedTurnRenderKeysRef.current.byMessageId.get(msg.id) ?? msg.id;
     const renderArchivedMessages = (archivedMessages: Message[]) => {
       const archivedQuestionResponses = new Map(questionResponses ?? []);
@@ -1002,6 +1014,7 @@ export function MessageList({
             sessionStreams={sessionStreams}
             compactReferences={compactReferences}
             questionResponses={archivedQuestionResponses}
+            claimedQuestionToolCallIds={claimedQuestionIdsForHistory}
             onQuestionSubmit={onQuestionSubmit}
             onQuestionCancel={onQuestionCancel}
             historical
