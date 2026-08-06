@@ -120,9 +120,33 @@ export interface ContentBlock {
 }
 
 import type { ToolDefinition } from "@shared/models/tools";
-import type { ToolFailure } from "./tool-failure";
+import {
+  extractToolFailureKind,
+  inferFailureKind,
+  isClassifiedToolFailureKind,
+  type ToolFailureKind,
+} from "@shared/tool-failure";
+import {
+  toolFailureFromError,
+  type ToolFailure,
+} from "./tool-failure";
 import { ToolOperationRecovery, type ToolRecoveryDecision } from "./tool-operation-recovery";
 export type { ToolDefinition };
+
+/**
+ * Prefer extractToolFailureKind (nested failure.kind or flattened failureKind).
+ * Also accept a bare ToolFailure / { kind } so call sites can pass failure alone.
+ */
+function resolvedToolFailureKind(...sources: unknown[]): ToolFailureKind | undefined {
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue;
+    const fromShapes = extractToolFailureKind(source);
+    if (isClassifiedToolFailureKind(fromShapes)) return fromShapes;
+    const bareKind = (source as { kind?: unknown }).kind;
+    if (isClassifiedToolFailureKind(bareKind)) return bareKind;
+  }
+  return undefined;
+}
 
 export type ToolContinuation = "persona_switch" | "tool_schema_refresh" | "await_user" | "provider_system_tool" | "working_set_refresh";
 export type ToolOutcome = "succeeded" | "degraded" | "failed" | "cancelled";
@@ -139,6 +163,12 @@ export type ToolExecutorResult = {
   error?: boolean;
   /** Structured source classification consumed by run-scoped recovery policy. */
   failure?: ToolFailure;
+  /**
+   * Flattened kind from bridge dispatch inference / telemetry.
+   * Prefer extractToolFailureKind over reading failure?.kind alone —
+   * dispatch may only set this field when the handler lacked failure.kind.
+   */
+  failureKind?: ToolFailureKind;
   /** One discriminated recovery decision computed by the run-scoped ledger. */
   recoveryDecision?: ToolRecoveryDecision;
   outcome?: ToolOutcome;
@@ -2004,6 +2034,7 @@ export class AgentExecutor extends EventEmitter {
           outcome: event.outcome ?? (event.error ? "failed" : "succeeded"),
           durationMs: event.durationMs ?? 0,
           failure: event.failure,
+          failureKind: resolvedToolFailureKind(event),
           recoveryDecision: event.recoveryDecision,
         });
         if (toolCallId && !ctx.iterationToolCalls.some((call) => call.id === toolCallId)) {
@@ -2037,7 +2068,8 @@ export class AgentExecutor extends EventEmitter {
           arguments: resolvedArgs,
           result: event.result,
           error: event.error ? event.result : undefined,
-          failureKind: event.failure?.kind,
+          // SSOT: accept failure.kind or flattened failureKind from dispatch.
+            failureKind: resolvedToolFailureKind(event),
         });
         const toolStepStartResolved = ctx.activeToolUseSteps.get(toolCallId || "");
         if (toolStepStartResolved && toolCallId) {
@@ -2266,10 +2298,19 @@ export class AgentExecutor extends EventEmitter {
           return options.toolExecutor!(tc.name, tc.input);
         });
       } catch (err: unknown) {
+        // Mirror bridge-tools catch: explicit ToolFailure first, then
+        // phrase inference so predictable throws render amber, not red.
+        const thrownFailure = toolFailureFromError(err);
+        const errMessage = err instanceof Error ? err.message : String(err);
+        const thrownKind =
+          resolvedToolFailureKind(thrownFailure, err) ??
+          (inferFailureKind(errMessage) ?? undefined);
         toolResult = {
-          result: `Tool execution error: ${err instanceof Error ? err.message : String(err)}`,
+          result: `Tool execution error: ${errMessage}`,
           error: true,
           outcome: "failed",
+          ...(thrownFailure ? { failure: thrownFailure } : {}),
+          ...(thrownKind ? { failureKind: thrownKind } : {}),
         };
       } finally {
         clearInterval(toolHeartbeat);
@@ -2327,6 +2368,7 @@ export class AgentExecutor extends EventEmitter {
         outcome: toolResult.outcome ?? (toolResult.error ? "failed" : "succeeded"),
         durationMs,
         failure: toolResult.failure,
+        failureKind: resolvedToolFailureKind(toolResult),
         recoveryDecision: toolResult.recoveryDecision,
       });
       // Chronology: record tool entry pointing to resolvedToolCalls index
@@ -2352,7 +2394,8 @@ export class AgentExecutor extends EventEmitter {
         arguments: canonicalArgs,
         result: toolResult.result,
         error: toolResult.error ? toolResult.result : undefined,
-        failureKind: toolResult.failure?.kind,
+        // SSOT: accept failure.kind or flattened failureKind from dispatch.
+        failureKind: resolvedToolFailureKind(toolResult),
       });
       const toolStepStart = ctx.activeToolUseSteps.get(tc.id);
       if (toolStepStart) {
@@ -2422,14 +2465,18 @@ export class AgentExecutor extends EventEmitter {
     outcome: ToolOutcome;
     durationMs: number;
     failure?: ToolFailure;
+    /** Flattened kind from bridge inference when failure.kind was absent. */
+    failureKind?: ToolFailureKind;
     recoveryDecision?: ToolRecoveryDecision;
   }): void {
     const {
       ctx, options, id, name, input, result, outcome, durationMs, failure, recoveryDecision,
       providerResult, historicalProviderResult, canMateriallyShrinkOnRefresh, refreshReductionTokens,
+      failureKind: flattenedFailureKind,
     } = args;
     const error = outcome === "failed" || outcome === "cancelled";
-    const failureKind = failure?.kind;
+    // Prefer structured failure; also accept flattened kind from dispatch.
+    const failureKind = resolvedToolFailureKind(failure, { failureKind: flattenedFailureKind });
     ctx.resolvedToolCalls.push({
       id,
       name,
