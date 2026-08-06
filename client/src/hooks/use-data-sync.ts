@@ -10,6 +10,18 @@ import type { Vault } from "@/hooks/use-vaults";
 
 const log = createLogger("DataSync");
 
+const DEFERRED_SESSION_QUERY_KEYS = [
+  "/api/sessions?view=past",
+  "/api/sessions?view=snooze",
+  "/api/sessions?view=archive",
+] as const;
+
+function invalidateDeferredSessionViews(): void {
+  for (const key of DEFERRED_SESSION_QUERY_KEYS) {
+    queryClient.invalidateQueries({ queryKey: [key] });
+  }
+}
+
 const INVALIDATION_MAP: Record<string, string[][]> = {
   "data:goals_changed": [["/api/goals/today"], ["/api/home/feed"]],
   "data:calendar_changed": [["/api/calendar/events"], ["/api/calendar/metadata"]],
@@ -337,8 +349,12 @@ export function useDataSync() {
         if (delta) {
           const handled = applySessionDelta(delta);
           if (handled) {
+            // Historical projections have different membership predicates. Mark
+            // them stale immediately so an open section refetches after any
+            // session-list mutation.
+            invalidateDeferredSessionViews();
             log.verbose(() => `applied session delta: ${delta.action} ${delta.sessionId}`);
-            return;  // Skip full invalidation — delta was applied directly
+            return;  // Skip primary-list invalidation — delta was applied directly
           }
         }
       }

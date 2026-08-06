@@ -462,10 +462,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
   app.use(["/api/sessions", "/api/chat"], requireAuth);
   app.get("/api/sessions", async (req: Request, res: Response) => {
     try {
-      const [all, reminderMap] = await Promise.all([
-        chatStorage.getAllSessions(),
-        getSessionReminderMap(),
-      ]);
+      const reminderMap = await getSessionReminderMap();
+      const view = typeof req.query.view === "string" ? req.query.view : "all";
+      const supportedView = view === "primary" || view === "past" || view === "snooze" || view === "archive"
+        ? view
+        : null;
+      const snoozedSessionIds = [...reminderMap.keys()];
+      const all = supportedView
+        ? await chatStorage.getSessionsForView(supportedView, snoozedSessionIds)
+        : await chatStorage.getAllSessions();
       const principal = req.principal;
       if (!principal) return res.status(401).json({ error: "Not authenticated" });
       const emailReviewKindsBySession = await emailDraftStorage.getPendingReviewKindsBySession(
@@ -475,27 +480,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // The session menu loads its immediately useful working set first, then
       // requests collapsed historical sections on disclosure. Keep the
       // unqualified route as the full canonical index for non-menu consumers.
-      const view = typeof req.query.view === "string" ? req.query.view : "all";
-      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1_000;
-      const isSnoozed = (session: (typeof all)[number]) => reminderMap.get(session.id)?.active === true;
-      const isPrimary = (session: (typeof all)[number]) => {
-        if (session.archivedAt || isSnoozed(session)) return false;
-        const updatedMs = new Date(session.updatedAt || session.createdAt).getTime();
-        return updatedMs >= sevenDaysAgo ||
-          session.isPinned === true ||
-          session.status === "streaming" ||
-          session.awaitingReview === true ||
-          session.awaitingQuestionResponse === true;
-      };
-      const visible = view === "primary"
-        ? all.filter(isPrimary)
-        : view === "past"
-          ? all.filter((session) => !session.archivedAt && !isSnoozed(session) && !isPrimary(session))
-          : view === "snooze"
-            ? all.filter(isSnoozed)
-            : view === "archive"
-              ? all.filter((session) => !!session.archivedAt)
-              : all;
+      // View-specific reads are already filtered and bounded by chat storage.
+      // The unqualified route remains the full canonical session index.
+      const visible = all;
       const allIds = new Set(all.map((s) => s.id));
       const visibleIds = new Set(visible.map((s) => s.id));
       const childCounts = new Map<string, number>();

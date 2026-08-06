@@ -1432,6 +1432,11 @@ export interface IChatFileStorage {
   getSessions(ids: string[]): Promise<FileSession[]>;
   getSavedSessions(): Promise<FileSession[]>;
   getAllSessions(limit?: number): Promise<FileSession[]>;
+  getSessionsForView(
+    view: "primary" | "past" | "snooze" | "archive",
+    snoozedSessionIds: string[],
+    limit?: number,
+  ): Promise<FileSession[]>;
   createSession(
     title: string,
     sessionKey?: string,
@@ -1880,6 +1885,68 @@ export const chatFileStorage: IChatFileStorage = {
             new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
         );
     });
+  },
+
+  async getSessionsForView(view, snoozedSessionIds, limit = view === "primary" ? 250 : 5_000) {
+    const principal = requireCurrentPrincipal();
+    const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 5_000);
+    const snoozed = [...new Set(snoozedSessionIds.filter(Boolean))];
+    const isSnoozed = snoozed.length > 0
+      ? inArray(documentStoreDocuments.documentId, snoozed)
+      : sql`FALSE`;
+    const isArchived = sql`${documentStoreDocuments.metadata}->>'archivedAt' IS NOT NULL`;
+    const isPrimary = and(
+      sql`NOT (${isArchived})`,
+      sql`NOT (${isSnoozed})`,
+      or(
+        sql`${documentStoreDocuments.updatedAt} >= NOW() - INTERVAL '7 days'`,
+        sql`${documentStoreDocuments.metadata}->>'isPinned' = 'true'`,
+        sql`${documentStoreDocuments.metadata}->>'status' = 'streaming'`,
+        sql`${documentStoreDocuments.metadata}->>'awaitingReview' = 'true'`,
+        sql`${documentStoreDocuments.metadata}->>'awaitingQuestionResponse' = 'true'`,
+      ),
+    );
+    const viewPredicate = view === "primary"
+      ? isPrimary
+      : view === "past"
+        ? and(sql`NOT (${isArchived})`, sql`NOT (${isSnoozed})`, sql`NOT (${isPrimary})`)
+        : view === "snooze"
+          ? isSnoozed
+          : isArchived;
+    const rows = await db
+      .select({
+        docId: documentStoreDocuments.documentId,
+        title: documentStoreDocuments.title,
+        createdAt: documentStoreDocuments.createdAt,
+        metadata: documentStoreDocuments.metadata,
+        ownerUserId: documentStoreDocuments.ownerUserId,
+        accountId: documentStoreDocuments.accountId,
+        vaultId: documentStoreDocuments.vaultId,
+      })
+      .from(documentStoreDocuments)
+      .where(combineWithVisibleScope(
+        principal,
+        {
+          scope: documentStoreDocuments.scope,
+          ownerUserId: documentStoreDocuments.ownerUserId,
+          accountId: documentStoreDocuments.accountId,
+          vaultId: documentStoreDocuments.vaultId,
+        },
+        and(eq(documentStoreDocuments.documentType, "chat"), viewPredicate),
+      ))
+      .orderBy(sql`${documentStoreDocuments.updatedAt} DESC`)
+      .limit(boundedLimit);
+    const docs = rows.map((row) => ({
+      id: 0,
+      docId: row.docId,
+      title: row.title,
+      createdAt: row.createdAt?.toISOString() ?? null,
+      metadata: row.metadata as Record<string, unknown>,
+      ownerUserId: row.ownerUserId,
+      accountId: row.accountId,
+      vaultId: row.vaultId,
+    }));
+    return applySessionTreeRowsToMetadataList(docs);
   },
 
   async createSession(
