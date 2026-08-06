@@ -140,6 +140,7 @@ const PERSONAL_RULES: ApiPolicyRule[] = [
       "/api/gmail",
       "/api/calendar",
       "/api/files",
+      "/api/drive",
       "/api/object-storage",
       "/api/media",
       "/api/magic-demo",

@@ -1,3 +1,13 @@
+<!-- 2026-08-06 Drive API policy classification delta:
+- Assets/data: Google OAuth access tokens, browser-safe Picker key, user-selected Drive file metadata, connected-account identity, and Vault-scoped Drive bindings.
+- Flow/boundary: authenticated SPA -> global API policy -> `/api/drive/*` route -> principal-scoped connected-account token refresh / Vault-gated Drive resource service -> Google Picker or Files API.
+- Threats: STRIDE information disclosure/elevation if Drive endpoints bypass principal classification; availability failure if legitimate routes remain default-denied; cross-Vault confused-deputy access if route exposure substitutes for downstream account/Vault checks.
+- Controls/owner: Core Application Platform classifies the exact `/api/drive` prefix as `personal`, requiring a user principal before handlers execute. Existing route-owned connected-account ownership, `drive.file` scope, explicit Picker selection, Vault membership, object grants, and read-only Files API controls remain independently authoritative. Unclassified routes remain 404 default-deny.
+- Evidence: production client telemetry repeatedly reported `POST /api/drive/picker-token` as `404 {\"error\":\"Not found\"}` while the handler was registered; `server/api-policy.ts` lacked `/api/drive`, so policy enforcement rejected the request before `DriveResourceRoutes`. Production build is the release gate.
+- Severity/owner/SLA/status: high functional availability with sensitive-token boundary implications; Core Application Platform; immediate; repaired in source pending build, merge, deployment, and authenticated Picker acceptance.
+- Residual risk: the short-lived OAuth access token must cross into the browser for Google Picker; exposure remains bounded by the narrow `drive.file` grant, short lifetime, exact browser origins, and no refresh-token disclosure.
+-->
+
 <!-- 2026-08-06 slow-query truncation telemetry delta:
 - Assets/data: database query structure and production logs; SQL snippets remain bounded operational telemetry and may expose schema shape.
 - Flow/boundary: node-postgres query text -> slow-query formatter -> bounded in-memory resource telemetry; `safeTruncate` no longer emits a second log event for this expected truncation path.
