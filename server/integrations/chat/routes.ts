@@ -49,7 +49,7 @@ import { deferStatusSaved } from "./abort-defer";
 import { chatRunLifecycle, ChatRunInvalidatedError, type ChatRunLease } from "./run-lifecycle";
 import { timerStorage } from "../../file-storage";
 import { timerScheduler } from "../../timer-scheduler";
-import { SESSION_REMINDER_PREFIX } from "../../routes/session-reminder";
+import { extractSessionReminderId } from "../../session-reminder-metadata";
 import { getPrincipal } from "../../principal";
 import { completeFtueSayHello } from "../../ftue-goals";
 import type { Timer } from "@shared/models/timers";
@@ -94,7 +94,7 @@ type SessionReminderState = { active: true; timerId: string; fireAt: string | nu
 
 function getSessionReminderState(timer: Timer): SessionReminderState | null {
   if (timer.type !== "reminder" || !timer.enabled) return null;
-  if (!timer.description?.startsWith(SESSION_REMINDER_PREFIX)) return null;
+  if (!extractSessionReminderId(timer.description ?? "")) return null;
   const schedule = timer.schedules[0];
   const nextBoot = !!schedule?.fireOnNextBoot;
   const nextBuild = !!schedule?.fireOnNextBuild;
@@ -114,8 +114,9 @@ async function getSessionReminderMap(): Promise<Map<string, SessionReminderState
   for (const timer of timers) {
     const state = getSessionReminderState(timer);
     if (!state) continue;
-    const sessionId = timer.description.slice(SESSION_REMINDER_PREFIX.length);
-    if (sessionId) reminders.set(sessionId, state);
+    const sessionId = extractSessionReminderId(timer.description);
+    if (!sessionId) continue;
+    reminders.set(sessionId, state);
   }
   return reminders;
 }
