@@ -2318,8 +2318,38 @@ export class AgentExecutor extends EventEmitter {
         markRunToolActivity();
       }
 
+      // Tool handlers are dynamically registered and can violate the compile-time
+      // ToolExecutorResult contract. Normalize once at the executor boundary so
+      // projection, persistence, streaming, and provider delivery share one
+      // canonical string representation instead of crashing on structured data.
+      const rawToolResult = toolResult as ToolExecutorResult & {
+        result: unknown;
+        providerResult?: unknown;
+        historicalProviderResult?: unknown;
+      };
+      if (typeof rawToolResult.result !== "string") {
+        log.warn(
+          `Tool "${tc.name}" returned non-string result; normalized type=${rawToolResult.result === null ? "null" : typeof rawToolResult.result}`,
+        );
+        toolResult.result = rawToolResult.result == null ? "" : safeStringify(rawToolResult.result);
+      }
+      if (rawToolResult.providerResult !== undefined && typeof rawToolResult.providerResult !== "string") {
+        log.warn(
+          `Tool "${tc.name}" returned non-string providerResult; normalized type=${rawToolResult.providerResult === null ? "null" : typeof rawToolResult.providerResult}`,
+        );
+        toolResult.providerResult = rawToolResult.providerResult == null ? "" : safeStringify(rawToolResult.providerResult);
+      }
+      if (rawToolResult.historicalProviderResult !== undefined && typeof rawToolResult.historicalProviderResult !== "string") {
+        log.warn(
+          `Tool "${tc.name}" returned non-string historicalProviderResult; normalized type=${rawToolResult.historicalProviderResult === null ? "null" : typeof rawToolResult.historicalProviderResult}`,
+        );
+        toolResult.historicalProviderResult = rawToolResult.historicalProviderResult == null
+          ? ""
+          : safeStringify(rawToolResult.historicalProviderResult);
+      }
+
       const durationMs = Date.now() - toolStart;
-      log.verbose(() => `Tool "${tc.name}" completed in ${durationMs}ms error=${!!toolResult.error} sideEffectOnly=${!!toolResult.sideEffectOnly} resultLen=${toolResult.result?.length || 0}`);
+      log.verbose(() => `Tool "${tc.name}" completed in ${durationMs}ms error=${!!toolResult.error} sideEffectOnly=${!!toolResult.sideEffectOnly} resultLen=${toolResult.result.length}`);
 
       return { tc, toolResult, durationMs };
     };
