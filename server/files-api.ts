@@ -55,6 +55,7 @@ const MAX_INLINE_READ_BYTES = 2 * 1024 * 1024;
 const MAX_INLINE_TEXT_CHARS = 100_000;
 /** Bump when archive payload encoding/encryption changes so old keys miss cleanly. */
 const DRIVE_FILE_CACHE_SCHEMA = "enc1";
+const OFFICE_TEXT_TRANSFORM_SCHEMA = "office-text-v1";
 const MAX_LIST_PAGE = 100;
 const MAX_PARENT_WALK = 32;
 
@@ -354,12 +355,16 @@ export function buildDriveFileCacheKey(input: {
   modifiedTime?: string | null;
   contentType: string;
   encoding: "utf8" | "base64";
+  transformVersion?: string | null;
 }): string {
   const version =
     (typeof input.md5Checksum === "string" && input.md5Checksum.trim()) ||
     (typeof input.modifiedTime === "string" && input.modifiedTime.trim()) ||
     "unversioned";
-  return `drive-file:${input.provider}:${input.providerFileId}:v=${version}:ct=${input.contentType}:enc=${input.encoding}:${DRIVE_FILE_CACHE_SCHEMA}`;
+  const transform = input.transformVersion
+    ? `:transform=${input.transformVersion}`
+    : "";
+  return `drive-file:${input.provider}:${input.providerFileId}:v=${version}:ct=${input.contentType}:enc=${input.encoding}${transform}:${DRIVE_FILE_CACHE_SCHEMA}`;
 }
 
 function archiveEncodingFor(contentType: string): "utf8" | "base64" {
@@ -880,6 +885,7 @@ class FilesApi {
       modifiedTime: metadata.modifiedTime,
       contentType,
       encoding,
+      transformVersion: officeExtraction ? OFFICE_TEXT_TRANSFORM_SCHEMA : null,
     });
 
     // Cache hit: skip provider download entirely.
@@ -894,6 +900,7 @@ class FilesApi {
           modifiedTime: metadata.modifiedTime,
           contentType,
           encoding: "base64",
+          transformVersion: OFFICE_TEXT_TRANSFORM_SCHEMA,
         });
         cached = await lookupDriveFileArchive(binaryOperationKey, "base64");
         cachedEncoding = "base64";
@@ -1005,6 +1012,7 @@ class FilesApi {
               modifiedTime: metadata.modifiedTime,
               contentType: resolvedContentType,
               encoding: resolvedEncoding,
+              transformVersion: officeExtraction ? OFFICE_TEXT_TRANSFORM_SCHEMA : null,
             });
 
       let archive: FilesReadArchiveRef | null = null;
