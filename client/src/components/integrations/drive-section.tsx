@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Folder, HardDrive, Loader2, Plus } from "lucide-react";
+import { FileText, Folder, HardDrive, Loader2, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
@@ -169,6 +171,21 @@ export function DriveSection({
     onError: (error) => log.error("Drive bind failed", { error: String(error) }),
   });
 
+  const unbindMutation = useMutation({
+    mutationFn: async (resourceId: string) => {
+      await apiRequest("DELETE", `/api/drive/resources/${resourceId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/drive/resources", vaultId] });
+      toast({ title: "Removed from allow list" });
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      log.error("Drive unbind failed", { error: String(error) });
+      toast({ title: "Couldn't remove file", description: message, variant: "destructive" });
+    },
+  });
+
   const handlePick = useCallback(async () => {
     if (!connectedAccountId) return;
     setPicking(true);
@@ -254,7 +271,7 @@ export function DriveSection({
                 continues
                 connectorAnchor="first-row-center"
               >
-                <div className="flex min-h-10 items-center gap-2 px-2 py-1.5" data-testid={`row-drive-resource-${resource.id}`}>
+                <div className="group flex min-h-10 items-center gap-2 px-2 py-1.5" data-testid={`row-drive-resource-${resource.id}`}>
                   <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <a
                     className="min-w-0 flex-1 truncate text-sm hover:text-cta"
@@ -266,6 +283,29 @@ export function DriveSection({
                   >
                     {resource.name}
                   </a>
+                  <DropdownMenu modal={false}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 shrink-0 rounded-md text-muted-foreground/60 opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100 [&_svg]:size-3.5"
+                        aria-label={`Actions for ${resource.name}`}
+                        data-testid={`button-drive-resource-actions-${resource.id}`}
+                      >
+                        <MoreHorizontal className="h-3.5 w-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" onCloseAutoFocus={(event) => event.preventDefault()}>
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        disabled={unbindMutation.isPending}
+                        onClick={() => unbindMutation.mutate(resource.id)}
+                        data-testid={`menu-drive-resource-remove-${resource.id}`}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> Remove from allow list
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </HierarchyTreeRow>
             );
