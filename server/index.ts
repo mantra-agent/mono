@@ -58,12 +58,14 @@ process.on("unhandledRejection", (reason) => {
 });
 
 import { addObjectAclsTable } from "./migrations/add-object-acls";
+import { ensureToolOutputAdmissionsTable } from "./migrations/ensure-tool-output-admissions";
 import { ensureVaults } from "./migrations/ensure-vaults";
 import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
 import { runDiagnosedCrossOwnerLibraryChildRepair } from "./migrations/detach-cross-owner-library-child";
 import { runMeetingRecapAgendaSanitizer } from "./migrations/sanitize-meeting-recap-agendas";
 
 const objectAclsMigrationReady = addObjectAclsTable();
+const toolOutputAdmissionsMigrationReady = ensureToolOutputAdmissionsTable();
 const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
 
 
@@ -513,6 +515,7 @@ app.use((req, res, next) => {
 
 
   await objectAclsMigrationReady;
+  await toolOutputAdmissionsMigrationReady;
   await vaultsMigrationReady;
   const { ensureWorkVaultSchema } = await import("./work-vault-schema");
   const { pool: workVaultPool } = await import("./db");
