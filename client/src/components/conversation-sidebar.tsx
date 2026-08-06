@@ -71,6 +71,43 @@ export interface SessionGroup {
   defaultOpen: boolean;
 }
 
+const SESSION_SECTION_STATE_KEY = "mantra:sessions-menu:section-state";
+
+type SessionSectionState = Record<string, boolean>;
+
+function readSessionSectionState(): SessionSectionState {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const stored = window.localStorage.getItem(SESSION_SECTION_STATE_KEY);
+    return stored ? JSON.parse(stored) as SessionSectionState : {};
+  } catch {
+    return {};
+  }
+}
+
+function useSessionSectionOpen(label: string, defaultOpen: boolean) {
+  const [open, setOpenState] = useState(() => {
+    const stored = readSessionSectionState()[label];
+    return typeof stored === "boolean" ? stored : defaultOpen;
+  });
+
+  const setOpen = useCallback((nextOpen: boolean) => {
+    setOpenState(nextOpen);
+    if (typeof window === "undefined") return;
+
+    try {
+      const state = readSessionSectionState();
+      state[label] = nextOpen;
+      window.localStorage.setItem(SESSION_SECTION_STATE_KEY, JSON.stringify(state));
+    } catch {
+      // Storage can be unavailable in privacy-restricted browser contexts.
+    }
+  }, [label]);
+
+  return [open, setOpen] as const;
+}
+
 export function sortByUpdated(a: ChatSession, b: ChatSession): number {
   return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
 }
@@ -688,16 +725,7 @@ export function SessionGroupSection({
   vaultById: Map<string, Vault>;
   activeVaultId: string | null;
 }) {
-  const hasLiveConv = group.sessions.some(isDurablyActiveSession);
-  const hasActiveSess = !!activeSession && group.sessions.some(c => c.id === activeSession);
-  const staysCollapsedByDefault = group.label === "Snooze" || group.label === "Archive";
-  const [open, setOpen] = useState(
-    !staysCollapsedByDefault && (group.defaultOpen || hasLiveConv || hasActiveSess),
-  );
-
-  useEffect(() => {
-    if (!staysCollapsedByDefault && (hasLiveConv || hasActiveSess)) setOpen(true);
-  }, [staysCollapsedByDefault, hasLiveConv, hasActiveSess]);
+  const [open, setOpen] = useSessionSectionOpen(group.label, group.defaultOpen);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -757,7 +785,7 @@ function DeferredSessionGroup({
   vaultById: Map<string, Vault>;
   activeVaultId: string | null;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useSessionSectionOpen(label, false);
   const { data = [], isLoading } = useQuery<ChatSession[]>({
     queryKey: [`/api/sessions?view=${view}`],
     enabled: open,
