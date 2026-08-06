@@ -79,13 +79,6 @@ export function SecretControl({ name }: SecretControlProps) {
     setShowValue(false);
   }
 
-  function openEditor() {
-    if (!isAdmin) return;
-    setEditing(true);
-    setShowValue(false);
-    setValue("");
-  }
-
   function save() {
     if (!value.trim()) {
       toast({ title: "Value required", variant: "destructive" });
@@ -101,7 +94,6 @@ export function SecretControl({ name }: SecretControlProps) {
         icon={<KeyRound className="h-3.5 w-3.5" />}
         hasValue
         showEmpty
-        wideLabel
         testId={`secret-loading-${name}`}
       >
         <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
@@ -129,7 +121,7 @@ export function SecretControl({ name }: SecretControlProps) {
   const menuContent = isAdmin ? (
     <>
       <DropdownMenuItem
-        onClick={openEditor}
+        onClick={() => { setEditing(true); setShowValue(false); setValue(""); }}
         data-testid={`button-secret-edit-${name}`}
       >
         {meta.source === "db" ? "Rotate" : "Set"}
@@ -157,23 +149,11 @@ export function SecretControl({ name }: SecretControlProps) {
         icon={<KeyRound className="h-3.5 w-3.5" />}
         hasValue
         showEmpty
-        wideLabel
         menuContent={menuContent}
         menuVisibility="hover"
         testId={`secret-control-${name}`}
       >
-        {isAdmin ? (
-          <button
-            type="button"
-            className="max-w-full truncate text-left text-xs leading-relaxed text-inherit hover:text-foreground"
-            onClick={openEditor}
-            data-testid={`button-secret-status-${name}`}
-          >
-            {status}
-          </button>
-        ) : (
-          status
-        )}
+        {status}
       </ProfileTreeRow>
       {isAdmin && editing && (
         <div className="flex items-center gap-1.5 px-2 pb-2 pl-8" data-testid={`secret-editor-${name}`}>
