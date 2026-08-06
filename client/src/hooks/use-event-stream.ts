@@ -47,12 +47,34 @@ function setEventStreamConnected(connected: boolean): void {
   emitEventStreamSnapshot({ ...eventStreamSnapshot, connected });
 }
 
+function compareEvents(a: BusEvent, b: BusEvent): number {
+  return a.timestamp - b.timestamp || a.id.localeCompare(b.id);
+}
+
 function mergeEvents(incoming: readonly BusEvent[]): void {
   if (incoming.length === 0) return;
-  const byId = new Map(eventStreamSnapshot.events.map((event) => [event.id, event]));
+
+  const current = eventStreamSnapshot.events;
+  if (incoming.length === 1) {
+    const event = incoming[0];
+    const last = current.at(-1);
+    const existingIndex = current.findIndex((candidate) => candidate.id === event.id);
+
+    if (existingIndex === -1 && (!last || compareEvents(last, event) <= 0)) {
+      const events = current.length < EVENT_STREAM_CAPACITY
+        ? [...current, event]
+        : [...current.slice(1), event];
+      emitEventStreamSnapshot({ ...eventStreamSnapshot, events });
+      return;
+    }
+
+    if (existingIndex >= 0 && current[existingIndex] === event) return;
+  }
+
+  const byId = new Map(current.map((event) => [event.id, event]));
   for (const event of incoming) byId.set(event.id, event);
   const events = Array.from(byId.values())
-    .sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id))
+    .sort(compareEvents)
     .slice(-EVENT_STREAM_CAPACITY);
   emitEventStreamSnapshot({ ...eventStreamSnapshot, events });
 }
