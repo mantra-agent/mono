@@ -1009,7 +1009,8 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
   // Stays open across the whole path so preparing never looks like a no-op.
   const [publishOpen, setPublishOpen] = useState(false);
   const [versionIncrement, setVersionIncrement] = useState<VersionIncrement>("minor");
-  const [notesReady, setNotesReady] = useState(false);
+  const [publishPhase, setPublishPhase] = useState<"select" | "preparing" | "review" | "publishing">("select");
+  const notesReady = publishPhase === "review" || publishPhase === "publishing";
   const [reviewVersion, setReviewVersion] = useState<string | null>(null);
   const [reviewNotes, setReviewNotes] = useState<{
     newFeatures: string;
@@ -1021,7 +1022,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
 
   function resetPublishModalState() {
     setVersionIncrement("minor");
-    setNotesReady(false);
+    setPublishPhase("select");
     setReviewVersion(null);
     setReviewNotes({ newFeatures: "", improvements: "", fixes: "" });
   }
@@ -1077,12 +1078,12 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         improvements: itemsToLines(notes.improvements ?? []),
         fixes: itemsToLines(notes.fixes ?? []),
       });
-      setNotesReady(true);
+      setPublishPhase("review");
     },
     onError: (err) => {
       setReviewVersion(null);
       setReviewNotes({ newFeatures: "", improvements: "", fixes: "" });
-      setNotesReady(true);
+      setPublishPhase("review");
       toast({
         title: "Couldn't prepare release notes",
         description: `${errorMessage(err)} — empty list is ready to edit or approve as-is.`,
@@ -1114,6 +1115,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
       toast({ title: "Publish started", description: "Promoting dev → live." });
     },
     onError: (err) => {
+      setPublishPhase("review");
       toast({
         title: "Couldn't start publish",
         description: errorMessage(err),
@@ -1122,7 +1124,25 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
     },
   });
 
-  const publishBusy = draftMut.isPending || startMut.isPending;
+  const publishBusy = publishPhase === "preparing" || publishPhase === "publishing";
+
+  function prepareReleaseNotes() {
+    // Lock the dialog synchronously, before React Query schedules its pending state.
+    setPublishPhase("preparing");
+    draftMut.mutate(versionIncrement);
+  }
+
+  function approvePublish() {
+    setPublishPhase("publishing");
+    startMut.mutate({
+      increment: versionIncrement,
+      approvedNotes: {
+        newFeatures: linesToItems(reviewNotes.newFeatures),
+        improvements: linesToItems(reviewNotes.improvements),
+        fixes: linesToItems(reviewNotes.fixes),
+      },
+    });
+  }
 
   const cancelMut = useMutation<unknown, Error, void>({
     mutationFn: async () => {
@@ -1636,7 +1656,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
             </DialogDescription>
           </DialogHeader>
 
-          {!notesReady && !draftMut.isPending && (
+          {publishPhase === "select" && (
             <div className="space-y-2">
               <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Version increment
@@ -1662,7 +1682,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
             </div>
           )}
 
-          {draftMut.isPending && (
+          {publishPhase === "preparing" && (
             <div
               className="flex items-center gap-3 rounded-md border border-border bg-muted/40 px-4 py-6"
               data-testid="publish-notes-preparing"
@@ -1722,8 +1742,8 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
             </Button>
             {!notesReady ? (
               <Button
-                onClick={() => draftMut.mutate(versionIncrement)}
-                disabled={draftMut.isPending}
+                onClick={prepareReleaseNotes}
+                disabled={publishPhase !== "select"}
                 data-testid="button-prepare-notes"
               >
                 {draftMut.isPending ? (
@@ -1737,17 +1757,8 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
               </Button>
             ) : (
               <Button
-                onClick={() =>
-                  startMut.mutate({
-                    increment: versionIncrement,
-                    approvedNotes: {
-                      newFeatures: linesToItems(reviewNotes.newFeatures),
-                      improvements: linesToItems(reviewNotes.improvements),
-                      fixes: linesToItems(reviewNotes.fixes),
-                    },
-                  })
-                }
-                disabled={startMut.isPending}
+                onClick={approvePublish}
+                disabled={publishPhase !== "review"}
                 data-testid="button-approve-publish"
               >
                 {startMut.isPending ? (
