@@ -33,6 +33,11 @@ import {
   ownedInsertValues,
 } from "../scoped-storage";
 import { createLogger } from "../log";
+import {
+  inputFailure,
+  permissionFailure,
+  type ToolFailure,
+} from "../tool-failure";
 import { resolveExplicitPlanStepPersona, resolvePlanStepPersona, type PlanStepPersona } from "../plan-persona";
 import {
   generatePlanId,
@@ -50,7 +55,22 @@ import {
 
 const log = createLogger("PlanTool");
 
-type ToolHandlerResult = { result: string; error?: boolean };
+type ToolHandlerResult = {
+  result: string;
+  error?: boolean;
+  failure?: ToolFailure;
+};
+
+function classifyPlanResult(result: ToolHandlerResult): ToolHandlerResult {
+  if (!result.error || result.failure) return result;
+  const permissionRequired = result.result === "Plan creation requires an explicit user principal.";
+  return {
+    ...result,
+    failure: permissionRequired
+      ? permissionFailure("plan_principal_required")
+      : inputFailure("plan_input_invalid"),
+  };
+}
 
 const planScopeColumns = {
   ownerUserId: planExecutions.ownerUserId,
@@ -139,39 +159,54 @@ export async function handlePlan(
 ): Promise<ToolHandlerResult> {
   const action = args.action as string;
 
+  let result: ToolHandlerResult;
   switch (action) {
     case "create":
-      return handleCreate(args);
+      result = await handleCreate(args);
+      break;
     case "get":
-      return handleGet(args);
+      result = await handleGet(args);
+      break;
     case "associate_session":
-      return handleAssociateSession(args);
+      result = await handleAssociateSession(args);
+      break;
     case "unlink_session":
-      return handleUnlinkSession(args);
+      result = await handleUnlinkSession(args);
+      break;
     case "list":
-      return handleList(args);
+      result = await handleList(args);
+      break;
     case "reconcile_library":
-      return handleReconcileLibrary(args);
+      result = await handleReconcileLibrary(args);
+      break;
     case "execute":
-      return handleExecute(args);
+      result = await handleExecute(args);
+      break;
     case "update_step":
-      return handleUpdateStep(args);
+      result = await handleUpdateStep(args);
+      break;
     case "edit":
-      return handleEdit(args);
+      result = await handleEdit(args);
+      break;
     case "add_steps":
-      return handleAddSteps(args);
+      result = await handleAddSteps(args);
+      break;
     case "pause":
-      return handlePause(args);
+      result = await handlePause(args);
+      break;
     case "review":
-      return handleReview(args);
+      result = await handleReview(args);
+      break;
     case "resume":
-      return handleResume(args);
+      result = await handleResume(args);
+      break;
     default:
-      return {
+      result = {
         result: `Unknown plan action: "${action}". Available: create, get, associate_session, unlink_session, list, reconcile_library, execute, update_step, edit, add_steps, pause, review, resume`,
         error: true,
       };
   }
+  return classifyPlanResult(result);
 }
 
 // ─── Action Handlers ─────────────────────────────────────────────────

@@ -28,6 +28,7 @@ import {
   classifyGitHubApiStatus,
   inputFailure,
   permissionFailure,
+  transientFailure,
   type ToolFailure,
   type ToolFailureCode,
 } from "./tool-failure";
@@ -120,6 +121,30 @@ type ToolHandlerResult = {
 /** Contract reject → amber input failure (same discriminant path as shell_policy_denied). */
 function contractReject(result: string, code: ToolFailureCode, detail?: string): ToolHandlerResult {
   return { result, error: true, failure: inputFailure(code, detail) };
+}
+
+/** Classify errors emitted by the canonical Files API/provider boundary. */
+function classifyFilesToolError(err: unknown): ToolFailure | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  const record = err as {
+    status?: unknown;
+    code?: unknown;
+    response?: { status?: unknown };
+  };
+  const candidates = [record.status, record.code, record.response?.status];
+  const status = candidates.find((value): value is number =>
+    typeof value === "number" && Number.isInteger(value),
+  );
+  if (status === 401 || status === 403) {
+    return permissionFailure("files_access_denied", `http_${status}`);
+  }
+  if (status === 408 || status === 429 || (status !== undefined && status >= 500)) {
+    return transientFailure("files_provider_transient", `http_${status}`);
+  }
+  if (status !== undefined && status >= 400) {
+    return inputFailure("files_input_invalid", `http_${status}`);
+  }
+  return undefined;
 }
 
 const PEOPLE_AGENDA_SURFACE_LIMIT = 3;
@@ -11275,7 +11300,12 @@ ${refs}` : ""),
 
   async tools(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = args.action;
-    if (!action) return { result: "Missing action parameter. Available: list, get", error: true };
+    if (!action) {
+      return contractReject(
+        "Missing action parameter. Available: list, get",
+        "tools_input_invalid",
+      );
+    }
 
     if (action === "list") {
       const { getToolSchemas } = await import("./tool-registry");
@@ -11292,7 +11322,12 @@ ${refs}` : ""),
 
     if (action === "get") {
       const toolName = args.tool;
-      if (!toolName) return { result: "Missing tool parameter for get action", error: true };
+      if (!toolName) {
+        return contractReject(
+          "Missing tool parameter for get action",
+          "tools_input_invalid",
+        );
+      }
       const { getToolSchemas } = await import("./tool-registry");
       const { filterToolSchemasForAuthority } = await import("./agent-authority");
       const schemas = filterToolSchemasForAuthority(
@@ -11300,7 +11335,13 @@ ${refs}` : ""),
         args._authorityContext || {},
       );
       const meta = schemas.find((schema) => schema.name === toolName);
-      if (!meta) return { result: `Tool unavailable under current execution authority: ${toolName}`, error: true };
+      if (!meta) {
+        return {
+          result: `Tool unavailable under current execution authority: ${toolName}`,
+          error: true,
+          failure: permissionFailure("tools_authority_denied", toolName),
+        };
+      }
 
       let detail = `## ${toolName}\n${meta.description}\nCategory: ${meta.category}`;
       if (meta.parameters?.properties) {
@@ -11353,7 +11394,10 @@ ${refs}` : ""),
         : { result: detail };
     }
 
-    return { result: `Unknown tools action: ${action}. Available: list, get`, error: true };
+    return contractReject(
+      `Unknown tools action: ${action}. Available: list, get`,
+      "tools_input_invalid",
+    );
   },
 
   async content(args: Record<string, any>): Promise<ToolHandlerResult> {
@@ -13116,9 +13160,13 @@ const workspaceTools: Record<string, ToolHandler> = {
 const persistentFileTools: Record<string, ToolHandler> = {
   async write_file(args) {
     const fileName = args.fileName;
-    if (!fileName) return { result: "Missing fileName", error: true };
+    if (!fileName) {
+      return contractReject("Missing fileName", "files_input_invalid");
+    }
     const content = args.content;
-    if (content === undefined || content === null) return { result: "Missing file content", error: true };
+    if (content === undefined || content === null) {
+      return contractReject("Missing file content", "files_input_invalid");
+    }
 
     try {
       const { extname } = await import("path");
@@ -13143,7 +13191,12 @@ const persistentFileTools: Record<string, ToolHandler> = {
 
   async read_file(args) {
     const filePath = args.filePath;
-    if (!filePath) return { result: "Missing filePath (the /objects/... path from write_file)", error: true };
+    if (!filePath) {
+      return contractReject(
+        "Missing filePath (the /objects/... path from write_file)",
+        "files_input_invalid",
+      );
+    }
 
     try {
       const storageService = objectStorageService;
@@ -13219,7 +13272,9 @@ const persistentFileTools: Record<string, ToolHandler> = {
   /** Bound-drive reads — always via filesApi (never Google/Box SDKs directly). */
   async listBound(args) {
     const vaultId = typeof args.vaultId === "string" ? args.vaultId.trim() : "";
-    if (!vaultId) return { result: "Missing vaultId for listBound", error: true };
+    if (!vaultId) {
+      return contractReject("Missing vaultId for listBound", "files_input_invalid");
+    }
     try {
       const { filesApi } = await import("./files-api");
       const rows = await filesApi.listBound(vaultId);
@@ -13244,7 +13299,11 @@ const persistentFileTools: Record<string, ToolHandler> = {
         ),
       };
     } catch (err: any) {
-      return { result: `listBound failed: ${err.message}`, error: true };
+      return {
+        result: `listBound failed: ${err.message}`,
+        error: true,
+        failure: classifyFilesToolError(err),
+      };
     }
   },
 
@@ -13257,10 +13316,10 @@ const persistentFileTools: Record<string, ToolHandler> = {
       typeof args.providerFileId === "string" ? args.providerFileId.trim() : undefined;
     const pageToken = typeof args.pageToken === "string" ? args.pageToken.trim() : undefined;
     if (!driveResourceId && !(provider && providerFileId)) {
-      return {
-        result: "listChildren requires driveResourceId or provider+providerFileId",
-        error: true,
-      };
+      return contractReject(
+        "listChildren requires driveResourceId or provider+providerFileId",
+        "files_input_invalid",
+      );
     }
     try {
       const { filesApi } = await import("./files-api");
@@ -13273,7 +13332,11 @@ const persistentFileTools: Record<string, ToolHandler> = {
       });
       return { result: JSON.stringify(result, null, 2) };
     } catch (err: any) {
-      return { result: `listChildren failed: ${err.message}`, error: true };
+      return {
+        result: `listChildren failed: ${err.message}`,
+        error: true,
+        failure: classifyFilesToolError(err),
+      };
     }
   },
 
@@ -13285,10 +13348,10 @@ const persistentFileTools: Record<string, ToolHandler> = {
     const providerFileId =
       typeof args.providerFileId === "string" ? args.providerFileId.trim() : undefined;
     if (!driveResourceId && !(provider && providerFileId)) {
-      return {
-        result: "getMetadata requires driveResourceId or provider+providerFileId",
-        error: true,
-      };
+      return contractReject(
+        "getMetadata requires driveResourceId or provider+providerFileId",
+        "files_input_invalid",
+      );
     }
     try {
       const { filesApi } = await import("./files-api");
@@ -13300,7 +13363,11 @@ const persistentFileTools: Record<string, ToolHandler> = {
       });
       return { result: JSON.stringify(metadata, null, 2) };
     } catch (err: any) {
-      return { result: `getMetadata failed: ${err.message}`, error: true };
+      return {
+        result: `getMetadata failed: ${err.message}`,
+        error: true,
+        failure: classifyFilesToolError(err),
+      };
     }
   },
 
@@ -13312,10 +13379,10 @@ const persistentFileTools: Record<string, ToolHandler> = {
     const providerFileId =
       typeof args.providerFileId === "string" ? args.providerFileId.trim() : undefined;
     if (!driveResourceId && !(provider && providerFileId)) {
-      return {
-        result: "authorize requires driveResourceId or provider+providerFileId",
-        error: true,
-      };
+      return contractReject(
+        "authorize requires driveResourceId or provider+providerFileId",
+        "files_input_invalid",
+      );
     }
     try {
       const { filesApi } = await import("./files-api");
@@ -13348,7 +13415,11 @@ const persistentFileTools: Record<string, ToolHandler> = {
         result: JSON.stringify({ authorized: true, metadata }, null, 2),
       };
     } catch (err: any) {
-      return { result: `authorize failed: ${err.message}`, error: true };
+      return {
+        result: `authorize failed: ${err.message}`,
+        error: true,
+        failure: classifyFilesToolError(err),
+      };
     }
   },
 };
@@ -14697,7 +14768,9 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
   },
   async files(args) {
     const action = args.action;
-    if (!action) return { result: "Missing action parameter", error: true };
+    if (!action) {
+      return contractReject("Missing action parameter", "files_input_invalid");
+    }
 
     // Bound-drive file body: action=read with drive identity (not object-storage filePath).
     const isBoundDriveRead =
@@ -14746,7 +14819,11 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         }
         return { result: JSON.stringify(payload, null, 2) };
       } catch (err: any) {
-        return { result: `Bound-drive read failed: ${err.message}`, error: true };
+        return {
+          result: `Bound-drive read failed: ${err.message}`,
+          error: true,
+          failure: classifyFilesToolError(err),
+        };
       }
     }
 
@@ -14760,7 +14837,12 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       authorize: persistentFileTools.authorize,
     };
     const handler = sub[action];
-    if (!handler) return { result: `Unknown files action: ${action}`, error: true };
+    if (!handler) {
+      return contractReject(
+        `Unknown files action: ${action}`,
+        "files_input_invalid",
+      );
+    }
     const result = await handler(args);
     // Record session artifact link for writes
     if (action === "write" && !result.error && result.result) {
