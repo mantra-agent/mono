@@ -1,3 +1,12 @@
+<!-- 2026-08-06 Session-owned Git workspace resolution delta:
+- Assets/data: session-owned repository working trees, authenticated Git remotes, source code, branch state, and pull-request refs.
+- Flow/boundary: model-provided Git tool arguments -> deterministic server resolver -> session-suffixed clone inventory under `repos/` -> existing ownership gate -> credentialed Git subprocess / GitHub API.
+- Threats: STRIDE elevation or tampering if omitted directories resolve across sessions; information disclosure if repository discovery lists another session's clone; confused-deputy writes if implicit selection reaches the deployment workspace; ref injection if pull-request identifiers become arbitrary fetch refspecs.
+- Controls/owner: Core Tool Runtime activates implicit resolution only with a trusted calling session ID, filters candidates through the existing session suffix ownership invariant, verifies `.git`, resolves only when exactly one owned clone exists, and fails closed on zero or multiple candidates. Explicit `.`/`self` remain read-only workspace-root aliases. PR checkout accepts only a positive integer, constructs the fixed `pull/<n>/head:pr-<n>` refspec server-side, reuses existing scoped Git credentials, and retains the existing write-ownership gate.
+- Evidence: six-hour reliability showed 25 Git input failures dominated by missing/stale clone directories and synthesized PR refs; implementation is confined to the Git tool resolver/schema/details plus this finding, with `npm run build` as release gate.
+- Severity/owner/SLA/status: medium reliability and cross-session isolation risk; owner Core Tool Runtime; fixed before release. Rollback: revert implicit clone selection and PR checkout, restoring explicit directories/refs. Residual risk: sessions intentionally holding multiple clones must still choose one explicitly; provider-specific PR namespaces beyond GitHub remain unsupported.
+-->
+
 <!-- 2026-08-06 Drive API policy classification delta:
 - Assets/data: Google OAuth access tokens, browser-safe Picker key, user-selected Drive file metadata, connected-account identity, and Vault-scoped Drive bindings.
 - Flow/boundary: authenticated SPA -> global API policy -> `/api/drive/*` route -> principal-scoped connected-account token refresh / Vault-gated Drive resource service -> Google Picker or Files API.
