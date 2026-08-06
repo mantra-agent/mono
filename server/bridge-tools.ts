@@ -15368,6 +15368,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     }
     if (action === "tool_output_pressure") {
       try {
+        const { getCurrentPrincipal } = await import("./principal-context");
         const principal = getCurrentPrincipal();
         if (!principal) return { result: "Authenticated principal required", error: true };
         const { rankToolOutputPressure } = await import("./tool-output-pressure");
