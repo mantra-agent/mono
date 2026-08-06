@@ -1,7 +1,8 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, HardDrive, Loader2, Plus, X } from "lucide-react";
+import { ExternalLink, FileText, Folder, Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HIERARCHY_PRIMARY_ACTION_CLASS } from "@/components/hierarchy-section-header";
 import { apiRequest } from "@/lib/queryClient";
 import { createLogger } from "@/lib/logger";
 import { useToast } from "@/hooks/use-toast";
@@ -131,9 +132,10 @@ export function DriveSection({
   const [picking, setPicking] = useState(false);
 
   const resourcesQuery = useQuery<{ resources: DriveResource[] }>({
-    queryKey: ["/api/drive/resources", vaultId],
+    queryKey: ["/api/drive/resources", vaultId, connectedAccountId],
     queryFn: async () => {
-      const response = await apiRequest("GET", `/api/drive/resources?vaultId=${encodeURIComponent(vaultId!)}`);
+      const params = new URLSearchParams({ vaultId: vaultId!, connectedAccountId: connectedAccountId! });
+      const response = await apiRequest("GET", `/api/drive/resources?${params.toString()}`);
       return response.json();
     },
     enabled: Boolean(vaultId && connectedAccountId && drivePickerConfigured && hasDriveScope),
@@ -243,42 +245,51 @@ export function DriveSection({
   const resources = resourcesQuery.data?.resources ?? [];
 
   return (
-    <div className="space-y-2 px-2 py-1.5" data-testid="drive-integration-section">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium">Selected files</p>
-          <p className="text-xs text-muted-foreground">Only files you choose are available to this Vault. Nothing else in Drive is scanned.</p>
-        </div>
-        <Button size="sm" variant="outline" onClick={handlePick} disabled={picking || bindMutation.isPending} data-testid="button-drive-choose-files">
-          {picking || bindMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Plus className="mr-1.5 h-3.5 w-3.5" />}
-          {picking ? "Picking…" : "Choose files"}
-        </Button>
-      </div>
+    <div className="space-y-1 py-1" data-testid="drive-integration-section">
+      <button
+        type="button"
+        className={HIERARCHY_PRIMARY_ACTION_CLASS}
+        onClick={handlePick}
+        disabled={picking || bindMutation.isPending}
+        data-testid="button-drive-choose-files"
+      >
+        {picking || bindMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+        <span>{picking ? "Picking…" : "Choose Files"}</span>
+      </button>
 
       {resourcesQuery.isLoading ? (
-        <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Loading Drive files…
         </div>
       ) : resources.length === 0 ? (
-        <div className="flex gap-2 rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground" data-testid="text-drive-empty">
-          <HardDrive className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>No Drive files selected. Mantra can only access files you explicitly choose here.</p>
-        </div>
+        <p className="px-2 py-2 text-sm text-muted-foreground" data-testid="text-drive-empty">
+          No files included.
+        </p>
       ) : (
-        <ul className="divide-y rounded-md border" data-testid="list-drive-resources">
-          {resources.map((resource) => (
-            <li key={resource.id} className="flex items-center gap-3 px-3 py-2">
-              <HardDrive className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate text-sm" title={resource.name}>{resource.name}</span>
-              <a className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" href={resource.webUrl ?? `https://drive.google.com/open?id=${encodeURIComponent(resource.providerFileId)}`} target="_blank" rel="noreferrer" data-testid={`link-drive-open-${resource.id}`}>
-                Open in Drive <ExternalLink className="h-3 w-3" />
-              </a>
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive" onClick={() => unbindMutation.mutate(resource.id)} disabled={unbindMutation.isPending} data-testid={`button-drive-remove-${resource.id}`}>
-                <X className="mr-1 h-3.5 w-3.5" /> Remove
-              </Button>
-            </li>
-          ))}
+        <ul className="divide-y divide-border/20" data-testid="list-drive-resources">
+          {resources.map((resource) => {
+            const Icon = resource.resourceType === "folder" ? Folder : FileText;
+            return (
+              <li key={resource.id} className="flex min-h-10 items-center gap-2 px-2 py-1.5">
+                <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <a
+                  className="min-w-0 flex-1 truncate text-sm hover:text-cta"
+                  href={resource.webUrl ?? `https://drive.google.com/open?id=${encodeURIComponent(resource.providerFileId)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={resource.name}
+                  data-testid={`link-drive-open-${resource.id}`}
+                >
+                  {resource.name}
+                </a>
+                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => unbindMutation.mutate(resource.id)} disabled={unbindMutation.isPending} aria-label={`Remove ${resource.name}`} data-testid={`button-drive-remove-${resource.id}`}>
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
