@@ -2219,6 +2219,47 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
     },
   });
 
+  const assignVaultMutation = useMutation({
+    mutationFn: async ({ accountId, vaultId }: { accountId: string; vaultId: string }) => {
+      await apiRequest("PUT", `/api/connected-accounts/${encodeURIComponent(accountId)}/vault`, { vaultId });
+    },
+    onMutate: async ({ accountId, vaultId }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/connected-accounts", "google"] });
+      const previous = queryClient.getQueryData<{ accounts: ConnectedAccountWithPerms[] }>([
+        "/api/connected-accounts",
+        "google",
+      ]);
+      const vault = vaults.find((candidate) => candidate.id === vaultId);
+      if (vault) {
+        queryClient.setQueryData<{ accounts: ConnectedAccountWithPerms[] }>(
+          ["/api/connected-accounts", "google"],
+          (current) => current ? {
+            ...current,
+            accounts: current.accounts.map((candidate) => candidate.accountId === accountId ? {
+              ...candidate,
+              vaultId,
+              vault: { id: vault.id, name: vault.name, color: vault.color ?? null },
+            } : candidate),
+          } : current,
+        );
+      }
+      return { previous };
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/gmail/status"] }),
+      ]);
+      toast({ title: "Vault assigned" });
+    },
+    onError: (error: Error, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["/api/connected-accounts", "google"], context.previous);
+      }
+      toast({ title: "Failed to assign vault", description: error.message, variant: "destructive" });
+    },
+  });
   const removeMutation = useMutation({
     mutationFn: async ({ accountId, confirmationEmail }: { accountId: string; confirmationEmail: string }) => {
       await apiRequest("DELETE", `/api/gmail/accounts/${accountId}`, { confirmationEmail });
@@ -2415,20 +2456,12 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
                   <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} />{permAccount.vault.name}</span>
                 ) : permAccount && vaults.length > 0 ? (
                   <Select
-                    onValueChange={async (vaultId) => {
-                      try {
-                        await apiRequest("PUT", `/api/connected-accounts/${permAccount.accountId}/vault`, {
-                          vaultId,
-                        });
-                        queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
-                        queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
-                        queryClient.invalidateQueries({ queryKey: ["/api/gmail/status"] });
-                        toast({ title: "Vault assigned" });
-                      } catch (error) {
-                        const message = error instanceof Error ? error.message : "Unknown error";
-                        toast({ title: "Failed to assign vault", description: message, variant: "destructive" });
-                      }
-                    }}
+                    value={permAccount.vaultId ?? undefined}
+                    onValueChange={(vaultId) => assignVaultMutation.mutate({
+                      accountId: permAccount.accountId,
+                      vaultId,
+                    })}
+                    disabled={assignVaultMutation.isPending}
                   >
                     <SelectTrigger className="h-8 w-44" aria-label="Assign vault" data-testid={`select-assign-google-vault-${account.id}`}>
                       <SelectValue placeholder="Assign" />
