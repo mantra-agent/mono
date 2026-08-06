@@ -196,6 +196,10 @@ function mergeResolvedNavigation(
     }
     if (section.items.some((item) => item.target === target)) continue;
 
+    // Fail closed on unknown targets — empty href used to throw inside this useMemo.
+    const url = getUiInteractionTargetHref(target);
+    if (!url) continue;
+
     const lowerTargets = new Set(
       composition.navigation
         .filter((item) => item.section === contribution.section && item.order < contribution.order)
@@ -205,7 +209,7 @@ function mergeResolvedNavigation(
     section.items.splice(insertionIndex, 0, {
       title: contribution.label,
       target,
-      url: getUiInteractionTargetHref(target),
+      url,
       icon,
       permission: getUiInteractionTargetPermission(target),
     });

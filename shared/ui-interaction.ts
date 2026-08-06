@@ -68,12 +68,17 @@ export const UI_INTERACTION_TARGETS = Object.freeze(
 );
 
 export function getUiInteractionTargetHref(target: UiInteractionTarget): string {
-  return UI_INTERACTION_TARGET_ROUTES[target].href;
+  // Fail closed: composition/registry can surface a typed target that is not yet
+  // in the client route table. Reading `.href` on undefined hard-crashes Home.
+  const route = UI_INTERACTION_TARGET_ROUTES[target];
+  return route?.href ?? "";
 }
 
 export function getUiInteractionTargetPermission(target: UiInteractionTarget): UiInteractionPermission | undefined {
-  const route = UI_INTERACTION_TARGET_ROUTES[target] as { permission?: UiInteractionPermission };
-  return route.permission;
+  const route = UI_INTERACTION_TARGET_ROUTES[target] as
+    | { permission?: UiInteractionPermission }
+    | undefined;
+  return route?.permission;
 }
 
 export function isUiInteractionTargetOpen(

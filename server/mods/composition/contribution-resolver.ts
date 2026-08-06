@@ -59,7 +59,7 @@ import {
 } from "@shared/models/product-composition";
 import { resolveConnectorReadiness, type ConnectorReadiness } from "./connector-readiness";
 import { isModPlatformEnabled } from "../mod-platform-config";
-import type { UiInteractionTarget } from "@shared/ui-interaction";
+import { isUiInteractionTarget, type UiInteractionTarget } from "@shared/ui-interaction";
 
 const log = createLogger("mod-composition-resolver");
 
@@ -368,6 +368,15 @@ function compose(
           });
           break;
         case "navigation":
+          // Never publish nav targets the client route table cannot resolve.
+          if (!isUiInteractionTarget(contribution.target)) {
+            diagnostics.push({
+              contributionId: contribution.id,
+              state: "unavailable",
+              reasonCode: "unknown_interaction_target",
+            });
+            break;
+          }
           navigation.push({
             id: contribution.id,
             section: contribution.section,

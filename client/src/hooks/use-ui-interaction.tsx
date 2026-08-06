@@ -189,6 +189,7 @@ export function UiInteractionProvider({ children }: { children: ReactNode }) {
       return;
     }
     const href = getUiInteractionTargetHref(target);
+    if (!href) return;
     if (isMobile) setWidgetOpen(false);
     if (href !== location) startNavigation({ href });
     navigate(href);
