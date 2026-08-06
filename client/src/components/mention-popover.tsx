@@ -21,14 +21,16 @@ export interface MentionPopoverProps {
 
 const EDGE_PAD = 8;
 const GAP = 8;
-/** Fallback before first measure — keeps the first paint off-screen-safe. */
-const ESTIMATED_HEIGHT = 220;
+
+type Placement = "above" | "below";
 
 type PopoverPos = {
-  top: number;
+  /** Fixed Y of the pinned edge (bottom edge when above, top edge when below). */
+  y: number;
   left: number;
   width: number;
   maxHeight: number;
+  placement: Placement;
 };
 
 function readViewport() {
@@ -48,10 +50,11 @@ function readViewport() {
 function samePos(a: PopoverPos | null, b: PopoverPos): boolean {
   return (
     !!a &&
-    a.top === b.top &&
+    a.y === b.y &&
     a.left === b.left &&
     a.width === b.width &&
-    a.maxHeight === b.maxHeight
+    a.maxHeight === b.maxHeight &&
+    a.placement === b.placement
   );
 }
 
@@ -59,8 +62,8 @@ function samePos(a: PopoverPos | null, b: PopoverPos): boolean {
  * Mention autocomplete popover. Compact single-line rows via shared
  * ReferenceSuggestionRow. When `anchorRef` is provided, renders via
  * portal at document.body to escape overflow-hidden containers, and
- * places itself above or below the anchor inside the visual viewport
- * (so mobile keyboards cannot pin it under the status bar).
+ * pins its near edge to the composer inside the visual viewport
+ * (no height-estimated gap above the input).
  */
 export function MentionPopover({
   trigger,
@@ -79,37 +82,36 @@ export function MentionPopover({
     if (!anchorRef?.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
     const vp = readViewport();
-    const measured = popoverRef.current?.offsetHeight ?? 0;
-    const popoverHeight = measured > 0 ? measured : ESTIMATED_HEIGHT;
     const width = Math.min(rect.width, Math.max(0, vp.width - EDGE_PAD * 2));
 
     const spaceAbove = rect.top - vp.top - GAP - EDGE_PAD;
     const spaceBelow = vp.bottom - rect.bottom - GAP - EDGE_PAD;
 
     // Prefer above (composer is usually at the bottom). Flip below only when
-    // above cannot fit the measured/estimated height and below has more room.
-    const placeAbove =
-      spaceAbove >= popoverHeight || spaceAbove >= spaceBelow;
+    // above has almost no room and below is clearly better.
+    const placement: Placement =
+      spaceAbove >= 80 || spaceAbove >= spaceBelow ? "above" : "below";
 
-    let top: number;
+    let y: number;
     let maxHeight: number;
-    if (placeAbove) {
+    if (placement === "above") {
+      // Pin the BOTTOM edge to just above the composer. translateY(-100%) does
+      // the height math in the compositor — no estimate, no residual gap.
+      y = rect.top - GAP;
       maxHeight = Math.max(80, Math.min(320, spaceAbove));
-      const usedHeight =
-        measured > 0
-          ? Math.min(measured, maxHeight)
-          : Math.min(popoverHeight, maxHeight);
-      top = rect.top - GAP - usedHeight;
+      // Keep the full max-height box inside the visual viewport.
+      const maxFromTop = y - (vp.top + EDGE_PAD);
+      maxHeight = Math.max(80, Math.min(maxHeight, maxFromTop));
+      // If the pin itself drifted above the visible area, clamp the edge down.
+      y = Math.min(Math.max(y, vp.top + EDGE_PAD + Math.min(80, maxHeight)), vp.bottom - EDGE_PAD);
     } else {
+      // Pin the TOP edge to just below the composer.
+      y = rect.bottom + GAP;
       maxHeight = Math.max(80, Math.min(320, spaceBelow));
-      top = rect.bottom + GAP;
+      const maxFromBottom = vp.bottom - EDGE_PAD - y;
+      maxHeight = Math.max(80, Math.min(maxHeight, maxFromBottom));
+      y = Math.min(Math.max(y, vp.top + EDGE_PAD), vp.bottom - EDGE_PAD - Math.min(80, maxHeight));
     }
-
-    // Final clamp into the visual viewport so nothing pins under the status bar
-    // or slides under the home indicator / keyboard edge.
-    const minTop = vp.top + EDGE_PAD;
-    const maxTop = vp.bottom - EDGE_PAD - Math.min(popoverHeight, maxHeight);
-    top = Math.min(Math.max(top, minTop), Math.max(minTop, maxTop));
 
     let left = rect.left;
     left = Math.min(
@@ -117,7 +119,7 @@ export function MentionPopover({
       vp.right - EDGE_PAD - width,
     );
 
-    const next = { top, left, width, maxHeight };
+    const next: PopoverPos = { y, left, width, maxHeight, placement };
     setPos((prev) => (samePos(prev, next) ? prev : next));
   }, [anchorRef]);
 
@@ -127,8 +129,9 @@ export function MentionPopover({
       return;
     }
 
-    // First pass (may use estimated height), then a frame later with real height.
     reposition();
+    // Content height can settle one frame later; edge-pin is height-invariant,
+    // but maxHeight still benefits from a second pass after layout.
     const raf = window.requestAnimationFrame(() => reposition());
 
     const onChange = () => reposition();
@@ -138,12 +141,21 @@ export function MentionPopover({
     const vv = window.visualViewport;
     vv?.addEventListener("resize", onChange);
     vv?.addEventListener("scroll", onChange);
+
+    const node = popoverRef.current;
+    const ro =
+      typeof ResizeObserver !== "undefined" && node
+        ? new ResizeObserver(() => reposition())
+        : null;
+    if (node && ro) ro.observe(node);
+
     return () => {
       window.cancelAnimationFrame(raf);
       window.removeEventListener("resize", onChange);
       window.removeEventListener("scroll", onChange, true);
       vv?.removeEventListener("resize", onChange);
       vv?.removeEventListener("scroll", onChange);
+      ro?.disconnect();
     };
   }, [trigger, suggestions, isLoading, anchorRef, reposition]);
 
@@ -186,22 +198,25 @@ export function MentionPopover({
 
   // Portal mode: escape overflow:hidden ancestors (chat composer).
   if (anchorRef) {
+    const style: React.CSSProperties = pos
+      ? {
+          position: "fixed",
+          left: `${pos.left}px`,
+          width: `${pos.width}px`,
+          maxHeight: `${pos.maxHeight}px`,
+          // Above: y is the bottom edge → translate up by full height.
+          // Below: y is the top edge → no translate.
+          top: `${pos.y}px`,
+          transform: pos.placement === "above" ? "translateY(-100%)" : undefined,
+        }
+      : // Hide until first measure so we never flash at 0,0 under the status bar.
+        { position: "fixed", top: 0, left: 0, visibility: "hidden" };
+
     return createPortal(
       <div
         ref={popoverRef}
         data-testid={`mention-popover${testIdSuffix}`}
-        style={
-          pos
-            ? {
-                position: "fixed",
-                top: `${pos.top}px`,
-                left: `${pos.left}px`,
-                width: `${pos.width}px`,
-                maxHeight: `${pos.maxHeight}px`,
-              }
-            : // Hide until first measure so we never flash at 0,0 under the status bar.
-              { position: "fixed", top: 0, left: 0, visibility: "hidden" }
-        }
+        style={style}
         className="z-[9999] flex flex-col overflow-hidden rounded-md border border-border bg-background text-foreground shadow-md"
       >
         {body}
