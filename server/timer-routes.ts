@@ -8,6 +8,8 @@ import { ZodError } from "zod";
 import type { BusEvent } from "./event-bus";
 import { createLogger } from "./log";
 import { requirePermission } from "./permissions";
+import { chatFileStorage } from "./chat-file-storage";
+import { extractSessionReminderId } from "./session-reminder-metadata";
 
 const log = createLogger("TimerRoutes");
 
@@ -32,9 +34,21 @@ async function buildEnrichedTimers(): Promise<{ timers: TimerWithNextRun[]; glob
   const globalPaused = timerScheduler.isGlobalPaused();
 
   const recentRunsByTimer = await timerStorage.getRunsForTimers(timers.map((timer) => timer.id), 10);
+  const reminderSessionIds = timers
+    .map((timer) => extractSessionReminderId(timer.description))
+    .filter((sessionId): sessionId is string => Boolean(sessionId));
+  const reminderSessions = await chatFileStorage.getSessions(reminderSessionIds);
+  const reminderTitleBySessionId = new Map(
+    reminderSessions.map((session) => [session.id, session.title.trim()]),
+  );
+
   const enriched: TimerWithNextRun[] = timers.map((r) => {
       const recentRuns = recentRunsByTimer.get(r.id) ?? [];
       const nextRunAt = nextRunTimes[r.id];
+      const reminderSessionId = extractSessionReminderId(r.description);
+      const reminderTitle = reminderSessionId
+        ? reminderTitleBySessionId.get(reminderSessionId)
+        : undefined;
 
       const successCount = recentRuns.filter((run) => run.status === "success").length;
       const errorCount = recentRuns.filter((run) => run.status === "error").length;
@@ -59,6 +73,7 @@ async function buildEnrichedTimers(): Promise<{ timers: TimerWithNextRun[]; glob
 
       return {
         ...r,
+        name: reminderTitle || r.name,
         nextRunAt: nextRunAt ? new Date(nextRunAt).toISOString() : undefined,
         lastRun: recentRuns[0] || undefined,
         recentRuns,

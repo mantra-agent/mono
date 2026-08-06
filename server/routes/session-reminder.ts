@@ -4,21 +4,12 @@ import { timerScheduler } from "../timer-scheduler";
 import { chatFileStorage } from "../chat-file-storage";
 import { createLogger } from "../log";
 import { requireAuth } from "../auth";
+import {
+  buildSessionReminderDescription,
+  buildSessionReminderName,
+} from "../session-reminder-metadata";
 
 const log = createLogger("SessionReminder");
-
-const SESSION_REMINDER_PREFIX = "session-reminder:";
-
-function buildReminderName(sessionId: string): string {
-  return `Session Reminder (${sessionId})`;
-}
-
-function extractSessionId(timer: { description: string }): string | null {
-  if (timer.description.startsWith(SESSION_REMINDER_PREFIX)) {
-    return timer.description.slice(SESSION_REMINDER_PREFIX.length);
-  }
-  return null;
-}
 
 async function findActiveReminder(sessionId: string) {
   const allTimers = await timerStorage.getAll();
@@ -26,7 +17,7 @@ async function findActiveReminder(sessionId: string) {
     (t) =>
       t.type === "reminder" &&
       t.enabled &&
-      t.description === `${SESSION_REMINDER_PREFIX}${sessionId}`
+      t.description === buildSessionReminderDescription(sessionId)
   );
 }
 
@@ -107,8 +98,8 @@ export function registerSessionReminderRoutes(app: Express): void {
       }
 
       const timer = await timerStorage.create({
-        name: buildReminderName(sessionId),
-        description: `${SESSION_REMINDER_PREFIX}${sessionId}`,
+        name: buildSessionReminderName(session.title, sessionId),
+        description: buildSessionReminderDescription(sessionId),
         type: "reminder",
         prompt: "",
         schedules: [scheduleEntry],
@@ -158,5 +149,3 @@ export function registerSessionReminderRoutes(app: Express): void {
     }
   });
 }
-
-export { SESSION_REMINDER_PREFIX, extractSessionId };
