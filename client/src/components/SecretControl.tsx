@@ -94,6 +94,7 @@ export function SecretControl({ name }: SecretControlProps) {
         icon={<KeyRound className="h-3.5 w-3.5" />}
         hasValue
         showEmpty
+        mobileLayout="inline"
         testId={`secret-loading-${name}`}
       >
         <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
@@ -149,6 +150,7 @@ export function SecretControl({ name }: SecretControlProps) {
         icon={<KeyRound className="h-3.5 w-3.5" />}
         hasValue
         showEmpty
+        mobileLayout="inline"
         menuContent={menuContent}
         menuVisibility="hover"
         testId={`secret-control-${name}`}
