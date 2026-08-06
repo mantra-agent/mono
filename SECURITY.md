@@ -21,6 +21,13 @@
 - Controls/owner: FilesApi remains the sole authorization boundary; parsing is data-only and never evaluates formulas/macros; compressed source, uncompressed ZIP size, sheet count, populated/sparse cells, and extracted chars are deterministically bounded; worksheet relationships resolve only through entries already present in the opened ZIP; warnings contain identifiers, MIME, byte count, and a capped error only; archives remain AES-GCM encrypted and sourceBytes/stagedBytes continue to measure provider bytes. Owner Platform Files API; SLA immediate.
 - Residual: XLSX formatting, formulas, cached-value nuance, charts, and embedded objects are intentionally not represented in CSV text; over-budget or unsupported content remains available only through encrypted base64 paging.
 -->
+<!-- 2026-08-06 SessionMenu bounded view reads:
+- Assets/data: S1 principal-scoped chat-session metadata and active reminder-derived session IDs.
+- Flow/boundary: authenticated GET /api/sessions?view=* -> reminder map -> ChatFileStorage principal-scoped SQL predicate -> read-only tree hydration -> client React Query projection.
+- Threats: IDOR/cross-account disclosure if view predicates bypass document visibility; availability degradation from unbounded history hydration; stale UI after lifecycle mutations.
+- Controls/owner: requireAuth plus combineWithVisibleScope remain deterministic authorization boundaries; supported views are an enum; SQL is parameterized; primary reads are capped at 250 and historical views at 5,000; event-carried deltas invalidate every deferred projection. Owner Platform Engineering; SLA immediate.
+- Rollback: revert the view-specific storage method and route selection to the full canonical session index. Residual risk: historical sections remain capped at 5,000 and reminder IDs are resolved before document filtering, but only principal-visible documents can be returned.
+-->
 <!-- 2026-08-06 stream/draft failureCode durability:
 - Assets/data: stable ToolFailure codes on stream steps, draft toolCalls, and reliability reads. No args/result bodies, secrets, or cross-principal aggregates.
 - Flow/boundary: producer failure.code -> stream tool_result -> session reducer/draft projection -> terminal toolCalls -> reliability extractFailureCode.
