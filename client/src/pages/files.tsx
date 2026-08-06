@@ -59,10 +59,10 @@ export default function FilesPage() {
   );
 
   const recent = useMemo(() => {
-    const flat: { resource: DriveResource; vaultName: string }[] = [];
+    const flat: { resource: DriveResource; vaultColor: string | null }[] = [];
     for (const { vault, resources } of perVault) {
       for (const resource of resources) {
-        flat.push({ resource, vaultName: vault.name });
+        flat.push({ resource, vaultColor: vault.color ?? null });
       }
     }
     return flat.slice(0, RECENT_LIMIT);
@@ -87,11 +87,11 @@ export default function FilesPage() {
               </div>
             ) : (
               <div className="flex flex-col gap-0.5">
-                {recent.map(({ resource, vaultName }) => (
+                {recent.map(({ resource, vaultColor }) => (
                   <RecentResourceRow
                     key={resource.id}
                     resource={resource}
-                    vaultName={vaultName}
+                    vaultColor={vaultColor}
                   />
                 ))}
               </div>
@@ -100,7 +100,11 @@ export default function FilesPage() {
             {perVault.map(({ vault, resources }) => (
               <div key={vault.id}>
                 <SectionHeader>{vault.name}</SectionHeader>
-                <DriveResourceTree vaultId={vault.id} resources={resources} />
+                <DriveResourceTree
+                  vaultId={vault.id}
+                  resources={resources}
+                  vaultColor={vault.color ?? null}
+                />
               </div>
             ))}
           </>
