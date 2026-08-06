@@ -31,6 +31,7 @@ interface GooglePickerBuilder {
   enableFeature: (feature: string) => GooglePickerBuilder;
   setOAuthToken: (token: string) => GooglePickerBuilder;
   setDeveloperKey: (key: string) => GooglePickerBuilder;
+  setAppId: (appId: string) => GooglePickerBuilder;
   setCallback: (callback: (data: { action: string; docs?: PickerDocument[] }) => void) => GooglePickerBuilder;
   setSelectableMimeTypes: (types: string) => GooglePickerBuilder;
   build: () => { setVisible: (visible: boolean) => void };
@@ -74,6 +75,7 @@ function loadPicker(): Promise<void> {
 function openGooglePicker(options: {
   accessToken: string;
   developerKey: string;
+  appId: string;
   onPicked: (documents: PickerDocument[]) => void;
   onClosed: () => void;
 }) {
@@ -98,6 +100,7 @@ function openGooglePicker(options: {
     .setSelectableMimeTypes("application/vnd.google-apps.document,application/vnd.google-apps.spreadsheet,application/vnd.google-apps.presentation,application/vnd.google-apps.folder,application/pdf,text/plain,text/markdown")
     .setOAuthToken(options.accessToken)
     .setDeveloperKey(options.developerKey)
+    .setAppId(options.appId)
     .setCallback((data) => {
       if (data.action === google.picker.Action.PICKED) {
         options.onPicked(data.docs ?? []);
@@ -174,10 +177,11 @@ export function DriveSection({
         accessToken?: string;
         developerKey?: string;
         apiKey?: string;
+        appId?: string;
         configured?: boolean;
       };
       const developerKey = payload.developerKey || payload.apiKey;
-      if (!payload.accessToken || !developerKey) {
+      if (!payload.accessToken || !developerKey || !payload.appId) {
         throw new Error(payload.configured === false
           ? "Drive picker isn't configured on this deployment"
           : "Drive picker token response was incomplete");
@@ -185,6 +189,7 @@ export function DriveSection({
       openGooglePicker({
         accessToken: payload.accessToken,
         developerKey,
+        appId: payload.appId,
         onPicked: (documents) => bindMutation.mutate(documents),
         onClosed: () => setPicking(false),
       });
