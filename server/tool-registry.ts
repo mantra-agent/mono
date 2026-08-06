@@ -155,14 +155,14 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   npm_dependencies: {
-    description: "Safely set one exact npm package version in a nested package.json and regenerate that package's existing package-lock.json without touching node_modules or running lifecycle scripts. Restricted to the current session-owned repos/ clone and trusted engineering sessions with build:write. This is the only approved dependency-mutation path; general npm install remains blocked.",
+    description: "Safely set one exact npm package version in a repository-root or nested package.json and regenerate that package's existing package-lock.json without mutating node_modules or running lifecycle scripts. Root packages must use the session clone's immutable workspace toolchain symlink. Restricted to the current session-owned repos/ clone and trusted engineering sessions with build:write. This is the only approved dependency-mutation path; general npm install remains blocked.",
     category: "system",
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["set_package"], description: "Bounded dependency mutation action" },
         repositoryDirectory: { type: "string", description: "Exact directory name inside repos/ for this session-owned clone" },
-        manifestPath: { type: "string", description: "Nested package.json path relative to the repository root, for example mobile/package.json" },
+        manifestPath: { type: "string", description: "package.json path relative to the repository root, for example package.json or mobile/package.json" },
         section: { type: "string", enum: ["dependencies", "devDependencies", "optionalDependencies", "overrides"], description: "Manifest dependency section to mutate" },
         packageName: { type: "string", description: "Exact npm package name" },
         version: { type: "string", description: "Exact semantic version; ranges, tags, URLs, aliases, and file/git specs are rejected" },
