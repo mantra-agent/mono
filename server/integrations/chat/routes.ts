@@ -1952,7 +1952,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             compacted.terminalOutcome === "compacted");
         if (durableCompactionApplied) {
           chatLog.log(
-            `betweenTurnCompaction full-input threshold applied sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${betweenTurnThreshold}; rebuilding after min-viable land`,
+            `betweenTurnCompaction outcome sessionId=${sessionId} action=between_turn_history_reset ` +
+            `tokensBefore=${fullPreExecutorTokens} threshold=${betweenTurnThreshold} outcome=applied; ` +
+            `rebuilding after min-viable land`,
           );
           endCompaction();
           return buildChatHistory(
@@ -1968,8 +1970,22 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             { attempted: true, applied: true },
           );
         }
-        chatLog.log(
-          `betweenTurnCompaction full-input threshold no-op sessionId=${sessionId} tokens=${fullPreExecutorTokens} threshold=${betweenTurnThreshold} outcome=${compacted.outcome}`,
+        const outcomeReason =
+          "reason" in compacted && compacted.reason
+            ? ` reason=${compacted.reason}`
+            : "";
+        const operationId =
+          "operationId" in compacted && compacted.operationId
+            ? ` operationId=${compacted.operationId}`
+            : "";
+        const outcomeLog =
+          compacted.outcome === "failed" || compacted.outcome === "archive_failed"
+            ? chatLog.warn.bind(chatLog)
+            : chatLog.log.bind(chatLog);
+        outcomeLog(
+          `betweenTurnCompaction outcome sessionId=${sessionId} action=between_turn_history_reset ` +
+            `tokensBefore=${fullPreExecutorTokens} threshold=${betweenTurnThreshold} ` +
+            `outcome=${compacted.outcome}${outcomeReason}${operationId}`,
         );
         endCompaction();
       } catch (compactErr: unknown) {

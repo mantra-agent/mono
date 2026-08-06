@@ -3139,20 +3139,30 @@ export class AgentExecutor extends EventEmitter {
     options: ExecutorRunOptions,
     publish: RunIterationContext["publish"],
   ): Promise<{ compacted: boolean; hasRunMidTurnHistoryHardTrim: boolean }> {
-    log.warn(`Context length error detected, attempting emergency compaction`);
+    const emergencyTokensBefore = estimateTotalTokens(messages);
+    const emergencyMessagesBefore = messages.length;
+    log.warn(
+      `context.overflow provider rejected request; attempting emergency compaction ` +
+        `sessionId=${options.sessionId || "none"} estimatedMessageTokens=${emergencyTokensBefore} ` +
+        `messages=${emergencyMessagesBefore}`,
+    );
     const compactionStepId = `emergency-compaction-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     publish("compacting", { stepId: compactionStepId, status: "active", content: "Context too large. Compressing working context..." });
 
     let hasRunMidTurnHistoryHardTrim = false;
-    const emergencyTokensBefore = estimateTotalTokens(messages);
-    const emergencyMessagesBefore = messages.length;
     const historyHardTrim = compactMidTurnHistoryHardTrim(messages);
     if (historyHardTrim.compacted) {
       messages.splice(0, messages.length, ...historyHardTrim.messages);
       if (historyHardTrim.summaryContent) {
         hasRunMidTurnHistoryHardTrim = true;
         const tokensAfter = estimateTotalTokens(messages);
-        log.debug(`Emergency compaction applied in-memory: sessionId=${options.sessionId || "none"} tokensBefore=${emergencyTokensBefore} tokensAfter=${tokensAfter} messagesBefore=${emergencyMessagesBefore} messagesAfter=${messages.length} summaryLen=${historyHardTrim.summaryContent.length}`);
+        log.info(
+          `context.reduction action=mid_turn_history_hard_trim trigger=provider_overflow outcome=applied ` +
+            `sessionId=${options.sessionId || "none"} tokensBefore=${emergencyTokensBefore} ` +
+            `tokensAfter=${tokensAfter} tokensSaved=${emergencyTokensBefore - tokensAfter} ` +
+            `messagesBefore=${emergencyMessagesBefore} messagesAfter=${messages.length} ` +
+            `summaryLen=${historyHardTrim.summaryContent.length}`,
+        );
         eventBus.publish({ category: "system", event: "compaction.applied", payload: { sessionId: options.sessionId || null, trigger: "emergency", action: "mid_turn_history_hard_trim", outcome: "applied", tokensBefore: emergencyTokensBefore, tokensAfter, tokensSaved: emergencyTokensBefore - tokensAfter, messagesBefore: emergencyMessagesBefore, messagesAfter: messages.length, summaryLength: historyHardTrim.summaryContent.length, historyHardTrim: historyHardTrim.telemetry } });
       }
     }
@@ -3160,8 +3170,40 @@ export class AgentExecutor extends EventEmitter {
     if (historyReset.compacted) messages.splice(0, messages.length, ...historyReset.messages);
 
     const compacted = historyHardTrim.compacted || historyReset.compacted;
+    const emergencyTokensAfter = estimateTotalTokens(messages);
     if (compacted) {
-      log.debug(`Emergency compaction complete: ${estimateTotalTokens(messages)} tokens, ${messages.length} messages`);
+      const action = historyReset.compacted
+        ? "mid_turn_history_reset"
+        : "mid_turn_history_hard_trim";
+      log.info(
+        `context.reduction action=${action} trigger=provider_overflow outcome=complete ` +
+          `sessionId=${options.sessionId || "none"} tokensBefore=${emergencyTokensBefore} ` +
+          `tokensAfter=${emergencyTokensAfter} tokensSaved=${emergencyTokensBefore - emergencyTokensAfter} ` +
+          `messagesBefore=${emergencyMessagesBefore} messagesAfter=${messages.length}`,
+      );
+    } else {
+      const reason = "no_compactable_history";
+      log.error(
+        `context.reduction action=emergency_compaction trigger=provider_overflow outcome=failed ` +
+          `sessionId=${options.sessionId || "none"} tokensBefore=${emergencyTokensBefore} ` +
+          `tokensAfter=${emergencyTokensAfter} tokensSaved=0 reason=${reason}`,
+      );
+      eventBus.publish({
+        category: "system",
+        event: "compaction.failed",
+        payload: {
+          sessionId: options.sessionId || null,
+          trigger: "emergency",
+          action: "emergency_compaction",
+          outcome: "failed",
+          reason,
+          tokensBefore: emergencyTokensBefore,
+          tokensAfter: emergencyTokensAfter,
+          tokensSaved: 0,
+          messagesBefore: emergencyMessagesBefore,
+          messagesAfter: messages.length,
+        },
+      });
     }
     publish("compacting", {
       stepId: compactionStepId,
@@ -3218,7 +3260,12 @@ export class AgentExecutor extends EventEmitter {
     if (compactionResult.action !== "none") {
       messages.splice(0, messages.length, ...compactionResult.messages);
       const tokensAfter = estimateTotalTokens(messages);
-      log.debug(`Compaction applied (${compactionResult.action}): ${tokensAfter} tokens, ${messages.length} messages`);
+      log.info(
+        `context.reduction action=${compactionResult.action} trigger=threshold outcome=applied ` +
+          `sessionId=${options.sessionId || "none"} runId=${ctx.runId} ` +
+          `tokensBefore=${tokensBefore} tokensAfter=${tokensAfter} tokensSaved=${tokensBefore - tokensAfter} ` +
+          `messagesBefore=${messagesBefore} messagesAfter=${messages.length}`,
+      );
 
       const compactionElapsed = Date.now() - iterStartTime;
       const isFirstIterationPreToolCompression = ctx.iteration === 0 && compactionResult.telemetry.preToolRunPressure;

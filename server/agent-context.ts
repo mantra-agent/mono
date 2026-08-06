@@ -313,6 +313,11 @@ export async function runBetweenTurnCompaction(
     }
     return tokens;
   };
+  const totalTokens = docMessages.reduce(
+    (sum, message) =>
+      isCommittedContextMessage(message) ? sum + estimateDocTokens(message) : sum,
+    0,
+  );
 
   try {
     await transitionCompactionOperation(operationId, operationAttempt, "archiving");
