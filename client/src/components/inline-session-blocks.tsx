@@ -28,14 +28,19 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { filterStepsByLayer, stripMessageTimestamp } from "@/components/chat-shared";
-import { useEventStream } from "@/hooks/use-event-stream";
 import {
+  ActiveThinkingStatus,
+  ExecutionTimeline,
+  MarkdownContent,
+  filterStepsByLayer,
+  findThinkingStartTime,
   segmentsFromSavedMessage,
+  stripMessageTimestamp,
   type ChatMessage,
   type ChildSessionBlockMeta,
   type CrossSessionMeta,
 } from "@/components/chat-shared";
+import { useEventStream } from "@/hooks/use-event-stream";
 import { SegmentStream } from "@/components/segment-stream";
 import { useSessionSubscription, type SessionStreamState } from "@/hooks/use-session-subscription";
 import { useVisibilityLayer, type VisibilityLayer } from "@/hooks/use-visibility-layer";
@@ -400,6 +405,12 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
               segments={segments}
               isStreaming={hasActiveChildSub}
               layer={layer}
+              contentCompact
+              ActiveThinkingStatusComponent={ActiveThinkingStatus}
+              ExecutionTimelineComponent={ExecutionTimeline}
+              MarkdownContentComponent={MarkdownContent}
+              filterVisibleSteps={filterStepsByLayer}
+              getThinkingStartTime={findThinkingStartTime}
             />
           )}
         </div>
