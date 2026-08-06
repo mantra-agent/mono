@@ -1,7 +1,7 @@
 /**
- * Context-pressure policy has one denominator: the provider context window.
- * These direct fractions are provisional behavior-preserving altitudes; tuning
- * changes the values, never the shape of the ladder.
+ * Context-pressure policy has one denominator: the hard input limit
+ * (provider context window minus reserved output). Tuning changes the values,
+ * never the shape of the ladder.
  */
 export const BETWEEN_TURN_FIRE_FRACTION = 0.3;
 export const MID_RUN_STAGE_1_FRACTION = 0.5;
@@ -153,7 +153,7 @@ export interface ContextRequestBudget {
   outputReserve: number;
   /** Provider admission cliff: contextWindow − outputReserve. */
   hardInputLimit: number;
-  /** Absolute window-derived policy altitudes used by every server and client consumer. */
+  /** Absolute hard-input-derived policy altitudes used by every server and client consumer. */
   thresholds: ContextPressureThresholds;
 }
 
@@ -163,11 +163,11 @@ function boundedTokenCount(value: number): number {
 
 /**
  * Single spine for request pressure:
- *   every compaction altitude = named fraction × contextWindow
  *   hardInputLimit = contextWindow − outputReserve
+ *   every compaction altitude = named fraction × hardInputLimit
  *
- * Output reserve changes only the provider admission cliff. It never moves the
- * compaction ladder, whose resolved absolute altitudes are published to clients.
+ * Reserve first defines the usable input envelope; every pressure threshold and
+ * gauge marker then uses that one envelope as its denominator.
  *
  * `outputReserve` is the caller's max output tokens. When it is an *inherited
  * registry default* (`outputReserveIsExplicit` false), it is clamped by a fixed
@@ -210,7 +210,7 @@ export function getContextRequestBudget(
     0,
     boundedContextWindow - boundedOutputReserve,
   );
-  const thresholds = getContextPressureThresholds(boundedContextWindow);
+  const thresholds = getContextPressureThresholds(hardInputLimit);
 
   return {
     contextWindow: boundedContextWindow,
@@ -221,20 +221,15 @@ export function getContextRequestBudget(
 }
 
 export function getContextPressureThresholds(
-  contextWindow: number,
+  hardInputLimit: number,
 ): ContextPressureThresholds {
-  const window = boundedTokenCount(contextWindow);
+  const inputLimit = boundedTokenCount(hardInputLimit);
   return {
-    betweenTurnFire: Math.floor(window * BETWEEN_TURN_FIRE_FRACTION),
-    midRunStage1: Math.floor(window * MID_RUN_STAGE_1_FRACTION),
-    midRunStage2: Math.floor(window * MID_RUN_STAGE_2_FRACTION),
-    midRunStage3: Math.floor(window * MID_RUN_STAGE_3_FRACTION),
+    betweenTurnFire: Math.floor(inputLimit * BETWEEN_TURN_FIRE_FRACTION),
+    midRunStage1: Math.floor(inputLimit * MID_RUN_STAGE_1_FRACTION),
+    midRunStage2: Math.floor(inputLimit * MID_RUN_STAGE_2_FRACTION),
+    midRunStage3: Math.floor(inputLimit * MID_RUN_STAGE_3_FRACTION),
   };
-}
-
-/** Between-turn fire is exactly its named fraction of the provider window. */
-export function getBetweenTurnFireThreshold(contextWindow: number): number {
-  return getContextPressureThresholds(contextWindow).betweenTurnFire;
 }
 
 export function estimateMessageInputTokens(message: {

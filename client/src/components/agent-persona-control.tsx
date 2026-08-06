@@ -60,31 +60,26 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
     : personaLabel;
   const formatTokensK = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(n < 100_000 ? 1 : 0)}k` : `${n}`;
-  // Debug detail: input tokens, % of the true provider window, the real max, and model.
-  const fireDetail = contextPressure
-    ? ` · fire ${formatTokensK(contextPressure.betweenTurnFire)}`
-    : "";
+  // Hover and ring share the usable hard-input envelope 1:1.
   const pressureDetail =
-    contextPressure && contextPressure.contextWindow
-      ? ` (${formatTokensK(contextPressure.inputTokens)} (${Math.round(
-          (contextPressure.inputTokens / contextPressure.contextWindow) * 100,
-        )}%) / ${formatTokensK(contextPressure.contextWindow)}${fireDetail}${
-          contextPressure.modelName ? ` ${contextPressure.modelName}` : ""
-        })`
+    contextPressure && contextPressure.hardInputLimit
+      ? ` (${formatTokensK(contextPressure.inputTokens)} / ${formatTokensK(
+          contextPressure.hardInputLimit,
+        )} input · ${Math.round(
+          (contextPressure.inputTokens / contextPressure.hardInputLimit) * 100,
+        )}%${contextPressure.modelName ? ` · ${contextPressure.modelName}` : ""})`
       : "";
   const tooltipLabel = `${baseTooltipLabel}${pressureDetail}`;
-  // The client projects server-resolved altitudes onto one denominator. It owns no
-  // pressure policy and performs no threshold multiplication.
-  const scaleLimit = contextPressure ? Math.max(contextPressure.contextWindow, 1) : 1;
+  // The client projects server-resolved altitudes onto the usable input envelope.
+  // It owns no pressure policy and performs no threshold multiplication.
+  const scaleLimit = contextPressure ? Math.max(contextPressure.hardInputLimit, 1) : 1;
   const ratio = (tokens: number | undefined) =>
     typeof tokens === "number" ? Math.min(tokens / scaleLimit, 1) : 0;
   const pressureRatio = ratio(contextPressure?.inputTokens);
   const thresholdRatio = ratio(contextPressure?.midRunStage1);
   const stage2Ratio = ratio(contextPressure?.midRunStage2);
   const stage3Ratio = ratio(contextPressure?.midRunStage3);
-  const hardRatio = ratio(contextPressure?.hardInputLimit);
-  const fireRatio = ratio(contextPressure?.betweenTurnFire);
-  const reserveRatio = ratio(contextPressure?.outputReserve);
+  const betweenTurnRatio = ratio(contextPressure?.betweenTurnFire);
   const pressureColor =
     contextPressure && contextPressure.inputTokens >= contextPressure.hardInputLimit
       ? "hsl(var(--destructive))"
@@ -146,19 +141,6 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                   data-testid={`context-pressure-ring-${sessionId}`}
                 >
                   <circle cx="20" cy="20" r="18" fill="none" stroke="hsl(var(--border))" strokeOpacity="0.45" strokeWidth="1.5" />
-                  {reserveRatio > 0 && reserveRatio < 1 && (
-                    <circle
-                      cx="20"
-                      cy="20"
-                      r="18"
-                      fill="none"
-                      stroke="hsl(var(--muted-foreground))"
-                      strokeOpacity="0.5"
-                      strokeWidth="1.5"
-                      strokeDasharray={`${reserveRatio * circumference} ${circumference}`}
-                      transform={`rotate(${(1 - reserveRatio) * 360} 20 20)`}
-                    />
-                  )}
                   <circle
                     cx="20"
                     cy="20"
@@ -200,7 +182,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                       transform={`rotate(${stage3Ratio * 360} 20 20)`}
                     />
                   )}
-                  {fireRatio > 0 && fireRatio < 1 && (
+                  {betweenTurnRatio > 0 && betweenTurnRatio < 1 && (
                     <line
                       x1="36.5"
                       y1="20"
@@ -210,18 +192,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                       strokeWidth="1"
                       strokeLinecap="round"
                       opacity="0.55"
-                      transform={`rotate(${fireRatio * 360} 20 20)`}
-                    />
-                  )}
-                  {hardRatio > 0 && hardRatio < 1 && (
-                    <line
-                      x1="36"
-                      y1="20"
-                      x2="40.5"
-                      y2="20"
-                      stroke="hsl(var(--destructive))"
-                      strokeWidth="1.25"
-                      transform={`rotate(${hardRatio * 360} 20 20)`}
+                      transform={`rotate(${betweenTurnRatio * 360} 20 20)`}
                     />
                   )}
                 </svg>
