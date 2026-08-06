@@ -1763,6 +1763,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             arguments?: Record<string, unknown>;
             result?: string;
             error?: boolean | string;
+            failureKind?: import("@shared/tool-failure").ToolFailureKind;
+            failureCode?: string;
           }>
         | undefined;
       if (msg.role === "assistant" && toolCalls) {
@@ -1789,6 +1791,9 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             if (tc.failureKind && !existing.failureKind) {
               existing.failureKind = tc.failureKind;
             }
+            if (tc.failureCode && !existing.failureCode) {
+              existing.failureCode = tc.failureCode;
+            }
             chatLog.warn(
               `merged duplicate toolCallId=${tc.toolCallId} name=${tc.toolName} fromMsgId=${msgId} sessionId=${sessionId}`,
             );
@@ -1800,6 +1805,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
               result: tc.result,
               error: tc.error,
               ...(tc.failureKind ? { failureKind: tc.failureKind } : {}),
+              ...(tc.failureCode ? { failureCode: tc.failureCode } : {}),
             });
           }
         }

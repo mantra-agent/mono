@@ -1,3 +1,10 @@
+<!-- 2026-08-06 tool_output_admissions boot ensure + residual failureCode durability:
+- Assets/data: principal-scoped tool-output admission metrics table; stable ToolFailure codes on session tool-call metadata. No arguments, result bodies, secrets, or cross-principal aggregates.
+- Flow/boundary: boot ensure -> admissions insert/rank path; executor failureCode -> interactive merge/rebuild map -> reliability reader.
+- Threats: availability loss from missing telemetry table (42P01); diagnostic corruption if duplicate toolCallId merges drop producer codes; information disclosure if ensure/query logs principal IDs or query values.
+- Controls/owner: ensureToolOutputAdmissionsTable owns idempotent CREATE TABLE/INDEX IF NOT EXISTS and is awaited before traffic; chat rebuild merge preserves failureCode with failureKind; pressure query remains account+user scoped with bounded PostgreSQL diagnostics only. Owner Platform Reliability; SLA immediate.
+- Residual: historical null-code rows remain; admissions metrics start only after boot ensure deploys and new tool calls write rows.
+-->
 <!-- 2026-08-06 Context-compaction observability and durable-reset availability repair:
 - Assets/data: user session history, exact compaction archives, continuation capsules, provider-facing working context, and bounded token-count telemetry; no message bodies, tool outputs, secrets, or cross-principal data are added to logs.
 - Flow/boundary: authenticated chat assembly -> durable between-turn archive/summarize/writeback -> AgentExecutor threshold actions or provider-overflow recovery -> model provider; working-set projection remains a separate disposable provider-view reduction.
