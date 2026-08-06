@@ -1370,29 +1370,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     },
   );
 
-  function estimateExecutorMessageTokens(msg: ExecutorMessage): number {
-    if (typeof msg.content === "string")
-      return Math.ceil(msg.content.length / 3.5);
-    if (Array.isArray(msg.content)) {
-      return msg.content.reduce((sum, block) => {
-        const text =
-          block.text ||
-          block.thinking ||
-          block.content ||
-          JSON.stringify(block.input || {});
-        return sum + Math.ceil((text?.length || 0) / 3.5);
-      }, 0);
-    }
-    return 0;
-  }
-
-  function estimateExecutorMessagesTokens(messages: ExecutorMessage[]): number {
-    return messages.reduce(
-      (sum, msg) => sum + estimateExecutorMessageTokens(msg),
-      0,
-    );
-  }
-
   function historicalToolResultForExecutor(value: unknown): string {
     const content = typeof value === "string" ? value : "";
     if (!content) return "";
@@ -1932,15 +1909,18 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       : resolvedModel || "";
     const contextWindow = getContextWindow(bareModel);
     const {
+      applyTokenEstimateCalibration,
+      estimateMessagesInputTokens,
       estimateToolDefinitionTokens,
-      getContextRequestBudget,
       getBetweenTurnFireThreshold,
     } = await import("../../context-budget");
-    const maxTokens = (await import("../../model-registry")).getMaxOutputTokens(bareModel);
-    const requestBudget = getContextRequestBudget(contextWindow, maxTokens);
     const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
     const betweenTurnFireThreshold = getBetweenTurnFireThreshold(contextWindow);
-    const fullPreExecutorTokens = estimateExecutorMessagesTokens(messages) + toolDefinitionTokens;
+    const rawPreExecutorTokens = estimateMessagesInputTokens(messages) + toolDefinitionTokens;
+    const fullPreExecutorTokens = await applyTokenEstimateCalibration(
+      bareModel,
+      rawPreExecutorTokens,
+    );
     const toolResultCount = messages.reduce((sum, msg) => {
       if (!Array.isArray(msg.content)) return sum;
       return (
@@ -1998,7 +1978,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
 
     chatLog.log(
-      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurnFire=${betweenTurnFireThreshold} target=${requestBudget.compactionTarget} operating=${requestBudget.operatingInputLimit} hard=${requestBudget.hardInputLimit} reserve=${requestBudget.outputReserve} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
+      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurnFire=${betweenTurnFireThreshold} window=${contextWindow} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} sessionId=${sessionId}`,
     );
     return {
       messages,
@@ -2014,7 +1994,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         messageCount: messages.length,
         toolCount: toolResultCount,
         contextWindow,
-        contextLimit: requestBudget.operatingInputLimit,
+        contextLimit: contextWindow,
       },
     };
   }

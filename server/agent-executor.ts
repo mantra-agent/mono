@@ -25,12 +25,11 @@ import type { ContinuationCapsule, ExecutorStreamEvent, ModelProviderFailureInfo
 import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-storage";
 import { ModelProviderError, isModelContextOverflow, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
 import {
-  ContextOperatingBudgetExceededError,
+  ContextHardLimitExceededError,
   applyTokenEstimateCalibration,
-  estimateTokensFromChars,
+  estimateMessagesInputTokens,
   estimateToolDefinitionTokens,
   getContextRequestBudget,
-  getBetweenTurnFireThreshold,
   recordTokenEstimateCalibration,
   type ContextRequestBudget,
 } from "./context-budget";
@@ -352,29 +351,8 @@ function extractThinkingFromText(text: string): { thinking: string; clean: strin
   return { thinking: parts.join("\n"), clean };
 }
 
-function estimateMessageTokens(msg: ExecutorMessage): number {
-  if (typeof msg.content === "string") {
-    return estimateTokensFromChars(msg.content.length, "prose");
-  }
-  if (Array.isArray(msg.content)) {
-    return msg.content.reduce((sum, block) => {
-      // Structured tool_use / tool_result blocks are JSON-dense; free text is prose.
-      if (block && typeof block === "object" && (block.type === "tool_use" || block.type === "tool_result" || block.input != null)) {
-        const payload = block.input != null ? block.input : block;
-        return sum + estimateTokensFromChars(JSON.stringify(payload).length, "json");
-      }
-      const text = block.text || block.thinking || block.content || "";
-      if (typeof text === "string" && text.length > 0) {
-        return sum + estimateTokensFromChars(text.length, "prose");
-      }
-      return sum + estimateTokensFromChars(JSON.stringify(block || {}).length, "json");
-    }, 0);
-  }
-  return 0;
-}
-
 function estimateTotalTokens(messages: ExecutorMessage[]): number {
-  return messages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
+  return estimateMessagesInputTokens(messages);
 }
 
 function formatInputContextDetail(contextPressure: ExecutorRunOptions["contextPressure"]): string | undefined {
@@ -582,8 +560,6 @@ interface CompactionTelemetry {
   contextLimit: number;
   outputReserve: number;
   hardInputLimit: number;
-  operatingInputLimit: number;
-  compactionTarget: number;
   toolDefinitionTokens: number;
   threshold1: number;
   threshold2: number;
@@ -781,15 +757,18 @@ async function runCompaction(
   toolDefinitionTokens: number,
   publish: (type: JournalEntry["type"], extra?: Partial<JournalEntry>) => void,
   hasRunStage2: boolean,
+  resolvedModel: string,
 ): Promise<{ messages: ExecutorMessage[]; stage: number; summaryContent?: string; telemetry: CompactionTelemetry }> {
-  // Stage thresholds aim at compactionTarget (soft), not the hard operating gate.
-  const threshold1 = Math.floor(budget.compactionTarget * 0.65);
-  const threshold2 = Math.floor(budget.compactionTarget * 0.80);
-  const threshold3 = budget.compactionTarget;
-  const estimateRequestTokens = (requestMessages: ExecutorMessage[]) =>
-    estimateTotalTokens(requestMessages) + toolDefinitionTokens;
+  const threshold1 = budget.thresholds.midRunStage1;
+  const threshold2 = budget.thresholds.midRunStage2;
+  const threshold3 = budget.thresholds.midRunStage3;
+  const estimateRequestTokens = async (requestMessages: ExecutorMessage[]) =>
+    applyTokenEstimateCalibration(
+      resolvedModel,
+      estimateTotalTokens(requestMessages) + toolDefinitionTokens,
+    );
 
-  let currentTokens = estimateRequestTokens(messages);
+  let currentTokens = await estimateRequestTokens(messages);
   const tokensBefore = currentTokens;
   const messagesBefore = messages.length;
   const preToolRunPressure = messages.every(m => m.role !== "tool_result");
@@ -800,7 +779,7 @@ async function runCompaction(
   if (currentTokens <= threshold1) {
     log.debug(
       `Compaction not needed: request=${currentTokens} tokens <= stage1=${threshold1} ` +
-        `target=${budget.compactionTarget} operating=${budget.operatingInputLimit} hard=${budget.hardInputLimit}`,
+        `stage3=${threshold3} hard=${budget.hardInputLimit}`,
     );
     return {
       messages,
@@ -814,8 +793,6 @@ async function runCompaction(
         contextLimit: budget.contextWindow,
         outputReserve: budget.outputReserve,
         hardInputLimit: budget.hardInputLimit,
-        operatingInputLimit: budget.operatingInputLimit,
-        compactionTarget: budget.compactionTarget,
         toolDefinitionTokens,
         threshold1,
         threshold2,
@@ -832,7 +809,7 @@ async function runCompaction(
 
   log.debug(
     `Compaction needed: request=${currentTokens} tokens > stage1=${threshold1} ` +
-      `target=${budget.compactionTarget} operating=${budget.operatingInputLimit} hard=${budget.hardInputLimit}`,
+      `stage3=${threshold3} hard=${budget.hardInputLimit}`,
   );
   const compactionStepId = `compaction-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   publish("compacting", { stepId: compactionStepId, status: "active", content: "Working context compression started..." });
@@ -843,7 +820,7 @@ async function runCompaction(
   const s1 = compactStage1(messages);
   if (s1.compacted) {
     messages = s1.messages;
-    currentTokens = estimateRequestTokens(messages);
+    currentTokens = await estimateRequestTokens(messages);
     stage = 1;
     log.debug(`Stage 1 compaction complete: ${currentTokens} tokens`);
   }
@@ -851,14 +828,14 @@ async function runCompaction(
   if (currentTokens > threshold2) {
     log.debug(
       `Stage 2 needed: request=${currentTokens} tokens > stage2=${threshold2} ` +
-        `target=${budget.compactionTarget} operating=${budget.operatingInputLimit}`,
+        `stage3=${threshold3} hard=${budget.hardInputLimit}`,
     );
     publish("compacting", { stepId: compactionStepId, status: "active", content: "Folding earlier working context..." });
     const s2 = compactStage2(messages, preparedStage2Capsule);
     stage2Telemetry = s2.telemetry;
     if (s2.compacted) {
       messages = s2.messages;
-      currentTokens = estimateRequestTokens(messages);
+      currentTokens = await estimateRequestTokens(messages);
       stage = 2;
       summaryContent = s2.summaryContent;
       log.debug(`Stage 2 compaction complete: ${currentTokens} tokens`);
@@ -868,13 +845,13 @@ async function runCompaction(
   if (currentTokens > threshold3) {
     log.debug(
       `Stage 3 needed: ${currentTokens} tokens > stage3=${threshold3} ` +
-        `target=${budget.compactionTarget} operating=${budget.operatingInputLimit}`,
+        `stage3=${threshold3} hard=${budget.hardInputLimit}`,
     );
     publish("compacting", { stepId: compactionStepId, status: "active", content: "Aggressively compressing working context..." });
     const s3 = compactStage3(messages);
     if (s3.compacted) {
       messages = s3.messages;
-      currentTokens = estimateRequestTokens(messages);
+      currentTokens = await estimateRequestTokens(messages);
       stage = 3;
       log.debug(`Stage 3 compaction complete: ${currentTokens} tokens`);
     }
@@ -899,8 +876,6 @@ async function runCompaction(
       contextLimit: budget.contextWindow,
       outputReserve: budget.outputReserve,
       hardInputLimit: budget.hardInputLimit,
-      operatingInputLimit: budget.operatingInputLimit,
-      compactionTarget: budget.compactionTarget,
       toolDefinitionTokens,
       threshold1,
       threshold2,
@@ -2351,7 +2326,7 @@ export class AgentExecutor extends EventEmitter {
         toolResultTokens: ctx.currentCycleToolResultTokens,
         // getContextRequestBudget expects a numeric context window, not a model id.
         // Passing modelString coerced through boundedTokenCount and permanently emitted budgetTokens:0.
-        budgetTokens: getContextRequestBudget(getContextWindow(ctx.modelString)).operatingInputLimit,
+        budgetTokens: getContextRequestBudget(getContextWindow(ctx.modelString)).hardInputLimit,
         toolCallId: tc.id,
         toolName: tc.name,
       });
@@ -3199,6 +3174,7 @@ export class AgentExecutor extends EventEmitter {
       toolDefinitionTokens,
       ctx.publish,
       hasRunStage2,
+      ctx.resolvedModel || ctx.modelString,
     );
     if (compactionResult.stage > 0) {
       messages.splice(0, messages.length, ...compactionResult.messages);
@@ -3259,18 +3235,17 @@ export class AgentExecutor extends EventEmitter {
     );
     ctx.publish("context_pressure", {
       inputTokens: requestTokens,
-      inputLimit: contextBudget.operatingInputLimit,
-      compactionThreshold: Math.floor(contextBudget.compactionTarget * 0.65),
+      hardInputLimit: contextBudget.hardInputLimit,
       contextWindow: contextBudget.contextWindow,
       modelName: pressureModelName,
       outputReserve: contextBudget.outputReserve,
-      compactionTarget: contextBudget.compactionTarget,
-      // Between-turn rest floor — same scale as the ring, separate policy from mid-run.
-      // Between-turn fire altitude (0.3 × window) — full next input, not history keep-budget.
-      retentionBudget: getBetweenTurnFireThreshold(contextBudget.contextWindow),
+      betweenTurnFire: contextBudget.thresholds.betweenTurnFire,
+      midRunStage1: contextBudget.thresholds.midRunStage1,
+      midRunStage2: contextBudget.thresholds.midRunStage2,
+      midRunStage3: contextBudget.thresholds.midRunStage3,
     });
-    if (requestTokens > contextBudget.operatingInputLimit) {
-      throw new ContextOperatingBudgetExceededError(requestTokens, contextBudget);
+    if (requestTokens > contextBudget.hardInputLimit) {
+      throw new ContextHardLimitExceededError(requestTokens, contextBudget);
     }
 
     ctx.iteration++;
@@ -3425,7 +3400,7 @@ export class AgentExecutor extends EventEmitter {
               boundary: "tool_result_reinjection",
               messageTokens: estimateTotalTokens(messages) + ctx.currentCycleToolResultTokens,
               toolResultTokens: ctx.currentCycleToolResultTokens,
-              budgetTokens: contextBudget.operatingInputLimit,
+              budgetTokens: contextBudget.hardInputLimit,
               toolCallId: callId,
               toolName: name,
             });
@@ -3471,7 +3446,7 @@ export class AgentExecutor extends EventEmitter {
         boundary: "pre_inference",
         messageTokens: workingSet.telemetry.tokensProjected,
         toolResultTokens: ctx.currentCycleToolResultTokens,
-        budgetTokens: contextBudget.operatingInputLimit,
+        budgetTokens: contextBudget.hardInputLimit,
       });
       const pendingToolResultMessages = providerMessages.filter(m => m.role === "tool_result").length;
       log.debug(

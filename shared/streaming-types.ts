@@ -54,23 +54,20 @@ export type MessageSegment =
 export type StreamingSource = "text" | "voice" | "meeting" | null;
 
 export interface ContextPressureSnapshot {
+  /** Calibrated full assembled input: messages plus tool definitions. */
   inputTokens: number;
-  inputLimit: number;
-  compactionThreshold: number;
-  /** True provider context window (e.g. 200k) — the real max, for debug display. */
-  contextWindow?: number;
-  /** Human-readable model display name, for debug display. */
+  /** True provider context window — the sole gauge denominator. */
+  contextWindow: number;
+  /** Provider admission cliff: contextWindow − outputReserve. */
+  hardInputLimit: number;
+  /** Tokens reserved for model output, rendered as the roped-off top wedge. */
+  outputReserve: number;
+  /** Server-resolved policy altitudes; clients project but never derive them. */
+  betweenTurnFire: number;
+  midRunStage1: number;
+  midRunStage2: number;
+  midRunStage3: number;
   modelName?: string;
-  /** Tokens reserved for model output (off-limits to input) — the roped-off wedge at top of the gauge. */
-  outputReserve?: number;
-  /** Soft mid-turn compaction target (stage-3 threshold). Stage 2 = 0.80×, stage 1 = 0.65× of this. Drives the amber ladder ticks. */
-  compactionTarget?: number;
-  /**
-   * Between-turn fire altitude (0.3 × window on full next input).
-   * Distinct from mid-run operating/hard — cruise altitude, not a history keep-budget.
-   * Landing after fire is minimum viable live context.
-   */
-  retentionBudget?: number;
 }
 
 export interface StreamingContent {

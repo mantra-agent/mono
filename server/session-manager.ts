@@ -75,13 +75,14 @@ export type SessionStreamEvent = {
   model?: string;
   autoTier?: string;
   inputTokens?: number;
-  inputLimit?: number;
-  compactionThreshold?: number;
   contextWindow?: number;
+  hardInputLimit?: number;
   modelName?: string;
   outputReserve?: number;
-  compactionTarget?: number;
-  retentionBudget?: number;
+  betweenTurnFire?: number;
+  midRunStage1?: number;
+  midRunStage2?: number;
+  midRunStage3?: number;
   persona?: { id: number; name: string; icon: string };
   runId?: string;
   turnId?: string;
@@ -468,23 +469,26 @@ class SessionManager {
       case "context_pressure":
         if (
           typeof event.inputTokens === "number"
-          && typeof event.inputLimit === "number"
-          && typeof event.compactionThreshold === "number"
+          && typeof event.contextWindow === "number"
+          && typeof event.hardInputLimit === "number"
+          && typeof event.outputReserve === "number"
+          && typeof event.betweenTurnFire === "number"
+          && typeof event.midRunStage1 === "number"
+          && typeof event.midRunStage2 === "number"
+          && typeof event.midRunStage3 === "number"
         ) {
           prev = {
             ...prev,
             contextPressure: {
               inputTokens: Math.max(0, event.inputTokens),
-              inputLimit: Math.max(1, event.inputLimit),
-              compactionThreshold: Math.max(0, event.compactionThreshold),
-              // Carry the window-scale fields through so the client gauge and hover
-              // detail can render them. Omitting these (the prior bug) silently
-              // collapsed the ring to the operating-limit scale and blanked the tooltip.
-              ...(typeof event.contextWindow === "number" ? { contextWindow: event.contextWindow } : {}),
+              contextWindow: Math.max(1, event.contextWindow),
+              hardInputLimit: Math.max(0, event.hardInputLimit),
+              outputReserve: Math.max(0, event.outputReserve),
+              betweenTurnFire: Math.max(0, event.betweenTurnFire),
+              midRunStage1: Math.max(0, event.midRunStage1),
+              midRunStage2: Math.max(0, event.midRunStage2),
+              midRunStage3: Math.max(0, event.midRunStage3),
               ...(typeof event.modelName === "string" ? { modelName: event.modelName } : {}),
-              ...(typeof event.outputReserve === "number" ? { outputReserve: event.outputReserve } : {}),
-              ...(typeof event.compactionTarget === "number" ? { compactionTarget: event.compactionTarget } : {}),
-              ...(typeof event.retentionBudget === "number" ? { retentionBudget: event.retentionBudget } : {}),
             },
           };
         } else {

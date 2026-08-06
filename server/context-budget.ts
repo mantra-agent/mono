@@ -1,5 +1,12 @@
-/** Between-turn fire line: full next input vs this fraction of the provider window. */
-const BETWEEN_TURN_FIRE_FRACTION = 0.3;
+/**
+ * Context-pressure policy has one denominator: the provider context window.
+ * These direct fractions are provisional behavior-preserving altitudes; tuning
+ * changes the values, never the shape of the ladder.
+ */
+export const BETWEEN_TURN_FIRE_FRACTION = 0.3;
+export const MID_RUN_STAGE_1_FRACTION = 0.5;
+export const MID_RUN_STAGE_2_FRACTION = 0.62;
+export const MID_RUN_STAGE_3_FRACTION = 0.77;
 /**
  * Baseline chars→tokens for prose / mixed message content.
  * 4.0 is closer to real BPE density than the prior 3.5 (which ran ~50% hot
@@ -37,6 +44,10 @@ interface TokenEstimateCalibration {
 
 const calibrationCache = new Map<string, TokenEstimateCalibration>();
 
+function normalizedCalibrationModelKey(modelKey: string): string {
+  return modelKey.includes("/") ? modelKey.split("/").slice(1).join("/") : modelKey;
+}
+
 function calibrationSettingKey(modelKey: string): string {
   return `${TOKEN_ESTIMATE_CALIBRATION_SETTING_PREFIX}${modelKey}`;
 }
@@ -59,20 +70,21 @@ export async function applyTokenEstimateCalibration(
 ): Promise<number> {
   const raw = Math.max(0, Math.ceil(rawEstimateTokens || 0));
   if (raw <= 0 || !modelKey) return raw;
-  const cached = calibrationCache.get(modelKey);
+  const normalizedModelKey = normalizedCalibrationModelKey(modelKey);
+  const cached = calibrationCache.get(normalizedModelKey);
   if (cached && cached.samples > 0) {
     return Math.max(1, Math.ceil(raw * cached.ratio));
   }
   try {
     const { getSetting } = await import("./system-settings");
-    const stored = await getSetting<TokenEstimateCalibration>(calibrationSettingKey(modelKey));
+    const stored = await getSetting<TokenEstimateCalibration>(calibrationSettingKey(normalizedModelKey));
     if (stored && typeof stored.ratio === "number" && stored.samples > 0) {
       const entry: TokenEstimateCalibration = {
         ratio: clampCalibrationRatio(stored.ratio),
         samples: stored.samples,
         updatedAt: stored.updatedAt || new Date().toISOString(),
       };
-      calibrationCache.set(modelKey, entry);
+      calibrationCache.set(normalizedModelKey, entry);
       return Math.max(1, Math.ceil(raw * entry.ratio));
     }
   } catch {
@@ -96,8 +108,9 @@ export async function recordTokenEstimateCalibration(
   const actual = Math.max(0, Math.floor(providerActualInputTokens || 0));
   // Ignore tiny samples (noise) and impossible pairs.
   if (raw < 500 || actual < 500) return;
+  const normalizedModelKey = normalizedCalibrationModelKey(modelKey);
   const observed = clampCalibrationRatio(actual / raw);
-  const previous = calibrationCache.get(modelKey);
+  const previous = calibrationCache.get(normalizedModelKey);
   const nextRatio = previous && previous.samples > 0
     ? clampCalibrationRatio(
         (1 - TOKEN_ESTIMATE_CALIBRATION_EMA_ALPHA) * previous.ratio
@@ -109,10 +122,10 @@ export async function recordTokenEstimateCalibration(
     samples: (previous?.samples ?? 0) + 1,
     updatedAt: new Date().toISOString(),
   };
-  calibrationCache.set(modelKey, entry);
+  calibrationCache.set(normalizedModelKey, entry);
   try {
     const { setSetting } = await import("./system-settings");
-    await setSetting(calibrationSettingKey(modelKey), entry);
+    await setSetting(calibrationSettingKey(normalizedModelKey), entry);
   } catch {
     // Persist is best-effort; in-memory ratio still applies for this process.
   }
@@ -128,16 +141,20 @@ const OPERATING_OUTPUT_RESERVE_WINDOW_FRACTION = 0.2;
  * half — the fixed 32k default ceiling does not apply to a deliberate choice.
  */
 const OPERATING_OUTPUT_RESERVE_EXPLICIT_WINDOW_FRACTION = 0.5;
-/** Compaction aims under this fraction of operatingInputLimit so the hard gate has margin. */
-const CONTEXT_COMPACTION_TARGET_FRACTION = 0.92;
+export interface ContextPressureThresholds {
+  betweenTurnFire: number;
+  midRunStage1: number;
+  midRunStage2: number;
+  midRunStage3: number;
+}
 
 export interface ContextRequestBudget {
   contextWindow: number;
   outputReserve: number;
+  /** Provider admission cliff: contextWindow − outputReserve. */
   hardInputLimit: number;
-  operatingInputLimit: number;
-  /** Soft target for mid-run compaction stages (0.92 × operating = hard input). */
-  compactionTarget: number;
+  /** Absolute window-derived policy altitudes used by every server and client consumer. */
+  thresholds: ContextPressureThresholds;
 }
 
 function boundedTokenCount(value: number): number {
@@ -145,14 +162,12 @@ function boundedTokenCount(value: number): number {
 }
 
 /**
- * Single spine for request budget:
+ * Single spine for request pressure:
+ *   every compaction altitude = named fraction × contextWindow
  *   hardInputLimit = contextWindow − outputReserve
- *   operatingInputLimit = hardInputLimit  (no secondary fraction/ceiling clamp)
- *   compactionTarget = 0.92 × operatingInputLimit
  *
- * Mid-run stages hang off compactionTarget. Between-turn fire is a separate
- * rest altitude via getBetweenTurnFireThreshold (0.3 × window on full next input) —
- * not another operating clamp and not a history keep-budget.
+ * Output reserve changes only the provider admission cliff. It never moves the
+ * compaction ladder, whose resolved absolute altitudes are published to clients.
  *
  * `outputReserve` is the caller's max output tokens. When it is an *inherited
  * registry default* (`outputReserveIsExplicit` false), it is clamped by a fixed
@@ -195,41 +210,61 @@ export function getContextRequestBudget(
     0,
     boundedContextWindow - boundedOutputReserve,
   );
-  // Operating ceiling is the hard input cliff. Prior 0.6×window + 128k absolute
-  // clamps double-buffered usable space and forced mid-run compaction far below
-  // real capacity; stages already provide graduated pressure response.
-  const operatingInputLimit = hardInputLimit;
-  const compactionTarget = Math.min(
-    operatingInputLimit,
-    Math.floor(operatingInputLimit * CONTEXT_COMPACTION_TARGET_FRACTION),
-  );
+  const thresholds = getContextPressureThresholds(boundedContextWindow);
 
   return {
     contextWindow: boundedContextWindow,
     outputReserve: boundedOutputReserve,
     hardInputLimit,
-    operatingInputLimit,
-    compactionTarget,
+    thresholds,
   };
 }
 
-/**
- * Between-turn fire threshold: 30% of the true provider context window.
- * Measurand is full next input (history + spine + tools + …). Crossing this
- * triggers durable compaction; landing is minimum viable live context — not
- * "pack history up to this budget."
- */
-export function getBetweenTurnFireThreshold(contextWindow: number): number {
-  const budget = getContextRequestBudget(contextWindow);
-  return Math.min(
-    Math.floor(budget.contextWindow * BETWEEN_TURN_FIRE_FRACTION),
-    budget.operatingInputLimit,
-  );
+export function getContextPressureThresholds(
+  contextWindow: number,
+): ContextPressureThresholds {
+  const window = boundedTokenCount(contextWindow);
+  return {
+    betweenTurnFire: Math.floor(window * BETWEEN_TURN_FIRE_FRACTION),
+    midRunStage1: Math.floor(window * MID_RUN_STAGE_1_FRACTION),
+    midRunStage2: Math.floor(window * MID_RUN_STAGE_2_FRACTION),
+    midRunStage3: Math.floor(window * MID_RUN_STAGE_3_FRACTION),
+  };
 }
 
-/** @deprecated Use getBetweenTurnFireThreshold — retention-as-history-budget is gone. */
-export function getConversationRetentionBudget(contextWindow: number): number {
-  return getBetweenTurnFireThreshold(contextWindow);
+/** Between-turn fire is exactly its named fraction of the provider window. */
+export function getBetweenTurnFireThreshold(contextWindow: number): number {
+  return getContextPressureThresholds(contextWindow).betweenTurnFire;
+}
+
+export function estimateMessageInputTokens(message: {
+  content: unknown;
+}): number {
+  if (typeof message.content === "string") {
+    return estimateTokensFromChars(message.content.length, "prose");
+  }
+  if (!Array.isArray(message.content)) return 0;
+  return message.content.reduce((sum: number, block: any) => {
+    if (
+      block &&
+      typeof block === "object" &&
+      (block.type === "tool_use" || block.type === "tool_result" || block.input != null)
+    ) {
+      const payload = block.input != null ? block.input : block;
+      return sum + estimateTokensFromChars(JSON.stringify(payload).length, "json");
+    }
+    const text = block?.text || block?.thinking || block?.content || "";
+    if (typeof text === "string" && text.length > 0) {
+      return sum + estimateTokensFromChars(text.length, "prose");
+    }
+    return sum + estimateTokensFromChars(JSON.stringify(block || {}).length, "json");
+  }, 0);
+}
+
+export function estimateMessagesInputTokens(
+  messages: readonly { content: unknown }[],
+): number {
+  return messages.reduce((sum, message) => sum + estimateMessageInputTokens(message), 0);
 }
 
 export function estimateToolDefinitionTokens(
@@ -240,19 +275,19 @@ export function estimateToolDefinitionTokens(
   return estimateTokensFromChars(JSON.stringify(tools).length, "json");
 }
 
-export class ContextOperatingBudgetExceededError extends Error {
-  readonly code = "CONTEXT_OPERATING_BUDGET_EXCEEDED";
+export class ContextHardLimitExceededError extends Error {
+  readonly code = "CONTEXT_HARD_LIMIT_EXCEEDED";
   readonly estimatedInputTokens: number;
   readonly budget: ContextRequestBudget;
 
   constructor(estimatedInputTokens: number, budget: ContextRequestBudget) {
     super(
       `The assembled request remains too large after context compression ` +
-      `(estimated ${estimatedInputTokens.toLocaleString()} tokens; operating budget ` +
-      `${budget.operatingInputLimit.toLocaleString()} tokens; compaction target ` +
-      `${budget.compactionTarget.toLocaleString()} tokens).`,
+      `(estimated ${estimatedInputTokens.toLocaleString()} tokens; hard input limit ` +
+      `${budget.hardInputLimit.toLocaleString()} tokens; stage 3 ` +
+      `${budget.thresholds.midRunStage3.toLocaleString()} tokens).`,
     );
-    this.name = "ContextOperatingBudgetExceededError";
+    this.name = "ContextHardLimitExceededError";
     this.estimatedInputTokens = estimatedInputTokens;
     this.budget = budget;
   }
