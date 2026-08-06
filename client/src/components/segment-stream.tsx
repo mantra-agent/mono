@@ -34,6 +34,8 @@ type RenderSegment =
   | { type: "content"; content: string; sourceIndexes: number[] }
   | { type: "timeline"; segment: Extract<MessageSegment, { type: "timeline" }>; sourceIndexes: number[] };
 
+const identityStepFilter = (steps: ExecutionStep[]) => steps;
+
 function stepOwnsActiveStatus(step: Extract<MessageSegment, { type: "timeline" }>["steps"][number]): boolean {
   if (step.status !== "active") return false;
   if (step.type === "thinking" || step.type === "tool_call") return true;
@@ -131,9 +133,21 @@ export function SegmentStream({
   filterVisibleSteps,
   getThinkingStartTime,
 }: SegmentStreamProps) {
+  const safeFilterVisibleSteps = typeof filterVisibleSteps === "function"
+    ? filterVisibleSteps
+    : identityStepFilter;
+
+  if (typeof filterVisibleSteps !== "function") {
+    log.error("SEGMENT_STREAM:FILTER_NOT_CALLABLE", {
+      receivedType: typeof filterVisibleSteps,
+      segmentCount: segments.length,
+      timelineSegmentCount: segments.filter((segment) => segment.type === "timeline").length,
+    });
+  }
+
   const renderSegments = useMemo(
-    () => normalizeRenderSegments(segments, layer, isStreaming, filterVisibleSteps),
-    [segments, isStreaming, layer, filterVisibleSteps],
+    () => normalizeRenderSegments(segments, layer, isStreaming, safeFilterVisibleSteps),
+    [segments, isStreaming, layer, safeFilterVisibleSteps],
   );
   const graphSteps = useMemo(() => {
     const byId = new Map<string, Extract<MessageSegment, { type: "timeline" }>["steps"][number]>();
