@@ -1,6 +1,6 @@
 // Use createLogger for logging ONLY
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { useQuery, useMutation, useQueries } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("Integrations");
@@ -2243,15 +2243,50 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
     return !bound?.vaultId || account.healthy === false || missingScopes.length > 0 || Boolean(account.scopes && !account.scopes.hasGmailRead);
   });
 
+  const refreshGoogleQueries = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/gmail/status"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/setup/secrets-status"] });
+  }, [queryClient]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { type?: string; status?: string } | null;
+      if (!data || data.type !== "mantra:google-oauth") return;
+      refreshGoogleQueries();
+      if (data.status === "connected") {
+        setShowAddForm(false);
+        toast({ title: "Google account connected" });
+      }
+    };
+    const onFocus = () => refreshGoogleQueries();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshGoogleQueries();
+    };
+    window.addEventListener("message", onMessage);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [refreshGoogleQueries, toast]);
+
   const startOAuth = async (vaultId: string, accountId?: string) => {
     try {
+      // Reauth and first-time connect both mint a full-scope consent URL
+      // (drive.file included). createConnectedAccountInVault upserts by
+      // provider+email, so re-consent updates the existing account scopes.
       const res = await apiRequest("POST", "/api/gmail/accounts/add", { vaultId });
       const data = await res.json();
       if (data.url) {
-        window.open(data.url, "_blank", "width=500,height=700");
-        setTimeout(() => {
-          queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/setup/secrets-status"] });
+        window.open(data.url, "mantra-google-oauth", "width=500,height=700");
+        // Fallback if the popup cannot postMessage (opener severed).
+        window.setTimeout(() => {
+          refreshGoogleQueries();
           if (!accountId) setShowAddForm(false);
         }, 5000);
       }
@@ -2388,11 +2423,26 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
                         <SelectTrigger className="w-48" aria-label="Select Vault"><SelectValue placeholder="Select Vault" /></SelectTrigger>
                         <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
                       </Select>
-                      <Button disabled={!selectedVaultId} onClick={async () => {
-                        await apiRequest("PUT", `/api/connected-accounts/${permAccount.accountId}/vault`, { vaultId: selectedVaultId });
-                        queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
-                        queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
-                      }}>Assign Vault</Button>
+                      <Button
+                        disabled={!selectedVaultId}
+                        data-testid={`button-assign-google-vault-${account.id}`}
+                        onClick={async () => {
+                          try {
+                            await apiRequest("PUT", `/api/connected-accounts/${permAccount.accountId}/vault`, {
+                              vaultId: selectedVaultId,
+                            });
+                            queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
+                            queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
+                            queryClient.invalidateQueries({ queryKey: ["/api/gmail/status"] });
+                            toast({ title: "Vault assigned" });
+                          } catch (error) {
+                            const message = error instanceof Error ? error.message : "Unknown error";
+                            toast({ title: "Failed to assign vault", description: message, variant: "destructive" });
+                          }
+                        }}
+                      >
+                        Assign Vault
+                      </Button>
                     </div>
                   </div>
                 ) : null}
@@ -2459,6 +2509,8 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
 }
 
 function GoogleDetail() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data: gmailStatus, isLoading } = useQuery<{
     oauthConfigured: boolean;
     drivePickerConfigured?: boolean;
@@ -2471,14 +2523,50 @@ function GoogleDetail() {
     queryKey: ["/api/gmail/accounts"],
     enabled: Boolean(gmailStatus?.oauthConfigured),
   });
+  const { data: permsData } = useQuery<{
+    accounts: Array<{ accountId: string; provider: string; email: string; vaultId: string | null }>;
+  }>({
+    queryKey: ["/api/connected-accounts", "google"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/connected-accounts?provider=google");
+      return res.json();
+    },
+    enabled: Boolean(gmailStatus?.oauthConfigured),
+  });
   const { activeVaultId } = useVaults();
   const oauthConfigured = Boolean(gmailStatus?.oauthConfigured);
   const driveAccount = googleAccountsData?.accounts?.find((account) => account.scopes?.hasDrive)
     ?? googleAccountsData?.accounts?.[0];
-  const reconnectGoogle = useCallback(() => {
+  const reconnectGoogle = useCallback(async () => {
     if (!driveAccount) return;
-    window.location.href = `/api/auth/google?accountId=${encodeURIComponent(driveAccount.id)}`;
-  }, [driveAccount]);
+    const bound = permsData?.accounts?.find(
+      (candidate) => candidate.provider === "google" && candidate.accountId === driveAccount.id,
+    ) ?? permsData?.accounts?.find((candidate) => candidate.provider === "google" && candidate.vaultId);
+    const vaultId = bound?.vaultId || activeVaultId;
+    if (!vaultId) {
+      toast({
+        title: "Vault required",
+        description: "Assign this Google account to a Vault before reconnecting Drive.",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      const res = await apiRequest("POST", "/api/gmail/accounts/add", { vaultId });
+      const data = await res.json();
+      if (data.url) {
+        window.open(data.url, "mantra-google-oauth", "width=500,height=700");
+        window.setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/gmail/accounts"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/gmail/status"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/connected-accounts", "google"] });
+        }, 5000);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      toast({ title: "Failed to start re-authorization", description: message, variant: "destructive" });
+    }
+  }, [activeVaultId, driveAccount, permsData?.accounts, queryClient, toast]);
 
   if (isLoading) {
     return (

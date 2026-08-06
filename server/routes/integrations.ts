@@ -155,9 +155,29 @@ export async function registerIntegrationsRoutes(app: Express) {
       const { handleAccountOAuthCallback } = await import("../gmail");
       const originHost = req.get("host") || undefined;
       const account = await handleAccountOAuthCallback(code, stateRaw, req.principal, originHost);
-      res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Account Connected</h2><p><strong>${account.email}</strong> (${account.label})</p><p>You can close this tab.</p><script>setTimeout(()=>window.close(),3000)</script></body></html>`);
+      const email = String(account.email || "").replace(/[<>&"']/g, "");
+      const label = String(account.label || "").replace(/[<>&"']/g, "");
+      res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Account Connected</h2><p><strong>${email}</strong> (${label})</p><p>You can close this tab.</p><script>
+(function () {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({ type: "mantra:google-oauth", status: "connected" }, window.location.origin);
+    }
+  } catch (e) {}
+  setTimeout(function () { window.close(); }, 1200);
+})();
+</script></body></html>`);
     } catch (error: any) {
-      res.status(500).send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Authorization Failed</h2><p>${error.message}</p></body></html>`);
+      const message = String(error?.message || "Authorization failed").replace(/[<>&"']/g, "");
+      res.status(500).send(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0a0a0a;color:#e0e0e0"><h2>Authorization Failed</h2><p>${message}</p><script>
+(function () {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({ type: "mantra:google-oauth", status: "failed" }, window.location.origin);
+    }
+  } catch (e) {}
+})();
+</script></body></html>`);
     }
   });
 
