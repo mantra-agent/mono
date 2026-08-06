@@ -2188,7 +2188,12 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
   const [selectedVaultId, setSelectedVaultId] = useState("");
   const [accountPendingRemoval, setAccountPendingRemoval] = useState<{ id: string; email: string } | null>(null);
   const [removalConfirmation, setRemovalConfirmation] = useState("");
-  const { vaults } = useVaults();
+  const { vaults, activeVaultId } = useVaults();
+
+  const openAddForm = () => {
+    setSelectedVaultId(activeVaultId || "");
+    setShowAddForm(true);
+  };
 
   const { data: accountsData, isLoading } = useQuery<{
     accounts: Array<{
@@ -2265,40 +2270,36 @@ function GoogleAccountsSection({ oauthConfigured }: { oauthConfigured: boolean }
   return (
     <>
       {oauthConfigured ? (
-        showAddForm ? (
-          <IntegrationTreeSection label="New account" initialOpen testIdPrefix="google-new">
-            <ProfileTreeRow
-              label={<span>Vault</span>}
-              icon={<Shield className="h-3.5 w-3.5" />}
-              hasValue={Boolean(selectedVaultId)}
-              showEmpty
-              mobileLayout="inline"
-              testId="row-new-google-account-vault"
-            >
-              <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
-                <SelectTrigger data-testid="select-google-account-vault" className="w-48" aria-label="Select account Vault"><SelectValue placeholder="Select Vault" /></SelectTrigger>
-                <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </ProfileTreeRow>
-            <div className="flex flex-wrap items-center gap-2 px-2 py-1.5">
-              <Button disabled={!selectedVaultId} onClick={() => startOAuth(selectedVaultId)} data-testid="button-connect-google-account">Connect to Vault</Button>
-              <Button variant="ghost" size="sm" onClick={() => setShowAddForm(false)}>Cancel</Button>
-            </div>
-          </IntegrationTreeSection>
-        ) : (
-          <div className="px-2 py-1">
-            <button
-              type="button"
-              onClick={() => setShowAddForm(true)}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
-              data-testid="button-add-google-account"
-            >
-              <Plus className="h-3.5 w-3.5 shrink-0" />
-              <span>New Account</span>
-            </button>
-          </div>
-        )
+        <div className="px-2 py-1">
+          <button
+            type="button"
+            onClick={openAddForm}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-cta transition-colors hover:bg-accent/70 hover:text-cta/80"
+            data-testid="button-add-google-account"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>New Account</span>
+          </button>
+        </div>
       ) : null}
+      <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Connect a Google account</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="google-account-vault">Vault</Label>
+            <Select value={selectedVaultId} onValueChange={setSelectedVaultId}>
+              <SelectTrigger id="google-account-vault" data-testid="select-google-account-vault" aria-label="Select account Vault"><SelectValue placeholder="Select Vault" /></SelectTrigger>
+              <SelectContent>{vaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowAddForm(false)}>Cancel</Button>
+            <Button disabled={!selectedVaultId} onClick={() => startOAuth(selectedVaultId)} data-testid="button-connect-google-account">Connect to Google</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {!oauthConfigured ? (
         <p className="px-2 py-1.5 text-sm text-muted-foreground" data-testid="text-google-oauth-required">
           Add the Google client ID and client secret under Credentials before connecting an account.
