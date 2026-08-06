@@ -3384,7 +3384,7 @@ function DeepgramDetail() {
     onSuccess: (result) => { queryClient.setQueryData(["/api/integrations/deepgram/status"], result); toast({ title: result.connected ? "Deepgram connected" : "Deepgram connection failed", description: result.connected ? "Nova-3 streaming credentials verified." : result.error, variant: result.connected ? "default" : "destructive" }); },
     onError: (error: Error) => toast({ title: "Deepgram connection test failed", description: error.message, variant: "destructive" }),
   });
-  return <div className="min-w-0 space-y-2"><IntegrationTreeSection label="Connection" initialOpen={!status?.connected}><ProviderConnectionRow provider="deepgram" connected={Boolean(status?.connected)} error={status?.error} pending={test.isPending} onTest={() => test.mutate()} /></IntegrationTreeSection><IntegrationTreeSection label="Credentials" initialOpen={!status?.hasApiKey}><div className="min-w-0 px-2 py-1.5"><SecretsForSection section="deepgram" /></div></IntegrationTreeSection></div>;
+  return <div className="min-w-0 space-y-2"><IntegrationTreeSection label="Connection" initialOpen={!status?.connected}><ProviderConnectionRow provider="deepgram" connected={Boolean(status?.connected)} error={status?.error} pending={test.isPending} onTest={() => test.mutate()} /></IntegrationTreeSection></div>;
 }
 
 function SentryDetail() {
@@ -3401,7 +3401,7 @@ function SentryDetail() {
           <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
             Add these values to activate mobile crash reporting and symbolicated stack traces. Build &gt; Mobile reads this same setup status, so Sentry will stay visibly inactive until the required keys are present.
           </div>
-          <SecretsForSection section="sentry" />
+          <p className="text-sm text-muted-foreground">Manage these keys on the Secrets page.</p>
           <div className="grid gap-2 text-xs text-muted-foreground @md:grid-cols-2">
             <div className="rounded-lg border p-3">
               <div className="font-medium text-foreground">Mobile app runtime</div>
@@ -3560,7 +3560,7 @@ function ExpoDetail() {
           <CardTitle className="text-base font-semibold">Expo Access Token</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <SecretsForSection section="expo" />
+          <p className="text-sm text-muted-foreground">Manage the Expo access token on the Secrets page.</p>
           <p className="text-xs text-muted-foreground">
             Create a token at{" "}
             <a href="https://expo.dev/settings/access-tokens" target="_blank" rel="noopener noreferrer" className="underline text-primary">
@@ -5875,7 +5875,7 @@ function SendGridDetail() {
               </p>
             </>
           )}
-          <SecretsForSection section="sendgrid" />
+          <p className="text-sm text-muted-foreground">Manage the SendGrid API key and sender on the Secrets page.</p>
         </CardContent>
       </Card>
 
@@ -6375,8 +6375,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
         <Card className="overflow-hidden min-w-0" data-testid="card-secret-cartesia">
           <CardHeader><CardTitle className="text-base font-semibold">Cartesia meeting speech</CardTitle></CardHeader>
           <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground">Primary low-latency voice for answers spoken into live meetings. ElevenLabs is used automatically when Cartesia fails or is not configured.</p>
-            <SecretsForSection section="cartesia" />
+            <p className="text-sm text-muted-foreground">Primary low-latency voice for answers spoken into live meetings. ElevenLabs is used automatically when Cartesia fails or is not configured. Manage the API key and voice ID on the Secrets page.</p>
           </CardContent>
         </Card>
       )}
@@ -6445,7 +6444,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
               <CardTitle className="text-base font-semibold">Brave Search</CardTitle>
             </CardHeader>
             <CardContent>
-              <SecretsForSection section="brave" />
+              <p className="text-sm text-muted-foreground">Manage the Brave Search API key on the Secrets page.</p>
             </CardContent>
           </Card>
         </div>
