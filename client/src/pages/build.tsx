@@ -109,6 +109,8 @@ import {
 } from "@/components/ui/tooltip";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -4717,6 +4719,54 @@ export function DesignTab() {
                 Plain text for config values, scores, and parameters.
               </p>
             </div>
+          </div>
+
+          <div className="mt-8 min-w-0 border-t border-border/15 pt-6">
+            <div className="mb-1 text-sm font-medium">Edit fields</div>
+            <p className="mb-3 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+              Settings, secrets, credentials, and object detail are TreeView rows — never cards.
+              Label on the left, the value or an inline input right-aligned, and any
+              rotate/clear/destructive action in the hover overflow menu. Compose{" "}
+              <span className="font-mono text-foreground">ProfileDetailSection</span> with{" "}
+              <span className="font-mono text-foreground">ProfileTreeRow</span>; this is the same
+              pattern the environment SOURCE section and the Secrets screen use.
+            </p>
+            <div className="max-w-xl">
+              <ProfileDetailSection title="Example provider" defaultOpen testId="design-editfields-demo">
+                <ProfileTreeRow label="Client ID" hasValue showEmpty>
+                  <span className="font-mono text-xs text-muted-foreground">••••4821</span>
+                </ProfileTreeRow>
+                <ProfileTreeRow label="Display name" hasValue showEmpty>
+                  <Input
+                    defaultValue="Mantra Web"
+                    className="h-5 w-48 bg-muted/50 px-1.5 py-0 text-right text-xs"
+                  />
+                </ProfileTreeRow>
+                <ProfileTreeRow
+                  label="API secret"
+                  hasValue
+                  showEmpty
+                  menuVisibility="hover"
+                  menuContent={
+                    <>
+                      <DropdownMenuItem>Rotate</DropdownMenuItem>
+                      <DropdownMenuItem className="text-destructive focus:text-destructive">
+                        Clear
+                      </DropdownMenuItem>
+                    </>
+                  }
+                >
+                  <span className="font-mono text-xs text-muted-foreground">••••e2f9</span>
+                </ProfileTreeRow>
+                <ProfileTreeRow label="Enabled" hasValue showEmpty>
+                  <Switch defaultChecked />
+                </ProfileTreeRow>
+              </ProfileDetailSection>
+            </div>
+            <p className="mt-3 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+              Do not wrap editable settings in <span className="font-mono">bg-card</span> boxes or
+              standalone Input/Button forms. Cards are for modals, not settings.
+            </p>
           </div>
         </DesignSection>
 
