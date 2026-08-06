@@ -334,7 +334,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "GPT-5.4 Mini",
     provider: "openai",
     cost: { input: 0.0000008, output: 0.0000048, cacheRead: 0.0000004, cacheWrite: 0 },
-    contextWindow: 1050000,
+    contextWindow: 400000, // OpenAI docs (gpt-5.4-mini-2026-03-17): 400k total = 272k max input + 128k max output. The 1.05M window applies only to full GPT-5.4 / 5.4 Pro (opt-in), never mini.
     maxOutputTokens: 128000,
     reasoning: true,
     thinking: { level: "basic", description: "GPT-5.4 mini reasoning model", selectableEffort: true },
@@ -434,7 +434,7 @@ const REGISTRY: Record<string, ModelInfo> = {
     name: "GPT-5.4 Mini (Subscription)",
     provider: "openai-subscription",
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 1050000,
+    contextWindow: 400000, // Codex subscription rides gpt-5.4-mini: OpenAI docs cap it at 400k total (272k input + 128k output). Not 1.05M.
     maxOutputTokens: 128000,
     reasoning: true,
     thinking: { level: "basic", description: "GPT-5.4 mini subscription reasoning via Codex/Work access", selectableEffort: true },
