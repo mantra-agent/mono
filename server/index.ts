@@ -18,7 +18,6 @@ import { ensureGrokSubscriptionConnector, migrateLegacyModelProfiles } from "./m
 import { spawn } from "child_process";
 import { resolve as resolvePath } from "path";
 import { createLogger } from "./log";
-import { captureApplicationError } from "./error-telemetry";
 import { bootTracker, registerBootStatusRoute } from "./boot-tracker";
 import { runSchemaBootstrap } from "./schema-bootstrap";
 import { isRecoverablePostgresConnectionError } from "./postgres-errors";
@@ -547,7 +546,6 @@ app.use((req, res, next) => {
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    if (status >= 500) void captureApplicationError(err);
     const message = status >= 500 ? "Internal Server Error" : (err.message || "Request failed");
 
     serverLog.error("Internal Server Error:", err);

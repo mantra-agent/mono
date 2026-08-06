@@ -1,10 +1,21 @@
 // Use createLogger for logging ONLY — do not use console.log/warn/error directly anywhere in the codebase
 
+interface ErrorAggregateProjection {
+  deliveryId: string;
+  logger: string;
+  errorName?: string;
+  errorCode?: string;
+  sourceFile?: string;
+  sourceLine?: number;
+  sourceSite?: string;
+}
+
 interface LogEntry {
   level: string;
   source: string;
   message: string;
   ts: number;
+  aggregate?: ErrorAggregateProjection;
 }
 
 let pendingLogs: LogEntry[] = [];
@@ -21,22 +32,31 @@ function scheduleFlush() {
   flushTimer = setTimeout(flushLogs, FLUSH_INTERVAL_MS);
 }
 
-async function flushLogs() {
+function deliverLogs(batch: LogEntry[], exiting = false): void {
+  const body = JSON.stringify({ entries: batch });
+  if (exiting && typeof navigator !== "undefined" && navigator.sendBeacon) {
+    try {
+      if (navigator.sendBeacon("/api/client-logs", new Blob([body], { type: "application/json" }))) return;
+    } catch {}
+  }
+  void fetch("/api/client-logs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: exiting,
+  }).catch(() => {});
+}
+
+function flushLogs(exiting = false) {
   flushTimer = null;
   if (pendingLogs.length === 0) return;
-
   const batch = pendingLogs.splice(0, MAX_BATCH_SIZE);
-  if (pendingLogs.length > 0) scheduleFlush();
+  if (pendingLogs.length > 0 && !exiting) scheduleFlush();
+  deliverLogs(batch, exiting);
+}
 
-  try {
-    await fetch("/api/client-logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entries: batch }),
-    });
-  } catch {
-    // silently drop if server unreachable
-  }
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => flushLogs(true));
 }
 
 function shouldShip(level: string): boolean {
@@ -129,10 +149,23 @@ export function initializeDiagnosticLogging(): Promise<void> {
 
 export function createLogger(module: string) {
   const prefix = `[${module}]`;
-  function ship(level: string, message: string) {
+  function ship(level: string, message: string, args: unknown[] = []) {
     if (!shouldShip(level)) return;
     if (pendingLogs.length >= MAX_PENDING_LOGS) pendingLogs.shift();
-    pendingLogs.push({ level, source: module, message: message.slice(0, MAX_LOG_MESSAGE_CHARS), ts: Date.now() });
+    const entry: LogEntry = { level, source: module, message: message.slice(0, MAX_LOG_MESSAGE_CHARS), ts: Date.now() };
+    if (level === "error") {
+      const errorArg = args.find((arg) => arg instanceof Error) as Error | undefined
+        ?? args.map((arg) => arg && typeof arg === "object" ? (arg as { error?: unknown }).error : undefined)
+          .find((value) => value instanceof Error) as Error | undefined;
+      const code = errorArg && "code" in errorArg ? String((errorArg as Error & { code?: unknown }).code ?? "") : undefined;
+      entry.aggregate = {
+        deliveryId: crypto.randomUUID(),
+        logger: module,
+        errorName: errorArg?.name,
+        errorCode: code,
+      };
+    }
+    pendingLogs.push(entry);
     scheduleFlush();
   }
 
@@ -162,7 +195,7 @@ export function createLogger(module: string) {
     },
     error: (...args: unknown[]) => {
       console.error(prefix, ...args);
-      ship("error", formatArgs(args));
+      ship("error", formatArgs(args), args);
     },
   };
 }

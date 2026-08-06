@@ -504,6 +504,21 @@ export function createLogger(module: string) {
     bufferLog(sinkLevel, msg, module);
     appendToLogFile(sinkLevel, module, msg);
     sink?.({ level: sinkLevel, message: msg, source: module });
+    if (sinkLevel === "error" && module !== "TelemetryWrite") {
+      void import("./error-telemetry")
+        .then(({ enqueueApplicationErrorProjection }) => {
+          const errorArg = args.find((arg) => arg instanceof Error) as Error | undefined
+            ?? args.map((arg) => arg && typeof arg === "object" ? (arg as { error?: unknown }).error : undefined)
+              .find((value) => value instanceof Error) as Error | undefined;
+          const code = errorArg && "code" in errorArg ? String((errorArg as Error & { code?: unknown }).code ?? "") : undefined;
+          enqueueApplicationErrorProjection({
+            logger: module,
+            errorName: errorArg?.name,
+            errorCode: code,
+          });
+        })
+        .catch(() => {});
+    }
   };
   const info = (...args: unknown[]) => {
     write((...line) => console.log(...line), "info", args);

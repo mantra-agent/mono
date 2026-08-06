@@ -4,8 +4,14 @@
 - Threats: STRIDE spoofing/tampering and supply-chain script compromise could execute third-party code in the signed-in browser context; an overbroad Google wildcard would unnecessarily increase that blast radius.
 - Controls/owner: Core Application Platform owns the composition-root CSP. `script-src` permits the exact `https://apis.google.com` origin required by Picker, with no wildcard or relaxation of `object-src`, `frame-ancestors`, `form-action`, or other directives. The Picker API key remains HTTP-referrer/API restricted and OAuth remains independently scope-gated.
 - Evidence: confirmed client telemetry `client:DriveSection` reported `Google API script failed to load`; `server/index.ts` previously allowed only self/inline/blob scripts while `client/src/components/integrations/drive-section.tsx` loads the official Google API URL. Google Workspace's maintained Picker CSP guidance names `https://apis.google.com` as the required script origin. Production build is the release gate.
-- Severity/owner/SLA/status: medium; Core Application Platform; immediate; repaired in source pending build, merge, deployment, and authenticated Picker acceptance.
-- Residual risk: trusting Google's loader gives that origin script execution authority in the SPA; this is bounded to the exact origin but cannot eliminate upstream supply-chain risk. Runtime acceptance must confirm Picker's transitive resources do not require a narrower additional directive.
+- Severity/owner/SLA/status: medium; Core Application Platform; immediate; repaired in source pending build, merge, deployment, and authenticated Drive verification. Residual risk is the intrinsic trust placed in Google's loader within the authenticated browser context. -->
+
+<!-- 2026-08-06 Canonical createLogger error aggregation correction:
+- Boundary/owner: Core Reliability now derives one bounded aggregate projection at the canonical client and server `createLogger` error-emission boundary; the former Express 5xx producer is removed to prevent duplicate counting. Browser projections travel only through the authenticated, rate-limited `/api/client-logs` route; server projections use the shared telemetry-write lane.
+- Stored data: normalized logger/source, error class and allowlisted code identity, and bounded safe file/line/site when available. Raw messages, stacks, context, URLs, identities, headers, secrets, user content, and arbitrary metadata remain ordinary ephemeral/file logs only and never enter `application_error_aggregates` or its replay ledger.
+- Threats/controls: deterministic allowlists and length bounds reduce STRIDE information disclosure and attacker-controlled cardinality; UUID delivery claims make beacon/keepalive retries replay-safe; fingerprint upserts group repeated identical crashes; aggregation failure is best-effort and excludes TelemetryWrite logger errors to prevent recursion.
+- Evidence: `client/src/lib/logger.ts`, authenticated ingestion in `server/routes/system.ts`, `server/log.ts`, `server/error-telemetry.ts`, and existing admin-gated Issues Errors API/tool.
+- Residual limitations: errors never emitted through `createLogger` are intentionally outside this contract; browser source file/line/site are unavailable unless safely derived at the logger boundary; delivery can still be lost on abrupt process/browser termination or telemetry-lane overflow.
 -->
 
 <!-- 2026-08-05 Privacy-safe proactive error telemetry delta:
@@ -1113,12 +1119,6 @@ A03 durable orchestration state, A04 autonomous mutation authority, and A08 avai
 **Closed in source.** `child-session-monitor.ts` is the single abort-and-confirm boundary: it waits through the executor's bounded drain budget until no matching active run remains, serializes monitor settlement, and returns `termination_unconfirmed` when liveness cannot be disproven. Plans pause and Workflows block without retry on that outcome. Plan automatic retry, manual resume, and abandoned-child closure reuse the same fence. Principal, Plan lease, attempt ownership, and tool authorization are unchanged.
 
 Controls: AGENT-04, OBS-01, DATA-01, REC-02. Owner: Agent Runtime / Orchestration. Severity: high. Rollback is the merged PR revert. Residual risk: an uncooperative child can force a fail-closed pause/block requiring later recovery, but cannot authorize an overlapping retry.
-
-## 11.21 Business Plan ownership and slot assignment, August 6, 2026
-
-A01/A02/S2 Business Plans cross F04/F05 and B06/B11 because a Plan contains strategic Goal, Project, and KPI identifiers and can move between Vaults. Credible abuse cases are assigning another account's object by ID, moving a Plan into a hidden or foreign Vault, or reading/updating a Plan outside the current principal's visible Vault set (STRIDE: information disclosure, tampering, elevation of privilege).
-
-**Closed in source.** `business_plans` carries non-null owner, account, scope, and Vault columns. `server/business-plan-storage.ts` is the sole ordinary mutation boundary: every list/update query composes principal and visible-Vault predicates; every insert stamps canonical ownership; Vault moves require a live, same-account, currently visible Vault; and Goal, Project, and KPI slot assignments are resolved through their principal-scoped domain boundaries before persistence. Routes remain behind the Business Mod's authentication gate and named `system:read` / `system:write` permissions. Controls: DATA-01, DATA-04, AUTHZ-01, AGENT-03. Owner: Business / Planning. Severity: high if bypassed; closed in source on August 6, 2026. Rollback is the merged PR revert. Residual risk: the schema converges through additive ordered-boot DDL rather than a transactional migration runner, consistent with the repository's current distributed schema model.
 
 ## 11.20 Metrics/KPI default reconciliation vault scope, August 5, 2026
 
