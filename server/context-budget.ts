@@ -1,5 +1,3 @@
-const CONTEXT_OPERATING_INPUT_FRACTION = 0.6;
-const CONTEXT_OPERATING_INPUT_TOKEN_CEILING = 128_000;
 const CONVERSATION_RETENTION_FRACTION = 0.3;
 const CONVERSATION_RETENTION_TOKEN_CEILING = 100_000;
 /**
@@ -138,7 +136,7 @@ export interface ContextRequestBudget {
   outputReserve: number;
   hardInputLimit: number;
   operatingInputLimit: number;
-  /** Soft target for mid-run compaction stages; always ≤ operatingInputLimit. */
+  /** Soft target for mid-run compaction stages (0.92 × operating = hard input). */
   compactionTarget: number;
 }
 
@@ -147,10 +145,13 @@ function boundedTokenCount(value: number): number {
 }
 
 /**
- * Provider context capacity is a hard safety boundary, not the ordinary
- * operating target. Keep routine requests inside a smaller, model-relative
- * budget with a stable ceiling so larger advertised windows cannot silently
- * inflate latency, cost, or compaction thresholds.
+ * Single spine for request budget:
+ *   hardInputLimit = contextWindow − outputReserve
+ *   operatingInputLimit = hardInputLimit  (no secondary fraction/ceiling clamp)
+ *   compactionTarget = 0.92 × operatingInputLimit
+ *
+ * Mid-run stages hang off compactionTarget. Between-turn retention is a separate
+ * rest floor via getConversationRetentionBudget — not another operating clamp.
  *
  * `outputReserve` is the caller's max output tokens. When it is an *inherited
  * registry default* (`outputReserveIsExplicit` false), it is clamped by a fixed
@@ -193,11 +194,10 @@ export function getContextRequestBudget(
     0,
     boundedContextWindow - boundedOutputReserve,
   );
-  const operatingInputLimit = Math.min(
-    Math.floor(boundedContextWindow * CONTEXT_OPERATING_INPUT_FRACTION),
-    CONTEXT_OPERATING_INPUT_TOKEN_CEILING,
-    hardInputLimit,
-  );
+  // Operating ceiling is the hard input cliff. Prior 0.6×window + 128k absolute
+  // clamps double-buffered usable space and forced mid-run compaction far below
+  // real capacity; stages already provide graduated pressure response.
+  const operatingInputLimit = hardInputLimit;
   const compactionTarget = Math.min(
     operatingInputLimit,
     Math.floor(operatingInputLimit * CONTEXT_COMPACTION_TARGET_FRACTION),
