@@ -143,7 +143,15 @@ export default function BusinessAdvantagePage() {
     },
   });
   const projectsQuery = useQuery<ProjectRow[]>({ queryKey: ["/api/projects/projects"] });
-  const kpisQuery = useQuery<Kpi[]>({ queryKey: ["/api/business/kpis"] });
+  const kpisQuery = useQuery<Kpi[]>({
+    queryKey: ["/api/business/kpis"],
+    queryFn: async () => {
+      const response = await fetch("/api/business/kpis", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to load KPIs");
+      const payload = await response.json() as Kpi[] | { kpis?: Kpi[] };
+      return Array.isArray(payload) ? payload : payload.kpis ?? [];
+    },
+  });
 
   const plans = plansQuery.data ?? [];
   const plan = plans.find((candidate) => candidate.id === selectedPlanId) ?? plans[0];
