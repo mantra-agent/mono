@@ -947,6 +947,19 @@ export async function searchCodebase(query: string): Promise<{
   // Tokenize query for better lexical matching — each word matched independently
   const tokens = query.trim().split(/\s+/).filter(t => t.length >= 2).map(t => t.replace(/\\/g, "\\\\").replace(/'/g, "\\'"));
   const perType = 5;
+  const normalizedTokens = tokens.map(t => t.toLowerCase());
+  const exactMatchScore = (result: { name?: string; filePath?: string }): number => {
+    const name = (result.name ?? "").toLowerCase();
+    const filePath = (result.filePath ?? "").toLowerCase();
+    const fileName = filePath.split("/").pop() ?? "";
+
+    return normalizedTokens.reduce((score, token) => {
+      if (name === token) return Math.max(score, 3);
+      if (fileName === token || fileName === `${token}.ts` || fileName === `${token}.tsx`) return Math.max(score, 2);
+      if (filePath === token) return Math.max(score, 1);
+      return score;
+    }, 0);
+  };
 
   const nodeTypes: Array<{ label: string; hasLines: boolean }> = [
     { label: "Function",  hasLines: true  },
@@ -1035,8 +1048,13 @@ export async function searchCodebase(query: string): Promise<{
     merged.push({ ...r, source: "contains" });
   }
 
-  logger.log(`[search] done query="${query}" contains=${allResults.length} semantic=${semanticResults.length} merged=${merged.length} sample=${JSON.stringify(merged[0])}`);
-  return { processes: [], process_symbols: merged, definitions: [] };
+  const ranked = merged
+    .map((result, index) => ({ result, index, exactScore: exactMatchScore(result) }))
+    .sort((a, b) => b.exactScore - a.exactScore || a.index - b.index)
+    .map(({ result }) => result);
+
+  logger.log(`[search] done query="${query}" contains=${allResults.length} semantic=${semanticResults.length} merged=${ranked.length} sample=${JSON.stringify(ranked[0])}`);
+  return { processes: [], process_symbols: ranked, definitions: [] };
 }
 
 export async function getStatus(): Promise<GitNexusStatus> {
