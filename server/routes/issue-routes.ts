@@ -162,6 +162,20 @@ export function registerIssueRoutes(app: Express) {
     }
   });
 
+  app.post("/api/issues/errors/:fingerprint/dismiss", requireAuth, async (req, res) => {
+    try {
+      const { dismissApplicationError } = await import("../error-telemetry");
+      const dismissed = await dismissApplicationError(String(req.params.fingerprint ?? ""));
+      if (!dismissed) {
+        return res.status(404).json({ error: "Error aggregate not found" });
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Failed to dismiss application error:", error instanceof Error ? error.name : "UnknownError");
+      res.status(500).json({ error: "Failed to dismiss application error" });
+    }
+  });
+
   app.get("/api/issues", async (req, res) => {
     try {
       const status = req.query.status as string | undefined;

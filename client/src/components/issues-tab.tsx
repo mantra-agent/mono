@@ -31,6 +31,7 @@ import {
   Loader2,
   MessageSquare,
   Plus,
+  X,
 } from "lucide-react";
 import type { Issue, IssueStatus } from "@shared/schema";
 
@@ -82,14 +83,23 @@ function IssueTreeRow({ issue, onCycleStatus, isUpdating, onDiscuss }: IssueTree
   return (
     <ProfileTreeRow
       label={(
-        <span
-          className={cn(
-            "block max-w-full truncate font-medium text-foreground",
-            status === "resolved" && "text-muted-foreground line-through",
-          )}
-          data-testid={`label-issue-${issue.id}`}
-        >
-          {issue.title}
+        <span className="flex min-w-0 items-center gap-2" data-testid={`label-issue-${issue.id}`}>
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate font-medium text-foreground",
+              status === "resolved" && "text-muted-foreground line-through",
+            )}
+          >
+            {issue.title}
+          </span>
+          {issue.createdAt ? (
+            <span
+              className="shrink-0 text-xs text-muted-foreground"
+              title={formatDate(issue.createdAt, timezone)}
+            >
+              {formatDate(issue.createdAt, timezone)}
+            </span>
+          ) : null}
         </span>
       )}
       icon={(
@@ -115,7 +125,7 @@ function IssueTreeRow({ issue, onCycleStatus, isUpdating, onDiscuss }: IssueTree
           </TooltipContent>
         </Tooltip>
       )}
-      hasValue
+      hasValue={false}
       showEmpty
       mobileLayout="inline"
       menuVisibility="always"
@@ -134,22 +144,20 @@ function IssueTreeRow({ issue, onCycleStatus, isUpdating, onDiscuss }: IssueTree
           Discuss
         </DropdownMenuItem>
       )}
-    >
-      {issue.createdAt ? (
-        <span className="truncate text-xs text-muted-foreground" title={formatDate(issue.createdAt, timezone)}>
-          {formatDate(issue.createdAt, timezone)}
-        </span>
-      ) : null}
-    </ProfileTreeRow>
+    />
   );
 }
 
 function ErrorTreeRow({
   error,
   onDiscuss,
+  onDismiss,
+  isDismissing,
 }: {
   error: AggregatedApplicationError;
   onDiscuss: () => void;
+  onDismiss: () => void;
+  isDismissing: boolean;
 }) {
   const { timezone } = useTimezone();
   const source = error.sourceFile
@@ -167,12 +175,17 @@ function ErrorTreeRow({
   return (
     <ProfileTreeRow
       label={(
-        <span className="block max-w-full truncate font-medium text-foreground" data-testid={`label-error-${error.fingerprint}`}>
-          {error.errorIdentity}
+        <span className="flex min-w-0 items-center gap-2" data-testid={`label-error-${error.fingerprint}`}>
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+            {error.errorIdentity}
+          </span>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {error.occurrenceCount.toLocaleString()}
+          </span>
         </span>
       )}
       icon={<CircleX className="h-3.5 w-3.5 text-destructive" />}
-      hasValue
+      hasValue={false}
       showEmpty
       mobileLayout="inline"
       menuVisibility="always"
@@ -188,22 +201,31 @@ function ErrorTreeRow({
         </dl>
       )}
       menuContent={(
-        <DropdownMenuItem
-          onSelect={(event) => {
-            event.preventDefault();
-            onDiscuss();
-          }}
-          data-testid={`menu-discuss-error-${error.fingerprint}`}
-        >
-          <MessageSquare className="mr-2 h-4 w-4" />
-          Discuss
-        </DropdownMenuItem>
+        <>
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault();
+              onDiscuss();
+            }}
+            data-testid={`menu-discuss-error-${error.fingerprint}`}
+          >
+            <MessageSquare className="mr-2 h-4 w-4" />
+            Discuss
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={isDismissing}
+            onSelect={(event) => {
+              event.preventDefault();
+              onDismiss();
+            }}
+            data-testid={`menu-dismiss-error-${error.fingerprint}`}
+          >
+            <X className="mr-2 h-4 w-4" />
+            Dismiss
+          </DropdownMenuItem>
+        </>
       )}
-    >
-      <span className="truncate text-xs tabular-nums text-muted-foreground">
-        {error.occurrenceCount.toLocaleString()}
-      </span>
-    </ProfileTreeRow>
+    />
   );
 }
 
@@ -381,6 +403,23 @@ export function IssuesTab() {
     onSettled: () => setUpdatingId(null),
   });
 
+  const dismissErrorMutation = useMutation({
+    mutationFn: async (fingerprint: string) => {
+      const response = await apiRequest("POST", `/api/issues/errors/${fingerprint}/dismiss`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/issues/errors/recent"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to dismiss error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const normalized = search.trim();
   const activeIssues = (activeData?.issues || []).filter((issue) =>
     matchesQuery(`${issue.title} ${issue.description} ${issue.reproSteps ?? ""}`, normalized),
@@ -476,6 +515,8 @@ export function IssuesTab() {
               key={error.fingerprint}
               error={error}
               onDiscuss={() => discussError(error)}
+              onDismiss={() => dismissErrorMutation.mutate(error.fingerprint)}
+              isDismissing={dismissErrorMutation.isPending && dismissErrorMutation.variables === error.fingerprint}
             />
           )}
         />

@@ -160,10 +160,10 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     attemptVersionSkewRecovery(error);
-    log.error("route render failed", {
+    // Pass the real Error instance so createLogger can classify/name/code/callsite.
+    log.error("route render failed", error, {
       routeKey: this.props.routeKey,
       errorName: error.name,
-      errorMessage: error.message,
       componentFrames: info.componentStack
         ?.split("\n")
         .filter(Boolean)
