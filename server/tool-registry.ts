@@ -739,7 +739,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   system: {
-    description: "System operations — get system state snapshot, retrieve runtime logs, check budget, inspect principal-scoped reliability outcomes, rank principal-scoped tool-output pressure, list recent tool failures for pattern diagnosis, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename. For reliability, omit detail for the aggregate health summary; set detail='tool_failures' to list individual failed tool calls in the window (filterable by failureKind/tool/code).",
+    description: "System operations — get system state snapshot, retrieve runtime logs, check budget, inspect principal-scoped reliability outcomes, rank principal-scoped tool-output pressure, list recent tool failures for pattern diagnosis, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename. For reliability, omit detail for the aggregate health summary; set detail='turn_failures' to list failed conversational turns or detail='tool_failures' to list individual failed tool calls in the window (tool failures are filterable by failureKind/tool/code).",
     category: "system",
 
     parameters: {
@@ -757,7 +757,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         provider: { type: "string", description: "Filter accounts by provider (for accounts)" },
         hours: { type: "number", description: "Summary window in hours for frontend_performance/context_health/reliability/tool_output_pressure (default 24; max 720)" },
         offset: { type: "number", description: "Pagination offset for tool_output_pressure (default 0, max 5000)" },
-        detail: { type: "string", enum: ["summary", "tool_failures"], description: "Reliability detail mode (for reliability). Omit or 'summary' for aggregate health; 'tool_failures' lists individual failed tool calls in the window." },
+        detail: { type: "string", enum: ["summary", "turn_failures", "tool_failures"], description: "Reliability detail mode (for reliability). Omit or 'summary' for aggregate health; 'turn_failures' lists failed conversational turns with terminal/recovery metadata; 'tool_failures' lists individual failed tool calls." },
         failureKind: { type: "string", enum: ["input", "permission", "transient", "internal"], description: "Filter reliability tool_failures by structured failure kind (amber classes: permission/input/transient; internal is usually red)." },
         tool: { type: "string", description: "Filter reliability tool_failures by exact tool name (e.g. shell, git, scratch)." },
         code: { type: "string", description: "Filter reliability tool_failures by failure code when present (e.g. shell_policy_denied, scratch_edit_not_found)." },
