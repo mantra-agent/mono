@@ -65,6 +65,11 @@ export interface ContextPressureSnapshot {
   outputReserve?: number;
   /** Soft mid-turn compaction target (stage-3 threshold). Stage 2 = 0.80×, stage 1 = 0.65× of this. Drives the amber ladder ticks. */
   compactionTarget?: number;
+  /**
+   * Between-turn rest floor (min(0.3 × window, 100k), capped by operating).
+   * Distinct from mid-run operating/hard input — the attractor after turn-end compaction.
+   */
+  retentionBudget?: number;
 }
 
 export interface StreamingContent {

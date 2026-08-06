@@ -30,6 +30,7 @@ import {
   estimateTokensFromChars,
   estimateToolDefinitionTokens,
   getContextRequestBudget,
+  getConversationRetentionBudget,
   recordTokenEstimateCalibration,
   type ContextRequestBudget,
 } from "./context-budget";
@@ -3217,6 +3218,8 @@ export class AgentExecutor extends EventEmitter {
       modelName: pressureModelName,
       outputReserve: contextBudget.outputReserve,
       compactionTarget: contextBudget.compactionTarget,
+      // Between-turn rest floor — same scale as the ring, separate policy from mid-run.
+      retentionBudget: getConversationRetentionBudget(contextBudget.contextWindow),
     });
     if (requestTokens > contextBudget.operatingInputLimit) {
       throw new ContextOperatingBudgetExceededError(requestTokens, contextBudget);

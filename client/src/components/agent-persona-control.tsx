@@ -61,11 +61,15 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const formatTokensK = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(n < 100_000 ? 1 : 0)}k` : `${n}`;
   // Debug detail: input tokens, % of the true provider window, the real max, and model.
+  const retentionDetail =
+    contextPressure?.retentionBudget && contextPressure.contextWindow
+      ? ` · rest ${formatTokensK(contextPressure.retentionBudget)}`
+      : "";
   const pressureDetail =
     contextPressure && contextPressure.contextWindow
       ? ` (${formatTokensK(contextPressure.inputTokens)} (${Math.round(
           (contextPressure.inputTokens / contextPressure.contextWindow) * 100,
-        )}%) / ${formatTokensK(contextPressure.contextWindow)}${
+        )}%) / ${formatTokensK(contextPressure.contextWindow)}${retentionDetail}${
           contextPressure.modelName ? ` ${contextPressure.modelName}` : ""
         })`
       : "";
@@ -82,11 +86,17 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const thresholdRatio = contextPressure
     ? Math.min(contextPressure.compactionThreshold / scaleLimit, 1)
     : 0;
-  // Operating limit: the self-imposed routine budget (e.g. 120k of a 200k window).
-  // Shown as an explicit radial tick so its position on the true-window scale is legible.
+  // Hard input cliff (= operating after clamp removal): window − outputReserve.
+  // Red radial tick — the mid-run gate input must not cross.
   const operatingRatio =
     contextPressure && contextPressure.contextWindow
       ? Math.min(contextPressure.inputLimit / scaleLimit, 1)
+      : 0;
+  // Between-turn rest floor: attractor after turn-end compaction. Softer than the
+  // amber ladder and red cliff — same scale, different policy weight.
+  const retentionRatio =
+    contextPressure && contextPressure.contextWindow && contextPressure.retentionBudget
+      ? Math.min(contextPressure.retentionBudget / scaleLimit, 1)
       : 0;
   // Output reserve: the roped-off top of the window (window − hardInputLimit) that input
   // can never touch. Drawn as a muted wedge counting back counter-clockwise from 12 o'clock.
@@ -224,6 +234,19 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                       r="1.4"
                       fill="hsl(var(--warning))"
                       transform={`rotate(${stage3Ratio * 360} 20 20)`}
+                    />
+                  )}
+                  {retentionRatio > 0 && retentionRatio < 1 && (
+                    <line
+                      x1="36.5"
+                      y1="20"
+                      x2="39.5"
+                      y2="20"
+                      stroke="hsl(var(--muted-foreground))"
+                      strokeWidth="1"
+                      strokeLinecap="round"
+                      opacity="0.55"
+                      transform={`rotate(${retentionRatio * 360} 20 20)`}
                     />
                   )}
                   {operatingRatio > 0 && operatingRatio < 1 && (
