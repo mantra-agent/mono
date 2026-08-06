@@ -31,16 +31,15 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/calendar',
   'https://www.googleapis.com/auth/calendar.readonly',
-  // Drive is opt-in per-file access (Picker grants files one at a time). Requested at consent so a
-  // reconnect enables Drive, but treated as OPTIONAL below — existing accounts without it stay
-  // healthy; hasDrive simply reports false until the user reconnects.
-  'https://www.googleapis.com/auth/drive.file',
+  // Recursive folder bindings require read-only traversal beyond the Picker-selected root.
+  // Keep this optional for existing accounts: reconnect grants it without making Gmail unhealthy.
+  'https://www.googleapis.com/auth/drive.readonly',
 ];
 
 /** Drive is an optional capability scope: absent from an account's grant never means "unhealthy". */
 export const OPTIONAL_GOOGLE_SCOPES = new Set<string>([
   'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/drive.readonly',
 ]);
 
 export interface GmailAccount {
@@ -140,7 +139,7 @@ export async function removeGmailAccount(accountId: string, confirmationEmail: s
   const cleanup = await storage.cleanupEmailAccountState(accountId);
   await deleteAccount(accountId);
   clearHealthCache(accountId);
-  // Fail closed on disconnect: bound Drive files were readable only through this account's drive.file
+  // Fail closed on disconnect: bound Drive trees are readable only through this account's drive.readonly
   // grant. Once the account is gone the pointers are dead, so drop them rather than leave rows that
   // resolve to nothing. Any object_grants on those drive_resources become inert (object no longer exists).
   const { db } = await import("./db");
@@ -181,7 +180,7 @@ export async function getAccountScopes(accountId: string): Promise<{
     hasModify: hasFullAccess || scope.includes('gmail.modify'),
     hasCalendar: scope.split(' ').includes('https://www.googleapis.com/auth/calendar'),
     hasCalendarReadonly: scope.includes('calendar.readonly') || scope.split(' ').includes('https://www.googleapis.com/auth/calendar'),
-    hasDrive: scope.split(' ').includes('https://www.googleapis.com/auth/drive.file'),
+    hasDrive: scope.split(' ').includes('https://www.googleapis.com/auth/drive.readonly'),
     missingScopes: [] as string[],
   };
   const scopeChecks: Record<string, boolean> = {
@@ -191,7 +190,7 @@ export async function getAccountScopes(accountId: string): Promise<{
     'https://www.googleapis.com/auth/gmail.modify': result.hasModify,
     'https://www.googleapis.com/auth/calendar': result.hasCalendar,
     'https://www.googleapis.com/auth/calendar.readonly': result.hasCalendarReadonly,
-    'https://www.googleapis.com/auth/drive.file': result.hasDrive,
+    'https://www.googleapis.com/auth/drive.readonly': result.hasDrive,
   };
   result.missingScopes = GOOGLE_SCOPES.filter(s => {
     if (OPTIONAL_GOOGLE_SCOPES.has(s)) return false;
@@ -305,16 +304,16 @@ export async function getReadClientForAccount(accountId: string) {
 }
 
 /**
- * Mint a fresh, short-lived Google access token carrying drive.file for the Picker. Refresh tokens
- * stay server-side; only the ephemeral access token crosses to the browser. Throws if the account
- * has not granted Drive (hasDrive=false) so the caller can prompt a reconnect.
+ * Mint a fresh, short-lived Google access token carrying drive.readonly for Picker and Files API
+ * reads. Refresh tokens stay server-side; only the ephemeral access token crosses to the Picker.
+ * Throws when recursive read access is absent so the UI can prompt a reconnect.
  */
 export async function getDriveAccessTokenForAccount(accountId: string): Promise<{ accessToken: string; expiresAt: number | null }> {
   const tokens = await getAccountTokens(accountId);
   if (!tokens) throw Object.assign(new Error(`No tokens for account ${accountId}`), { status: 404 });
   const scope = tokens.scope || '';
-  if (!scope.split(' ').includes('https://www.googleapis.com/auth/drive.file')) {
-    throw Object.assign(new Error('This Google account has not granted Drive access — reconnect to enable Drive.'), { status: 403 });
+  if (!scope.split(' ').includes('https://www.googleapis.com/auth/drive.readonly')) {
+    throw Object.assign(new Error('This Google account has not granted recursive Drive read access — reconnect Google, then reselect folders.'), { status: 403 });
   }
   const oauth2Client = await getOAuth2Client();
   oauth2Client.setCredentials(tokens);

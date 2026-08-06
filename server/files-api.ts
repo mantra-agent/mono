@@ -12,7 +12,7 @@
  *
  * Path: resolve target → authorize (bind ownership | object_grant | vault gate)
  * → owner token (system-elevated mint, when needed) → provider adapter.
- * Fail closed on disconnect, missing drive.file, or non-whitelist. Never ambient crawl.
+ * Fail closed on disconnect, missing drive.readonly, or non-whitelist. Never ambient crawl.
  *
  * Transport lives in files-providers.ts (GoogleDriveAdapter / BoxAdapter /
  * MantraStorageAdapter). FilesApi never leaks provider clients past this boundary.
@@ -211,7 +211,7 @@ async function adapterContextForConnector(
       });
       throw httpError(
         403,
-        "Drive access unavailable — reconnect Google with drive.file scope",
+        "Drive access unavailable — reconnect Google for recursive read access, then reselect folders",
       );
     }
   });
@@ -234,15 +234,22 @@ async function isUnderAnyFolderBind(
 ): Promise<boolean> {
   if (folderBindIds.has(providerFileId)) return true;
 
-  let current = providerFileId;
-  for (let i = 0; i < MAX_PARENT_WALK; i++) {
-    const parents = await adapter.getParentIds(ctx, current);
-    if (parents.length === 0) return false;
-    for (const p of parents) {
-      if (folderBindIds.has(p)) return true;
+  const visited = new Set<string>([providerFileId]);
+  let frontier = [providerFileId];
+
+  for (let depth = 0; depth < MAX_PARENT_WALK && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const current of frontier) {
+      const parents = await adapter.getParentIds(ctx, current);
+      for (const parent of parents) {
+        if (folderBindIds.has(parent)) return true;
+        if (!visited.has(parent)) {
+          visited.add(parent);
+          next.push(parent);
+        }
+      }
     }
-    // Continue walk on the first parent (Drive files usually have one).
-    current = parents[0]!;
+    frontier = next;
   }
   return false;
 }
@@ -543,12 +550,12 @@ class FilesApi {
     } catch (err) {
       const status = (err as { status?: number }).status;
       if (status === 403 || status === 404 || status === 501) throw err;
-      // Google drive.file often surfaces as 404 when outside grants.
+      // Provider authorization and stale/deleted IDs can surface as 403 or 404.
       const msg = err instanceof Error ? err.message : String(err);
       if (/403|insufficient|not found|404/i.test(msg)) {
         throw httpError(
           403,
-          "Provider denied read — file may be outside drive.file grants. Re-pick via Picker.",
+          "Provider denied read — reconnect Google or reselect the bound root.",
         );
       }
       log.error("Files read failed", {

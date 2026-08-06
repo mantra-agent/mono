@@ -26,6 +26,11 @@ interface PickerDocument {
   type?: string;
 }
 
+interface GooglePickerDocsView {
+  setIncludeFolders: (include: boolean) => GooglePickerDocsView;
+  setSelectFolderEnabled: (enabled: boolean) => GooglePickerDocsView;
+}
+
 interface GooglePickerBuilder {
   addView: (view: unknown) => GooglePickerBuilder;
   enableFeature: (feature: string) => GooglePickerBuilder;
@@ -85,14 +90,16 @@ function openGooglePicker(options: {
         PickerBuilder: new () => GooglePickerBuilder;
         ViewId: { DOCS: string };
         Feature: { MULTISELECT_ENABLED: string; SUPPORT_DRIVES: string };
-        DocsView: new (viewId: string) => unknown;
+        DocsView: new (viewId: string) => GooglePickerDocsView;
         Action: { PICKED: string; CANCEL: string };
       };
     };
   }).google;
   if (!google?.picker) throw new Error("Google Picker not loaded");
 
-  const view = new google.picker.DocsView(google.picker.ViewId.DOCS);
+  const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+    .setIncludeFolders(true)
+    .setSelectFolderEnabled(true);
   const picker = new google.picker.PickerBuilder()
     .addView(view)
     .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
@@ -224,7 +231,7 @@ export function DriveSection({
   if (!hasDriveScope) {
     return (
       <div className="flex items-center justify-between gap-3 px-2 py-1.5">
-        <p className="text-sm text-muted-foreground">Google Drive access hasn't been granted for this account.</p>
+        <p className="text-sm text-muted-foreground">Reconnect Google to grant read-only folder access. Then reselect any folders you want to bind.</p>
         <Button variant="outline" size="sm" onClick={onReconnect} data-testid="button-drive-reconnect-google">
           Reconnect Google
         </Button>
