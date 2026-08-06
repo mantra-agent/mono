@@ -3867,8 +3867,8 @@ function DesignReferencePlayground() {
         <li>
           <span className="text-foreground">Chat:</span>{" "}
           <code className="rounded bg-muted px-1 font-mono">MentionPopover</code> uses the
-          same rows and flips above/below the composer inside the visual viewport
-          (never pins under the status bar on mobile).
+          same rows and edge-pins to the composer (flip above/below inside the
+          visual viewport — no floating gap, no status-bar pin).
         </li>
         <li>
           <span className="text-foreground">Tags:</span>{" "}
