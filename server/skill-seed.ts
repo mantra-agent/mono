@@ -620,7 +620,7 @@ export async function seedBuiltinSkills(): Promise<void> {
     }
   }
 
-  log.debug(`Skill bootstrap complete: ${inserted} inserted, ${preserved} existing-preserved, ${errored} errors (total defaults: ${BUILTIN_SKILL_DEFAULTS.length})`);
+  log.info(`Skill bootstrap complete: ${inserted} inserted, ${preserved} existing-preserved, ${errored} errors (total defaults: ${BUILTIN_SKILL_DEFAULTS.length})`);
 }
 
 export async function migrateLegacyPromptOverrides(): Promise<void> {
