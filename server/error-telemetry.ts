@@ -141,10 +141,9 @@ async function persistProjection(input: ApplicationErrorProjection): Promise<voi
 }
 
 export function enqueueApplicationErrorProjection(input: ApplicationErrorProjection): void {
-  enqueueTelemetryWrite({
-    label: "application-error-aggregate",
-    execute: () => persistProjection(input),
-  });
+  // Must match enqueueTelemetryWrite(label, run) — object form is dropped/misrun
+  // and starves application_error_aggregates of all post-boot projections.
+  enqueueTelemetryWrite("application-error-aggregate", () => persistProjection(input));
 }
 
 export function captureApplicationError(error: unknown, logger = "ExpressFallback"): void {
