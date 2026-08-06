@@ -22,6 +22,12 @@ const TOKEN_ESTIMATE_CHARS_PER_TOKEN_PROSE = 4.0;
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN_JSON = 5.5;
 /** EMA weight for new actual/estimate observations (higher = faster adapt). */
 const TOKEN_ESTIMATE_CALIBRATION_EMA_ALPHA = 0.25;
+/** Persist only when the learned ratio moves enough to matter. */
+const TOKEN_ESTIMATE_CALIBRATION_PERSIST_RATIO_DELTA = 0.02;
+/** Or after this many in-memory samples since the last durable checkpoint. */
+const TOKEN_ESTIMATE_CALIBRATION_PERSIST_SAMPLE_INTERVAL = 20;
+/** Or after this much wall time since the last durable checkpoint. */
+const TOKEN_ESTIMATE_CALIBRATION_PERSIST_INTERVAL_MS = 5 * 60 * 1000;
 /** Clamp learned ratio so a single bad sample can't collapse or explode estimates. */
 const TOKEN_ESTIMATE_CALIBRATION_RATIO_MIN = 0.4;
 const TOKEN_ESTIMATE_CALIBRATION_RATIO_MAX = 1.5;
@@ -43,9 +49,34 @@ interface TokenEstimateCalibration {
 }
 
 const calibrationCache = new Map<string, TokenEstimateCalibration>();
+/** Last durable checkpoint per model — memory stays live; DB is sparse. */
+const lastPersistedCalibration = new Map<string, TokenEstimateCalibration>();
 
 function normalizedCalibrationModelKey(modelKey: string): string {
   return modelKey.includes("/") ? modelKey.split("/").slice(1).join("/") : modelKey;
+}
+
+function shouldPersistCalibration(
+  previousPersisted: TokenEstimateCalibration | undefined,
+  next: TokenEstimateCalibration,
+): boolean {
+  if (!previousPersisted) return true;
+  if (
+    Math.abs(next.ratio - previousPersisted.ratio)
+    >= TOKEN_ESTIMATE_CALIBRATION_PERSIST_RATIO_DELTA
+  ) {
+    return true;
+  }
+  if (
+    next.samples - previousPersisted.samples
+    >= TOKEN_ESTIMATE_CALIBRATION_PERSIST_SAMPLE_INTERVAL
+  ) {
+    return true;
+  }
+  const previousAt = Date.parse(previousPersisted.updatedAt);
+  const nextAt = Date.parse(next.updatedAt);
+  if (!Number.isFinite(previousAt) || !Number.isFinite(nextAt)) return true;
+  return nextAt - previousAt >= TOKEN_ESTIMATE_CALIBRATION_PERSIST_INTERVAL_MS;
 }
 
 function calibrationSettingKey(modelKey: string): string {
@@ -85,6 +116,7 @@ export async function applyTokenEstimateCalibration(
         updatedAt: stored.updatedAt || new Date().toISOString(),
       };
       calibrationCache.set(normalizedModelKey, entry);
+      lastPersistedCalibration.set(normalizedModelKey, entry);
       return Math.max(1, Math.ceil(raw * entry.ratio));
     }
   } catch {
@@ -123,9 +155,16 @@ export async function recordTokenEstimateCalibration(
     updatedAt: new Date().toISOString(),
   };
   calibrationCache.set(normalizedModelKey, entry);
+
+  // Memory is the live store. Checkpoint only on material change, sample
+  // budget, or elapsed time — every-sample writes thrash system_settings.
+  const previousPersisted = lastPersistedCalibration.get(normalizedModelKey);
+  if (!shouldPersistCalibration(previousPersisted, entry)) return;
+
   try {
     const { setSetting } = await import("./system-settings");
     await setSetting(calibrationSettingKey(normalizedModelKey), entry);
+    lastPersistedCalibration.set(normalizedModelKey, entry);
   } catch {
     // Persist is best-effort; in-memory ratio still applies for this process.
   }

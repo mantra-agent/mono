@@ -35,6 +35,11 @@ export interface ToolStatSummary {
 
 let store: ToolStatsStore | null = null;
 let dbInitialized = false;
+/** Memory is live; DB is a sparse checkpoint for crash continuity / dashboards. */
+const TOOL_STATS_FLUSH_INTERVAL_MS = 60_000;
+let toolStatsDirty = false;
+let toolStatsFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let toolStatsFlushInFlight: Promise<void> | null = null;
 
 function normalizeToolStat(raw: Partial<ToolStat> & { name: string }): ToolStat {
   const errors = typeof raw.errors === "number" ? raw.errors : 0;
@@ -108,9 +113,50 @@ function load(): ToolStatsStore {
   return store;
 }
 
+async function flushToolStatsToDb(): Promise<void> {
+  if (!toolStatsDirty) return;
+  if (toolStatsFlushInFlight) {
+    await toolStatsFlushInFlight;
+    return;
+  }
+
+  toolStatsFlushInFlight = (async () => {
+    while (toolStatsDirty) {
+      toolStatsDirty = false;
+      const s = load();
+      try {
+        await setSetting(DB_KEY, { tools: s.tools });
+      } catch (err) {
+        // Keep dirty so the next interval retries; live path still uses memory.
+        toolStatsDirty = true;
+        log.warn("tool_stats checkpoint failed", err);
+        break;
+      }
+    }
+  })();
+
+  try {
+    await toolStatsFlushInFlight;
+  } finally {
+    toolStatsFlushInFlight = null;
+  }
+}
+
+function scheduleToolStatsFlush(): void {
+  toolStatsDirty = true;
+  if (toolStatsFlushTimer) return;
+  toolStatsFlushTimer = setTimeout(() => {
+    toolStatsFlushTimer = null;
+    void flushToolStatsToDb();
+  }, TOOL_STATS_FLUSH_INTERVAL_MS);
+  // Don't keep the process alive solely for telemetry checkpoints.
+  if (typeof toolStatsFlushTimer.unref === "function") {
+    toolStatsFlushTimer.unref();
+  }
+}
+
 async function save(): Promise<void> {
-  const s = load();
-  await setSetting(DB_KEY, { tools: s.tools });
+  scheduleToolStatsFlush();
 }
 
 export function recordToolCallStart(toolCallId: string, toolName: string) {
