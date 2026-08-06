@@ -145,8 +145,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isOneTimeReminder(timer: Timer): boolean {
-  return timer.type === "reminder" &&
+function isEphemeralOneTimeTimer(timer: Timer): boolean {
+  return timer.scope === "user" &&
+    !timer.systemKey &&
     timer.schedules.length > 0 &&
     timer.schedules.every((schedule) => schedule.frequency === "once");
 }
@@ -239,14 +240,14 @@ class TimerScheduler {
     log.log(`Starting scheduler, globalPaused=${this.globalPaused}`);
     try {
       const deletedCount = await withQueryAttributionAsync("timer-scheduler", () =>
-        timerStorage.deleteCompletedOneTimeRemindersForScheduler(),
+        timerStorage.deleteCompletedEphemeralOneTimeTimersForScheduler(),
       );
       if (deletedCount > 0) {
-        log.log(`deleted ${deletedCount} completed one-time reminder(s)`);
+        log.log(`deleted ${deletedCount} completed ephemeral one-time timer(s)`);
       }
     } catch (error: unknown) {
       log.warn(
-        "completed one-time reminder cleanup failed; scheduler will continue",
+        "completed ephemeral one-time timer cleanup failed; scheduler will continue",
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -1013,16 +1014,23 @@ class TimerScheduler {
       timerStorage.updateRun(timer, run.id, update),
     );
 
-    if (result.outcome === "success" && isOneTimeReminder(timer)) {
-      const deleted = await withQueryAttributionAsync("timer-scheduler", () =>
-        timerStorage.deleteForScheduler(timer),
-      );
-      if (deleted) {
-        log.debug(`deleted completed one-time reminder "${timer.name}"`);
-      } else {
-        log.error(`failed to delete completed one-time reminder "${timer.name}"; disabling fallback`);
+    if (result.outcome !== "deferred" && isEphemeralOneTimeTimer(timer)) {
+      try {
+        const deleted = await withQueryAttributionAsync("timer-scheduler", () =>
+          timerStorage.deleteEphemeralOneTimeForScheduler(timer),
+        );
+        if (deleted) {
+          log.debug(`deleted completed ephemeral one-time timer "${timer.name}"`);
+        } else {
+          log.debug(`skipped cleanup for changed or already-deleted one-time timer "${timer.name}"`);
+        }
+      } catch (error: unknown) {
+        log.error(
+          `failed to delete completed ephemeral one-time timer "${timer.name}"; disabling fallback`,
+          error instanceof Error ? error.message : String(error),
+        );
         await withQueryAttributionAsync("timer-scheduler", () =>
-          timerStorage.updateForScheduler(timer, { enabled: false }),
+          timerStorage.disableEphemeralOneTimeForScheduler(timer),
         );
       }
     }

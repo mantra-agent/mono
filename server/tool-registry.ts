@@ -1559,7 +1559,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   timers: {
-    description: "Manage scheduled timers and one-time reminders — list all or filter by name, get details by ID or name, view runs, create, update, delete, or manually trigger. Use type=reminder with frequency=once and fireAt for one-time reminders that auto-disable after firing.",
+    description: "Manage scheduled timers and one-time reminders — list all or filter by name, get details by ID or name, view runs, create, update, delete, or manually trigger. Use frequency=once with fireAt for one-time timers; unmanaged user timers composed only of Once schedules auto-delete after firing.",
     category: "system",
 
     parameters: {
@@ -1570,7 +1570,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         scheduleId: { type: "string", description: "Schedule ID within the timer (for trigger, defaults to first schedule)" },
         name: { type: "string", description: "Timer name (for create/update, or list filter)" },
         description: { type: "string", description: "Timer description (for create/update)" },
-        type: { type: "string", enum: ["agent", "system", "me", "skill", "pipeline", "reminder"], description: "Timer type: agent, system, me, skill, pipeline, reminder (for create). Pipeline runs a deterministic domain command from prompt; use reminder for one-time scheduled prompts that auto-disable after firing." },
+        type: { type: "string", enum: ["agent", "system", "me", "skill", "pipeline", "reminder"], description: "Timer type: agent, system, me, skill, pipeline, reminder (for create). Pipeline runs a deterministic domain command from prompt; use reminder for one-time scheduled prompts; unmanaged user timers composed only of Once schedules auto-delete after firing." },
         prompt: { type: "string", description: "Timer prompt (for create/update)" },
         skillId: { type: "string", description: "Skill ID (for create/update, when type=skill)" },
         schedules: { type: "array", items: { type: "object", properties: { id: { type: "string", description: "Schedule ID" }, frequency: { type: "string", enum: ["every_x_minutes", "every_x_hours", "every_x_weeks", "daily", "weekly", "monthly", "quarterly", "annually", "custom", "once"], description: "Schedule frequency. Use every_x_weeks with interval, daysOfWeek, and timeOfDay for biweekly or multi-week cadence. Use 'once' with fireAt for one-time reminders." }, interval: { type: "number", description: "Interval value (for every_x_minutes/every_x_hours/every_x_weeks)" }, timeOfDay: { type: "string", description: "Time of day HH:MM (for daily/weekly/monthly/quarterly/annually)" }, daysOfWeek: { type: "array", items: { type: "string", enum: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] }, description: "Days of the week (for weekly)" }, dayOfMonth: { type: "number", description: "Day of month 1-31 (for monthly)" }, monthOfYear: { type: "number", description: "Month of year 1-12 (for annually)" }, dayOfYear: { type: "number", description: "Day of year 1-366 (for annually)" }, quarter: { type: "number", description: "Quarter 1-4 (for quarterly)" }, cronExpression: { type: "string", description: "Cron expression (for custom)" }, fireAt: { type: "string", description: "ISO datetime string for one-time fire (use with frequency=once for reminders)" } }, required: ["id", "frequency"] }, description: "Schedule definitions (for create/update)" },

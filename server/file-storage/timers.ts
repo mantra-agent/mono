@@ -316,12 +316,42 @@ export class FileTimerStorage {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async deleteCompletedOneTimeRemindersForScheduler(): Promise<number> {
+  async deleteEphemeralOneTimeForScheduler(timer: Timer): Promise<boolean> {
+    const ownership = ownershipForTimer(timer);
+    if (ownership.scope !== "user" || timer.systemKey) return false;
+    const result = await db.delete(timers).where(and(
+      eq(timers.id, timer.id),
+      eq(timers.scope, "user"),
+      eq(timers.ownerUserId, ownership.ownerUserId),
+      eq(timers.accountId, ownership.accountId),
+      eq(timers.updatedAt, new Date(timer.updatedAt)),
+    ));
+    this.invalidateCache();
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async disableEphemeralOneTimeForScheduler(timer: Timer): Promise<boolean> {
+    const ownership = ownershipForTimer(timer);
+    if (ownership.scope !== "user" || timer.systemKey) return false;
+    const [row] = await db.update(timers)
+      .set(this.updateValues({ enabled: false }))
+      .where(and(
+        eq(timers.id, timer.id),
+        eq(timers.scope, "user"),
+        eq(timers.ownerUserId, ownership.ownerUserId),
+        eq(timers.accountId, ownership.accountId),
+        eq(timers.updatedAt, new Date(timer.updatedAt)),
+      ))
+      .returning({ id: timers.id });
+    this.invalidateCache();
+    return Boolean(row);
+  }
+
+  async deleteCompletedEphemeralOneTimeTimersForScheduler(): Promise<number> {
     const result = await pool.query<{ id: string }>(`
       DELETE FROM timers AS timer
-      WHERE timer.type = 'reminder'
-        AND timer.enabled = false
-        AND timer.scope = 'user'
+      WHERE timer.scope = 'user'
+        AND timer.system_key IS NULL
         AND timer.owner_user_id IS NOT NULL
         AND timer.account_id IS NOT NULL
         AND jsonb_typeof(timer.schedules) = 'array'
@@ -335,7 +365,9 @@ export class FileTimerStorage {
           SELECT 1
           FROM responsibility_runs AS run
           WHERE run.responsibility_id = timer.id
-            AND run.status = 'success'
+            AND run.status IN ('success', 'error', 'skipped', 'degraded')
+            AND run.completed_at IS NOT NULL
+            AND run.completed_at >= timer.updated_at
             AND run.scope = 'user'
             AND run.owner_user_id = timer.owner_user_id
             AND run.account_id = timer.account_id
