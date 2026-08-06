@@ -7,6 +7,13 @@ const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 3.5;
 const OPERATING_OUTPUT_RESERVE_CEILING = 32_000;
 /** Share of the context window treated as a soft upper bound on output reserve. */
 const OPERATING_OUTPUT_RESERVE_WINDOW_FRACTION = 0.2;
+/**
+ * When the caller explicitly configured an output ceiling (a per-tier
+ * maxOutputTokens set in the UI), honor it verbatim up to this share of the
+ * window. The only guard is that input can never collapse below the remaining
+ * half — the fixed 32k default ceiling does not apply to a deliberate choice.
+ */
+const OPERATING_OUTPUT_RESERVE_EXPLICIT_WINDOW_FRACTION = 0.5;
 /** Compaction aims under this fraction of operatingInputLimit so the hard gate has margin. */
 const CONTEXT_COMPACTION_TARGET_FRACTION = 0.92;
 
@@ -29,25 +36,43 @@ function boundedTokenCount(value: number): number {
  * budget with a stable ceiling so larger advertised windows cannot silently
  * inflate latency, cost, or compaction thresholds.
  *
- * `outputReserve` is the caller's configured max output tokens. It is clamped
- * by a fixed ceiling and a window fraction so models that advertise huge
- * maxOutputTokens (claude-opus-sub: 128k on a 200k window) do not zero out
- * the usable input envelope.
+ * `outputReserve` is the caller's max output tokens. When it is an *inherited
+ * registry default* (`outputReserveIsExplicit` false), it is clamped by a fixed
+ * ceiling and a window fraction so models that advertise huge maxOutputTokens
+ * (claude-opus-sub: 128k on a 200k window) do not zero out the usable input
+ * envelope. When it is an *explicit user configuration* (`outputReserveIsExplicit`
+ * true — a per-tier maxOutputTokens set in the UI), it is honored verbatim up to
+ * half the window, so the derived hard input limit and the gauge's reserved-output
+ * wedge reflect the real setting instead of a fixed 32k clamp.
  */
 export function getContextRequestBudget(
   contextWindow: number,
   outputReserve = 0,
+  outputReserveIsExplicit = false,
 ): ContextRequestBudget {
   const boundedContextWindow = boundedTokenCount(contextWindow);
-  const windowReserveCap = Math.floor(
-    boundedContextWindow * OPERATING_OUTPUT_RESERVE_WINDOW_FRACTION,
-  );
-  const boundedOutputReserve = Math.min(
-    boundedTokenCount(outputReserve),
-    OPERATING_OUTPUT_RESERVE_CEILING,
-    windowReserveCap > 0 ? windowReserveCap : OPERATING_OUTPUT_RESERVE_CEILING,
-    boundedContextWindow,
-  );
+  const requestedReserve = boundedTokenCount(outputReserve);
+  let boundedOutputReserve: number;
+  if (outputReserveIsExplicit && requestedReserve > 0) {
+    const explicitReserveCap = Math.floor(
+      boundedContextWindow * OPERATING_OUTPUT_RESERVE_EXPLICIT_WINDOW_FRACTION,
+    );
+    boundedOutputReserve = Math.min(
+      requestedReserve,
+      explicitReserveCap > 0 ? explicitReserveCap : boundedContextWindow,
+      boundedContextWindow,
+    );
+  } else {
+    const windowReserveCap = Math.floor(
+      boundedContextWindow * OPERATING_OUTPUT_RESERVE_WINDOW_FRACTION,
+    );
+    boundedOutputReserve = Math.min(
+      requestedReserve,
+      OPERATING_OUTPUT_RESERVE_CEILING,
+      windowReserveCap > 0 ? windowReserveCap : OPERATING_OUTPUT_RESERVE_CEILING,
+      boundedContextWindow,
+    );
+  }
   const hardInputLimit = Math.max(
     0,
     boundedContextWindow - boundedOutputReserve,
