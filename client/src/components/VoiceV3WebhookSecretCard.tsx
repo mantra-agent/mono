@@ -1,48 +1,17 @@
-/**
- * Dedicated UI for the V3 webhook secret.
- *
- * Why not just `<SecretControl name="VOICE_V3_WEBHOOK_SECRET" />`?
- *
- * Two extras live here that aren't useful for any other secret:
- *
- *   1. "Generate strong random" — the V3 webhook secret is a shared
- *      symmetric token between this server (authorize()) and the
- *      ElevenLabs workspace tools (request_headers["X-Voice-Webhook-Secret"]).
- *      Nothing in EL ever needs to read it back, so the right hygiene
- *      is "high-entropy random, rotate on suspicion". Asking the
- *      operator to invent one invites short/weak values; an in-page
- *      generator removes that footgun.
- *
- *   2. Re-provision feedback — `POST /api/secrets/set` for this
- *      particular name triggers a server-side EL agent re-PATCH so
- *      the workspace tools start sending the new header on the next
- *      tool call. The route returns a `reprovision` field describing
- *      that side-effect; we surface it inline so the operator knows
- *      whether the new secret is actually live in EL or whether they
- *      have to retry. Without this they'd save, see "ok", and then
- *      hit prod 401s for minutes — exactly the failure mode
- *      task-945 was diagnosing.
- *
- * The underlying state model is identical to `SecretControl`
- * (metadata fetch, set/clear mutations) — we duplicate it rather
- * than overload `SecretControl` with render-prop hooks because the
- * extras are V3-webhook-specific and unlikely to apply to any other
- * secret in the catalog.
- */
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { useToast } from "@/hooks/use-toast";
-import { Eye, EyeOff, Loader2, Sparkles, CheckCircle2, AlertCircle } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2, Sparkles, CheckCircle2, AlertCircle } from "lucide-react";
 import { useIsAdmin } from "@/components/SecretControl";
 import type { SecretMetadata } from "@shared/secrets-catalog";
 
 const SECRET_NAME = "VOICE_V3_WEBHOOK_SECRET";
 
-/** 32 bytes (64 hex chars) ≈ 256 bits of entropy — overkill but cheap. */
 function generateStrongRandom(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -69,9 +38,7 @@ export function VoiceV3WebhookSecretCard() {
   const [showValue, setShowValue] = useState(false);
   const [lastReprovision, setLastReprovision] = useState<ReprovisionInfo | null>(null);
 
-  const { data, isLoading } = useQuery<{ secrets: SecretMetadata[] }>({
-    queryKey: ["/api/secrets/metadata"],
-  });
+  const { data, isLoading } = useQuery<{ secrets: SecretMetadata[] }>({ queryKey: ["/api/secrets/metadata"] });
   const meta = data?.secrets.find((s) => s.name === SECRET_NAME);
 
   const setMutation = useMutation({
@@ -84,13 +51,9 @@ export function VoiceV3WebhookSecretCard() {
       queryClient.invalidateQueries({ queryKey: ["/api/setup/secrets-status"] });
       setLastReprovision(resp.reprovision ?? null);
       toast({ title: "Webhook secret saved", description: describeReprovision(resp.reprovision) });
-      setEditing(false);
-      setValue("");
-      setShowValue(false);
+      closeEditor();
     },
-    onError: (err: Error) => {
-      toast({ title: "Save failed", description: err.message, variant: "destructive" });
-    },
+    onError: (err: Error) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
   });
 
   const clearMutation = useMutation({
@@ -104,151 +67,108 @@ export function VoiceV3WebhookSecretCard() {
       setLastReprovision(resp.reprovision ?? null);
       toast({ title: "Webhook secret cleared", description: describeReprovision(resp.reprovision) });
     },
-    onError: (err: Error) => {
-      toast({ title: "Clear failed", description: err.message, variant: "destructive" });
-    },
+    onError: (err: Error) => toast({ title: "Clear failed", description: err.message, variant: "destructive" }),
   });
+
+  function closeEditor() {
+    setEditing(false);
+    setValue("");
+    setShowValue(false);
+  }
+
+  function openEditor() {
+    if (!isAdmin) return;
+    setEditing(true);
+    setValue("");
+    setShowValue(false);
+  }
+
+  function save() {
+    if (!value.trim()) {
+      toast({ title: "Value required", variant: "destructive" });
+      return;
+    }
+    setMutation.mutate(value.trim());
+  }
 
   if (isLoading || !meta) {
     return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="secret-loading-voice-webhook">
-        <Loader2 className="h-3 w-3 animate-spin" /> Loading webhook secret…
-      </div>
+      <ProfileTreeRow label={SECRET_NAME} icon={<KeyRound className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" testId="secret-loading-voice-webhook">
+        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+      </ProfileTreeRow>
     );
   }
 
-  const statusBadge = (() => {
-    if (meta.status === "invalid") return <Badge variant="destructive" data-testid="badge-secret-status-voice-webhook">Invalid</Badge>;
-    if (meta.status === "set") return <Badge variant="default" data-testid="badge-secret-status-voice-webhook">Set</Badge>;
-    return <Badge variant="outline" data-testid="badge-secret-status-voice-webhook">Not set</Badge>;
-  })();
-  const sourceHint = meta.status === "set" ? (meta.source === "db" ? "app" : "host env") : null;
+  const status = meta.status === "invalid" ? (
+    <span className="text-xs text-destructive" data-testid="text-secret-status-voice-webhook">Invalid</span>
+  ) : meta.status === "set" ? (
+    <span className="flex items-center gap-1.5" data-testid="text-secret-status-voice-webhook">
+      {meta.last4 ? <span className="font-mono text-xs text-muted-foreground">••••{meta.last4}</span> : <span className="text-xs text-muted-foreground">Set</span>}
+      {meta.source !== "db" && <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">env</span>}
+    </span>
+  ) : <span className="text-xs text-muted-foreground/60" data-testid="text-secret-status-voice-webhook">Not set</span>;
+
+  const menuContent = isAdmin ? (
+    <>
+      <DropdownMenuItem onClick={openEditor} data-testid="button-secret-edit-voice-webhook">{meta.source === "db" ? "Rotate" : "Set"}</DropdownMenuItem>
+      {meta.source === "db" && (
+        <DropdownMenuItem
+          className="text-destructive focus:text-destructive"
+          onClick={() => {
+            if (confirm("Clear VOICE_V3_WEBHOOK_SECRET? Reads will fall back to host env (if any), and the EL agent will be re-PATCHed.")) clearMutation.mutate();
+          }}
+          data-testid="button-secret-clear-voice-webhook"
+        >Clear</DropdownMenuItem>
+      )}
+    </>
+  ) : undefined;
 
   return (
-    <div className="space-y-2 p-3 rounded-md border bg-muted/20" data-testid="card-voice-v3-webhook-secret">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-medium" data-testid="text-secret-label-voice-webhook">{meta.label}</span>
-        {statusBadge}
-        {sourceHint && (
-          <span className="text-xs text-muted-foreground" data-testid="text-secret-source-voice-webhook">via {sourceHint}</span>
-        )}
-        {meta.last4 && (
-          <span className="text-xs text-muted-foreground font-mono" data-testid="text-secret-last4-voice-webhook">
-            ••••{meta.last4}
-          </span>
-        )}
-        {meta.updatedAt && (
-          <span className="text-xs text-muted-foreground" data-testid="text-secret-updated-voice-webhook">
-            updated {new Date(meta.updatedAt).toLocaleDateString()}
-          </span>
-        )}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Shared secret ElevenLabs sends with every V3 tool webhook call. Saving here also re-PATCHes the EL agent so the new value goes live without a server restart.
-      </p>
-      {!isAdmin && (
-        <p className="text-xs text-muted-foreground italic">Admin only — sign in as an admin to manage.</p>
-      )}
-      {isAdmin && !editing && (
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setEditing(true)}
-            data-testid="button-secret-edit-voice-webhook"
-          >
-            {meta.source === "db" ? "Rotate" : "Set"}
-          </Button>
-          {meta.source === "db" && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                if (confirm("Clear VOICE_V3_WEBHOOK_SECRET? Reads will fall back to host env (if any), and the EL agent will be re-PATCHed.")) {
-                  clearMutation.mutate();
-                }
-              }}
-              disabled={clearMutation.isPending}
-              data-testid="button-secret-clear-voice-webhook"
-            >
-              {clearMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-              Clear
-            </Button>
-          )}
-        </div>
-      )}
+    <>
+      <ProfileTreeRow
+        label={meta.label}
+        icon={<KeyRound className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        mobileLayout="inline"
+        valueLayout="compact"
+        menuContent={menuContent}
+        menuVisibility="hover"
+        testId="secret-control-voice-webhook"
+      >{status}</ProfileTreeRow>
+
       {isAdmin && editing && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Input
-              type={showValue ? "text" : "password"}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder="Paste a value or click Generate"
-              autoComplete="off"
-              spellCheck={false}
-              className="font-mono text-xs"
-              data-testid="input-secret-voice-webhook"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowValue((s) => !s)}
-              data-testid="button-secret-toggle-voice-webhook"
-            >
-              {showValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </Button>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                if (!value.trim()) {
-                  toast({ title: "Value required", variant: "destructive" });
-                  return;
-                }
-                setMutation.mutate(value);
-              }}
-              disabled={setMutation.isPending}
-              data-testid="button-secret-save-voice-webhook"
-            >
-              {setMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-              Save & re-provision
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const next = generateStrongRandom();
-                setValue(next);
-                setShowValue(true);
-              }}
-              data-testid="button-secret-generate-voice-webhook"
-            >
-              <Sparkles className="h-3 w-3 mr-1" />
-              Generate strong random
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => { setEditing(false); setValue(""); setShowValue(false); }}
-              data-testid="button-secret-cancel-voice-webhook"
-            >
-              Cancel
-            </Button>
-          </div>
+        <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2 pl-8" data-testid="secret-editor-voice-webhook">
+          <Input
+            type={showValue ? "text" : "password"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="Paste or generate a high-entropy secret"
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+            className="h-6 min-w-[14rem] flex-1 bg-muted/50 px-1.5 py-0 font-mono text-xs"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); save(); }
+              else if (e.key === "Escape") { e.preventDefault(); closeEditor(); }
+            }}
+            data-testid="input-secret-voice-webhook"
+          />
+          <Button type="button" variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => setShowValue((s) => !s)} data-testid="button-secret-toggle-voice-webhook">
+            {showValue ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => { setValue(generateStrongRandom()); setShowValue(true); }} data-testid="button-secret-generate-voice-webhook">
+            <Sparkles className="mr-1 h-3 w-3" />Generate
+          </Button>
+          <Button type="button" size="sm" className="h-6 px-2 text-xs" onClick={save} disabled={setMutation.isPending} data-testid="button-secret-save-voice-webhook">
+            {setMutation.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}Save
+          </Button>
+          <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={closeEditor} data-testid="button-secret-cancel-voice-webhook">Cancel</Button>
         </div>
       )}
-      {lastReprovision && (
-        <ReprovisionBanner info={lastReprovision} />
-      )}
-    </div>
+
+      {lastReprovision && <div className="px-2 pb-2 pl-8"><ReprovisionBanner info={lastReprovision} /></div>}
+    </>
   );
 }
 
@@ -264,27 +184,7 @@ function describeReprovision(info: ReprovisionInfo | undefined): string {
 }
 
 function ReprovisionBanner({ info }: { info: ReprovisionInfo }) {
-  if (info.result === "ok") {
-    return (
-      <div className="flex items-center gap-2 text-xs text-success-foreground" data-testid="text-reprovision-result-ok">
-        <CheckCircle2 className="h-3 w-3" />
-        ElevenLabs agent re-provisioned ({info.engine ?? "v3"}). New header live on next tool call.
-      </div>
-    );
-  }
-  if (info.result === "skipped") {
-    return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="text-reprovision-result-skipped">
-        <AlertCircle className="h-3 w-3" />
-        EL re-provision skipped: {info.reason ?? "unknown"}
-        {info.engine ? ` (engine=${info.engine})` : ""}.
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-center gap-2 text-xs text-destructive" data-testid="text-reprovision-result-error">
-      <AlertCircle className="h-3 w-3" />
-      EL re-provision failed: {info.error ?? "unknown error"}
-    </div>
-  );
+  if (info.result === "ok") return <div className="flex items-center gap-2 text-xs text-success-foreground" data-testid="text-reprovision-result-ok"><CheckCircle2 className="h-3 w-3" />ElevenLabs agent re-provisioned ({info.engine ?? "v3"}). New header live on next tool call.</div>;
+  if (info.result === "skipped") return <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="text-reprovision-result-skipped"><AlertCircle className="h-3 w-3" />EL re-provision skipped: {info.reason ?? "unknown"}{info.engine ? ` (engine=${info.engine})` : ""}.</div>;
+  return <div className="flex items-center gap-2 text-xs text-destructive" data-testid="text-reprovision-result-error"><AlertCircle className="h-3 w-3" />EL re-provision failed: {info.error ?? "unknown error"}</div>;
 }
