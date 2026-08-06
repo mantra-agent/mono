@@ -220,8 +220,12 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
     tempRoot = await mkdtemp(join(tempParent, "run-"));
     const npmCache = join(tempRoot, "cache");
     const npmHome = join(tempRoot, "home");
+    const npmUserConfig = join(tempRoot, "user.npmrc");
+    const npmGlobalConfig = join(tempRoot, "global.npmrc");
     await mkdir(npmCache, { recursive: true });
     await mkdir(npmHome, { recursive: true });
+    await writeFile(npmUserConfig, "", "utf-8");
+    await writeFile(npmGlobalConfig, "", "utf-8");
 
     await execFileAsync("npm", [
       "install",
@@ -243,8 +247,8 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
         LC_ALL: process.env.LC_ALL || process.env.LANG || "C.UTF-8",
         CI: "1",
         NO_COLOR: "1",
-        NPM_CONFIG_USERCONFIG: "/dev/null",
-        NPM_CONFIG_GLOBALCONFIG: "/dev/null",
+        NPM_CONFIG_USERCONFIG: npmUserConfig,
+        NPM_CONFIG_GLOBALCONFIG: npmGlobalConfig,
         NPM_CONFIG_CACHE: npmCache,
         NPM_CONFIG_IGNORE_SCRIPTS: "true",
         NPM_CONFIG_PACKAGE_LOCK_ONLY: "true",
