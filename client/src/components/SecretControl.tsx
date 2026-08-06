@@ -3,10 +3,11 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2 } from "lucide-react";
 import type { SecretMetadata, SecretSection } from "@shared/secrets-catalog";
 
 export function useIsAdmin(): boolean {
@@ -15,10 +16,15 @@ export function useIsAdmin(): boolean {
 
 interface SecretControlProps {
   name: string;
-  compact?: boolean;
 }
 
-export function SecretControl({ name, compact = false }: SecretControlProps) {
+/**
+ * A single secret rendered as a canonical TreeView row (ProfileTreeRow):
+ * label + key icon on the left, masked status on the right, and Rotate/Clear
+ * in the hover overflow menu. Editing opens an inline field directly beneath
+ * the row — no cards, matching the SOURCE section on the environment detail page.
+ */
+export function SecretControl({ name }: SecretControlProps) {
   const { toast } = useToast();
   const isAdmin = useIsAdmin();
   const [editing, setEditing] = useState(false);
@@ -44,9 +50,7 @@ export function SecretControl({ name, compact = false }: SecretControlProps) {
       queryClient.invalidateQueries({ queryKey: ["/api/secrets/metadata"] });
       queryClient.invalidateQueries({ queryKey: ["/api/setup/secrets-status"] });
       toast({ title: "Secret saved", description: `${name} updated.` });
-      setEditing(false);
-      setValue("");
-      setShowValue(false);
+      closeEditor();
     },
     onError: (err: Error) => {
       toast({ title: "Save failed", description: err.message, variant: "destructive" });
@@ -69,128 +73,140 @@ export function SecretControl({ name, compact = false }: SecretControlProps) {
     },
   });
 
+  function closeEditor() {
+    setEditing(false);
+    setValue("");
+    setShowValue(false);
+  }
+
+  function save() {
+    if (!value.trim()) {
+      toast({ title: "Value required", variant: "destructive" });
+      return;
+    }
+    setMutation.mutate(value.trim());
+  }
+
   if (isLoading || !meta) {
     return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid={`secret-loading-${name}`}>
-        <Loader2 className="h-3 w-3 animate-spin" /> Loading {name}…
-      </div>
+      <ProfileTreeRow
+        label={name}
+        icon={<KeyRound className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        testId={`secret-loading-${name}`}
+      >
+        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+      </ProfileTreeRow>
     );
   }
 
-  const statusBadge = (() => {
-    if (meta.status === "invalid") return <Badge variant="destructive" data-testid={`badge-secret-status-${name}`}>Invalid</Badge>;
-    if (meta.status === "set") return <Badge variant="default" data-testid={`badge-secret-status-${name}`}>Set</Badge>;
-    return <Badge variant="outline" data-testid={`badge-secret-status-${name}`}>Not set</Badge>;
+  const status = (() => {
+    if (meta.status === "invalid") {
+      return <span className="text-xs text-destructive" data-testid={`text-secret-status-${name}`}>Invalid</span>;
+    }
+    if (meta.status === "set") {
+      return (
+        <span className="flex items-center gap-1.5" data-testid={`text-secret-status-${name}`}>
+          {meta.last4
+            ? <span className="font-mono text-xs text-muted-foreground">••••{meta.last4}</span>
+            : <span className="text-xs text-muted-foreground">Set</span>}
+          {meta.source !== "db" && <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">env</span>}
+        </span>
+      );
+    }
+    return <span className="text-xs text-muted-foreground/60" data-testid={`text-secret-status-${name}`}>Not set</span>;
   })();
-  const sourceHint = meta.status === "set" ? (meta.source === "db" ? "app" : "host env") : null;
+
+  const menuContent = isAdmin ? (
+    <>
+      <DropdownMenuItem
+        onClick={() => { setEditing(true); setShowValue(false); setValue(""); }}
+        data-testid={`button-secret-edit-${name}`}
+      >
+        {meta.source === "db" ? "Rotate" : "Set"}
+      </DropdownMenuItem>
+      {meta.source === "db" && (
+        <DropdownMenuItem
+          className="text-destructive focus:text-destructive"
+          onClick={() => {
+            if (confirm(`Clear ${name}? Reads will fall back to host env (if any).`)) {
+              clearMutation.mutate();
+            }
+          }}
+          data-testid={`button-secret-clear-${name}`}
+        >
+          Clear
+        </DropdownMenuItem>
+      )}
+    </>
+  ) : undefined;
 
   return (
-    <div className={compact ? "space-y-1.5" : "space-y-2 p-3 rounded-md border bg-muted/20"} data-testid={`secret-control-${name}`}>
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-medium" data-testid={`text-secret-label-${name}`}>{meta.label}</span>
-        {statusBadge}
-        {sourceHint && (
-          <span className="text-xs text-muted-foreground" data-testid={`text-secret-source-${name}`}>via {sourceHint}</span>
-        )}
-        {meta.last4 && (
-          <span className="text-xs text-muted-foreground font-mono" data-testid={`text-secret-last4-${name}`}>
-            ••••{meta.last4}
-          </span>
-        )}
-        {meta.updatedAt && (
-          <span className="text-xs text-muted-foreground" data-testid={`text-secret-updated-${name}`}>
-            updated {new Date(meta.updatedAt).toLocaleDateString()}
-          </span>
-        )}
-      </div>
-      {meta.description && !editing && (
-        <p className="text-xs text-muted-foreground">{meta.description}</p>
-      )}
-      {!isAdmin && (
-        <p className="text-xs text-muted-foreground italic">Admin only — sign in as an admin to manage.</p>
-      )}
-      {isAdmin && !editing && (
-        <div className="flex items-center gap-2">
+    <>
+      <ProfileTreeRow
+        label={meta.label}
+        icon={<KeyRound className="h-3.5 w-3.5" />}
+        hasValue
+        showEmpty
+        menuContent={menuContent}
+        menuVisibility="hover"
+        testId={`secret-control-${name}`}
+      >
+        {status}
+      </ProfileTreeRow>
+      {isAdmin && editing && (
+        <div className="flex items-center gap-1.5 px-2 pb-2 pl-8" data-testid={`secret-editor-${name}`}>
+          <Input
+            type={showValue ? "text" : "password"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={`Enter ${meta.label}`}
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus
+            className="h-6 flex-1 bg-muted/50 px-1.5 py-0 font-mono text-xs"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); save(); }
+              else if (e.key === "Escape") { e.preventDefault(); closeEditor(); }
+            }}
+            data-testid={`input-secret-${name}`}
+          />
           <Button
             type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setEditing(true)}
-            data-testid={`button-secret-edit-${name}`}
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 shrink-0 text-muted-foreground/70"
+            onClick={() => setShowValue(s => !s)}
+            aria-label={showValue ? "Hide value" : "Show value"}
+            data-testid={`button-secret-toggle-${name}`}
           >
-            {meta.source === "db" ? "Rotate" : "Set"}
+            {showValue ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
           </Button>
-          {meta.source === "db" && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                if (confirm(`Clear ${name}? Reads will fall back to host env (if any).`)) {
-                  clearMutation.mutate();
-                }
-              }}
-              disabled={clearMutation.isPending}
-              data-testid={`button-secret-clear-${name}`}
-            >
-              Clear
-            </Button>
-          )}
+          <Button
+            type="button"
+            size="sm"
+            className="h-6 px-2 text-xs"
+            onClick={save}
+            disabled={setMutation.isPending}
+            data-testid={`button-secret-save-${name}`}
+          >
+            {setMutation.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+            Save
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs text-muted-foreground"
+            onClick={closeEditor}
+            data-testid={`button-secret-cancel-${name}`}
+          >
+            Cancel
+          </Button>
         </div>
       )}
-      {isAdmin && editing && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Input
-              type={showValue ? "text" : "password"}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder={`Enter ${meta.label}`}
-              autoComplete="off"
-              spellCheck={false}
-              className="font-mono text-xs"
-              data-testid={`input-secret-${name}`}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowValue(s => !s)}
-              data-testid={`button-secret-toggle-${name}`}
-            >
-              {showValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                if (!value.trim()) {
-                  toast({ title: "Value required", variant: "destructive" });
-                  return;
-                }
-                setMutation.mutate(value);
-              }}
-              disabled={setMutation.isPending}
-              data-testid={`button-secret-save-${name}`}
-            >
-              {setMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
-              Save
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => { setEditing(false); setValue(""); setShowValue(false); }}
-              data-testid={`button-secret-cancel-${name}`}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 
@@ -199,7 +215,7 @@ export function SecretsForSection({
   excludeNames,
 }: {
   section: SecretSection;
-  /** Names to omit — used when a particular secret has its own dedicated UI card. */
+  /** Names to omit — used when a particular secret has its own dedicated UI. */
   excludeNames?: string[];
 }) {
   const isAdmin = useIsAdmin();
@@ -210,7 +226,7 @@ export function SecretsForSection({
   });
   if (!isAdmin) {
     return (
-      <p className="text-xs text-muted-foreground italic" data-testid={`secrets-section-admin-only-${section}`}>
+      <p className="px-2 py-1.5 text-xs italic text-muted-foreground" data-testid={`secrets-section-admin-only-${section}`}>
         Admin only — sign in as an admin to manage credentials for this connection.
       </p>
     );
@@ -219,7 +235,7 @@ export function SecretsForSection({
   const secrets = (data?.secrets ?? []).filter(s => s.section === section && !exclude.has(s.name));
   if (secrets.length === 0) return null;
   return (
-    <div className="space-y-2" data-testid={`secrets-section-${section}`}>
+    <div data-testid={`secrets-section-${section}`}>
       {secrets.map(s => <SecretControl key={s.name} name={s.name} />)}
     </div>
   );

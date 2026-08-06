@@ -1,9 +1,10 @@
 import { KeyRound } from "lucide-react";
 import { SecretsForSection } from "@/components/SecretControl";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
 
 export default function SecretsAdminPage() {
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 p-6">
+    <div className="mx-auto w-full max-w-5xl space-y-4 p-6">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <KeyRound className="h-5 w-5 text-muted-foreground" />
@@ -14,15 +15,9 @@ export default function SecretsAdminPage() {
         </p>
       </div>
 
-      <section className="space-y-3 rounded-lg border bg-card p-5">
-        <div>
-          <h2 className="font-medium">Google OAuth</h2>
-          <p className="text-sm text-muted-foreground">
-            OAuth client credentials used to connect Google accounts across Mantra.
-          </p>
-        </div>
+      <ProfileDetailSection title="Google OAuth" defaultOpen testId="secrets-section-google-oauth">
         <SecretsForSection section="google" />
-      </section>
+      </ProfileDetailSection>
     </div>
   );
 }

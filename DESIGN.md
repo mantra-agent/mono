@@ -176,6 +176,7 @@ Background color is structural first, semantic only when the surface is literall
 - **Route and embedded UIs**: Content sits directly on the canvas. Object sets and structured data use the canonical Hierarchy Tree, not Cards.
 - **Grouping**: Use tree sections, indentation, quiet rails, row expansion, and structural borders. Do not create a Card merely to establish visual separation.
 - **Cards**: Reserved for modal decision surfaces only. Modal Cards use `bg-card` (never black/`bg-background`) and contain their content with `overflow-hidden` and `min-w-0`.
+- **Editable fields (settings, secrets, credentials, object detail)**: These are TreeView rows, not cards and not standalone `Input`+`Button` forms. Compose `ProfileDetailSection` (the collapsible group header) with `ProfileTreeRow` (one row per field): label + icon on the left, the value or an inline right-aligned input as the row's child, and any rotate/clear/destructive action in the `menuContent` hover overflow menu. When a field is being edited, open the input inline beneath or within the row — never in a `rounded-lg border bg-card` box. The canonical live references are the SOURCE section on the environment detail page and the Secrets screen; the pattern is demonstrated on the in-app Design page under Components → "Edit fields".
 
 | Role | Token/class | Use | Forbidden |
 |---|---|---|---|
