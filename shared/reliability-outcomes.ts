@@ -69,6 +69,30 @@ export interface ReliabilityToolFailureFilters {
   code: string | null;
 }
 
+/** One conversational turn currently classified as failed. No message body or tool arguments are exposed. */
+export interface ReliabilityTurnFailureRow {
+  timestamp: string;
+  sessionId: string;
+  runId: string | null;
+  turnId: string | null;
+  terminalReason: string;
+  finalRunStatus: "failed" | "degraded" | "unknown";
+  /** null when the persisted turn record cannot prove whether earlier tool errors were recovered. */
+  toolErrorsRecovered: boolean | null;
+  toolFailureKind: ReliabilityToolFailureKind | null;
+  toolFailureCode: string | null;
+  tool: string | null;
+  toolCallId: string | null;
+}
+
+export interface ReliabilityTurnFailureList {
+  window: { start: string; end: string; hours: number };
+  totalMatched: number;
+  returned: number;
+  truncated: boolean;
+  failures: ReliabilityTurnFailureRow[];
+}
+
 export interface ReliabilityToolFailureList {
   window: {
     start: string;

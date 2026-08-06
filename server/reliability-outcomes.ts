@@ -11,6 +11,8 @@ import {
   type ReliabilityToolFailureKind,
   type ReliabilityToolFailureList,
   type ReliabilityToolFailureRow,
+  type ReliabilityTurnFailureList,
+  type ReliabilityTurnFailureRow,
 } from "@shared/reliability-outcomes";
 import { db } from "./db";
 import { getCurrentPrincipal } from "./principal-context";
@@ -62,10 +64,14 @@ type ChatToolCall = {
 };
 
 type ChatMessage = {
+  id?: unknown;
   role?: unknown;
   timestamp?: unknown;
   createdAt?: unknown;
   toolCalls?: unknown;
+  assistantRunId?: unknown;
+  turnId?: unknown;
+  assistantState?: unknown;
 };
 
 type ChatDocumentContent = {
@@ -464,6 +470,115 @@ function collectToolFailuresFromMessages(
   return rows;
 }
 
+type PendingTurnDetail = {
+  timestamp: string;
+  sessionId: string;
+  runId: string | null;
+  turnId: string | null;
+  failedTools: ChatToolCall[];
+};
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function toolCallId(toolCall: ChatToolCall): string | null {
+  return stringValue(toolCall.toolCallId) ?? stringValue(toolCall.id);
+}
+
+function finalRunStatusForReason(reason: string): ReliabilityTurnFailureRow["finalRunStatus"] {
+  return reason === "output_limit_no_final" || reason === "empty_model_completion"
+    ? "degraded"
+    : "failed";
+}
+
+function turnFailureFromTool(args: PendingTurnDetail): ReliabilityTurnFailureRow | null {
+  const primary = args.failedTools[args.failedTools.length - 1];
+  if (!primary) return null;
+  const errorText = extractErrorText(primary);
+  return {
+    timestamp: args.timestamp,
+    sessionId: args.sessionId,
+    runId: args.runId,
+    turnId: args.turnId,
+    terminalReason: "tool_error",
+    finalRunStatus: "unknown",
+    toolErrorsRecovered: false,
+    toolFailureKind: asFailureKind(primary.failureKind),
+    toolFailureCode: extractFailureCode(primary, errorText),
+    tool: toolCallName(primary),
+    toolCallId: toolCallId(primary),
+  };
+}
+
+function collectTurnFailures(
+  messages: ChatMessage[],
+  sessionId: string,
+  windowStartMs: number,
+  windowEndMs: number,
+): ReliabilityTurnFailureRow[] {
+  const failures: ReliabilityTurnFailureRow[] = [];
+  let pending: PendingTurnDetail | null = null;
+  let lastCountedNotice = false;
+
+  const commitPending = () => {
+    if (!pending) return;
+    const failure = turnFailureFromTool(pending);
+    if (failure) failures.push(failure);
+    pending = null;
+  };
+
+  for (const message of messages) {
+    const notice = parseTerminalNotice(message);
+    if (notice) {
+      const timestampMs = messageTimestampMs(message);
+      if (
+        notice.outcome === "failed"
+        && !lastCountedNotice
+        && timestampMs != null
+        && timestampMs >= windowStartMs
+        && timestampMs <= windowEndMs
+      ) {
+        const failedTools = pending?.failedTools ?? [];
+        const primary = failedTools[failedTools.length - 1] ?? null;
+        const errorText = primary ? extractErrorText(primary) : "";
+        failures.push({
+          timestamp: new Date(timestampMs).toISOString(),
+          sessionId,
+          runId: pending?.runId ?? null,
+          turnId: pending?.turnId ?? null,
+          terminalReason: notice.reason,
+          finalRunStatus: finalRunStatusForReason(notice.reason),
+          toolErrorsRecovered: null,
+          toolFailureKind: primary ? asFailureKind(primary.failureKind) : null,
+          toolFailureCode: primary ? extractFailureCode(primary, errorText) : null,
+          tool: primary ? toolCallName(primary) : null,
+          toolCallId: primary ? toolCallId(primary) : null,
+        });
+      }
+      pending = null;
+      lastCountedNotice = true;
+      continue;
+    }
+
+    if (!isAssistantMessage(message)) continue;
+    commitPending();
+    lastCountedNotice = false;
+    const timestampMs = messageTimestampMs(message);
+    if (timestampMs == null || timestampMs < windowStartMs || timestampMs > windowEndMs) continue;
+    pending = {
+      timestamp: new Date(timestampMs).toISOString(),
+      sessionId,
+      runId: stringValue(message.assistantRunId),
+      turnId: stringValue(message.turnId),
+      failedTools: asToolCalls(message.toolCalls).filter((toolCall) => toolCall.status === "error"),
+    };
+  }
+
+  commitPending();
+  return failures;
+}
+
 export async function getReliabilityOutcomeSummary(
   hoursInput?: number,
 ): Promise<ReliabilityOutcomeSummary> {
@@ -585,6 +700,59 @@ export async function getReliabilityOutcomeSummary(
     },
     health: deriveReliabilityHealth(domains),
     domains,
+  };
+}
+
+export async function listReliabilityTurnFailures(input?: {
+  hours?: number;
+  limit?: number;
+}): Promise<ReliabilityTurnFailureList> {
+  const principal = getCurrentPrincipal();
+  if (!principal) throw new Error("Principal required for reliability turn failures");
+
+  const hours = normalizeReliabilityWindowHours(input?.hours);
+  const limit = normalizeReliabilityToolFailureLimit(input?.limit);
+  const end = new Date();
+  const start = new Date(end.getTime() - hours * 60 * 60 * 1000);
+  const windowStartMs = start.getTime();
+  const windowEndMs = end.getTime();
+  const chatDocs = await db
+    .select({
+      documentId: documentStoreDocuments.documentId,
+      content: documentStoreDocuments.content,
+      updatedAt: documentStoreDocuments.updatedAt,
+    })
+    .from(documentStoreDocuments)
+    .where(
+      combineWithVisibleScope(
+        principal,
+        DOC_SCOPE,
+        and(
+          eq(documentStoreDocuments.documentType, "chat"),
+          gte(documentStoreDocuments.updatedAt, start),
+        ),
+      ),
+    );
+
+  const rows: ReliabilityTurnFailureRow[] = [];
+  for (const doc of chatDocs) {
+    rows.push(
+      ...collectTurnFailures(
+        messagesFromChatDocument(doc.content),
+        doc.documentId,
+        windowStartMs,
+        windowEndMs,
+      ),
+    );
+  }
+  rows.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  return {
+    window: { start: start.toISOString(), end: end.toISOString(), hours },
+    totalMatched: rows.length,
+    returned: Math.min(rows.length, limit),
+    truncated: rows.length > limit,
+    failures: rows.slice(0, limit),
   };
 }
 

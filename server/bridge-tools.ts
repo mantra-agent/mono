@@ -15528,6 +15528,15 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
             ? args.detail.trim()
             : "summary";
 
+        if (detail === "turn_failures") {
+          const { listReliabilityTurnFailures } = await import("./reliability-outcomes");
+          const failures = await listReliabilityTurnFailures({
+            hours: typeof args.hours === "number" ? args.hours : undefined,
+            limit: typeof args.limit === "number" ? args.limit : undefined,
+          });
+          return { result: JSON.stringify(failures, null, 2) };
+        }
+
         if (detail === "tool_failures") {
           const { listReliabilityToolFailures } = await import("./reliability-outcomes");
           const failures = await listReliabilityToolFailures({
@@ -15542,7 +15551,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
 
         if (detail !== "summary") {
           return {
-            result: `Unknown reliability detail '${detail}'. Use 'summary' or 'tool_failures'.`,
+            result: `Unknown reliability detail '${detail}'. Use 'summary', 'turn_failures', or 'tool_failures'.`,
             error: true,
           };
         }
