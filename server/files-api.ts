@@ -47,10 +47,10 @@ const log = createLogger("FilesApi");
 
 /** Inline tool-return preview cap — not a product/download ceiling. */
 const MAX_INLINE_READ_BYTES = 2 * 1024 * 1024;
-/** Full provider download staged to object storage for paginated access. */
-const MAX_STAGE_BYTES = 50 * 1024 * 1024;
 /** Text returned inline when the full staged body is this small or smaller. */
 const MAX_INLINE_TEXT_CHARS = 100_000;
+/** Bump when archive payload encoding/encryption changes so old keys miss cleanly. */
+const DRIVE_FILE_CACHE_SCHEMA = "enc1";
 const MAX_LIST_PAGE = 100;
 const MAX_PARENT_WALK = 32;
 
@@ -89,9 +89,20 @@ export interface FilesMetadata {
 export interface FilesReadArchiveRef {
   id: string;
   objectStoragePath: string;
+  /** Decrypted/paginated body size in characters (utf-8 text or base64 text). */
   byteCount: number;
   reused: boolean;
   operationKey: string;
+  /** How the archived body is encoded after decrypt. */
+  encoding: "utf8" | "base64";
+  /** Always AES-GCM envelope at rest for drive_file archives. */
+  encryption: "aes-256-gcm";
+  /** How to page the whole body. */
+  retrieval: {
+    tool: "indexed_content";
+    get: "indexed_content.get";
+    readSection: "indexed_content.read_section";
+  };
 }
 
 export interface FilesReadResult {
@@ -101,9 +112,29 @@ export interface FilesReadResult {
   text: string | null;
   /** Inline base64 only for small binaries; large bodies are archived. */
   base64: string | null;
+  /**
+   * Provider-reported source size when known (metadata.size), else staged bytes.
+   * Prefer sourceBytes for "how big is the file?"
+   */
+  sourceBytes: number | null;
+  /** Bytes actually staged from the provider body (full file — no stage ceiling). */
+  stagedBytes: number;
+  /** Alias of stagedBytes for older callers. */
   byteLength: number;
-  /** True when the provider body exceeded MAX_STAGE_BYTES and was cut. */
+  /** True only if a caller-supplied maxBytes cap cut the body. Never a product ceiling. */
   truncated: boolean;
+  /** True when stagedBytes holds the full provider body (always true without a caller cap). */
+  complete: boolean;
+  /**
+   * Next retrieval step when the body is not fully inline.
+   * null when complete body is already inline in text/base64.
+   */
+  next: {
+    tool: "indexed_content";
+    id: string;
+    actions: Array<"get" | "read_section">;
+    encoding: "utf8" | "base64";
+  } | null;
   /** Object-storage archive with sectioned/paginated access via indexed_content. */
   archive: FilesReadArchiveRef | null;
   /** hit = served from fingerprint cache without re-download; miss = freshly staged; none = archive unavailable. */
@@ -318,15 +349,53 @@ export function buildDriveFileCacheKey(input: {
   md5Checksum?: string | null;
   modifiedTime?: string | null;
   contentType: string;
+  encoding: "utf8" | "base64";
 }): string {
   const version =
     (typeof input.md5Checksum === "string" && input.md5Checksum.trim()) ||
     (typeof input.modifiedTime === "string" && input.modifiedTime.trim()) ||
     "unversioned";
-  return `drive-file:${input.provider}:${input.providerFileId}:v=${version}:ct=${input.contentType}`;
+  return `drive-file:${input.provider}:${input.providerFileId}:v=${version}:ct=${input.contentType}:enc=${input.encoding}:${DRIVE_FILE_CACHE_SCHEMA}`;
 }
 
-async function lookupDriveFileArchive(operationKey: string): Promise<FilesReadArchiveRef | null> {
+function archiveEncodingFor(contentType: string): "utf8" | "base64" {
+  return isTextLike(contentType) ? "utf8" : "base64";
+}
+
+function parseSourceBytes(size: string | null | undefined): number | null {
+  if (size == null || size === "") return null;
+  const n = Number(size);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function toArchiveRef(
+  row: {
+    id: string;
+    objectStoragePath: string;
+    byteCount: number;
+  },
+  opts: { operationKey: string; reused: boolean; encoding: "utf8" | "base64" },
+): FilesReadArchiveRef {
+  return {
+    id: row.id,
+    objectStoragePath: row.objectStoragePath,
+    byteCount: row.byteCount,
+    reused: opts.reused,
+    operationKey: opts.operationKey,
+    encoding: opts.encoding,
+    encryption: "aes-256-gcm",
+    retrieval: {
+      tool: "indexed_content",
+      get: "indexed_content.get",
+      readSection: "indexed_content.read_section",
+    },
+  };
+}
+
+async function lookupDriveFileArchive(
+  operationKey: string,
+  encoding: "utf8" | "base64",
+): Promise<FilesReadArchiveRef | null> {
   const { db } = await import("./db");
   const { indexedContent } = await import("@shared/schema");
   const { combineWithSensitiveVisible } = await import("./sensitive-scope");
@@ -349,36 +418,191 @@ async function lookupDriveFileArchive(operationKey: string): Promise<FilesReadAr
     )
     .limit(1);
   if (!existing) return null;
-  return {
-    id: existing.id,
-    objectStoragePath: existing.objectStoragePath,
-    byteCount: existing.byteCount,
-    reused: true,
-    operationKey,
-  };
+  return toArchiveRef(existing, { operationKey, reused: true, encoding });
 }
 
+/**
+ * Stage full Drive body under AES-GCM envelope in R2 + indexed_content row.
+ * Does not use plaintext persistToObjectStorage.
+ */
 async function stageDriveFileArchive(opts: {
   content: string;
   sourceLabel: string;
   operationKey: string;
   objectFileName?: string;
+  encoding: "utf8" | "base64";
 }): Promise<FilesReadArchiveRef | null> {
-  const { indexAndArchiveHeuristic } = await import("./content-indexer");
-  const archived = await indexAndArchiveHeuristic({
-    content: opts.content,
-    sourceType: "drive_file",
-    sourceLabel: opts.sourceLabel,
-    operationKey: opts.operationKey,
-    objectFileName: opts.objectFileName,
-  });
-  if (!archived) return null;
+  const { db } = await import("./db");
+  const { indexedContent } = await import("@shared/schema");
+  const { combineWithSensitiveVisible, sensitiveOwnershipValues } = await import(
+    "./sensitive-scope"
+  );
+  const {
+    persistEncryptedDriveFileToObjectStorage,
+  } = await import("./content-indexer");
+  const owner = sensitiveOwnershipValues();
+  const ownerColumns = {
+    ownerUserId: indexedContent.ownerUserId,
+    principalAccountId: indexedContent.principalAccountId,
+    vaultId: indexedContent.vaultId,
+  };
+
+  // Exact-once: reuse if another concurrent writer won the key.
+  const [existing] = await db
+    .select()
+    .from(indexedContent)
+    .where(
+      combineWithSensitiveVisible(
+        ownerColumns,
+        and(
+          eq(indexedContent.sourceType, "drive_file"),
+          eq(indexedContent.operationKey, opts.operationKey),
+        ),
+      ),
+    )
+    .limit(1);
+  if (existing) {
+    return toArchiveRef(existing, {
+      operationKey: opts.operationKey,
+      reused: true,
+      encoding: opts.encoding,
+    });
+  }
+
+  const objectPath = await persistEncryptedDriveFileToObjectStorage(
+    opts.content,
+    opts.objectFileName,
+  );
+  if (!objectPath) return null;
+
+  // Heuristic section map over the decrypted/paginated body encoding (utf8 or base64 text).
+  const chunkSize = Math.max(1, Math.ceil(opts.content.length / 4));
+  const sections =
+    opts.content.length <= 2000
+      ? [
+          {
+            title: "Full",
+            byteOffset: 0,
+            byteLength: opts.content.length,
+            keyFacts: [] as string[],
+          },
+        ]
+      : Array.from({ length: 4 }, (_, i) => {
+          const start = i * chunkSize;
+          const len = Math.min(chunkSize, opts.content.length - start);
+          return {
+            title: `Part ${i + 1}`,
+            byteOffset: start,
+            byteLength: Math.max(0, len),
+            keyFacts: [] as string[],
+          };
+        }).filter((s) => s.byteLength > 0);
+
+  const { randomUUID } = await import("crypto");
+  const id = randomUUID();
+  const byteCount = Buffer.byteLength(opts.content, "utf-8");
+  const index = {
+    sections,
+    keyFacts: [
+      `encoding=${opts.encoding}`,
+      "encryption=aes-256-gcm",
+      "retrieval=indexed_content.get|read_section",
+    ],
+    identifiers: [] as string[],
+    totalChars: opts.content.length,
+  };
+
+  const [inserted] = await db
+    .insert(indexedContent)
+    .values({
+      id,
+      ...owner,
+      sourceType: "drive_file",
+      operationKey: opts.operationKey,
+      sourceLabel: opts.sourceLabel,
+      objectStoragePath: objectPath,
+      byteCount,
+      index,
+    })
+    .onConflictDoNothing()
+    .returning();
+
+  if (!inserted) {
+    const [winner] = await db
+      .select()
+      .from(indexedContent)
+      .where(
+        combineWithSensitiveVisible(
+          ownerColumns,
+          and(
+            eq(indexedContent.sourceType, "drive_file"),
+            eq(indexedContent.operationKey, opts.operationKey),
+          ),
+        ),
+      )
+      .limit(1);
+    if (winner) {
+      return toArchiveRef(winner, {
+        operationKey: opts.operationKey,
+        reused: true,
+        encoding: opts.encoding,
+      });
+    }
+    return null;
+  }
+
+  return toArchiveRef(
+    { id: inserted.id, objectStoragePath: inserted.objectStoragePath, byteCount: inserted.byteCount },
+    { operationKey: opts.operationKey, reused: false, encoding: opts.encoding },
+  );
+}
+
+function buildReadResult(input: {
+  metadata: FilesMetadata;
+  contentType: string;
+  text: string | null;
+  base64: string | null;
+  stagedBytes: number;
+  truncated: boolean;
+  archive: FilesReadArchiveRef | null;
+  cache: FilesReadResult["cache"];
+  encoding: "utf8" | "base64";
+}): FilesReadResult {
+  const sourceBytes = parseSourceBytes(input.metadata.size);
+  const fullyInline =
+    (input.encoding === "utf8" &&
+      typeof input.text === "string" &&
+      input.text.length === input.stagedBytes &&
+      !input.truncated) ||
+    (input.encoding === "base64" &&
+      typeof input.base64 === "string" &&
+      // base64 length is not stagedBytes; stagedBytes is raw binary length
+      input.base64.length > 0 &&
+      input.stagedBytes <= MAX_INLINE_READ_BYTES &&
+      !input.truncated);
+  const complete = !input.truncated;
+  const next =
+    input.archive && !fullyInline
+      ? {
+          tool: "indexed_content" as const,
+          id: input.archive.id,
+          actions: ["get", "read_section"] as Array<"get" | "read_section">,
+          encoding: input.encoding,
+        }
+      : null;
   return {
-    id: archived.id,
-    objectStoragePath: archived.objectStoragePath,
-    byteCount: archived.byteCount,
-    reused: !!archived.reused,
-    operationKey: opts.operationKey,
+    metadata: input.metadata,
+    contentType: input.contentType,
+    text: input.text,
+    base64: input.base64,
+    sourceBytes,
+    stagedBytes: input.stagedBytes,
+    byteLength: input.stagedBytes,
+    truncated: input.truncated,
+    complete,
+    next,
+    archive: input.archive,
+    cache: input.cache,
   };
 }
 
@@ -621,15 +845,15 @@ class FilesApi {
   /**
    * Read file bytes/text (v1 read-only). Folders rejected.
    *
-   * Large-file path:
-   * 1. Fingerprint the source (md5Checksum preferred, else modifiedTime).
-   * 2. On cache hit, serve the vault-scoped object-storage archive without re-download.
-   * 3. On miss, download up to MAX_STAGE_BYTES, stage via indexAndArchiveHeuristic with
-   *    operationKey = drive-file:{provider}:{id}:v={fingerprint}:ct={contentType}, return
-   *    a small inline preview + archive handle for indexed_content pagination.
-   * 4. When the source is newer (fingerprint changes), the key misses and we re-download.
+   * Large-file path (no product stage ceiling):
+   * 1. Fingerprint source (md5 preferred, else modifiedTime) + encoding + schema.
+   * 2. Cache hit → serve AES-GCM envelope archive from R2 without re-download.
+   * 3. Cache miss → download the FULL provider body, envelope-encrypt, stage to
+   *    vault-scoped R2 + indexed_content, return completeness contract + next handle.
+   * 4. Newer source changes the fingerprint → automatic miss → re-download.
    *
-   * Google editors are exported to text/csv before staging; small bodies stay inline.
+   * Completeness contract always includes sourceBytes / stagedBytes / complete / next.
+   * Agent pages via indexed_content.get + read_section (decrypt happens server-side).
    */
   async read(input: {
     vaultId?: string;
@@ -643,17 +867,19 @@ class FilesApi {
     }
 
     const contentType = expectedReadContentType(metadata.mimeType);
+    const encoding = archiveEncodingFor(contentType);
     const operationKey = buildDriveFileCacheKey({
       provider: metadata.provider,
       providerFileId: metadata.providerFileId,
       md5Checksum: metadata.md5Checksum,
       modifiedTime: metadata.modifiedTime,
       contentType,
+      encoding,
     });
 
     // Cache hit: skip provider download entirely.
     try {
-      const cached = await lookupDriveFileArchive(operationKey);
+      const cached = await lookupDriveFileArchive(operationKey, encoding);
       if (cached) {
         log.log("Files read cache hit", {
           provider: metadata.provider,
@@ -663,29 +889,36 @@ class FilesApi {
         });
         let text: string | null = null;
         let base64: string | null = null;
-        if (isTextLike(contentType) && cached.byteCount <= MAX_INLINE_TEXT_CHARS) {
+        if (encoding === "utf8" && cached.byteCount <= MAX_INLINE_TEXT_CHARS) {
           const { readFromObjectStorage } = await import("./content-indexer");
           text = await readFromObjectStorage(cached.objectStoragePath);
         } else if (
-          !isTextLike(contentType) &&
-          // Archive stores base64 text (~4/3 binary size); only re-inline when small.
+          encoding === "base64" &&
           cached.byteCount <= Math.ceil((MAX_INLINE_READ_BYTES * 4) / 3)
         ) {
           const { readFromObjectStorage } = await import("./content-indexer");
           const body = await readFromObjectStorage(cached.objectStoragePath);
           if (body != null) base64 = body;
         }
-        return {
+        // stagedBytes: prefer provider size; fall back to decoded archive length.
+        const stagedFromSource = parseSourceBytes(metadata.size);
+        const stagedBytes =
+          stagedFromSource != null
+            ? stagedFromSource
+            : encoding === "base64"
+              ? Math.floor((cached.byteCount * 3) / 4)
+              : cached.byteCount;
+        return buildReadResult({
           metadata,
           contentType,
           text,
           base64,
-          // For binary archives this is the base64 text length (paginated body size).
-          byteLength: cached.byteCount,
+          stagedBytes,
           truncated: false,
           archive: cached,
           cache: "hit",
-        };
+          encoding,
+        });
       }
     } catch (err) {
       // Cache lookup is best-effort; fall through to provider download.
@@ -702,24 +935,37 @@ class FilesApi {
     );
 
     try {
+      // No product ceiling — download the whole provider body.
       const bytes = await adapter.readBytes(ctx, metadata.providerFileId, {
-        maxBytes: MAX_STAGE_BYTES,
+        maxBytes: null,
         mimeType: metadata.mimeType,
       });
 
-      const truncated = bytes.truncated || bytes.byteLength > MAX_STAGE_BYTES;
-      const buf = truncated
-        ? bytes.buffer.subarray(0, Math.min(bytes.buffer.length, MAX_STAGE_BYTES))
-        : bytes.buffer;
+      const buf = bytes.buffer;
+      const truncated = !!bytes.truncated;
       const resolvedContentType =
         bytes.contentType || contentType || metadata.mimeType || "application/octet-stream";
-      const textLike = isTextLike(resolvedContentType);
+      const resolvedEncoding = archiveEncodingFor(resolvedContentType);
       // Text archives as utf-8; binary as base64 so indexed_content sections stay text-safe.
-      const archiveBody = textLike ? buf.toString("utf8") : buf.toString("base64");
+      const archiveBody =
+        resolvedEncoding === "utf8" ? buf.toString("utf8") : buf.toString("base64");
       const safeName = (metadata.name || "file")
         .replace(/[^a-zA-Z0-9._-]+/g, "_")
         .slice(0, 80);
-      const objectFileName = `${safeName || "file"}.${textLike ? "txt" : "b64.txt"}`;
+      const objectFileName = `${safeName || "file"}.${resolvedEncoding === "utf8" ? "txt" : "b64"}.enc.json`;
+
+      // Recompute key if export content-type diverged from the pre-download guess.
+      const stageOperationKey =
+        resolvedContentType === contentType && resolvedEncoding === encoding
+          ? operationKey
+          : buildDriveFileCacheKey({
+              provider: metadata.provider,
+              providerFileId: metadata.providerFileId,
+              md5Checksum: metadata.md5Checksum,
+              modifiedTime: metadata.modifiedTime,
+              contentType: resolvedContentType,
+              encoding: resolvedEncoding,
+            });
 
       let archive: FilesReadArchiveRef | null = null;
       let cache: FilesReadResult["cache"] = "none";
@@ -727,8 +973,9 @@ class FilesApi {
         archive = await stageDriveFileArchive({
           content: archiveBody,
           sourceLabel: `${metadata.provider}:${metadata.name || metadata.providerFileId}`,
-          operationKey,
+          operationKey: stageOperationKey,
           objectFileName,
+          encoding: resolvedEncoding,
         });
         if (archive) cache = archive.reused ? "hit" : "miss";
       } catch (err) {
@@ -739,10 +986,10 @@ class FilesApi {
         });
       }
 
-      // Inline preview: full body when small; otherwise null and agent uses archive.
+      // Inline preview only — full body always lives in the archive when staged.
       let text: string | null = null;
       let base64: string | null = null;
-      if (textLike) {
+      if (resolvedEncoding === "utf8") {
         const fullText = buf.toString("utf8");
         text =
           fullText.length <= MAX_INLINE_TEXT_CHARS
@@ -752,16 +999,17 @@ class FilesApi {
         base64 = buf.toString("base64");
       }
 
-      return {
+      return buildReadResult({
         metadata,
         contentType: resolvedContentType,
         text,
         base64,
-        byteLength: buf.length,
+        stagedBytes: buf.length,
         truncated,
         archive,
         cache,
-      };
+        encoding: resolvedEncoding,
+      });
     } catch (err) {
       const status = (err as { status?: number }).status;
       if (status === 403 || status === 404 || status === 501) throw err;

@@ -88,12 +88,13 @@ export interface FilesProviderAdapter {
   ): Promise<{ children: AdapterChild[]; nextPageToken: string | null }>;
   /**
    * Read raw/export bytes. Google editors are exported to text/csv.
-   * maxBytes caps the returned buffer; truncated=true when more existed.
+   * maxBytes is optional — omit/null for the full body (no product ceiling).
+   * truncated=true only when a finite maxBytes cap was applied.
    */
   readBytes(
     ctx: AdapterContext,
     providerFileId: string,
-    opts: { maxBytes: number; mimeType?: string | null },
+    opts: { maxBytes?: number | null; mimeType?: string | null },
   ): Promise<AdapterBytes>;
   /** Parent provider ids for whitelist ancestry walks. Empty = root/orphan. */
   getParentIds(ctx: AdapterContext, providerFileId: string): Promise<string[]>;
@@ -214,7 +215,7 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
   async readBytes(
     ctx: AdapterContext,
     providerFileId: string,
-    opts: { maxBytes: number; mimeType?: string | null },
+    opts: { maxBytes?: number | null; mimeType?: string | null },
   ): Promise<AdapterBytes> {
     const drive = this.drive(ctx);
     try {
@@ -269,9 +270,13 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
         contentType = mimeType || "application/octet-stream";
       }
 
-      const truncated = buffer.length > opts.maxBytes;
+      const cap =
+        typeof opts.maxBytes === "number" && Number.isFinite(opts.maxBytes) && opts.maxBytes > 0
+          ? opts.maxBytes
+          : null;
+      const truncated = cap != null && buffer.length > cap;
       if (truncated) {
-        buffer = buffer.subarray(0, opts.maxBytes);
+        buffer = buffer.subarray(0, cap);
       }
 
       return {
@@ -346,7 +351,7 @@ class BoxAdapter implements FilesProviderAdapter {
   async readBytes(
     _ctx: AdapterContext,
     _providerFileId: string,
-    _opts: { maxBytes: number; mimeType?: string | null },
+    _opts: { maxBytes?: number | null; mimeType?: string | null },
   ): Promise<AdapterBytes> {
     this.notConfigured();
   }
@@ -487,14 +492,18 @@ class MantraStorageAdapter implements FilesProviderAdapter {
   async readBytes(
     _ctx: AdapterContext,
     providerFileId: string,
-    opts: { maxBytes: number; mimeType?: string | null },
+    opts: { maxBytes?: number | null; mimeType?: string | null },
   ): Promise<AdapterBytes> {
     const ref = await this.refFor(providerFileId);
     try {
       const [buf] = await ref.download();
       const meta = await ref.getMetadata().catch(() => null);
-      const truncated = buf.length > opts.maxBytes;
-      const buffer = truncated ? buf.subarray(0, opts.maxBytes) : buf;
+      const cap =
+        typeof opts.maxBytes === "number" && Number.isFinite(opts.maxBytes) && opts.maxBytes > 0
+          ? opts.maxBytes
+          : null;
+      const truncated = cap != null && buf.length > cap;
+      const buffer = truncated ? buf.subarray(0, cap) : buf;
       const contentType =
         meta?.contentType ||
         opts.mimeType ||
