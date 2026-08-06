@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Loader2, MessageCircleQuestion, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -227,31 +227,51 @@ export function QuestionWidget({
   const isAnswered = Boolean(response) || prompt.status === "answered";
   const isSubmitting = submitting || cancelling;
 
+  const widgetInstanceIdRef = useRef(`question-widget-${Math.random().toString(36).slice(2, 10)}`);
+  const latestWidgetStateRef = useRef({
+    status: prompt.status,
+    isAnswered,
+    decisionId: localDecisionId ?? response?.decisionId ?? null,
+  });
+  latestWidgetStateRef.current = {
+    status: prompt.status,
+    isAnswered,
+    decisionId: localDecisionId ?? response?.decisionId ?? null,
+  };
+
   useEffect(() => {
-    log.debug("QUESTION_WIDGET:MOUNT_STATE", {
-      toolCallId: prompt.toolCallId,
+    log.info("QUESTION_TRACE:WIDGET_MOUNT", {
+      widgetInstanceId: widgetInstanceIdRef.current,
+      questionToolCallId: prompt.toolCallId,
+      mountedAt: Date.now(),
+    });
+    return () => {
+      log.info("QUESTION_TRACE:WIDGET_UNMOUNT", {
+        widgetInstanceId: widgetInstanceIdRef.current,
+        questionToolCallId: prompt.toolCallId,
+        ...latestWidgetStateRef.current,
+        unmountedAt: Date.now(),
+      });
+    };
+  }, [prompt.toolCallId]);
+
+  useEffect(() => {
+    log.info("QUESTION_TRACE:WIDGET_STATE", {
+      widgetInstanceId: widgetInstanceIdRef.current,
+      questionToolCallId: prompt.toolCallId,
       status: prompt.status,
       isAnswered,
       isSubmitting,
       hasResponse: Boolean(response),
-      selectedOptionIds: response?.selectedOptionIds ?? selected,
       decisionId: localDecisionId ?? response?.decisionId ?? null,
+      changedAt: Date.now(),
     });
-    return () => {
-      log.debug("QUESTION_WIDGET:UNMOUNT", {
-        toolCallId: prompt.toolCallId,
-        status: prompt.status,
-        isAnswered,
-        decisionId: localDecisionId ?? response?.decisionId ?? null,
-      });
-    };
   }, [
     prompt.toolCallId,
     prompt.status,
     isAnswered,
     isSubmitting,
     response,
-    selected,
     localDecisionId,
   ]);
 

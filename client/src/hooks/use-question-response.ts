@@ -22,6 +22,13 @@ export function useQuestionResponse({
     if (!sessionId) return { ok: false };
 
     const clientTurnId = `question-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const questionToolCallId = questionResponse.questionToolCallId;
+    log.info("QUESTION_TRACE:SUBMIT_START", {
+      sessionId,
+      questionToolCallId,
+      clientTurnId,
+      submittedAt: Date.now(),
+    });
 
     try {
       const response = await fetch(`/api/sessions/${sessionId}/messages`, {
@@ -33,12 +40,27 @@ export function useQuestionResponse({
       if (!response.ok) {
         throw new Error(body?.error || "Failed to submit answer");
       }
+      const decisionId =
+        typeof body?.decisionId === "string" && body.decisionId
+          ? body.decisionId
+          : undefined;
+      log.info("QUESTION_TRACE:SUBMIT_ACCEPTED", {
+        sessionId,
+        questionToolCallId,
+        clientTurnId,
+        decisionId: decisionId ?? null,
+        acceptedAt: Date.now(),
+      });
       emitSessionChanged(sessionId, "question-answered");
+      log.info("QUESTION_TRACE:SESSION_INVALIDATED", {
+        sessionId,
+        questionToolCallId,
+        clientTurnId,
+        invalidatedAt: Date.now(),
+      });
       return {
         ok: true,
-        ...(typeof body?.decisionId === "string" && body.decisionId
-          ? { decisionId: body.decisionId }
-          : {}),
+        ...(decisionId ? { decisionId } : {}),
       };
     } catch (error) {
       log.error("QUESTION_RESPONSE:SUBMIT_FAILED", {

@@ -16,6 +16,50 @@ import { noteNavigationStreamPressure } from "@/lib/navigation-trace";
 import { getClientTabId } from "@/lib/client-tab-identity";
 
 const log = createLogger("SessionSub");
+const lastQuestionStreamSignatureBySession = new Map<string, string>();
+
+function questionToolCallIdsFromStreaming(content: StreamingContent): string[] {
+  return Array.from(new Set(content.segments.flatMap((segment) =>
+    segment.type === "timeline"
+      ? segment.steps.flatMap((step) =>
+          step.toolName === "question" && typeof step.toolCallId === "string"
+            ? [step.toolCallId]
+            : [],
+        )
+      : [],
+  )));
+}
+
+function traceQuestionStreamTransition(
+  event: "snapshot" | "delta",
+  msg: SessionMessage,
+  content: StreamingContent,
+  status: SessionStatus,
+): void {
+  const questionToolCallIds = questionToolCallIdsFromStreaming(content);
+  if (questionToolCallIds.length === 0) return;
+  const signature = JSON.stringify({
+    questionToolCallIds,
+    status,
+    runActive: msg.runActive ?? status === "streaming",
+    handoffPhase: msg.handoffPhase ?? "live",
+    durableRevision: msg.durableRevision ?? null,
+  });
+  if (lastQuestionStreamSignatureBySession.get(msg.sessionId) === signature) return;
+  lastQuestionStreamSignatureBySession.set(msg.sessionId, signature);
+  log.info("QUESTION_TRACE:STREAM_STATE", {
+    event,
+    sessionId: msg.sessionId,
+    questionToolCallIds,
+    status,
+    runActive: msg.runActive ?? status === "streaming",
+    handoffPhase: msg.handoffPhase ?? "live",
+    durableRevision: msg.durableRevision ?? null,
+    eventSeq: msg.eventSeq ?? null,
+    patchSeq: msg.patchSeq ?? null,
+    tracedAt: Date.now(),
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -289,6 +333,7 @@ export function useSessionSubscriptions(
       // The server snapshot is authoritative, including its settled terminal
       // payload. The transcript handoff releases it only after durable finality.
       markChatStreamProgress(msg.sessionId, streamingContentHasProgress(content), streamingContentHasText(content), status);
+      traceQuestionStreamTransition("snapshot", msg, content, status);
       patchSeqRef.current[msg.sessionId] = msg.patchSeq ?? null;
       latestStreamRef.current[msg.sessionId] = content;
       upsertStream(msg.sessionId, {
@@ -333,6 +378,7 @@ export function useSessionSubscriptions(
 
       log.verbose(() => `DELTA:RECEIVE session=${msg.sessionId} status=${status ?? "streaming"} segments=${content.segments.length}`);
       markChatStreamProgress(msg.sessionId, streamingContentHasProgress(content), streamingContentHasText(content), status);
+      traceQuestionStreamTransition("delta", msg, content, status ?? "streaming");
       const patch: Partial<SessionStreamState> = {};
       patch.streamingContent = content;
       if (status) patch.status = status;
