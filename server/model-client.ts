@@ -2224,7 +2224,7 @@ export interface ChatCompletionStreamOptions {
    * Authority is the real boundary; the pre-load set is only an assumed-needs guess.
    */
   stubTools?: ToolDefinition[];
-  toolExecutor?: (name: string, args: Record<string, unknown>, context?: { toolCallId: string; order: number }) => Promise<{ result: string; providerResult?: string; historicalProviderResult?: string; canMateriallyShrinkOnRefresh?: boolean; refreshReductionTokens?: number; error?: boolean; sideEffectOnly?: boolean; continuation?: import("./agent-executor").ToolContinuation; normalizedArguments?: Record<string, unknown> }>;
+  toolExecutor?: (name: string, args: Record<string, unknown>, context?: { toolCallId: string; order: number }) => Promise<{ result: string; providerResult?: string; error?: boolean; sideEffectOnly?: boolean; continuation?: import("./agent-executor").ToolContinuation; normalizedArguments?: Record<string, unknown> }>;
   maxTokens?: number;
   temperature?: number;
   /** @deprecated Pass `thinking` instead. Kept for back-compat with existing callers. */
@@ -2283,7 +2283,7 @@ export type StreamEvent =
   | { type: "tool_use_update"; toolCallId: string; narrative: string }
   | { type: "tool_use"; toolCallId: string; toolName: string; arguments: Record<string, any> }
   | { type: "tool_call_resolved"; toolCallId: string; toolName: string; arguments: Record<string, unknown> }
-  | { type: "tool_result_resolved"; toolCallId: string; toolName: string; arguments?: Record<string, unknown>; order?: number; result: string; providerResult?: string; historicalProviderResult?: string; canMateriallyShrinkOnRefresh?: boolean; refreshReductionTokens?: number; error?: boolean; failure?: import("./tool-failure").ToolFailure; recoveryDecision?: import("./tool-operation-recovery").ToolRecoveryDecision; continuation?: import("./agent-executor").ToolContinuation; outcome?: import("./agent-executor").ToolOutcome; durationMs?: number }
+  | { type: "tool_result_resolved"; toolCallId: string; toolName: string; arguments?: Record<string, unknown>; order?: number; result: string; providerResult?: string; error?: boolean; failure?: import("./tool-failure").ToolFailure; recoveryDecision?: import("./tool-operation-recovery").ToolRecoveryDecision; continuation?: import("./agent-executor").ToolContinuation; outcome?: import("./agent-executor").ToolOutcome; durationMs?: number }
   | { type: "usage"; usage: { inputTokens: number; outputTokens: number; totalTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number; visibleOutputTokens?: number }; model?: string; stopReason: string; metadata?: Record<string, unknown> }
   | { type: "error"; error: string; providerFailure?: ModelProviderFailure }
   | { type: "keepalive"; reason: string }

@@ -1931,29 +1931,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     } = await import("../../context-budget");
     const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
     const betweenTurnThreshold = getContextPressureThresholds(hardInputLimit).betweenTurnHistoryReset;
-    // Judge between-turn on the provider-facing projection, not the raw durable
-    // rebuild. This projection is measurement-only: buildChatHistory still returns
-    // the original rebuilt messages, leaving the executor's pre-inference boundary
-    // as the sole owner of request transformation. The durable transcript is never
-    // mutated, and projection failure falls back to measuring the raw rebuild.
-    const { projectWorkingSet } = await import("../../working-set-projector");
-    let projectedMessages = messages;
-    try {
-      const projection = await projectWorkingSet({
-        messages,
-        runId: contextBuildId || `between-turn:${sessionId}`,
-        sessionId,
-        source: "between_turn_measure",
-      });
-      projectedMessages = projection.messages;
-    } catch (projErr: unknown) {
-      chatLog.warn(
-        `between-turn working-set projection failed (using raw rebuild) sessionId=${sessionId}: ${projErr instanceof Error ? projErr.message : String(projErr)}`,
-      );
-      projectedMessages = messages;
-    }
+    // One truthful measurand: the exact rebuilt messages passed to the executor,
+    // plus the tool definitions sent with them. No provider-view simulation.
     const rawPreExecutorTokens =
-      estimateMessagesInputTokens(projectedMessages) + toolDefinitionTokens;
+      estimateMessagesInputTokens(messages) + toolDefinitionTokens;
     const fullPreExecutorTokens = await applyTokenEstimateCalibration(
       bareModel,
       rawPreExecutorTokens,
@@ -2032,7 +2013,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
 
     chatLog.log(
-      `historyRebuilt messageCount=${projectedMessages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurn=${betweenTurnThreshold} hardInput=${hardInputLimit} window=${contextWindow} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} measurand=projected sessionId=${sessionId}`,
+      `historyRebuilt messageCount=${messages.length} preExecutorTokens=${fullPreExecutorTokens} betweenTurn=${betweenTurnThreshold} hardInput=${hardInputLimit} window=${contextWindow} toolSchemaTokens=${toolDefinitionTokens} toolResults=${toolResultCount} measurand=raw_input sessionId=${sessionId}`,
     );
     return {
       messages,

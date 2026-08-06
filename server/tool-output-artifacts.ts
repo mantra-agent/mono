@@ -249,6 +249,27 @@ export async function ensureToolOutputArchived(args: ToolOutputArchiveArgs): Pro
   }
 }
 
+/**
+ * Preserve oversized tool evidence independently of provider request shaping.
+ * The exact result remains the canonical transcript and provider value; archival
+ * creates a durable indexed_content retrieval path without rewriting context.
+ */
+export async function archiveLargeToolOutput(args: ToolOutputArchiveArgs & {
+  error?: boolean;
+  policy?: Partial<ToolOutputPolicy>;
+}): Promise<void> {
+  const policy = { ...DEFAULT_TOOL_OUTPUT_POLICY, ...(args.policy || {}) };
+  const size = estimateToolOutputSize(args.result);
+  const shouldArchive =
+    size.contentType === "binary"
+    || size.estimatedTokens >= policy.forceArtifactTokens
+    || size.estimatedTokens > policy.maxInlineTokens
+    || size.chars > policy.maxInlineChars;
+  if (!shouldArchive) return;
+
+  await ensureToolOutputArchived({ ...args, maxPreviewChars: policy.maxPreviewChars });
+}
+
 export async function maybeOffloadToolOutput(args: ToolOutputArchiveArgs & {
   error?: boolean;
   policy?: Partial<ToolOutputPolicy>;
