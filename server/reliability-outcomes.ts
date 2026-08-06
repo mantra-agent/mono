@@ -193,23 +193,18 @@ function countToolCalls(
   // The turn outcome for the most recent in-window assistant message is held
   // pending so a trailing terminal `system_notice` can override it — an aborted
   // turn whose tools all completed must not be counted as a success.
-  let pendingTurn: "succeeded" | "failed" | "excluded" | null = null;
-  let pendingHasUnclassified = false;
+  // A turn fails only via an authoritative terminal system_notice. A tool
+  // error the model recovered from must not count against turn success —
+  // per-call errors are tracked separately in toolExecutions.
+  let pendingTurn: "succeeded" | "excluded" | null = null;
   // Guards against a rare run of consecutive notices for the same turn being
   // counted as multiple turns; a real assistant message clears it.
   let lastCountedNotice = false;
 
   const commitPending = () => {
     if (!pendingTurn) return;
-    if (pendingTurn === "failed") {
-      conversationalTurns.failed += 1;
-      if (pendingHasUnclassified) conversationalTurns.unclassifiedErrors += 1;
-      else conversationalTurns.amberFailures += 1;
-    } else {
-      conversationalTurns[pendingTurn] += 1;
-    }
+    conversationalTurns[pendingTurn] += 1;
     pendingTurn = null;
-    pendingHasUnclassified = false;
   };
 
   for (const message of messages) {
@@ -221,7 +216,6 @@ function countToolCalls(
       // Discard any provisional assistant outcome — the notice is authoritative.
       const hadPending = pendingTurn != null;
       pendingTurn = null;
-      pendingHasUnclassified = false;
       if (lastCountedNotice && !hadPending) continue; // collapse duplicate notices
       if (notice.outcome === "excluded") {
         conversationalTurns.excluded += 1;
@@ -243,8 +237,6 @@ function countToolCalls(
     lastCountedNotice = false;
 
     const toolCalls = Array.isArray(message.toolCalls) ? (message.toolCalls as ChatToolCall[]) : [];
-    let turnFailed = false;
-    let turnHasUnclassified = false;
     let turnHasTerminalTool = false;
 
     for (const toolCall of toolCalls) {
@@ -261,9 +253,10 @@ function countToolCalls(
           toolExecutions.amberFailures += 1;
         } else {
           toolExecutions.unclassifiedErrors += 1;
-          turnHasUnclassified = true;
         }
-        turnFailed = true;
+        // A tool error does NOT fail the turn — turn failure is authoritative
+        // only via a terminal system_notice. A recovered error stays counted
+        // in toolExecutions; the turn still settles as succeeded/terminal.
         turnHasTerminalTool = true;
         continue;
       }
@@ -272,14 +265,7 @@ function countToolCalls(
     }
 
     // Hold provisional turn outcome; a trailing terminal notice may override it.
-    if (!turnHasTerminalTool) {
-      pendingTurn = "excluded";
-    } else if (turnFailed) {
-      pendingTurn = "failed";
-      pendingHasUnclassified = turnHasUnclassified;
-    } else {
-      pendingTurn = "succeeded";
-    }
+    pendingTurn = turnHasTerminalTool ? "succeeded" : "excluded";
   }
 
   commitPending();
@@ -512,25 +498,6 @@ function finalRunStatusForReason(reason: string): ReliabilityTurnFailureRow["fin
     : "failed";
 }
 
-function turnFailureFromTool(args: PendingTurnDetail): ReliabilityTurnFailureRow | null {
-  const primary = args.failedTools[args.failedTools.length - 1];
-  if (!primary) return null;
-  const errorText = extractErrorText(primary);
-  return {
-    timestamp: args.timestamp,
-    sessionId: args.sessionId,
-    runId: args.runId,
-    turnId: args.turnId,
-    terminalReason: "tool_error",
-    finalRunStatus: "unknown",
-    toolErrorsRecovered: false,
-    toolFailureKind: asFailureKind(primary.failureKind),
-    toolFailureCode: extractFailureCode(primary, errorText),
-    tool: toolCallName(primary),
-    toolCallId: toolCallId(primary),
-  };
-}
-
 function collectTurnFailures(
   messages: ChatMessage[],
   sessionId: string,
@@ -542,9 +509,9 @@ function collectTurnFailures(
   let lastCountedNotice = false;
 
   const commitPending = () => {
-    if (!pending) return;
-    const failure = turnFailureFromTool(pending);
-    if (failure) failures.push(failure);
+    // A tool error is not a turn failure. Discard the provisional detail;
+    // only a terminal notice (below) emits a failure row, enriched with this
+    // pending failed-tool context when present.
     pending = null;
   };
 
