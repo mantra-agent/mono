@@ -85,10 +85,10 @@ export interface JournalEntry {
   contextWindow?: number;
   hardInputLimit?: number;
   outputReserve?: number;
-  betweenTurnFire?: number;
-  midRunStage1?: number;
-  midRunStage2?: number;
-  midRunStage3?: number;
+  betweenTurnHistoryReset?: number;
+  midTurnToolSoftTrim?: number;
+  midTurnHistoryHardTrim?: number;
+  midTurnHistoryReset?: number;
 }
 
 const activeRunJournals = new Map<string, JournalEntry[]>();

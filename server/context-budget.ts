@@ -3,10 +3,10 @@
  * (provider context window minus reserved output). Tuning changes the values,
  * never the shape of the ladder.
  */
-export const BETWEEN_TURN_FIRE_FRACTION = 0.3;
-export const MID_RUN_STAGE_1_FRACTION = 0.5;
-export const MID_RUN_STAGE_2_FRACTION = 0.62;
-export const MID_RUN_STAGE_3_FRACTION = 0.77;
+export const BETWEEN_TURN_HISTORY_RESET_FRACTION = 0.3;
+export const MID_TURN_TOOL_SOFT_TRIM_FRACTION = 0.5;
+export const MID_TURN_HISTORY_HARD_TRIM_FRACTION = 0.62;
+export const MID_TURN_HISTORY_RESET_FRACTION = 1;
 /**
  * Baseline chars→tokens for prose / mixed message content.
  * 4.0 is closer to real BPE density than the prior 3.5 (which ran ~50% hot
@@ -142,10 +142,14 @@ const OPERATING_OUTPUT_RESERVE_WINDOW_FRACTION = 0.2;
  */
 const OPERATING_OUTPUT_RESERVE_EXPLICIT_WINDOW_FRACTION = 0.5;
 export interface ContextPressureThresholds {
-  betweenTurnFire: number;
-  midRunStage1: number;
-  midRunStage2: number;
-  midRunStage3: number;
+  /** Durable history reset between requests. */
+  betweenTurnHistoryReset: number;
+  /** Reconstructible tool-output trimming during execution. */
+  midTurnToolSoftTrim: number;
+  /** Deterministic compression of older working history during execution. */
+  midTurnHistoryHardTrim: number;
+  /** Final working-history reset at the hard input limit. */
+  midTurnHistoryReset: number;
 }
 
 export interface ContextRequestBudget {
@@ -225,10 +229,10 @@ export function getContextPressureThresholds(
 ): ContextPressureThresholds {
   const inputLimit = boundedTokenCount(hardInputLimit);
   return {
-    betweenTurnFire: Math.floor(inputLimit * BETWEEN_TURN_FIRE_FRACTION),
-    midRunStage1: Math.floor(inputLimit * MID_RUN_STAGE_1_FRACTION),
-    midRunStage2: Math.floor(inputLimit * MID_RUN_STAGE_2_FRACTION),
-    midRunStage3: Math.floor(inputLimit * MID_RUN_STAGE_3_FRACTION),
+    betweenTurnHistoryReset: Math.floor(inputLimit * BETWEEN_TURN_HISTORY_RESET_FRACTION),
+    midTurnToolSoftTrim: Math.floor(inputLimit * MID_TURN_TOOL_SOFT_TRIM_FRACTION),
+    midTurnHistoryHardTrim: Math.floor(inputLimit * MID_TURN_HISTORY_HARD_TRIM_FRACTION),
+    midTurnHistoryReset: Math.floor(inputLimit * MID_TURN_HISTORY_RESET_FRACTION),
   };
 }
 
@@ -279,8 +283,8 @@ export class ContextHardLimitExceededError extends Error {
     super(
       `The assembled request remains too large after context compression ` +
       `(estimated ${estimatedInputTokens.toLocaleString()} tokens; hard input limit ` +
-      `${budget.hardInputLimit.toLocaleString()} tokens; stage 3 ` +
-      `${budget.thresholds.midRunStage3.toLocaleString()} tokens).`,
+      `${budget.hardInputLimit.toLocaleString()} tokens; mid-turn history reset ` +
+      `${budget.thresholds.midTurnHistoryReset.toLocaleString()} tokens).`,
     );
     this.name = "ContextHardLimitExceededError";
     this.estimatedInputTokens = estimatedInputTokens;

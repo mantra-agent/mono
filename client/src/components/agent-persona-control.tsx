@@ -76,14 +76,14 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const ratio = (tokens: number | undefined) =>
     typeof tokens === "number" ? Math.min(tokens / scaleLimit, 1) : 0;
   const pressureRatio = ratio(contextPressure?.inputTokens);
-  const thresholdRatio = ratio(contextPressure?.midRunStage1);
-  const stage2Ratio = ratio(contextPressure?.midRunStage2);
-  const stage3Ratio = ratio(contextPressure?.midRunStage3);
-  const betweenTurnRatio = ratio(contextPressure?.betweenTurnFire);
+  const toolSoftTrimRatio = ratio(contextPressure?.midTurnToolSoftTrim);
+  const historyHardTrimRatio = ratio(contextPressure?.midTurnHistoryHardTrim);
+  const historyResetRatio = ratio(contextPressure?.midTurnHistoryReset);
+  const betweenTurnRatio = ratio(contextPressure?.betweenTurnHistoryReset);
   const pressureColor =
     contextPressure && contextPressure.inputTokens >= contextPressure.hardInputLimit
       ? "hsl(var(--destructive))"
-      : contextPressure && contextPressure.inputTokens >= contextPressure.midRunStage1
+      : contextPressure && contextPressure.inputTokens >= contextPressure.midTurnToolSoftTrim
         ? "hsl(var(--warning))"
         : "hsl(var(--cta))";
   const circumference = 2 * Math.PI * 18;
@@ -153,33 +153,33 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                     strokeDashoffset={circumference * (1 - pressureRatio)}
                     className="transition-[stroke,stroke-dashoffset] duration-300 ease-out"
                   />
-                  {thresholdRatio > 0 && thresholdRatio < 1 && (
+                  {toolSoftTrimRatio > 0 && toolSoftTrimRatio < 1 && (
                     <circle
                       cx="38"
                       cy="20"
                       r="1.25"
                       fill="hsl(var(--warning))"
                       fillOpacity="0.55"
-                      transform={`rotate(${thresholdRatio * 360} 20 20)`}
+                      transform={`rotate(${toolSoftTrimRatio * 360} 20 20)`}
                     />
                   )}
-                  {stage2Ratio > 0 && stage2Ratio < 1 && (
+                  {historyHardTrimRatio > 0 && historyHardTrimRatio < 1 && (
                     <circle
                       cx="38"
                       cy="20"
                       r="1.25"
                       fill="hsl(var(--warning))"
                       fillOpacity="0.78"
-                      transform={`rotate(${stage2Ratio * 360} 20 20)`}
+                      transform={`rotate(${historyHardTrimRatio * 360} 20 20)`}
                     />
                   )}
-                  {stage3Ratio > 0 && stage3Ratio < 1 && (
+                  {historyResetRatio > 0 && historyResetRatio < 1 && (
                     <circle
                       cx="38"
                       cy="20"
                       r="1.4"
                       fill="hsl(var(--warning))"
-                      transform={`rotate(${stage3Ratio * 360} 20 20)`}
+                      transform={`rotate(${historyResetRatio * 360} 20 20)`}
                     />
                   )}
                   {betweenTurnRatio > 0 && betweenTurnRatio < 1 && (
