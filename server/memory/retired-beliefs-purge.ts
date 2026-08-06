@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
 import { createNamedSystemPrincipal } from "../principal";
-import { tagRegistry } from "../file-storage/tags";
+import { tagService } from "../tag-service";
 
 const log = createLogger("RetiredBeliefsPurge");
 const MARKER_KEY = "migration.retired_beliefs.v2.archival_only";
@@ -22,5 +22,5 @@ export async function purgeRetiredBeliefs(): Promise<void> {
     `);
     log.info("complete {\"behavior\":\"beliefs_retired_archival_only\",\"legacyRowsPreserved\":true}");
   }
-  await tagRegistry.removeRetiredEntityTypeUsages("belief", MAINTENANCE_PRINCIPAL);
+  await tagService.removeRetiredEntityTypeUsages("belief", MAINTENANCE_PRINCIPAL);
 }

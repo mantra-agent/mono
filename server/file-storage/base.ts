@@ -1,5 +1,5 @@
 import { documentStorage } from "../memory/document-storage";
-import { tagRegistry } from "./tags";
+import { tagService } from "../tag-service";
 import { generateId } from "./utils";
 import { createLogger } from "../log";
 import { requireCurrentPrincipal } from "../principal-context";
@@ -100,7 +100,7 @@ export abstract class BaseDocumentStore<T extends BaseEntity> {
     }
     this.log.log("delete id=" + id);
     try {
-      await tagRegistry.removeEntityTags(this.config.docType as any, id);
+      await tagService.removeEntityTags(this.config.docType as any, id);
     } catch (err) {
       const tagError = err instanceof Error ? err.message : String(err);
       this.log.error("delete tag cleanup error", { id, docType: this.config.docType, error: tagError });
@@ -125,7 +125,7 @@ export abstract class BaseDocumentStore<T extends BaseEntity> {
     this.log.log(logAction + " id=" + entity.id + logExtra);
 
     try {
-      await tagRegistry.syncEntityTags(this.config.docType as any, entity.id, this.config.getTitle(entity), entity.tags);
+      await tagService.syncEntityTags(this.config.docType as any, entity.id, this.config.getTitle(entity), entity.tags);
     } catch (err) {
       const tagError = err instanceof Error ? err.message : String(err);
       this.log.error(logAction + " tag sync error", { id: entity.id, docType: this.config.docType, error: tagError });
@@ -164,7 +164,7 @@ export abstract class BaseDocumentStore<T extends BaseEntity> {
       }
       this.log.log("update id=" + id + " fields=" + Object.keys(updates).join(","));
       try {
-        await tagRegistry.syncEntityTags(this.config.docType as any, updated.id, this.config.getTitle(updated), updated.tags);
+        await tagService.syncEntityTags(this.config.docType as any, updated.id, this.config.getTitle(updated), updated.tags);
       } catch (err) {
         const tagError = err instanceof Error ? err.message : String(err);
         this.log.error("update tag sync error", { id: updated.id, docType: this.config.docType, error: tagError });

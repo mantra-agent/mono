@@ -12,7 +12,6 @@ export { fileProjectStorage, FileProjectStorage } from "./projects";
 export { timerStorage, FileTimerStorage } from "./timers";
 export { fileRuleStorage, FileRuleStorage } from "./rules";
 export type { Rule } from "./rules";
-export { tagRegistry } from "./tags";
 export { fileTaskStorage, FileTaskStorage } from "./tasks";
 export { recordToolCallStart, recordToolCallEnd, getToolStats } from "./tool-stats";
 export { generateId } from "./utils";

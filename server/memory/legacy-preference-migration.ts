@@ -7,7 +7,7 @@ import {
   combineWithVisibleScope,
   combineWithWritableScope,
 } from "../scoped-storage";
-import { tagRegistry } from "../file-storage/tags";
+import { tagService } from "../tag-service";
 import { fileRuleStorage } from "../file-storage/rules";
 import {
   documentStoreDocuments,
@@ -197,7 +197,7 @@ function toClaim(preference: LegacyPreference): ClaimCandidate {
 }
 
 async function deleteLegacyPreference(preference: LegacyPreference, principal: Principal): Promise<void> {
-  await tagRegistry.removeEntityTags("preference", preference.documentId);
+  await tagService.removeEntityTags("preference", preference.documentId);
 
   await db
     .delete(documentStoreDocuments)

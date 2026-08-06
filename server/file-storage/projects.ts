@@ -24,13 +24,13 @@ import {
 } from "../project-vault-access";
 import { objectGrantService } from "../object-grant-service";
 import { eventBus } from "../event-bus";
-import { tagRegistry } from "./tags";
+import { tagService } from "../tag-service";
 
 const log = createLogger("StoreProjects");
 
 async function syncProjectTags(project: Project): Promise<void> {
   try {
-    await tagRegistry.syncEntityTags("project", String(project.id), project.title, project.tags || []);
+    await tagService.syncEntityTags("project", String(project.id), project.title, project.tags || []);
   } catch (err) {
     const tagError = err instanceof Error ? err.message : String(err);
     log.error("project tag sync error", { id: project.id, error: tagError });
@@ -776,7 +776,7 @@ export class FileProjectStorage {
     });
     if (deleted) {
       try {
-        await tagRegistry.removeEntity("project", String(id));
+        await tagService.removeEntity("project", String(id));
       } catch (err) {
         const tagError = err instanceof Error ? err.message : String(err);
         log.error("project tag cleanup error", { id, error: tagError });
