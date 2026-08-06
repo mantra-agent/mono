@@ -29,7 +29,6 @@ export function ProfileTreeRow({
   testId,
   defaultOpen = false,
   mobileLayout = "stacked",
-  wideLabel = false,
 }: {
   label: ReactNode;
   icon?: ReactNode;
@@ -44,8 +43,6 @@ export function ProfileTreeRow({
   testId?: string;
   defaultOpen?: boolean;
   mobileLayout?: "stacked" | "inline";
-  /** Prefer one-line labels and a content-sized label column (Secrets rows). */
-  wideLabel?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -64,20 +61,12 @@ export function ProfileTreeRow({
           className={cn(
             "group relative grid w-full items-center gap-x-2 rounded-md px-2 py-1.5 text-left text-sm select-none transition-colors hover:bg-accent/70",
             showValue
-              ? wideLabel
-                ? mobileLayout === "inline"
-                  ? "grid-cols-[max-content_minmax(0,1fr)_auto_auto] gap-y-0"
-                  : "grid-cols-[max-content_auto] gap-y-1 sm:grid-cols-[max-content_minmax(0,1fr)_auto_auto] sm:gap-y-1"
-                : mobileLayout === "inline"
-                  ? "grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] gap-y-0"
-                  : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1"
-              : wideLabel
-                ? mobileLayout === "inline"
-                  ? "grid-cols-[max-content_auto_auto] gap-y-0"
-                  : "grid-cols-[max-content_auto] gap-y-1 sm:grid-cols-[max-content_auto_auto] sm:gap-y-1"
-                : mobileLayout === "inline"
-                  ? "grid-cols-[minmax(0,1fr)_auto_auto] gap-y-0"
-                  : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-y-1",
+              ? mobileLayout === "inline"
+                ? "grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] gap-y-0"
+                : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1"
+              : mobileLayout === "inline"
+                ? "grid-cols-[minmax(0,1fr)_auto_auto] gap-y-0"
+                : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-y-1",
           )}
         >
           <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
@@ -90,7 +79,7 @@ export function ProfileTreeRow({
               className={cn(
                 "min-w-0",
                 !icon && "w-full",
-                wideLabel || mobileLayout === "inline" ? "whitespace-nowrap" : "break-words",
+                mobileLayout === "inline" ? "truncate" : "break-words",
               )}
             >
               {label}
@@ -103,9 +92,7 @@ export function ProfileTreeRow({
                 mobileLayout === "inline"
                   ? "col-span-1 justify-end overflow-hidden pl-0 text-right"
                   : "col-span-2 justify-start pl-6 text-left",
-                wideLabel
-                  ? "sm:col-span-1 sm:min-w-0 sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right"
-                  : "sm:col-span-1 sm:w-48 sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right",
+                "sm:col-span-1 sm:w-48 sm:justify-end sm:overflow-visible sm:pl-0 sm:text-right",
                 "[&_input]:h-5 [&_input]:w-48 [&_input]:bg-muted/50 [&_input]:px-1.5 [&_input]:py-0 [&_input]:text-right [&_input]:text-xs [&_input]:leading-none",
                 "[&_input[type=date]]:[color-scheme:dark] [&_input[type=date]::-webkit-calendar-picker-indicator]:h-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:w-3 [&_input[type=date]::-webkit-calendar-picker-indicator]:opacity-60 [&_input[type=date]::-webkit-calendar-picker-indicator]:invert",
                 "[&_textarea]:bg-muted/50 [&_textarea]:text-xs",

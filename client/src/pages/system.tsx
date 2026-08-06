@@ -103,11 +103,7 @@ export default function SystemPage() {
     <div className="flex flex-col h-full min-w-0 overflow-hidden">
       <Suspense fallback={<TabFallback />}>
         {activeTab === "users" && <UsersContent />}
-        {activeTab === "secrets" && (
-          <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
-            <SecretsContent />
-          </div>
-        )}
+        {activeTab === "secrets" && <SecretsContent />}
         {activeTab === "logs" && <LogsContent embedded={true} />}
         {activeTab === "timers" && (
           <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
