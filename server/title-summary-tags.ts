@@ -122,8 +122,8 @@ async function singlePassSummarize(
 ): Promise<TitleSummaryTagsResult> {
   let existingTagHint = buildTagGuidance([]);
   try {
-    const { tagRegistry } = await import("./file-storage/tags");
-    const existing = await tagRegistry.listTags();
+    const { tagService } = await import("./tag-service");
+    const existing = await tagService.listTags();
     existingTagHint = buildTagGuidance(existing.slice(0, 50).map((tag) => tag.slug));
   } catch (error) {
     log.warn("tag hint lookup failed", error);

@@ -19,13 +19,13 @@ import {
 import { objectGrantService } from "../object-grant-service";
 import { resolveInvitedSubjectReferenceInTransaction } from "../invited-subject-service";
 import { eventBus } from "../event-bus";
-import { tagRegistry } from "./tags";
+import { tagService } from "../tag-service";
 
 const log = createLogger("StoreTasks");
 
 async function syncTaskTags(task: Task): Promise<void> {
   try {
-    await tagRegistry.syncEntityTags("task", String(task.id), task.title, task.tags || []);
+    await tagService.syncEntityTags("task", String(task.id), task.title, task.tags || []);
   } catch (err) {
     const tagError = err instanceof Error ? err.message : String(err);
     log.error("task tag sync error", { id: task.id, error: tagError });
@@ -564,7 +564,7 @@ export class FileTaskStorage {
     });
     if (deleted) {
       try {
-        await tagRegistry.removeEntity("task", String(id));
+        await tagService.removeEntity("task", String(id));
       } catch (err) {
         const tagError = err instanceof Error ? err.message : String(err);
         log.error("task tag cleanup error", { id, error: tagError });

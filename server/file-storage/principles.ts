@@ -4,7 +4,7 @@ import { buildTagGuidance } from "@shared/tag-taxonomy";
 import { and, eq, sql } from "drizzle-orm";
 import { chatCompletion } from "../model-client";
 import { ACTIVITY_WORK } from "../job-profiles";
-import { tagRegistry } from "./tags";
+import { tagService } from "../tag-service";
 import { contextBuilder } from "../context-builder";
 import { generateId } from "./utils";
 import { createLogger } from "../log";
@@ -76,7 +76,7 @@ Respond in JSON format:
 
 async function getPrincipleTagGuidance(): Promise<string> {
   try {
-    const existingTags = await tagRegistry.listTags();
+    const existingTags = await tagService.listTags();
     return buildTagGuidance(existingTags.map((tag) => tag.name));
   } catch (error) {
     log.warn("Failed to load existing tags for principle guidance", error);
@@ -229,7 +229,7 @@ export class FilePrincipleStorage {
     });
 
     const allTags = [...(input.autoTags || []), ...(input.manualTags || [])];
-    tagRegistry.syncEntityTags("principle", id, input.title, allTags).catch(err => log.warn(`tag sync failed`, err));
+    tagService.syncEntityTags("principle", id, input.title, allTags).catch(err => log.warn(`tag sync failed`, err));
 
     log.log(`createPrinciple id=${id} revision=${currentRevisionId} title="${input.title}"`);
     this.invalidateCache();
@@ -314,7 +314,7 @@ export class FilePrincipleStorage {
     const merged = await this.getPrinciple(id);
     if (!merged) throw new Error(`Updated principle ${id} could not be loaded`);
     const allTags = [...merged.autoTags, ...merged.manualTags];
-    tagRegistry.syncEntityTags("principle", id, merged.title, allTags).catch(err => log.warn(`tag sync failed`, err));
+    tagService.syncEntityTags("principle", id, merged.title, allTags).catch(err => log.warn(`tag sync failed`, err));
 
     log.log(`updatePrinciple id=${id} revision=${merged.currentRevisionId} fields=${Object.keys(updates).join(",")}`);
     return merged;
@@ -343,7 +343,7 @@ export class FilePrincipleStorage {
       }
     }
 
-    tagRegistry.removeEntityTags("principle", id).catch(err => log.warn(`tag removal failed`, err));
+    tagService.removeEntityTags("principle", id).catch(err => log.warn(`tag removal failed`, err));
 
     this.invalidateCache();
     log.log(`deletePrinciple id=${id} success`);

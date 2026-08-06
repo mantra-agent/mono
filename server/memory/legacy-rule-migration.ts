@@ -4,7 +4,7 @@ import { createLogger } from "../log";
 import { createNamedSystemPrincipal, type Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope } from "../scoped-storage";
-import { tagRegistry } from "../file-storage/tags";
+import { tagService } from "../tag-service";
 import { fileRuleStorage } from "../file-storage/rules";
 import { documentStoreDocuments, memoryVnextClaims } from "@shared/schema";
 import { getSetting, setSetting } from "../system-settings";
@@ -106,7 +106,7 @@ function ownerPrincipal(row: AuditedRuleRow): Principal {
 async function deleteAuditedRule(row: AuditedRuleRow): Promise<void> {
   const principal = ownerPrincipal(row);
   await runWithPrincipal(principal, async () => {
-    await tagRegistry.removeEntityTags("rule", row.documentId);
+    await tagService.removeEntityTags("rule", row.documentId);
     await db
       .delete(documentStoreDocuments)
       .where(combineWithWritableScope(

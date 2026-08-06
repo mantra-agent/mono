@@ -3,7 +3,7 @@ import { randomBytes } from "crypto";
 import { documentStorage } from "./memory";
 import type { Goal, GoalIndexEntry, GoalListFilters, GoalNote, GoalActivity, GoalHorizon, GoalStatus, CreateGoalInput, UpdateGoalInput } from "@shared/schema";
 import { goalStatuses, resolveHorizon } from "@shared/schema";
-import { tagRegistry } from "./file-storage";
+import { tagService } from "./tag-service";
 import { TTLCache } from "./utils/ttl-cache";
 import { createLogger } from "./log";
 import { requireCurrentUserPrincipal } from "./principal-context";
@@ -277,7 +277,7 @@ export class GoalStorage {
       source: input.source,
     };
     await this.saveGoal(goal);
-    tagRegistry.syncEntityTags("goal", goal.id, goal.shortName, goal.tags).catch(err => log.warn("tag sync failed", err));
+    tagService.syncEntityTags("goal", goal.id, goal.shortName, goal.tags).catch(err => log.warn("tag sync failed", err));
     return goal;
   }
 
@@ -321,7 +321,7 @@ export class GoalStorage {
     }
     await this.saveGoal(updated);
     if (changedFields.includes("tags")) {
-      tagRegistry.syncEntityTags("goal", updated.id, updated.shortName, updated.tags).catch(err => log.warn("tag sync failed", err));
+      tagService.syncEntityTags("goal", updated.id, updated.shortName, updated.tags).catch(err => log.warn("tag sync failed", err));
     }
     return updated;
   }
@@ -329,7 +329,7 @@ export class GoalStorage {
   async deleteGoal(id: string): Promise<void> {
     await documentStorage.deleteDocument("goal", id);
     this.invalidateCache();
-    tagRegistry.removeEntityTags("goal", id).catch(err => log.warn("tag removal failed", err));
+    tagService.removeEntityTags("goal", id).catch(err => log.warn("tag removal failed", err));
   }
 
   async addNote(goalId: string, content: string): Promise<Goal> {
