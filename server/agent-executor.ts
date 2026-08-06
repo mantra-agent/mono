@@ -24,7 +24,15 @@ import { abortTrace } from "./abort-trace";
 import type { ContinuationCapsule, ExecutorStreamEvent, ModelProviderFailureInfo, PersonaSnapshot, TerminalDegradationReason } from "@shared/models/chat";
 import type { SegmentChronologyEntry, SystemStepRecord } from "./chat-file-storage";
 import { ModelProviderError, isModelContextOverflow, type StreamEvent as ModelStreamEvent, type StreamMessage } from "./model-client";
-import { ContextOperatingBudgetExceededError, estimateToolDefinitionTokens, getContextRequestBudget, type ContextRequestBudget } from "./context-budget";
+import {
+  ContextOperatingBudgetExceededError,
+  applyTokenEstimateCalibration,
+  estimateTokensFromChars,
+  estimateToolDefinitionTokens,
+  getContextRequestBudget,
+  recordTokenEstimateCalibration,
+  type ContextRequestBudget,
+} from "./context-budget";
 import { estimateToolOutputSize } from "./tool-output-artifacts";
 import {
   createRunConvergenceState,
@@ -315,12 +323,20 @@ function extractThinkingFromText(text: string): { thinking: string; clean: strin
 
 function estimateMessageTokens(msg: ExecutorMessage): number {
   if (typeof msg.content === "string") {
-    return Math.ceil(msg.content.length / 3.5);
+    return estimateTokensFromChars(msg.content.length, "prose");
   }
   if (Array.isArray(msg.content)) {
     return msg.content.reduce((sum, block) => {
-      const text = block.text || block.thinking || block.content || JSON.stringify(block.input || {});
-      return sum + Math.ceil((text?.length || 0) / 3.5);
+      // Structured tool_use / tool_result blocks are JSON-dense; free text is prose.
+      if (block && typeof block === "object" && (block.type === "tool_use" || block.type === "tool_result" || block.input != null)) {
+        const payload = block.input != null ? block.input : block;
+        return sum + estimateTokensFromChars(JSON.stringify(payload).length, "json");
+      }
+      const text = block.text || block.thinking || block.content || "";
+      if (typeof text === "string" && text.length > 0) {
+        return sum + estimateTokensFromChars(text.length, "prose");
+      }
+      return sum + estimateTokensFromChars(JSON.stringify(block || {}).length, "json");
     }, 0);
   }
   return 0;
@@ -878,6 +894,11 @@ interface RunIterationContext {
   allThinking: string[];
   resolvedToolCalls: ExecutorRunResult["toolCalls"];
   totalUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  /**
+   * Raw (pre-calibration) baseline estimate for the current iteration's request,
+   * paired with provider-reported input after the call so the estimator can learn.
+   */
+  preflightRawEstimateTokens: number;
   resolvedModel: string;
   resolvedProvider: string;
   routingDecision: ModelRoutingDecision;
@@ -1849,6 +1870,33 @@ export class AgentExecutor extends EventEmitter {
           ctx.totalUsage.inputTokens += event.usage.inputTokens;
           ctx.totalUsage.outputTokens += event.usage.outputTokens;
           ctx.totalUsage.totalTokens += event.usage.totalTokens;
+
+          // Learn from real provider-reported per-call input. Skip:
+          // - self-measured char estimates (would train the model on itself)
+          // - claude-cli (stream usage is cumulative / not a clean per-call actual)
+          // - zero/empty usage and already-consumed preflight pairs
+          const usageMeta = (event as { metadata?: Record<string, unknown> }).metadata;
+          const tokenAccounting = (usageMeta?.tokenAccounting ?? null) as Record<string, unknown> | null;
+          const selfMeasured = tokenAccounting?.contextTokenSource === "self_measured_chars";
+          const provider = ctx.resolvedProvider || ctx.routingDecision?.provider || "";
+          const isCli = provider === "claude-cli";
+          if (
+            !selfMeasured
+            && !isCli
+            && ctx.preflightRawEstimateTokens >= 500
+            && event.usage.inputTokens >= 500
+          ) {
+            const raw = ctx.preflightRawEstimateTokens;
+            const actual = event.usage.inputTokens;
+            // Consume the pair so a second usage event in the same iteration
+            // cannot double-train on the same preflight.
+            ctx.preflightRawEstimateTokens = 0;
+            void recordTokenEstimateCalibration(
+              ctx.resolvedModel || ctx.modelString,
+              raw,
+              actual,
+            );
+          }
         }
         if (event.model) {
           ctx.resolvedModel = event.model;
@@ -2927,6 +2975,7 @@ export class AgentExecutor extends EventEmitter {
       execTrace: [],
       allThinking: [], resolvedToolCalls: [],
       totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      preflightRawEstimateTokens: 0,
       resolvedModel: modelString, resolvedProvider: routingDecision.provider, routingDecision, routingTier,
       iteration: 0, emergencyCompactionRetries: 0, emptyFinalTurnRetries: 0, aborted: false,
       iterationThinking: "", iterationText: "",
@@ -3131,7 +3180,14 @@ export class AgentExecutor extends EventEmitter {
       }
     }
 
-    const requestTokens = estimateTotalTokens(messages) + toolDefinitionTokens;
+    // Raw baseline (prose 4.0 / JSON 5.5) before per-model calibration. Stored so
+    // the post-call usage handler can learn actual÷estimate from real provider input.
+    const rawRequestTokens = estimateTotalTokens(messages) + toolDefinitionTokens;
+    ctx.preflightRawEstimateTokens = rawRequestTokens;
+    const requestTokens = await applyTokenEstimateCalibration(
+      ctx.resolvedModel || ctx.modelString,
+      rawRequestTokens,
+    );
     const pressureModelRaw = ctx.resolvedModel || ctx.modelString;
     const pressureModelName = getModelName(
       pressureModelRaw.includes("/") ? pressureModelRaw.split("/").slice(1).join("/") : pressureModelRaw,

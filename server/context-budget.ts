@@ -2,7 +2,123 @@ const CONTEXT_OPERATING_INPUT_FRACTION = 0.6;
 const CONTEXT_OPERATING_INPUT_TOKEN_CEILING = 128_000;
 const CONVERSATION_RETENTION_FRACTION = 0.3;
 const CONVERSATION_RETENTION_TOKEN_CEILING = 100_000;
-const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 3.5;
+/**
+ * Baseline chars→tokens for prose / mixed message content.
+ * 4.0 is closer to real BPE density than the prior 3.5 (which ran ~50% hot
+ * on tool-heavy requests). Self-calibration further corrects per model from
+ * provider-reported actuals — see applyTokenEstimateCalibration.
+ */
+const TOKEN_ESTIMATE_CHARS_PER_TOKEN_PROSE = 4.0;
+/**
+ * Baseline chars→tokens for JSON tool-definition schemas. Schemas are far more
+ * BPE-compressible (repeated keys, enums, punctuation) than prose; 5.5 cuts the
+ * bulk of the historical overcount on tool-rich contexts.
+ */
+const TOKEN_ESTIMATE_CHARS_PER_TOKEN_JSON = 5.5;
+/** EMA weight for new actual/estimate observations (higher = faster adapt). */
+const TOKEN_ESTIMATE_CALIBRATION_EMA_ALPHA = 0.25;
+/** Clamp learned ratio so a single bad sample can't collapse or explode estimates. */
+const TOKEN_ESTIMATE_CALIBRATION_RATIO_MIN = 0.4;
+const TOKEN_ESTIMATE_CALIBRATION_RATIO_MAX = 1.5;
+const TOKEN_ESTIMATE_CALIBRATION_SETTING_PREFIX = "token-estimate-calibration:";
+
+export function estimateTokensFromChars(chars: number, kind: "prose" | "json" = "prose"): number {
+  if (!chars || chars <= 0) return 0;
+  const divisor = kind === "json"
+    ? TOKEN_ESTIMATE_CHARS_PER_TOKEN_JSON
+    : TOKEN_ESTIMATE_CHARS_PER_TOKEN_PROSE;
+  return Math.ceil(chars / divisor);
+}
+
+interface TokenEstimateCalibration {
+  /** actual ÷ raw_baseline — multiply a fresh baseline estimate by this. */
+  ratio: number;
+  samples: number;
+  updatedAt: string;
+}
+
+const calibrationCache = new Map<string, TokenEstimateCalibration>();
+
+function calibrationSettingKey(modelKey: string): string {
+  return `${TOKEN_ESTIMATE_CALIBRATION_SETTING_PREFIX}${modelKey}`;
+}
+
+function clampCalibrationRatio(ratio: number): number {
+  if (!Number.isFinite(ratio) || ratio <= 0) return 1;
+  return Math.min(
+    TOKEN_ESTIMATE_CALIBRATION_RATIO_MAX,
+    Math.max(TOKEN_ESTIMATE_CALIBRATION_RATIO_MIN, ratio),
+  );
+}
+
+/**
+ * Apply the learned per-model ratio to a raw baseline estimate.
+ * Falls back to the raw estimate when no samples exist yet.
+ */
+export async function applyTokenEstimateCalibration(
+  modelKey: string | null | undefined,
+  rawEstimateTokens: number,
+): Promise<number> {
+  const raw = Math.max(0, Math.ceil(rawEstimateTokens || 0));
+  if (raw <= 0 || !modelKey) return raw;
+  const cached = calibrationCache.get(modelKey);
+  if (cached && cached.samples > 0) {
+    return Math.max(1, Math.ceil(raw * cached.ratio));
+  }
+  try {
+    const { getSetting } = await import("./system-settings");
+    const stored = await getSetting<TokenEstimateCalibration>(calibrationSettingKey(modelKey));
+    if (stored && typeof stored.ratio === "number" && stored.samples > 0) {
+      const entry: TokenEstimateCalibration = {
+        ratio: clampCalibrationRatio(stored.ratio),
+        samples: stored.samples,
+        updatedAt: stored.updatedAt || new Date().toISOString(),
+      };
+      calibrationCache.set(modelKey, entry);
+      return Math.max(1, Math.ceil(raw * entry.ratio));
+    }
+  } catch {
+    // Calibration is best-effort — never block the request path.
+  }
+  return raw;
+}
+
+/**
+ * Learn from one clean (raw_baseline, provider_actual) pair.
+ * Only call with real provider-reported per-call input tokens — never with
+ * self-measured estimates or cumulative session totals.
+ */
+export async function recordTokenEstimateCalibration(
+  modelKey: string | null | undefined,
+  rawEstimateTokens: number,
+  providerActualInputTokens: number,
+): Promise<void> {
+  if (!modelKey) return;
+  const raw = Math.max(0, Math.floor(rawEstimateTokens || 0));
+  const actual = Math.max(0, Math.floor(providerActualInputTokens || 0));
+  // Ignore tiny samples (noise) and impossible pairs.
+  if (raw < 500 || actual < 500) return;
+  const observed = clampCalibrationRatio(actual / raw);
+  const previous = calibrationCache.get(modelKey);
+  const nextRatio = previous && previous.samples > 0
+    ? clampCalibrationRatio(
+        (1 - TOKEN_ESTIMATE_CALIBRATION_EMA_ALPHA) * previous.ratio
+          + TOKEN_ESTIMATE_CALIBRATION_EMA_ALPHA * observed,
+      )
+    : observed;
+  const entry: TokenEstimateCalibration = {
+    ratio: nextRatio,
+    samples: (previous?.samples ?? 0) + 1,
+    updatedAt: new Date().toISOString(),
+  };
+  calibrationCache.set(modelKey, entry);
+  try {
+    const { setSetting } = await import("./system-settings");
+    await setSetting(calibrationSettingKey(modelKey), entry);
+  } catch {
+    // Persist is best-effort; in-memory ratio still applies for this process.
+  }
+}
 /** Cap reserved output so large maxOutputTokens (e.g. 128k Opus) cannot collapse the input envelope. */
 const OPERATING_OUTPUT_RESERVE_CEILING = 32_000;
 /** Share of the context window treated as a soft upper bound on output reserve. */
@@ -109,7 +225,8 @@ export function estimateToolDefinitionTokens(
   tools: readonly unknown[] | undefined,
 ): number {
   if (!tools?.length) return 0;
-  return Math.ceil(JSON.stringify(tools).length / TOKEN_ESTIMATE_CHARS_PER_TOKEN);
+  // JSON schemas tokenize denser than prose — use the JSON baseline divisor.
+  return estimateTokensFromChars(JSON.stringify(tools).length, "json");
 }
 
 export class ContextOperatingBudgetExceededError extends Error {

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import path from "path";
 import { readFile } from "fs/promises";
 import { safeStringify } from "./utils/safe-stringify";
+import { estimateTokensFromChars as sharedEstimateTokensFromChars } from "./context-budget";
 import { db, withQueryAttributionAsync, getInFlightStats } from "./db";
 import { getInstanceNameLower } from "@shared/instance-config";
 import { TTLCache } from "./utils/ttl-cache";
@@ -209,10 +210,9 @@ async function resolveWithCacheAndCoalescing(
   return promise;
 }
 
-/** Canonical chars→tokens estimator (chars/3.5). Single source for the estimate. */
+/** Canonical chars→tokens estimator — shared prose baseline from context-budget. */
 export function estimateTokensFromChars(chars: number): number {
-  if (!chars || chars <= 0) return 0;
-  return Math.ceil(chars / 3.5);
+  return sharedEstimateTokensFromChars(chars, "prose");
 }
 
 export function estimateTokens(text: string): number {
