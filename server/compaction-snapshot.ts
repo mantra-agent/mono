@@ -14,6 +14,12 @@ export interface CompactionSnapshot {
 
 export interface CompactionSnapshotOptions {
   expectedRemovedMessageIds?: readonly string[];
+  /**
+   * @deprecated Between-turn no longer packs history up to a keep-budget.
+   * Prefer omitting so landing uses minimum viable live context
+   * (`selectBoundaryIndex` ≈ 2 recent context messages). Kept only for
+   * defensive pack-to-budget callers.
+   */
   retentionTokenBudget?: number;
 }
 

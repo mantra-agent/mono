@@ -30,7 +30,7 @@ import {
   estimateTokensFromChars,
   estimateToolDefinitionTokens,
   getContextRequestBudget,
-  getConversationRetentionBudget,
+  getBetweenTurnFireThreshold,
   recordTokenEstimateCalibration,
   type ContextRequestBudget,
 } from "./context-budget";
@@ -3266,7 +3266,8 @@ export class AgentExecutor extends EventEmitter {
       outputReserve: contextBudget.outputReserve,
       compactionTarget: contextBudget.compactionTarget,
       // Between-turn rest floor — same scale as the ring, separate policy from mid-run.
-      retentionBudget: getConversationRetentionBudget(contextBudget.contextWindow),
+      // Between-turn fire altitude (0.3 × window) — full next input, not history keep-budget.
+      retentionBudget: getBetweenTurnFireThreshold(contextBudget.contextWindow),
     });
     if (requestTokens > contextBudget.operatingInputLimit) {
       throw new ContextOperatingBudgetExceededError(requestTokens, contextBudget);

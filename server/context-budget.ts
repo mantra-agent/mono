@@ -1,5 +1,5 @@
-const CONVERSATION_RETENTION_FRACTION = 0.3;
-const CONVERSATION_RETENTION_TOKEN_CEILING = 100_000;
+/** Between-turn fire line: full next input vs this fraction of the provider window. */
+const BETWEEN_TURN_FIRE_FRACTION = 0.3;
 /**
  * Baseline chars→tokens for prose / mixed message content.
  * 4.0 is closer to real BPE density than the prior 3.5 (which ran ~50% hot
@@ -150,8 +150,9 @@ function boundedTokenCount(value: number): number {
  *   operatingInputLimit = hardInputLimit  (no secondary fraction/ceiling clamp)
  *   compactionTarget = 0.92 × operatingInputLimit
  *
- * Mid-run stages hang off compactionTarget. Between-turn retention is a separate
- * rest floor via getConversationRetentionBudget — not another operating clamp.
+ * Mid-run stages hang off compactionTarget. Between-turn fire is a separate
+ * rest altitude via getBetweenTurnFireThreshold (0.3 × window on full next input) —
+ * not another operating clamp and not a history keep-budget.
  *
  * `outputReserve` is the caller's max output tokens. When it is an *inherited
  * registry default* (`outputReserveIsExplicit` false), it is clamped by a fixed
@@ -212,13 +213,23 @@ export function getContextRequestBudget(
   };
 }
 
-export function getConversationRetentionBudget(contextWindow: number): number {
+/**
+ * Between-turn fire threshold: 30% of the true provider context window.
+ * Measurand is full next input (history + spine + tools + …). Crossing this
+ * triggers durable compaction; landing is minimum viable live context — not
+ * "pack history up to this budget."
+ */
+export function getBetweenTurnFireThreshold(contextWindow: number): number {
   const budget = getContextRequestBudget(contextWindow);
   return Math.min(
-    Math.floor(budget.contextWindow * CONVERSATION_RETENTION_FRACTION),
-    CONVERSATION_RETENTION_TOKEN_CEILING,
+    Math.floor(budget.contextWindow * BETWEEN_TURN_FIRE_FRACTION),
     budget.operatingInputLimit,
   );
+}
+
+/** @deprecated Use getBetweenTurnFireThreshold — retention-as-history-budget is gone. */
+export function getConversationRetentionBudget(contextWindow: number): number {
+  return getBetweenTurnFireThreshold(contextWindow);
 }
 
 export function estimateToolDefinitionTokens(
