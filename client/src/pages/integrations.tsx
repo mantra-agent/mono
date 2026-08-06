@@ -6093,7 +6093,7 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
   const sectionLabel = isSubscription ? "Subscription connector" : "API connector";
   const testIdPrefix = isClaude ? "claude-cli" : isGrok ? "grok-subscription" : `openai-${connector.provider}`;
   const settingsDescription = isClaude
-    ? "Claude subscription tiers. Configure the model, adaptive reasoning effort, thinking mode, and maximum agent turns. Mantra continues to own prompts, tools, permissions, and sessions."
+    ? "Claude subscription tiers. Configure the model, adaptive reasoning effort, thinking mode, maximum agent turns, and max output tokens. Mantra continues to own prompts, tools, permissions, and sessions."
     : isGrok
       ? "Grok subscription tiers. Map each semantic tier to a Grok model, set optional max output tokens, and choose reasoning effort on grok-4.5. xAI does not expose OpenAI Responses verbosity/service-tier controls here."
       : isSubscription
@@ -6232,6 +6232,28 @@ function ConnectorTierTree({ connector, models, title }: { connector: ModelConne
                       if (!raw) { if (config.maxTurns !== undefined) updateTier(tier, { maxTurns: undefined }); return; }
                       const value = Number.parseInt(raw, 10);
                       if (Number.isFinite(value) && value >= 1 && value <= 1000 && value !== config.maxTurns) updateTier(tier, { maxTurns: value });
+                    }}
+                    className="h-8 font-mono text-xs"
+                  />
+                </div>
+                <div className="grid gap-1.5 @sm:grid-cols-[8rem_1fr] @sm:items-center">
+                  <div className="min-w-0">
+                    <Label className="text-xs text-muted-foreground">Max output</Label>
+                    <p className="text-xs text-muted-foreground/80">Optional (1–32000). Lower caps shrink the output reserve and raise the usable input limit. Blank uses Claude Code's default.</p>
+                  </div>
+                  <Input
+                    key={`${tier}-${config.maxOutputTokens ?? "default"}`}
+                    type="number"
+                    min={1}
+                    max={32000}
+                    defaultValue={config.maxOutputTokens ?? ""}
+                    placeholder="Default (32000)"
+                    disabled={mutation.isPending}
+                    onBlur={(event) => {
+                      const raw = event.target.value.trim();
+                      if (!raw) { if (config.maxOutputTokens !== undefined) updateTier(tier, { maxOutputTokens: undefined }); return; }
+                      const value = Number.parseInt(raw, 10);
+                      if (Number.isFinite(value) && value >= 1 && value <= 32000 && value !== config.maxOutputTokens) updateTier(tier, { maxOutputTokens: Math.min(value, 32000) });
                     }}
                     className="h-8 font-mono text-xs"
                   />
