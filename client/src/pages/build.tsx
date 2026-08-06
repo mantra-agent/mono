@@ -3867,7 +3867,8 @@ function DesignReferencePlayground() {
         <li>
           <span className="text-foreground">Chat:</span>{" "}
           <code className="rounded bg-muted px-1 font-mono">MentionPopover</code> uses the
-          same rows — no more two-line dense list.
+          same rows and flips above/below the composer inside the visual viewport
+          (never pins under the status bar on mobile).
         </li>
         <li>
           <span className="text-foreground">Tags:</span>{" "}
