@@ -5254,6 +5254,20 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return { result: errors.length > 0 ? errors : "No aggregated application errors found." };
     }
 
+    if (action === "dismiss_error") {
+      const { dismissApplicationError } = await import("./error-telemetry");
+      const fingerprint = typeof args.fingerprint === "string" ? args.fingerprint.trim() : "";
+      if (!fingerprint) {
+        return { result: "dismiss_error requires a fingerprint (64-char hex from list_errors).", error: true };
+      }
+      const dismissed = await dismissApplicationError(fingerprint);
+      return {
+        result: dismissed
+          ? `Dismissed error ${fingerprint}. It will resurface if the same error recurs.`
+          : `No active error found for fingerprint ${fingerprint} (already dismissed or unknown).`,
+      };
+    }
+
     if (action === "list") {
       const allowedStatuses = new Set(["open", "in_progress", "in_review", "resolved"]);
       const status = typeof args.status === "string" && args.status.trim()

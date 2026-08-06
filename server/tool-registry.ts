@@ -772,8 +772,9 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["create", "list", "get", "resolve", "add_note", "list_errors"], description: "Action to perform" },
+        action: { type: "string", enum: ["create", "list", "get", "resolve", "add_note", "list_errors", "dismiss_error"], description: "Action to perform" },
         id: { type: "string", description: "Issue ID (for get/resolve/add_note)" },
+        fingerprint: { type: "string", description: "Aggregated error fingerprint — 64-char hex identity from list_errors (for dismiss_error). Dismiss hides the error until it recurs; a new occurrence resurfaces it." },
         text: { type: "string", description: "Dated log entry text to append to the Issue's notes log, 1-5000 characters (for add_note)" },
         status: { type: "string", enum: ["open", "in_progress", "in_review", "resolved"], description: "Issue status filter (for list)" },
         excludeStatus: { type: "string", enum: ["open", "in_progress", "in_review", "resolved"], description: "Issue status to exclude (for list)" },
