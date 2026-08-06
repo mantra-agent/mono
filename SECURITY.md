@@ -1,3 +1,10 @@
+<!-- 2026-08-06 bounded Drive Office text extraction:
+- Assets/data: user-selected uploaded DOCX/XLSX bytes (S2), extracted UTF-8 text, encrypted Drive archive envelopes, source fingerprints, and bounded warning metadata. PDF handling is unchanged and out of scope.
+- Flow/boundary: principal/vault/bind authorization in FilesApi -> full provider download -> file-text-extraction (DOCX canonical parser or XLSX ZIP/XML-to-CSV) -> AES-GCM archive + indexed_content; failed extraction returns to the existing base64 archive path.
+- Threats: hostile Office ZIP/XML causing decompression or allocation exhaustion (DoS), malformed relationships/path traversal, formula interpretation, parser exceptions leaking content, or extraction changing source-byte completeness semantics.
+- Controls/owner: FilesApi remains the sole authorization boundary; parsing is data-only and never evaluates formulas/macros; compressed source, uncompressed ZIP size, sheet count, populated/sparse cells, and extracted chars are deterministically bounded; worksheet relationships resolve only through entries already present in the opened ZIP; warnings contain identifiers, MIME, byte count, and a capped error only; archives remain AES-GCM encrypted and sourceBytes/stagedBytes continue to measure provider bytes. Owner Platform Files API; SLA immediate.
+- Residual: XLSX formatting, formulas, cached-value nuance, charts, and embedded objects are intentionally not represented in CSV text; over-budget or unsupported content remains available only through encrypted base64 paging.
+-->
 <!-- 2026-08-06 stream/draft failureCode durability:
 - Assets/data: stable ToolFailure codes on stream steps, draft toolCalls, and reliability reads. No args/result bodies, secrets, or cross-principal aggregates.
 - Flow/boundary: producer failure.code -> stream tool_result -> session reducer/draft projection -> terminal toolCalls -> reliability extractFailureCode.

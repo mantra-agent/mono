@@ -23,6 +23,10 @@ import { driveResources, type DriveResourceRow } from "@shared/schema";
 import { vaults } from "@shared/models/vaults";
 import { createLogger } from "./log";
 import {
+  extractOfficeText,
+  isExtractableOfficeMime,
+} from "./file-text-extraction";
+import {
   requireCurrentUserPrincipal,
   runWithPrincipal,
 } from "./principal-context";
@@ -867,7 +871,8 @@ class FilesApi {
     }
 
     const contentType = expectedReadContentType(metadata.mimeType);
-    const encoding = archiveEncodingFor(contentType);
+    const officeExtraction = isExtractableOfficeMime(contentType);
+    const encoding = officeExtraction ? "utf8" : archiveEncodingFor(contentType);
     const operationKey = buildDriveFileCacheKey({
       provider: metadata.provider,
       providerFileId: metadata.providerFileId,
@@ -879,7 +884,20 @@ class FilesApi {
 
     // Cache hit: skip provider download entirely.
     try {
-      const cached = await lookupDriveFileArchive(operationKey, encoding);
+      let cached = await lookupDriveFileArchive(operationKey, encoding);
+      let cachedEncoding = encoding;
+      if (!cached && officeExtraction) {
+        const binaryOperationKey = buildDriveFileCacheKey({
+          provider: metadata.provider,
+          providerFileId: metadata.providerFileId,
+          md5Checksum: metadata.md5Checksum,
+          modifiedTime: metadata.modifiedTime,
+          contentType,
+          encoding: "base64",
+        });
+        cached = await lookupDriveFileArchive(binaryOperationKey, "base64");
+        cachedEncoding = "base64";
+      }
       if (cached) {
         log.log("Files read cache hit", {
           provider: metadata.provider,
@@ -889,11 +907,11 @@ class FilesApi {
         });
         let text: string | null = null;
         let base64: string | null = null;
-        if (encoding === "utf8" && cached.byteCount <= MAX_INLINE_TEXT_CHARS) {
+        if (cachedEncoding === "utf8" && cached.byteCount <= MAX_INLINE_TEXT_CHARS) {
           const { readFromObjectStorage } = await import("./content-indexer");
           text = await readFromObjectStorage(cached.objectStoragePath);
         } else if (
-          encoding === "base64" &&
+          cachedEncoding === "base64" &&
           cached.byteCount <= Math.ceil((MAX_INLINE_READ_BYTES * 4) / 3)
         ) {
           const { readFromObjectStorage } = await import("./content-indexer");
@@ -905,7 +923,7 @@ class FilesApi {
         const stagedBytes =
           stagedFromSource != null
             ? stagedFromSource
-            : encoding === "base64"
+            : cachedEncoding === "base64"
               ? Math.floor((cached.byteCount * 3) / 4)
               : cached.byteCount;
         return buildReadResult({
@@ -917,7 +935,7 @@ class FilesApi {
           truncated: false,
           archive: cached,
           cache: "hit",
-          encoding,
+          encoding: cachedEncoding,
         });
       }
     } catch (err) {
@@ -943,12 +961,34 @@ class FilesApi {
 
       const buf = bytes.buffer;
       const truncated = !!bytes.truncated;
-      const resolvedContentType =
-        bytes.contentType || contentType || metadata.mimeType || "application/octet-stream";
-      const resolvedEncoding = archiveEncodingFor(resolvedContentType);
-      // Text archives as utf-8; binary as base64 so indexed_content sections stay text-safe.
-      const archiveBody =
-        resolvedEncoding === "utf8" ? buf.toString("utf8") : buf.toString("base64");
+      const resolvedContentType = officeExtraction
+        ? contentType
+        : bytes.contentType || contentType || metadata.mimeType || "application/octet-stream";
+      let resolvedEncoding = archiveEncodingFor(resolvedContentType);
+      let archiveBody: string;
+      if (officeExtraction) {
+        try {
+          const extracted = await extractOfficeText(buf, resolvedContentType);
+          if (extracted == null) {
+            throw new Error("Office extraction exceeded limits or produced no text");
+          }
+          resolvedEncoding = "utf8";
+          archiveBody = extracted;
+        } catch (err) {
+          log.warn("Office text extraction failed; preserving binary archive", {
+            provider: metadata.provider,
+            providerFileId: metadata.providerFileId,
+            mimeType: resolvedContentType,
+            sourceBytes: buf.length,
+            err: err instanceof Error ? err.message.slice(0, 240) : "unknown",
+          });
+          resolvedEncoding = "base64";
+          archiveBody = buf.toString("base64");
+        }
+      } else {
+        archiveBody =
+          resolvedEncoding === "utf8" ? buf.toString("utf8") : buf.toString("base64");
+      }
       const safeName = (metadata.name || "file")
         .replace(/[^a-zA-Z0-9._-]+/g, "_")
         .slice(0, 80);
@@ -990,11 +1030,10 @@ class FilesApi {
       let text: string | null = null;
       let base64: string | null = null;
       if (resolvedEncoding === "utf8") {
-        const fullText = buf.toString("utf8");
         text =
-          fullText.length <= MAX_INLINE_TEXT_CHARS
-            ? fullText
-            : fullText.slice(0, MAX_INLINE_TEXT_CHARS);
+          archiveBody.length <= MAX_INLINE_TEXT_CHARS
+            ? archiveBody
+            : archiveBody.slice(0, MAX_INLINE_TEXT_CHARS);
       } else if (buf.length <= MAX_INLINE_READ_BYTES) {
         base64 = buf.toString("base64");
       }
