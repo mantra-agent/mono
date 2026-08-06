@@ -64,6 +64,10 @@ export const claudeCliTierModelConfigSchema = z.object({
   effort: claudeCliEffortSchema.optional(),
   thinkingMode: claudeCliThinkingModeSchema.optional(),
   maxTurns: z.number().int().min(1).max(1000).optional(),
+  // Claude Code caps output at 32k (env CLAUDE_CODE_MAX_OUTPUT_TOKENS accepts 1-32000).
+  // Lowering this shrinks the output reserve and raises the hard input limit, mirroring
+  // the OpenAI connector's maxOutputTokens knob. Omit to use Claude Code's default cap.
+  maxOutputTokens: z.number().int().min(1).max(32000).optional(),
 }).strict();
 export type ClaudeCliTierModelConfig = z.infer<typeof claudeCliTierModelConfigSchema>;
 

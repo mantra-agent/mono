@@ -765,6 +765,12 @@ function buildSdkOptions(
       const e: Record<string, string> = { ...process.env } as Record<string, string>;
       e.CLAUDE_CODE_OAUTH_TOKEN = token;
       delete e.ANTHROPIC_API_KEY;
+      // Per-tier output cap: the Claude Agent SDK reads CLAUDE_CODE_MAX_OUTPUT_TOKENS
+      // from the spawned worker's env (range 1-32000). Setting it here lets a tier
+      // shrink the output reserve and reclaim input headroom. The pool key hashes the
+      // full connectorConfig, so workers with different caps never cross-contaminate.
+      const cliMaxOutput = options.connectorConfig?.maxOutputTokens;
+      if (cliMaxOutput) e.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(cliMaxOutput);
       return e;
     })(),
   };

@@ -2783,7 +2783,14 @@ export class AgentExecutor extends EventEmitter {
     if (runEntry) runEntry.model = modelString;
     const { getMaxOutputTokens: getModelMax } = await import("./model-registry");
     const parsedModelId = modelString.includes("/") ? modelString.split("/").slice(1).join("/") : modelString;
-    const maxTokens = getModelMax(parsedModelId);
+    let maxTokens = getModelMax(parsedModelId);
+    // Honor a per-tier Claude CLI output cap so the context budget's output reserve
+    // (and thus the derived hard input limit) reflects the configured output ceiling,
+    // matching the CLAUDE_CODE_MAX_OUTPUT_TOKENS the worker actually runs with.
+    const cliMaxOutputCap = routingDecision.provider === "claude-cli"
+      ? (routingDecision.modelConfig as { maxOutputTokens?: number } | undefined)?.maxOutputTokens
+      : undefined;
+    if (cliMaxOutputCap) maxTokens = Math.min(maxTokens, cliMaxOutputCap);
 
     const emit = (event: StreamEvent) => {
       options.onEvent?.(event);
@@ -4295,6 +4302,12 @@ export class AgentExecutor extends EventEmitter {
           thinkingBudget = thinking.thinking.type === "enabled" ? (thinking.thinking.budgetTokens ?? 0) : 0;
           const { getMaxOutputTokens } = await import("./model-registry");
           maxTokens = getMaxOutputTokens(parsedModel);
+          // Re-apply the per-tier Claude CLI output cap after a persona/model switch
+          // so the recomputed budget keeps honoring the configured output ceiling.
+          const cliCapAfterSwitch = routingDecision.provider === "claude-cli"
+            ? (routingDecision.modelConfig as { maxOutputTokens?: number } | undefined)?.maxOutputTokens
+            : undefined;
+          if (cliCapAfterSwitch) maxTokens = Math.min(maxTokens, cliCapAfterSwitch);
           contextBudget = getContextRequestBudget(
             getContextWindow(modelString),
             maxTokens,
