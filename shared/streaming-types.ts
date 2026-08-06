@@ -57,6 +57,10 @@ export interface ContextPressureSnapshot {
   inputTokens: number;
   inputLimit: number;
   compactionThreshold: number;
+  /** True provider context window (e.g. 200k) — the real max, for debug display. */
+  contextWindow?: number;
+  /** Human-readable model display name, for debug display. */
+  modelName?: string;
 }
 
 export interface StreamingContent {

@@ -3118,10 +3118,16 @@ export class AgentExecutor extends EventEmitter {
     }
 
     const requestTokens = estimateTotalTokens(messages) + toolDefinitionTokens;
+    const pressureModelRaw = ctx.resolvedModel || ctx.modelString;
+    const pressureModelName = getModelName(
+      pressureModelRaw.includes("/") ? pressureModelRaw.split("/").slice(1).join("/") : pressureModelRaw,
+    );
     ctx.publish("context_pressure", {
       inputTokens: requestTokens,
       inputLimit: contextBudget.operatingInputLimit,
       compactionThreshold: Math.floor(contextBudget.compactionTarget * 0.65),
+      contextWindow: contextBudget.contextWindow,
+      modelName: pressureModelName,
     });
     if (requestTokens > contextBudget.operatingInputLimit) {
       throw new ContextOperatingBudgetExceededError(requestTokens, contextBudget);

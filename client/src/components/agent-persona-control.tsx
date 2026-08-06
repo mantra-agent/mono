@@ -55,9 +55,21 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const radioValue = pinned && activePersonaId != null ? String(activePersonaId) : "auto";
   // The message snapshot is historical; session pin state is current. Only show
   // the current pin when this turn's persona still matches the pinned persona.
-  const tooltipLabel = pinned && persona?.id === activePersonaId
+  const baseTooltipLabel = pinned && persona?.id === activePersonaId
     ? `${personaLabel} · pinned by you`
     : personaLabel;
+  const formatTokensK = (n: number) =>
+    n >= 1000 ? `${(n / 1000).toFixed(n < 100_000 ? 1 : 0)}k` : `${n}`;
+  // Debug detail: input tokens, % of the true provider window, the real max, and model.
+  const pressureDetail =
+    contextPressure && contextPressure.contextWindow
+      ? ` (${formatTokensK(contextPressure.inputTokens)} (${Math.round(
+          (contextPressure.inputTokens / contextPressure.contextWindow) * 100,
+        )}%) / ${formatTokensK(contextPressure.contextWindow)}${
+          contextPressure.modelName ? ` ${contextPressure.modelName}` : ""
+        })`
+      : "";
+  const tooltipLabel = `${baseTooltipLabel}${pressureDetail}`;
   const pressureRatio = contextPressure
     ? Math.min(contextPressure.inputTokens / Math.max(contextPressure.inputLimit, 1), 1)
     : 0;
