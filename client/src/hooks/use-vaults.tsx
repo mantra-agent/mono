@@ -163,8 +163,12 @@ export function VaultProvider({ children }: { children: ReactNode }) {
 
 // ── Hook ───────────────────────────────────────────────────────────────────
 
+export function useOptionalVaults(): VaultContextValue | null {
+  return useContext(VaultContext);
+}
+
 export function useVaults(): VaultContextValue {
-  const ctx = useContext(VaultContext);
+  const ctx = useOptionalVaults();
   if (!ctx) throw new Error("useVaults must be used within VaultProvider");
   return ctx;
 }

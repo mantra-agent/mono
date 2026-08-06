@@ -2,7 +2,7 @@ import type { ReferenceRef } from "@shared/references";
 import type { LucideIcon } from "lucide-react";
 import { ReferenceChip } from "./reference-chip";
 import { resolveReference } from "./reference-registry";
-import { useVaults } from "@/hooks/use-vaults";
+import { useOptionalVaults } from "@/hooks/use-vaults";
 import { vaultReferenceColor } from "@/lib/vault-title-color";
 
 export type ReferenceSurface = "chat-inline" | "simple-chip" | "simple-row" | "card" | "expanded";
@@ -31,7 +31,9 @@ export function ReferenceRenderer({
   /** Allow multi-line labels for tree/row titles. */
   wrapLabel?: boolean;
 }) {
-  const { vaults, activeVaultId } = useVaults();
+  const vaultContext = useOptionalVaults();
+  const vaults = vaultContext?.vaults ?? [];
+  const activeVaultId = vaultContext?.activeVaultId ?? null;
   const vaultById = new Map(vaults.map(vault => [vault.id, vault]));
   const vaultIds = Array.isArray(refValue.metadata?.vaultIds)
     ? refValue.metadata.vaultIds.filter((id): id is string => typeof id === "string")
