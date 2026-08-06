@@ -82,8 +82,13 @@ export interface JournalEntry {
   inputTokens?: number | null;
   outputTokens?: number | null;
   totalTokens?: number | null;
-  inputLimit?: number;
-  compactionThreshold?: number;
+  contextWindow?: number;
+  hardInputLimit?: number;
+  outputReserve?: number;
+  betweenTurnFire?: number;
+  midRunStage1?: number;
+  midRunStage2?: number;
+  midRunStage3?: number;
 }
 
 const activeRunJournals = new Map<string, JournalEntry[]>();
@@ -366,11 +371,7 @@ export function publishJournalToUI(entry: JournalEntry, category: EventCategory 
   if (category === "chat" && entry.sessionId) {
     try {
       const { sessionManager } = require("./session-manager");
-      sessionManager.applyEvent(entry.sessionId, {
-    ...entry,
-    inputLimit: entry.inputLimit,
-    compactionThreshold: entry.compactionThreshold,
-  });
+      sessionManager.applyEvent(entry.sessionId, entry);
     } catch (err) {
       // SessionManager not loaded yet or error — non-fatal, eventBus still works
       log.debug(`sessionManager.applyEvent skipped: ${err instanceof Error ? err.message : String(err)}`);

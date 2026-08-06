@@ -14,13 +14,6 @@ export interface CompactionSnapshot {
 
 export interface CompactionSnapshotOptions {
   expectedRemovedMessageIds?: readonly string[];
-  /**
-   * @deprecated Between-turn no longer packs history up to a keep-budget.
-   * Prefer omitting so landing uses minimum viable live context
-   * (`selectBoundaryIndex` ≈ 2 recent context messages). Kept only for
-   * defensive pack-to-budget callers.
-   */
-  retentionTokenBudget?: number;
 }
 
 export function isCommittedContextMessage(message: Pick<FileMessage, "role" | "model" | "assistantState">): boolean {
@@ -35,67 +28,12 @@ export function isCommittedContextMessage(message: Pick<FileMessage, "role" | "m
   );
 }
 
-function estimateTokens(text: string): number {
-  return text ? Math.ceil(text.length / 3.5) : 0;
-}
-
-export function estimateCompactionMessageTokens(message: FileMessage): number {
-  let tokens = estimateTokens(message.content);
-  if (message.thinking) tokens += estimateTokens(message.thinking);
-  if (Array.isArray(message.toolCalls)) {
-    for (const toolCall of message.toolCalls as Array<Record<string, unknown>>) {
-      const result = toolCall?.result ?? toolCall?.output;
-      if (typeof result === "string") tokens += estimateTokens(result);
-      else if (result != null) tokens += estimateTokens(JSON.stringify(result));
-    }
-  }
-  return tokens;
-}
-
 function hashJson(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function immutableCopy<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function selectTokenAwareBoundary(
-  messages: readonly FileMessage[],
-  retentionTokenBudget: number,
-): number | null {
-  const contextIndices = messages.flatMap((message, index) =>
-    isCommittedContextMessage(message) ? [index] : [],
-  );
-  if (contextIndices.length <= 1) return null;
-
-  const newestUserIndex = contextIndices.reduce(
-    (latest, index) => (messages[index].role === "user" ? index : latest),
-    -1,
-  );
-  const mandatoryKeepIndex = newestUserIndex >= 0
-    ? newestUserIndex
-    : contextIndices[contextIndices.length - 1];
-
-  let keptTokens = 0;
-  let earliestKeptContextIndex = mandatoryKeepIndex;
-  for (let position = contextIndices.length - 1; position >= 0; position -= 1) {
-    const index = contextIndices[position];
-    if (index < mandatoryKeepIndex) continue;
-    keptTokens += estimateCompactionMessageTokens(messages[index]);
-    earliestKeptContextIndex = Math.min(earliestKeptContextIndex, index);
-  }
-
-  for (let position = contextIndices.length - 1; position >= 0; position -= 1) {
-    const index = contextIndices[position];
-    if (index >= mandatoryKeepIndex) continue;
-    const messageTokens = estimateCompactionMessageTokens(messages[index]);
-    if (keptTokens + messageTokens > retentionTokenBudget) break;
-    keptTokens += messageTokens;
-    earliestKeptContextIndex = index;
-  }
-
-  return earliestKeptContextIndex > 0 ? earliestKeptContextIndex : null;
 }
 
 export function buildCompactionSnapshot(
@@ -121,13 +59,6 @@ export function buildCompactionSnapshot(
       }
     }
     boundaryIndex = expectedRemovedMessageIds.length;
-  } else if (typeof options.retentionTokenBudget === "number") {
-    const selectedBoundary = selectTokenAwareBoundary(
-      messages,
-      Math.max(0, options.retentionTokenBudget),
-    );
-    if (selectedBoundary == null) return null;
-    boundaryIndex = selectedBoundary;
   } else {
     const contextIndices = messages.flatMap((message, index) =>
       isCommittedContextMessage(message) ? [index] : [],

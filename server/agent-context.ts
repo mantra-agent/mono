@@ -206,8 +206,8 @@ export async function runBetweenTurnCompaction(
 
   // The persisted doc is the coordinate space for the whole operation.
   // Fire threshold is full-request model-space; split/archive/write-back key
-  // off durable message IDs. Landing is minimum viable live context — no
-  // history keep-budget (omit retentionTokenBudget so snapshot keeps ~2 recent).
+  // off durable message IDs. Landing keeps the two newest committed context
+  // messages; there is no history keep-budget path.
   const { chatFileStorage } = await import("./chat-file-storage");
   const docMessages = await chatFileStorage.getMessagesBySession(sessionId);
 

@@ -61,72 +61,36 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const formatTokensK = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(n < 100_000 ? 1 : 0)}k` : `${n}`;
   // Debug detail: input tokens, % of the true provider window, the real max, and model.
-  const retentionDetail =
-    contextPressure?.retentionBudget && contextPressure.contextWindow
-      ? ` · fire ${formatTokensK(contextPressure.retentionBudget)}`
-      : "";
+  const fireDetail = contextPressure
+    ? ` · fire ${formatTokensK(contextPressure.betweenTurnFire)}`
+    : "";
   const pressureDetail =
     contextPressure && contextPressure.contextWindow
       ? ` (${formatTokensK(contextPressure.inputTokens)} (${Math.round(
           (contextPressure.inputTokens / contextPressure.contextWindow) * 100,
-        )}%) / ${formatTokensK(contextPressure.contextWindow)}${retentionDetail}${
+        )}%) / ${formatTokensK(contextPressure.contextWindow)}${fireDetail}${
           contextPressure.modelName ? ` ${contextPressure.modelName}` : ""
         })`
       : "";
   const tooltipLabel = `${baseTooltipLabel}${pressureDetail}`;
-  // Visual scale: the ring measures against the TRUE provider context window
-  // (e.g. 200k), so the arc and markers read on the denominator a human assumes.
-  // Falls back to the operating limit only when the window is unavailable.
-  const scaleLimit = contextPressure
-    ? Math.max(contextPressure.contextWindow ?? contextPressure.inputLimit, 1)
-    : 1;
-  const pressureRatio = contextPressure
-    ? Math.min(contextPressure.inputTokens / scaleLimit, 1)
-    : 0;
-  const thresholdRatio = contextPressure
-    ? Math.min(contextPressure.compactionThreshold / scaleLimit, 1)
-    : 0;
-  // Hard input cliff (= operating after clamp removal): window − outputReserve.
-  // Red radial tick — the mid-run gate input must not cross.
-  const operatingRatio =
-    contextPressure && contextPressure.contextWindow
-      ? Math.min(contextPressure.inputLimit / scaleLimit, 1)
-      : 0;
-  // Between-turn fire altitude (0.3 × window, full next input). Softer than the
-  // amber ladder and red cliff — same scale, different policy weight.
-  const retentionRatio =
-    contextPressure && contextPressure.contextWindow && contextPressure.retentionBudget
-      ? Math.min(contextPressure.retentionBudget / scaleLimit, 1)
-      : 0;
-  // Output reserve: the roped-off top of the window (window − hardInputLimit) that input
-  // can never touch. Drawn as a muted wedge counting back counter-clockwise from 12 o'clock.
-  const reserveRatio =
-    contextPressure && contextPressure.contextWindow && contextPressure.outputReserve
-      ? Math.min(contextPressure.outputReserve / scaleLimit, 1)
-      : 0;
-  // Mid-turn compaction ladder: stage 1 (0.65× target) is the existing dot; stages 2
-  // (0.80×) and 3 (target) are the upper rungs. Drawn as graduated amber ticks so the
-  // staged recovery zone reads as one family, distinct from the red operating gate.
-  const stage2Ratio =
-    contextPressure && contextPressure.compactionTarget
-      ? Math.min((contextPressure.compactionTarget * 0.8) / scaleLimit, 1)
-      : 0;
-  const stage3Ratio =
-    contextPressure && contextPressure.compactionTarget
-      ? Math.min(contextPressure.compactionTarget / scaleLimit, 1)
-      : 0;
-  // Color stays pegged to the operational events (compaction + operating gate),
-  // NOT the visual scale — otherwise rescaling to the window would neuter the
-  // red/amber warnings, since the hard gate lives well below the full window.
-  const nearOperatingGate =
-    !!contextPressure && contextPressure.inputTokens >= contextPressure.inputLimit * 0.9;
-  const pastCompaction =
-    !!contextPressure && contextPressure.inputTokens >= contextPressure.compactionThreshold;
-  const pressureColor = nearOperatingGate
-    ? "hsl(var(--destructive))"
-    : pastCompaction
-      ? "hsl(var(--warning))"
-      : "hsl(var(--cta))";
+  // The client projects server-resolved altitudes onto one denominator. It owns no
+  // pressure policy and performs no threshold multiplication.
+  const scaleLimit = contextPressure ? Math.max(contextPressure.contextWindow, 1) : 1;
+  const ratio = (tokens: number | undefined) =>
+    typeof tokens === "number" ? Math.min(tokens / scaleLimit, 1) : 0;
+  const pressureRatio = ratio(contextPressure?.inputTokens);
+  const thresholdRatio = ratio(contextPressure?.midRunStage1);
+  const stage2Ratio = ratio(contextPressure?.midRunStage2);
+  const stage3Ratio = ratio(contextPressure?.midRunStage3);
+  const hardRatio = ratio(contextPressure?.hardInputLimit);
+  const fireRatio = ratio(contextPressure?.betweenTurnFire);
+  const reserveRatio = ratio(contextPressure?.outputReserve);
+  const pressureColor =
+    contextPressure && contextPressure.inputTokens >= contextPressure.hardInputLimit
+      ? "hsl(var(--destructive))"
+      : contextPressure && contextPressure.inputTokens >= contextPressure.midRunStage1
+        ? "hsl(var(--warning))"
+        : "hsl(var(--cta))";
   const circumference = 2 * Math.PI * 18;
 
   const mutation = useMutation({
@@ -236,7 +200,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                       transform={`rotate(${stage3Ratio * 360} 20 20)`}
                     />
                   )}
-                  {retentionRatio > 0 && retentionRatio < 1 && (
+                  {fireRatio > 0 && fireRatio < 1 && (
                     <line
                       x1="36.5"
                       y1="20"
@@ -246,10 +210,10 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                       strokeWidth="1"
                       strokeLinecap="round"
                       opacity="0.55"
-                      transform={`rotate(${retentionRatio * 360} 20 20)`}
+                      transform={`rotate(${fireRatio * 360} 20 20)`}
                     />
                   )}
-                  {operatingRatio > 0 && operatingRatio < 1 && (
+                  {hardRatio > 0 && hardRatio < 1 && (
                     <line
                       x1="36"
                       y1="20"
@@ -257,7 +221,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
                       y2="20"
                       stroke="hsl(var(--destructive))"
                       strokeWidth="1.25"
-                      transform={`rotate(${operatingRatio * 360} 20 20)`}
+                      transform={`rotate(${hardRatio * 360} 20 20)`}
                     />
                   )}
                 </svg>

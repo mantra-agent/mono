@@ -382,8 +382,13 @@ export interface SystemStepRecord {
   childMode?: DiagnosticChildMode;
   occurredAt?: number;
   inputTokens?: number;
-  inputLimit?: number;
-  compactionThreshold?: number;
+  contextWindow?: number;
+  hardInputLimit?: number;
+  outputReserve?: number;
+  betweenTurnFire?: number;
+  midRunStage1?: number;
+  midRunStage2?: number;
+  midRunStage3?: number;
 }
 
 export interface ExecutorStreamEvent {
