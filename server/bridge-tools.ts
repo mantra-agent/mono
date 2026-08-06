@@ -5136,7 +5136,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     if (args.projectId !== undefined) command.projectId = args.projectId;
     if (args.milestoneId !== undefined) command.milestoneId = args.milestoneId;
     if (args.deadline !== undefined) command.deadline = args.deadline;
-    const clearFields = normalizeStringArray(args.clearFields);
+    const clearFields = Array.isArray(args.clearFields)
+      ? args.clearFields.filter((field: unknown): field is string => typeof field === "string")
+      : [];
     if (clearFields.includes("projectId") || clearFields.includes("milestoneId")) {
       return {
         result: "Task project and milestone placement cannot be cleared; move the task by setting a valid projectId and milestoneId together.",
