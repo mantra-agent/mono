@@ -62,11 +62,14 @@ export interface ContextPressureSnapshot {
   hardInputLimit: number;
   /** Tokens reserved for model output, rendered as the roped-off top wedge. */
   outputReserve: number;
-  /** Server-resolved policy altitudes; clients project but never derive them. */
-  betweenTurnFire: number;
-  midRunStage1: number;
-  midRunStage2: number;
-  midRunStage3: number;
+  /** Durable history reset between requests. */
+  betweenTurnHistoryReset: number;
+  /** Reconstructible tool-output trimming during execution. */
+  midTurnToolSoftTrim: number;
+  /** Deterministic compression of older working history during execution. */
+  midTurnHistoryHardTrim: number;
+  /** Final working-history reset at the hard input limit. */
+  midTurnHistoryReset: number;
   modelName?: string;
 }
 

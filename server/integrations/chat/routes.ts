@@ -1917,7 +1917,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       getContextPressureThresholds,
     } = await import("../../context-budget");
     const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
-    const betweenTurnThreshold = getContextPressureThresholds(hardInputLimit).betweenTurnFire;
+    const betweenTurnThreshold = getContextPressureThresholds(hardInputLimit).betweenTurnHistoryReset;
     const rawPreExecutorTokens = estimateMessagesInputTokens(messages) + toolDefinitionTokens;
     const fullPreExecutorTokens = await applyTokenEstimateCalibration(
       bareModel,

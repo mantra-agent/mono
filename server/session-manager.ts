@@ -79,10 +79,10 @@ export type SessionStreamEvent = {
   hardInputLimit?: number;
   modelName?: string;
   outputReserve?: number;
-  betweenTurnFire?: number;
-  midRunStage1?: number;
-  midRunStage2?: number;
-  midRunStage3?: number;
+  betweenTurnHistoryReset?: number;
+  midTurnToolSoftTrim?: number;
+  midTurnHistoryHardTrim?: number;
+  midTurnHistoryReset?: number;
   persona?: { id: number; name: string; icon: string };
   runId?: string;
   turnId?: string;
@@ -472,10 +472,10 @@ class SessionManager {
           && typeof event.contextWindow === "number"
           && typeof event.hardInputLimit === "number"
           && typeof event.outputReserve === "number"
-          && typeof event.betweenTurnFire === "number"
-          && typeof event.midRunStage1 === "number"
-          && typeof event.midRunStage2 === "number"
-          && typeof event.midRunStage3 === "number"
+          && typeof event.betweenTurnHistoryReset === "number"
+          && typeof event.midTurnToolSoftTrim === "number"
+          && typeof event.midTurnHistoryHardTrim === "number"
+          && typeof event.midTurnHistoryReset === "number"
         ) {
           prev = {
             ...prev,
@@ -484,10 +484,10 @@ class SessionManager {
               contextWindow: Math.max(1, event.contextWindow),
               hardInputLimit: Math.max(0, event.hardInputLimit),
               outputReserve: Math.max(0, event.outputReserve),
-              betweenTurnFire: Math.max(0, event.betweenTurnFire),
-              midRunStage1: Math.max(0, event.midRunStage1),
-              midRunStage2: Math.max(0, event.midRunStage2),
-              midRunStage3: Math.max(0, event.midRunStage3),
+              betweenTurnHistoryReset: Math.max(0, event.betweenTurnHistoryReset),
+              midTurnToolSoftTrim: Math.max(0, event.midTurnToolSoftTrim),
+              midTurnHistoryHardTrim: Math.max(0, event.midTurnHistoryHardTrim),
+              midTurnHistoryReset: Math.max(0, event.midTurnHistoryReset),
               ...(typeof event.modelName === "string" ? { modelName: event.modelName } : {}),
             },
           };

@@ -360,7 +360,7 @@ function formatInputContextDetail(contextPressure: ExecutorRunOptions["contextPr
   const tokens = contextPressure.contextTokens ?? contextPressure.preRunTokens;
   const threshold = contextPressure.threshold;
   const pieces = [`input≈${tokens.toLocaleString()} tok`];
-  if (threshold > 0) pieces.push(`stage1=${threshold.toLocaleString()}`);
+  if (threshold > 0) pieces.push(`toolSoftTrim=${threshold.toLocaleString()}`);
   if (contextPressure.contextWindow) pieces.push(`window=${contextPressure.contextWindow.toLocaleString()}`);
   if (contextPressure.messageCount != null) pieces.push(`msgs=${contextPressure.messageCount}`);
   if (contextPressure.toolCount != null) pieces.push(`tools=${contextPressure.toolCount}`);
@@ -445,7 +445,7 @@ interface CompactToolResultsOpts {
   truncateTextBlocks: boolean;
   textBlockLimit: number;
   textBlockPreviewLength: number;
-  stageName: string;
+  actionName: string;
 }
 
 function compactToolResults(messages: ExecutorMessage[], opts: CompactToolResultsOpts): { messages: ExecutorMessage[]; compacted: boolean } {
@@ -516,15 +516,15 @@ function compactToolResults(messages: ExecutorMessage[], opts: CompactToolResult
 
   if (didCompact) {
     const afterTokens = estimateTotalTokens(compacted);
-    log.debug(`${opts.stageName} compacted: toolResults=${toolResultsCompacted} thinkingBlocksRemoved=${thinkingBlocksRemoved} textBlocksTruncated=${textBlocksTruncated} charsSaved=${totalCharsSaved} tokens=${beforeTokens}→${afterTokens}`);
+    log.debug(`${opts.actionName} compacted: toolResults=${toolResultsCompacted} thinkingBlocksRemoved=${thinkingBlocksRemoved} textBlocksTruncated=${textBlocksTruncated} charsSaved=${totalCharsSaved} tokens=${beforeTokens}→${afterTokens}`);
   } else {
-    log.debug(`${opts.stageName} skipped: no compactable content found (tool results >${opts.contentLimit} chars${opts.preserveAfterLastAssistant ? " before last assistant" : ""}, thinking blocks${opts.truncateTextBlocks ? `, or text >${opts.textBlockLimit} chars` : ""}). messages=${messages.length} lastAssistantIdx=${lastAssistantIdx}`);
+    log.debug(`${opts.actionName} skipped: no compactable content found (tool results >${opts.contentLimit} chars${opts.preserveAfterLastAssistant ? " before last assistant" : ""}, thinking blocks${opts.truncateTextBlocks ? `, or text >${opts.textBlockLimit} chars` : ""}). messages=${messages.length} lastAssistantIdx=${lastAssistantIdx}`);
   }
 
   return { messages: compacted, compacted: didCompact };
 }
 
-function compactStage1(messages: ExecutorMessage[]): { messages: ExecutorMessage[]; compacted: boolean } {
+function compactMidTurnToolSoftTrim(messages: ExecutorMessage[]): { messages: ExecutorMessage[]; compacted: boolean } {
   return compactToolResults(messages, {
     contentLimit: 500,
     previewLength: 200,
@@ -536,11 +536,11 @@ function compactStage1(messages: ExecutorMessage[]): { messages: ExecutorMessage
     truncateTextBlocks: false,
     textBlockLimit: 200,
     textBlockPreviewLength: 150,
-    stageName: "Stage 1",
+    actionName: "Mid-turn tool soft trim",
   });
 }
 
-interface Stage2CompactionTelemetry {
+interface MidTurnHistoryHardTrimTelemetry {
   strategy: "deterministic_capsule";
   rangeStartIdx?: number;
   rangeEndIdx?: number;
@@ -551,8 +551,14 @@ interface Stage2CompactionTelemetry {
   durationMs: number;
 }
 
+type MidTurnCompactionAction =
+  | "none"
+  | "mid_turn_tool_soft_trim"
+  | "mid_turn_history_hard_trim"
+  | "mid_turn_history_reset";
+
 interface CompactionTelemetry {
-  stage: number;
+  action: MidTurnCompactionAction;
   outcome: "skipped" | "applied";
   trigger: "mid-run" | "emergency";
   preToolRunPressure?: boolean;
@@ -561,19 +567,19 @@ interface CompactionTelemetry {
   outputReserve: number;
   hardInputLimit: number;
   toolDefinitionTokens: number;
-  threshold1: number;
-  threshold2: number;
-  threshold3: number;
+  toolSoftTrimThreshold: number;
+  historyHardTrimThreshold: number;
+  historyResetThreshold: number;
   tokensBefore: number;
   tokensAfter: number;
   tokensSaved: number;
   messagesBefore: number;
   messagesAfter: number;
-  hasRunStage2: boolean;
-  stage2?: Stage2CompactionTelemetry;
+  hasRunMidTurnHistoryHardTrim: boolean;
+  historyHardTrim?: MidTurnHistoryHardTrimTelemetry;
 }
 
-interface PreparedStage2Capsule {
+interface PreparedHistoryHardTrimCapsule {
   range: { startIdx: number; endIdx: number; pairCount: number };
   content: string;
   sourceChars: number;
@@ -691,7 +697,7 @@ function executorEntriesForCapsule(
   return { entries, sourceChars };
 }
 
-function prepareStage2Capsule(messages: ExecutorMessage[]): PreparedStage2Capsule | null {
+function prepareMidTurnHistoryHardTrimCapsule(messages: ExecutorMessage[]): PreparedHistoryHardTrimCapsule | null {
   const range = findCompactableRange(messages);
   if (!range) return null;
   const normalized = executorEntriesForCapsule(messages, range.startIdx, range.endIdx);
@@ -701,19 +707,19 @@ function prepareStage2Capsule(messages: ExecutorMessage[]): PreparedStage2Capsul
   return { range, content, sourceChars: normalized.sourceChars };
 }
 
-function compactStage2(
+function compactMidTurnHistoryHardTrim(
   messages: ExecutorMessage[],
-  prepared = prepareStage2Capsule(messages),
-): { messages: ExecutorMessage[]; compacted: boolean; summaryContent?: string; telemetry: Stage2CompactionTelemetry } {
+  prepared = prepareMidTurnHistoryHardTrimCapsule(messages),
+): { messages: ExecutorMessage[]; compacted: boolean; summaryContent?: string; telemetry: MidTurnHistoryHardTrimTelemetry } {
   const startedAt = Date.now();
   const beforeTokens = estimateTotalTokens(messages);
   if (!prepared) {
-    const telemetry: Stage2CompactionTelemetry = {
+    const telemetry: MidTurnHistoryHardTrimTelemetry = {
       strategy: "deterministic_capsule",
       skippedReason: "no_compactable_range",
       durationMs: Date.now() - startedAt,
     };
-    log.debug(`Stage 2 skipped: no compactable range found. messages=${messages.length}`);
+    log.debug(`Mid-turn history hard trim skipped: no compactable range found. messages=${messages.length}`);
     return { messages, compacted: false, telemetry };
   }
 
@@ -725,7 +731,7 @@ function compactStage2(
     ...messages.slice(range.endIdx + 1),
   ];
   const afterTokens = estimateTotalTokens(compacted);
-  const telemetry: Stage2CompactionTelemetry = {
+  const telemetry: MidTurnHistoryHardTrimTelemetry = {
     rangeStartIdx: range.startIdx,
     rangeEndIdx: range.endIdx,
     pairCount: range.pairCount,
@@ -734,11 +740,11 @@ function compactStage2(
     strategy: "deterministic_capsule",
     durationMs: Date.now() - startedAt,
   };
-  log.debug(`Stage 2 compacted deterministically: pairs=${range.pairCount} range=${range.startIdx}-${range.endIdx} messagesRemoved=${messages.length - compacted.length} tokens=${beforeTokens}→${afterTokens} sourceChars=${sourceChars} capsuleChars=${content.length}`);
+  log.debug(`Mid-turn history hard trim completed deterministically: pairs=${range.pairCount} range=${range.startIdx}-${range.endIdx} messagesRemoved=${messages.length - compacted.length} tokens=${beforeTokens}→${afterTokens} sourceChars=${sourceChars} capsuleChars=${content.length}`);
   return { messages: compacted, compacted: true, summaryContent: content, telemetry };
 }
 
-function compactStage3(messages: ExecutorMessage[]): { messages: ExecutorMessage[]; compacted: boolean } {
+function compactMidTurnHistoryReset(messages: ExecutorMessage[]): { messages: ExecutorMessage[]; compacted: boolean } {
   return compactToolResults(messages, {
     contentLimit: 100,
     previewLength: 100,
@@ -747,7 +753,7 @@ function compactStage3(messages: ExecutorMessage[]): { messages: ExecutorMessage
     truncateTextBlocks: true,
     textBlockLimit: 200,
     textBlockPreviewLength: 150,
-    stageName: "Stage 3",
+    actionName: "Mid-turn history reset",
   });
 }
 
@@ -756,12 +762,12 @@ async function runCompaction(
   budget: ContextRequestBudget,
   toolDefinitionTokens: number,
   publish: (type: JournalEntry["type"], extra?: Partial<JournalEntry>) => void,
-  hasRunStage2: boolean,
+  hasRunMidTurnHistoryHardTrim: boolean,
   resolvedModel: string,
-): Promise<{ messages: ExecutorMessage[]; stage: number; summaryContent?: string; telemetry: CompactionTelemetry }> {
-  const threshold1 = budget.thresholds.midRunStage1;
-  const threshold2 = budget.thresholds.midRunStage2;
-  const threshold3 = budget.thresholds.midRunStage3;
+): Promise<{ messages: ExecutorMessage[]; action: MidTurnCompactionAction; summaryContent?: string; telemetry: CompactionTelemetry }> {
+  const toolSoftTrimThreshold = budget.thresholds.midTurnToolSoftTrim;
+  const historyHardTrimThreshold = budget.thresholds.midTurnHistoryHardTrim;
+  const historyResetThreshold = budget.thresholds.midTurnHistoryReset;
   const estimateRequestTokens = async (requestMessages: ExecutorMessage[]) =>
     applyTokenEstimateCalibration(
       resolvedModel,
@@ -772,20 +778,20 @@ async function runCompaction(
   const tokensBefore = currentTokens;
   const messagesBefore = messages.length;
   const preToolRunPressure = messages.every(m => m.role !== "tool_result");
-  let stage = 0;
+  let action: MidTurnCompactionAction = "none";
   let summaryContent: string | undefined;
-  let stage2Telemetry: Stage2CompactionTelemetry | undefined;
+  let historyHardTrimTelemetry: MidTurnHistoryHardTrimTelemetry | undefined;
 
-  if (currentTokens <= threshold1) {
+  if (currentTokens <= toolSoftTrimThreshold) {
     log.debug(
-      `Compaction not needed: request=${currentTokens} tokens <= stage1=${threshold1} ` +
-        `stage3=${threshold3} hard=${budget.hardInputLimit}`,
+      `Compaction not needed: request=${currentTokens} tokens <= toolSoftTrim=${toolSoftTrimThreshold} ` +
+        `historyReset=${historyResetThreshold} hard=${budget.hardInputLimit}`,
     );
     return {
       messages,
-      stage: 0,
+      action: "none",
       telemetry: {
-        stage: 0,
+        action: "none",
         outcome: "skipped",
         trigger: "mid-run",
         preToolRunPressure,
@@ -794,99 +800,99 @@ async function runCompaction(
         outputReserve: budget.outputReserve,
         hardInputLimit: budget.hardInputLimit,
         toolDefinitionTokens,
-        threshold1,
-        threshold2,
-        threshold3,
+        toolSoftTrimThreshold,
+        historyHardTrimThreshold,
+        historyResetThreshold,
         tokensBefore,
         tokensAfter: currentTokens,
         tokensSaved: 0,
         messagesBefore,
         messagesAfter: messages.length,
-        hasRunStage2,
+        hasRunMidTurnHistoryHardTrim,
       },
     };
   }
 
   log.debug(
-    `Compaction needed: request=${currentTokens} tokens > stage1=${threshold1} ` +
-      `stage3=${threshold3} hard=${budget.hardInputLimit}`,
+    `Compaction needed: request=${currentTokens} tokens > toolSoftTrim=${toolSoftTrimThreshold} ` +
+      `historyReset=${historyResetThreshold} hard=${budget.hardInputLimit}`,
   );
   const compactionStepId = `compaction-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   publish("compacting", { stepId: compactionStepId, status: "active", content: "Working context compression started..." });
-  const preparedStage2Capsule = currentTokens > threshold2
-    ? prepareStage2Capsule(messages)
+  const preparedHistoryHardTrimCapsule = currentTokens > historyHardTrimThreshold
+    ? prepareMidTurnHistoryHardTrimCapsule(messages)
     : null;
 
-  const s1 = compactStage1(messages);
-  if (s1.compacted) {
-    messages = s1.messages;
+  const toolSoftTrim = compactMidTurnToolSoftTrim(messages);
+  if (toolSoftTrim.compacted) {
+    messages = toolSoftTrim.messages;
     currentTokens = await estimateRequestTokens(messages);
-    stage = 1;
-    log.debug(`Stage 1 compaction complete: ${currentTokens} tokens`);
+    action = "mid_turn_tool_soft_trim";
+    log.debug(`Mid-turn tool soft trim complete: ${currentTokens} tokens`);
   }
 
-  if (currentTokens > threshold2) {
+  if (currentTokens > historyHardTrimThreshold) {
     log.debug(
-      `Stage 2 needed: request=${currentTokens} tokens > stage2=${threshold2} ` +
-        `stage3=${threshold3} hard=${budget.hardInputLimit}`,
+      `Mid-turn history hard trim needed: request=${currentTokens} tokens > ` +
+        `historyHardTrim=${historyHardTrimThreshold} historyReset=${historyResetThreshold} hard=${budget.hardInputLimit}`,
     );
     publish("compacting", { stepId: compactionStepId, status: "active", content: "Folding earlier working context..." });
-    const s2 = compactStage2(messages, preparedStage2Capsule);
-    stage2Telemetry = s2.telemetry;
-    if (s2.compacted) {
-      messages = s2.messages;
+    const historyHardTrim = compactMidTurnHistoryHardTrim(messages, preparedHistoryHardTrimCapsule);
+    historyHardTrimTelemetry = historyHardTrim.telemetry;
+    if (historyHardTrim.compacted) {
+      messages = historyHardTrim.messages;
       currentTokens = await estimateRequestTokens(messages);
-      stage = 2;
-      summaryContent = s2.summaryContent;
-      log.debug(`Stage 2 compaction complete: ${currentTokens} tokens`);
+      action = "mid_turn_history_hard_trim";
+      summaryContent = historyHardTrim.summaryContent;
+      log.debug(`Mid-turn history hard trim complete: ${currentTokens} tokens`);
     }
   }
 
-  if (currentTokens > threshold3) {
+  if (currentTokens > historyResetThreshold) {
     log.debug(
-      `Stage 3 needed: ${currentTokens} tokens > stage3=${threshold3} ` +
-        `stage3=${threshold3} hard=${budget.hardInputLimit}`,
+      `Mid-turn history reset needed: ${currentTokens} tokens > ` +
+        `historyReset=${historyResetThreshold} hard=${budget.hardInputLimit}`,
     );
-    publish("compacting", { stepId: compactionStepId, status: "active", content: "Aggressively compressing working context..." });
-    const s3 = compactStage3(messages);
-    if (s3.compacted) {
-      messages = s3.messages;
+    publish("compacting", { stepId: compactionStepId, status: "active", content: "Resetting working context..." });
+    const historyReset = compactMidTurnHistoryReset(messages);
+    if (historyReset.compacted) {
+      messages = historyReset.messages;
       currentTokens = await estimateRequestTokens(messages);
-      stage = 3;
-      log.debug(`Stage 3 compaction complete: ${currentTokens} tokens`);
+      action = "mid_turn_history_reset";
+      log.debug(`Mid-turn history reset complete: ${currentTokens} tokens`);
     }
   }
 
   publish("compacting", {
     stepId: compactionStepId,
     status: "done",
-    content: stage > 0 ? `Working context compressed (stage ${stage}).` : "Working context compression checked; no changes needed.",
+    content: action !== "none" ? `Working context action applied: ${action}.` : "Working context compression checked; no changes needed.",
   });
 
   return {
     messages,
-    stage,
+    action,
     summaryContent,
     telemetry: {
-      stage,
-      outcome: stage > 0 ? "applied" : "skipped",
+      action,
+      outcome: action !== "none" ? "applied" : "skipped",
       trigger: "mid-run",
       preToolRunPressure,
-      reason: tokensBefore > threshold1 ? "above_threshold" : "below_threshold",
+      reason: tokensBefore > toolSoftTrimThreshold ? "above_threshold" : "below_threshold",
       contextLimit: budget.contextWindow,
       outputReserve: budget.outputReserve,
       hardInputLimit: budget.hardInputLimit,
       toolDefinitionTokens,
-      threshold1,
-      threshold2,
-      threshold3,
+      toolSoftTrimThreshold,
+      historyHardTrimThreshold,
+      historyResetThreshold,
       tokensBefore,
       tokensAfter: currentTokens,
       tokensSaved: tokensBefore - currentTokens,
       messagesBefore,
       messagesAfter: messages.length,
-      hasRunStage2,
-      stage2: stage2Telemetry,
+      hasRunMidTurnHistoryHardTrim,
+      historyHardTrim: historyHardTrimTelemetry,
     },
   };
 }
@@ -3129,28 +3135,28 @@ export class AgentExecutor extends EventEmitter {
     messages: ExecutorMessage[],
     options: ExecutorRunOptions,
     publish: RunIterationContext["publish"],
-  ): Promise<{ compacted: boolean; hasRunStage2: boolean }> {
+  ): Promise<{ compacted: boolean; hasRunMidTurnHistoryHardTrim: boolean }> {
     log.warn(`Context length error detected, attempting emergency compaction`);
     const compactionStepId = `emergency-compaction-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     publish("compacting", { stepId: compactionStepId, status: "active", content: "Context too large. Compressing working context..." });
 
-    let hasRunStage2 = false;
+    let hasRunMidTurnHistoryHardTrim = false;
     const emergencyTokensBefore = estimateTotalTokens(messages);
     const emergencyMessagesBefore = messages.length;
-    const s2 = compactStage2(messages);
-    if (s2.compacted) {
-      messages.splice(0, messages.length, ...s2.messages);
-      if (s2.summaryContent) {
-        hasRunStage2 = true;
+    const historyHardTrim = compactMidTurnHistoryHardTrim(messages);
+    if (historyHardTrim.compacted) {
+      messages.splice(0, messages.length, ...historyHardTrim.messages);
+      if (historyHardTrim.summaryContent) {
+        hasRunMidTurnHistoryHardTrim = true;
         const tokensAfter = estimateTotalTokens(messages);
-        log.debug(`Emergency compaction applied in-memory: sessionId=${options.sessionId || "none"} tokensBefore=${emergencyTokensBefore} tokensAfter=${tokensAfter} messagesBefore=${emergencyMessagesBefore} messagesAfter=${messages.length} summaryLen=${s2.summaryContent.length}`);
-        eventBus.publish({ category: "system", event: "compaction.applied", payload: { sessionId: options.sessionId || null, trigger: "emergency", stage: 2, outcome: "applied", tokensBefore: emergencyTokensBefore, tokensAfter, tokensSaved: emergencyTokensBefore - tokensAfter, messagesBefore: emergencyMessagesBefore, messagesAfter: messages.length, summaryLength: s2.summaryContent.length, stage2: s2.telemetry } });
+        log.debug(`Emergency compaction applied in-memory: sessionId=${options.sessionId || "none"} tokensBefore=${emergencyTokensBefore} tokensAfter=${tokensAfter} messagesBefore=${emergencyMessagesBefore} messagesAfter=${messages.length} summaryLen=${historyHardTrim.summaryContent.length}`);
+        eventBus.publish({ category: "system", event: "compaction.applied", payload: { sessionId: options.sessionId || null, trigger: "emergency", action: "mid_turn_history_hard_trim", outcome: "applied", tokensBefore: emergencyTokensBefore, tokensAfter, tokensSaved: emergencyTokensBefore - tokensAfter, messagesBefore: emergencyMessagesBefore, messagesAfter: messages.length, summaryLength: historyHardTrim.summaryContent.length, historyHardTrim: historyHardTrim.telemetry } });
       }
     }
-    const s3 = compactStage3(messages);
-    if (s3.compacted) messages.splice(0, messages.length, ...s3.messages);
+    const historyReset = compactMidTurnHistoryReset(messages);
+    if (historyReset.compacted) messages.splice(0, messages.length, ...historyReset.messages);
 
-    const compacted = s2.compacted || s3.compacted;
+    const compacted = historyHardTrim.compacted || historyReset.compacted;
     if (compacted) {
       log.debug(`Emergency compaction complete: ${estimateTotalTokens(messages)} tokens, ${messages.length} messages`);
     }
@@ -3159,7 +3165,7 @@ export class AgentExecutor extends EventEmitter {
       status: compacted ? "done" : "error",
       content: compacted ? "Emergency working context compression complete." : "Emergency working context compression could not reduce context.",
     });
-    return { compacted, hasRunStage2 };
+    return { compacted, hasRunMidTurnHistoryHardTrim };
   }
 
   private async executeIteration(
@@ -3176,11 +3182,11 @@ export class AgentExecutor extends EventEmitter {
     chatCompletionStream: typeof import("./model-client")["chatCompletionStream"],
     contextBudget: ContextRequestBudget,
     toolDefinitionTokens: number,
-    hasRunStage2: boolean,
+    hasRunMidTurnHistoryHardTrim: boolean,
   ): Promise<{
     finalContent: string;
     shouldContinue: boolean;
-    hasRunStage2: boolean;
+    hasRunMidTurnHistoryHardTrim: boolean;
     exitCause?: "natural_stop" | "aborted" | "circuit_breaker";
     continuationType?: "tool_call" | "max_tokens";
     personaSwitchRequested?: boolean;
@@ -3203,13 +3209,13 @@ export class AgentExecutor extends EventEmitter {
       contextBudget,
       toolDefinitionTokens,
       ctx.publish,
-      hasRunStage2,
+      hasRunMidTurnHistoryHardTrim,
       ctx.resolvedModel || ctx.modelString,
     );
-    if (compactionResult.stage > 0) {
+    if (compactionResult.action !== "none") {
       messages.splice(0, messages.length, ...compactionResult.messages);
       const tokensAfter = estimateTotalTokens(messages);
-      log.debug(`Compaction applied (stage ${compactionResult.stage}): ${tokensAfter} tokens, ${messages.length} messages`);
+      log.debug(`Compaction applied (${compactionResult.action}): ${tokensAfter} tokens, ${messages.length} messages`);
 
       const compactionElapsed = Date.now() - iterStartTime;
       const isFirstIterationPreToolCompression = ctx.iteration === 0 && compactionResult.telemetry.preToolRunPressure;
@@ -3222,8 +3228,8 @@ export class AgentExecutor extends EventEmitter {
       const compressionStep = isFirstIterationPreToolCompression
         ? "session_compaction"
         : "working_context_compression";
-      ctx.publish("system_step", { step: compressionStep, status: "started", detail: `stage=${compactionResult.stage} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
-      ctx.publish("system_step", { step: compressionStep, status: "done", elapsedMs: compactionElapsed, detail: `stage=${compactionResult.stage} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
+      ctx.publish("system_step", { step: compressionStep, status: "started", detail: `action=${compactionResult.action} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
+      ctx.publish("system_step", { step: compressionStep, status: "done", elapsedMs: compactionElapsed, detail: `action=${compactionResult.action} tokens=${tokensBefore}→${tokensAfter}${pressureSuffix}` });
 
       if (isFirstIterationPreToolCompression) {
         log.warn(`First-iteration working-context compression indicates missed durable context pressure sessionId=${options.sessionId || "none"} runId=${ctx.runId} tokensBefore=${tokensBefore} tokensAfter=${tokensAfter}`);
@@ -3235,7 +3241,7 @@ export class AgentExecutor extends EventEmitter {
             runId: ctx.runId,
             tokensBefore,
             tokensAfter,
-            stage: compactionResult.stage,
+            action: compactionResult.action,
             durableCompactionAttempted: options.contextPressure?.durableCompactionAttempted ?? false,
             durableCompactionApplied: options.contextPressure?.durableCompactionApplied ?? false,
           },
@@ -3244,9 +3250,9 @@ export class AgentExecutor extends EventEmitter {
         });
       }
 
-      if (compactionResult.stage >= 2 && compactionResult.summaryContent) {
-        hasRunStage2 = true;
-        log.debug(`Mid-run compaction applied in-memory: sessionId=${options.sessionId || "none"} stage=${compactionResult.stage} tokensBefore=${tokensBefore} tokensAfter=${tokensAfter} messagesBefore=${messagesBefore} messagesAfter=${messages.length} summaryLen=${compactionResult.summaryContent.length}`);
+      if (compactionResult.action === "mid_turn_history_hard_trim" && compactionResult.summaryContent) {
+        hasRunMidTurnHistoryHardTrim = true;
+        log.debug(`Mid-run compaction applied in-memory: sessionId=${options.sessionId || "none"} action=${compactionResult.action} tokensBefore=${tokensBefore} tokensAfter=${tokensAfter} messagesBefore=${messagesBefore} messagesAfter=${messages.length} summaryLen=${compactionResult.summaryContent.length}`);
         eventBus.publish({ category: "system", event: "compaction.applied", payload: { sessionId: options.sessionId || null, runId: ctx.runId, ...compactionResult.telemetry, tokensBefore, tokensAfter, tokensSaved: tokensBefore - tokensAfter, messagesBefore, messagesAfter: messages.length, summaryLength: compactionResult.summaryContent.length } });
       }
     }
@@ -3269,10 +3275,10 @@ export class AgentExecutor extends EventEmitter {
       contextWindow: contextBudget.contextWindow,
       modelName: pressureModelName,
       outputReserve: contextBudget.outputReserve,
-      betweenTurnFire: contextBudget.thresholds.betweenTurnFire,
-      midRunStage1: contextBudget.thresholds.midRunStage1,
-      midRunStage2: contextBudget.thresholds.midRunStage2,
-      midRunStage3: contextBudget.thresholds.midRunStage3,
+      betweenTurnHistoryReset: contextBudget.thresholds.betweenTurnHistoryReset,
+      midTurnToolSoftTrim: contextBudget.thresholds.midTurnToolSoftTrim,
+      midTurnHistoryHardTrim: contextBudget.thresholds.midTurnHistoryHardTrim,
+      midTurnHistoryReset: contextBudget.thresholds.midTurnHistoryReset,
     });
     if (requestTokens > contextBudget.hardInputLimit) {
       throw new ContextHardLimitExceededError(requestTokens, contextBudget);
@@ -3691,10 +3697,10 @@ export class AgentExecutor extends EventEmitter {
         log.debug(`Emergency compaction attempt ${ctx.emergencyCompactionRetries}/${MAX_EMERGENCY_RETRIES} runId=${ctx.runId}`);
         const emergency = await this.handleEmergencyCompaction(messages, options, ctx.publish);
         if (emergency.compacted) {
-          if (emergency.hasRunStage2) hasRunStage2 = true;
+          if (emergency.hasRunMidTurnHistoryHardTrim) hasRunMidTurnHistoryHardTrim = true;
           ctx.providerFailure = undefined;
           ctx.lastError = undefined;
-          return { finalContent: "", shouldContinue: true, hasRunStage2 };
+          return { finalContent: "", shouldContinue: true, hasRunMidTurnHistoryHardTrim };
         }
       }
       if (providerFailure) {
@@ -3721,7 +3727,7 @@ export class AgentExecutor extends EventEmitter {
       log.warn(`Post-loop abort detection: signal was aborted but ctx.aborted was false. Set abortReason=${ctx.abortReason} runId=${ctx.runId}`);
     }
 
-    if (ctx.aborted) return { finalContent: "", shouldContinue: false, hasRunStage2, exitCause: ctx.abortReason === "circuit_breaker" ? "circuit_breaker" : "aborted" };
+    if (ctx.aborted) return { finalContent: "", shouldContinue: false, hasRunMidTurnHistoryHardTrim, exitCause: ctx.abortReason === "circuit_breaker" ? "circuit_breaker" : "aborted" };
 
     this.logIterationCost(messages, ctx.iterationText, ctx, options, iterStartTime, abortController);
 
@@ -3753,7 +3759,7 @@ export class AgentExecutor extends EventEmitter {
             messages.push({ role: "assistant", content: partialContent });
           }
           messages.push({ role: "user", content: "[System: Your previous response reached the provider output boundary while building a tool call. The tool call was incomplete and could not be executed. Continue the task and retry the tool call with valid complete arguments.]" });
-          return { finalContent: cleanText, shouldContinue: true, hasRunStage2, continuationType: "max_tokens" };
+          return { finalContent: cleanText, shouldContinue: true, hasRunMidTurnHistoryHardTrim, continuationType: "max_tokens" };
         }
       }
     }
@@ -3767,7 +3773,7 @@ export class AgentExecutor extends EventEmitter {
       return {
         finalContent: cleanText,
         shouldContinue: false,
-        hasRunStage2,
+        hasRunMidTurnHistoryHardTrim,
         exitCause: "natural_stop",
         awaitUserRequested: true,
       };
@@ -3804,7 +3810,7 @@ export class AgentExecutor extends EventEmitter {
       return {
         finalContent: cleanText,
         shouldContinue: true,
-        hasRunStage2,
+        hasRunMidTurnHistoryHardTrim,
         continuationType: "tool_call",
         toolSchemaRefreshRequested: request,
       };
@@ -3857,7 +3863,7 @@ export class AgentExecutor extends EventEmitter {
       return {
         finalContent: cleanText,
         shouldContinue: true,
-        hasRunStage2,
+        hasRunMidTurnHistoryHardTrim,
         continuationType: "tool_call",
       };
     }
@@ -3896,7 +3902,7 @@ export class AgentExecutor extends EventEmitter {
       return {
         finalContent: cleanText,
         shouldContinue: true,
-        hasRunStage2,
+        hasRunMidTurnHistoryHardTrim,
         continuationType: "tool_call",
         personaSwitchRequested: true,
       };
@@ -3943,7 +3949,7 @@ export class AgentExecutor extends EventEmitter {
         return {
           finalContent: cleanText,
           shouldContinue: true,
-          hasRunStage2,
+          hasRunMidTurnHistoryHardTrim,
           continuationType: "tool_call",
           personaSwitchRequested: true,
         };
@@ -3960,7 +3966,7 @@ export class AgentExecutor extends EventEmitter {
           return {
             finalContent: cleanText,
             shouldContinue: true,
-            hasRunStage2,
+            hasRunMidTurnHistoryHardTrim,
             continuationType: "tool_call",
             toolSchemaRefreshRequested: {
               toolCallId: schemaCall.id,
@@ -3975,7 +3981,7 @@ export class AgentExecutor extends EventEmitter {
         return {
           finalContent: cleanText,
           shouldContinue: false,
-          hasRunStage2,
+          hasRunMidTurnHistoryHardTrim,
           exitCause: "natural_stop",
           awaitUserRequested: true,
         };
@@ -4039,7 +4045,7 @@ export class AgentExecutor extends EventEmitter {
             sessionKey: options.sessionKey,
           });
           ctx.publish("tool_use_pause", { content: "" });
-          return { finalContent: cleanText, shouldContinue: true, hasRunStage2, continuationType: "tool_call" };
+          return { finalContent: cleanText, shouldContinue: true, hasRunMidTurnHistoryHardTrim, continuationType: "tool_call" };
         }
         // Force-receipt every tool result just appended so the next projectWorkingSet
         // emits historical/receipt form instead of re-sending multi-MB exact payloads.
@@ -4058,7 +4064,7 @@ export class AgentExecutor extends EventEmitter {
         return {
           finalContent: cleanText,
           shouldContinue: true,
-          hasRunStage2,
+          hasRunMidTurnHistoryHardTrim,
           continuationType: "tool_call",
         };
       }
@@ -4157,7 +4163,7 @@ export class AgentExecutor extends EventEmitter {
           ctx.abortDetails = details;
           ctx.aborted = true;
           ctx.publish("error", { error: summary });
-          return { finalContent: cleanText, shouldContinue: false, hasRunStage2, exitCause: "circuit_breaker" };
+          return { finalContent: cleanText, shouldContinue: false, hasRunMidTurnHistoryHardTrim, exitCause: "circuit_breaker" };
         }
       } else {
         ctx.lastIterationFailureKey = undefined;
@@ -4169,14 +4175,14 @@ export class AgentExecutor extends EventEmitter {
       // sideEffectOnly is telemetry/classification only — never a loop stop signal.
       // AGENTS.md: do not emulate continuation boundaries with side-effect-only classification.
       ctx.publish("tool_use_pause", { content: "" });
-      return { finalContent: cleanText, shouldContinue: true, hasRunStage2, continuationType: "tool_call" };
+      return { finalContent: cleanText, shouldContinue: true, hasRunMidTurnHistoryHardTrim, continuationType: "tool_call" };
     }
 
     if (ctx.iterationStopReason === "max_tokens" && cleanText.length > 0) {
       log.debug(`max_tokens hit — continuing runId=${ctx.runId} partialLength=${cleanText.length}`);
       messages.push({ role: "assistant", content: ctx.iterationText });
       messages.push({ role: "user", content: "[System: Your previous response reached the provider output boundary. Continue exactly where you left off. Do not repeat what you already said.]" });
-      return { finalContent: cleanText, shouldContinue: true, hasRunStage2, continuationType: "max_tokens" };
+      return { finalContent: cleanText, shouldContinue: true, hasRunMidTurnHistoryHardTrim, continuationType: "max_tokens" };
     }
 
     // Empty final turn: the model completed with no tool calls, no await-user
@@ -4220,7 +4226,7 @@ export class AgentExecutor extends EventEmitter {
         runId: ctx.runId,
         sessionKey: options.sessionKey,
       });
-      return { finalContent: "", shouldContinue: true, hasRunStage2 };
+      return { finalContent: "", shouldContinue: true, hasRunMidTurnHistoryHardTrim };
     }
 
     if (ctx.convergence.terminalRequired) {
@@ -4247,7 +4253,7 @@ export class AgentExecutor extends EventEmitter {
         sessionKey: options.sessionKey,
       });
     }
-    return { finalContent: cleanText, shouldContinue: false, hasRunStage2, exitCause: "natural_stop" };
+    return { finalContent: cleanText, shouldContinue: false, hasRunMidTurnHistoryHardTrim, exitCause: "natural_stop" };
   }
 
   async run(options: ExecutorRunOptions): Promise<ExecutorRunResult> {
@@ -4265,7 +4271,7 @@ export class AgentExecutor extends EventEmitter {
     } = initialized;
 
     const messages = [...options.messages];
-    let hasRunStage2 = false;
+    let hasRunMidTurnHistoryHardTrim = false;
     const iterationResults: Array<{ content: string; continuationType?: "tool_call" | "max_tokens" }> = [];
 
     const tier = options.tier ?? (options.querySubsystem === "autonomous" ? "background" as const : "communication" as const);
@@ -4366,7 +4372,7 @@ export class AgentExecutor extends EventEmitter {
           chatCompletionStream,
           contextBudget,
           toolDefinitionTokens,
-          hasRunStage2,
+          hasRunMidTurnHistoryHardTrim,
         );
         if (result.finalContent) {
           iterationResults.push({
@@ -4374,7 +4380,7 @@ export class AgentExecutor extends EventEmitter {
             continuationType: result.shouldContinue ? result.continuationType : undefined,
           });
         }
-        hasRunStage2 = result.hasRunStage2;
+        hasRunMidTurnHistoryHardTrim = result.hasRunMidTurnHistoryHardTrim;
 
         if (result.toolSchemaRefreshRequested) {
           if (!options.refreshToolSchema) {

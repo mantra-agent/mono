@@ -106,7 +106,7 @@ function truncateConversationHistory(
 
 /** Between-turn threshold on the usable hard-input scale. */
 export function getBetweenTurnCompactionThreshold(hardInputLimit: number): number {
-  return getContextPressureThresholds(hardInputLimit).betweenTurnFire;
+  return getContextPressureThresholds(hardInputLimit).betweenTurnHistoryReset;
 }
 
 type CompactableHistoryMessage = {
