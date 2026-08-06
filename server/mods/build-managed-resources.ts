@@ -26,8 +26,8 @@ export const BUILD_MANAGED_TIMER_DEFINITIONS: readonly BuildManagedTimerDefiniti
   {
     contributionId: "build.timer.reliability-sentinel-30m",
     systemKey: "build-reliability-sentinel-30m",
-    legacyNames: ["Reliability Sentinel 30m"],
-    name: "Reliability Sentinel 30m",
+    legacyNames: ["Reliability Sentinel 30m", "Monitor Stability"],
+    name: "Monitor Stability",
     description: "Every 30 minutes, inspect Mantra Web stage and production health, deployment/build state, runtime errors and recurring warnings, Sentry crashes when configured, and performance/context degradation. Deduplicate incidents and autonomously repair only bounded stage/main software defects; production remains observe-only and human-promoted.",
     type: "skill",
     skillId: "sentry",
@@ -39,8 +39,8 @@ export const BUILD_MANAGED_TIMER_DEFINITIONS: readonly BuildManagedTimerDefiniti
   {
     contributionId: "build.timer.security-sentinel-weekly",
     systemKey: "build-security-sentinel-weekly",
-    legacyNames: ["Security Sentinel Weekly"],
-    name: "Security Sentinel Weekly",
+    legacyNames: ["Security Sentinel Weekly", "Monitor Security"],
+    name: "Monitor Security",
     description: "Weekly read-only Security Sentinel review of mantra-agent/mono main. Diff-only by default; full baseline review every 4th run or after 30 days. Immediate off-schedule runs are triggered manually after auth, data-ownership, execution, secret, webhook, or infrastructure changes.",
     type: "skill",
     skillId: "guard",

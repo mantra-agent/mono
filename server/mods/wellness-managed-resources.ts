@@ -73,9 +73,9 @@ export const WELLNESS_MANAGED_TIMER_DEFINITIONS: readonly WellnessManagedTimerDe
   {
     contributionId: "wellness.timer.reflect-daily",
     systemKey: "reflect-daily",
-    legacyNames: ["Reflect Daily"],
+    legacyNames: ["Reflect Daily", "Nightly Journal"],
     legacySkillIds: ["reflect-daily"],
-    name: "Reflect Daily",
+    name: "Nightly Journal",
     description:
       "Daily journal using parameterized Reflect — creates a deterministic source artifact without surfacing inbox noise",
     type: "skill",

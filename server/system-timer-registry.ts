@@ -107,7 +107,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     legacyMatch: (t) => t.type === "skill" && t.skillId === "financial-review",
 
     systemKey: "financial-review-monthly",
-    name: "Financial Review Monthly",
+    name: "Review Finances",
     description:
       "Monthly financial advisory review using live finance data, investment positions, budget targets, and liabilities",
     type: "skill",
@@ -128,7 +128,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     legacyMatch: (t) => t.type === "skill" && t.skillId === "sleep",
 
     systemKey: "sleep",
-    name: "Sleep",
+    name: "Manage Memory",
     description: "Nightly vNext claim lifecycle, REM dream generation, and weekly GSI at 2am",
     type: "skill",
     skillId: "sleep",
@@ -143,7 +143,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     legacyMatch: (t) => t.type === "skill" && t.skillId === "brief-daily",
 
     systemKey: "daily-brief",
-    name: "Daily Brief",
+    name: "Morning Brief",
     description:
       "Assembles a morning briefing from calendar, priorities, tasks, email, finance, people, and yesterday's journal",
     type: "skill",
@@ -252,7 +252,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     legacyMatch: (t) => t.type === "skill" && t.skillId === "wonder",
 
     systemKey: "wonder",
-    name: "Wonder",
+    name: "Philosophy Session",
     description:
       "Weekly deep question for Ray. One genuine, context-grounded question delivered Sunday morning to invite introspection.",
     type: "skill",
@@ -329,7 +329,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
       (t.skillId === "ideate" || t.skillId === "idea-generation"),
 
     systemKey: "weekly-ideas",
-    name: "Weekly Ideas",
+    name: "Generate Ideas",
     description:
       "Fire the ideate skill once a week. Top 3 ideas to make Agent, Ray, or the collaboration better. Research-backed, context-grounded.",
     type: "skill",
@@ -353,7 +353,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
       (t.type === "pipeline" && t.prompt === "news:scan"),
 
     systemKey: "landscape-scan",
-    name: "Landscape Scan",
+    name: "Scan News",
     description:
       "Automated market intelligence pipeline — collects signals, scores, curates, surfaces relevant items",
     type: "pipeline",
@@ -401,7 +401,7 @@ export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
     legacyMatch: (t) => t.type === "skill" && t.skillId === "goal-manager",
 
     systemKey: "goal-manager",
-    name: "Goal Manager",
+    name: "Manage Goals",
     description:
       "Nightly goal-graph stewardship at 4am — repairs high-confidence hierarchy and relationship gaps, prunes dangling links, flags weak or stale goals, and appends a deterministic run log. Runs after the sleep cycle refreshes memory and provenance.",
     type: "skill",
