@@ -25,6 +25,7 @@ export type ToolFailureCode =
   | "git_invalid_url"
   | "git_directory_required"
   | "git_directory_not_found"
+  | "git_directory_ambiguous"
   | "git_session_ownership"
   | "git_workspace_root_forbidden"
   | "git_invalid_action"
