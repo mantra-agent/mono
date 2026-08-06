@@ -113,7 +113,6 @@ import type {
   ModelConnectorProvider,
 } from "@shared/model-connectors";
 import { SEMANTIC_TIERS } from "@shared/model-connectors";
-import { VoiceV3WebhookSecretCard } from "@/components/VoiceV3WebhookSecretCard";
 import { usePlaidLink } from "react-plaid-link";
 import { useRoute, useLocation } from "wouter";
 
@@ -6340,15 +6339,6 @@ function IntegrationDetail({ provider }: { provider: string }) {
 
       {provider === "elevenlabs" && (
         <div className="space-y-4">
-          <Card data-testid="card-secret-elevenlabs">
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">ElevenLabs</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <SecretsForSection section="elevenlabs" excludeNames={["VOICE_V3_WEBHOOK_SECRET"]} />
-              <VoiceV3WebhookSecretCard />
-            </CardContent>
-          </Card>
           <WebhookBaseUrlSection />
           <InstantVoiceCloneWizard />
           <VoiceBrowserSection />
