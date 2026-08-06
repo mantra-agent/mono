@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Sparkles } from "lucide-react";
+import { Pin, Sparkles } from "lucide-react";
 import type { ChatSession } from "@shared/models/chat";
 import type { ContextPressureSnapshot } from "@shared/streaming-types";
 
@@ -55,21 +55,22 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const radioValue = pinned && activePersonaId != null ? String(activePersonaId) : "auto";
   // The message snapshot is historical; session pin state is current. Only show
   // the current pin when this turn's persona still matches the pinned persona.
-  const baseTooltipLabel = pinned && persona?.id === activePersonaId
-    ? `${personaLabel} · pinned by you`
-    : personaLabel;
+  const showPinnedIcon = pinned && persona?.id === activePersonaId;
   const formatTokensK = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(n < 100_000 ? 1 : 0)}k` : `${n}`;
   // Hover and ring share the usable hard-input envelope 1:1.
+  // Strip billing-path suffix — "(Subscription)" adds no decision value in the hover.
+  const modelLabel = contextPressure?.modelName
+    ?.replace(/\s*\(Subscription\)\s*$/i, "")
+    .trim();
   const pressureDetail =
     contextPressure && contextPressure.hardInputLimit
       ? ` (${formatTokensK(contextPressure.inputTokens)} / ${formatTokensK(
           contextPressure.hardInputLimit,
-        )} input · ${Math.round(
+        )} · ${Math.round(
           (contextPressure.inputTokens / contextPressure.hardInputLimit) * 100,
-        )}%${contextPressure.modelName ? ` · ${contextPressure.modelName}` : ""})`
+        )}%${modelLabel ? ` · ${modelLabel}` : ""})`
       : "";
-  const tooltipLabel = `${baseTooltipLabel}${pressureDetail}`;
   // The client projects server-resolved altitudes onto the usable input envelope.
   // It owns no pressure policy and performs no threshold multiplication.
   const scaleLimit = contextPressure ? Math.max(contextPressure.hardInputLimit, 1) : 1;
@@ -202,7 +203,19 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
           </DropdownMenuTrigger>
         </TooltipTrigger>
         <TooltipContent side="right" className="text-xs">
-          {tooltipLabel}
+          <span className="inline-flex items-center gap-1">
+            {showPinnedIcon && (
+              <Pin
+                className="h-3 w-3 shrink-0 text-foreground"
+                fill="currentColor"
+                aria-label="Pinned"
+              />
+            )}
+            <span>
+              {personaLabel}
+              {pressureDetail}
+            </span>
+          </span>
         </TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="start" className="w-56">
