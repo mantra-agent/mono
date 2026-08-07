@@ -12,6 +12,45 @@ import { useToast } from "@/hooks/use-toast";
 
 const log = createLogger("DriveSection");
 
+type DriveOperation = "list_resources" | "bind_resource" | "unbind_resource" | "load_picker" | "fetch_picker_token" | "open_picker";
+
+type DriveOperationError = Error & {
+  code?: string;
+  operation?: DriveOperation;
+  provider?: "google";
+  status?: number;
+};
+
+function normalizeDriveError(value: unknown, operation: DriveOperation, fallbackCode: string): DriveOperationError {
+  const error = value instanceof Error
+    ? value as DriveOperationError
+    : new Error("Drive operation failed", { cause: value }) as DriveOperationError;
+  const statusMatch = error.message.match(/^(\d{3}):/);
+  if (!error.code) error.code = fallbackCode;
+  error.operation = operation;
+  error.provider = "google";
+  if (!error.status && statusMatch) error.status = Number(statusMatch[1]);
+  return error;
+}
+
+function driveLogContext(options: {
+  operation: DriveOperation;
+  vaultId?: string;
+  connectedAccountId?: string;
+  resourceId?: string;
+  documentCount?: number;
+}) {
+  return {
+    operation: options.operation,
+    provider: "google",
+    vaultId: options.vaultId,
+    connectedAccountId: options.connectedAccountId,
+    driveResourceId: options.resourceId,
+    documentCount: options.documentCount,
+    route: window.location.pathname,
+  };
+}
+
 interface DriveResource {
   id: string;
   provider: "google" | "box" | "mantra";
@@ -142,9 +181,16 @@ export function DriveSection({
   const resourcesQuery = useQuery<{ resources: DriveResource[] }>({
     queryKey: ["/api/drive/resources", vaultId, connectedAccountId],
     queryFn: async () => {
-      const params = new URLSearchParams({ vaultId: vaultId!, connectedAccountId: connectedAccountId! });
-      const response = await apiRequest("GET", `/api/drive/resources?${params.toString()}`);
-      return response.json();
+      const operation: DriveOperation = "list_resources";
+      try {
+        const params = new URLSearchParams({ vaultId: vaultId!, connectedAccountId: connectedAccountId! });
+        const response = await apiRequest("GET", `/api/drive/resources?${params.toString()}`);
+        return response.json();
+      } catch (value) {
+        const error = normalizeDriveError(value, operation, "DRIVE_RESOURCE_LIST_FAILED");
+        log.error("Drive resource list failed", error, driveLogContext({ operation, vaultId, connectedAccountId }));
+        throw error;
+      }
     },
     enabled: Boolean(vaultId && connectedAccountId && drivePickerConfigured && hasDriveScope),
   });
@@ -168,7 +214,17 @@ export function DriveSection({
       }));
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/drive/resources", vaultId] }),
-    onError: (error) => log.error("Drive bind failed", { error: String(error) }),
+    onError: (value, documents) => {
+      const operation: DriveOperation = "bind_resource";
+      const error = normalizeDriveError(value, operation, "DRIVE_RESOURCE_BIND_FAILED");
+      log.error("Drive bind failed", error, driveLogContext({
+        operation,
+        vaultId,
+        connectedAccountId,
+        documentCount: documents.length,
+      }));
+      toast({ title: "Couldn't add file", description: error.message, variant: "destructive" });
+    },
   });
 
   const unbindMutation = useMutation({
@@ -179,10 +235,16 @@ export function DriveSection({
       queryClient.invalidateQueries({ queryKey: ["/api/drive/resources", vaultId] });
       toast({ title: "Removed from allow list" });
     },
-    onError: (error) => {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      log.error("Drive unbind failed", { error: String(error) });
-      toast({ title: "Couldn't remove file", description: message, variant: "destructive" });
+    onError: (value, resourceId) => {
+      const operation: DriveOperation = "unbind_resource";
+      const error = normalizeDriveError(value, operation, "DRIVE_RESOURCE_UNBIND_FAILED");
+      log.error("Drive unbind failed", error, driveLogContext({
+        operation,
+        vaultId,
+        connectedAccountId,
+        resourceId,
+      }));
+      toast({ title: "Couldn't remove file", description: error.message, variant: "destructive" });
     },
   });
 
@@ -212,17 +274,18 @@ export function DriveSection({
         onPicked: (documents) => bindMutation.mutate(documents),
         onClosed: () => setPicking(false),
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      log.error("Drive picker failed", { error: String(error) });
+    } catch (value) {
+      const operation: DriveOperation = "open_picker";
+      const error = normalizeDriveError(value, operation, "DRIVE_PICKER_OPEN_FAILED");
+      log.error("Drive picker failed", error, driveLogContext({ operation, vaultId, connectedAccountId }));
       toast({
         title: "Couldn't open Google Drive",
-        description: message,
+        description: error.message,
         variant: "destructive",
       });
       setPicking(false);
     }
-  }, [bindMutation, connectedAccountId, toast]);
+  }, [bindMutation, connectedAccountId, toast, vaultId]);
 
   const resources = resourcesQuery.data?.resources ?? [];
   const canBrowse = Boolean(drivePickerConfigured && connectedAccountId && hasDriveScope && vaultId);
