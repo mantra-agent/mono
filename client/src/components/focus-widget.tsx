@@ -712,11 +712,9 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   }, [activeSessionTitle, setMobileSessionTitle, showMobileSessionTranscriptPanel]);
 
   // Transcript panel width must be computed before headerAndPanel JSX that references it.
-  // When the session menu is collapsed, reclaim its reserved width so the right
-  // column does not leave an empty black gutter beside the transcript.
-  const transcriptPanelWidth = widgetOpen
-    ? columnWidth - sidebarWidth - 1 // -1px for divider
-    : columnWidth;
+  // Keep this fixed whether the session menu is open or closed so the session
+  // window stays centered in the focus column; the menu slot stays reserved.
+  const transcriptPanelWidth = columnWidth - sidebarWidth - 1; // -1px for divider
 
   const headerAndPanel = (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
@@ -855,8 +853,8 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   }
 
   // Desktop: docked right column with fixed width. The aside is always the
-  // full columnWidth. When the session menu is hidden, the transcript expands
-  // into the full column so no empty black gutter remains.
+  // full columnWidth. When the session menu is hidden, the transcript panel keeps
+  // its width and the sidebar space becomes empty — the divider doesn't move.
   return (
     <aside
       className="relative flex shrink-0 min-w-0 bg-background h-full"
@@ -876,25 +874,15 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
         <div className="absolute inset-y-0 -left-1.5 w-3" />
       </div>
       <div className="flex flex-col min-w-0 flex-1 overflow-hidden">
-        {/* Desktop header: vault sits over the transcript column when the menu is
-            open. When collapsed, transcript reclaim must not crush the reopen
-            control — keep connections + menu toggle on a shrink-0 rail. */}
-        <div className="hidden md:flex h-[42px] shrink-0 items-center">
+        {/* Desktop header: vault context is centered over the transcript column. */}
+        <div className="hidden md:flex h-[42px] shrink-0">
           <div
-            className={cn(
-              "flex min-w-0 items-center justify-center",
-              widgetOpen ? "shrink-0" : "flex-1",
-            )}
-            style={widgetOpen ? { width: `${transcriptPanelWidth}px` } : undefined}
+            className="flex shrink-0 items-center justify-center"
+            style={{ width: `${transcriptPanelWidth}px` }}
           >
             <VaultSwitcher />
           </div>
-          <div
-            className={cn(
-              "flex shrink-0 items-center justify-end gap-2 px-2",
-              widgetOpen && "min-w-0 flex-1",
-            )}
-          >
+          <div className="flex flex-1 items-center justify-end gap-2 px-2">
             <ConnectionsIndicator />
             <button
               type="button"
