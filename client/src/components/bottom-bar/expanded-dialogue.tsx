@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { X, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MODAL_GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface";
 import { createPortal } from "react-dom";
 
 interface ExpandedDialogueProps {
@@ -41,8 +42,8 @@ export function ExpandedDialogue({
       <div className="absolute inset-0 bg-black/50" />
       <div
         className={cn(
-          "relative w-full max-w-2xl max-h-[70vh] flex flex-col",
-          "bg-background border border-border rounded-t-xl shadow-xl",
+          MODAL_GLASS_SURFACE_CLASS,
+          "relative w-full max-w-2xl max-h-[70vh] flex flex-col rounded-b-none",
           "animate-in slide-in-from-bottom-4 duration-200",
         )}
       >

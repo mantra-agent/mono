@@ -2,7 +2,9 @@ import { useState, useCallback, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Upload, FileText, ArrowRight, ArrowLeft, Check, AlertCircle, Loader2 } from "lucide-react";
 import { queryClient } from "@/lib/queryClient";
+import { MODAL_GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 interface CSVPreviewResponse {
   headers: string[];
@@ -209,7 +211,7 @@ export function CSVImportDialog({ open, onClose }: { open: boolean; onClose: () 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" data-testid="csv-import-overlay">
       <div className="absolute inset-0 bg-black/50" onClick={handleClose} />
-      <div className="relative bg-card border border-border rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col" data-testid="csv-import-dialog">
+      <div className={cn(MODAL_GLASS_SURFACE_CLASS, "w-full max-w-2xl max-h-[85vh] flex flex-col")} data-testid="csv-import-dialog">
         <div className="px-5 py-4 border-b border-border/50 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-primary" />

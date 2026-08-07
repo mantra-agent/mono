@@ -8,6 +8,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
 import { getInstanceName } from "@/lib/instance-config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MODAL_GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -3659,7 +3660,7 @@ function ImportView({ onSelectPerson, selectedEmailOverride, onClearSelection }:
 
       {showSkipListManager && skipListData?.skipList && skipListData.skipList.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowSkipListManager(false)}>
-          <Card className="w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+          <Card className={cn(MODAL_GLASS_SURFACE_CLASS, "w-full max-w-sm mx-4")} onClick={e => e.stopPropagation()}>
             <CardContent className="pt-4 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-medium">Skipped Contacts</span>
