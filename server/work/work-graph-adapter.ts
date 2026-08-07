@@ -6,14 +6,13 @@ import type {
 } from "@shared/life-addressing";
 import { extractPositionedReferences } from "@shared/reference-parser";
 import type { GoalIndexEntry } from "@shared/models/goals";
-import type { Project, Task } from "@shared/models/work";
+import type { Project } from "@shared/models/work";
 import type { Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import { createLogger } from "../log";
 import { goalsService } from "../goals-service";
 import { goalRelationshipService, type GoalRelationship } from "../goal-relationship-service";
 import { fileProjectStorage } from "../file-storage/projects";
-import { fileTaskStorage } from "../file-storage/tasks";
 
 const log = createLogger("WorkGraphAdapter");
 
@@ -114,38 +113,34 @@ interface WorkProjectionCounts {
   goals: number;
   projects: number;
   milestones: number;
-  tasks: number;
   goalHierarchyEdges: number;
   goalRelationshipEdges: number;
   projectGoalEdges: number;
   milestoneEdges: number;
-  taskEdges: number;
   participantEdges: number;
   pageArtifactEdges: number;
   fileArtifactEdges: number;
   authoredEdges: number;
 }
 
-function buildProjection(goals: GoalIndexEntry[], projects: Project[], tasks: Task[], relationships: GoalRelationship[]): { nodes: GraphNode[]; edges: GraphEdge[]; counts: WorkProjectionCounts } {
+function buildProjection(goals: GoalIndexEntry[], projects: Project[], relationships: GoalRelationship[]): { nodes: GraphNode[]; edges: GraphEdge[]; counts: WorkProjectionCounts } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
 
   // In-play scope: shelved/finished work stays domain truth but is not projected as base topology.
+  // Tasks remain domain truth but are intentionally excluded from the Memory Graph surface.
   const inPlayGoals = goals.filter((goal) => goal.status !== "achieved");
   const inPlayProjects = projects.filter((project) => project.status !== "completed");
-  const inPlayTasks = tasks.filter((task) => task.status !== "done");
 
   const goalIds = new Set(inPlayGoals.map((goal) => goal.id));
   const counts: WorkProjectionCounts = {
     goals: inPlayGoals.length,
     projects: inPlayProjects.length,
     milestones: 0,
-    tasks: inPlayTasks.length,
     goalHierarchyEdges: 0,
     goalRelationshipEdges: 0,
     projectGoalEdges: 0,
     milestoneEdges: 0,
-    taskEdges: 0,
     participantEdges: 0,
     pageArtifactEdges: 0,
     fileArtifactEdges: 0,
@@ -233,33 +228,16 @@ function buildProjection(goals: GoalIndexEntry[], projects: Project[], tasks: Ta
     counts.authoredEdges += projectAuthored.length;
   }
 
-  // --- Tasks ---
-  for (const task of inPlayTasks) {
-    const taskAddress = `@task:${task.id}`;
-    nodes.push(node(taskAddress, "task", task.title, task.description || `${task.status} task`, task.updatedAt));
-
-    if (task.projectId != null) {
-      edges.push(edge(`work:task:${task.id}:task_of`, taskAddress, `@project:${task.projectId}`, "task_of", 0.9, "domain", task.updatedAt));
-      counts.taskEdges++;
-      if (task.milestoneId != null) {
-        edges.push(edge(`work:task:${task.id}:in_milestone`, taskAddress, `@milestone:${task.projectId}~${task.milestoneId}`, "in_milestone", 0.9, "domain", task.updatedAt));
-        counts.taskEdges++;
-      }
-    }
-
-    const taskAuthored = authoredEdges(taskAddress, [task.description, task.output]);
-    edges.push(...taskAuthored);
-    counts.authoredEdges += taskAuthored.length;
-  }
-
   return { nodes, edges, counts };
 }
 
 /**
- * Domain-owned Work projection. Goal, Project, Milestone, and Task tables remain
- * the authority; this adapter emits canonical candidates only. The graph assembler
- * independently resolves and authorizes every target endpoint before exposing an
- * edge, so a projected participant/artifact/reference can never grant visibility.
+ * Domain-owned Work projection. Goal, Project, and Milestone tables remain the
+ * authority; Tasks stay domain truth but are intentionally excluded from this
+ * Memory Graph surface. The adapter emits canonical candidates only. The graph
+ * assembler independently resolves and authorizes every target endpoint before
+ * exposing an edge, so a projected participant/artifact/reference can never
+ * grant visibility.
  */
 export const workGraphAdapter: PersonalGraphAdapter<Principal> = {
   id: "work",
@@ -273,11 +251,10 @@ export const workGraphAdapter: PersonalGraphAdapter<Principal> = {
     }
 
     const limit = boundedLimit(input.limit);
-    const [goals, projects, tasks, relationships] = await runWithPrincipal(principal, () =>
+    const [goals, projects, relationships] = await runWithPrincipal(principal, () =>
       Promise.all([
         goalsService.listAll() as Promise<GoalIndexEntry[]>,
         fileProjectStorage.getProjects() as Promise<Project[]>,
-        fileTaskStorage.getTasks() as Promise<Task[]>,
         goalRelationshipService.listActiveForProjection() as Promise<GoalRelationship[]>,
       ]),
     );
@@ -285,14 +262,13 @@ export const workGraphAdapter: PersonalGraphAdapter<Principal> = {
     const { nodes, edges, counts } = buildProjection(
       goals.slice(0, limit),
       projects.slice(0, limit),
-      tasks.slice(0, limit),
       relationships,
     );
 
     log.info(
-      `[work-graph] goals=${counts.goals} projects=${counts.projects} milestones=${counts.milestones} tasks=${counts.tasks} ` +
+      `[work-graph] goals=${counts.goals} projects=${counts.projects} milestones=${counts.milestones} ` +
         `goalHierarchy=${counts.goalHierarchyEdges} goalRelationships=${counts.goalRelationshipEdges} projectGoal=${counts.projectGoalEdges} milestoneEdges=${counts.milestoneEdges} ` +
-        `taskEdges=${counts.taskEdges} participants=${counts.participantEdges} pageArtifacts=${counts.pageArtifactEdges} ` +
+        `participants=${counts.participantEdges} pageArtifacts=${counts.pageArtifactEdges} ` +
         `fileArtifacts=${counts.fileArtifactEdges} authored=${counts.authoredEdges}`,
     );
 

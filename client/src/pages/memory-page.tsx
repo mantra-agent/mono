@@ -122,11 +122,12 @@ import { MemoryGraph3D, type MemoryGraph3DHandle, type MemoryGraph3DLink, type M
 import {
   getAvailableMemoryGraphNodeTypes,
   getMemoryGraphNodeTypeConfig,
+  isExcludedMemoryGraphNodeType,
   MemorySourceIcon,
 } from "@/components/memory/memory-source-icon";
 
 const MEMORY_GRAPH_ACTIVITY_STORAGE_KEY = "memory-graph-activity-enabled";
-const DEFAULT_HIDDEN_GRAPH_NODE_TYPES = new Set(["plans", "interactions", "tags"]);
+const DEFAULT_HIDDEN_GRAPH_NODE_TYPES = new Set(["tags"]);
 
 const SOURCE_REF_TYPE_MAP: Record<string, string> = {
   chat_journal: "session",
@@ -1517,7 +1518,9 @@ function GraphTab({
   );
   const visibleGraphNodes = useMemo(
     () => graphNodes.filter((node) => {
+      if (isExcludedMemoryGraphNodeType(node.source)) return false;
       const typeId = getMemoryGraphNodeTypeConfig(node.source).id;
+      if (isExcludedMemoryGraphNodeType(typeId)) return false;
       if (hiddenNodeTypes.has(typeId)) return false;
       // Tag nodes only connect via `tagged_with`, so a tag's degree is its
       // connection count. The Mixer's Tag Degree Threshold hides sparsely

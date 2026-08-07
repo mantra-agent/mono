@@ -33,12 +33,28 @@ const MEMORY_GRAPH_NODE_TYPE_ORDER = [
   "pages",
   "sessions",
   "meetings",
-  "interactions",
   "goals",
   "projects",
-  "plans",
   "tags",
 ];
+
+/** Node types intentionally excluded from Layers + the Memory Graph surface. */
+const EXCLUDED_MEMORY_GRAPH_NODE_TYPES = new Set([
+  "workflows",
+  "workflow",
+  "workflow_gate",
+  "workflow_gates",
+  "tasks",
+  "task",
+  "prs",
+  "pr",
+  "plan_attempts",
+  "plan_attempt",
+  "plans",
+  "plan",
+  "interactions",
+  "interaction",
+]);
 
 const MEMORY_GRAPH_NODE_TYPE_BY_SOURCE: Record<string, MemoryGraphNodeTypeConfig> = {
   person: { id: "people", label: "People", iconSource: "person" },
@@ -52,10 +68,8 @@ const MEMORY_GRAPH_NODE_TYPE_BY_SOURCE: Record<string, MemoryGraphNodeTypeConfig
   library_page: { id: "pages", label: "Pages", iconSource: "page" },
   session: { id: "sessions", label: "Sessions", iconSource: "session" },
   meeting: { id: "meetings", label: "Meetings", iconSource: "meeting" },
-  interaction: { id: "interactions", label: "Interactions", iconSource: "interaction" },
   goal: { id: "goals", label: "Goals", iconSource: "goal" },
   project: { id: "projects", label: "Projects", iconSource: "project" },
-  plan: { id: "plans", label: "Plans", iconSource: "plan" },
   tag: { id: "tags", label: "Tags", iconSource: "tag" },
 };
 
@@ -79,10 +93,20 @@ export function getMemoryGraphNodeTypeConfig(source: string): MemoryGraphNodeTyp
   };
 }
 
+export function isExcludedMemoryGraphNodeType(sourceOrTypeId: string): boolean {
+  const normalized = sourceOrTypeId.trim().toLowerCase();
+  if (!normalized) return false;
+  if (EXCLUDED_MEMORY_GRAPH_NODE_TYPES.has(normalized)) return true;
+  const config = MEMORY_GRAPH_NODE_TYPE_BY_SOURCE[normalized];
+  return Boolean(config && EXCLUDED_MEMORY_GRAPH_NODE_TYPES.has(config.id));
+}
+
 export function getAvailableMemoryGraphNodeTypes(sources: string[]): MemoryGraphNodeTypeConfig[] {
   const typeById = new Map<string, MemoryGraphNodeTypeConfig>();
   sources.forEach((source) => {
+    if (isExcludedMemoryGraphNodeType(source)) return;
     const config = getMemoryGraphNodeTypeConfig(source);
+    if (isExcludedMemoryGraphNodeType(config.id)) return;
     typeById.set(config.id, config);
   });
   return [...typeById.values()].sort((left, right) => {
