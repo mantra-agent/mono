@@ -534,6 +534,8 @@ app.use((req, res, next) => {
   await ensureOrganizationsSchema(workVaultPool);
   const { ensureDriveResourcesSchema } = await import("./drive-resources-schema");
   await ensureDriveResourcesSchema(workVaultPool);
+  const { ensureFilesIndexSchema } = await import("./files-index-schema");
+  await ensureFilesIndexSchema(workVaultPool);
   const { ensureDocumentArtifactsSchema } = await import("./document-artifacts-schema");
   await ensureDocumentArtifactsSchema(workVaultPool);
   const { ensureAgendaDefinitionSchema } = await import("./agenda-schema");

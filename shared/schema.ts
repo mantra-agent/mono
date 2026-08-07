@@ -874,6 +874,160 @@ export const driveResources = pgTable("drive_resources", {
 export type DriveResourceRow = typeof driveResources.$inferSelect;
 export type InsertDriveResourceRow = typeof driveResources.$inferInsert;
 
+// ── Files index policy + materialized indexed file sources ─────────
+// Indexing is a policy over canonical drive_resources, not recursive state on every
+// provider child. Folders use mode=recursive as a continuous selection rule; discovered
+// files materialize as indexed_file_sources. Semantic extraction state stays in
+// memory_vnext_source_queue (drive_file source ids = drive_resources.id for bound files,
+// or indexed_file_sources.id for discovered descendants). v1 has no per-child exclusions.
+export const fileIndexPolicyModes = ["off", "self", "recursive"] as const;
+export type FileIndexPolicyMode = (typeof fileIndexPolicyModes)[number];
+
+export const fileIndexPolicies = pgTable("file_index_policies", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  ownerUserId: varchar("owner_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "cascade" }),
+  /** Canonical bound root this policy anchors to. */
+  driveResourceId: text("drive_resource_id").notNull().references(() => driveResources.id, { onDelete: "cascade" }),
+  mode: text("mode", { enum: fileIndexPolicyModes }).notNull().default("off"),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  updatedByUserId: varchar("updated_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("idx_file_index_policies_drive_resource").on(table.driveResourceId),
+  index("idx_file_index_policies_vault").on(table.vaultId),
+  index("idx_file_index_policies_account").on(table.accountId),
+  check("file_index_policies_mode_check", sql`${table.mode} IN ('off', 'self', 'recursive')`),
+]);
+
+export type FileIndexPolicyRow = typeof fileIndexPolicies.$inferSelect;
+export type InsertFileIndexPolicyRow = typeof fileIndexPolicies.$inferInsert;
+
+export const indexedFileSourceDiscoveryStates = [
+  "active",
+  "inaccessible",
+  "deleted",
+  "unsupported",
+  "retired",
+] as const;
+export type IndexedFileSourceDiscoveryState = (typeof indexedFileSourceDiscoveryStates)[number];
+
+/**
+ * Materialized file sources discovered under an active index policy.
+ * One row per (account, vault, provider, provider_file_id). Coverage is multi-policy:
+ * retiring one policy must not delete a source still covered by another active policy.
+ * Do not store recursive expansion state on every provider child outside this table.
+ */
+export const indexedFileSources = pgTable("indexed_file_sources", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  ownerUserId: varchar("owner_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "cascade" }),
+  /** Policy that last claimed/upserted this source (provenance, not exclusive coverage). */
+  policyId: text("policy_id").references(() => fileIndexPolicies.id, { onDelete: "set null" }),
+  /** Bound root drive_resource that owns the selecting policy, when known. */
+  rootDriveResourceId: text("root_drive_resource_id").references(() => driveResources.id, {
+    onDelete: "set null",
+  }),
+  /**
+   * When the discovered file is itself an explicit bind, point at that drive_resource.
+   * drive_file queue source ids prefer this id so FilesApi authorize stays bind-native.
+   */
+  driveResourceId: text("drive_resource_id").references(() => driveResources.id, {
+    onDelete: "set null",
+  }),
+  provider: text("provider").notNull(),
+  providerFileId: text("provider_file_id").notNull(),
+  name: text("name").notNull(),
+  mimeType: text("mime_type"),
+  providerPath: text("provider_path"),
+  providerParentId: text("provider_parent_id"),
+  providerChecksum: text("provider_checksum"),
+  providerModifiedAt: timestamp("provider_modified_at", { withTimezone: true }),
+  discoveryState: text("discovery_state", { enum: indexedFileSourceDiscoveryStates })
+    .notNull()
+    .default("active"),
+  title: text("title"),
+  oneLiner: text("one_liner"),
+  summary: text("summary"),
+  tags: jsonb("tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  lastDiscoveredAt: timestamp("last_discovered_at", { withTimezone: true })
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+  retiredAt: timestamp("retired_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  uniqueIndex("idx_indexed_file_sources_vault_provider_file").on(
+    table.vaultId,
+    table.provider,
+    table.providerFileId,
+  ),
+  index("idx_indexed_file_sources_account").on(table.accountId),
+  index("idx_indexed_file_sources_policy").on(table.policyId),
+  index("idx_indexed_file_sources_root").on(table.rootDriveResourceId),
+  index("idx_indexed_file_sources_drive_resource").on(table.driveResourceId),
+  index("idx_indexed_file_sources_discovery").on(table.discoveryState),
+  check(
+    "indexed_file_sources_discovery_state_check",
+    sql`${table.discoveryState} IN ('active', 'inaccessible', 'deleted', 'unsupported', 'retired')`,
+  ),
+  check("indexed_file_sources_provider_check", sql`${table.provider} IN ('google', 'box', 'mantra')`),
+]);
+
+export type IndexedFileSourceRow = typeof indexedFileSources.$inferSelect;
+export type InsertIndexedFileSourceRow = typeof indexedFileSources.$inferInsert;
+
+/** Durable reconciliation-run stub for folder recursive discovery (step 3 fills the worker). */
+export const fileIndexReconciliationRunPhases = [
+  "queued",
+  "discovering",
+  "indexing",
+  "complete",
+  "partial",
+  "failed",
+  "canceled",
+] as const;
+export type FileIndexReconciliationRunPhase = (typeof fileIndexReconciliationRunPhases)[number];
+
+export const fileIndexReconciliationRuns = pgTable("file_index_reconciliation_runs", {
+  id: text("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountId: varchar("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  ownerUserId: varchar("owner_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  vaultId: text("vault_id").notNull().references(() => vaults.id, { onDelete: "cascade" }),
+  policyId: text("policy_id").notNull().references(() => fileIndexPolicies.id, { onDelete: "cascade" }),
+  rootDriveResourceId: text("root_drive_resource_id")
+    .notNull()
+    .references(() => driveResources.id, { onDelete: "cascade" }),
+  phase: text("phase", { enum: fileIndexReconciliationRunPhases }).notNull().default("queued"),
+  foldersVisited: integer("folders_visited").notNull().default(0),
+  filesDiscovered: integer("files_discovered").notNull().default(0),
+  filesEligible: integer("files_eligible").notNull().default(0),
+  filesCompleted: integer("files_completed").notNull().default(0),
+  filesUnchanged: integer("files_unchanged").notNull().default(0),
+  filesUnsupported: integer("files_unsupported").notNull().default(0),
+  filesFailed: integer("files_failed").notNull().default(0),
+  discoveryCursor: jsonb("discovery_cursor").$type<Record<string, unknown> | null>(),
+  lastError: text("last_error"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, (table) => [
+  index("idx_file_index_recon_runs_policy").on(table.policyId),
+  index("idx_file_index_recon_runs_account_phase").on(table.accountId, table.phase),
+  index("idx_file_index_recon_runs_root").on(table.rootDriveResourceId),
+  check(
+    "file_index_reconciliation_runs_phase_check",
+    sql`${table.phase} IN ('queued', 'discovering', 'indexing', 'complete', 'partial', 'failed', 'canceled')`,
+  ),
+]);
+
+export type FileIndexReconciliationRunRow = typeof fileIndexReconciliationRuns.$inferSelect;
+export type InsertFileIndexReconciliationRunRow = typeof fileIndexReconciliationRuns.$inferInsert;
+
 // ── Principles ────────────────────────────────────────────────────
 export const principles = pgTable("principles", {
   id: text("id").primaryKey(),
