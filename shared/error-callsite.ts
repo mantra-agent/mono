@@ -13,6 +13,9 @@ const INFRASTRUCTURE_FRAMES = [
   "/node_modules/",
 ];
 
+const BUNDLED_RUNTIME_FILE =
+  /(?:^|\/)(?:dist\/)?(?:index|process-wrapper|heartbeat-worker|shell-index-worker)\.m?js$/i;
+
 const SECRET_LIKE =
   /(?:bearer\s+\S+|api[_-]?key|authorization|cookie|password|secret|token|session|email|https?:\/\/|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/i;
 
@@ -28,12 +31,17 @@ export interface SafeErrorClassifier {
 }
 
 function normalizeFile(rawFile: string): string | undefined {
-  const file = rawFile.replace(/\\/g, "/").replace(/[?#].*$/, "");
-  if (!file || file.includes("..") || /(?:https?:|blob:|data:|@)/i.test(file)) return undefined;
+  const file = rawFile
+    .replace(/\\/g, "/")
+    .replace(/^[a-z]+:\/\//i, "")
+    .replace(/^\/+/, "/")
+    .replace(/[?#].*$/, "");
+  if (!file || file.includes("..") || /(?:blob:|data:|@)/i.test(file)) return undefined;
   const sourceMarker = file.lastIndexOf("/src/");
   const serverMarker = file.lastIndexOf("/server/");
   const sharedMarker = file.lastIndexOf("/shared/");
-  const marker = Math.max(sourceMarker, serverMarker, sharedMarker);
+  const clientMarker = file.lastIndexOf("/client/");
+  const marker = Math.max(sourceMarker, serverMarker, sharedMarker, clientMarker);
   const normalized =
     marker >= 0 ? file.slice(marker + 1) : file.split("/").filter(Boolean).slice(-2).join("/");
   return normalized && normalized.length <= MAX_FILE_LENGTH ? normalized : undefined;
@@ -42,6 +50,9 @@ function normalizeFile(rawFile: string): string | undefined {
 function normalizeSite(rawSite: string | undefined): string | undefined {
   if (!rawSite) return undefined;
   const site = rawSite.replace(/^async\s+/, "").trim();
+  if (!site || /^(?:anonymous|<anonymous>|Object\.<anonymous>|Module\.<anonymous>)$/i.test(site)) {
+    return undefined;
+  }
   return /^[A-Za-z0-9_.$<>:-]{1,160}$/.test(site) ? site.slice(0, MAX_SITE_LENGTH) : undefined;
 }
 
@@ -50,25 +61,80 @@ function isInfrastructureFrame(file: string): boolean {
   return INFRASTRUCTURE_FRAMES.some((frame) => normalized.includes(frame));
 }
 
+function isBundledRuntimeFile(file: string | undefined): boolean {
+  if (!file) return false;
+  const normalized = file.replace(/\\/g, "/");
+  return BUNDLED_RUNTIME_FILE.test(normalized) || /(?:^|\/)dist\//.test(normalized);
+}
+
+function isOwnedSourceFile(file: string | undefined): boolean {
+  if (!file) return false;
+  const normalized = file.replace(/\\/g, "/");
+  return (
+    normalized.startsWith("server/") ||
+    normalized.startsWith("shared/") ||
+    normalized.startsWith("client/") ||
+    normalized.includes("/src/")
+  );
+}
+
+function scoreCallsite(callsite: SafeErrorCallsite): number {
+  let score = 0;
+  if (isOwnedSourceFile(callsite.sourceFile)) score += 8;
+  if (callsite.sourceSite) score += 4;
+  if (typeof callsite.sourceLine === "number" && callsite.sourceLine > 0) score += 1;
+  if (isBundledRuntimeFile(callsite.sourceFile)) score -= 6;
+  if (!callsite.sourceFile && !callsite.sourceSite) score -= 10;
+  return score;
+}
+
+function parseStackFrame(line: string): SafeErrorCallsite | null {
+  const match =
+    /^\s*at\s+(?:async\s+)?(?<site>.+?)\s+\((?<file>.*?):(?<line>\d+)(?::\d+)?\)$/.exec(line) ||
+    /^\s*at\s+(?<file>.*?):(?<line>\d+)(?::\d+)?$/.exec(line) ||
+    /^\s*at\s+(?:async\s+)?(?<site>[^\s]+)$/.exec(line);
+  if (!match?.groups) return null;
+  if (match.groups.file && isInfrastructureFrame(match.groups.file)) return null;
+  const sourceFile = match.groups.file ? normalizeFile(match.groups.file) : undefined;
+  if (sourceFile && isInfrastructureFrame(sourceFile)) return null;
+  return {
+    sourceFile,
+    sourceLine: match.groups.line ? Number.parseInt(match.groups.line, 10) : undefined,
+    sourceSite: normalizeSite(match.groups.site),
+  };
+}
+
+/**
+ * Privacy-safe producer callsite for error aggregates.
+ * Prefer the first owned source frame with a real site; skip logger/runtime
+ * infrastructure and reject anonymous/bundled-only frames when better evidence
+ * exists. Never invent a site from synthetic logger stacks alone.
+ */
 export function deriveSafeErrorCallsite(stack: string | undefined): SafeErrorCallsite {
   if (!stack) return {};
   const lines = stack.split("\n").slice(0, MAX_STACK_FRAMES);
+  let best: SafeErrorCallsite | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
   for (const line of lines) {
-    const match =
-      /^\s*at\s+(?:async\s+)?(?<site>.+?)\s+\((?<file>.*?):(?<line>\d+)(?::\d+)?\)$/.exec(line) ||
-      /^\s*at\s+(?<file>.*?):(?<line>\d+)(?::\d+)?$/.exec(line) ||
-      /^\s*at\s+(?:async\s+)?(?<site>[^\s]+)$/.exec(line);
-    if (!match?.groups) continue;
-    if (match.groups.file && isInfrastructureFrame(match.groups.file)) continue;
-    const sourceFile = match.groups.file ? normalizeFile(match.groups.file) : undefined;
-    if (sourceFile && isInfrastructureFrame(sourceFile)) continue;
+    const candidate = parseStackFrame(line);
+    if (!candidate) continue;
+    const score = scoreCallsite(candidate);
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+    // Strong owned source frame is good enough; stop early.
+    if (score >= 12) break;
+  }
+  if (!best || bestScore < 0) return {};
+  // Bundled runtime coordinates without a real site are not actionable owners.
+  if (isBundledRuntimeFile(best.sourceFile) && !best.sourceSite) {
     return {
-      sourceFile,
-      sourceLine: match.groups.line ? Number.parseInt(match.groups.line, 10) : undefined,
-      sourceSite: normalizeSite(match.groups.site),
+      sourceFile: best.sourceFile,
+      sourceLine: best.sourceLine,
     };
   }
-  return {};
+  return best;
 }
 
 function normalizeErrorName(raw: unknown): string | undefined {
@@ -146,14 +212,14 @@ export function deriveSafeErrorClassifier(input: {
     errorLike instanceof Error && "code" in errorLike
       ? (errorLike as Error & { code?: unknown }).code
       : errorLike?.code ??
-        errorLike?.failureCode ??
-        nestedFromArgs?.code ??
-        nestedFromArgs?.failureCode ??
-        nestedFromArgs?.errorCode ??
-        errorLike?.kind ??
-        errorLike?.failureKind ??
-        nestedFromArgs?.kind ??
-        nestedFromArgs?.failureKind,
+          errorLike?.failureCode ??
+          nestedFromArgs?.code ??
+          nestedFromArgs?.failureCode ??
+          nestedFromArgs?.errorCode ??
+          errorLike?.kind ??
+          errorLike?.failureKind ??
+          nestedFromArgs?.kind ??
+          nestedFromArgs?.failureKind,
   );
 
   const messageCode = codeFromMessage(input.message);
@@ -165,4 +231,29 @@ export function deriveSafeErrorClassifier(input: {
     errorName: name,
     errorCode: explicitCode ?? messageCode ?? nestedMessageCode,
   };
+}
+
+/**
+ * Prefer producer Error stacks; only fall back to a synthetic logger stack when
+ * no real exception stack exists. Callers should pass the logger module so the
+ * synthetic path can still own the aggregate when frames are anonymous.
+ */
+export function selectErrorStack(input: {
+  error?: unknown;
+  nestedError?: unknown;
+  fallbackStack?: string;
+}): string | undefined {
+  const direct = input.error;
+  if (direct instanceof Error && typeof direct.stack === "string" && direct.stack.trim()) {
+    return direct.stack;
+  }
+  const nested = input.nestedError;
+  if (nested && typeof nested === "object" && "stack" in nested) {
+    const stack = String((nested as { stack?: unknown }).stack ?? "").trim();
+    if (stack) return stack;
+  }
+  if (typeof input.fallbackStack === "string" && input.fallbackStack.trim()) {
+    return input.fallbackStack;
+  }
+  return undefined;
 }

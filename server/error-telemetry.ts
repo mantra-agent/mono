@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { pool } from "./db";
 import { enqueueTelemetryWrite } from "./telemetry-write";
-import { deriveSafeErrorCallsite } from "@shared/error-callsite";
+import { deriveSafeErrorCallsite, selectErrorStack } from "@shared/error-callsite";
 
 const MAX_IDENTITY_LENGTH = 160;
 const MAX_SOURCE_LENGTH = 240;
@@ -147,7 +147,7 @@ export function enqueueApplicationErrorProjection(input: ApplicationErrorProject
 }
 
 export function captureApplicationError(error: unknown, logger = "ExpressFallback"): void {
-  const callsite = deriveSafeErrorCallsite(error instanceof Error ? error.stack : undefined);
+  const callsite = deriveSafeErrorCallsite(selectErrorStack({ error }));
   const errorName = error instanceof Error && error.name ? error.name : "Error";
   const errorCode =
     typeof error === "object" &&
@@ -156,7 +156,13 @@ export function captureApplicationError(error: unknown, logger = "ExpressFallbac
     /^[A-Z][A-Z0-9_]{1,48}$/.test(String((error as { code?: unknown }).code ?? ""))
       ? String((error as { code?: unknown }).code)
       : undefined;
-  enqueueApplicationErrorProjection({ logger, errorName, errorCode, ...callsite });
+  enqueueApplicationErrorProjection({
+    logger,
+    errorName,
+    errorCode,
+    ...callsite,
+    sourceSite: callsite.sourceSite ?? logger,
+  });
 }
 
 export async function listRecentApplicationErrors(
