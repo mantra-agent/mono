@@ -289,4 +289,31 @@ export function registerDriveResourceRoutes(app: Express) {
       handleError(res, error, "Failed to toggle file index policy");
     }
   });
+
+  // GET  /api/files/index/runs/:runId — durable progress projection
+  // POST /api/files/index/runs/:runId/retry-failed — retry failed files only
+  app.get("/api/files/index/runs/:runId", async (req, res) => {
+    try {
+      const runId = String(req.params.runId ?? "").trim();
+      if (!runId) {
+        throw Object.assign(new Error("runId is required"), { status: 400 });
+      }
+      res.json({ run: await filesIndexService.getRun(runId) });
+    } catch (error) {
+      handleError(res, error, "Failed to load file index run");
+    }
+  });
+
+  app.post("/api/files/index/runs/:runId/retry-failed", async (req, res) => {
+    try {
+      const runId = String(req.params.runId ?? "").trim();
+      if (!runId) {
+        throw Object.assign(new Error("runId is required"), { status: 400 });
+      }
+      const status = await filesIndexService.retryFailedRun(runId);
+      res.json({ status });
+    } catch (error) {
+      handleError(res, error, "Failed to retry failed file index run");
+    }
+  });
 }

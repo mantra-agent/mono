@@ -17,7 +17,8 @@ type ConnectionPool = {
  *
  * file_index_policies — vault-scoped mode (off|self|recursive) anchored to a drive_resource.
  * indexed_file_sources — materialized discovered files only (not recursive state on every child).
- * file_index_reconciliation_runs — durable run stub for folder discovery (worker lands in step 3).
+ * file_index_reconciliation_runs — durable folder reconciliation progress
+ *   (phase discovering|indexing|complete|partial|failed|canceled + counters/cursor).
  *
  * Coverage semantics (v1): a source remains indexed while any active policy covers it.
  * Turning a folder off retires only sources no longer covered elsewhere. No per-child exclusions.
@@ -156,7 +157,7 @@ export async function ensureFilesIndexSchema(pool: ConnectionPool): Promise<void
     `);
     await client.query(`
       COMMENT ON TABLE file_index_reconciliation_runs IS
-      'Durable folder reconciliation run projection. Step 2 enqueues queued stubs; step 3 owns the resumable worker and counters.'
+      'Durable folder reconciliation run projection with phase/counters/cursor. files-index-reconciler owns the resumable worker; toggle enqueues queued runs.'
     `);
 
     await client.query("COMMIT");

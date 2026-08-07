@@ -980,7 +980,7 @@ export const indexedFileSources = pgTable("indexed_file_sources", {
 export type IndexedFileSourceRow = typeof indexedFileSources.$inferSelect;
 export type InsertIndexedFileSourceRow = typeof indexedFileSources.$inferInsert;
 
-/** Durable reconciliation-run stub for folder recursive discovery (step 3 fills the worker). */
+/** Durable reconciliation-run progress for folder recursive discovery. */
 export const fileIndexReconciliationRunPhases = [
   "queued",
   "discovering",

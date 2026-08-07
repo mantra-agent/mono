@@ -124,7 +124,73 @@ function driveFileFingerprint(meta: {
   return null;
 }
 
-async function loadDriveFileNormalizedText(driveResourceId: string): Promise<{
+type DriveFileReadTarget =
+  | { kind: "bind"; driveResourceId: string }
+  | {
+      kind: "discovered";
+      vaultId: string;
+      provider: "google" | "box" | "mantra";
+      providerFileId: string;
+      name: string;
+    };
+
+/**
+ * Resolve a drive_file queue source id.
+ * Bound files use drive_resources.id; discovered descendants use indexed_file_sources.id
+ * (preferring drive_resource_id when the child is itself an explicit bind).
+ */
+async function resolveDriveFileReadTarget(sourceId: string): Promise<DriveFileReadTarget | null> {
+  const { db } = await import("../db");
+  const { driveResources, indexedFileSources } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
+
+  const [bind] = await db
+    .select({
+      id: driveResources.id,
+      resourceType: driveResources.resourceType,
+    })
+    .from(driveResources)
+    .where(eq(driveResources.id, sourceId))
+    .limit(1);
+  if (bind) {
+    if (bind.resourceType !== "file") return null;
+    return { kind: "bind", driveResourceId: bind.id };
+  }
+
+  const [source] = await db
+    .select({
+      id: indexedFileSources.id,
+      vaultId: indexedFileSources.vaultId,
+      provider: indexedFileSources.provider,
+      providerFileId: indexedFileSources.providerFileId,
+      driveResourceId: indexedFileSources.driveResourceId,
+      name: indexedFileSources.name,
+      discoveryState: indexedFileSources.discoveryState,
+    })
+    .from(indexedFileSources)
+    .where(eq(indexedFileSources.id, sourceId))
+    .limit(1);
+  if (!source) return null;
+  if (source.driveResourceId) {
+    return { kind: "bind", driveResourceId: source.driveResourceId };
+  }
+  if (
+    source.provider !== "google" &&
+    source.provider !== "box" &&
+    source.provider !== "mantra"
+  ) {
+    return null;
+  }
+  return {
+    kind: "discovered",
+    vaultId: source.vaultId,
+    provider: source.provider,
+    providerFileId: source.providerFileId,
+    name: source.name,
+  };
+}
+
+async function loadDriveFileNormalizedText(sourceId: string): Promise<{
   text: string;
   metadata: {
     name: string;
@@ -141,66 +207,102 @@ async function loadDriveFileNormalizedText(driveResourceId: string): Promise<{
   const { filesApi } = await import("../files-api");
   const { readFromObjectStorage } = await import("../content-indexer");
 
-  try {
-    // Authorize first so missing/unauthorized binds fail closed before download.
-    await filesApi.authorize(driveResourceId, "read");
-  } catch (err) {
-    const status = (err as { status?: number }).status;
-    if (status === 404 || status === 403 || status === 401) {
-      log.warn(`drive_file adapter: inaccessible id=${driveResourceId} status=${status ?? "n/a"}`);
-      return {
-        text: "",
-        metadata: {
-          name: driveResourceId,
-          mimeType: null,
-          provider: "unknown",
-          providerFileId: driveResourceId,
-          md5Checksum: null,
-          modifiedTime: null,
-          vaultId: "",
-        },
-        fingerprint: null,
-        availability: "inaccessible",
-      };
+  const target = await resolveDriveFileReadTarget(sourceId);
+  if (!target) {
+    log.debug(`drive_file adapter: missing source id=${sourceId}`);
+    return {
+      text: "",
+      metadata: {
+        name: sourceId,
+        mimeType: null,
+        provider: "unknown",
+        providerFileId: sourceId,
+        md5Checksum: null,
+        modifiedTime: null,
+        vaultId: "",
+      },
+      fingerprint: null,
+      availability: "missing",
+    };
+  }
+
+  const readInput =
+    target.kind === "bind"
+      ? { driveResourceId: target.driveResourceId }
+      : {
+          vaultId: target.vaultId,
+          provider: target.provider,
+          providerFileId: target.providerFileId,
+        };
+
+  if (target.kind === "bind") {
+    try {
+      // Authorize first so missing/unauthorized binds fail closed before download.
+      await filesApi.authorize(target.driveResourceId, "read");
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 404 || status === 403 || status === 401) {
+        log.warn(
+          `drive_file adapter: inaccessible id=${sourceId} status=${status ?? "n/a"}`,
+        );
+        return {
+          text: "",
+          metadata: {
+            name: sourceId,
+            mimeType: null,
+            provider: "unknown",
+            providerFileId: sourceId,
+            md5Checksum: null,
+            modifiedTime: null,
+            vaultId: "",
+          },
+          fingerprint: null,
+          availability: "inaccessible",
+        };
+      }
+      throw err;
     }
-    throw err;
   }
 
   let readResult: Awaited<ReturnType<typeof filesApi.read>>;
   try {
-    readResult = await filesApi.read({ driveResourceId });
+    readResult = await filesApi.read(readInput);
   } catch (err) {
     const status = (err as { status?: number }).status;
     if (status === 400) {
-      // Folders and other non-file binds are not semantic sources.
-      log.debug(`drive_file adapter: unsupported bind id=${driveResourceId}`);
+      // Folders and other non-file targets are not semantic sources.
+      log.debug(`drive_file adapter: unsupported source id=${sourceId}`);
       return {
         text: "",
         metadata: {
-          name: driveResourceId,
+          name: target.kind === "discovered" ? target.name : sourceId,
           mimeType: null,
-          provider: "unknown",
-          providerFileId: driveResourceId,
+          provider: target.kind === "discovered" ? target.provider : "unknown",
+          providerFileId:
+            target.kind === "discovered" ? target.providerFileId : sourceId,
           md5Checksum: null,
           modifiedTime: null,
-          vaultId: "",
+          vaultId: target.kind === "discovered" ? target.vaultId : "",
         },
         fingerprint: null,
         availability: "unsupported",
       };
     }
     if (status === 404 || status === 403 || status === 401) {
-      log.warn(`drive_file adapter: read inaccessible id=${driveResourceId} status=${status}`);
+      log.warn(
+        `drive_file adapter: read inaccessible id=${sourceId} status=${status}`,
+      );
       return {
         text: "",
         metadata: {
-          name: driveResourceId,
+          name: target.kind === "discovered" ? target.name : sourceId,
           mimeType: null,
-          provider: "unknown",
-          providerFileId: driveResourceId,
+          provider: target.kind === "discovered" ? target.provider : "unknown",
+          providerFileId:
+            target.kind === "discovered" ? target.providerFileId : sourceId,
           md5Checksum: null,
           modifiedTime: null,
-          vaultId: "",
+          vaultId: target.kind === "discovered" ? target.vaultId : "",
         },
         fingerprint: null,
         availability: "inaccessible",
