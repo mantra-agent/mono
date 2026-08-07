@@ -12,6 +12,7 @@ import {
   type ReferenceRef,
 } from "@shared/references";
 import {
+  businessPlans,
   companies,
   emailDrafts,
   emailMessages,
@@ -262,6 +263,23 @@ const adapters: AddressResolverAdapter[] = [
       .where(combineWithProjectAccess(principal, "read", inArray(projects.id, numbers(refs))));
     const byId = new Map(rows.map(row => [String(row.id), row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title, summary: byId.get(ref.id)!.description, updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
+  simpleAdapter("business_plan", async (principal, refs) => {
+    const rows = await db.select({
+      id: businessPlans.id,
+      name: businessPlans.name,
+      vaultId: businessPlans.vaultId,
+      updatedAt: businessPlans.updatedAt,
+    }).from(businessPlans).where(and(
+      inArray(businessPlans.id, refs.map(ref => ref.id)),
+      combineWithVisibleScope(principal, { vaultId: businessPlans.vaultId }),
+    ));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, {
+      label: byId.get(ref.id)!.name,
+      href: `/business/advantage?plan=${encodeURIComponent(ref.id)}`,
+      updatedAt: byId.get(ref.id)!.updatedAt,
+    })]] : []));
   }),
   simpleAdapter("milestone", async (principal, refs) => {
     const parsed = refs.map(ref => ({ ref, parts: ref.id.split("~").map(Number) })).filter(item => item.parts.length === 2 && item.parts.every(Number.isInteger));
