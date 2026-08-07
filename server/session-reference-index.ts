@@ -77,10 +77,12 @@ export async function indexSettledSessionReferences(principal: Principal, sessio
         : undefined;
     return targetAddress ? [{ targetAddress, location: { start: item.start, end: item.end } }] : [];
   });
-  const contentHash = createHash("sha256").update(content).digest("hex");
+  const projectionRevision = createHash("sha256")
+    .update(JSON.stringify({ content, occurrences }))
+    .digest("hex");
   const result = await replaceReferenceOccurrences(principal, {
     sourceAddress: `@session:${session.id}`,
-    sourceRevision: `sha256:${contentHash}`,
+    sourceRevision: `sha256:${projectionRevision}`,
     observedAt: new Date(session.updatedAt),
     occurrences,
   });
