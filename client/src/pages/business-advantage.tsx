@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Gauge, Loader2, MoreHorizontal, Plus } from "lucide-react";
-import { HierarchySectionHeader } from "@/components/hierarchy-section-header";
+import {
+  HIERARCHY_PRIMARY_ACTION_CLASS,
+  HierarchySectionHeader,
+} from "@/components/hierarchy-section-header";
 import { HierarchyTreeRow } from "@/components/hierarchy-tree";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { ReferencePicker, type ReferencePickerValue } from "@/components/references/reference-picker";
@@ -67,14 +70,18 @@ function AssignControl({
   type,
   label,
   onAssign,
+  asAction = false,
 }: {
   type: "goal" | "project" | "kpi";
   label: string;
   onAssign: (id: string) => void;
+  asAction?: boolean;
 }) {
   return (
-    <div className="w-72 p-2" onClick={(event) => event.stopPropagation()}>
-      <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">{label}</p>
+    <div
+      className={asAction ? "w-full" : "w-72 p-2"}
+      onClick={(event) => event.stopPropagation()}
+    >
       <ReferencePicker
         value={[]}
         onChange={(next) => {
@@ -86,6 +93,7 @@ function AssignControl({
         variant="compact"
         placeholder={label}
         showToken={false}
+        className={asAction ? HIERARCHY_PRIMARY_ACTION_CLASS : undefined}
       />
     </div>
   );
@@ -318,7 +326,12 @@ export default function BusinessAdvantagePage() {
                       surface="simple-chip"
                     />
                   ) : (
-                    <span className="text-sm text-muted-foreground">No thematic goal assigned</span>
+                    <AssignControl
+                      type="goal"
+                      label="+ Set Goal"
+                      asAction
+                      onAssign={(id) => update({ thematicGoalId: id })}
+                    />
                   )
                 }
                 mobileLayout="inline"
@@ -350,31 +363,19 @@ export default function BusinessAdvantagePage() {
           </section>
 
           <section className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <HierarchySectionHeader>Initiatives</HierarchySectionHeader>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-8 px-2 text-xs">
-                    <Plus className="mr-1 h-3.5 w-3.5" />
-                    Add
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <AssignControl
-                    type="project"
-                    label="Add initiative…"
-                    onAssign={(id) => {
-                      const projectId = Number(id);
-                      if (!Number.isFinite(projectId) || initiativeProjectIds.includes(projectId)) return;
-                      update({ initiativeProjectIds: [...initiativeProjectIds, projectId] });
-                    }}
-                  />
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+            <HierarchySectionHeader>Initiatives</HierarchySectionHeader>
             <div className="min-w-0">
               {initiativeProjectIds.length === 0 ? (
-                <p className="px-1 py-2 text-sm text-muted-foreground">No initiatives assigned</p>
+                <AssignControl
+                  type="project"
+                  label="+ Add Project"
+                  asAction
+                  onAssign={(id) => {
+                    const projectId = Number(id);
+                    if (!Number.isFinite(projectId)) return;
+                    update({ initiativeProjectIds: [projectId] });
+                  }}
+                />
               ) : (
                 initiativeProjectIds.map((projectId, index) => {
                   const project = projectsById.get(projectId);
@@ -424,30 +425,15 @@ export default function BusinessAdvantagePage() {
           </section>
 
           <section className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <HierarchySectionHeader>Key Performance Indicators</HierarchySectionHeader>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-8 px-2 text-xs">
-                    <Plus className="mr-1 h-3.5 w-3.5" />
-                    Add
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <AssignControl
-                    type="kpi"
-                    label="Add KPI…"
-                    onAssign={(id) => {
-                      if (kpiIds.includes(id)) return;
-                      update({ kpiIds: [...kpiIds, id] });
-                    }}
-                  />
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+            <HierarchySectionHeader>Key Performance Indicators</HierarchySectionHeader>
             <div className="min-w-0">
               {kpiIds.length === 0 ? (
-                <p className="px-1 py-2 text-sm text-muted-foreground">No KPIs assigned</p>
+                <AssignControl
+                  type="kpi"
+                  label="+ Add KPI"
+                  asAction
+                  onAssign={(id) => update({ kpiIds: [id] })}
+                />
               ) : (
                 kpiIds.map((kpiId, index) => {
                   const kpi = kpisById.get(kpiId);
