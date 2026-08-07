@@ -80,16 +80,34 @@ export class GoalStorage {
     this._listCache.invalidateAll();
   }
 
+  /**
+   * Mutation-path vault assignment. Create/update may only target a currently
+   * visible Vault (or any Vault under a system principal).
+   */
   private resolveVaultId(requestedVaultId?: string | null): string {
     const principal = requireCurrentUserPrincipal();
     const vaultId = requestedVaultId ?? principal.activeVaultId ?? principal.visibleVaultIds[0];
     if (!vaultId) {
       throw new Error("A Goal must belong to a Vault");
     }
-    if (principal.actorType !== "system" && !principal.visibleVaultIds.includes(vaultId)) {
+    if (
+      principal.actorType !== "system"
+      && principal.visibleVaultIds.length > 0
+      && !principal.visibleVaultIds.includes(vaultId)
+    ) {
       throw new Error("Vault access denied");
     }
     return vaultId;
+  }
+
+  /** Read-path visibility: hidden Vault ownership is retained, not rewritten. */
+  private isVaultVisibleToPrincipal(vaultId: string | null | undefined): boolean {
+    if (!vaultId) return false;
+    const principal = requireCurrentUserPrincipal();
+    if (principal.actorType === "system") return true;
+    // Empty visibleVaultIds = no vault filter (matches scoped-storage semantics).
+    if (!principal.visibleVaultIds || principal.visibleVaultIds.length === 0) return true;
+    return principal.visibleVaultIds.includes(vaultId);
   }
 
   private toIndexEntry(goal: Goal): GoalIndexEntry {
@@ -126,11 +144,12 @@ export class GoalStorage {
     }
     if (goal.domain) { delete goal.domain; dirty = true; }
 
+    // Preserve existing vault ownership even when that Vault is currently hidden.
+    // Visibility is enforced at list/get boundaries. Only missing vaultId is
+    // backfilled onto the principal's active/visible Vault.
     if (!goal.vaultId) {
       goal.vaultId = this.resolveVaultId();
       dirty = true;
-    } else {
-      goal.vaultId = this.resolveVaultId(goal.vaultId);
     }
 
     // Remove deprecated fields
@@ -180,6 +199,9 @@ export class GoalStorage {
   }
 
   async listGoals(filters?: GoalListFilters): Promise<GoalIndexEntry[]> {
+    // Cache the full principal-owned goal set (including hidden-vault ownership).
+    // Visibility is applied after the cache so toggling vault visibility cannot
+    // poison the list path or throw mid-migration.
     const allEntries = await this._listCache.getOrFetch(`all:${principalCacheKey()}`, async () => {
       const docs = await documentStorage.getDocumentsByType("goal");
       const entries: GoalIndexEntry[] = [];
@@ -193,12 +215,14 @@ export class GoalStorage {
       return entries;
     });
 
+    const vaultVisibleEntries = allEntries.filter((entry) => this.isVaultVisibleToPrincipal(entry.vaultId));
+
     // Dormant goals are shelved: excluded from every listing unless explicitly requested.
     // This is the canonical enforcement point — all goal surfaces (Simple, Home, context
     // assembly, priorities) inherit it. Management surfaces opt in via includeDormant.
     const visibleEntries = filters?.includeDormant
-      ? allEntries
-      : allEntries.filter((entry) => entry.status !== "dormant");
+      ? vaultVisibleEntries
+      : vaultVisibleEntries.filter((entry) => entry.status !== "dormant");
 
     if (!filters) return visibleEntries;
 
@@ -265,6 +289,7 @@ export class GoalStorage {
     if (!raw) return null;
     const { goal, dirty } = this.migrateGoal(raw);
     if (dirty) this.saveGoal(goal).catch(err => log.warn("migration write-back failed", err));
+    if (!this.isVaultVisibleToPrincipal(goal.vaultId)) return null;
     return goal;
   }
 
