@@ -2127,13 +2127,12 @@ async function resolveTools(request: ContextRequest): Promise<string> {
     ? "Tools are available. In voice mode, prefer simple tool calls and concise responses."
     : "The current persona provides an initial callable tool set. If a needed tool is absent, call `tools` with action `get` and its exact name; when authority allows it, the full schema loads for the next step of this run.";
 
-  // Always-on tool index (TOC). Core tools carry full schemas up front; the rest
-  // advertise here by exact name and one-line summary so nothing is ever invisible
-  // — the model hydrates a full schema on intent via `tools` action `get`.
+  // Always-on tool index (TOC). Core + persona-bundled tools load full schemas up
+  // front. On-demand tools advertise as a compact grouped catalog of exact names
+  // (no per-tool marketing sentences) — hydrate via `tools` action `get`.
   const catalog = getToolCatalog();
   const core = catalog.filter(t => t.isCore);
   const fmtName = (t: { name: string }) => `- \`${t.name}\``;
-  const fmtEntry = (t: { name: string; description: string }) => `- \`${t.name}\` — ${t.description}`;
 
   // Make the TOC bundle-aware: the active persona front-loads full schemas for
   // core ∪ bundle, and everything else hydrates on demand via `tools.get`. Run
@@ -2154,6 +2153,56 @@ async function resolveTools(request: ContextRequest): Promise<string> {
   const bundled = frontLoaded.filter(t => !t.isCore);
   const onDemand = catalog.filter(t => !frontLoadedNames.has(t.name));
 
+  /** Compact grouped on-demand catalog — exact names only, no description lines. */
+  const formatOnDemandCatalog = (tools: Array<{ name: string; category: string }>): string[] => {
+    if (tools.length === 0) return [];
+    const GROUP_ORDER = ["comms", "ops", "data", "build", "mobile", "media", "rare"] as const;
+    const categoryToGroup = (category: string, name: string): (typeof GROUP_ORDER)[number] => {
+      const c = (category || "").toLowerCase();
+      if (["communication", "comms", "email", "calendar"].includes(c) ||
+          ["gmail", "phone_call", "meta", "content", "meetings", "agendas"].includes(name)) {
+        return "comms";
+      }
+      if (["system", "execution", "browser", "work"].includes(c) ||
+          ["timers", "hooks", "settings", "workflows", "issues", "ui", "system", "work", "tasks"].includes(name)) {
+        return "ops";
+      }
+      if (["memory", "knowledge", "finance", "web"].includes(c) ||
+          ["finance", "news", "notion", "companies", "jobs", "business_plans", "theses", "rules", "decisions", "scenarios", "indexed_content", "files", "docx"].includes(name)) {
+        return "data";
+      }
+      if (["code", "file"].includes(c) ||
+          ["code", "git", "shell", "scratch", "platforms", "railway", "npm_dependencies", "backup", "router"].includes(name)) {
+        return "build";
+      }
+      if (["mobile"].includes(c) || ["expo", "sentry", "meta"].includes(name)) {
+        return "mobile";
+      }
+      if (["images", "pronunciation"].includes(name) || c === "media") {
+        return "media";
+      }
+      return "rare";
+    };
+    const groups = new Map<string, string[]>();
+    for (const t of tools) {
+      const g = categoryToGroup(t.category, t.name);
+      const list = groups.get(g) ?? [];
+      list.push(t.name);
+      groups.set(g, list);
+    }
+    const parts: string[] = [];
+    for (const g of GROUP_ORDER) {
+      const names = groups.get(g);
+      if (!names || names.length === 0) continue;
+      names.sort((a, b) => a.localeCompare(b));
+      parts.push(`${g} (${names.join(", ")})`);
+    }
+    return [
+      `On-demand (${tools.length}): call \`tools.get\` with exact name.`,
+      `Groups: ${parts.join(" · ")}`,
+    ];
+  };
+
   const toc = mode === "voice" ? [] : [
     "",
     "**Tool index.** Every tool below is callable. Core and this persona's bundled tools load full schemas up front; the rest advertise here by exact name — call `tools` action `get` with that name to hydrate a full schema when you intend to use it.",
@@ -2170,8 +2219,7 @@ async function resolveTools(request: ContextRequest): Promise<string> {
           `Bundled by this persona (${bundled.length}, loaded up front):`,
           ...bundled.map(fmtName),
           "",
-          `On-demand (${onDemand.length}, call \`tools.get\` to load):`,
-          ...onDemand.map(fmtEntry),
+          ...formatOnDemandCatalog(onDemand),
         ]),
   ];
 
