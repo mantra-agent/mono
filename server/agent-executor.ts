@@ -8,6 +8,45 @@ import { getContextWindow } from "./model-registry";
 import { safeStringify } from "./utils/safe-stringify";
 
 const log = createLogger("Executor");
+
+type ExecutorErrorCode =
+  | "EXECUTOR_UNEXPECTED_TOOL_RESOLVED"
+  | "EXECUTOR_TOOL_OUTCOME_FAILED"
+  | "EXECUTOR_POST_ABORT_DRAIN_TIMEOUT"
+  | "EXECUTOR_EMERGENCY_COMPACTION_FAILED"
+  | "EXECUTOR_STREAM_IDLE_TIMEOUT"
+  | "EXECUTOR_EMERGENCY_COMPACTION_RETRY_LIMIT"
+  | "EXECUTOR_REPEATED_TOOL_FAILURE"
+  | "EXECUTOR_RUN_ERROR"
+  | "EXECUTOR_RUN_ERROR_STACK"
+  | "EXECUTOR_RUN_ERROR_TRACE"
+  | "EXECUTOR_TERMINAL_DECISION"
+  | "EXECUTOR_DRAIN_BACKGROUND_THREW";
+
+/** Upper-snake machine code for error aggregates (mirrors shared/error-callsite). */
+function toExecutorErrorCode(raw: unknown, fallback: ExecutorErrorCode): string {
+  if (typeof raw !== "string" && typeof raw !== "number") return fallback;
+  const code = String(raw).trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  const compact = code.replace(/_+/g, "_").replace(/^_|_$/g, "");
+  return /^[A-Z][A-Z0-9_]{1,47}$/.test(compact) ? compact.slice(0, 48) : fallback;
+}
+
+/**
+ * Normalize Executor failures into real Error instances with stable product codes.
+ * String-only log.error lines that embed sessionId/tokens trip SECRET_LIKE in
+ * deriveSafeErrorClassifier and collapse aggregates to Executor:Error:UNCLASSIFIED.
+ */
+function attributableExecutorError(
+  error: unknown,
+  code: string,
+): Error & { code: string } {
+  const normalized = error instanceof Error ? error : new Error(String(error));
+  const coded = normalized as Error & { code: string };
+  const stable = toExecutorErrorCode(code, "EXECUTOR_TOOL_OUTCOME_FAILED");
+  if (!/^[A-Z][A-Z0-9_]{1,48}$/.test(coded.code ?? "")) coded.code = stable;
+  return coded;
+}
+
 import { writeJournal, publishJournalToUI, type JournalEntry } from "./chat-journal";
 import { ACTIVITY_CHAT, type ActivityId } from "./job-profiles";
 import { resolveModelCandidates, type ModelRoutingDecision } from "./model-routing";
@@ -2188,7 +2227,14 @@ export class AgentExecutor extends EventEmitter {
           if (pidx >= 0) ctx.pendingToolCalls.splice(pidx, 1);
         } else {
           // executor_owned mode should not receive tool_call_resolved — log as unexpected
-          log.error(`[ToolExec] mode=executor_owned received tool_call_resolved id=${toolCallId} name=${normalizedName} — unexpected, tracking defensively`);
+          log.error(
+            "executor.unexpected_tool_resolved",
+            attributableExecutorError(
+              `mode=executor_owned received tool_call_resolved id=${toolCallId} name=${normalizedName}`,
+              "EXECUTOR_UNEXPECTED_TOOL_RESOLVED",
+            ),
+            { operation: "tool_call_resolved", toolCallId, toolName: normalizedName },
+          );
           ctx.pendingToolCalls.push({ id: toolCallId, name: normalizedName, input: event.arguments || {} });
         }
         if (!ctx.iterationToolCalls.some((call) => call.id === toolCallId)) {
@@ -2748,7 +2794,16 @@ export class AgentExecutor extends EventEmitter {
     if (failure?.resourceKey) metadata.resourceKey = failure.resourceKey;
     if (recoveryDecision) metadata.recoveryDecision = recoveryDecision;
     if (outcome === "failed" || outcome === "cancelled") {
-      log.error("agent.tool_outcome", metadata);
+      // Prefer the handler's machine code; fall back to kind-derived synthetic codes.
+      const outcomeCode = toExecutorErrorCode(failureCode, "EXECUTOR_TOOL_OUTCOME_FAILED");
+      log.error(
+        "agent.tool_outcome",
+        attributableExecutorError(
+          `tool=${name} outcome=${outcome}${failureCode ? ` code=${failureCode}` : ""}`,
+          outcomeCode,
+        ),
+        metadata,
+      );
     } else if (outcome === "degraded") {
       log.warn("agent.tool_outcome", metadata);
     } else {
@@ -2816,9 +2871,19 @@ export class AgentExecutor extends EventEmitter {
       const outcome = await Promise.race([settled, deadline]);
       if (outcome === "timeout") {
         log.error(
-          `[Executor] post-abort drain timeout runId=${runId} pendingCostLogs=${ctx.pendingCostLogs.length} ` +
-          `backgroundWork=${ctx.backgroundWork.size} elapsedSinceStart=${elapsedSinceStart}ms ` +
-          `graceMs=${POST_ABORT_DRAIN_GRACE_MS} — releasing slot anyway, residual work will continue but is now untracked`
+          "executor.post_abort_drain_timeout",
+          attributableExecutorError(
+            `post-abort drain timeout pendingCostLogs=${ctx.pendingCostLogs.length} backgroundWork=${ctx.backgroundWork.size} elapsedSinceStart=${elapsedSinceStart}ms graceMs=${POST_ABORT_DRAIN_GRACE_MS}`,
+            "EXECUTOR_POST_ABORT_DRAIN_TIMEOUT",
+          ),
+          {
+            operation: "post_abort_drain",
+            runId,
+            pendingCostLogs: ctx.pendingCostLogs.length,
+            backgroundWork: ctx.backgroundWork.size,
+            elapsedSinceStartMs: elapsedSinceStart,
+            graceMs: POST_ABORT_DRAIN_GRACE_MS,
+          },
         );
       }
     } finally {
@@ -3430,9 +3495,20 @@ export class AgentExecutor extends EventEmitter {
     } else {
       const reason = "no_compactable_history";
       log.error(
-        `context.reduction action=emergency_compaction trigger=provider_overflow outcome=failed ` +
-          `sessionId=${options.sessionId || "none"} tokensBefore=${emergencyTokensBefore} ` +
-          `tokensAfter=${emergencyTokensAfter} tokensSaved=0 reason=${reason}`,
+        "executor.emergency_compaction_failed",
+        attributableExecutorError(
+          `emergency compaction failed reason=${reason} tokensBefore=${emergencyTokensBefore} tokensAfter=${emergencyTokensAfter}`,
+          "EXECUTOR_EMERGENCY_COMPACTION_FAILED",
+        ),
+        {
+          operation: "emergency_compaction",
+          trigger: "provider_overflow",
+          reason,
+          tokensBefore: emergencyTokensBefore,
+          tokensAfter: emergencyTokensAfter,
+          messagesBefore: emergencyMessagesBefore,
+          messagesAfter: messages.length,
+        },
       );
       eventBus.publish({
         category: "system",
@@ -3658,10 +3734,24 @@ export class AgentExecutor extends EventEmitter {
         }
 
         log.error(
-          `Stream idle timeout (${idleTimeoutMs}ms) — aborting iteration ${ctx.iteration} runId=${ctx.runId} ` +
-          `streamEvents=${streamEventCount} elapsedMs=${elapsedMs} lastEventType=${lastEventType} ` +
-          `tokensAccumulated=${tokensAccumulated} hasPartialContent=${hasPartialContent} ` +
-          `pendingToolCalls=${ctx.pendingToolCalls.length} resolvedToolCalls=${ctx.resolvedToolCalls.length}`
+          "executor.stream_idle_timeout",
+          attributableExecutorError(
+            `stream idle timeout idleTimeoutMs=${idleTimeoutMs} iteration=${ctx.iteration} streamEvents=${streamEventCount} elapsedMs=${elapsedMs}`,
+            "EXECUTOR_STREAM_IDLE_TIMEOUT",
+          ),
+          {
+            operation: "stream_idle_timeout",
+            runId: ctx.runId,
+            iteration: ctx.iteration,
+            idleTimeoutMs,
+            streamEvents: streamEventCount,
+            elapsedMs,
+            lastEventType,
+            tokensAccumulated,
+            hasPartialContent,
+            pendingToolCalls: ctx.pendingToolCalls.length,
+            resolvedToolCalls: ctx.resolvedToolCalls.length,
+          },
         );
         ctx.lastStreamDiagnostics = { eventCount: streamEventCount, elapsedMs, lastEventType };
         ctx.abortReason = "stream_idle_timeout";
@@ -3926,7 +4016,20 @@ export class AgentExecutor extends EventEmitter {
         const MAX_EMERGENCY_RETRIES = 3;
         ctx.emergencyCompactionRetries++;
         if (ctx.emergencyCompactionRetries > MAX_EMERGENCY_RETRIES) {
-          log.error(`Emergency compaction retry limit reached (${MAX_EMERGENCY_RETRIES}). Context is fundamentally too large. runId=${ctx.runId} tokens=${estimateTotalTokens(messages)} messages=${messages.length}`);
+          log.error(
+            "executor.emergency_compaction_retry_limit",
+            attributableExecutorError(
+              `Emergency compaction retry limit reached (${MAX_EMERGENCY_RETRIES}). Context is fundamentally too large.`,
+              "EXECUTOR_EMERGENCY_COMPACTION_RETRY_LIMIT",
+            ),
+            {
+              operation: "emergency_compaction_retry_limit",
+              runId: ctx.runId,
+              maxRetries: MAX_EMERGENCY_RETRIES,
+              tokens: estimateTotalTokens(messages),
+              messages: messages.length,
+            },
+          );
           throw streamErr;
         }
         log.debug(`Emergency compaction attempt ${ctx.emergencyCompactionRetries}/${MAX_EMERGENCY_RETRIES} runId=${ctx.runId}`);
@@ -4297,7 +4400,23 @@ export class AgentExecutor extends EventEmitter {
             failedCalls: failedCalls.map(fc => ({ name: fc.name, args: fc.args, error: fc.result })),
           };
           const summary = formatAbortDetails(details) || `Repeated tool failure: ${toolNames.join(", ")}`;
-          log.error(`Repeated tool failure: tool(s) "${toolNames.join(", ")}" failed identically across ${ctx.consecutiveFailureIterations} consecutive iterations — aborting runId=${ctx.runId} details=${safeStringify(details, { maxBytes: 8 * 1024, label: "agent-executor.repeatedToolFailure.log" })}`);
+          log.error(
+            "executor.repeated_tool_failure",
+            attributableExecutorError(
+              `Repeated tool failure: tool(s) "${toolNames.join(", ")}" failed identically across ${ctx.consecutiveFailureIterations} consecutive iterations`,
+              "EXECUTOR_REPEATED_TOOL_FAILURE",
+            ),
+            {
+              operation: "repeated_tool_failure",
+              runId: ctx.runId,
+              toolNames,
+              consecutiveFailures: ctx.consecutiveFailureIterations,
+              details: safeStringify(details, {
+                maxBytes: 8 * 1024,
+                label: "agent-executor.repeatedToolFailure.log",
+              }),
+            },
+          );
           eventBus.publish({
             category: "agent",
             event: "agent.repeated_tool_failure",
@@ -4787,12 +4906,39 @@ export class AgentExecutor extends EventEmitter {
         );
       }
 
-      log.error(`run ERROR runId=${runId} model=${modelString} abortReason=${ctx.abortReason ?? "none"}: ${errorMsg}`);
+      const runError = attributableExecutorError(err instanceof Error ? err : errorMsg, "EXECUTOR_RUN_ERROR");
+      log.error(
+        "executor.run_error",
+        runError,
+        {
+          operation: "run_error",
+          runId,
+          model: modelString,
+          abortReason: ctx.abortReason ?? "none",
+        },
+      );
       if (errorStack) {
-        log.error(`agent.run.error_stack runId=${runId}: ${errorStack}`);
+        log.error(
+          "executor.run_error_stack",
+          attributableExecutorError(errorStack, "EXECUTOR_RUN_ERROR_STACK"),
+          { operation: "run_error_stack", runId },
+        );
       }
       log.error(
-        `agent.run.error_trace runId=${runId} lastStep=${ctx.diagnosticLastStep ?? "none"} ${safeStringify(ctx.execTrace ? ctx.execTrace.slice(-40) : [], { maxBytes: 8192, label: "agent-executor.execTrace" })}`,
+        "executor.run_error_trace",
+        attributableExecutorError(
+          `lastStep=${ctx.diagnosticLastStep ?? "none"}`,
+          "EXECUTOR_RUN_ERROR_TRACE",
+        ),
+        {
+          operation: "run_error_trace",
+          runId,
+          lastStep: ctx.diagnosticLastStep ?? "none",
+          execTrace: safeStringify(ctx.execTrace ? ctx.execTrace.slice(-40) : [], {
+            maxBytes: 8192,
+            label: "agent-executor.execTrace",
+          }),
+        },
       );
       if (!ctx.providerFailure) {
         ctx.publish("error", { error: errorMsg });
@@ -4818,7 +4964,26 @@ export class AgentExecutor extends EventEmitter {
         providerFailure: ctx.providerFailure,
         source: options.activity || "agent",
       };
-      log.error(`agent.run.terminal_decision ${safeStringify(terminalDecision, { maxBytes: 4096, label: "agent-executor.terminalDecision.error" })}`);
+      log.error(
+        "executor.terminal_decision",
+        attributableExecutorError(
+          `status=error reason=error lastStep=${ctx.diagnosticLastStep || "terminal"}`,
+          "EXECUTOR_TERMINAL_DECISION",
+        ),
+        {
+          operation: "terminal_decision",
+          runId,
+          status: "error",
+          reason: "error",
+          iterations: ctx.iteration,
+          durationMs: Date.now() - startTime,
+          lastStep: ctx.diagnosticLastStep || "terminal",
+          decision: safeStringify(terminalDecision, {
+            maxBytes: 4096,
+            label: "agent-executor.terminalDecision.error",
+          }),
+        },
+      );
       eventBus.publish({
         category: "agent",
         event: "agent.run.terminal_decision",
@@ -4872,7 +5037,11 @@ export class AgentExecutor extends EventEmitter {
         await this.drainBackgroundWork(ctx, runId, startTime);
       } catch (drainErr: unknown) {
         const msg = drainErr instanceof Error ? drainErr.message : String(drainErr);
-        log.error(`drainBackgroundWork threw runId=${runId}: ${msg}`);
+        log.error(
+          "executor.drain_background_threw",
+          attributableExecutorError(drainErr instanceof Error ? drainErr : msg, "EXECUTOR_DRAIN_BACKGROUND_THREW"),
+          { operation: "drain_background_work", runId },
+        );
       }
       if (admissionGranted) {
         await admissionController.releaseSlot(runId);
