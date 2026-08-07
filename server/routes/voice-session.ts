@@ -35,6 +35,63 @@ import {
 
 const voiceLog = createLogger("VoiceSession");
 
+type VoiceSessionOperation =
+  | "agent_setup"
+  | "custom_llm_route"
+  | "voice_start"
+  | "voice_start_config";
+
+type VoiceSessionOperationError = Error & {
+  code?: string;
+  operation?: VoiceSessionOperation;
+  phase?: string;
+  requestId?: string;
+  sessionId?: string;
+  chatSessionId?: string;
+  path?: string;
+};
+
+function normalizeVoiceSessionError(
+  value: unknown,
+  operation: VoiceSessionOperation,
+  fallbackCode: string,
+  message?: string,
+): VoiceSessionOperationError {
+  let error: VoiceSessionOperationError;
+  if (value instanceof Error) {
+    error = value as VoiceSessionOperationError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(message || value) as VoiceSessionOperationError;
+  } else {
+    error = new Error(message || "VoiceSession operation failed", {
+      cause: value,
+    }) as VoiceSessionOperationError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = fallbackCode;
+  }
+  error.operation = operation;
+  return error;
+}
+
+function voiceSessionLogContext(options: {
+  operation: VoiceSessionOperation;
+  phase?: string;
+  requestId?: string;
+  sessionId?: string;
+  chatSessionId?: string;
+  path?: string;
+}) {
+  return {
+    operation: options.operation,
+    phase: options.phase,
+    requestId: options.requestId,
+    sessionId: options.sessionId,
+    chatSessionId: options.chatSessionId,
+    path: options.path,
+  };
+}
+
 let agentSetupComplete = false;
 let agentSetupPromise: Promise<void> | null = null;
 
@@ -88,8 +145,13 @@ async function ensureAgentSetup(): Promise<void> {
   }
   voiceLog.log("ensureAgentSetup: retrying setup on first connection");
   agentSetupPromise = performAgentSetup(elAgentId).catch((err: unknown) => {
-    const msg = err instanceof Error ? err.message : String(err);
-    voiceLog.error(`ensureAgentSetup retry failed: ${msg}`);
+    const error = normalizeVoiceSessionError(
+      err,
+      "agent_setup",
+      "VOICE_AGENT_SETUP_RETRY_FAILED",
+      "ensureAgentSetup retry failed",
+    );
+    voiceLog.error(error, voiceSessionLogContext({ operation: error.operation! }));
     agentSetupPromise = null;
   });
   await agentSetupPromise;
@@ -157,10 +219,31 @@ export async function registerVoiceSessionRoutes(app: Express) {
       const { handleV25CustomLLM } = await import("../voice");
       await handleV25CustomLLM(req, res);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      const stack = err instanceof Error ? err.stack : undefined;
-      voiceLog.error(`route handler crashed: path=${req.path} bodyKeys=[${Object.keys(req.body || {}).join(",")}] error=${message}`, stack);
-      if (!res.headersSent) res.status(500).json({ error: message });
+      const error = normalizeVoiceSessionError(
+        err,
+        "custom_llm_route",
+        "VOICE_CUSTOM_LLM_ROUTE_CRASHED",
+        "custom LLM route handler crashed",
+      );
+      // Path template only — never log body keys/values (may include transcript/PII).
+      const routePath =
+        typeof req.route?.path === "string"
+          ? req.route.path
+          : typeof req.path === "string"
+            ? req.path.split("/").slice(0, 4).join("/")
+            : undefined;
+      error.path = routePath;
+      voiceLog.error(
+        error,
+        voiceSessionLogContext({
+          operation: error.operation!,
+          path: routePath,
+          sessionId: typeof req.params?.sessionId === "string" ? req.params.sessionId : undefined,
+          chatSessionId:
+            typeof req.params?.chatSessionId === "string" ? req.params.chatSessionId : undefined,
+        }),
+      );
+      if (!res.headersSent) res.status(500).json({ error: error.message });
     }
   };
 
@@ -402,7 +485,21 @@ export async function registerVoiceSessionRoutes(app: Express) {
     // ---- Pre-await error checks (must run BEFORE any res.writeHead). ----
     const elAgentId = getSecretSync("ELEVENLABS_AGENT_ID");
     if (!elAgentId) {
-      voiceLog.error(`start aborted requestId=${requestId} — ELEVENLABS_AGENT_ID not configured`);
+      const error = normalizeVoiceSessionError(
+        "ELEVENLABS_AGENT_ID not configured",
+        "voice_start_config",
+        "VOICE_AGENT_ID_NOT_CONFIGURED",
+        "voice start aborted — ELEVENLABS_AGENT_ID not configured",
+      );
+      error.requestId = requestId;
+      voiceLog.error(
+        error,
+        voiceSessionLogContext({
+          operation: error.operation!,
+          requestId,
+          chatSessionId: chatSessionId || undefined,
+        }),
+      );
       if (wantsStream) {
         res.writeHead(400, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ error: "Agent not configured — set ELEVENLABS_AGENT_ID in Settings → Connections" }));
@@ -847,9 +944,27 @@ export async function registerVoiceSessionRoutes(app: Express) {
         res.json(payload);
       }
     } catch (error: unknown) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      const errStack = error instanceof Error ? error.stack?.split("\n").slice(0, 3).join(" | ") : undefined;
-      voiceLog.error(`start failed at phase=${currentPhase}: ${errMsg}`, errStack);
+      const normalized = normalizeVoiceSessionError(
+        error,
+        "voice_start",
+        "VOICE_START_FAILED",
+        `voice start failed at phase=${currentPhase}`,
+      );
+      const errMsg = normalized.message;
+      normalized.phase = currentPhase;
+      normalized.requestId = requestId;
+      if (sessionId) normalized.sessionId = sessionId;
+      if (chatSessionId) normalized.chatSessionId = chatSessionId;
+      voiceLog.error(
+        normalized,
+        voiceSessionLogContext({
+          operation: normalized.operation!,
+          phase: currentPhase,
+          requestId,
+          sessionId: sessionId || undefined,
+          chatSessionId: chatSessionId || undefined,
+        }),
+      );
       if (sessionId) {
         try {
           const { endVoiceSession } = await import("../voice-llm");
