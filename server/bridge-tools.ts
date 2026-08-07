@@ -4369,9 +4369,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     return handleAgendas(args);
   },
 
-  async business_plans(args) {
-    const { handleBusinessPlans } = await import("./tools/business-plans");
-    return handleBusinessPlans(args);
+  async business(args) {
+    const { handleBusiness } = await import("./tools/business-plans");
+    return handleBusiness(args);
   },
 
   async plan(args) {
