@@ -43,7 +43,9 @@ export type FileIndexUiStatus =
   | "off"
   | "self"
   | "recursive"
+  | "inherited"
   | "indexing"
+  | "stale"
   | "unsupported"
   | "error"
   | "retired";
@@ -59,7 +61,10 @@ export interface FileIndexStatus {
   indexedSource: IndexedFileSourceRow | null;
   /** Active or latest reconciliation run for folder policies. */
   reconciliationRun: FileIndexReconciliationRunRow | null;
-  /** Compact UI discriminant for Files rows (inherited labels land with reconciler). */
+  /**
+   * Compact UI discriminant for Files rows:
+   * off | self | recursive | inherited | indexing | stale | unsupported | error | retired
+   */
   status: FileIndexUiStatus;
 }
 
@@ -98,10 +103,32 @@ function statusFromParts(input: {
   }
   if (input.run?.phase === "failed") return "error";
   if (input.source?.discoveryState === "unsupported") return "unsupported";
+  if (
+    input.source?.discoveryState === "inaccessible" ||
+    input.source?.discoveryState === "deleted"
+  ) {
+    return "error";
+  }
   if (input.source?.discoveryState === "retired" && input.mode === "off") return "retired";
+
+  // Partial folder runs preserve successful work; surface error so retry is obvious.
+  if (input.run?.phase === "partial" && (input.run.filesFailed ?? 0) > 0) {
+    return "error";
+  }
+
+  // Explicit policy on but source not yet materialized / extraction lagging.
+  if ((input.mode === "self" || input.mode === "recursive") && !input.source) {
+    return "stale";
+  }
+
   if (input.mode === "self") return "self";
   if (input.mode === "recursive") return "recursive";
-  if (input.source && input.source.discoveryState === "active") return "self";
+
+  // Covered by another active policy (typically recursive ancestor) without a local toggle.
+  if (input.source?.discoveryState === "active" && input.mode === "off") {
+    return "inherited";
+  }
+
   return "off";
 }
 

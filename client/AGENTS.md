@@ -185,6 +185,7 @@ When adding admin or system UI:
 - If a new UI action needs a new permission, add the server permission first and consume the `/api/auth/me` contract after it exists.
 - Permission editors must distinguish inherited/base permissions from explicit user overrides. Saving override state is replace-set semantics: unchecked explicit grants must be omitted so they revoke cleanly.
 - Library Drive branch (`pages/library/drive-branch.tsx`): bound folders expand via `GET /api/drive/resources/:id/children` (Files API). Share uses `ShareSheet` with `objectType: "drive_resource"`. Do not call Google APIs from the client except the Picker bind flow.
+- Files page (`pages/files.tsx` + `pages/library/drive-tree.tsx`): browse vault-bound resources and own semantic index policy UI (row toggles, inherited/status labels, durable run progress via `/api/files/index/*`). Connector connect/bind/unbind stays on Integrations — never add connector management here.
 
 ## Badge System
 
