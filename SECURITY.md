@@ -1463,3 +1463,18 @@ Git clone crosses B03/B08 and F11 over A08/S0-S2: it invokes a credentialed exte
 **Deterministic controls:** `isPoolAcquireTimeoutError` in `server/postgres-errors.ts` is the single detector. Instrumented general/voice `pool.query` classifies terminal acquire failures as `POOL_ACQUIRE_TIMEOUT` (not `QUERY_CONTRACT_FAILED` or raw `ETIMEDOUT`), retains lane/subsystem/label/pool counts/attempt/phase/SQLSTATE only, and retries acquire timeout **once** immediately because no application SQL has started. Statement timeouts, lock timeouts, constraint errors, and mid-query disconnects remain single-shot. Callers still receive the original thrown error. No SQL text parameters, secrets, or principal fields are added. Controls: OBS-01, AUDIT-01, DATA-02.
 
 **Evidence:** Issue 1786061326715 (five concurrent connect-timeout exceptions); live DB op-summary pool samples; `server/db.ts` instrumentation; `server/postgres-errors.ts`. **Residual risk:** Auth-pool and dedicated-client paths remain outside this instrumentation; sustained pool exhaustion still fails after one retry and requires capacity/query diagnosis rather than larger blind retries.
+
+## 11.25 Intentional silent session completion vs empty_response, August 6, 2026
+
+**Status:** Closed in source.
+**Severity:** Medium before fix; Low residual.
+**Owner:** Agent Runtime / Communications.
+**SLA:** Immediate.
+
+**Assets/data:** A02/S2 private Session and tool evidence, A03 durable assistant/Session state, A07 terminal audit evidence. **Flows:** autonomous Skill runs that intentionally end via `session.end` / `set_status=saved` without final assistant narration (e.g. enrich-email). **Boundaries:** B03 persistence, B06 observability, B08 model/tool loop.
+
+**Threat:** After successful tool work and intentional terminal session status, the executor continued the model loop. Provider empty `end_turn` responses were then classified `empty_response` degradation even though the skill had already completed its contract. That produced false-red EmailEnrichment skill runs, wasted empty-final-turn retries, and obscured whether enrichment tool work succeeded (STRIDE: tampering/repudiation/availability analogue; DATA-01/AGENT-04/OBS-01). Expanding diagnostics with transcript or email bodies would add disclosure risk.
+
+**Deterministic controls:** Successful `session.end` and `set_status=saved` emit controlled continuation `session_complete`. `AgentExecutor` stops the loop on that discriminant (and defensively when a pending saved session end already exists), sets `intentionallyCompletedSession`, and excludes that path from `empty_response` / empty-final-turn retries. True empty completions without intentional terminal status remain degraded. Terminal metadata stays bounded (reason/counts/IDs only); no transcript, tool payload, or email content is added. Principal/Vault scope, tool authority, and provider routing are unchanged. Controls: OBS-01, AUDIT-01, AGENT-04.
+
+**Evidence:** Issue 1786061327389; live logs showing enrich-email-class runs with `degradationReason=empty_response`, `emptyFinalTurnRetries=2`, nonzero toolCalls, `contentLen=0`; `server/agent-executor.ts`; `server/bridge-tools.ts` session end/status handlers. **Residual risk:** Skills that neither call `session.end`/`set_status=saved` nor produce final text still degrade as `empty_response` by design; provider empty turns after incomplete work remain visible.

@@ -4728,6 +4728,9 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         agentExecutor.markPendingSessionEnd(sessionId, status as "saved" | "failed");
         return {
           result: `Session status "${status === "saved" ? "complete" : status}" deferred until tool persistence completes`,
+          // Successful terminal status is intentional completion — stop the loop
+          // without requiring a final assistant narration (silent skill contract).
+          ...(status === "saved" ? { continuation: "session_complete" as const } : {}),
         };
       }
 
@@ -4743,7 +4746,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         toolExec.warn(`[converse] [${sessionId}] deferred postRunVerify on set_status ${status} failed: ${e instanceof Error ? e.message : String(e)}`);
       }
 
-      return { result: `Session status set to "${status === "saved" ? "complete" : status}"` };
+      return {
+        result: `Session status set to "${status === "saved" ? "complete" : status}"`,
+        ...(status === "saved" ? { continuation: "session_complete" as const } : {}),
+      };
     }
 
     if (action === "end") {
@@ -4764,7 +4770,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           payload: { sessionId, summary, deferred: true },
           sessionKey,
         });
-        return { result: `Session end deferred until tool persistence completes. Summary: ${summary}` };
+        return {
+          result: `Session end deferred until tool persistence completes. Summary: ${summary}`,
+          // Intentional silent completion for tool-only autonomous skills.
+          continuation: "session_complete" as const,
+        };
       }
 
       await chatFileStorage.updateSessionStatus(sessionId, "saved", summary);
@@ -4784,7 +4794,10 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
         sessionKey,
       });
 
-      return { result: `Session ended and completed. Summary: ${summary}` };
+      return {
+        result: `Session ended and completed. Summary: ${summary}`,
+        continuation: "session_complete" as const,
+      };
     }
 
     if (action === "list") {
