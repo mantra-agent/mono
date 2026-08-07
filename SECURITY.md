@@ -1,3 +1,11 @@
+<!-- 2026-08-06 ModelClient Grok quota circuit repair:
+- Assets/data: connected model-provider credentials (S3 secrets), sanitized provider failure envelopes (S1 operational metadata), connector identifiers, and inference availability.
+- Flow/boundary: untrusted Grok subscription response -> `model-client.ts` normalized provider failure -> process-local connector admission for subsequent routed inference calls.
+- Threats: an exhausted credential repeatedly consuming inference capacity and flooding telemetry (availability/DoS), provider-controlled text falsely opening a circuit (spoofing), or a circuit suppressing an explicitly requested connector (integrity).
+- Controls/owner: Model Runtime opens a bounded 15-minute process-local cooldown only for normalized HTTP 402/403 failures whose bounded diagnostics match known quota codes/messages; ordinary routed calls safely fall through to existing configured connectors before output, explicit overrides bypass the circuit and remain truthful, and an all-cooled candidate set fails open to preserve diagnosability. No credential or raw response data enters circuit state. Owner Model Runtime. Severity: medium. SLA: immediate. Status: repaired in source, pending production build/merge.
+- Residual: cooldown state is replica-local and intentionally non-durable; one failure per replica can recur after restart or expiry, while configured fallback capacity remains an operational dependency.
+-->
+
 <!-- 2026-08-06 ModelClient provider-failure classifier repair:
 - Assets/data: sanitized external-provider failure envelopes (S1 operational metadata), provider/model identifiers, HTTP status, allowlisted provider codes, and aggregate error fingerprints.
 - Flow/boundary: untrusted model-provider response -> `model-client.ts` normalization -> structured server logger args -> privacy-safe application-error classifier/projection.
