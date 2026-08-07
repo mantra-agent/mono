@@ -139,12 +139,25 @@ function serializeCaughtValue(value: unknown): unknown {
   return { type: typeof value, value: String(value) };
 }
 
+function normalizeAppError(value: unknown, fallbackMessage: string, fallbackCode: string): Error {
+  if (value instanceof Error) {
+    const errorWithCode = value as Error & { code?: string };
+    if (!errorWithCode.code) errorWithCode.code = fallbackCode;
+    return errorWithCode;
+  }
+
+  const error = new Error(
+    typeof value === "string" && value.trim().length > 0 ? value : fallbackMessage,
+    { cause: value },
+  ) as Error & { code?: string };
+  error.name = "AppRuntimeError";
+  error.code = fallbackCode;
+  return error;
+}
+
 function getRuntimeCrashContext() {
   return {
-    path: window.location.pathname,
-    search: window.location.search,
-    hash: window.location.hash,
-    href: window.location.href,
+    route: window.location.pathname,
     userAgent: navigator.userAgent,
     viewport: {
       width: window.innerWidth,
@@ -560,21 +573,36 @@ function prefetchRoutes() {
 function App() {
   useEffect(() => {
     const handleError = (event: ErrorEvent) => {
-      log.error("Window error", {
+      const error = normalizeAppError(
+        event.error,
+        event.message || "Window emitted an error without an exception",
+        "APP_WINDOW_ERROR",
+      );
+      log.error("Window error", error, {
         crashId: createCrashId(),
-        message: event.message,
-        filename: event.filename,
-        lineno: event.lineno,
-        colno: event.colno,
-        error: serializeCaughtValue(event.error),
+        operation: "window.error",
+        route: window.location.pathname,
+        source: {
+          filename: event.filename || undefined,
+          line: event.lineno || undefined,
+          column: event.colno || undefined,
+        },
+        error: serializeCaughtValue(error),
         context: getRuntimeCrashContext(),
       });
     };
 
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      log.error("Unhandled promise rejection", {
+      const error = normalizeAppError(
+        event.reason,
+        "Promise rejected without an Error reason",
+        "APP_UNHANDLED_REJECTION",
+      );
+      log.error("Unhandled promise rejection", error, {
         crashId: createCrashId(),
-        reason: serializeCaughtValue(event.reason),
+        operation: "window.unhandledrejection",
+        route: window.location.pathname,
+        error: serializeCaughtValue(error),
         context: getRuntimeCrashContext(),
       });
     };
