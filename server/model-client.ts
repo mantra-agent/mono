@@ -758,8 +758,12 @@ async function recordInference(params: {
       },
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.error(`boundary inference tracking failed provider=${params.routing.provider} model=${params.routing.model} status=${params.status}: ${msg}`);
+    const trackingError = err instanceof Error ? err : new Error(String(err));
+    (trackingError as Error & { code?: string }).code ||= "INFERENCE_TRACKING_FAILED";
+    log.error(
+      `boundary inference tracking failed provider=${params.routing.provider} model=${params.routing.model} status=${params.status}: ${trackingError.message}`,
+      trackingError,
+    );
   }
 }
 
@@ -879,17 +883,18 @@ async function executeChatCompletion(options: ChatCompletionOptions, routing: Mo
     const elapsed = Date.now() - start;
     const status: InferenceStatus = isAbortError(err, options.signal) ? "aborted" : "error";
     routing.attempts = appendFailedAttempt(routing, err);
-    const errorMetadata = serializeModelError(err);
+    const modelError = enrichModelError(err, routing, options.metadata);
+    const errorMetadata = serializeModelError(modelError);
     const expectedAbort = status === "aborted"
       && matchesExpectedAbortReason(options.signal, options.expectedAbortReason);
     const completionFailureMessage =
       `chatCompletion ${status.toUpperCase()} in ${elapsed}ms provider=${provider} model=${model} ` +
       `activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash}` +
-      `${expectedAbort ? ` expectedAbortReason=${options.expectedAbortReason}` : ""}: ${err.message}`;
+      `${expectedAbort ? ` expectedAbortReason=${options.expectedAbortReason}` : ""}: ${modelError.message}`;
     if (expectedAbort) {
       log.debug(completionFailureMessage);
     } else {
-      log.error(completionFailureMessage);
+      log.error(completionFailureMessage, modelError);
     }
     const providerUsage = err instanceof ModelProviderError && err.providerFailure.usage
       ? {
