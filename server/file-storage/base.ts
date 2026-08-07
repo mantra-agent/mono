@@ -125,7 +125,7 @@ export abstract class BaseDocumentStore<T extends BaseEntity> {
     this.log.log(logAction + " id=" + entity.id + logExtra);
 
     try {
-      await tagService.syncEntityTags(this.config.docType as any, entity.id, this.config.getTitle(entity), entity.tags);
+      await tagService.replaceEntityTags(this.config.docType as any, entity.id, this.config.getTitle(entity), entity.tags);
     } catch (err) {
       const tagError = err instanceof Error ? err.message : String(err);
       this.log.error(logAction + " tag sync error", { id: entity.id, docType: this.config.docType, error: tagError });
@@ -164,7 +164,7 @@ export abstract class BaseDocumentStore<T extends BaseEntity> {
       }
       this.log.log("update id=" + id + " fields=" + Object.keys(updates).join(","));
       try {
-        await tagService.syncEntityTags(this.config.docType as any, updated.id, this.config.getTitle(updated), updated.tags);
+        await tagService.replaceEntityTags(this.config.docType as any, updated.id, this.config.getTitle(updated), updated.tags);
       } catch (err) {
         const tagError = err instanceof Error ? err.message : String(err);
         this.log.error("update tag sync error", { id: updated.id, docType: this.config.docType, error: tagError });

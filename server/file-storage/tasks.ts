@@ -25,7 +25,7 @@ const log = createLogger("StoreTasks");
 
 async function syncTaskTags(task: Task): Promise<void> {
   try {
-    await tagService.syncEntityTags("task", String(task.id), task.title, task.tags || []);
+    await tagService.replaceEntityTags("task", String(task.id), task.title, task.tags || []);
   } catch (err) {
     const tagError = err instanceof Error ? err.message : String(err);
     log.error("task tag sync error", { id: task.id, error: tagError });

@@ -229,7 +229,7 @@ export class FilePrincipleStorage {
     });
 
     const allTags = [...(input.autoTags || []), ...(input.manualTags || [])];
-    tagService.syncEntityTags("principle", id, input.title, allTags).catch(err => log.warn(`tag sync failed`, err));
+    tagService.replaceEntityTags("principle", id, input.title, allTags).catch(err => log.warn(`tag sync failed`, err));
 
     log.log(`createPrinciple id=${id} revision=${currentRevisionId} title="${input.title}"`);
     this.invalidateCache();
@@ -314,7 +314,7 @@ export class FilePrincipleStorage {
     const merged = await this.getPrinciple(id);
     if (!merged) throw new Error(`Updated principle ${id} could not be loaded`);
     const allTags = [...merged.autoTags, ...merged.manualTags];
-    tagService.syncEntityTags("principle", id, merged.title, allTags).catch(err => log.warn(`tag sync failed`, err));
+    tagService.replaceEntityTags("principle", id, merged.title, allTags).catch(err => log.warn(`tag sync failed`, err));
 
     log.log(`updatePrinciple id=${id} revision=${merged.currentRevisionId} fields=${Object.keys(updates).join(",")}`);
     return merged;
