@@ -15068,6 +15068,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       const {
         openPdf,
         extractPdfText,
+        generatePdf,
         listDocumentArtifacts,
       } = await import("./pdf-service");
 
@@ -15085,6 +15086,23 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: JSON.stringify(extracted, null, 2) };
       }
 
+      if (action === "generate") {
+        const generated = await generatePdf({
+          title: typeof args.title === "string" ? args.title : "",
+          blocks: Array.isArray(args.blocks) ? args.blocks : undefined,
+          vaultId: sourceInput.vaultId,
+        });
+        if (args._sessionId) {
+          const { recordSessionArtifact } = await import("./session-artifacts");
+          recordSessionArtifact(args._sessionId, "file", generated.objectPath, {
+            documentId: generated.documentId,
+            title: generated.title,
+            sourceKind: "generated",
+          });
+        }
+        return { result: JSON.stringify(generated, null, 2) };
+      }
+
       if (action === "list") {
         const listed = await listDocumentArtifacts({
           vaultId: sourceInput.vaultId,
@@ -15097,7 +15115,11 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       return contractReject(`Unknown pdf action: ${action}`, "pdf_input_invalid");
     } catch (err: any) {
       const failure = classifyPdfError(err)
-        ?? (action === "extract" ? internalFailure("pdf_extract_failed") : undefined);
+        ?? (action === "extract"
+          ? internalFailure("pdf_extract_failed")
+          : action === "generate"
+            ? internalFailure("pdf_generate_failed")
+            : undefined);
       return {
         result: `pdf.${action} failed: ${err?.message || String(err)}`,
         error: true,

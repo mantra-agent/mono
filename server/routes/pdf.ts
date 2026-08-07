@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "../auth";
-import { openPdf, readPdfContentHandle } from "../pdf-service";
+import { generatePdf, openPdf, readPdfContentHandle } from "../pdf-service";
 
 function statusOf(error: unknown): number {
   const status = (error as { status?: number })?.status;
@@ -14,6 +14,15 @@ export function registerPdfRoutes(app: Express): void {
     } catch (error) {
       const status = statusOf(error);
       res.status(status).json({ error: status >= 500 ? "Failed to open PDF" : (error as Error).message });
+    }
+  });
+
+  app.post("/api/pdf/generate", requireAuth, async (req: Request, res: Response) => {
+    try {
+      res.status(201).json(await generatePdf(req.body ?? {}));
+    } catch (error) {
+      const status = statusOf(error);
+      res.status(status).json({ error: status >= 500 ? "Failed to generate PDF" : (error as Error).message });
     }
   });
 

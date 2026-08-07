@@ -138,16 +138,16 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
   pdf: {
     description:
-      "Core PDF document service for Agent. open authorizes a source and returns a short-lived content handle plus metadata/viewer hint; extract runs server-side text extraction per page after the same authorize path; list returns principal-visible document_artifacts. Prefer pdf.* over files.read for document semantics. No path-on-disk escape — bound sources go through filesApi; ownership is re-checked on every call. Extract is a derivative, never ACL authority.",
+      "Core PDF document service for Agent. open authorizes a source and returns a short-lived content handle plus metadata/viewer hint; extract runs server-side text extraction per page after the same authorize path; generate builds a structured PDF into private object storage with a document_artifacts row (source_kind=generated) and returns open metadata for /documents/:id; list returns principal-visible document_artifacts. Prefer pdf.* over files.read for document semantics. No path-on-disk escape — bound sources go through filesApi; ownership is re-checked on every call. Extract is a derivative, never ACL authority.",
     category: "file",
     parameters: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["open", "extract", "list"],
+          enum: ["open", "extract", "generate", "list"],
           description:
-            "open: authorize + handle/metadata. extract: plain text by page with caps. list: document_artifacts in visible vaults.",
+            "open: authorize + handle/metadata. extract: plain text by page with caps. generate: structured PDF to private storage + document_artifacts. list: document_artifacts in visible vaults.",
         },
         documentId: {
           type: "string",
@@ -168,7 +168,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         },
         vaultId: {
           type: "string",
-          description: "Vault ID (required with provider+providerFileId; optional filter for list)",
+          description: "Vault ID (required with provider+providerFileId; optional for generate/list; defaults to active vault on generate)",
         },
         objectPath: {
           type: "string",
@@ -177,6 +177,22 @@ export const TOOLS: Record<string, ToolMeta> = {
         uploadId: {
           type: "string",
           description: "Just-uploaded object path/id for open/extract",
+        },
+        title: {
+          type: "string",
+          description: "Document title for generate (required)",
+        },
+        blocks: {
+          type: "array",
+          description: "Ordered content blocks for generate: { type: heading|paragraph|bullet, text }",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: ["heading", "paragraph", "bullet"] },
+              text: { type: "string" },
+            },
+            required: ["type", "text"],
+          },
         },
         startPage: {
           type: "number",

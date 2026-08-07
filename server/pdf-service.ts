@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import { and, desc, eq } from "drizzle-orm";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { documentArtifacts, type DocumentArtifact } from "@shared/models/documents";
 import { db } from "./db";
 import { filesApi } from "./files-api";
@@ -22,6 +23,19 @@ const MAX_TOTAL_CHARS = 400_000;
 const MAX_PAGE_CHARS = 20_000;
 const DEFAULT_LIST_LIMIT = 50;
 const HARD_LIST_LIMIT = 100;
+/** Structured generate caps — keep Agent-authored PDFs bounded and deterministic. */
+const MAX_GENERATE_TITLE_CHARS = 200;
+const MAX_GENERATE_BLOCKS = 80;
+const MAX_GENERATE_BLOCK_CHARS = 4_000;
+const MAX_GENERATE_TOTAL_CHARS = 60_000;
+const MAX_GENERATE_BYTES = 5 * 1024 * 1024;
+const PAGE_WIDTH = 612;
+const PAGE_HEIGHT = 792;
+const PAGE_MARGIN = 54;
+const BODY_SIZE = 11;
+const HEADING_SIZE = 16;
+const TITLE_SIZE = 22;
+const LINE_GAP = 4;
 
 type ExternalSource = { kind: "external"; driveResourceId?: string; provider?: FilesProvider; providerFileId?: string; vaultId?: string };
 type InternalSource = { kind: "internal"; objectPath: string; document?: DocumentArtifact };
@@ -510,4 +524,245 @@ export async function listDocumentArtifacts(input: ListDocumentArtifactsInput = 
   }).from(documentArtifacts).where(where).orderBy(desc(documentArtifacts.updatedAt)).limit(limit).offset(offset);
 
   return { count: rows.length, documents: rows };
+}
+
+export type PdfGenerateBlock =
+  | { type: "heading"; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "bullet"; text: string };
+
+export type GeneratePdfSpec = {
+  title: string;
+  blocks?: PdfGenerateBlock[];
+  vaultId?: string;
+};
+
+export interface GeneratePdfResult {
+  documentId: string;
+  title: string;
+  objectPath: string;
+  byteSize: number;
+  pageCount: number;
+  sourceKind: "generated";
+  mimeType: typeof PDF_MIME;
+  viewerUrl: string;
+  open: OpenPdfResult;
+}
+
+function sanitizePdfText(value: unknown, maxChars: number, label: string): string {
+  if (typeof value !== "string") throw httpError(400, `${label} must be a string`);
+  // pdf-lib standard fonts are WinAnsi — strip control chars and normalize whitespace.
+  const cleaned = value
+    .normalize("NFKC")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+  if (!cleaned) throw httpError(400, `${label} is required`);
+  if (cleaned.length > maxChars) throw httpError(400, `${label} exceeds ${maxChars} characters`);
+  return cleaned;
+}
+
+function normalizeGenerateSpec(input: GeneratePdfSpec): {
+  title: string;
+  blocks: PdfGenerateBlock[];
+  vaultId: string | undefined;
+} {
+  const title = sanitizePdfText(input.title, MAX_GENERATE_TITLE_CHARS, "title");
+  const rawBlocks = Array.isArray(input.blocks) ? input.blocks : [];
+  if (rawBlocks.length > MAX_GENERATE_BLOCKS) {
+    throw httpError(400, `blocks exceeds cap of ${MAX_GENERATE_BLOCKS}`);
+  }
+
+  let totalChars = title.length;
+  const blocks: PdfGenerateBlock[] = [];
+  for (let i = 0; i < rawBlocks.length; i += 1) {
+    const block = rawBlocks[i];
+    if (!block || typeof block !== "object") throw httpError(400, `blocks[${i}] is invalid`);
+    const type = (block as { type?: unknown }).type;
+    if (type !== "heading" && type !== "paragraph" && type !== "bullet") {
+      throw httpError(400, `blocks[${i}].type must be heading, paragraph, or bullet`);
+    }
+    const text = sanitizePdfText((block as { text?: unknown }).text, MAX_GENERATE_BLOCK_CHARS, `blocks[${i}].text`);
+    totalChars += text.length;
+    if (totalChars > MAX_GENERATE_TOTAL_CHARS) {
+      throw httpError(400, `PDF generate content exceeds ${MAX_GENERATE_TOTAL_CHARS} characters`);
+    }
+    blocks.push({ type, text });
+  }
+
+  const vaultId = typeof input.vaultId === "string" && input.vaultId.trim()
+    ? input.vaultId.trim()
+    : undefined;
+  return { title, blocks, vaultId };
+}
+
+function wrapLine(text: string, font: { widthOfTextAtSize: (t: string, s: number) => number }, size: number, maxWidth: number): string[] {
+  const paragraphs = text.split("\n");
+  const lines: string[] = [];
+  for (const paragraph of paragraphs) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    if (words.length === 0) {
+      lines.push("");
+      continue;
+    }
+    let current = words[0];
+    for (let i = 1; i < words.length; i += 1) {
+      const candidate = `${current} ${words[i]}`;
+      if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+        current = candidate;
+      } else {
+        lines.push(current);
+        current = words[i];
+      }
+    }
+    lines.push(current);
+  }
+  return lines;
+}
+
+async function renderStructuredPdf(title: string, blocks: PdfGenerateBlock[]): Promise<{ buffer: Buffer; pageCount: number }> {
+  const pdfDoc = await PDFDocument.create();
+  pdfDoc.setTitle(title);
+  pdfDoc.setProducer("Mantra Core PDF");
+  pdfDoc.setCreator("Mantra");
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const maxWidth = PAGE_WIDTH - PAGE_MARGIN * 2;
+
+  let page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  let y = PAGE_HEIGHT - PAGE_MARGIN;
+
+  const ensureSpace = (needed: number) => {
+    if (y - needed < PAGE_MARGIN) {
+      page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+      y = PAGE_HEIGHT - PAGE_MARGIN;
+    }
+  };
+
+  const drawWrapped = (
+    text: string,
+    opts: { size: number; bold?: boolean; indent?: number; color?: ReturnType<typeof rgb> },
+  ) => {
+    const activeFont = opts.bold ? fontBold : font;
+    const indent = opts.indent ?? 0;
+    const lines = wrapLine(text, activeFont, opts.size, maxWidth - indent);
+    const lineHeight = opts.size + LINE_GAP;
+    for (const line of lines) {
+      ensureSpace(lineHeight);
+      if (line.length > 0) {
+        page.drawText(line, {
+          x: PAGE_MARGIN + indent,
+          y: y - opts.size,
+          size: opts.size,
+          font: activeFont,
+          color: opts.color ?? rgb(0.1, 0.1, 0.1),
+        });
+      }
+      y -= lineHeight;
+    }
+  };
+
+  drawWrapped(title, { size: TITLE_SIZE, bold: true, color: rgb(0.05, 0.05, 0.05) });
+  y -= 10;
+
+  for (const block of blocks) {
+    if (block.type === "heading") {
+      y -= 8;
+      drawWrapped(block.text, { size: HEADING_SIZE, bold: true });
+      y -= 4;
+      continue;
+    }
+    if (block.type === "bullet") {
+      drawWrapped(`• ${block.text}`, { size: BODY_SIZE, indent: 12 });
+      y -= 2;
+      continue;
+    }
+    drawWrapped(block.text, { size: BODY_SIZE });
+    y -= 6;
+  }
+
+  const bytes = await pdfDoc.save({ useObjectStreams: false });
+  const buffer = Buffer.from(bytes);
+  if (buffer.length > MAX_GENERATE_BYTES) {
+    throw httpError(413, `Generated PDF exceeds ${MAX_GENERATE_BYTES} bytes`);
+  }
+  assertPdf(buffer, PDF_MIME);
+  return { buffer, pageCount: pdfDoc.getPageCount() };
+}
+
+/**
+ * Deterministic structured PDF generation. Bytes always land in private object
+ * storage under the principal ACL, with a document_artifacts row
+ * source_kind='generated'. Round-trip open reuses the same authorize path.
+ */
+export async function generatePdf(input: GeneratePdfSpec): Promise<GeneratePdfResult> {
+  const principal = requireCurrentUserPrincipal();
+  if (!principal.userId || !principal.accountId) {
+    throw httpError(403, "Authenticated user principal required");
+  }
+
+  const spec = normalizeGenerateSpec(input);
+  const vaultId = spec.vaultId ?? principal.activeVaultId ?? null;
+  if (!vaultId || !principal.visibleVaultIds?.includes(vaultId)) {
+    throw httpError(403, "Document vault access denied");
+  }
+
+  const rendered = await renderStructuredPdf(spec.title, spec.blocks);
+  const checksum = createHash("sha256").update(rendered.buffer).digest("hex");
+
+  const uploaded = await objectStorageService.uploadObjectEntity(rendered.buffer, {
+    extension: ".pdf",
+    contentType: PDF_MIME,
+    category: "uploads",
+    principal,
+    acl: {
+      owner: principal.userId,
+      ownerUserId: principal.userId,
+      accountId: principal.accountId,
+      createdByUserId: principal.userId,
+      scope: "user",
+      visibility: "private",
+    },
+  });
+
+  const document = await createDocumentArtifact({
+    vaultId,
+    sourceKind: "generated",
+    sourceRef: `generate:${checksum.slice(0, 16)}`,
+    mimeType: PDF_MIME,
+    title: spec.title,
+    byteSize: uploaded.size,
+    checksum,
+    objectPath: uploaded.objectPath,
+    pageCount: rendered.pageCount,
+    provenance: {
+      generated: {
+        engine: "pdf-lib@1.17.1",
+        generatedAt: new Date().toISOString(),
+        blockCount: spec.blocks.length,
+        titleChars: spec.title.length,
+      },
+    },
+  });
+
+  const open = await openPdf({ documentId: document.id });
+  log.info("generatePdf created document artifact", {
+    documentId: document.id,
+    byteSize: uploaded.size,
+    pageCount: rendered.pageCount,
+    blockCount: spec.blocks.length,
+  });
+
+  return {
+    documentId: document.id,
+    title: document.title,
+    objectPath: uploaded.objectPath,
+    byteSize: uploaded.size,
+    pageCount: rendered.pageCount,
+    sourceKind: "generated",
+    mimeType: PDF_MIME,
+    viewerUrl: `/documents/${encodeURIComponent(document.id)}`,
+    open,
+  };
 }
