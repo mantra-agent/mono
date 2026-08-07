@@ -876,29 +876,39 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
         <div className="absolute inset-y-0 -left-1.5 w-3" />
       </div>
       <div className="flex flex-col min-w-0 flex-1 overflow-hidden">
-        {/* Desktop header: vault context is centered over the transcript column. */}
-        <div className="hidden md:flex h-[42px] shrink-0">
+        {/* Desktop header: vault sits over the transcript column when the menu is
+            open. When collapsed, transcript reclaim must not crush the reopen
+            control — keep connections + menu toggle on a shrink-0 rail. */}
+        <div className="hidden md:flex h-[42px] shrink-0 items-center">
           <div
-            className="flex shrink-0 items-center justify-center"
-            style={{ width: `${transcriptPanelWidth}px` }}
+            className={cn(
+              "flex min-w-0 items-center justify-center",
+              widgetOpen ? "shrink-0" : "flex-1",
+            )}
+            style={widgetOpen ? { width: `${transcriptPanelWidth}px` } : undefined}
           >
             <VaultSwitcher />
           </div>
-          <div className="flex flex-1 items-center justify-end gap-2 px-2">
+          <div
+            className={cn(
+              "flex shrink-0 items-center justify-end gap-2 px-2",
+              widgetOpen && "min-w-0 flex-1",
+            )}
+          >
             <ConnectionsIndicator />
             <button
-            type="button"
-            onClick={() => setWidgetOpen(!widgetOpen)}
-            className={cn(
-              "shrink-0 flex items-center justify-center h-7 w-7 rounded-md border transition-colors",
-              hasStreaming
-                ? "text-active border-active/30 animate-pulse"
-                : "border-border text-muted-foreground hover:bg-muted/50",
-            )}
-            aria-label={widgetOpen ? "Hide sessions menu" : "Show sessions menu"}
-            data-testid="button-focus-widget-conversation-toggle"
-          >
-            <MessageSquare className="h-4 w-4" />
+              type="button"
+              onClick={() => setWidgetOpen(!widgetOpen)}
+              className={cn(
+                "shrink-0 flex items-center justify-center h-7 w-7 rounded-md border transition-colors",
+                hasStreaming
+                  ? "text-active border-active/30 animate-pulse"
+                  : "border-border text-muted-foreground hover:bg-muted/50",
+              )}
+              aria-label={widgetOpen ? "Hide sessions menu" : "Show sessions menu"}
+              data-testid="button-focus-widget-conversation-toggle"
+            >
+              <MessageSquare className="h-4 w-4" />
             </button>
           </div>
         </div>
