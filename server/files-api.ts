@@ -64,7 +64,13 @@ export type { FilesProvider };
 
 export interface FilesChild {
   provider: FilesProvider;
+  /** Tree-local provider id under the browsed parent (shortcut id when applicable). */
   providerFileId: string;
+  /**
+   * Id used for nested list/read after provider shortcut resolution.
+   * Equals providerFileId when the child is not a shortcut.
+   */
+  contentProviderFileId: string;
   name: string;
   mimeType: string | null;
   resourceType: "file" | "folder";
@@ -81,7 +87,10 @@ export interface FilesChild {
 
 export interface FilesMetadata {
   provider: FilesProvider;
+  /** Tree-local / bind provider id. */
   providerFileId: string;
+  /** Concrete content id after shortcut resolution (Google). */
+  contentProviderFileId: string;
   name: string;
   mimeType: string | null;
   resourceType: "file" | "folder";
@@ -775,10 +784,14 @@ class FilesApi {
     );
 
     const children: FilesChild[] = result.children.map((c) => {
-      const bind = bindByFileId.get(c.providerFileId) ?? null;
+      const bind =
+        bindByFileId.get(c.providerFileId) ??
+        bindByFileId.get(c.contentProviderFileId) ??
+        null;
       return {
         provider: c.provider,
         providerFileId: c.providerFileId,
+        contentProviderFileId: c.contentProviderFileId || c.providerFileId,
         name: c.name,
         mimeType: c.mimeType,
         resourceType: c.resourceType,
@@ -788,6 +801,92 @@ class FilesApi {
         md5Checksum: c.md5Checksum ?? null,
         driveResourceId: bind?.id ?? null,
         viaFolderBind: !bind && folderBindIds.size > 0,
+      };
+    });
+
+    return { children, nextPageToken: result.nextPageToken };
+  }
+
+  /**
+   * Recursive index discovery listing.
+   *
+   * Ordinary listChildren authorizes nested folders by walking Google parents
+   * back to a folder bind. Data Rooms often place real subtrees behind folder
+   * shortcuts, so the Google parent chain of a discovered child never returns
+   * to the bound root even though the child was reached by listing that root.
+   *
+   * This method authorizes the bound root once, then lists any folder id the
+   * reconciler already discovered under that root. Not exposed on HTTP routes.
+   */
+  async listChildrenForIndex(input: {
+    rootDriveResourceId: string;
+    /** Tree-local folder id from discovery (shortcut id when the row is a shortcut). */
+    folderProviderFileId: string;
+    pageToken?: string;
+  }): Promise<{ children: FilesChild[]; nextPageToken: string | null }> {
+    const principal = requireCurrentUserPrincipal();
+    const root = await authorizeBoundResource(principal, input.rootDriveResourceId);
+    if (root.resourceType !== "folder") {
+      throw httpError(400, "listChildrenForIndex requires a folder root bind");
+    }
+    await assertVaultAccess(principal, root.vaultId);
+
+    const provider = root.provider as FilesProvider;
+    const { adapter, ctx } = await adapterContextForConnector(
+      provider,
+      root.connectedAccountId,
+    );
+
+    const folderId =
+      input.folderProviderFileId === root.providerFileId
+        ? root.providerFileId
+        : input.folderProviderFileId;
+
+    const result = await adapter.listChildren(ctx, {
+      folderId,
+      pageToken: input.pageToken,
+      pageSize: MAX_LIST_PAGE,
+    });
+
+    const childIds = result.children.flatMap((c) => [
+      c.providerFileId,
+      c.contentProviderFileId,
+    ]);
+    const explicitBinds =
+      childIds.length === 0
+        ? []
+        : await db
+            .select()
+            .from(driveResources)
+            .where(
+              and(
+                eq(driveResources.vaultId, root.vaultId),
+                eq(driveResources.connectedAccountId, root.connectedAccountId),
+                eq(driveResources.provider, provider),
+                inArray(driveResources.providerFileId, [...new Set(childIds)]),
+              ),
+            );
+    const bindByFileId = new Map(
+      explicitBinds.map((b) => [b.providerFileId, b] as const),
+    );
+
+    const children: FilesChild[] = result.children.map((c) => {
+      const contentId = c.contentProviderFileId || c.providerFileId;
+      const bind =
+        bindByFileId.get(c.providerFileId) ?? bindByFileId.get(contentId) ?? null;
+      return {
+        provider: c.provider,
+        providerFileId: c.providerFileId,
+        contentProviderFileId: contentId,
+        name: c.name,
+        mimeType: c.mimeType,
+        resourceType: c.resourceType,
+        iconUrl: c.iconUrl,
+        webViewLink: c.webViewLink,
+        modifiedTime: c.modifiedTime ?? null,
+        md5Checksum: c.md5Checksum ?? null,
+        driveResourceId: bind?.id ?? null,
+        viaFolderBind: !bind,
       };
     });
 
@@ -846,7 +945,9 @@ class FilesApi {
     const meta = await adapter.getMetadata(ctx, providerFileId);
     return {
       provider: meta.provider,
-      providerFileId: meta.providerFileId,
+      // Preserve the requested/bind id for ACL identity; content id is separate.
+      providerFileId,
+      contentProviderFileId: meta.contentProviderFileId || meta.providerFileId,
       name: meta.name,
       mimeType: meta.mimeType,
       resourceType: meta.resourceType,
@@ -888,9 +989,11 @@ class FilesApi {
     const contentType = expectedReadContentType(metadata.mimeType);
     const officeExtraction = isExtractableOfficeMime(contentType);
     const encoding = officeExtraction ? "utf8" : archiveEncodingFor(contentType);
+    const contentId =
+      metadata.contentProviderFileId || metadata.providerFileId;
     const operationKey = buildDriveFileCacheKey({
       provider: metadata.provider,
-      providerFileId: metadata.providerFileId,
+      providerFileId: contentId,
       md5Checksum: metadata.md5Checksum,
       modifiedTime: metadata.modifiedTime,
       contentType,
@@ -905,7 +1008,7 @@ class FilesApi {
       if (!cached && officeExtraction) {
         const binaryOperationKey = buildDriveFileCacheKey({
           provider: metadata.provider,
-          providerFileId: metadata.providerFileId,
+          providerFileId: contentId,
           md5Checksum: metadata.md5Checksum,
           modifiedTime: metadata.modifiedTime,
           contentType,
@@ -971,7 +1074,8 @@ class FilesApi {
 
     try {
       // No product ceiling — download the whole provider body.
-      const bytes = await adapter.readBytes(ctx, metadata.providerFileId, {
+      // Use content id so Google shortcuts read their target bytes.
+      const bytes = await adapter.readBytes(ctx, contentId, {
         maxBytes: null,
         mimeType: metadata.mimeType,
       });
@@ -1105,10 +1209,14 @@ class FilesApi {
       metadata.provider,
       metadata.connectedAccountId,
     );
-    const bytes = await adapter.readBytes(ctx, metadata.providerFileId, {
-      maxBytes: null,
-      mimeType: metadata.mimeType,
-    });
+    const bytes = await adapter.readBytes(
+      ctx,
+      metadata.contentProviderFileId || metadata.providerFileId,
+      {
+        maxBytes: null,
+        mimeType: metadata.mimeType,
+      },
+    );
     if (bytes.truncated) throw httpError(502, "Provider returned incomplete file bytes");
     return {
       metadata,
