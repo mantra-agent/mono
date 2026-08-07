@@ -66,6 +66,38 @@ function errorCode(error: unknown): string | undefined {
     : undefined;
 }
 
+/**
+ * Stable, machine-classifiable failure for document-store search-index
+ * maintenance. `code` is the single discriminant the error-telemetry
+ * classifier keys off (probe failed vs indexes not confirmed); the raw
+ * PostgreSQL SQLSTATE is preserved separately as safe operational context
+ * and never overwrites the stable discriminant.
+ */
+class DocumentSearchIndexError extends Error {
+  readonly code: string;
+  readonly sqlState?: string;
+
+  constructor(
+    code: string,
+    message: string,
+    options: { cause?: unknown; sqlState?: string } = {},
+  ) {
+    super(
+      message,
+      options.cause !== undefined ? { cause: options.cause } : undefined,
+    );
+    this.name = "DocumentSearchIndexError";
+    this.code = code;
+    this.sqlState = options.sqlState;
+  }
+}
+
+function maintenanceSqlState(error: unknown): string | undefined {
+  return error instanceof DocumentSearchIndexError
+    ? error.sqlState
+    : errorCode(error);
+}
+
 async function readIndexState(
   client: PoolClient,
   indexName: string,
@@ -298,22 +330,35 @@ async function verifyOperationalQuery(client: PoolClient): Promise<"verified" | 
     });
     return "verified";
   } catch (error) {
-    const code = errorCode(error);
-    log.error("session search operational probe failed", {
-      outcome:
-        code === "57014"
-          ? "statement_timeout"
-          : code === "SESSION_SEARCH_REQUIRED_INDEX_UNUSED"
-            ? "required_index_unused"
-            : "query_failure",
-      code,
+    const sqlState = errorCode(error);
+    const rawCode =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : undefined;
+    const outcome =
+      sqlState === "57014"
+        ? "statement_timeout"
+        : rawCode === "SESSION_SEARCH_REQUIRED_INDEX_UNUSED"
+          ? "required_index_unused"
+          : "query_failure";
+    const probeError =
+      error instanceof DocumentSearchIndexError
+        ? error
+        : new DocumentSearchIndexError(
+            "SESSION_SEARCH_PROBE_FAILED",
+            "Session search operational probe failed",
+            { cause: error, sqlState },
+          );
+    log.error("session search operational probe failed", probeError, {
+      outcome,
+      sqlState,
       missingIndexes:
         error && typeof error === "object" && "missingIndexes" in error
           ? (error as { missingIndexes: unknown }).missingIndexes
           : undefined,
       durationMs: Number((performance.now() - startedAt).toFixed(2)),
     });
-    throw error;
+    throw probeError;
   } finally {
     await client.query("SET enable_seqscan TO on");
     await client.query("SET statement_timeout TO '15min'");
@@ -386,12 +431,19 @@ export function startDocumentStoreSearchIndexMaintenance(): void {
     } catch (error) {
       log.warn("document-store search index maintenance failed", {
         attempt,
-        sqlState: errorCode(error),
+        sqlState: maintenanceSqlState(error),
       });
     }
 
     if (attempt >= MAX_ATTEMPTS) {
-      log.error(`document-store search indexes not confirmed after ${MAX_ATTEMPTS} attempts`);
+      log.error(
+        "document-store search indexes not confirmed",
+        new DocumentSearchIndexError(
+          "DOCUMENT_SEARCH_INDEXES_NOT_CONFIRMED",
+          `Document-store search indexes not confirmed after ${MAX_ATTEMPTS} attempts`,
+        ),
+        { attempts: MAX_ATTEMPTS },
+      );
       return;
     }
     setTimeout(run, RETRY_DELAY_MS).unref();
