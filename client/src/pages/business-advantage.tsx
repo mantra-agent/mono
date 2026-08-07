@@ -34,6 +34,8 @@ interface VaultSnapshot {
   activeVaultId: string | null;
 }
 
+const RECENT_BUSINESS_PLAN_KEY = "business-plan:recent-plan-id";
+
 interface KpisResponse {
   kpis: Kpi[];
 }
@@ -196,6 +198,13 @@ function PlanTitle({
 export default function BusinessAdvantagePage() {
   const queryClient = useQueryClient();
   const routePlanId = useMemo(() => new URLSearchParams(window.location.search).get("plan"), []);
+  const recentPlanId = useMemo(() => {
+    try {
+      return window.localStorage.getItem(RECENT_BUSINESS_PLAN_KEY);
+    } catch {
+      return null;
+    }
+  }, []);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
   const plansQuery = useQuery<BusinessPlan[]>({ queryKey: ["/api/business/plans"] });
@@ -208,17 +217,37 @@ export default function BusinessAdvantagePage() {
   const kpisQuery = useQuery<Kpi[] | KpisResponse>({ queryKey: ["/api/business/kpis"] });
 
   const plans = asArray<BusinessPlan>(plansQuery.data);
-  // Prefer an in-page selection, then an authorized route reference, then the first plan.
+
+  useEffect(() => {
+    if (!plans.length) return setSelectedPlanId(null);
+    if (selectedPlanId && plans.some((candidate) => candidate.id === selectedPlanId)) return;
+    if (routePlanId && plans.some((candidate) => candidate.id === routePlanId)) {
+      setSelectedPlanId(routePlanId);
+      return;
+    }
+    if (recentPlanId && plans.some((candidate) => candidate.id === recentPlanId)) {
+      setSelectedPlanId(recentPlanId);
+      return;
+    }
+    setSelectedPlanId(plans[0].id);
+  }, [plans, recentPlanId, routePlanId, selectedPlanId]);
+
+  useEffect(() => {
+    if (!selectedPlanId || !plans.some((candidate) => candidate.id === selectedPlanId)) return;
+    try {
+      window.localStorage.setItem(RECENT_BUSINESS_PLAN_KEY, selectedPlanId);
+    } catch {
+      // Selection remains usable when storage is unavailable.
+    }
+  }, [plans, selectedPlanId]);
+
   const plan =
-    (selectedPlanId ? plans.find((candidate) => candidate.id === selectedPlanId) : undefined) ??
-    (routePlanId ? plans.find((candidate) => candidate.id === routePlanId) : undefined) ??
+    plans.find((candidate) => candidate.id === selectedPlanId) ??
+    plans.find((candidate) => candidate.id === routePlanId) ??
+    plans.find((candidate) => candidate.id === recentPlanId) ??
     plans[0];
   const initiativeProjectIds = asArray<number>(plan?.initiativeProjectIds);
   const kpiIds = asArray<string>(plan?.kpiIds);
-
-  useEffect(() => {
-    if (plan && selectedPlanId !== plan.id) setSelectedPlanId(plan.id);
-  }, [plan, selectedPlanId]);
 
   const goalsById = useMemo(
     () => new Map(goalList(goalsQuery.data).map((goal) => [goal.id, goal])),
@@ -297,8 +326,13 @@ export default function BusinessAdvantagePage() {
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" aria-label="Business Plan actions">
-                <MoreHorizontal className="h-4 w-4" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="min-h-11 min-w-11 shrink-0 rounded text-muted-foreground/60 transition-opacity hover:bg-accent hover:text-foreground sm:min-h-5 sm:min-w-5"
+                aria-label="Business Plan actions"
+              >
+                <MoreHorizontal className="h-3 w-3" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
@@ -315,7 +349,7 @@ export default function BusinessAdvantagePage() {
 
         {/* key forces a full remount when the selected plan changes so no prior tree state lingers */}
         <div key={plan.id} className="space-y-6">
-          <section className="space-y-3">
+          <section className="space-y-1">
             <HierarchySectionHeader>Thematic Goal</HierarchySectionHeader>
             <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
               <ProfileTreeRow
@@ -366,7 +400,7 @@ export default function BusinessAdvantagePage() {
             </HierarchyTreeRow>
           </section>
 
-          <section className="space-y-3">
+          <section className="space-y-1">
             <HierarchySectionHeader>Initiatives</HierarchySectionHeader>
             <div className="min-w-0">
               {initiativeProjectIds.length === 0 ? (
@@ -428,7 +462,7 @@ export default function BusinessAdvantagePage() {
             </div>
           </section>
 
-          <section className="space-y-3">
+          <section className="space-y-1">
             <HierarchySectionHeader>Key Performance Indicators</HierarchySectionHeader>
             <div className="min-w-0">
               {kpiIds.length === 0 ? (
