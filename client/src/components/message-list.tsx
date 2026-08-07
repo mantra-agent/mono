@@ -14,7 +14,7 @@ import {
 } from "@/components/chat-shared";
 import type { QuestionResponseMeta } from "@shared/models/chat";
 import { getActiveQuestionToolCallId } from "@shared/question-prompt";
-import type { StreamingContent } from "@shared/streaming-types";
+import type { MessageSegment, StreamingContent } from "@shared/streaming-types";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 import type { PendingChatTurn } from "@/hooks/use-chat-send";
 import { VoiceTranscriptBubble } from "@/components/voice-session-ui";
@@ -26,10 +26,12 @@ import {
   useLiveSessionBlocks,
 } from "@/components/inline-session-blocks";
 import { SystemNoticeMessage, parseSystemNotice } from "@/components/system-notice-message";
+import { createLogger } from "@/lib/logger";
 
 // Cache of email draft IDs extracted from saved messages, keyed by message
 // object identity — avoids reparsing segments/tool results on every render.
 const savedDraftIdCache = new WeakMap<Message, string[]>();
+const savedQuestionIdCache = new WeakMap<Message, string[]>();
 
 function draftIdsForSavedMessage(msg: Message): string[] {
   const cached = savedDraftIdCache.get(msg);
@@ -39,7 +41,53 @@ function draftIdsForSavedMessage(msg: Message): string[] {
   savedDraftIdCache.set(msg, ids);
   return ids;
 }
-import { createLogger } from "@/lib/logger";
+
+/** Collect unique question toolCallIds from a segment stream (chronology or live). */
+function questionToolCallIdsFromSegments(segments: MessageSegment[]): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const segment of segments) {
+    if (segment.type !== "timeline") continue;
+    for (const step of segment.steps) {
+      if (step.toolName !== "question" || typeof step.toolCallId !== "string") continue;
+      if (step.status === "error") continue;
+      if (seen.has(step.toolCallId)) continue;
+      seen.add(step.toolCallId);
+      ids.push(step.toolCallId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Ownership and suppression must see every paint source ChatTurn walks.
+ * toolCalls alone miss chronology-only carriers that still mount answered cards.
+ */
+function questionToolCallIdsForSavedMessage(msg: Message): string[] {
+  const cached = savedQuestionIdCache.get(msg);
+  if (cached) return cached;
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const add = (id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  };
+  if (Array.isArray(msg.toolCalls)) {
+    for (const call of msg.toolCalls) {
+      if (!call || typeof call !== "object") continue;
+      const c = call as { toolName?: unknown; toolCallId?: unknown; status?: unknown };
+      if (c.toolName !== "question" || typeof c.toolCallId !== "string") continue;
+      if (c.status === "error") continue;
+      add(c.toolCallId);
+    }
+  }
+  for (const id of questionToolCallIdsFromSegments(segmentsFromSavedMessage(msg))) {
+    add(id);
+  }
+  savedQuestionIdCache.set(msg, ids);
+  return ids;
+}
 
 const log = createLogger("MessageList");
 
@@ -830,26 +878,25 @@ export function MessageList({
 
   // Question ownership spans the visible transcript and every recursively loaded
   // history page. Newer pages claim IDs first; each page then assigns its
-  // remaining IDs to the latest local occurrence. Historical pages inherit the
-  // full claim set so the same logical Question can never be painted twice.
+  // remaining IDs to the latest local occurrence. Ownership must scan the same
+  // paint sources ChatTurn walks (toolCalls + chronology/stream segments) so a
+  // chronology-only carrier cannot keep an answered card after a later owner
+  // claims the toolCallId. Historical pages inherit the full claim set so the
+  // same logical Question can never be painted twice.
   const questionOwnerByToolCallId = new Map<string, string>();
   const questionToolCallIdsByMessageId = new Map<string, string[]>();
-  for (const it of items) {
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
     if (it.kind !== "message") continue;
-    const toolCalls = it.msg.toolCalls;
-    if (!Array.isArray(toolCalls)) continue;
-    const ids: string[] = [];
-    for (const call of toolCalls) {
-      if (!call || typeof call !== "object") continue;
-      const c = call as { toolName?: unknown; toolCallId?: unknown; status?: unknown };
-      if (c.toolName !== "question" || typeof c.toolCallId !== "string") continue;
-      if (c.status === "error") continue;
-      ids.push(c.toolCallId);
-    }
+    const useStreamingSegments = i === streamingTargetIdx && effectiveStreaming.segments.length > 0;
+    const ids = useStreamingSegments
+      ? questionToolCallIdsFromSegments(effectiveStreaming.segments)
+      : questionToolCallIdsForSavedMessage(it.msg);
     if (ids.length === 0) continue;
     questionToolCallIdsByMessageId.set(it.msg.id, ids);
     for (const id of ids) {
       if (!claimedQuestionToolCallIds?.has(id)) {
+        // Latest local occurrence wins, matching email-draft ownership.
         questionOwnerByToolCallId.set(id, it.msg.id);
       }
     }
@@ -858,17 +905,7 @@ export function MessageList({
   for (const id of questionOwnerByToolCallId.keys()) {
     claimedQuestionIdsForHistory.add(id);
   }
-  const streamingQuestionToolCallIds = Array.from(new Set(
-    effectiveStreaming.segments.flatMap((segment) =>
-      segment.type === "timeline"
-        ? segment.steps.flatMap((step) =>
-            step.toolName === "question" && typeof step.toolCallId === "string"
-              ? [step.toolCallId]
-              : [],
-          )
-        : [],
-    ),
-  ));
+  const streamingQuestionToolCallIds = questionToolCallIdsFromSegments(effectiveStreaming.segments);
   const questionOwnershipSignature = JSON.stringify({
     activeSession,
     streamingTargetIdx,
