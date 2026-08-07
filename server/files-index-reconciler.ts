@@ -669,14 +669,13 @@ async function processDiscoveringBatch(input: {
 
     let page: { children: FilesChild[]; nextPageToken: string | null };
     try {
-      page = await filesApi.listChildren({
-        vaultId: root.vaultId,
-        ...(current.providerFileId === root.providerFileId
-          ? { driveResourceId: root.id }
-          : {
-              provider: root.provider as "google" | "box" | "mantra",
-              providerFileId: current.providerFileId,
-            }),
+      // Index discovery authorizes the bound root once, then walks any folder
+      // id already discovered under it. Ordinary listChildren parent-chain
+      // checks reject Google folder shortcuts because the target's parents do
+      // not lead back to the bound root even though listing did.
+      page = await filesApi.listChildrenForIndex({
+        rootDriveResourceId: root.id,
+        folderProviderFileId: current.providerFileId,
         pageToken: current.pageToken ?? undefined,
       });
     } catch (err) {

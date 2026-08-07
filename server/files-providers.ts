@@ -43,7 +43,17 @@ export interface AdapterContext {
 
 export interface AdapterMetadata {
   provider: FilesProvider;
+  /**
+   * Tree-local provider id (the id under the browsed parent). For Google
+   * shortcuts this stays the shortcut id so whitelist ancestry can walk the
+   * bound folder path.
+   */
   providerFileId: string;
+  /**
+   * Id used for list/read/content operations after shortcut resolution.
+   * Equals providerFileId when the item is not a shortcut.
+   */
+  contentProviderFileId: string;
   name: string;
   mimeType: string | null;
   resourceType: "file" | "folder";
@@ -57,6 +67,8 @@ export interface AdapterMetadata {
 export interface AdapterChild {
   provider: FilesProvider;
   providerFileId: string;
+  /** See AdapterMetadata.contentProviderFileId. */
+  contentProviderFileId: string;
   name: string;
   mimeType: string | null;
   resourceType: "file" | "folder";
@@ -108,6 +120,9 @@ function httpError(status: number, message: string): Error {
 }
 
 const GOOGLE_FOLDER_MIME = "application/vnd.google-apps.folder";
+const GOOGLE_SHORTCUT_MIME = "application/vnd.google-apps.shortcut";
+/** Bound walk depth when resolving shortcut chains (A → B → …). */
+const GOOGLE_SHORTCUT_MAX_HOPS = 5;
 const GOOGLE_EXPORT_MAP: Record<string, { mime: string; ext: string }> = {
   "application/vnd.google-apps.document": {
     mime: "text/plain",
@@ -129,6 +144,23 @@ const GOOGLE_EXPORT_MAP: Record<string, { mime: string; ext: string }> = {
 
 // ── Google Drive ────────────────────────────────────────────────────────────
 
+type GoogleFilePayload = {
+  id?: string | null;
+  name?: string | null;
+  mimeType?: string | null;
+  iconLink?: string | null;
+  webViewLink?: string | null;
+  size?: string | null;
+  modifiedTime?: string | null;
+  md5Checksum?: string | null;
+  parents?: string[] | null;
+  trashed?: boolean | null;
+  shortcutDetails?: {
+    targetId?: string | null;
+    targetMimeType?: string | null;
+  } | null;
+};
+
 class GoogleDriveAdapter implements FilesProviderAdapter {
   readonly provider: FilesProvider = "google";
 
@@ -141,34 +173,86 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
     return google.drive({ version: "v3", auth });
   }
 
+  /**
+   * Follow Google Drive shortcut hops to the concrete target payload.
+   * Data Rooms commonly nest real folders only as shortcuts; without this,
+   * recursive indexing classifies them as files and seals after the shallow set.
+   */
+  private async resolveGoogleTarget(
+    ctx: AdapterContext,
+    providerFileId: string,
+    seed?: GoogleFilePayload | null,
+  ): Promise<{ local: GoogleFilePayload; target: GoogleFilePayload }> {
+    const drive = this.drive(ctx);
+    const load = async (id: string, hint?: GoogleFilePayload | null) => {
+      if (hint?.id === id) return hint;
+      const res = await drive.files.get({
+        fileId: id,
+        fields:
+          "id,name,mimeType,iconLink,webViewLink,size,modifiedTime,md5Checksum,parents,trashed,shortcutDetails(targetId,targetMimeType)",
+        supportsAllDrives: true,
+      });
+      return res.data as GoogleFilePayload;
+    };
+
+    const local = await load(providerFileId, seed);
+    if (!local.id) throw httpError(404, "Google file not found");
+    if (local.trashed) throw httpError(404, "Google file is trashed");
+
+    const seen = new Set<string>([local.id]);
+    let target = local;
+    for (let hop = 0; hop < GOOGLE_SHORTCUT_MAX_HOPS; hop += 1) {
+      if (target.mimeType !== GOOGLE_SHORTCUT_MIME) {
+        return { local, target };
+      }
+      const targetId = target.shortcutDetails?.targetId?.trim();
+      if (!targetId) throw httpError(404, "Google Drive shortcut target missing");
+      if (seen.has(targetId)) throw httpError(409, "Google Drive shortcut cycle");
+      seen.add(targetId);
+      target = await load(targetId);
+      if (!target.id) throw httpError(404, "Google file not found");
+      if (target.trashed) throw httpError(404, "Google file is trashed");
+    }
+    if (target.mimeType === GOOGLE_SHORTCUT_MIME) {
+      throw httpError(409, "Google Drive shortcut chain too deep");
+    }
+    return { local, target };
+  }
+
+  /**
+   * Preserve tree-local identity (shortcut id when present) while exposing the
+   * target's type/mime/content fingerprint so discovery can recurse folders and
+   * read real files without breaking parent-chain whitelist walks.
+   */
+  private toAdapterMetadata(
+    local: GoogleFilePayload,
+    target: GoogleFilePayload,
+  ): AdapterMetadata {
+    if (!local.id || !target.id) throw httpError(404, "Google file not found");
+    const mimeType = target.mimeType ?? null;
+    return {
+      provider: "google",
+      providerFileId: local.id,
+      contentProviderFileId: target.id,
+      // Prefer the name the user sees in this tree (shortcut label).
+      name: local.name ?? target.name ?? local.id,
+      mimeType,
+      resourceType: mimeType === GOOGLE_FOLDER_MIME ? "folder" : "file",
+      iconUrl: target.iconLink ?? local.iconLink ?? null,
+      webViewLink: target.webViewLink ?? local.webViewLink ?? null,
+      size: target.size ?? null,
+      modifiedTime: target.modifiedTime ?? local.modifiedTime ?? null,
+      md5Checksum: target.md5Checksum ?? null,
+    };
+  }
+
   async getMetadata(
     ctx: AdapterContext,
     providerFileId: string,
   ): Promise<AdapterMetadata> {
-    const drive = this.drive(ctx);
     try {
-      const res = await drive.files.get({
-        fileId: providerFileId,
-        fields:
-          "id,name,mimeType,iconLink,webViewLink,size,modifiedTime,md5Checksum,parents,trashed",
-        supportsAllDrives: true,
-      });
-      const f = res.data;
-      if (!f.id) throw httpError(404, "Google file not found");
-      if (f.trashed) throw httpError(404, "Google file is trashed");
-      const mimeType = f.mimeType ?? null;
-      return {
-        provider: "google",
-        providerFileId: f.id,
-        name: f.name ?? f.id,
-        mimeType,
-        resourceType: mimeType === GOOGLE_FOLDER_MIME ? "folder" : "file",
-        iconUrl: f.iconLink ?? null,
-        webViewLink: f.webViewLink ?? null,
-        size: f.size ?? null,
-        modifiedTime: f.modifiedTime ?? null,
-        md5Checksum: f.md5Checksum ?? null,
-      };
+      const { local, target } = await this.resolveGoogleTarget(ctx, providerFileId);
+      return this.toAdapterMetadata(local, target);
     } catch (err) {
       rethrowProvider(err, "Google Drive metadata");
     }
@@ -180,34 +264,58 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
   ): Promise<{ children: AdapterChild[]; nextPageToken: string | null }> {
     const drive = this.drive(ctx);
     try {
+      // List the concrete folder, even when the walk id is a folder shortcut.
+      const folder = await this.resolveGoogleTarget(ctx, opts.folderId);
+      const folderMeta = this.toAdapterMetadata(folder.local, folder.target);
+      if (folderMeta.resourceType !== "folder") {
+        throw httpError(400, "listChildren requires a Google folder");
+      }
+      const listFolderId = folderMeta.contentProviderFileId;
+
       const res = await drive.files.list({
-        q: `'${opts.folderId.replace(/'/g, "\\'")}' in parents and trashed = false`,
+        q: `'${listFolderId.replace(/'/g, "\\'")}' in parents and trashed = false`,
         pageSize: Math.min(Math.max(opts.pageSize ?? 50, 1), 100),
         pageToken: opts.pageToken,
         fields:
-          "nextPageToken, files(id,name,mimeType,iconLink,webViewLink,size,modifiedTime,md5Checksum)",
+          "nextPageToken, files(id,name,mimeType,iconLink,webViewLink,size,modifiedTime,md5Checksum,shortcutDetails(targetId,targetMimeType))",
         supportsAllDrives: true,
         includeItemsFromAllDrives: true,
       });
-      const children: AdapterChild[] = (res.data.files ?? [])
-        .filter((f): f is typeof f & { id: string } => Boolean(f.id))
-        .map((f) => {
-          const mimeType = f.mimeType ?? null;
-          return {
-            provider: "google" as const,
-            providerFileId: f.id,
-            name: f.name ?? f.id,
-            mimeType,
-            resourceType:
-              mimeType === GOOGLE_FOLDER_MIME
-                ? ("folder" as const)
-                : ("file" as const),
-            iconUrl: f.iconLink ?? null,
-            webViewLink: f.webViewLink ?? null,
-            modifiedTime: f.modifiedTime ?? null,
-            md5Checksum: f.md5Checksum ?? null,
-          };
-        });
+
+      const children: AdapterChild[] = [];
+      for (const raw of res.data.files ?? []) {
+        if (!raw.id) continue;
+        try {
+          const resolved = await this.resolveGoogleTarget(
+            ctx,
+            raw.id,
+            raw as GoogleFilePayload,
+          );
+          const meta = this.toAdapterMetadata(resolved.local, resolved.target);
+          children.push({
+            provider: "google",
+            // Keep the id under this parent (shortcut or real) for ancestry.
+            providerFileId: meta.providerFileId,
+            contentProviderFileId: meta.contentProviderFileId,
+            name: meta.name,
+            mimeType: meta.mimeType,
+            resourceType: meta.resourceType,
+            iconUrl: meta.iconUrl,
+            webViewLink: meta.webViewLink,
+            modifiedTime: meta.modifiedTime,
+            md5Checksum: meta.md5Checksum,
+          });
+        } catch (err) {
+          // Broken/denied shortcut targets stay out of discovery rather than
+          // failing the whole page; caller can still index reachable peers.
+          log.warn("Google Drive shortcut child skipped", {
+            parentFolderId: listFolderId,
+            shortcutId: raw.id,
+            errorName: err instanceof Error ? err.name : typeof err,
+          });
+        }
+      }
+
       return {
         children,
         nextPageToken: res.data.nextPageToken ?? null,
@@ -224,32 +332,20 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
   ): Promise<AdapterBytes> {
     const drive = this.drive(ctx);
     try {
-      // Refresh metadata when mime unknown so we can choose export vs media.
-      let mimeType = opts.mimeType ?? null;
-      let name: string | undefined;
-      let iconUrl: string | null | undefined;
-      let webViewLink: string | null | undefined;
-      let size: string | null | undefined;
-      let modifiedTime: string | null | undefined;
-      let md5Checksum: string | null | undefined;
-
-      if (!mimeType) {
-        const meta = await this.getMetadata(ctx, providerFileId);
-        if (meta.resourceType === "folder") {
-          throw httpError(400, "Cannot read a folder");
-        }
-        mimeType = meta.mimeType;
-        name = meta.name;
-        iconUrl = meta.iconUrl;
-        webViewLink = meta.webViewLink;
-        size = meta.size;
-        modifiedTime = meta.modifiedTime;
-        md5Checksum = meta.md5Checksum;
-      }
-
-      if (mimeType === GOOGLE_FOLDER_MIME) {
+      const { local, target } = await this.resolveGoogleTarget(ctx, providerFileId);
+      const meta = this.toAdapterMetadata(local, target);
+      if (meta.resourceType === "folder" || meta.mimeType === GOOGLE_FOLDER_MIME) {
         throw httpError(400, "Cannot read a folder");
       }
+
+      const mimeType = meta.mimeType;
+      const name = meta.name;
+      const iconUrl = meta.iconUrl;
+      const webViewLink = meta.webViewLink;
+      const size = meta.size;
+      const modifiedTime = meta.modifiedTime;
+      const md5Checksum = meta.md5Checksum;
+      const resolvedFileId = meta.contentProviderFileId;
 
       const exportSpec = mimeType ? GOOGLE_EXPORT_MAP[mimeType] : undefined;
       let buffer: Buffer;
@@ -257,7 +353,7 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
 
       if (exportSpec) {
         const res = await drive.files.export(
-          { fileId: providerFileId, mimeType: exportSpec.mime },
+          { fileId: resolvedFileId, mimeType: exportSpec.mime },
           { responseType: "arraybuffer" },
         );
         buffer = Buffer.from(res.data as ArrayBuffer);
@@ -265,7 +361,7 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
       } else {
         const res = await drive.files.get(
           {
-            fileId: providerFileId,
+            fileId: resolvedFileId,
             alt: "media",
             supportsAllDrives: true,
           },
@@ -389,6 +485,7 @@ class BoxAdapter implements FilesProviderAdapter {
     return {
       provider: "box",
       providerFileId: item.id,
+      contentProviderFileId: item.id,
       name: item.name,
       mimeType: this.mime(item),
       resourceType: item.type === "folder" ? "folder" : "file",
@@ -555,6 +652,7 @@ class MantraStorageAdapter implements FilesProviderAdapter {
       return {
         provider: "mantra",
         providerFileId,
+        contentProviderFileId: providerFileId,
         name,
         mimeType: meta.contentType ?? "application/octet-stream",
         resourceType: "file",
