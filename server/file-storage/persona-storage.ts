@@ -7,6 +7,7 @@ import { createLogger } from "../log";
 import { isUniqueViolationError } from "../postgres-errors";
 import { requireCurrentUserPrincipal } from "../principal-context";
 import { createSystemPrincipal, type Principal } from "../principal";
+import { principalHasPermission } from "../permissions";
 import {
   combineWithVisibleScope,
   combineWithWritableScope,
@@ -638,6 +639,40 @@ class PersonaStorageClass {
     this.invalidateCache();
     log.log("create name=" + input.name);
     return rowToEntry(row);
+  }
+
+  async updateGlobalTemplateToolBundle(
+    id: number,
+    toolBundle: string[],
+  ): Promise<PersonaEntry | null> {
+    const principal = requireCurrentUserPrincipal();
+    if (!principalHasPermission(principal, "system:write")) {
+      throw new Error("system:write permission required to update global persona templates");
+    }
+
+    const [updated] = await db
+      .update(personas)
+      .set({
+        toolBundle,
+        updatedAt: new Date(),
+        updatedByUserId: principal.userId,
+      })
+      .where(and(
+        eq(personas.id, id),
+        eq(personas.scope, "global"),
+        eq(personas.source, "seed"),
+        eq(personas.isSystem, false),
+      ))
+      .returning();
+
+    if (!updated) return null;
+    this._cache.clear();
+    log.info("Updated global persona template tool bundle", {
+      personaId: updated.id,
+      personaName: updated.name,
+      toolCount: toolBundle.length,
+    });
+    return rowToEntry(updated);
   }
 
   async update(
