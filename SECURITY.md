@@ -206,6 +206,14 @@
 - Residual/rollback: provider access may still omit broken/denied shortcuts by design and reports a warning; PDF semantic extraction remains unsupported. Revert this delta to restore the false-complete traversal and blocked file extraction, so rollback is not operationally safe except for isolation.
 -->
 
+<!-- 2026-08-07 mounted Drive descendant PDF authorization repair:
+- Assets/data: S2 Drive PDF bytes and metadata, Vault/bind identity, connected-account credentials, and short-lived encrypted PDF content handles.
+- Flow/boundary: recursive Drive tree row -> authenticated document viewer -> `/api/pdf/open` -> PdfService content handle -> FilesApi -> provider adapter; extraction separately loads the repository-pinned PDF.js implementation inside Node.
+- Failure/threat: recursive rows retained only the descendant provider ID, so the viewer later rediscovered authorization from ambient same-provider Vault binds. Shortcut-backed descendants can lack a provider-parent path to the bind and returned Not found; accepting a caller-selected root without revalidation would create a confused-deputy/IDOR path, while the browser PDF.js build crashed Node extraction on missing DOMMatrix.
+- Controls/owner: Core Files/PDF preserve the exact `rootDriveResourceId` from the authorized recursive tree root through route, source contract, encrypted handle, and every content re-read. FilesApi independently authorizes that bind for the current principal, verifies exact Vault/provider/folder identity, proves bounded descendant ancestry, then reads through that connector. Server extraction uses the pinned `pdfjs-dist/legacy/build/pdf.mjs` Node-compatible entry with existing caps. Severity: high authorization-integrity boundary plus medium availability. Owner: Core Application Platform / Files API. SLA: immediate.
+- Residual/rollback: provider ancestry remains bounded and provider-dependent; reverting restores viewer failure and ambient bind rediscovery without schema rollback.
+-->
+
 <!-- 2026-08-06 Recursive Google Drive folder bindings:
 - Assets/data: explicitly selected Drive file/folder IDs, descendant metadata/content, connected-account identity, short-lived `drive.readonly` access tokens, and Vault-scoped Drive bindings.
 - Flow/boundary: authenticated SPA receives a short-lived Picker token plus a separate browser-safe API key/project number -> the user selects files or folders in My Drive or shared drives -> the binding stores the selecting connected account -> every list/read resolves that account server-side, proves the target is the bound root or a descendant, then calls the read-only adapter.

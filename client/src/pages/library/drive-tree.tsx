@@ -138,6 +138,7 @@ function pdfViewerHref(args: {
   vaultId?: string;
   provider?: "google" | "box" | "mantra";
   providerFileId?: string;
+  rootDriveResourceId?: string;
   webViewLink?: string | null;
 }): string {
   const params = new URLSearchParams({ source: args.source });
@@ -146,6 +147,7 @@ function pdfViewerHref(args: {
     params.set("provider", args.provider);
     params.set("providerLabel", providerOpenLabel(args.provider));
   }
+  if (args.rootDriveResourceId) params.set("rootDriveResourceId", args.rootDriveResourceId);
   if (args.webViewLink) params.set("providerHref", args.webViewLink);
   const routeId =
     args.source === "provider" && args.providerFileId
@@ -670,6 +672,7 @@ function FolderChildren({
   driveResourceId,
   provider,
   providerFileId,
+  rootDriveResourceId,
   depth,
   vaultColor,
   statusByResourceId,
@@ -678,6 +681,7 @@ function FolderChildren({
   driveResourceId?: string;
   provider?: "google" | "box" | "mantra";
   providerFileId?: string;
+  rootDriveResourceId: string;
   depth: number;
   vaultColor?: string | null;
   statusByResourceId: Map<string, FileIndexStatus>;
@@ -764,6 +768,7 @@ function FolderChildren({
               vaultId,
               provider: c.provider,
               providerFileId: c.providerFileId,
+              rootDriveResourceId,
               webViewLink: c.webViewLink,
             }),
           );
@@ -816,6 +821,7 @@ function FolderChildren({
                 driveResourceId={c.driveResourceId ?? undefined}
                 provider={c.provider}
                 providerFileId={c.providerFileId}
+                rootDriveResourceId={rootDriveResourceId}
                 depth={depth + 1}
                 vaultColor={vaultColor}
                 statusByResourceId={statusByResourceId}
@@ -921,6 +927,7 @@ export function DriveResourceTree({
                 driveResourceId={r.id}
                 provider={r.provider}
                 providerFileId={r.providerFileId}
+                rootDriveResourceId={r.id}
                 depth={1}
                 vaultColor={vaultColor}
                 statusByResourceId={statusByResourceId}

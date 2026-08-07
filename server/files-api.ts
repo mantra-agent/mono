@@ -898,6 +898,7 @@ class FilesApi {
     driveResourceId?: string;
     provider?: FilesProvider;
     providerFileId?: string;
+    rootDriveResourceId?: string;
   }): Promise<FilesMetadata> {
     const principal = requireCurrentUserPrincipal();
 
@@ -920,12 +921,9 @@ class FilesApi {
       await assertVaultAccess(principal, vaultId);
     } else if (input.vaultId && input.provider && input.providerFileId) {
       await assertVaultAccess(principal, input.vaultId);
-      const resolved = await this.resolveWhitelistedTarget(
-        principal,
-        input.vaultId,
-        input.provider,
-        input.providerFileId,
-      );
+      const resolved = input.rootDriveResourceId
+        ? await this.resolveTargetUnderMountedRoot(principal, input.vaultId, input.provider, input.providerFileId, input.rootDriveResourceId)
+        : await this.resolveWhitelistedTarget(principal, input.vaultId, input.provider, input.providerFileId);
       provider = input.provider;
       providerFileId = input.providerFileId;
       connectorId = resolved.connectorId;
@@ -980,6 +978,7 @@ class FilesApi {
     driveResourceId?: string;
     provider?: FilesProvider;
     providerFileId?: string;
+    rootDriveResourceId?: string;
   }): Promise<FilesReadResult> {
     const metadata = await this.getMetadata(input);
     if (metadata.resourceType === "folder") {
@@ -1200,6 +1199,7 @@ class FilesApi {
     driveResourceId?: string;
     provider?: FilesProvider;
     providerFileId?: string;
+    rootDriveResourceId?: string;
   }): Promise<{ metadata: FilesMetadata; buffer: Buffer; contentType: string }> {
     const metadata = await this.getMetadata(input);
     if (metadata.resourceType === "folder") {
@@ -1235,6 +1235,23 @@ class FilesApi {
   ): Promise<DriveResourceRow> {
     const principal = requireCurrentUserPrincipal();
     return authorizeBoundResource(principal, driveResourceId, required);
+  }
+
+  private async resolveTargetUnderMountedRoot(
+    principal: Principal,
+    vaultId: string,
+    provider: FilesProvider,
+    providerFileId: string,
+    rootDriveResourceId: string,
+  ): Promise<{ connectorId: string; driveResourceId: string }> {
+    const root = await authorizeBoundResource(principal, rootDriveResourceId);
+    if (root.vaultId !== vaultId || root.provider !== provider || root.resourceType !== "folder") {
+      throw httpError(403, "Mounted root does not authorize this provider source");
+    }
+    const { adapter, ctx } = await adapterContextForConnector(provider, root.connectedAccountId);
+    const isDescendant = await isUnderAnyFolderBind(adapter, ctx, providerFileId, new Set([root.providerFileId]));
+    if (!isDescendant) throw httpError(403, "File is not under the authorized mounted root");
+    return { connectorId: root.connectedAccountId, driveResourceId: root.id };
   }
 
   /**

@@ -37,6 +37,7 @@ export default function DocumentViewerPage() {
           provider,
           providerFileId: id,
           vaultId,
+          rootDriveResourceId: firstQueryValue("rootDriveResourceId") ?? undefined,
         };
       }
       return null;
