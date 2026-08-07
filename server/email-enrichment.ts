@@ -9,6 +9,62 @@ const log = createLogger("EmailEnrichment");
 const AUTO_DISMISS_TIERS = new Set(["🗑️", "📋"]);
 const NEVER_AUTO_DISMISS_TIERS = new Set(["🟡", "🔴"]);
 
+type EnrichmentOperation =
+  | "fire_skill_run"
+  | "skip_incomplete_ownership"
+  | "owner_scoped_run";
+
+type EnrichmentOperationError = Error & {
+  code?: string;
+  operation?: EnrichmentOperation;
+  skillStatus?: string;
+  candidateId?: number;
+  hasOwnerUserId?: boolean;
+  hasPrincipalAccountId?: boolean;
+  hasVaultId?: boolean;
+};
+
+function normalizeEnrichmentError(
+  value: unknown,
+  operation: EnrichmentOperation,
+  fallbackCode: string,
+  message?: string,
+): EnrichmentOperationError {
+  let error: EnrichmentOperationError;
+  if (value instanceof Error) {
+    error = value as EnrichmentOperationError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(message || value) as EnrichmentOperationError;
+  } else {
+    error = new Error(message || "Email enrichment failed", { cause: value }) as EnrichmentOperationError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = fallbackCode;
+  }
+  error.operation = operation;
+  return error;
+}
+
+function enrichmentLogContext(options: {
+  operation: EnrichmentOperation;
+  skillStatus?: string;
+  candidateId?: number;
+  hasOwnerUserId?: boolean;
+  hasPrincipalAccountId?: boolean;
+  hasVaultId?: boolean;
+  ownerCount?: number;
+}) {
+  return {
+    operation: options.operation,
+    skillStatus: options.skillStatus,
+    candidateId: options.candidateId,
+    hasOwnerUserId: options.hasOwnerUserId,
+    hasPrincipalAccountId: options.hasPrincipalAccountId,
+    hasVaultId: options.hasVaultId,
+    ownerCount: options.ownerCount,
+  };
+}
+
 export async function runDeterministicDismissal(): Promise<{ dismissed: number; dismissedThreadIds: string[] }> {
   const emails = await storage.getUnenrichedTriagedEmails(200);
 
@@ -55,20 +111,33 @@ export async function runDeterministicDismissal(): Promise<{ dismissed: number; 
 export type EnrichmentRunStatus = "completed" | "deferred" | "failed";
 
 export async function fireEnrichmentSkillRun(): Promise<EnrichmentRunStatus> {
+  const operation: EnrichmentOperation = "fire_skill_run";
   try {
     const { executeAutonomousSkillRun } = await import("./autonomous-skill-runner");
     const result = await executeAutonomousSkillRun("enrich-email");
     if (!result) {
-      log.warn("Enrichment skill run deferred or already active");
+      log.warn("Enrichment skill run deferred or already active", enrichmentLogContext({ operation }));
       return "deferred";
     }
     if (result.status !== "succeeded") {
-      log.error(`Enrichment skill run ${result.status}: ${result.error || result.summary || "unknown"}`);
+      const detail = result.error || result.summary || "unknown";
+      const error = normalizeEnrichmentError(
+        detail,
+        operation,
+        "ENRICHMENT_SKILL_RUN_FAILED",
+        `Enrichment skill run ${result.status}: ${detail}`,
+      );
+      error.skillStatus = result.status;
+      log.error("Enrichment skill run failed", error, enrichmentLogContext({
+        operation,
+        skillStatus: result.status,
+      }));
       return "failed";
     }
     return "completed";
-  } catch (err: any) {
-    log.error(`Enrichment skill run failed: ${err.message}`);
+  } catch (value) {
+    const error = normalizeEnrichmentError(value, operation, "ENRICHMENT_SKILL_RUN_EXCEPTION");
+    log.error("Enrichment skill run exception", error, enrichmentLogContext({ operation }));
     return "failed";
   }
 }
@@ -89,7 +158,24 @@ export async function runEnrichment(): Promise<{ dismissed: number; runStatus: E
   const ownerKeys = new Map<string, { ownerUserId: string; accountId: string; vaultId: string | null }>();
   for (const email of candidates) {
     if (!email.ownerUserId || !email.principalAccountId) {
-      log.error(`Skipping enrichment candidate id=${email.id}: ownership is incomplete`);
+      const operation: EnrichmentOperation = "skip_incomplete_ownership";
+      const error = normalizeEnrichmentError(
+        undefined,
+        operation,
+        "ENRICHMENT_CANDIDATE_OWNERSHIP_INCOMPLETE",
+        "Skipping enrichment candidate: ownership is incomplete",
+      );
+      error.candidateId = email.id;
+      error.hasOwnerUserId = Boolean(email.ownerUserId);
+      error.hasPrincipalAccountId = Boolean(email.principalAccountId);
+      error.hasVaultId = Boolean(email.vaultId);
+      log.error("Enrichment candidate ownership incomplete", error, enrichmentLogContext({
+        operation,
+        candidateId: email.id,
+        hasOwnerUserId: Boolean(email.ownerUserId),
+        hasPrincipalAccountId: Boolean(email.principalAccountId),
+        hasVaultId: Boolean(email.vaultId),
+      }));
       continue;
     }
     const key = `${email.ownerUserId}:${email.principalAccountId}:${email.vaultId || "no-vault"}`;
@@ -105,6 +191,7 @@ export async function runEnrichment(): Promise<{ dismissed: number; runStatus: E
   let deferred = 0;
   let failed = 0;
   for (const identity of ownerKeys.values()) {
+    const operation: EnrichmentOperation = "owner_scoped_run";
     try {
       const user = await storage.getUser(identity.ownerUserId);
       if (!user) throw new Error(`Email owner ${identity.ownerUserId} not found`);
@@ -129,9 +216,15 @@ export async function runEnrichment(): Promise<{ dismissed: number; runStatus: E
       if (result.runStatus === "completed") completed++;
       else if (result.runStatus === "deferred") deferred++;
       else failed++;
-    } catch (error) {
+    } catch (value) {
       failed++;
-      log.error(`Owner-scoped enrichment failed: ${error instanceof Error ? error.message : String(error)}`);
+      const error = normalizeEnrichmentError(value, operation, "ENRICHMENT_OWNER_SCOPED_FAILED");
+      log.error("Owner-scoped enrichment failed", error, enrichmentLogContext({
+        operation,
+        hasOwnerUserId: true,
+        hasPrincipalAccountId: true,
+        hasVaultId: Boolean(identity.vaultId),
+      }));
     }
   }
 
@@ -140,6 +233,9 @@ export async function runEnrichment(): Promise<{ dismissed: number; runStatus: E
     : completed > 0
       ? "completed"
       : "deferred";
-  log.log(`Owner-scoped enrichment: owners=${ownerKeys.size} completed=${completed} deferred=${deferred} failed=${failed}`);
+  log.log(`Owner-scoped enrichment: owners=${ownerKeys.size} completed=${completed} deferred=${deferred} failed=${failed}`, enrichmentLogContext({
+    operation: "owner_scoped_run",
+    ownerCount: ownerKeys.size,
+  }));
   return { dismissed, runStatus };
 }
