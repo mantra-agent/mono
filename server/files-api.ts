@@ -32,6 +32,7 @@ import {
 } from "./principal-context";
 import { createSystemPrincipal, type Principal } from "./principal";
 import { getDriveAccessTokenForAccount } from "./gmail";
+import { getBoxAccessTokenForAccount } from "./box-oauth";
 import { getAccount } from "./connected-accounts";
 import {
   liveObjectGrantPredicate,
@@ -237,8 +238,8 @@ async function authorizeBoundResource(
 
 /**
  * Mint adapter context for a connector.
- * Google: system-elevated owner token from connected_accounts.
- * Mantra / Box: no OAuth token (Box fails closed 501 inside the adapter).
+ * Google/Box: system-elevated owner token from connected_accounts.
+ * Mantra: no OAuth token.
  */
 async function adapterContextForConnector(
   provider: string,
@@ -246,31 +247,35 @@ async function adapterContextForConnector(
 ): Promise<{ adapter: FilesProviderAdapter; ctx: AdapterContext }> {
   const adapter = getFilesProviderAdapter(provider);
 
-  if (provider === "mantra" || provider === "box") {
+  if (provider === "mantra") {
     return {
       adapter,
       ctx: { connectedAccountId, accessToken: null },
     };
   }
 
-  // Google (and any future OAuth provider): mint binder token as system.
+  // OAuth providers mint the binder's token under system authority after FilesApi authorization.
   const accessToken = await runWithPrincipal(createSystemPrincipal(), async () => {
     const account = await getAccount(connectedAccountId);
     if (!account) {
       throw httpError(403, "Connected account disconnected or missing");
     }
     try {
+      if (provider === "box") return getBoxAccessTokenForAccount(connectedAccountId);
       const { accessToken: token } =
         await getDriveAccessTokenForAccount(connectedAccountId);
       return token;
     } catch (err) {
-      log.warn("Failed to mint Drive token for connector", {
+      log.warn("Failed to mint provider token for connector", {
+        provider,
         connectedAccountId,
         err: err instanceof Error ? err.message : String(err),
       });
       throw httpError(
         403,
-        "Drive access unavailable — reconnect Google for recursive read access, then reselect folders",
+        provider === "box"
+          ? "Box access unavailable — reconnect Box, then retry"
+          : "Drive access unavailable — reconnect Google for recursive read access, then reselect folders",
       );
     }
   });

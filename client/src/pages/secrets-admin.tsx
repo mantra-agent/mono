@@ -12,6 +12,10 @@ export default function SecretsAdminPage() {
         <SecretsForSection section="google" />
       </ProfileDetailSection>
 
+      <ProfileDetailSection title="Box OAuth" defaultOpen testId="secrets-section-box-oauth">
+        <SecretsForSection section="box" />
+      </ProfileDetailSection>
+
       <ProfileDetailSection title="ElevenLabs" defaultOpen testId="secrets-section-elevenlabs">
         <SecretsForSection section="elevenlabs" excludeNames={["VOICE_V3_WEBHOOK_SECRET"]} />
         <VoiceV3WebhookSecretCard />

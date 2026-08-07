@@ -327,45 +327,140 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
   }
 }
 
-// ── Box (stub) ──────────────────────────────────────────────────────────────
+// ── Box ─────────────────────────────────────────────────────────────────────
+
+type BoxItem = {
+  id: string;
+  type: "file" | "folder" | "web_link";
+  name: string;
+  size?: number;
+  modified_at?: string;
+  sha1?: string;
+  parent?: { id?: string };
+  shared_link?: { url?: string } | null;
+  extension?: string;
+};
 
 class BoxAdapter implements FilesProviderAdapter {
   readonly provider: FilesProvider = "box";
+  private readonly apiBase = "https://api.box.com/2.0";
 
-  private notConfigured(): never {
-    throw httpError(
-      501,
-      "Box provider is not configured — Box OAuth is not connected yet",
-    );
+  private headers(ctx: AdapterContext) {
+    if (!ctx.accessToken) throw httpError(403, "Box access unavailable — reconnect Box");
+    return { Authorization: `Bearer ${ctx.accessToken}` };
   }
 
-  async getMetadata(
-    _ctx: AdapterContext,
-    _providerFileId: string,
-  ): Promise<AdapterMetadata> {
-    this.notConfigured();
+  private async request(ctx: AdapterContext, path: string): Promise<Response> {
+    const response = await fetch(`${this.apiBase}${path}`, {
+      headers: this.headers(ctx),
+      redirect: "follow",
+    });
+    if (response.status === 401) throw httpError(403, "Box access unavailable — reconnect Box");
+    if (response.status === 403) throw httpError(403, "Box item access denied");
+    if (response.status === 404) throw httpError(404, "Box item not found");
+    if (!response.ok) throw httpError(502, `Box API failed (${response.status})`);
+    return response;
+  }
+
+  private mime(item: BoxItem): string | null {
+    if (item.type === "folder") return "application/vnd.box.folder";
+    const extension = item.extension || item.name.split(".").pop()?.toLowerCase();
+    const known: Record<string, string> = {
+      pdf: "application/pdf",
+      txt: "text/plain",
+      md: "text/markdown",
+      csv: "text/csv",
+      json: "application/json",
+      doc: "application/msword",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      xls: "application/vnd.ms-excel",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ppt: "application/vnd.ms-powerpoint",
+      pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+    };
+    return extension ? known[extension] || "application/octet-stream" : "application/octet-stream";
+  }
+
+  private metadata(item: BoxItem): AdapterMetadata {
+    return {
+      provider: "box",
+      providerFileId: item.id,
+      name: item.name,
+      mimeType: this.mime(item),
+      resourceType: item.type === "folder" ? "folder" : "file",
+      iconUrl: null,
+      webViewLink: item.shared_link?.url || null,
+      size: typeof item.size === "number" ? String(item.size) : null,
+      modifiedTime: item.modified_at || null,
+      md5Checksum: item.sha1 || null,
+    };
+  }
+
+  private async item(ctx: AdapterContext, id: string): Promise<BoxItem> {
+    const fields = "id,type,name,size,modified_at,sha1,parent,shared_link,extension";
+    const file = await fetch(
+      `${this.apiBase}/files/${encodeURIComponent(id)}?fields=${fields}`,
+      { headers: this.headers(ctx) },
+    );
+    if (file.ok) return file.json() as Promise<BoxItem>;
+    if (file.status !== 404) {
+      if (file.status === 401 || file.status === 403) throw httpError(403, "Box item access denied");
+      throw httpError(502, `Box API failed (${file.status})`);
+    }
+    return (await this.request(ctx, `/folders/${encodeURIComponent(id)}?fields=${fields}`)).json() as Promise<BoxItem>;
+  }
+
+  async getMetadata(ctx: AdapterContext, providerFileId: string): Promise<AdapterMetadata> {
+    return this.metadata(await this.item(ctx, providerFileId));
   }
 
   async listChildren(
-    _ctx: AdapterContext,
-    _opts: { folderId: string; pageToken?: string; pageSize?: number },
+    ctx: AdapterContext,
+    opts: { folderId: string; pageToken?: string; pageSize?: number },
   ): Promise<{ children: AdapterChild[]; nextPageToken: string | null }> {
-    this.notConfigured();
+    const offset = Number.parseInt(opts.pageToken || "0", 10) || 0;
+    const limit = Math.min(Math.max(opts.pageSize || 100, 1), 1000);
+    const fields = "id,type,name,size,modified_at,sha1,parent,shared_link,extension";
+    const payload = await (await this.request(
+      ctx,
+      `/folders/${encodeURIComponent(opts.folderId)}/items?limit=${limit}&offset=${offset}&fields=${fields}`,
+    )).json() as { entries?: BoxItem[]; total_count?: number; limit?: number };
+    const entries = (payload.entries || []).filter((item) => item.type !== "web_link");
+    const nextOffset = offset + (payload.limit || limit);
+    return {
+      children: entries.map((item) => ({ ...this.metadata(item), parentId: opts.folderId })),
+      nextPageToken: nextOffset < (payload.total_count || 0) ? String(nextOffset) : null,
+    };
   }
 
   async readBytes(
-    _ctx: AdapterContext,
-    _providerFileId: string,
-    _opts: { maxBytes?: number | null; mimeType?: string | null },
+    ctx: AdapterContext,
+    providerFileId: string,
+    opts: { maxBytes?: number | null; mimeType?: string | null },
   ): Promise<AdapterBytes> {
-    this.notConfigured();
+    const response = await this.request(ctx, `/files/${encodeURIComponent(providerFileId)}/content`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const maxBytes = opts.maxBytes ?? null;
+    return {
+      bytes: maxBytes === null ? buffer : buffer.subarray(0, maxBytes),
+      truncated: maxBytes !== null && buffer.length > maxBytes,
+      mimeType: opts.mimeType || response.headers.get("content-type"),
+    };
   }
 
-  async getParentIds(
-    _ctx: AdapterContext,
-    _providerFileId: string,
-  ): Promise<string[]> {
-    this.notConfigured();
+  async getParentIds(ctx: AdapterContext, providerFileId: string): Promise<string[]> {
+    try {
+      const item = await this.item(ctx, providerFileId);
+      return item.parent?.id ? [item.parent.id] : [];
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (status === 403 || status === 404) return [];
+      throw error;
+    }
   }
 }
 

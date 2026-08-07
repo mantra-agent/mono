@@ -28,6 +28,7 @@ import {
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useVaults } from "@/hooks/use-vaults";
 import { DriveSection } from "@/components/integrations/drive-section";
+import { BoxSection } from "@/components/integrations/box-section";
 import {
   Select,
   SelectContent,
@@ -2515,6 +2516,8 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
           })()}
         </div>
       )}
+
+      <BoxSection vaultId={activeVaultId || undefined} />
 
       <AlertDialog
         open={Boolean(accountPendingRemoval)}
