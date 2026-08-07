@@ -44,6 +44,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   // News scanning is a bounded internal pipeline: provider reads are constrained by
   // the News adapters and results land only in the owning user's signal store.
   news: { default: 1, actions: { summary: 0, list_signals: 0, get_signal: 0, list_sources: 0, list_scan_runs: 0, interest_graph: 0 } },
+  business_plans: { default: 1, actions: { list: 0, get: 0 } },
   goals: { default: 1, actions: { list: 0, get: 0, search: 0 } },
   // Plan execution is internal orchestration. Each child and eventual tool call
   // remains independently authorized under the originating principal.

@@ -1,3 +1,10 @@
+<!-- 2026-08-06 Business Plan Agent tool controls:
+- Assets/data: Business Plan names and assignments, principal-owned Goal/Project/KPI identifiers, and live Vault placement (S1 private product data).
+- Flow/boundary: model-selected explicit `business_plans` action -> canonical tool authority/admission -> `business-plan-storage.ts` principal/Vault scope -> validated Goal/Project/KPI/Vault mutation -> reference-rich result.
+- Threats: cross-Vault IDOR or object enumeration (information disclosure), assignment of foreign/hidden objects (authorization bypass), inferred/background assignment changes (integrity), and duplicate/lost array updates during retries or concurrency (tampering).
+- Controls/owner: the tool delegates every read/write to `business-plan-storage.ts`; list/get/update/delete retain visible/writable principal scope and default deny, every referenced object is independently resolved under the same principal, Vault assignment requires a live visible writable Vault, and no assignment action is inferred or scheduled. Initiative/KPI add/remove serialize with a row lock and ordered-set semantics, making exact retries idempotent. Tool outputs expose canonical `@business_plan:id` addresses without expanding hidden linked objects. Owner Business Plan domain. Severity: high. SLA: release-blocking. Status: repaired.
+-->
+
 <!-- 2026-08-06 ModelClient Grok quota circuit repair:
 - Assets/data: connected model-provider credentials (S3 secrets), sanitized provider failure envelopes (S1 operational metadata), connector identifiers, and inference availability.
 - Flow/boundary: untrusted Grok subscription response -> `model-client.ts` normalized provider failure -> process-local connector admission for subsequent routed inference calls.
