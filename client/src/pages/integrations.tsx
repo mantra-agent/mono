@@ -93,6 +93,7 @@ import {
   Glasses,
   Radio,
   Zap,
+  Box,
 } from "lucide-react";
 import { SiX } from "react-icons/si";
 import { SecretsForSection } from "@/components/SecretControl";
@@ -145,6 +146,7 @@ interface IntegrationDef {
 
 const INTEGRATIONS: IntegrationDef[] = [
   { id: "google", name: "Google", icon: Mail, statusFields: ["gmail", "gdrive"], healthField: "gmailHealthy", route: "google" },
+  { id: "box", name: "Box", icon: Box, statusFields: ["box"], route: "box" },
   { id: "elevenlabs", name: "ElevenLabs", icon: Volume2, statusFields: ["elevenlabs"], route: "elevenlabs" },
   { id: "cartesia", name: "Cartesia", icon: Volume2, statusFields: ["cartesia"], route: "cartesia" },
   { id: "twilio", name: "Twilio Phone", icon: Phone, statusFields: ["twilio"], route: "twilio" },
@@ -2517,8 +2519,6 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
         </div>
       )}
 
-      <BoxSection vaultId={activeVaultId || undefined} />
-
       <AlertDialog
         open={Boolean(accountPendingRemoval)}
         onOpenChange={(open) => {
@@ -2643,6 +2643,15 @@ function GoogleDetail() {
   return (
     <div className="min-w-0 space-y-2">
       <GoogleAccountsSection oauthConfigured={oauthConfigured} drivePickerConfigured={gmailStatus?.drivePickerConfigured !== false} />
+    </div>
+  );
+}
+
+function BoxDetail() {
+  const { activeVaultId } = useVaults();
+  return (
+    <div className="min-w-0 space-y-2" data-testid="box-detail">
+      <BoxSection vaultId={activeVaultId || undefined} />
     </div>
   );
 }
@@ -6542,6 +6551,7 @@ function IntegrationDetail({ provider }: { provider: string }) {
       )}
 
       {provider === "google" && <GoogleDetail />}
+      {provider === "box" && <BoxDetail />}
 
       {provider === "elevenlabs" && (
         <div className="space-y-4">
