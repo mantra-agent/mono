@@ -1,6 +1,7 @@
-import { desc, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import {
   MEMORY_VNEXT_LIFECYCLE_STAGE,
+  driveResources,
   memoryVnextClaims,
   memoryVnextClaimLinks,
   memoryVnextEntityLinks,
@@ -19,6 +20,11 @@ import {
   LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT,
 } from "../library-reference-index";
 import { resolveAddressBatch, ADDRESS_RESOLUTION_BATCH_LIMIT, type AddressResolution } from "../address-resolver";
+import {
+  liveObjectGrantPredicate,
+  liveVaultGatePredicate,
+  objectGrantIdentity,
+} from "../authorize";
 import { peopleStorage } from "../people-storage";
 import { companyStorage } from "../company-storage";
 import { chatFileStorage } from "../chat-file-storage";
@@ -146,9 +152,18 @@ function sourceForAddressType(type: string): string {
       return "meeting";
     case "session":
       return "session";
+    case "file":
+      return "file";
     default:
       return type;
   }
+}
+
+/** Normalize vNext queue/source-ref types onto graph node address types. */
+function normalizeSourceRefType(sourceType: string): string {
+  if (sourceType === "library_page" || sourceType === "library") return "page";
+  if (sourceType === "drive_file") return "file";
+  return sourceType;
 }
 
 /**
@@ -301,8 +316,14 @@ export async function assemblePersonalGraph(
   // Goal/Project/Milestone/Task titles and structural topology are owned by the
   // Work adapter (registered as domain nodes below); claim mentions attach to them.
 
-  // Session source nodes (pages are all seeded; sessions are loaded only when cited).
+  // Session + drive_file source nodes (pages are all seeded; these load only when cited).
   const sourceSessionIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "session").map((ref) => ref.sourceId))];
+  const sourceDriveFileIds = [...new Set(
+    sourceRefs
+      .filter((ref) => ref.sourceType === "drive_file" || ref.sourceType === "file")
+      .map((ref) => ref.sourceId)
+      .filter(Boolean),
+  )];
   const sessionBatches: Array<Awaited<ReturnType<typeof chatFileStorage.getSession>>> = [];
   for (const batch of chunkValues(sourceSessionIds)) sessionBatches.push(...await chatFileStorage.getSessions(batch));
   const sourceSessionById = new Map(
@@ -310,6 +331,50 @@ export async function assemblePersonalGraph(
       .filter((session) => session !== undefined && sourceSessionIds.includes(session.id) && session.sessionType !== "agent" && session.sessionType !== "autonomous")
       .map((session) => [session!.id, session!]),
   );
+
+  // Durable file identity is drive_resources.id. Visibility mirrors FilesApi:
+  // account-owned bind OR live object grant OR live vault gate.
+  const sourceDriveFileById = new Map<string, {
+    id: string;
+    name: string;
+    provider: string;
+    providerFileId: string;
+    mimeType: string | null;
+    vaultId: string;
+    createdAt: Date;
+  }>();
+  if (sourceDriveFileIds.length > 0 && principal.accountId) {
+    const driveGrantIdentity = objectGrantIdentity("drive_resource", {
+      objectId: driveResources.id,
+      ownerUserId: driveResources.addedByUserId,
+      accountId: driveResources.accountId,
+      vaultId: driveResources.vaultId,
+    });
+    for (const batch of chunkValues(sourceDriveFileIds)) {
+      const rows = await db
+        .select({
+          id: driveResources.id,
+          name: driveResources.name,
+          provider: driveResources.provider,
+          providerFileId: driveResources.providerFileId,
+          mimeType: driveResources.mimeType,
+          vaultId: driveResources.vaultId,
+          createdAt: driveResources.createdAt,
+        })
+        .from(driveResources)
+        .where(
+          and(
+            inArray(driveResources.id, batch),
+            or(
+              eq(driveResources.accountId, principal.accountId),
+              liveObjectGrantPredicate(principal, driveGrantIdentity, "read"),
+              liveVaultGatePredicate(principal, driveResources.vaultId, "read"),
+            ),
+          ),
+        );
+      for (const row of rows) sourceDriveFileById.set(row.id, row);
+    }
+  }
 
   // ---- Node assembly (keyed by canonical address; merges by address) ----
   const entries: PersonalGraphNode[] = [];
@@ -471,9 +536,49 @@ export async function assemblePersonalGraph(
       recency: computeNodeRecency(createdTs, updatedTs),
     });
   }
+
+  function ensureDriveFileNode(sourceId: string, createdAt?: Date | string | null): number | null {
+    const file = sourceDriveFileById.get(sourceId);
+    if (!file) return null;
+    // Canonical durable file identity for graph/source refs is drive_resource id.
+    const key = `file:${file.id}`;
+    const existing = nodeIdByAddress.get(key);
+    if (existing !== undefined) return existing;
+    const createdTs = file.createdAt || createdAt;
+    const summary = [file.provider, file.mimeType].filter(Boolean).join(" · ") || "Indexed file";
+    return registerNode(key, {
+      id: nextSyntheticNodeId--,
+      content: summary,
+      title: file.name || sourceId,
+      summary,
+      layer: "long",
+      source: "file",
+      sourceId: file.id,
+      tags: ["file", file.provider].filter(Boolean),
+      graphed: true,
+      metadata: {
+        graphStorage: "vnext",
+        nodeKind: "source",
+        nodeType: "file",
+        driveResourceId: file.id,
+        provider: file.provider,
+        providerFileId: file.providerFileId,
+        vaultId: file.vaultId,
+        // Protocol @file: is path-shaped today; durable identity remains drive_resource id.
+        reference: `file:${file.id}`,
+      },
+      createdAt: serializeDate(createdTs),
+      updatedAt: serializeDate(createdTs),
+      recency: computeNodeRecency(createdTs, createdTs),
+    });
+  }
+
   for (const ref of sourceRefs) {
     if (!visibleClaimIds.has(ref.claimId)) continue;
     if (ref.sourceType === "session") ensureSessionNode(ref.sourceId, ref.createdAt);
+    if (ref.sourceType === "drive_file" || ref.sourceType === "file") {
+      ensureDriveFileNode(ref.sourceId, ref.createdAt);
+    }
   }
 
   // Resolve distinct non-page occurrence targets through independently authorized
@@ -559,7 +664,7 @@ export async function assemblePersonalGraph(
   }
   for (const ref of sourceRefs) {
     if (!visibleClaimIds.has(ref.claimId)) continue;
-    const normalizedType = ref.sourceType === "library_page" || ref.sourceType === "library" ? "page" : ref.sourceType;
+    const normalizedType = normalizeSourceRefType(ref.sourceType);
     const key = normalizedType === "page"
       ? `page:${pageById.get(ref.sourceId)?.id ?? ref.sourceId}`
       : `${normalizedType}:${ref.sourceId}`;

@@ -1,8 +1,9 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { or, inArray, sql, desc } from "drizzle-orm";
+import { and, eq, or, inArray, sql, desc } from "drizzle-orm";
 import {
   MEMORY_VNEXT_LIFECYCLE_STAGE,
+  driveResources,
   memoryVnextClaims,
   memoryVnextEntityLinks,
   memoryVnextClaimLinks,
@@ -37,6 +38,11 @@ import { chatFileStorage } from "../chat-file-storage";
 import { listMeetingGraphRecords, type MeetingIndexRecord } from "../meetings/meeting-index";
 import { getLibraryAuthoredOccurrences, getLibraryReferenceNeighborhood, scheduleLibraryReferenceReplay } from "../library-reference-index";
 import { normalizeProtocolAddress } from "@shared/life-addressing";
+import {
+  liveObjectGrantPredicate,
+  liveVaultGatePredicate,
+  objectGrantIdentity,
+} from "../authorize";
 import { assemblePersonalGraph, libraryFirstGraphEnabled } from "./personal-graph-projection";
 import {
   isAcceptedMemoryGraphSettingsSnapshot,
@@ -549,8 +555,14 @@ async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<
 
     const sourcePageIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "library_page" || ref.sourceType === "library").map((ref) => ref.sourceId))];
     const sourceSessionIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "session").map((ref) => ref.sourceId))];
+    const sourceDriveFileIds = [...new Set(
+      sourceRefs
+        .filter((ref) => ref.sourceType === "drive_file" || ref.sourceType === "file")
+        .map((ref) => ref.sourceId)
+        .filter(Boolean),
+    )];
     const pageScope = { ownerUserId: libraryPages.ownerUserId, accountId: libraryPages.accountId, scope: libraryPages.scope };
-    const [sourcePageRows, sessionBatches] = await Promise.all([
+    const [sourcePageRows, sessionBatches, sourceDriveFileRows] = await Promise.all([
       (async () => {
         const pages: Array<{ id: string; slug: string; title: string; summary: string | null; oneLiner: string | null; createdAt: Date; updatedAt: Date }> = [];
         for (const batch of chunkValues(sourcePageIds)) {
@@ -568,6 +580,56 @@ async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<
         }
         return sessions;
       })(),
+      (async () => {
+        if (sourceDriveFileIds.length === 0 || !principal.accountId) return [] as Array<{
+          id: string;
+          name: string;
+          provider: string;
+          providerFileId: string;
+          mimeType: string | null;
+          vaultId: string;
+          createdAt: Date;
+        }>;
+        const driveGrantIdentity = objectGrantIdentity("drive_resource", {
+          objectId: driveResources.id,
+          ownerUserId: driveResources.addedByUserId,
+          accountId: driveResources.accountId,
+          vaultId: driveResources.vaultId,
+        });
+        const files: Array<{
+          id: string;
+          name: string;
+          provider: string;
+          providerFileId: string;
+          mimeType: string | null;
+          vaultId: string;
+          createdAt: Date;
+        }> = [];
+        for (const batch of chunkValues(sourceDriveFileIds)) {
+          files.push(...await db
+            .select({
+              id: driveResources.id,
+              name: driveResources.name,
+              provider: driveResources.provider,
+              providerFileId: driveResources.providerFileId,
+              mimeType: driveResources.mimeType,
+              vaultId: driveResources.vaultId,
+              createdAt: driveResources.createdAt,
+            })
+            .from(driveResources)
+            .where(
+              and(
+                inArray(driveResources.id, batch),
+                or(
+                  eq(driveResources.accountId, principal.accountId),
+                  liveObjectGrantPredicate(principal, driveGrantIdentity, "read"),
+                  liveVaultGatePredicate(principal, driveResources.vaultId, "read"),
+                ),
+              ),
+            ));
+        }
+        return files;
+      })(),
     ]);
     const allSessions = sessionBatches.flat().filter((session) => session !== undefined);
     const sourcePageById = new Map<string, typeof sourcePageRows[number]>();
@@ -575,6 +637,7 @@ async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<
       sourcePageById.set(page.id, page);
       sourcePageById.set(page.slug, page);
     }
+    const sourceDriveFileById = new Map(sourceDriveFileRows.map((file) => [file.id, file]));
 
     const librarySeedPageIds = sourcePageRows.map((page) => page.id);
     const [libraryNeighborhood, libraryAuthoredOccurrences] = await Promise.all([
@@ -729,40 +792,58 @@ async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<
       }
     }
 
-    function ensureSourceNode(normalizedType: "page" | "session", sourceId: string, createdAt?: Date | string | null): number | null {
+    function ensureSourceNode(
+      normalizedType: "page" | "session" | "file",
+      sourceId: string,
+      createdAt?: Date | string | null,
+    ): number | null {
       const page = normalizedType === "page" ? sourcePageById.get(sourceId) : undefined;
       const session = normalizedType === "session" ? sourceSessionById.get(sourceId) : undefined;
-      if (!page && !session) return null;
-      const canonicalId = page?.id || session?.id || sourceId;
+      const file = normalizedType === "file" ? sourceDriveFileById.get(sourceId) : undefined;
+      if (!page && !session && !file) return null;
+      const canonicalId = page?.id || session?.id || file?.id || sourceId;
       const key = `${normalizedType}:${canonicalId}`;
       const existing = sourceNodeIds.get(key) ?? sourceNodeIds.get(`${normalizedType}:${sourceId}`);
       if (existing) return existing;
       const sourceNodeId = nextSyntheticNodeId--;
       sourceNodeIds.set(key, sourceNodeId);
       sourceNodeIds.set(`${normalizedType}:${sourceId}`, sourceNodeId);
-      const title = page?.title || session?.title || sourceId;
-      const content = page?.summary || page?.oneLiner || session?.summary || "";
+      const title = page?.title || session?.title || file?.name || sourceId;
+      const fileSummary = file
+        ? [file.provider, file.mimeType].filter(Boolean).join(" · ") || "Indexed file"
+        : "";
+      const content = page?.summary || page?.oneLiner || session?.summary || fileSummary || "";
       const sessionLastMessageAt = (session?.messages ?? []).reduce<Date | null>((latest, message) => {
         const candidate = maxTimestamp(message.updatedAt, message.createdAt);
         return !candidate || (latest && latest >= candidate) ? latest : candidate;
       }, null);
-      const sourceCreatedAt = page?.createdAt || session?.createdAt || createdAt;
-      const sourceUpdatedAt = page?.updatedAt || maxTimestamp(session?.updatedAt, sessionLastMessageAt) || createdAt;
+      const sourceCreatedAt = page?.createdAt || session?.createdAt || file?.createdAt || createdAt;
+      const sourceUpdatedAt = page?.updatedAt || maxTimestamp(session?.updatedAt, sessionLastMessageAt) || file?.createdAt || createdAt;
       entries.push({
         id: sourceNodeId,
         content,
         title,
-        summary: page?.summary || session?.summary || undefined,
+        summary: page?.summary || session?.summary || (file ? fileSummary : undefined),
         layer: "long",
         source: normalizedType,
-        sourceId: page?.slug || session?.id || sourceId,
-        tags: [normalizedType],
+        sourceId: page?.slug || session?.id || file?.id || sourceId,
+        tags: file ? ["file", file.provider].filter(Boolean) : [normalizedType],
         graphed: true,
         metadata: {
           graphStorage: "vnext",
           nodeKind: "source",
           nodeType: normalizedType,
-          reference: `@${normalizedType}:${page?.id || session?.id || sourceId}`,
+          ...(file
+            ? {
+                driveResourceId: file.id,
+                provider: file.provider,
+                providerFileId: file.providerFileId,
+                vaultId: file.vaultId,
+                reference: `file:${file.id}`,
+              }
+            : {
+                reference: `@${normalizedType}:${page?.id || session?.id || sourceId}`,
+              }),
         },
         createdAt: serializeDate(sourceCreatedAt),
         updatedAt: serializeDate(sourceUpdatedAt),
@@ -773,8 +854,13 @@ async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<
 
     for (const ref of sourceRefs) {
       if (!visibleClaimIds.has(ref.claimId)) continue;
-      const normalizedType = ref.sourceType === "library_page" || ref.sourceType === "library" ? "page" : ref.sourceType;
-      if (normalizedType !== "page" && normalizedType !== "session") continue;
+      const normalizedType =
+        ref.sourceType === "library_page" || ref.sourceType === "library"
+          ? "page"
+          : ref.sourceType === "drive_file"
+            ? "file"
+            : ref.sourceType;
+      if (normalizedType !== "page" && normalizedType !== "session" && normalizedType !== "file") continue;
       ensureSourceNode(normalizedType, ref.sourceId, ref.createdAt);
     }
 
@@ -796,7 +882,12 @@ async function handleGetVnextGraphLegacy(_req: Request, res: Response): Promise<
       }));
 
     for (const ref of sourceRefs) {
-      const normalizedType = ref.sourceType === "library_page" || ref.sourceType === "library" ? "page" : ref.sourceType;
+      const normalizedType =
+        ref.sourceType === "library_page" || ref.sourceType === "library"
+          ? "page"
+          : ref.sourceType === "drive_file"
+            ? "file"
+            : ref.sourceType;
       const page = normalizedType === "page" ? sourcePageById.get(ref.sourceId) : undefined;
       const sourceNodeId = sourceNodeIds.get(`${normalizedType}:${page?.id || ref.sourceId}`) ?? sourceNodeIds.get(`${normalizedType}:${ref.sourceId}`);
       if (!sourceNodeId || !visibleClaimIds.has(ref.claimId)) continue;
