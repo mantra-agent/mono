@@ -260,8 +260,16 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
     });
 
     if (await pathExists(packageNodeModules)) {
-      await rm(packageNodeModules, { recursive: true, force: true });
-      throw new Error("npm_created_forbidden_node_modules");
+      const stats = await lstat(packageNodeModules);
+      const canonicalNodeModules = await realpath(packageNodeModules);
+      const isImmutableToolchain =
+        isRepositoryRootPackage &&
+        stats.isSymbolicLink() &&
+        canonicalNodeModules === resolve(WORKSPACE_DIR, "node_modules");
+      if (!isImmutableToolchain) {
+        await rm(packageNodeModules, { recursive: true, force: true });
+        throw new Error("npm_created_forbidden_node_modules");
+      }
     }
 
     const finalManifest = await readFile(manifestPath, "utf-8");

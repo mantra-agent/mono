@@ -96,6 +96,7 @@
     "openai": "^6.18.0",
     "p-limit": "^7.3.0",
     "p-retry": "^7.1.1",
+    "pdfjs-dist": "6.2.108",
     "pg": "^8.16.3",
     "plaid": "^41.4.0",
     "playwright-core": "^1.58.2",
