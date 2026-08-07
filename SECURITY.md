@@ -1,3 +1,11 @@
+<!-- 2026-08-07 ModelClient upstream-error HTTP classification repair:
+- Assets/data: sanitized external-provider failure envelopes (S1 operational metadata), provider/model identifiers, HTTP status, allowlisted provider codes, and aggregate error fingerprints.
+- Flow/boundary: untrusted OpenAI subscription response -> `model-client.ts` HTTP failure normalization -> bounded retry/fallback -> structured telemetry.
+- Failure/threat: the subscription gateway returned provider code `upstream_error` with HTTP 400 for a valid request; status-only classification labeled it permanent, skipped the bounded retry path, and emitted duplicate error aggregates despite immediate fallback recovery (STRIDE spoofing/availability/repudiation analogue; OBS-01).
+- Controls/owner: Model Runtime treats only the exact sanitized machine code `upstream_error` as retryable when HTTP status is otherwise permanent. Message text cannot affect retryability; existing four-attempt exponential bounds, replay-safety fence, redaction, fallback, and terminal error behavior remain authoritative. Recovered provider conditions remain warning-level. Severity: medium. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: provider code semantics remain an external contract; an exhausted bounded retry still fails truthfully and can fall through configured routing. Revert this classifier delta to restore status-only handling.
+-->
+
 <!-- 2026-08-06 Executor single-exchange context budget repair:
 - Assets/data: A02/S2 private conversation/tool evidence and attachments, A04 model-visible instructions and security context, A07 audit correlation, A08 provider context capacity.
 - Flow/boundary: assembled Executor messages + tool schemas -> pre-dispatch `runCompaction` hard-input envelope -> provider stream; provider overflow -> emergency compaction retry.
