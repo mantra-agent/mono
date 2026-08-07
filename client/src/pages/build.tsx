@@ -4174,12 +4174,14 @@ export function DesignTab() {
             </p>
             <div className="mt-4 bg-black p-4">
               <div className={cn(MODAL_GLASS_SURFACE_CLASS, "mx-auto max-w-sm p-4")}>
-                <div className="relative z-10 space-y-2">
-                  <div className="text-sm font-medium">Canonical modal glass</div>
+                <div className="space-y-2">
+                  <div className="text-sm font-medium text-white">Canonical modal glass</div>
                   <p className="text-xs leading-relaxed text-white/70">
                     Translucent warm-dark gradient, white structural edge and
-                    highlights, deep shadow, and backdrop blur. Never substitute
-                    bg-background, bg-card, or a one-off gradient.
+                    highlights, deep shadow, and backdrop blur. Sheen paints under
+                    content; titles stay white and secondary copy uses white/70.
+                    Never substitute bg-background, bg-card, muted-foreground, or a
+                    one-off gradient.
                   </p>
                 </div>
               </div>
