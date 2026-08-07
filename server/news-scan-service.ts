@@ -486,28 +486,55 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       const shouldSurface = qualifiesForSurface && !suppressedAsDuplicate && remainingSurfaceSlots > 0;
       const status = shouldSurface ? "surfaced" : qualifiesForSurface ? "new" : scored.relevanceScore >= relevanceThreshold ? "new" : "archived";
 
-      const { item, isNew } = await signalStorage.upsertSignal({
-        sourceType: raw.sourceType,
-        sourceId: raw.sourceId,
-        url: raw.url,
-        title: raw.title,
-        snippet: raw.snippet,
-        agentSummary: curated.agentSummary,
-        curatedTitle: curated.curatedTitle,
-        curatedReason: curated.curatedReason,
-        curationStatus: curated.curationStatus,
-        curationScore: curated.curationScore,
-        matchedTopics: curated.matchedTopics,
-        curatedAt: curated.curationStatus !== "unread" ? new Date() : null,
-        publishedAt: raw.publishedAt ? new Date(raw.publishedAt) : null,
-        relevanceScore: curated.relevanceScore,
-        relevanceTags: curated.relevanceTags,
-        matchingSkills: curated.matchingSkills,
-        matchingTheses: curated.matchingTheses,
-        fingerprint,
-        duplicateOfSignalId,
-        status,
-      });
+      let upserted: Awaited<ReturnType<typeof signalStorage.upsertSignal>>;
+      try {
+        upserted = await signalStorage.upsertSignal({
+          sourceType: raw.sourceType,
+          sourceId: raw.sourceId,
+          url: raw.url,
+          title: raw.title,
+          snippet: raw.snippet,
+          agentSummary: curated.agentSummary,
+          curatedTitle: curated.curatedTitle,
+          curatedReason: curated.curatedReason,
+          curationStatus: curated.curationStatus,
+          curationScore: curated.curationScore,
+          matchedTopics: curated.matchedTopics,
+          curatedAt: curated.curationStatus !== "unread" ? new Date() : null,
+          publishedAt: raw.publishedAt ? new Date(raw.publishedAt) : null,
+          relevanceScore: curated.relevanceScore,
+          relevanceTags: curated.relevanceTags,
+          matchingSkills: curated.matchingSkills,
+          matchingTheses: curated.matchingTheses,
+          fingerprint,
+          duplicateOfSignalId,
+          status,
+        });
+      } catch (upsertErr) {
+        const code = (upsertErr as { code?: string } | null)?.code;
+        const msg = upsertErr instanceof Error ? upsertErr.message : String(upsertErr);
+        // Ownership collisions are per-signal and must not abort the whole scan or
+        // collapse into an undefined-item status read. Record and continue.
+        if (code === "SIGNAL_FINGERPRINT_OWNERSHIP_CONFLICT") {
+          errors.push(`upsert:${fingerprint}: ownership_conflict`);
+          log.warn(`scan: skipped signal on fingerprint ownership conflict fingerprint=${fingerprint}`);
+          diagnostics.recordDeduped(raw.sourceId);
+          itemsDeduped++;
+          continue;
+        }
+        throw upsertErr instanceof Error
+          ? upsertErr
+          : Object.assign(new Error(msg), { code: "SIGNAL_UPSERT_FAILED" });
+      }
+
+      const { item, isNew } = upserted;
+      if (!item || typeof item.status !== "string" || !item.id) {
+        const error = new Error(
+          `Signal upsert returned incomplete item for fingerprint=${fingerprint}`,
+        ) as Error & { code?: string };
+        error.code = "SIGNAL_UPSERT_INCOMPLETE_RESULT";
+        throw error;
+      }
 
       signalRowUpserts++;
       diagnostics.recordPersisted(raw.sourceId);
@@ -637,7 +664,9 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       message,
     };
   } catch (err) {
+    const code = (err as { code?: string } | null)?.code;
     const msg = err instanceof Error ? err.message : String(err);
+    const labeled = code ? `${code}: ${msg}` : msg;
     try {
       await signalStorage.saveSourceScanDiagnostics(diagnostics.finalize().map(row => ({
         scanRunId: row.scanRunId,
@@ -652,7 +681,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         surfacedCount: row.surfacedCount,
         dedupedCount: row.dedupedCount,
         rejectedByReason: row.rejectedByReason,
-        lastError: row.lastError ?? msg,
+        lastError: row.lastError ?? labeled,
         startedAt: row.startedAt,
         completedAt: row.completedAt ?? new Date(),
       })));
@@ -665,7 +694,7 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
         itemsFound: 0,
         itemsSurfaced: 0,
         itemsDeduped: 0,
-        error: msg,
+        error: labeled,
       });
     } catch (completionErr) {
       log.error(
@@ -678,8 +707,8 @@ export async function runLandscapeScan(): Promise<LandscapeScanResult> {
       itemsFound: 0,
       itemsSurfaced: 0,
       itemsDeduped: 0,
-      errors: [msg],
-      message: `Scan failed: ${msg}`,
+      errors: [labeled],
+      message: `Scan failed: ${labeled}`,
     };
   }
 }
