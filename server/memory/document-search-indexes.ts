@@ -253,6 +253,10 @@ async function verifyOperationalQuery(client: PoolClient): Promise<"verified" | 
     50,
   ).toSQL();
   await client.query(`SET statement_timeout TO '${OPERATIONAL_PROBE_TIMEOUT_MS}ms'`);
+  // Prove that the canonical indexes can carry the production query independently
+  // of transient table size and cache-cost estimates. This is a maintenance-session
+  // setting only; production searches retain PostgreSQL's normal cost decisions.
+  await client.query("SET enable_seqscan TO off");
   const startedAt = performance.now();
 
   try {
@@ -271,12 +275,12 @@ async function verifyOperationalQuery(client: PoolClient): Promise<"verified" | 
     const missingIndexes = requiredOperationalIndexes
       .filter((name) => !usedIndexes.has(name));
     if (missingIndexes.length > 0) {
-      log.error("session search operational probe failed", {
-        outcome: "missing_required_indexes",
-        missingIndexes,
-        durationMs: Number((performance.now() - startedAt).toFixed(2)),
-      });
-      throw new Error("Session search operational probe missed required indexes");
+      const error = new Error(
+        "Session search operational probe missed required indexes",
+      ) as Error & { code: string; missingIndexes: string[] };
+      error.code = "SESSION_SEARCH_REQUIRED_INDEX_UNUSED";
+      error.missingIndexes = missingIndexes;
+      throw error;
     }
 
     log.info("session search operational probe verified", {
@@ -294,13 +298,24 @@ async function verifyOperationalQuery(client: PoolClient): Promise<"verified" | 
     });
     return "verified";
   } catch (error) {
+    const code = errorCode(error);
     log.error("session search operational probe failed", {
-      outcome: errorCode(error) === "57014" ? "statement_timeout" : "query_failure",
-      sqlState: errorCode(error),
+      outcome:
+        code === "57014"
+          ? "statement_timeout"
+          : code === "SESSION_SEARCH_REQUIRED_INDEX_UNUSED"
+            ? "required_index_unused"
+            : "query_failure",
+      code,
+      missingIndexes:
+        error && typeof error === "object" && "missingIndexes" in error
+          ? (error as { missingIndexes: unknown }).missingIndexes
+          : undefined,
       durationMs: Number((performance.now() - startedAt).toFixed(2)),
     });
-    throw new Error("Session search operational probe failed");
+    throw error;
   } finally {
+    await client.query("SET enable_seqscan TO on");
     await client.query("SET statement_timeout TO '15min'");
   }
 }
