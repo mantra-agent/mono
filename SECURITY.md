@@ -61,6 +61,14 @@
 - Residual: historical aggregates cannot be retroactively enriched; timeout-only Suspense failures remain separately classified as ROUTE_LOAD_TIMEOUT without an exception stack because no exception was thrown.
 -->
 
+<!-- 2026-08-07 Route module version-skew recovery residual:
+- Assets/data: browser and server build identifiers plus bounded route-module error identity (S1 operational metadata); no route payload, user content, or module response body.
+- Flow/boundary: untrusted dynamic-import rejection -> lazyWithRetry wraps the final failure -> app-level version-skew guard inspects a bounded Error cause chain -> authenticated same-origin `/api/version` comparison -> one replay-safe reload or visible update prompt.
+- Threats: an HTML fallback or deployment-skew response can surface as a browser TypeError (`text/html` is not valid JavaScript), remain hidden inside RouteLoadError.cause, and bypass narrow chunk-message matching, leaving a stale client unable to recover (availability/DoS). Over-broad matching could instead create reload loops.
+- Controls/owner: Client Platform recognizes only established module-load signatures plus the browser's exact invalid-JavaScript-MIME family, traverses at most four Error causes, dispatches only the wrapped Error object inside the same page, and retains the existing server build-ID proof plus per-build sessionStorage reload fence. No response text is logged or persisted. Severity: medium. SLA: immediate. Status: repaired in source pending build/merge/deployment.
+- Residual/rollback: same-build CDN/origin HTML responses still present the ordinary route failure rather than looping because the server build ID matches; transient version-check failure shows the existing reload prompt. Revert the two client-library changes to restore manual-reload-only recovery for this browser error family.
+-->
+
 <!-- 2026-08-07 RouteLoadBoundary residual TypeError / budget classification:
 - Assets/data: route keys, failure phase, and stable product error codes (S1 operational metadata); no route payload bodies or user content.
 - Flow/boundary: React render TypeErrors and named route-load budgets -> RouteLoadBoundary/lazyWithRetry producer normalization -> redacting client logger -> authenticated telemetry sink. Separate producer fix: optional-chain-then-method null intermediates on Platforms/Integrations and shared list lookups.

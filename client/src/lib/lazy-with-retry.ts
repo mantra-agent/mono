@@ -73,6 +73,9 @@ export function lazyWithRetry<T extends React.ComponentType<any>>(
         2,
         retryError,
       );
+      window.dispatchEvent(
+        new CustomEvent("mantra:route-module-load-failed", { detail: error }),
+      );
       log.error("page module load exhausted", error, {
         attempts: error.attempts,
         errorName: error.causeName,
