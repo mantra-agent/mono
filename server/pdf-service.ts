@@ -37,12 +37,13 @@ const HEADING_SIZE = 16;
 const TITLE_SIZE = 22;
 const LINE_GAP = 4;
 
-type ExternalSource = { kind: "external"; driveResourceId?: string; provider?: FilesProvider; providerFileId?: string; vaultId?: string };
+type ExternalSource = { kind: "external"; driveResourceId?: string; rootDriveResourceId?: string; provider?: FilesProvider; providerFileId?: string; vaultId?: string };
 type InternalSource = { kind: "internal"; objectPath: string; document?: DocumentArtifact };
 type ResolvedSource = ExternalSource | InternalSource;
 
 export type OpenPdfInput = {
   driveResourceId?: string;
+  rootDriveResourceId?: string;
   provider?: FilesProvider;
   providerFileId?: string;
   vaultId?: string;
@@ -168,12 +169,12 @@ async function visibleDocument(id: string): Promise<DocumentArtifact> {
 }
 
 async function resolveSource(input: OpenPdfInput): Promise<ResolvedSource> {
-  const hasProviderTuple = !!(input.provider || input.providerFileId || input.vaultId);
+  const hasProviderTuple = !!(input.provider || input.providerFileId || input.vaultId || input.rootDriveResourceId);
   const discriminators = [!!input.driveResourceId, hasProviderTuple, !!input.objectPath, !!input.documentId, !!input.uploadId].filter(Boolean).length;
   if (discriminators !== 1) throw httpError(400, "Exactly one PDF source is required");
   if (hasProviderTuple) {
     if (!input.provider || !input.providerFileId || !input.vaultId) throw httpError(400, "provider, providerFileId, and vaultId are required together");
-    return { kind: "external", provider: input.provider, providerFileId: input.providerFileId, vaultId: input.vaultId };
+    return { kind: "external", provider: input.provider, providerFileId: input.providerFileId, vaultId: input.vaultId, rootDriveResourceId: input.rootDriveResourceId };
   }
   if (input.driveResourceId) return { kind: "external", driveResourceId: input.driveResourceId };
   if (input.documentId) {
@@ -218,6 +219,7 @@ function viewerUrlFor(input: OpenPdfInput, documentId: string | null): string | 
       provider: input.provider,
       vaultId: input.vaultId,
     });
+    if (input.rootDriveResourceId) params.set("rootDriveResourceId", input.rootDriveResourceId);
     return `/documents/${encodeURIComponent(input.providerFileId)}?${params.toString()}`;
   }
   if (input.objectPath || input.uploadId) {
@@ -300,7 +302,7 @@ async function loadPdfJs(): Promise<PdfJsModule> {
     pdfJsLoad = (async () => {
       // Same Mozilla PDF.js family as the client viewer (pdfjs-dist@6.2.108).
       // Production installs from package-lock; do not CDN-import in Node.
-      const mod = await import("pdfjs-dist");
+      const mod = await import("pdfjs-dist/legacy/build/pdf.mjs");
       return mod as unknown as PdfJsModule;
     })();
   }

@@ -38,6 +38,7 @@ export type PdfOpenSource =
       provider: "google" | "box" | "mantra";
       providerFileId: string;
       vaultId: string;
+      rootDriveResourceId?: string;
     }
   | { kind: "object"; objectPath: string };
 
@@ -88,6 +89,7 @@ function openBody(source: PdfOpenSource): Record<string, string> {
         provider: source.provider,
         providerFileId: source.providerFileId,
         vaultId: source.vaultId,
+        ...(source.rootDriveResourceId ? { rootDriveResourceId: source.rootDriveResourceId } : {}),
       };
     case "object":
       return { objectPath: source.objectPath };
