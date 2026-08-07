@@ -770,7 +770,22 @@ app.use((req, res, next) => {
           log(`[scheduled] plan recovery failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
         });
       };
+      setTimeout(runPlanRecovery, 5_000).unref();
       setInterval(runPlanRecovery, PLAN_RECOVERY_INTERVAL_MS).unref();
+
+      // Workflows use the same durable child-executor geometry as Plans, but
+      // retain structured stage verdicts and template-defined transitions.
+      const WORKFLOW_RECOVERY_INTERVAL_MS = 60_000;
+      const runWorkflowRecovery = () => {
+        import("./workflows/workflow-service").then(async ({ recoverInterruptedWorkflows }) => {
+          const recovered = await recoverInterruptedWorkflows();
+          if (recovered > 0) log(`[scheduled] workflow recovery: recovered=${recovered}`, "boot");
+        }).catch((err) => {
+          log(`[scheduled] workflow recovery failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
+        });
+      };
+      setTimeout(runWorkflowRecovery, 7_500).unref();
+      setInterval(runWorkflowRecovery, WORKFLOW_RECOVERY_INTERVAL_MS).unref();
 
       // Periodic prune of completed/abandoned voice_session_active rows so the
       // table (and its partial index) stay compact. Retention is configurable
