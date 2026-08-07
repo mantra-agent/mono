@@ -372,31 +372,60 @@ export async function ensureVaults(): Promise<void> {
     }
 
     // Legacy chat projections can predate account_id even when owner_user_id is
-    // present. Recover both ownership fields from the canonical user ->
-    // memberships -> personal account relation before validating the Vault
-    // invariant. users has no account_id column; memberships is the sole
-    // ordinary user/account join. The generic account-based pass above cannot
-    // repair those rows because their account_id is NULL.
+    // present. Recover both ownership fields from the canonical personal-account
+    // owner relation before validating the Vault invariant. Memberships express
+    // access, not ownership, and may be absent or include additional accounts;
+    // accounts.owner_user_id is the unambiguous document-owner authority. The
+    // generic account-based pass above cannot repair rows whose account_id is NULL.
     const { rowCount: recoveredChatVaultCount } = await pool.query(`
       UPDATE document_store_documents d
-      SET account_id = m.account_id,
+      SET account_id = a.id,
           vault_id = v.id,
           updated_at = CURRENT_TIMESTAMP
-      FROM memberships m
-      JOIN accounts a
-        ON a.id = m.account_id
-       AND a.kind = 'personal'
+      FROM accounts a
       JOIN vaults v
         ON v.account_id = a.id
        AND v.is_default = true
       WHERE d.document_type = 'chat'
         AND d.scope = 'user'
         AND d.vault_id IS NULL
-        AND d.owner_user_id = m.user_id
-        AND m.account_id IS NOT NULL
+        AND a.kind = 'personal'
+        AND a.owner_user_id = d.owner_user_id
     `);
     if (recoveredChatVaultCount && recoveredChatVaultCount > 0) {
       log.log(`Recovered Vault ownership for ${recoveredChatVaultCount} legacy chat document(s)`);
+    }
+
+    // Emit only bounded aggregate shape diagnostics. Never log document IDs,
+    // principal identity, titles, paths, metadata, or content.
+    const { rows: [unresolvedChatVaults] } = await pool.query<{
+      unresolved_count: string;
+      missing_owner_count: string;
+      missing_personal_account_count: string;
+    }>(`
+      SELECT COUNT(*)::text AS unresolved_count,
+             COUNT(*) FILTER (WHERE d.owner_user_id IS NULL)::text AS missing_owner_count,
+             COUNT(*) FILTER (
+               WHERE d.owner_user_id IS NOT NULL
+                 AND NOT EXISTS (
+                   SELECT 1
+                   FROM accounts a
+                   WHERE a.kind = 'personal'
+                     AND a.owner_user_id = d.owner_user_id
+                 )
+             )::text AS missing_personal_account_count
+      FROM document_store_documents d
+      WHERE d.document_type = 'chat'
+        AND d.scope = 'user'
+        AND d.vault_id IS NULL
+    `);
+    const unresolvedChatVaultCount = Number(unresolvedChatVaults?.unresolved_count ?? 0);
+    if (unresolvedChatVaultCount > 0) {
+      log.warn("Legacy user chat Vault ownership remains unresolved", {
+        unresolvedCount: unresolvedChatVaultCount,
+        missingOwnerCount: Number(unresolvedChatVaults?.missing_owner_count ?? 0),
+        missingPersonalAccountCount: Number(unresolvedChatVaults?.missing_personal_account_count ?? 0),
+      });
     }
 
     // User-owned chat documents must always have one canonical Vault after the
