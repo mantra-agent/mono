@@ -94,6 +94,7 @@ const PlatformEnvironmentDetailPage = lazyWithRetry(() => import("@/pages/platfo
 const WellnessPage = lazyWithRetry(() => import("@/pages/wellness"));
 const InfoPage = lazyWithRetry(() => import("@/pages/library/index"));
 const FilesPage = lazyWithRetry(() => import("@/pages/files"));
+const DocumentViewerPage = lazyWithRetry(() => import("@/pages/document-viewer"));
 const FinancePage = lazyWithRetry(() => import("@/pages/finance"));
 const CreatePage = lazyWithRetry(() => import("@/pages/create-page"));
 const ProfilePage = lazyWithRetry(() => import("@/pages/profile"));
@@ -368,6 +369,7 @@ function Router() {
         <Route path="/library" component={InfoPage} />
         <Route path="/info" component={InfoPage} />
         <Route path="/files" component={FilesPage} />
+        <Route path="/documents/:id" component={DocumentViewerPage} />
         <Route path="/audiences">{() => <RequirePermission permission="system:read"><AudiencesPage /></RequirePermission>}</Route>
         <Route path="/campaigns">{() => <RequirePermission permission="system:read"><CampaignsPage /></RequirePermission>}</Route>
         <Route path="/account" component={UserDetailsPage} />

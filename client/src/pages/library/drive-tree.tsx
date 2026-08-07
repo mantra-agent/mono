@@ -1,12 +1,14 @@
 // Use createLogger for logging ONLY
-import { useState, type CSSProperties } from "react";
+import { useState, type CSSProperties, type MouseEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import {
   Loader2,
   FileText,
   Folder,
   ChevronRight,
   ChevronDown,
+  ExternalLink,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
@@ -17,10 +19,9 @@ import { hexToRgba } from "@/lib/vault-title-color";
  *
  * This is the data-plane view of vault-bound provider resources (Google Drive,
  * Box, Mantra storage). It renders bound roots and lets you drill into folders
- * and open files in their provider — nothing more. The control plane (connect,
- * bind a folder via Picker, unbind, share) lives in the Integrations surface,
- * NOT here. Keeping this primitive free of mutations is what lets the Files
- * page mirror the Library tree without dragging connector management onto it.
+ * and open files — PDFs open in the in-product viewer; other files keep the
+ * provider link. The control plane (connect, bind, unbind, share) lives in
+ * Integrations, not here.
  */
 
 export interface DriveResource {
@@ -46,6 +47,45 @@ export interface FilesChild {
   viaFolderBind: boolean;
 }
 
+function isPdfResource(resource: {
+  name: string;
+  mimeType: string | null;
+}): boolean {
+  const mime = (resource.mimeType || "").toLowerCase();
+  if (mime === "application/pdf" || mime.includes("pdf")) return true;
+  return resource.name.toLowerCase().endsWith(".pdf");
+}
+
+function providerOpenLabel(provider: "google" | "box" | "mantra"): string {
+  if (provider === "box") return "Open in Box";
+  if (provider === "mantra") return "Open source";
+  return "Open in Google";
+}
+
+function pdfViewerHref(args: {
+  id: string;
+  source: "drive_resource" | "provider";
+  vaultId?: string;
+  provider?: "google" | "box" | "mantra";
+  providerFileId?: string;
+  webViewLink?: string | null;
+}): string {
+  const params = new URLSearchParams({ source: args.source });
+  if (args.vaultId) params.set("vaultId", args.vaultId);
+  if (args.provider) {
+    params.set("provider", args.provider);
+    params.set("providerLabel", providerOpenLabel(args.provider));
+  }
+  if (args.webViewLink) {
+    params.set("providerHref", args.webViewLink);
+  }
+  const routeId =
+    args.source === "provider" && args.providerFileId
+      ? args.providerFileId
+      : args.id;
+  return `/documents/${encodeURIComponent(routeId)}?${params.toString()}`;
+}
+
 export function resourceIcon(r: { resourceType: "file" | "folder" }) {
   return r.resourceType === "folder" ? (
     <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -60,17 +100,32 @@ function titleStyleForVault(vaultColor?: string | null): CSSProperties | undefin
   return { color };
 }
 
-/** File/folder title — clickable provider link when a webViewLink exists. */
+/** File/folder title — PDF opens in-product; other files keep provider links. */
 function ResourceTitle({
   name,
   href,
   titleStyle,
+  onOpen,
 }: {
   name: string;
   href: string | null;
   titleStyle?: CSSProperties;
+  onOpen?: (event: MouseEvent) => void;
 }) {
-  const className = "min-w-0 flex-1 truncate text-sm";
+  const className = "min-h-11 min-w-0 flex-1 truncate text-left text-sm leading-[44px]";
+  if (onOpen) {
+    return (
+      <button
+        type="button"
+        className={cn(className, "hover:underline")}
+        style={titleStyle}
+        title={name}
+        onClick={onOpen}
+      >
+        {name}
+      </button>
+    );
+  }
   if (href) {
     return (
       <a
@@ -92,6 +147,29 @@ function ResourceTitle({
   );
 }
 
+function ExternalOpenLink({
+  href,
+  label,
+}: {
+  href: string | null;
+  label: string;
+}) {
+  if (!href) return null;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+      aria-label={label}
+      title={label}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <ExternalLink className="h-3.5 w-3.5" />
+    </a>
+  );
+}
+
 /** Recursively lists the children of a bound folder. Read-only. */
 function FolderChildren({
   vaultId,
@@ -108,6 +186,7 @@ function FolderChildren({
   depth: number;
   vaultColor?: string | null;
 }) {
+  const [, setLocation] = useLocation();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const titleStyle = titleStyleForVault(vaultColor);
 
@@ -163,16 +242,43 @@ function FolderChildren({
         const key = c.providerFileId;
         const isOpen = !!expanded[key];
         const isFolder = c.resourceType === "folder";
+        const isPdf = !isFolder && isPdfResource(c);
+        const openPdf = (event: MouseEvent) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (c.driveResourceId) {
+            setLocation(
+              pdfViewerHref({
+                id: c.driveResourceId,
+                source: "drive_resource",
+                vaultId,
+                provider: c.provider,
+                webViewLink: c.webViewLink,
+              }),
+            );
+            return;
+          }
+          setLocation(
+            pdfViewerHref({
+              id: c.providerFileId,
+              source: "provider",
+              vaultId,
+              provider: c.provider,
+              providerFileId: c.providerFileId,
+              webViewLink: c.webViewLink,
+            }),
+          );
+        };
         return (
           <li key={key}>
             <div
-              className="group flex items-center gap-2 rounded px-2 py-1 hover:bg-muted/60"
+              className="group flex min-h-11 items-center gap-2 rounded px-2 py-1 hover:bg-muted/60"
               style={{ paddingLeft: 8 + depth * 12 }}
             >
               {isFolder ? (
                 <button
                   type="button"
-                  className="shrink-0 text-muted-foreground"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-muted-foreground"
                   onClick={() => setExpanded((s) => ({ ...s, [key]: !s[key] }))}
                   aria-label={isOpen ? "Collapse" : "Expand"}
                 >
@@ -186,7 +292,15 @@ function FolderChildren({
                 <span className="w-3.5 shrink-0" />
               )}
               {resourceIcon(c)}
-              <ResourceTitle name={c.name} href={c.webViewLink} titleStyle={titleStyle} />
+              <ResourceTitle
+                name={c.name}
+                href={isPdf ? null : c.webViewLink}
+                titleStyle={titleStyle}
+                onOpen={isPdf ? openPdf : undefined}
+              />
+              {isPdf ? (
+                <ExternalOpenLink href={c.webViewLink} label={providerOpenLabel(c.provider)} />
+              ) : null}
             </div>
             {isFolder && isOpen && (
               <FolderChildren
@@ -221,6 +335,7 @@ export function DriveResourceTree({
   emptyLabel?: string;
   vaultColor?: string | null;
 }) {
+  const [, setLocation] = useLocation();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const titleStyle = titleStyleForVault(vaultColor);
 
@@ -237,16 +352,30 @@ export function DriveResourceTree({
       {resources.map((r) => {
         const isOpen = !!expanded[r.id];
         const isFolder = r.resourceType === "folder";
+        const isPdf = !isFolder && isPdfResource(r);
+        const openPdf = (event: MouseEvent) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setLocation(
+            pdfViewerHref({
+              id: r.id,
+              source: "drive_resource",
+              vaultId,
+              provider: r.provider,
+              webViewLink: r.webViewLink,
+            }),
+          );
+        };
         return (
           <li key={r.id}>
             <div
-              className="group flex items-center gap-2 rounded px-2 py-1 hover:bg-muted/60"
+              className="group flex min-h-11 items-center gap-2 rounded px-2 py-1 hover:bg-muted/60"
               style={{ paddingLeft: 8 }}
             >
               {isFolder ? (
                 <button
                   type="button"
-                  className="shrink-0 text-muted-foreground"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-muted-foreground"
                   onClick={() => setExpanded((s) => ({ ...s, [r.id]: !s[r.id] }))}
                   aria-label={isOpen ? "Collapse" : "Expand"}
                 >
@@ -260,7 +389,15 @@ export function DriveResourceTree({
                 <span className="w-3.5 shrink-0" />
               )}
               {resourceIcon(r)}
-              <ResourceTitle name={r.name} href={r.webViewLink} titleStyle={titleStyle} />
+              <ResourceTitle
+                name={r.name}
+                href={isPdf ? null : r.webViewLink}
+                titleStyle={titleStyle}
+                onOpen={isPdf ? openPdf : undefined}
+              />
+              {isPdf ? (
+                <ExternalOpenLink href={r.webViewLink} label={providerOpenLabel(r.provider)} />
+              ) : null}
             </div>
             {isFolder && isOpen && (
               <FolderChildren
@@ -282,20 +419,45 @@ export function DriveResourceTree({
 /** A row in the flat cross-vault RECENT list (no vault badge). */
 export function RecentResourceRow({
   resource,
+  vaultId,
   vaultColor,
 }: {
   resource: DriveResource;
+  vaultId?: string;
   vaultColor?: string | null;
 }) {
+  const [, setLocation] = useLocation();
+  const isPdf = isPdfResource(resource);
+  const openPdf = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setLocation(
+      pdfViewerHref({
+        id: resource.id,
+        source: "drive_resource",
+        vaultId,
+        provider: resource.provider,
+        webViewLink: resource.webViewLink,
+      }),
+    );
+  };
+
   return (
-    <div className="group flex items-center gap-2 rounded px-2 py-1 hover:bg-muted/60">
+    <div className="group flex min-h-11 items-center gap-2 rounded px-2 py-1 hover:bg-muted/60">
       <span className="w-3.5 shrink-0" />
       {resourceIcon(resource)}
       <ResourceTitle
         name={resource.name}
-        href={resource.webViewLink}
+        href={isPdf ? null : resource.webViewLink}
         titleStyle={titleStyleForVault(vaultColor)}
+        onOpen={isPdf ? openPdf : undefined}
       />
+      {isPdf ? (
+        <ExternalOpenLink
+          href={resource.webViewLink}
+          label={providerOpenLabel(resource.provider)}
+        />
+      ) : null}
     </div>
   );
 }
