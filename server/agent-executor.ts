@@ -162,7 +162,13 @@ function resolveToolOutcomeFailureCode(args: {
   return "tool_failed";
 }
 
-export type ToolContinuation = "persona_switch" | "tool_schema_refresh" | "await_user" | "provider_system_tool";
+export type ToolContinuation =
+  | "persona_switch"
+  | "tool_schema_refresh"
+  | "await_user"
+  | "provider_system_tool"
+  /** Successful session.end / set_status=saved: stop the loop without requiring final assistant text. */
+  | "session_complete";
 export type ToolOutcome = "succeeded" | "degraded" | "failed" | "cancelled";
 
 export type ToolExecutorResult = {
@@ -1012,7 +1018,10 @@ interface RunIterationContext {
   personaSwitchRequested?: { toolCallId: string };
   toolSchemaRefreshRequested?: { toolCallId: string; toolName: string };
   awaitUserRequested?: { toolCallId: string };
+  sessionCompleteRequested?: { toolCallId: string };
   intentionallyAwaitingUser: boolean;
+  /** True when a successful session.end / set_status=saved intentionally completed the run. */
+  intentionallyCompletedSession: boolean;
   iterationToolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; order: number }>;
   convergence: RunConvergenceState;
 }
@@ -2048,6 +2057,9 @@ export class AgentExecutor extends EventEmitter {
         if ((event.continuation === "await_user" || event.continuation === "provider_system_tool") && toolCallId) {
           ctx.awaitUserRequested = { toolCallId };
         }
+        if (event.continuation === "session_complete" && toolCallId) {
+          ctx.sessionCompleteRequested = { toolCallId };
+        }
         // Chronology: record tool entry pointing to resolvedToolCalls index
         ctx.segmentChronology.push({ s: "tool", i: toolIdx });
         ctx.publish("tool_result", {
@@ -2680,7 +2692,9 @@ export class AgentExecutor extends EventEmitter {
 
     const lastStopReason = ctx.diagnosticLastModelStopReason;
     // Empty final text on a completed turn is never a clean success unless the
-    // executor intentionally stopped to await the user (e.g. question widget).
+    // executor intentionally stopped to await the user (e.g. question widget)
+    // or a successful session.end / set_status=saved completed the work without
+    // requiring a closing narration (silent autonomous skills such as enrich-email).
     // Classify on the LAST turn's visible text, not the merged run content: an
     // empty final turn after earlier tool narration must not be masked into a
     // false success (Grok/xAI empty end_turn after a tool-use sequence). By the
@@ -2692,7 +2706,8 @@ export class AgentExecutor extends EventEmitter {
       !ctx.aborted &&
       terminationReason === "complete" &&
       ctx.diagnosticLastAssistantVisibleTextLength === 0 &&
-      !ctx.intentionallyAwaitingUser;
+      !ctx.intentionallyAwaitingUser &&
+      !ctx.intentionallyCompletedSession;
     const degradationReason: TerminalDegradationReason | undefined =
       ctx.terminalToolFailure
         ? "tool_failure_recovered"
@@ -3067,6 +3082,7 @@ export class AgentExecutor extends EventEmitter {
       diagnosticFailedToolCount: 0,
       iterationToolCalls: [],
       intentionallyAwaitingUser: false,
+      intentionallyCompletedSession: false,
       segmentChronology: [],
       systemStepsData: [],
       chronologyThinkingIdx: -1,
@@ -3240,6 +3256,7 @@ export class AgentExecutor extends EventEmitter {
     ctx.personaSwitchRequested = undefined;
     ctx.toolSchemaRefreshRequested = undefined;
     ctx.awaitUserRequested = undefined;
+    ctx.sessionCompleteRequested = undefined;
     ctx.iterationToolCalls = [];
     log.verbose(() => `Iteration ${ctx.iteration + 1} starting, messageCount=${messages.length}, model=${modelString}`);
 
@@ -3764,6 +3781,20 @@ export class AgentExecutor extends EventEmitter {
       };
     }
 
+    if (ctx.sessionCompleteRequested) {
+      const toolCallId = ctx.sessionCompleteRequested.toolCallId;
+      ctx.sessionCompleteRequested = undefined;
+      ctx.intentionallyCompletedSession = true;
+      ctx.publish("tool_use_pause", { content: "" });
+      log.log(`session-complete boundary requested runId=${ctx.runId} sessionId=${options.sessionId || "none"} toolCallId=${toolCallId}`);
+      return {
+        finalContent: cleanText,
+        shouldContinue: false,
+        hasRunMidTurnHistoryHardTrim,
+        exitCause: "natural_stop",
+      };
+    }
+
     if (ctx.toolSchemaRefreshRequested) {
       const iterationResults = ctx.resolvedToolCalls.slice(resolvedToolCallsBeforeIteration);
       const resultsById = new Map(iterationResults.map((call) => [call.id, call]));
@@ -3918,6 +3949,17 @@ export class AgentExecutor extends EventEmitter {
           awaitUserRequested: true,
         };
       }
+      if (continuation === "session_complete") {
+        ctx.intentionallyCompletedSession = true;
+        ctx.publish("tool_use_pause", { content: "" });
+        log.log(`session-complete boundary after tools runId=${ctx.runId} sessionId=${options.sessionId || "none"}`);
+        return {
+          finalContent: cleanText,
+          shouldContinue: false,
+          hasRunMidTurnHistoryHardTrim,
+          exitCause: "natural_stop",
+        };
+      }
       // Derive convergence evidence for this completed tool batch before deciding
       // whether another ordinary model iteration would make progress.
       const batchResolvedCalls = ctx.resolvedToolCalls.slice(-unresolvedToolCalls.length);
@@ -4056,23 +4098,51 @@ export class AgentExecutor extends EventEmitter {
       return { finalContent: cleanText, shouldContinue: true, hasRunMidTurnHistoryHardTrim, continuationType: "max_tokens" };
     }
 
-    // Empty final turn: the model completed with no tool calls, no await-user
-    // pause, and no visible text. This is never a clean success — it is a known
-    // provider failure mode (Grok/xAI end_turn with 0 output tokens after a long
-    // tool-use sequence; cline #6269, litellm #17136; same class on DeepSeek
-    // #1453 and GPT-4o). Re-drive the model with the UNCHANGED context: because
-    // executeIteration resets iterationText/pendingToolCalls at its head, this
-    // yields a clean fresh sample, which almost always returns real content
-    // ("press retry" is the community remedy). We deliberately do NOT push the
-    // empty assistant turn back into `messages` — xAI 400s on empty-content
-    // history ("Each message must have at least one content element", n8n
-    // #14797) — and empty finalContent is never appended to iterationResults, so
-    // the merge is untouched. If retries are exhausted, publishRunResult
-    // classifies the run degraded/empty_response instead of a silent success.
+    // Defensive: session.end / set_status=saved may have already marked the
+    // session complete even if the continuation discriminant was dropped by a
+    // transport path. Prefer intentional silent completion over empty_response
+    // degradation when durable terminal status is already requested as saved.
     if (
       cleanText.trim().length === 0 &&
       ctx.pendingToolCalls.length === 0 &&
       !ctx.aborted &&
+      !ctx.intentionallyCompletedSession &&
+      options.sessionId
+    ) {
+      const pendingEnd = this.peekPendingSessionEnd(options.sessionId);
+      if (pendingEnd?.status === "saved") {
+        ctx.intentionallyCompletedSession = true;
+        log.log(
+          `session-complete inferred from pending saved end runId=${ctx.runId} sessionId=${options.sessionId}`,
+        );
+        return {
+          finalContent: cleanText,
+          shouldContinue: false,
+          hasRunMidTurnHistoryHardTrim,
+          exitCause: "natural_stop",
+        };
+      }
+    }
+
+    // Empty final turn: the model completed with no tool calls, no await-user
+    // pause, no intentional session.end completion, and no visible text. This is
+    // never a clean success — it is a known provider failure mode (Grok/xAI
+    // end_turn with 0 output tokens after a long tool-use sequence; cline #6269,
+    // litellm #17136; same class on DeepSeek #1453 and GPT-4o). Re-drive the
+    // model with the UNCHANGED context: because executeIteration resets
+    // iterationText/pendingToolCalls at its head, this yields a clean fresh
+    // sample, which almost always returns real content ("press retry" is the
+    // community remedy). We deliberately do NOT push the empty assistant turn
+    // back into `messages` — xAI 400s on empty-content history ("Each message
+    // must have at least one content element", n8n #14797) — and empty
+    // finalContent is never appended to iterationResults, so the merge is
+    // untouched. If retries are exhausted, publishRunResult classifies the run
+    // degraded/empty_response instead of a silent success.
+    if (
+      cleanText.trim().length === 0 &&
+      ctx.pendingToolCalls.length === 0 &&
+      !ctx.aborted &&
+      !ctx.intentionallyCompletedSession &&
       ctx.emptyFinalTurnRetries < MAX_EMPTY_FINAL_TURN_RETRIES
     ) {
       ctx.emptyFinalTurnRetries++;
