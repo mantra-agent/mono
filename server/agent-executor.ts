@@ -142,6 +142,26 @@ function resolvedToolFailureKind(...sources: unknown[]): ToolFailureKind | undef
   return undefined;
 }
 
+/**
+ * Privacy-safe machine code for failed tool outcomes.
+ * Prefer the handler's ToolFailure.code. When handlers omit it, emit a stable
+ * synthetic code so error aggregates never collapse to UNCLASSIFIED merely
+ * because the log line also carries session/run identifiers.
+ */
+function resolveToolOutcomeFailureCode(args: {
+  failure?: ToolFailure;
+  failureKind?: ToolFailureKind;
+  flattenedCode?: string;
+}): string | undefined {
+  const explicit =
+    (typeof args.failure?.code === "string" && args.failure.code.trim()) ||
+    (typeof args.flattenedCode === "string" && args.flattenedCode.trim()) ||
+    "";
+  if (explicit) return explicit;
+  if (args.failureKind) return `tool_${args.failureKind}`;
+  return "tool_failed";
+}
+
 export type ToolContinuation = "persona_switch" | "tool_schema_refresh" | "await_user" | "provider_system_tool";
 export type ToolOutcome = "succeeded" | "degraded" | "failed" | "cancelled";
 
@@ -2000,6 +2020,12 @@ export class AgentExecutor extends EventEmitter {
           durationMs: event.durationMs ?? 0,
           failure: event.failure,
           failureKind: resolvedToolFailureKind(event),
+          failureCode:
+            typeof event.failure?.code === "string"
+              ? event.failure.code
+              : typeof event.failureCode === "string"
+                ? event.failureCode
+                : undefined,
           recoveryDecision: event.recoveryDecision,
         });
         if (toolCallId && !ctx.iterationToolCalls.some((call) => call.id === toolCallId)) {
@@ -2350,6 +2376,12 @@ export class AgentExecutor extends EventEmitter {
         durationMs,
         failure: toolResult.failure,
         failureKind: resolvedToolFailureKind(toolResult),
+        failureCode:
+          typeof toolResult.failure?.code === "string"
+            ? toolResult.failure.code
+            : typeof toolResult.failureCode === "string"
+              ? toolResult.failureCode
+              : undefined,
         recoveryDecision: toolResult.recoveryDecision,
       });
       // Chronology: record tool entry pointing to resolvedToolCalls index
@@ -2438,15 +2470,28 @@ export class AgentExecutor extends EventEmitter {
     failure?: ToolFailure;
     /** Flattened kind from bridge inference when failure.kind was absent. */
     failureKind?: ToolFailureKind;
+    /** Flattened code from stream/dispatch when failure.code was absent. */
+    failureCode?: string;
     recoveryDecision?: ToolRecoveryDecision;
   }): void {
     const {
       ctx, options, id, name, input, result, outcome, durationMs, failure, recoveryDecision,
-      providerResult, failureKind: flattenedFailureKind,
+      providerResult, failureKind: flattenedFailureKind, failureCode: flattenedFailureCode,
     } = args;
     const error = outcome === "failed" || outcome === "cancelled";
     // Prefer structured failure; also accept flattened kind from dispatch.
-    const failureKind = resolvedToolFailureKind(failure, { failureKind: flattenedFailureKind });
+    // Last resort: phrase-match the tool result text so residual uncoded
+    // handler strings still carry a kind before aggregate projection.
+    const failureKind =
+      resolvedToolFailureKind(failure, { failureKind: flattenedFailureKind }) ??
+      (error ? inferFailureKind(result) ?? undefined : undefined);
+    const failureCode = error
+      ? resolveToolOutcomeFailureCode({
+          failure,
+          failureKind,
+          flattenedCode: flattenedFailureCode,
+        })
+      : failure?.code ?? flattenedFailureCode;
     ctx.resolvedToolCalls.push({
       id,
       name,
@@ -2456,13 +2501,15 @@ export class AgentExecutor extends EventEmitter {
       outcome,
       error: error || undefined,
       ...(failureKind ? { failureKind } : {}),
-      ...(failure?.code ? { failureCode: failure.code } : {}),
+      ...(failureCode ? { failureCode } : {}),
       durationMs,
       parentId: `system-llm_call-model-${ctx.runId}-${ctx.iteration}`,
     });
 
     // One discriminant per decision: surface ToolFailure fields on the outcome log so
     // deterministic denials (shell policy, scratch edit) are diagnosable without re-running.
+    // Failed outcomes always carry failureCode so privacy-safe aggregates classify
+    // even when session/run ids poison message-token fallback.
     const metadata: Record<string, unknown> = {
       runId: ctx.runId,
       sessionId: options.sessionId,
@@ -2474,7 +2521,7 @@ export class AgentExecutor extends EventEmitter {
       executionMode: ctx.executionMode,
     };
     if (failureKind) metadata.failureKind = failureKind;
-    if (failure?.code) metadata.failureCode = failure.code;
+    if (failureCode) metadata.failureCode = failureCode;
     if (failure?.detail) metadata.failureDetail = failure.detail;
     if (failure?.resourceKey) metadata.resourceKey = failure.resourceKey;
     if (recoveryDecision) metadata.recoveryDecision = recoveryDecision;
