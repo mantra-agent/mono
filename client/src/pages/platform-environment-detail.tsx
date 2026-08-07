@@ -2440,9 +2440,9 @@ export default function PlatformEnvironmentDetailPage() {
   const { data: platformTree = [] } = useQuery<PlatformTree[]>({ queryKey: ["/api/platforms"] });
   const sourceEnvironmentId = data
     ? platformTree
-        .flatMap((platform) => platform.products)
+        .flatMap((platform) => platform.products ?? [])
         .find((product) => product.id === data.product.id)
-        ?.environments.find((environment) => environment.name.trim().toLowerCase() === "stage")?.id ?? null
+        ?.environments?.find((environment) => environment.name.trim().toLowerCase() === "stage")?.id ?? null
     : null;
 
   usePageHeader({

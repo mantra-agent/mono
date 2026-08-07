@@ -40,10 +40,15 @@ export function PageFallback({
     if (delayedOverride !== undefined) return;
     const delayedTimer = window.setTimeout(() => setLocalPhase("delayed"), DELAYED_ROUTE_LOAD_MS);
     const failedTimer = window.setTimeout(() => {
-      log.error("page fallback budget exhausted", {
-        elapsedMs: FAILED_ROUTE_LOAD_MS,
-        fallbackKind: label.startsWith("Checking") ? "auth" : "page",
-      });
+      const fallbackKind = label.startsWith("Checking") ? "auth" : "page";
+      log.error(
+        "page fallback budget exhausted",
+        createRouteBudgetError(fallbackKind),
+        {
+          elapsedMs: FAILED_ROUTE_LOAD_MS,
+          fallbackKind,
+        },
+      );
       setLocalPhase("failed");
     }, FAILED_ROUTE_LOAD_MS);
     return () => {
@@ -152,16 +157,52 @@ interface RouteErrorBoundaryState {
   error: Error | null;
 }
 
+function stampErrorCode(error: Error, code: string): Error {
+  if (!("code" in error) || (error as Error & { code?: unknown }).code == null) {
+    Object.defineProperty(error, "code", {
+      value: code,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return error;
+}
+
 function normalizeRouteRenderError(caught: unknown): Error {
-  if (caught instanceof Error) return caught;
+  if (caught instanceof Error) {
+    if ((caught as Error & { code?: unknown }).code != null) return caught;
+    if (caught.name === "RouteLoadError") {
+      return stampErrorCode(caught, "ROUTE_MODULE_LOAD_FAILED");
+    }
+    // TypeError "Cannot read properties of null/undefined" collapses through
+    // SECRET_LIKE message tokenization to CANNOT_READ_PROPERTIES_OF. Stamp a
+    // stable product code so aggregates stay attributable after redaction.
+    if (
+      caught.name === "TypeError" ||
+      /cannot read propert/i.test(caught.message) ||
+      /is not a function/i.test(caught.message) ||
+      /is not iterable/i.test(caught.message)
+    ) {
+      return stampErrorCode(caught, "ROUTE_RENDER_TYPEERROR");
+    }
+    return stampErrorCode(caught, "ROUTE_RENDER_FAILED");
+  }
 
   const error = new Error("Route render threw a non-Error value.");
   error.name = "RouteRenderError";
-  Object.defineProperty(error, "code", {
-    value: "ROUTE_RENDER_NON_ERROR_THROW",
-    enumerable: true,
-  });
-  return error;
+  return stampErrorCode(error, "ROUTE_RENDER_NON_ERROR_THROW");
+}
+
+function createRouteBudgetError(kind: "route" | "page" | "auth"): Error {
+  const error = new Error(
+    kind === "route"
+      ? "Route load budget exhausted."
+      : kind === "auth"
+        ? "Auth readiness budget exhausted."
+        : "Page fallback budget exhausted.",
+  );
+  error.name = "RouteLoadBudgetError";
+  return stampErrorCode(error, "ROUTE_LOAD_BUDGET_EXHAUSTED");
 }
 
 class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBoundaryState> {
@@ -203,8 +244,9 @@ interface RouteLoadBoundaryProps {
   children: ReactNode;
 }
 
-function getRouteLabel(routeKey: string): string {
-  const segment = routeKey.split("?")[0].split("/").filter(Boolean)[0] ?? "home";
+function getRouteLabel(routeKey: string | null | undefined): string {
+  const safeKey = typeof routeKey === "string" ? routeKey : "";
+  const segment = safeKey.split("?")[0].split("/").filter(Boolean)[0] ?? "home";
   return segment
     .split("-")
     .filter(Boolean)
@@ -257,11 +299,15 @@ function RouteLoadCycle({ routeKey, children }: RouteLoadBoundaryProps) {
 
     failedTimerRef.current = window.setTimeout(() => {
       if (readyRef.current) return;
-      log.error("route load budget exhausted", {
-        routeKey,
-        elapsedMs: FAILED_ROUTE_LOAD_MS,
-        manualAttempt,
-      });
+      log.error(
+        "route load budget exhausted",
+        createRouteBudgetError("route"),
+        {
+          routeKey,
+          elapsedMs: FAILED_ROUTE_LOAD_MS,
+          manualAttempt,
+        },
+      );
       setPhase("failed");
     }, FAILED_ROUTE_LOAD_MS);
 

@@ -39,7 +39,7 @@ export function VoiceV3WebhookSecretCard() {
   const [lastReprovision, setLastReprovision] = useState<ReprovisionInfo | null>(null);
 
   const { data, isLoading } = useQuery<{ secrets: SecretMetadata[] }>({ queryKey: ["/api/secrets/metadata"] });
-  const meta = data?.secrets.find((s) => s.name === SECRET_NAME);
+  const meta = data?.secrets?.find((s) => s.name === SECRET_NAME);
 
   const setMutation = useMutation({
     mutationFn: async (newValue: string) => {

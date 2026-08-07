@@ -221,7 +221,7 @@ export default function BusinessModelPage() {
   const fullPlanScenario = useMemo(() => draft ? computePhaseOneFinancingScenario(draft, roles, draft.financingEvents.find((event) => event.key === "pre_seed")?.amount ?? 0) : null, [draft, roles]);
   const firstCloseScenario = useMemo(() => draft ? computePhaseOneFinancingScenario(draft, roles, PHASE_ONE_FIRST_CLOSE_AMOUNT) : null, [draft, roles]);
   const periods = useMemo(() => projection ? aggregateMonths(projection.months, period) : [], [projection, period]);
-  const phaseOne = draft?.phases.find((phase) => phase.key === "phase_1");
+  const phaseOne = draft?.phases?.find((phase) => phase.key === "phase_1");
   const baselineGateRow = phaseOne ? projection?.months[Math.max(0, phaseOne.endMonth - 1)] : null;
   const downsideGateRow = phaseOne ? downsideProjection?.months[Math.max(0, phaseOne.endMonth - 1)] : null;
 

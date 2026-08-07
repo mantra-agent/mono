@@ -272,7 +272,7 @@ export function EventDetailView({ eventId, calendarId, accountId, startTime: ini
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showRecurringScopeDialog, setShowRecurringScopeDialog] = useState(false);
   const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
-  const agendaPage = metadataData?.artifacts.find(artifact => artifact.artifactKind === "agenda") ?? null;
+  const agendaPage = metadataData?.artifacts?.find(artifact => artifact.artifactKind === "agenda") ?? null;
   const [initialized, setInitialized] = useState(isCreate);
 
   // Populate form from fetched event data
