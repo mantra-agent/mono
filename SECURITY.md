@@ -1318,6 +1318,16 @@ Uploaded DOCX files are A02/S2 data crossing F07/B07 and B10 from private object
 
 **Closed in source.** `docx.read` now discriminates exact `/objects/...` entity paths from workspace paths. Object-backed reads require the current authenticated user principal, resolve through `ObjectStorageService`, enforce the existing object ACL with `ObjectPermission.READ`, cap the compressed input at 25 MB and declared uncompressed archive content at 100 MB, and parse the authorized buffer directly. Missing principal, foreign object, absent ACL, missing object, and oversized document all fail closed. No public URL, raw S3 key, temporary private copy, new route, provider, permission, or data class is introduced. Workspace reads and all DOCX write/edit/clone behavior remain unchanged. Controls: DATA-01, DATA-04, ING-01, AGENT-03. Security result: no open finding. Rollback is the merged PR revert; no schema or data mutation is involved.
 
+### A74: App error telemetry discarded exception identity and over-collected navigation data
+
+- **Status:** Resolved in code on 2026-08-06; pending production deployment verification.
+- **Severity:** Medium observability and data-minimization defect. Global browser error and unhandled-rejection producers passed only structured objects to the shared logger, so canonical aggregation could not derive a stable error code or producer callsite. Their runtime context also included query strings, hashes, and full URLs that can contain S2 private identifiers or tokens.
+- **Assets / boundaries:** A02/S2 client navigation state and runtime failures cross F02/F06 into authenticated client-log ingestion and B03 operational telemetry.
+- **Threats:** Exception payloads or navigation parameters disclose private data in logs (STRIDE information disclosure / DATA-01), while flattened errors prevent reliable incident diagnosis and recovery (OBS-01).
+- **Controls / owner:** The App boundary now normalizes every thrown or rejected value into a real `Error`, assigns deterministic `APP_WINDOW_ERROR` or `APP_UNHANDLED_REJECTION` codes when the producer supplied none, preserves the original cause, and records bounded operation, route pathname, source coordinates, and crash correlation. Query, hash, and full URL fields are removed. Owner: Client Platform / Reliability.
+- **SLA:** Immediate. Closed in source with the production build required before merge.
+- **Residual risk:** Third-party exception messages and stacks may still contain provider-authored sensitive text already governed by client-log redaction policy; source maps determine final bundle-to-source precision.
+
 ### A68: Vault administration page mounted a system-admin migration control for ordinary users
 
 - **Status:** Resolved in code on 2026-08-05; pending production deployment verification.
