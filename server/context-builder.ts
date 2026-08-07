@@ -69,6 +69,55 @@ function escapeContentForXml(content: string): string {
 
 const log = createLogger("ContextBuilder");
 
+type ContextBuilderOperation =
+  | "section_resolve"
+  | "graph_memory_resolve";
+
+type ContextBuilderOperationError = Error & {
+  code?: string;
+  operation?: ContextBuilderOperation;
+  sectionId?: string;
+  elapsedMs?: number;
+  path?: string;
+};
+
+function normalizeContextBuilderError(
+  value: unknown,
+  operation: ContextBuilderOperation,
+  fallbackCode: string,
+  message?: string,
+): ContextBuilderOperationError {
+  let error: ContextBuilderOperationError;
+  if (value instanceof Error) {
+    error = value as ContextBuilderOperationError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(message || value) as ContextBuilderOperationError;
+  } else {
+    error = new Error(message || "ContextBuilder operation failed", {
+      cause: value,
+    }) as ContextBuilderOperationError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = fallbackCode;
+  }
+  error.operation = operation;
+  return error;
+}
+
+function contextBuilderLogContext(options: {
+  operation: ContextBuilderOperation;
+  sectionId?: string;
+  elapsedMs?: number;
+  path?: string;
+}) {
+  return {
+    operation: options.operation,
+    sectionId: options.sectionId,
+    elapsedMs: options.elapsedMs,
+    path: options.path,
+  };
+}
+
 interface SectionCacheEntry {
   content: string;
   cachedAt: number;
@@ -1892,11 +1941,21 @@ async function resolveGraphMemory(request: ContextRequest): Promise<string> {
     _graphMemoryCache.set(queryHash, { content: "", recalledClaimIds: [] });
     return "";
   } catch (err) {
-    log.error(JSON.stringify({
-      event: "memory.graph.context_error",
-      path: "vnext",
-      error: err instanceof Error ? err.message : String(err),
-    }));
+    const normalized = normalizeContextBuilderError(
+      err,
+      "graph_memory_resolve",
+      "CONTEXT_GRAPH_MEMORY_FAILED",
+      "ContextBuilder graph memory resolve failed",
+    );
+    normalized.path = "vnext";
+    log.error(
+      "context_builder.graph_memory_failed",
+      normalized,
+      contextBuilderLogContext({
+        operation: "graph_memory_resolve",
+        path: "vnext",
+      }),
+    );
     return "vNEXT graph memory temporarily unavailable.";
   }
 }
@@ -2575,14 +2634,47 @@ export class ContextBuilder {
         const tokens = estimateTokens(content);
         log.verbose(() => `resolve section=${config.id} DONE tokens=${tokens} elapsed=${sectionElapsed}ms${sectionElapsed > 500 ? " (slow)" : ""}`);
         resolvedMap.set(config.id, { config, content });
-      } catch (err: any) {
+      } catch (err: unknown) {
         const sectionElapsed = Date.now() - sectionStart;
         if (isTimeoutError(err)) {
-          log.error(`resolve TIMEOUT section=${config.id} elapsed=${sectionElapsed}ms`);
+          const normalized = normalizeContextBuilderError(
+            err,
+            "section_resolve",
+            "CONTEXT_SECTION_RESOLVE_TIMEOUT",
+            `ContextBuilder section resolve timed out section=${config.id}`,
+          );
+          normalized.sectionId = config.id;
+          normalized.elapsedMs = sectionElapsed;
+          log.error(
+            "context_builder.section_resolve_timeout",
+            normalized,
+            contextBuilderLogContext({
+              operation: "section_resolve",
+              sectionId: config.id,
+              elapsedMs: sectionElapsed,
+            }),
+          );
           resolvedMap.set(config.id, { config, content: `[section ${config.id} timed out after ${sectionElapsed}ms]` });
         } else {
-          log.error(`resolve ERROR section=${config.id} elapsed=${sectionElapsed}ms: ${err.message}`, err.stack);
-          resolvedMap.set(config.id, { config, content: `[section ${config.id} failed: ${err.message}]` });
+          const normalized = normalizeContextBuilderError(
+            err,
+            "section_resolve",
+            "CONTEXT_SECTION_RESOLVE_FAILED",
+            `ContextBuilder section resolve failed section=${config.id}`,
+          );
+          normalized.sectionId = config.id;
+          normalized.elapsedMs = sectionElapsed;
+          const safeMessage = normalized.message || "section resolve failed";
+          log.error(
+            "context_builder.section_resolve_failed",
+            normalized,
+            contextBuilderLogContext({
+              operation: "section_resolve",
+              sectionId: config.id,
+              elapsedMs: sectionElapsed,
+            }),
+          );
+          resolvedMap.set(config.id, { config, content: `[section ${config.id} failed: ${safeMessage}]` });
         }
       }
       const phase = phaseMap[config.id];
