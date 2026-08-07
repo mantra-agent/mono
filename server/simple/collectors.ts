@@ -345,6 +345,9 @@ function itemFromGoal(goal: GoalIndexEntry, index: number, fallbackSection?: Sim
     label: goal.shortName,
     href: goalHref(goal),
     observedAt: goal.updatedAt,
+    // Single-Vault Goal ownership drives Home/Simple title color the same way
+    // Projects/Tasks/Milestones do through reference metadata.
+    vaultIds: goal.vaultId ? [goal.vaultId] : undefined,
   };
   return {
     id: `goal-${goal.id}`,
@@ -368,6 +371,7 @@ function itemFromGoal(goal: GoalIndexEntry, index: number, fallbackSection?: Sim
       periodDate: goal.periodDate,
       periodWeek: goal.periodWeek,
       periodMonth: goal.periodMonth,
+      vaultId: goal.vaultId,
     },
     actions: [
       { id: `complete-goal-${goal.id}`, label: "Done", type: "complete", sourceRef, payload: { priorityId: goal.id, horizon: goal.horizon, period: goal.horizon, date: goal.periodDate ?? goal.periodWeek ?? goal.periodMonth ?? goal.targetDate ?? "" } },

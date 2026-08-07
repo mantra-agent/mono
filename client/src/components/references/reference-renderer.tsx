@@ -39,7 +39,7 @@ export function ReferenceRenderer({
     ? refValue.metadata.vaultIds.filter((id): id is string => typeof id === "string")
     : undefined;
   const usesVaultColor = (surface === "simple-chip" || surface === "simple-row")
-    && ["project", "milestone", "task", "meeting"].includes(refValue.type);
+    && ["project", "milestone", "task", "meeting", "goal"].includes(refValue.type);
   const color = usesVaultColor
     ? vaultReferenceColor(vaultIds, vaultById, activeVaultId)
     : null;
