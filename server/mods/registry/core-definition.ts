@@ -145,6 +145,7 @@ export const coreDefinition: CoreDefinition = {
     actions: actionsForOwner("core"),
     integrations: [
       integration("core.integration.google", "google", "available", ["gmail", "calendar", "drive"]),
+      integration("core.integration.box", "box", "available", ["files"]),
       integration("core.integration.elevenlabs", "elevenlabs", "available", ["voice"]),
       integration("core.integration.cartesia", "cartesia", "available", ["voice"]),
       integration("core.integration.twilio", "twilio", "available", ["phone"]),

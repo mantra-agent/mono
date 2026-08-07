@@ -52,8 +52,7 @@ export function BoxSection({ vaultId }: { vaultId?: string }) {
   });
 
   return (
-    <div className="space-y-0">
-      <div className="px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Box</div>
+    <div className="space-y-0" data-testid="box-section">
       {(accounts.data?.accounts || []).map((account) => (
         <HierarchyTreeRow
           key={account.accountId}

@@ -126,6 +126,7 @@ export async function registerSetupRoutes(app: Express) {
       gmail: gmailReadAccess,
       gmailHealthy: gmailHealthResult.configured ? gmailHealthResult.healthy : undefined,
       gdrive: !!getSecretSync("GOOGLE_CLIENT_ID") && !!getSecretSync("GOOGLE_CLIENT_SECRET"),
+      box: !!getSecretSync("BOX_CLIENT_ID") && !!getSecretSync("BOX_CLIENT_SECRET"),
       twitter: await (async () => {
         try {
           const { isTwitterConnected } = await import("../twitter");

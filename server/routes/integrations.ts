@@ -424,10 +424,10 @@ export async function registerIntegrationsRoutes(app: Express) {
         resourceType: "folder",
         webViewLink: "https://app.box.com/folder/0",
       });
-      res.redirect("/integrations?box=connected");
+      res.redirect("/integrations/box?connected=1");
     } catch (error: any) {
       log.error("Box OAuth callback failed", { error: error.message });
-      res.redirect(`/integrations?box=error&message=${encodeURIComponent(error.message)}`);
+      res.redirect(`/integrations/box?error=${encodeURIComponent(error.message)}`);
     }
   });
 
