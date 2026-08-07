@@ -1388,9 +1388,22 @@ async function runSkillPipeline(
       logger.log(`[SkillChat] [${sessionId}] Skillless mode — using preContext as instructions (${instructions.length} chars)`);
     } else {
       const promptId = config.skillId.replace(/:/g, "-").toLowerCase();
-      const skillProcessText = await getSkillProcess(promptId);
-      instructions = `[SKILL — ${config.label}]\n\n${skillProcessText}`;
-      if (options.preContext) {
+      let skillProcessText: string | undefined;
+      try {
+        skillProcessText = await getSkillProcess(promptId);
+      } catch (error: unknown) {
+        const isMissingSkill = error instanceof Error
+          && error.message.startsWith("Required skill not found in DB:");
+        const isBuildOwnedSkill = BUILD_OWNED_SKILL_NAME_SET.has(resolveSkillRunName(promptId));
+        if (!isMissingSkill || !isBuildOwnedSkill || !options.preContext?.trim()) {
+          throw error;
+        }
+        logger.warn(
+          `[SkillChat] [${sessionId}] Build-owned skill "${promptId}" has no DB definition; using its managed run instructions`,
+        );
+      }
+      instructions = `[SKILL — ${config.label}]\n\n${skillProcessText ?? options.preContext}`;
+      if (options.preContext && skillProcessText) {
         instructions = `[SKILL — ${config.label}]\n\n${options.preContext}\n\n${skillProcessText}`;
       }
     }
