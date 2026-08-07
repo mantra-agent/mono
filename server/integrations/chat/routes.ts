@@ -1523,6 +1523,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     conversationHistory: ConversationHistoryMessage[];
     enrichedContent: string;
     toolDefs: ToolDefinition[];
+    authorityStubTools?: ToolDefinition[];
     contextPressure: {
       preRunTokens: number;
       threshold: number;
@@ -1648,8 +1649,18 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     // the initial working set. Long-tail schemas remain loadable through tools.get.
     const interactiveToolSet = await resolveInteractiveToolSet(sessionId);
     const toolDefs = interactiveToolSet.definitions;
+    let authorityStubTools: ToolDefinition[] | undefined;
+    try {
+      const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId);
+      const hydratedNames = new Set(toolDefs.map((tool) => tool.name));
+      authorityStubTools = authorityDefinitions.filter((def) => !hydratedNames.has(def.name));
+    } catch (err) {
+      chatLog.log(
+        `autohydrate: failed to resolve authority stub tools sessionId=${sessionId} err=${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     chatLog.log(
-      `tools loaded count=${toolDefs.length} authorityCount=${interactiveToolSet.authorityCount} persona=${interactiveToolSet.personaName} bundle=${interactiveToolSet.bundleCount} sessionId=${sessionId}`,
+      `tools loaded count=${toolDefs.length} authorityCount=${interactiveToolSet.authorityCount} stubCount=${authorityStubTools?.length ?? 0} persona=${interactiveToolSet.personaName} bundle=${interactiveToolSet.bundleCount} sessionId=${sessionId}`,
     );
 
     // --- Supersession / approval handoff ---
@@ -1929,7 +1940,10 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       estimateToolDefinitionTokens,
       getContextPressureThresholds,
     } = await import("../../context-budget");
-    const toolDefinitionTokens = estimateToolDefinitionTokens(toolDefs);
+    const toolDefinitionTokens = estimateToolDefinitionTokens([
+      ...toolDefs,
+      ...(authorityStubTools || []),
+    ]);
     const betweenTurnThreshold = getContextPressureThresholds(hardInputLimit).betweenTurnHistoryReset;
     // One truthful measurand: the exact rebuilt messages passed to the executor,
     // plus the tool definitions sent with them. No provider-view simulation.
@@ -2020,6 +2034,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       conversationHistory,
       enrichedContent,
       toolDefs,
+      authorityStubTools,
       contextPressure: {
         preRunTokens: fullPreExecutorTokens,
         threshold: betweenTurnThreshold,
@@ -2039,6 +2054,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     sessionId: string,
     messages: ExecutorMessage[],
     toolDefs: ToolDefinition[],
+    authorityStubTools: ToolDefinition[] | undefined,
     routingDecision: ModelRoutingDecision,
     contextPressure?: {
       preRunTokens: number;
@@ -2082,21 +2098,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         continuation: personaChanged ? "persona_switch" as const : toolResult.continuation,
       };
     };
-
-    // Authority is the hard boundary; the persona-hydrated `toolDefs` is only an
-    // assumed-needs pre-load. Register everything else the session is authorized
-    // to use as cheap stubs so a direct model call auto-hydrates and runs in-turn
-    // instead of hard-failing the run. Best-effort: on failure we fall back to the
-    // prior (pre-load-only) behavior rather than breaking the turn.
-    let authorityStubTools: ToolDefinition[] | undefined;
-    try {
-      const authorityDefinitions = await resolveAuthorityToolDefinitions(sessionId);
-      const hydratedNames = new Set(toolDefs.map((tool) => tool.name));
-      authorityStubTools = authorityDefinitions.filter((def) => !hydratedNames.has(def.name));
-    } catch (err) {
-      chatLog.log(`autohydrate: failed to resolve authority stub tools sessionId=${sessionId} err=${err instanceof Error ? err.message : String(err)}`);
-      authorityStubTools = undefined;
-    }
 
     return agentExecutor.run({
       sessionKey,
@@ -2621,6 +2622,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         conversationHistory,
         enrichedContent,
         toolDefs,
+        authorityStubTools,
         contextPressure,
       } = await buildChatHistory(
         sessionId,
@@ -2767,6 +2769,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         sessionId,
         messages,
         toolDefs,
+        authorityStubTools,
         resolvedRoutingDecision,
         contextPressure,
         (event) => {
@@ -2993,9 +2996,31 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // deleted above, no message to save, no journal entry to create.
       if (!isSuperseded) {
       const persistenceStartedAt = Date.now();
-      const finalContextPressure =
+      const lastRequestContextPressure =
         sessionManager.getSnapshot(sessionId)?.streamingContent.contextPressure ??
         undefined;
+      // The stream snapshot describes the final provider request. Once the
+      // assistant reply settles, add that newly carried message so the durable
+      // ring describes the context retained for the next turn rather than the
+      // request that just finished.
+      let finalContextPressure = lastRequestContextPressure;
+      if (lastRequestContextPressure && responseContent) {
+        const {
+          applyTokenEstimateCalibration,
+          estimateMessagesInputTokens,
+        } = await import("../../context-budget");
+        const pressureModel = usedModel.includes("/")
+          ? usedModel.split("/").slice(1).join("/")
+          : usedModel;
+        const carriedAssistantTokens = await applyTokenEstimateCalibration(
+          pressureModel,
+          estimateMessagesInputTokens([{ role: "assistant", content: responseContent }]),
+        );
+        finalContextPressure = {
+          ...lastRequestContextPressure,
+          inputTokens: lastRequestContextPressure.inputTokens + carriedAssistantTokens,
+        };
+      }
       chatLog.log(
         `saving message sessionId=${sessionId} thinkingLen=${persistedThinking?.length || 0} toolCallsCount=${persistedToolCalls?.length || 0} contentLen=${responseContent.length} systemSteps=${mergedSystemSteps.length}`,
       );
