@@ -6,7 +6,10 @@ import {
 } from "@shared/models/memory";
 import { createLogger } from "../log";
 import type { Principal } from "../principal";
-import { buildTargetSessionSearchQuery } from "./session-search-query";
+import {
+  buildLiteralSubstringPattern,
+  buildTargetSessionSearchQuery,
+} from "./session-search-query";
 
 const log = createLogger("DocumentSearchIndexes");
 
@@ -284,14 +287,39 @@ async function verifyOperationalQuery(client: PoolClient): Promise<"verified" | 
     scope.searchTerm,
     50,
   ).toSQL();
+  const searchPattern = buildLiteralSubstringPattern(scope.searchTerm);
   await client.query(`SET statement_timeout TO '${OPERATIONAL_PROBE_TIMEOUT_MS}ms'`);
-  // Prove that the canonical indexes can carry the production query independently
-  // of transient table size and cache-cost estimates. This is a maintenance-session
-  // setting only; production searches retain PostgreSQL's normal cost decisions.
-  await client.query("SET enable_seqscan TO off");
   const startedAt = performance.now();
 
   try {
+    // Keep physical index usability separate from the production planner's chosen
+    // join order. A narrow authorized scope may truthfully enter through the
+    // document FK index, so requiring the trigram index in that exact plan creates
+    // a false failure even when both the index and query are healthy.
+    await client.query("SET enable_seqscan TO off");
+    const capabilityResult = await client.query<Record<string, unknown>>(
+      `EXPLAIN (FORMAT JSON)
+       SELECT id
+         FROM session_search_segments
+        WHERE content ILIKE $1 ESCAPE '!'`,
+      [searchPattern],
+    );
+    const rawCapabilityPlan = capabilityResult.rows[0]?.["QUERY PLAN"];
+    const capabilityPlan =
+      typeof rawCapabilityPlan === "string"
+        ? JSON.parse(rawCapabilityPlan)
+        : rawCapabilityPlan;
+    const capabilityIndexes = collectIndexNames(capabilityPlan);
+    if (!capabilityIndexes.has(SESSION_SEARCH_SEGMENT_INDEX)) {
+      const error = new Error(
+        "Session search trigram index capability probe missed required index",
+      ) as Error & { code: string; missingIndexes: string[] };
+      error.code = "SESSION_SEARCH_REQUIRED_INDEX_UNUSED";
+      error.missingIndexes = [SESSION_SEARCH_SEGMENT_INDEX];
+      throw error;
+    }
+    await client.query("SET enable_seqscan TO on");
+
     const result = await client.query<Record<string, unknown>>(
       `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${productionQuery.sql}`,
       productionQuery.params,
@@ -302,18 +330,6 @@ async function verifyOperationalQuery(client: PoolClient): Promise<"verified" | 
       ? (payload[0] as Record<string, unknown> | undefined)
       : undefined;
     const rootPlan = statement?.Plan as Record<string, unknown> | undefined;
-    const usedIndexes = collectIndexNames(payload);
-    const requiredOperationalIndexes = [SESSION_SEARCH_SEGMENT_INDEX];
-    const missingIndexes = requiredOperationalIndexes
-      .filter((name) => !usedIndexes.has(name));
-    if (missingIndexes.length > 0) {
-      const error = new Error(
-        "Session search operational probe missed required indexes",
-      ) as Error & { code: string; missingIndexes: string[] };
-      error.code = "SESSION_SEARCH_REQUIRED_INDEX_UNUSED";
-      error.missingIndexes = missingIndexes;
-      throw error;
-    }
 
     log.info("session search operational probe verified", {
       outcome: "verified",
