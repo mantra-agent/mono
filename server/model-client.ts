@@ -1586,6 +1586,13 @@ function isRetryableCodexStatus(status: number): boolean {
   return status === 408 || status === 409 || status === 429 || (status >= 500 && status < 600);
 }
 
+function isRetryableCodexProviderCode(providerCode: string | undefined): boolean {
+  // The subscription gateway can surface an upstream service failure as HTTP
+  // 400 even though the request itself is valid. Trust only the provider's
+  // bounded machine code here; never infer retryability from message text.
+  return providerCode === "upstream_error";
+}
+
 function parseProviderErrorBody(body: string): {
   providerCode?: string;
   providerType?: string;
@@ -1616,9 +1623,10 @@ function parseProviderErrorBody(body: string): {
 }
 
 function codexHttpAttemptError(response: Response, bodySnippet: string, scope: CodexAttemptScope): ModelProviderAttemptError {
-  const retryable = isRetryableCodexStatus(response.status);
   const detail = parseProviderErrorBody(bodySnippet);
   const contextOverflow = detail.providerCode === "context_length_exceeded";
+  const retryable = isRetryableCodexStatus(response.status)
+    || isRetryableCodexProviderCode(detail.providerCode);
   return new ModelProviderAttemptError({
     kind: contextOverflow
       ? "context_overflow"
