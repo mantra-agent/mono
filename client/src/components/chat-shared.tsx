@@ -2739,12 +2739,18 @@ export const ChatTurn = memo(function ChatTurn({
   );
   const hasUnpromotedDraftWidget = unpromotedDraftIds.length > 0;
   const failedGmailDraftSteps = gmailDraftFailureSteps(segments);
+  // One logical question toolCallId paints once per carrier. Chronology can
+  // emit the same tool call in multiple timeline steps (replay + live merge);
+  // keep the latest occurrence only, matching email-draft latest-wins.
   const questionPromptOccurrences = useMemo(() => {
     const occurrenceByToolCallId = new Map<string, number>();
-    const occurrences: Array<{
-      prompt: QuestionWidgetPrompt;
-      renderProvenance: QuestionRenderProvenance;
-    }> = [];
+    const latestByToolCallId = new Map<
+      string,
+      {
+        prompt: QuestionWidgetPrompt;
+        renderProvenance: QuestionRenderProvenance;
+      }
+    >();
     segments.forEach((segment, segmentIndex) => {
       if (segment.type !== "timeline") return;
       segment.steps.forEach((step, stepIndex) => {
@@ -2752,7 +2758,7 @@ export const ChatTurn = memo(function ChatTurn({
         if (!prompt) return;
         const occurrence = (occurrenceByToolCallId.get(prompt.toolCallId) ?? 0) + 1;
         occurrenceByToolCallId.set(prompt.toolCallId, occurrence);
-        occurrences.push({
+        latestByToolCallId.set(prompt.toolCallId, {
           prompt,
           renderProvenance: {
             messageListInstanceId,
@@ -2766,8 +2772,12 @@ export const ChatTurn = memo(function ChatTurn({
         });
       });
     });
-    return occurrences;
+    return Array.from(latestByToolCallId.values());
   }, [segments, messageListInstanceId, historical, message.id, hasStreamingSegments]);
+  const questionPrompts = useMemo(
+    () => questionPromptOccurrences.map(({ prompt }) => prompt),
+    [questionPromptOccurrences],
+  );
   const lastQuestionCandidateSignatureRef = useRef<string | null>(null);
   useEffect(() => {
     if (questionPromptOccurrences.length === 0) return;
@@ -3146,7 +3156,7 @@ export const ChatTurn = memo(function ChatTurn({
               )
               .map(({ prompt, renderProvenance }) => (
                 <QuestionWidget
-                  key={`${prompt.toolCallId}-${renderProvenance.segmentIndex}-${renderProvenance.stepIndex}`}
+                  key={prompt.toolCallId}
                   prompt={prompt}
                   response={questionResponses?.get(prompt.toolCallId)}
                   onSubmit={onQuestionSubmit}
