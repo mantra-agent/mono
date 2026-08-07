@@ -136,6 +136,68 @@ export const TOOLS: Record<string, ToolMeta> = {
       required: ["action"],
     },
   },
+  pdf: {
+    description:
+      "Core PDF document service for Agent. open authorizes a source and returns a short-lived content handle plus metadata/viewer hint; extract runs server-side text extraction per page after the same authorize path; list returns principal-visible document_artifacts. Prefer pdf.* over files.read for document semantics. No path-on-disk escape — bound sources go through filesApi; ownership is re-checked on every call. Extract is a derivative, never ACL authority.",
+    category: "file",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["open", "extract", "list"],
+          description:
+            "open: authorize + handle/metadata. extract: plain text by page with caps. list: document_artifacts in visible vaults.",
+        },
+        documentId: {
+          type: "string",
+          description: "document_artifacts id (preferred for open/extract when already registered)",
+        },
+        driveResourceId: {
+          type: "string",
+          description: "Bound drive_resource ID for open/extract",
+        },
+        provider: {
+          type: "string",
+          enum: ["google", "box", "mantra"],
+          description: "Provider when using provider+providerFileId instead of driveResourceId",
+        },
+        providerFileId: {
+          type: "string",
+          description: "Provider-native file ID when not using driveResourceId",
+        },
+        vaultId: {
+          type: "string",
+          description: "Vault ID (required with provider+providerFileId; optional filter for list)",
+        },
+        objectPath: {
+          type: "string",
+          description: "Internal object storage path for open/extract",
+        },
+        uploadId: {
+          type: "string",
+          description: "Just-uploaded object path/id for open/extract",
+        },
+        startPage: {
+          type: "number",
+          description: "1-based start page for extract (default 1)",
+        },
+        maxPages: {
+          type: "number",
+          description: "Max pages to extract from startPage (default 40, hard cap 200)",
+        },
+        limit: {
+          type: "number",
+          description: "Max documents for list (default 50, max 100)",
+        },
+        offset: {
+          type: "number",
+          description: "Pagination offset for list",
+        },
+      },
+      required: ["action"],
+    },
+  },
   shell: {
     // Description is derived from validateShellCommand policy — never hand-author a parallel contract.
     description: getShellToolContractDescription(),
