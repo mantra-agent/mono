@@ -436,6 +436,20 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     // pipeline. It must not be deferred merely because the user is active.
     admissionTier: "realtime",
   },
+  // News pipeline child: landscape scan invokes curate for batch decisions.
+  // Runtime config is code-owned so Scan News never depends on dynamic DB
+  // config-resolve for admission/timeout/activity (process text remains DB-owned).
+  "curate": {
+    skillId: "curate",
+    label: "Curate",
+    callType: "full",
+    activity: ACTIVITY_WORK,
+    temperature: 0.3,
+    timeoutMs: 10 * 60 * 1000,
+    sessionType: "autonomous",
+    // Nested under an in-progress scan; must not yield solely because the user is active.
+    admissionTier: "realtime",
+  },
   "brief-daily": {
     skillId: "brief-daily",
     label: "Daily Brief",
@@ -719,8 +733,18 @@ export async function executeAutonomousSkillRun(
         }
       } catch (err: unknown) {
         const errDetail = err instanceof Error ? (err.stack || err.message) : String(err);
-        logger.error(`[skill:${requestedId}] phase=config-resolve FAILED — could not build dynamic config: ${errDetail}`);
-        throw new Error(`phase=config-resolve FAILED for skill "${requestedId}": ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+        const resolveError = new Error(
+          `phase=config-resolve FAILED for skill "${requestedId}": ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        ) as Error & { code?: string };
+        // Stable machine code so aggregates keep skill+phase identity without
+        // tokenizing free-form messages (e.g. SKILL_CURATE_PHASE_CONFIG).
+        resolveError.code = "SKILL_CONFIG_RESOLVE_FAILED";
+        logger.error(
+          `[skill:${requestedId}] phase=config-resolve FAILED — could not build dynamic config: ${errDetail}`,
+          { error: resolveError, errorCode: resolveError.code, skillId: requestedId, phase: "config-resolve" },
+        );
+        throw resolveError;
       }
     } else if (canonicalName !== requestedId) {
       logger.log(`[skill:${requestedId}] Resolved alias to hardcoded config "${canonicalName}" — timeout=${config.timeoutMs}ms`);
