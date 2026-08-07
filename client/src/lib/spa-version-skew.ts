@@ -14,17 +14,31 @@ let inFlight: Promise<void> | null = null;
 let lastCheckAt = 0;
 
 function isChunkLoadFailure(value: unknown): boolean {
-  const error = value instanceof Error ? value : null;
-  const name = error?.name || "";
-  const message = error?.message || String(value || "");
+  let candidate: unknown = value;
 
-  return (
-    name === "ChunkLoadError" ||
-    /Loading chunk [\d-]+ failed/i.test(message) ||
-    /Failed to fetch dynamically imported module/i.test(message) ||
-    /Importing a module script failed/i.test(message) ||
-    /error loading dynamically imported module/i.test(message)
-  );
+  for (let depth = 0; depth < 4; depth += 1) {
+    const error = candidate instanceof Error ? candidate : null;
+    const name = error?.name || "";
+    const message = error?.message || String(candidate || "");
+
+    if (
+      name === "ChunkLoadError" ||
+      /Loading chunk [\d-]+ failed/i.test(message) ||
+      /Failed to fetch dynamically imported module/i.test(message) ||
+      /Importing a module script failed/i.test(message) ||
+      /error loading dynamically imported module/i.test(message) ||
+      /is not a valid JavaScript MIME type/i.test(message)
+    ) {
+      return true;
+    }
+
+    if (!error || !("cause" in error) || error.cause == null || error.cause === candidate) {
+      return false;
+    }
+    candidate = error.cause;
+  }
+
+  return false;
 }
 
 function showUpdatePrompt(): void {
@@ -155,5 +169,9 @@ export function installSpaVersionSkewGuard(): void {
 
   window.addEventListener("vite:preloadError", (event) => {
     attemptVersionSkewRecovery((event as CustomEvent<unknown>).payload);
+  });
+
+  window.addEventListener("mantra:route-module-load-failed", (event) => {
+    attemptVersionSkewRecovery((event as CustomEvent<unknown>).detail);
   });
 }
