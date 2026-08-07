@@ -1200,6 +1200,39 @@ function sanitizeProviderDiagnostic(value: string | undefined): string | undefin
     .slice(0, MAX_PROVIDER_DIAGNOSTIC_CHARS);
 }
 
+/** Stable A-Z0-9_ code for telemetry aggregates — never rely on message tokenization. */
+function stableProviderFailureCode(failure: Pick<ModelProviderFailure, "providerCode" | "kind" | "status">): string {
+  const fromProvider = String(failure.providerCode ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+  if (/^[A-Z][A-Z0-9_]{1,47}$/.test(fromProvider)) return fromProvider.slice(0, 48);
+  const kind = String(failure.kind || "MODEL_PROVIDER")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "") || "MODEL_PROVIDER";
+  const status = typeof failure.status === "number" && failure.status > 0 ? `_${failure.status}` : "";
+  const combined = `${kind}${status}`.slice(0, 48);
+  return /^[A-Z][A-Z0-9_]{1,47}$/.test(combined) ? combined : "MODEL_PROVIDER_ERROR";
+}
+
+function normalizeLoggedModelError(err: unknown, fallbackCode: string, message?: string): Error {
+  if (err instanceof Error) {
+    const coded = err as Error & { code?: string };
+    if (!coded.code || !/^[A-Z][A-Z0-9_]{1,48}$/.test(String(coded.code))) {
+      coded.code = fallbackCode;
+    }
+    return err;
+  }
+  const normalized = new Error(message || (err === undefined || err === null ? fallbackCode : String(err)));
+  (normalized as Error & { code?: string }).code = fallbackCode;
+  return normalized;
+}
+
 function providerTransportErrorInfo(error: unknown, depth = 0, seen = new Set<object>()): ProviderTransportErrorInfo | undefined {
   if (error === undefined || error === null || depth > 3) return undefined;
   if (typeof error !== "object") {
@@ -1375,7 +1408,7 @@ function buildProviderUserMessage(failure: Omit<ModelProviderFailure, "userMessa
 }
 
 export class ModelProviderError extends Error {
-  readonly code = "MODEL_PROVIDER_ERROR";
+  readonly code: string;
   readonly providerFailure: ModelProviderFailure;
   readonly kind: ModelProviderFailureKind;
   readonly retryable: boolean;
@@ -1389,6 +1422,7 @@ export class ModelProviderError extends Error {
   constructor(providerFailure: ModelProviderFailure, bodySnippet?: string) {
     super(providerFailure.userMessage);
     this.name = "ModelProviderError";
+    this.code = stableProviderFailureCode(providerFailure);
     this.providerFailure = providerFailure;
     this.kind = providerFailure.kind;
     this.retryable = providerFailure.retryable;
@@ -1859,17 +1893,17 @@ function modelProviderErrorFromAttempt(
     ...base,
     userMessage: buildProviderUserMessage(base),
   };
-  const errorCode = providerFailure.providerCode
-    ?? `${providerFailure.kind}_${providerFailure.status || "unknown"}`;
-  log.error(`model.provider_failure ${safeStringify({
-    ...providerFailure,
-    bodySnippet: sanitizeProviderDiagnostic(err.bodySnippet),
-  }, {
-    maxBytes: 16 * 1024,
-    maxStrLen: MAX_PROVIDER_DIAGNOSTIC_CHARS,
-    label: "model-client.providerFailure",
-  })}`, { errorCode });
-  return new ModelProviderError(providerFailure, err.bodySnippet);
+  const modelError = new ModelProviderError(providerFailure, err.bodySnippet);
+  // Pass the Error object so aggregates retain code + producer stack. Do not
+  // stringify the failure envelope into the primary log arg — session/token
+  // substrings collapse message-token classification to UNCLASSIFIED.
+  log.error(
+    `model.provider_failure provider=${providerFailure.provider} model=${providerFailure.model ?? "unknown"} ` +
+      `kind=${providerFailure.kind} status=${providerFailure.status || "n/a"} phase=${providerFailure.phase} ` +
+      `code=${modelError.code} attempts=${providerFailure.attempts}`,
+    modelError,
+  );
+  return modelError;
 }
 
 // ─── Grok Subscription completions (xAI, OpenAI-compatible via api.x.ai/v1) ───
@@ -2558,6 +2592,17 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
   } catch (err: unknown) {
     const status: InferenceStatus = isAbortError(err, options.signal) ? "aborted" : (responseContent ? "partial" : "error");
     routing.attempts = appendFailedAttempt(routing, err);
+    const modelError = enrichModelError(err, routing, options.metadata);
+    const streamFailureMessage =
+      `chatCompletionStream ${status.toUpperCase()} provider=${provider} model=${model} ` +
+      `activity=${routing.activity} tier=${routing.tier} configHash=${routing.configHash}: ${modelError.message}`;
+    if (status === "aborted") {
+      // Caller-owned stream cancellation is expected; keep aggregates free of abort noise.
+      log.debug(streamFailureMessage);
+    } else {
+      // Terminal stream failures must log the enriched Error (code + stack), not a string.
+      log.error(streamFailureMessage, modelError);
+    }
     await recordInference({
       startTime: t0,
       routing,
@@ -2570,7 +2615,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       reasoning: reasoningAudit,
       stopReason: streamStopReason,
       termination: streamTermination,
-      error: serializeModelError(err),
+      error: serializeModelError(modelError),
       latency: {
         providerTtftMs: firstTextAt !== null ? firstTextAt - t0 : null,
         firstSdkEventMs: firstSdkEventAt !== null ? firstSdkEventAt - t0 : null,
@@ -2580,7 +2625,7 @@ async function* executeChatCompletionStream(options: ChatCompletionStreamOptions
       signal: options.signal,
       apiCallId: providerAttemptTracker.current?.apiCallId,
     });
-    throw enrichModelError(err, routing, options.metadata);
+    throw modelError;
   }
 }
 
@@ -2967,11 +3012,20 @@ async function* openaiSubscriptionStream(model: string, options: ChatCompletionS
       log.debug(`openai-subscription stream aborted model=${model}`);
       throw err;
     } else if (err.status === 429 || (err.message && err.message.includes("rate limit"))) {
-      log.error(`openai-subscription stream rate limit model=${model}`);
-      yield { type: "error", error: "OpenAI subscription rate limit reached. Your ChatGPT subscription limit has been hit. Please wait and try again." };
+      const rateLimitError = normalizeLoggedModelError(err, "PROVIDER_QUOTA", `openai-subscription stream rate limit model=${model}`);
+      log.error(`openai-subscription stream rate limit model=${model}`, rateLimitError);
+      yield {
+        type: "error",
+        error: "OpenAI subscription rate limit reached. Your ChatGPT subscription limit has been hit. Please wait and try again.",
+      };
     } else {
-      log.error(`openai-subscription stream ERROR model=${model}: ${err.message}`);
-      yield { type: "error", error: err.message || "OpenAI subscription stream error" };
+      const streamError = normalizeLoggedModelError(
+        err,
+        "MODEL_PROVIDER_ERROR",
+        err?.message || "OpenAI subscription stream error",
+      );
+      log.error(`openai-subscription stream ERROR model=${model}`, streamError);
+      yield { type: "error", error: streamError.message || "OpenAI subscription stream error" };
     }
   }
 }
@@ -3217,14 +3271,24 @@ async function* anthropicStream(model: string, options: ChatCompletionStreamOpti
         continue;
       }
 
-      log.error(`anthropic stream ERROR model=${model}: ${err.message}`);
-      yield { type: "error", error: err.message || "Anthropic stream error" };
+      const streamError = normalizeLoggedModelError(
+        err,
+        "MODEL_PROVIDER_ERROR",
+        err?.message || "Anthropic stream error",
+      );
+      log.error(`anthropic stream ERROR model=${model}`, streamError);
+      yield { type: "error", error: streamError.message || "Anthropic stream error" };
       return;
     }
   }
 
-  log.error(`anthropic stream overloaded after all retries model=${model}: ${lastOverloadErr?.message}`);
-  yield { type: "error", error: lastOverloadErr?.message || "overloaded_error" };
+  const overloadError = normalizeLoggedModelError(
+    lastOverloadErr,
+    "PROVIDER_OVERLOADED",
+    lastOverloadErr?.message || "overloaded_error",
+  );
+  log.error(`anthropic stream overloaded after all retries model=${model}`, overloadError);
+  yield { type: "error", error: overloadError.message || "overloaded_error" };
 }
 
 /**
