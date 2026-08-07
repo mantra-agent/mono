@@ -2384,7 +2384,7 @@ export class AgentExecutor extends EventEmitter {
         sessionKey: options.sessionKey,
       });
 
-      return { type: "tool_result" as const, tool_use_id: tc.id, content: immediateProjection.providerResult, is_error: toolResult.error };
+      return { type: "tool_result" as const, tool_use_id: tc.id, content: toolResult.result, is_error: toolResult.error };
     };
 
     const toolExecLimit = pLimit(4);
@@ -4179,7 +4179,15 @@ export class AgentExecutor extends EventEmitter {
           break;
         }
 
-        const toolDefinitionTokens = estimateToolDefinitionTokens(options.tools);
+        const hydratedProviderTools = ctx.convergence.terminalRequired ? [] : options.tools;
+      const hydratedProviderToolNames = new Set(hydratedProviderTools.map((tool) => tool.name));
+      const providerToolDefinitions = [
+        ...hydratedProviderTools,
+        ...(options.authorityStubTools || []).filter(
+          (tool) => !hydratedProviderToolNames.has(tool.name),
+        ),
+      ];
+      const toolDefinitionTokens = estimateToolDefinitionTokens(providerToolDefinitions);
         const result = await this.executeIteration(
           messages,
           ctx,

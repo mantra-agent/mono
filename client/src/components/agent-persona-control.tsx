@@ -84,7 +84,7 @@ export function AgentPersonaControl({ sessionId, persona, contextPressure }: Age
   const pressureColor =
     contextPressure && contextPressure.inputTokens >= contextPressure.hardInputLimit
       ? "hsl(var(--destructive))"
-      : contextPressure && contextPressure.inputTokens >= contextPressure.midTurnToolSoftTrim
+      : contextPressure && contextPressure.inputTokens >= contextPressure.betweenTurnHistoryReset
         ? "hsl(var(--warning))"
         : "hsl(var(--cta))";
   const circumference = 2 * Math.PI * 18;
