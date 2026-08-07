@@ -403,121 +403,121 @@ export default function BusinessAdvantagePage() {
           <section className="space-y-1">
             <HierarchySectionHeader>Initiatives</HierarchySectionHeader>
             <div className="min-w-0">
-              {initiativeProjectIds.length === 0 ? (
-                <AssignControl
-                  type="project"
-                  label="+ Add Project"
-                  asAction
-                  onAssign={(id) => {
-                    const projectId = Number(id);
-                    if (!Number.isFinite(projectId)) return;
-                    update({ initiativeProjectIds: [projectId] });
-                  }}
-                />
-              ) : (
-                initiativeProjectIds.map((projectId, index) => {
-                  const project = projectsById.get(projectId);
-                  return (
-                    <HierarchyTreeRow
-                      key={`${plan.id}-project-${projectId}-${index}`}
-                      continues={index < initiativeProjectIds.length - 1}
-                      connectorAnchor="first-row-center"
-                    >
-                      <ProfileTreeRow
-                        label={
-                          <ReferenceRenderer
-                            refValue={createReferenceRef({
-                              type: "project",
-                              id: String(projectId),
-                              metadata: { label: project?.title ?? `Project ${projectId}` },
-                            })}
-                            surface="simple-chip"
-                          />
-                        }
-                        mobileLayout="inline"
-                        hasValue
-                        showEmpty
-                        menuContent={
-                          <ReplaceControl
-                            type="project"
-                            value={String(projectId)}
-                            label={project?.title ?? `Project ${projectId}`}
-                            onReplace={(id) => {
-                              const next = [...initiativeProjectIds];
-                              next[index] = Number(id);
-                              update({ initiativeProjectIds: next });
-                            }}
-                          />
-                        }
-                        expandedContent={
-                          project?.description ? (
-                            <p className="text-sm leading-6 text-foreground/90">{project.description}</p>
-                          ) : null
-                        }
-                      />
-                    </HierarchyTreeRow>
-                  );
-                })
-              )}
+              {initiativeProjectIds.map((projectId, index) => {
+                const project = projectsById.get(projectId);
+                return (
+                  <HierarchyTreeRow
+                    key={`${plan.id}-project-${projectId}-${index}`}
+                    continues
+                    connectorAnchor="first-row-center"
+                  >
+                    <ProfileTreeRow
+                      label={
+                        <ReferenceRenderer
+                          refValue={createReferenceRef({
+                            type: "project",
+                            id: String(projectId),
+                            metadata: { label: project?.title ?? `Project ${projectId}` },
+                          })}
+                          surface="simple-chip"
+                        />
+                      }
+                      mobileLayout="inline"
+                      hasValue
+                      showEmpty
+                      menuContent={
+                        <ReplaceControl
+                          type="project"
+                          value={String(projectId)}
+                          label={project?.title ?? `Project ${projectId}`}
+                          onReplace={(id) => {
+                            const nextId = Number(id);
+                            if (!Number.isFinite(nextId)) return;
+                            const next = [...initiativeProjectIds];
+                            next[index] = nextId;
+                            update({ initiativeProjectIds: next });
+                          }}
+                        />
+                      }
+                      expandedContent={
+                        project?.description ? (
+                          <p className="text-sm leading-6 text-foreground/90">{project.description}</p>
+                        ) : null
+                      }
+                    />
+                  </HierarchyTreeRow>
+                );
+              })}
+              <AssignControl
+                type="project"
+                label="+ Add Initiative"
+                asAction
+                onAssign={(id) => {
+                  const projectId = Number(id);
+                  if (!Number.isFinite(projectId)) return;
+                  if (initiativeProjectIds.includes(projectId)) return;
+                  update({ initiativeProjectIds: [...initiativeProjectIds, projectId] });
+                }}
+              />
             </div>
           </section>
 
           <section className="space-y-1">
             <HierarchySectionHeader>Key Performance Indicators</HierarchySectionHeader>
             <div className="min-w-0">
-              {kpiIds.length === 0 ? (
-                <AssignControl
-                  type="kpi"
-                  label="+ Add KPI"
-                  asAction
-                  onAssign={(id) => update({ kpiIds: [id] })}
-                />
-              ) : (
-                kpiIds.map((kpiId, index) => {
-                  const kpi = kpisById.get(kpiId);
-                  return (
-                    <HierarchyTreeRow
-                      key={`${plan.id}-kpi-${kpiId}-${index}`}
-                      continues={index < kpiIds.length - 1}
-                      connectorAnchor="first-row-center"
-                    >
-                      <ProfileTreeRow
-                        icon={<Gauge className="h-3.5 w-3.5" />}
-                        label={
-                          <ReferenceRenderer
-                            refValue={createReferenceRef({
-                              type: "kpi",
-                              id: kpiId,
-                              metadata: { label: kpi?.name ?? "KPI" },
-                            })}
-                            surface="simple-chip"
-                          />
-                        }
-                        mobileLayout="inline"
-                        hasValue
-                        showEmpty
-                        menuContent={
-                          <ReplaceControl
-                            type="kpi"
-                            value={kpiId}
-                            label={kpi?.name ?? "KPI"}
-                            onReplace={(id) => {
-                              const next = [...kpiIds];
-                              next[index] = id;
-                              update({ kpiIds: next });
-                            }}
-                          />
-                        }
-                        expandedContent={
-                          kpi?.description ? (
-                            <p className="text-sm leading-6 text-foreground/90">{kpi.description}</p>
-                          ) : null
-                        }
-                      />
-                    </HierarchyTreeRow>
-                  );
-                })
-              )}
+              {kpiIds.map((kpiId, index) => {
+                const kpi = kpisById.get(kpiId);
+                return (
+                  <HierarchyTreeRow
+                    key={`${plan.id}-kpi-${kpiId}-${index}`}
+                    continues
+                    connectorAnchor="first-row-center"
+                  >
+                    <ProfileTreeRow
+                      icon={<Gauge className="h-3.5 w-3.5" />}
+                      label={
+                        <ReferenceRenderer
+                          refValue={createReferenceRef({
+                            type: "kpi",
+                            id: kpiId,
+                            metadata: { label: kpi?.name ?? "KPI" },
+                          })}
+                          surface="simple-chip"
+                        />
+                      }
+                      mobileLayout="inline"
+                      hasValue
+                      showEmpty
+                      menuContent={
+                        <ReplaceControl
+                          type="kpi"
+                          value={kpiId}
+                          label={kpi?.name ?? "KPI"}
+                          onReplace={(id) => {
+                            const next = [...kpiIds];
+                            next[index] = id;
+                            update({ kpiIds: next });
+                          }}
+                        />
+                      }
+                      expandedContent={
+                        kpi?.description ? (
+                          <p className="text-sm leading-6 text-foreground/90">{kpi.description}</p>
+                        ) : null
+                      }
+                    />
+                  </HierarchyTreeRow>
+                );
+              })}
+              <AssignControl
+                type="kpi"
+                label="+ Add KPI"
+                asAction
+                onAssign={(id) => {
+                  if (kpiIds.includes(id)) return;
+                  update({ kpiIds: [...kpiIds, id] });
+                }}
+              />
             </div>
           </section>
         </div>
