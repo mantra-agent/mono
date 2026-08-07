@@ -405,7 +405,7 @@ export class GoalStorage {
   async deleteGoal(id: string): Promise<void> {
     await documentStorage.deleteDocument("goal", id);
     this.invalidateCache();
-    tagService.removeEntityTags("goal", id).catch(err => log.warn("tag removal failed", err));
+    tagService.removeEntity("goal", id).catch(err => log.warn("tag removal failed", err));
   }
 
   async addNote(goalId: string, content: string): Promise<Goal> {

@@ -343,7 +343,7 @@ export class FilePrincipleStorage {
       }
     }
 
-    tagService.removeEntityTags("principle", id).catch(err => log.warn(`tag removal failed`, err));
+    tagService.removeEntity("principle", id).catch(err => log.warn(`tag removal failed`, err));
 
     this.invalidateCache();
     log.log(`deletePrinciple id=${id} success`);
