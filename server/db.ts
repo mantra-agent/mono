@@ -202,9 +202,34 @@ function flushRecoverableConnectionIncident(): void {
   );
 }
 
+/**
+ * Build a telemetry-only Error with a stable machine code.
+ * Never mutates the original provider/Postgres error — callers still need
+ * SQLSTATE and other native fields on the thrown value.
+ */
+function classifyDbLogError(error: unknown, code: string): Error {
+  const original =
+    error instanceof Error
+      ? error
+      : new Error(typeof error === "string" && error.trim() ? error : "database operation failed");
+  const existing = (original as Error & { code?: unknown }).code;
+  if (typeof existing === "string" && /^[A-Z][A-Z0-9_]{1,48}$/.test(existing)) {
+    return original;
+  }
+  const classified = new Error(original.message);
+  classified.name = original.name || "Error";
+  classified.stack = original.stack;
+  (classified as Error & { code?: string; cause?: unknown }).code = code;
+  (classified as Error & { cause?: unknown }).cause = original;
+  return classified;
+}
+
 function handlePoolConnectionError(lane: ConnectionIncidentLane, error: Error): void {
   if (!isRecoverablePostgresConnectionError(error)) {
-    log.error(`unexpected ${lane} connection error:`, error.message, error.stack);
+    log.error(
+      `unexpected ${lane} connection error`,
+      classifyDbLogError(error, "UNEXPECTED_POOL_CONNECTION_ERROR"),
+    );
     return;
   }
 
@@ -808,7 +833,8 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       const pgCode = getPostgresErrorCode(err);
       const errorType = err instanceof Error ? "Error" : typeof err;
       log.error(
-        `query contract failed after ${Date.now() - start}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}${sqlDiag} errorType=${errorType}${pgCode ? ` code=${pgCode}` : ""}`,
+        `query contract failed after ${Date.now() - start}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}${sqlDiag} phase=sync errorType=${errorType}${pgCode ? ` sqlstate=${pgCode}` : ""}`,
+        classifyDbLogError(err, "QUERY_CONTRACT_FAILED"),
       );
       throw err;
     }
@@ -827,9 +853,13 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
         if (failed && err !== undefined) {
           const pgCode = getPostgresErrorCode(err);
           const errorType = err instanceof Error ? "Error" : typeof err;
-          message += ` errorType=${errorType}${pgCode ? ` code=${pgCode}` : ""}`;
+          message += ` phase=async errorType=${errorType}${pgCode ? ` sqlstate=${pgCode}` : ""}`;
         }
-        if (failed) log.error(message); else log.warn(message);
+        if (failed) {
+          log.error(message, classifyDbLogError(err, "QUERY_CONTRACT_FAILED"));
+        } else {
+          log.warn(message);
+        }
       }
     };
 
