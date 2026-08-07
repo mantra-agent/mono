@@ -531,6 +531,41 @@ export interface ChatCompletionResult {
 
 const log = createLogger("ModelClient");
 
+const CONNECTOR_QUOTA_COOLDOWN_MS = 15 * 60 * 1000;
+const connectorQuotaUnavailableUntil = new Map<number, number>();
+
+function isConnectorQuotaExhaustion(error: unknown): error is ModelProviderError {
+  if (!(error instanceof ModelProviderError)) return false;
+  const failure = error.providerFailure;
+  if (failure.status !== 402 && failure.status !== 403) return false;
+  const diagnostic = `${failure.providerCode ?? ""} ${failure.providerMessage ?? ""} ${failure.bodySnippet ?? ""}`.toLowerCase();
+  return diagnostic.includes("run out of credits")
+    || diagnostic.includes("insufficient_quota")
+    || diagnostic.includes("billing_hard_limit_reached");
+}
+
+function quotaEligibleCandidates(candidates: ModelRoutingDecision[]): ModelRoutingDecision[] {
+  const now = Date.now();
+  const eligible = candidates.filter((candidate) => {
+    if (candidate.explicitOverride || candidate.connectorId === undefined) return true;
+    const unavailableUntil = connectorQuotaUnavailableUntil.get(candidate.connectorId);
+    if (!unavailableUntil) return true;
+    if (unavailableUntil <= now) {
+      connectorQuotaUnavailableUntil.delete(candidate.connectorId);
+      return true;
+    }
+    return false;
+  });
+  return eligible.length ? eligible : candidates;
+}
+
+function recordConnectorQuotaExhaustion(routing: ModelRoutingDecision, error: unknown): void {
+  if (routing.connectorId === undefined || routing.explicitOverride || !isConnectorQuotaExhaustion(error)) return;
+  const unavailableUntil = Date.now() + CONNECTOR_QUOTA_COOLDOWN_MS;
+  connectorQuotaUnavailableUntil.set(routing.connectorId, unavailableUntil);
+  log.warn(`model connector quota cooldown connector=${routing.connectorId} provider=${routing.provider} model=${routing.model} unavailableUntil=${new Date(unavailableUntil).toISOString()}`);
+}
+
 function buildRequestContent(messages: Array<{ role: string; content: unknown }>): { content?: string; chars: number } {
   try {
     const serialized = JSON.stringify(messages.map(m => ({ role: m.role, content: m.content })));
@@ -780,7 +815,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
   const sessionTierOverride = !options.model && !options.routingDecision && !options.semanticTierOverride
     ? await resolveSessionModelTierOverride(options.metadata)
     : null;
-  const candidates = latencyEligibleCandidates(
+  const candidates = quotaEligibleCandidates(latencyEligibleCandidates(
     options.routingDecision
       ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
       : await resolveModelCandidates(activity, {
@@ -790,7 +825,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
           sessionId: options.metadata?.sessionId,
         }),
     options.latencyBudgetMs,
-  );
+  ));
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;
   for (let index = 0; index < candidates.length; index++) {
@@ -800,6 +835,7 @@ export async function chatCompletion(options: ChatCompletionOptions): Promise<Ch
     } catch (error) {
       lastError = error;
       if (isAbortError(error, options.signal) || isModelContextOverflow(error)) throw error;
+      recordConnectorQuotaExhaustion(routing, error);
       failures = appendFailedAttempt(routing, error);
       const next = candidates[index + 1];
       if (next) log.warn(`model connector fallback connector=${routing.connectorId} tier=${routing.tier} model=${routing.model} nextConnector=${next.connectorId} nextModel=${next.model} failure=${error instanceof Error ? error.message : String(error)}`);
@@ -2299,14 +2335,14 @@ export async function* chatCompletionStream(options: ChatCompletionStreamOptions
   const sessionTierOverride = !options.model && !options.routingDecision && !options.semanticTierOverride
     ? await resolveSessionModelTierOverride(options.metadata)
     : null;
-  const candidates = options.routingDecision
+  const candidates = quotaEligibleCandidates(options.routingDecision
     ? [options.routingDecision, ...(options.routingDecision.fallbackCandidates || [])]
     : await resolveModelCandidates(activity, {
         model: options.model,
         overrideReason: options.overrideReason || (sessionTierOverride ? "session model tier override" : undefined),
         semanticTierOverride: options.semanticTierOverride || sessionTierOverride || undefined,
         sessionId: options.metadata?.sessionId,
-      });
+      }));
   let failures = candidates[0]?.attempts ?? [];
   let lastError: unknown;
   for (let index = 0; index < candidates.length; index++) {
@@ -2321,6 +2357,7 @@ export async function* chatCompletionStream(options: ChatCompletionStreamOptions
     } catch (error) {
       lastError = error;
       if (isAbortError(error, options.signal) || emittedContent || isModelContextOverflow(error)) throw error;
+      recordConnectorQuotaExhaustion(routing, error);
       failures = appendFailedAttempt(routing, error);
       const next = candidates[index + 1];
       if (next) log.warn(`model stream connector fallback connector=${routing.connectorId} tier=${routing.tier} model=${routing.model} nextConnector=${next.connectorId} nextModel=${next.model} failure=${error instanceof Error ? error.message : String(error)}`);
