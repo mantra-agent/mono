@@ -41,8 +41,9 @@ export type ToolFailureCode =
   | "system_schema_missing"
   | "system_internal_error"
   // Git contract rejects (caller input / wrong target — amber)
-  | "git_missing_url"
-  | "git_invalid_url"
+  | "git_platform_environment_required"
+  | "git_clone_routing_forbidden"
+  | "git_source_binding_unavailable"
   | "git_directory_required"
   | "git_directory_not_found"
   | "git_directory_ambiguous"

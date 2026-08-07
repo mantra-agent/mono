@@ -1,5 +1,9 @@
 # Authority
 
+## Git clone source identity
+
+Normal `git.clone` has no caller-owned repository coordinates. `server/git-source-resolver.ts` resolves the canonical `Mantra / Web / stage` source binding; `clone_from_environment` is the explicit exceptional path and requires one positive Platform Environment ID. Clone URL, provider connection, credential, branch, and destination identity must remain derived from the authorized source binding with no legacy credential fallback.
+
 ## Persona catalog and bundle data
 
 `SEED_PERSONAS` in `server/file-storage/persona-storage.ts` is the authoritative identity catalog. Persona `context_sections` and `tool_bundle` are persisted configuration owned by each persona row and mutated only through principal-scoped `PersonaStorage` APIs/tools. Boot reconciliation may maintain seed identity, overlay, icon, tier, and routing metadata; it must never define, inherit, version, or rewrite bundle values. Empty tool bundles preserve the passthrough contract.

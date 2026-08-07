@@ -948,16 +948,14 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   git: {
-    description: "Interact with Git repositories — clone, pull, browse history, diff, branch, checkout, show, and write changes (add, commit, push, create_pr). Write actions only work on cloned repos in repos/.",
+    description: "Interact with Git repositories. Normal clone takes no routing inputs and resolves the canonical Mantra / Web / stage source binding; clone_from_environment is the explicit exceptional path. Write actions only work on session-owned clones in repos/.",
     category: "work",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["clone", "pull", "status", "log", "diff", "branch", "checkout", "show", "add", "commit", "push", "create_pr", "merge_pr", "delete_branch"], description: "Action to perform" },
-        url: { type: "string", description: "Repo URL (for clone)" },
-        platformEnvironmentId: { type: "number", description: "Optional Platform Environment ID for platform-first clone auth. If omitted, clone infers a matching Platforms source binding by owner/repo before falling back to legacy Git auth." },
-        connectionId: { type: "number", description: "Optional provider connection ID for platform-first clone auth. Used to disambiguate matching Platforms source bindings." },
+        action: { type: "string", enum: ["clone", "clone_from_environment", "pull", "status", "log", "diff", "branch", "checkout", "show", "add", "commit", "push", "create_pr", "merge_pr", "delete_branch"], description: "Action to perform. clone uses the canonical Mantra / Web / stage source binding; clone_from_environment is the explicit exceptional path." },
+        platformEnvironmentId: { type: "number", description: "Required only for clone_from_environment. Normal clone takes no repository routing input." },
         directory: { type: "string", description: "Omit to use the sole repository clone owned by this session. If multiple session clones exist, pass the directory name returned by clone. Use \".\" or \"self\" only for read-only inspection of the workspace root repo." },
         branch: { type: "string", description: "Branch name" },
         ref: { type: "string", description: "Git ref (for show/checkout)" },
