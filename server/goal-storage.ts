@@ -277,7 +277,7 @@ export class GoalStorage {
       source: input.source,
     };
     await this.saveGoal(goal);
-    tagService.syncEntityTags("goal", goal.id, goal.shortName, goal.tags).catch(err => log.warn("tag sync failed", err));
+    tagService.replaceEntityTags("goal", goal.id, goal.shortName, goal.tags).catch(err => log.warn("tag sync failed", err));
     return goal;
   }
 
@@ -321,7 +321,7 @@ export class GoalStorage {
     }
     await this.saveGoal(updated);
     if (changedFields.includes("tags")) {
-      tagService.syncEntityTags("goal", updated.id, updated.shortName, updated.tags).catch(err => log.warn("tag sync failed", err));
+      tagService.replaceEntityTags("goal", updated.id, updated.shortName, updated.tags).catch(err => log.warn("tag sync failed", err));
     }
     return updated;
   }
