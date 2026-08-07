@@ -69,7 +69,11 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 - Finalized assistant turns preserve streamed content/tool boundaries. `transcript-projection.ts` alone owns the terminal-to-persisted handoff; persisted chronology must reconstruct the same segment sequence, and chronological timeline blocks receive full-turn graph context without collapsing across prose boundaries.
 - Transcript fallback widgets derived from persisted lifecycle metadata must deduplicate against both persisted assistant segments and the currently displayed authoritative stream. A child lifecycle event may persist before its creating tool call, but the live-to-persisted handoff still has one visible widget owner.
 
-### Protocol
+### Segment visibility ownership
+
+`segment-stream.tsx` owns the canonical execution-step visibility policy used by both live chat and persisted replay. Consumers may call the exported policy for summaries or timeline helpers, but must not inject a required filtering callback into `SegmentStream`; keeping the policy behind the renderer boundary prevents transport cancellation, replay replacement, or module-cycle timing from bypassing visibility filtering.
+
+## Protocol
 1. Chat route subscribes to the focused session plus bounded live streaming sessions via `session.subscribe { sessionId, supportsDelta: true }` on the shared WS. `supportsDelta` advertises protocol-v2 capability.
 2. Server replies with `session.snapshot { sessionId, content: StreamingContent, status, patchSeq }` — always the full state plus the patch baseline.
 3. As each run progresses, the server sends `session.delta`. To v2-capable clients it is an incremental patch `{ segmentPatch: { length, set }, scalars, patchSeq, basePatchSeq, status, ... }`; to legacy clients it remains the full `{ streamingContent, status, ... }`. The client is not a domain reducer — it applies an opaque structural patch (truncate to `length`, overwrite `set` indices, merge scalars) over the baseline it already holds.
