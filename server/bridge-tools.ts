@@ -17184,6 +17184,18 @@ const cognitionTools: Record<string, ToolHandler> = {
         return { result: `Persona created: ${persona.name} (id=${persona.id})` };
       },
 
+      update_global_persona_template: async (a) => {
+        if (!a.id) return { result: "Missing persona id", error: true };
+        const toolBundle = a.tool_bundle ?? a.toolBundle;
+        if (!Array.isArray(toolBundle) || toolBundle.length === 0) {
+          return { result: "A non-empty tool bundle is required", error: true };
+        }
+        const { personaStorage } = await import("./file-storage/persona-storage");
+        const updated = await personaStorage.updateGlobalTemplateToolBundle(Number(a.id), toolBundle);
+        if (!updated) return { result: `Global persona template ${a.id} not found`, error: true };
+        return { result: `Global persona template updated: ${updated.name} (id=${updated.id}, tools=${updated.toolBundle.join(", ")})` };
+      },
+
       update_persona: async (a) => {
         if (!a.id) return { result: "Missing persona id", error: true };
         const { personaStorage } = await import("./file-storage/persona-storage");
@@ -17383,7 +17395,7 @@ const SIDE_EFFECT_ONLY_ACTIONS: Record<string, Set<string>> = {
   memory: new Set(["write"]),
   settings: new Set(["set", "delete"]),
   observe: new Set(["pattern", "gap", "change", "connection", "opportunity"]),
-  cognition: new Set(["set_emotion", "create_persona", "update_persona"]),
+  cognition: new Set(["set_emotion", "create_persona", "update_persona", "update_global_persona_template"]),
   pronunciation: new Set(["add", "update", "remove"]),
   decisions: new Set(["create", "update", "delete", "lock", "reopen", "add_update", "edit_update", "delete_update", "add_link", "remove_link"]),
   plan: new Set(["update_step", "add_steps", "pause", "unlink_session"]),

@@ -1471,12 +1471,12 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   cognition: {
-    description: "Manage Agent's cognitive state, self-observations, personas, and own profile. Actions: set_emotion (record new state), get_emotion (current), emotion_history (recent), observe (record a constrained metacognitive observation), get_profile, update_profile, get_persona (current active), list_personas, resolve_toolset (preview the exact tools a persona loads up front vs on demand), create_persona, update_persona. Use the `orient` tool to activate/switch personas.",
+    description: "Manage Agent's cognitive state, self-observations, personas, and own profile. Actions: set_emotion (record new state), get_emotion (current), emotion_history (recent), observe (record a constrained metacognitive observation), get_profile, update_profile, get_persona (current active), list_personas, resolve_toolset (preview the exact tools a persona loads up front vs on demand), create_persona, update_persona, update_global_persona_template. Use the `orient` tool to activate/switch personas.",
     category: "cognition",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["set_emotion", "get_emotion", "emotion_history", "observe", "get_profile", "update_profile", "get_persona", "list_personas", "resolve_toolset", "create_persona", "update_persona"], description: "Action to perform" },
+        action: { type: "string", enum: ["set_emotion", "get_emotion", "emotion_history", "observe", "get_profile", "update_profile", "get_persona", "list_personas", "resolve_toolset", "create_persona", "update_persona", "update_global_persona_template"], description: "Action to perform" },
         observation_type: { type: "string", enum: ["pattern", "gap", "change", "connection", "opportunity"], description: "Observation type (for observe)" },
         observation: { type: "string", description: "Specific, evidence-based metacognitive observation in 1–3 short sentences (for observe)" },
         agentName: { type: "string", description: "New name for the agent (for update_profile, 1-80 chars)" },
