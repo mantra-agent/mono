@@ -3876,7 +3876,7 @@ export default function PeoplePage() {
 
   const selectedPersonName = useMemo(() => {
     if (!selectedPersonId) return null;
-    return headerPeopleData?.people.find(person => person.id === selectedPersonId)?.name ?? null;
+    return headerPeopleData?.people?.find(person => person.id === selectedPersonId)?.name ?? null;
   }, [headerPeopleData?.people, selectedPersonId]);
 
   const shouldOpenNewInteraction = useMemo(() => {

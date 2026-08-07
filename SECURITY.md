@@ -61,6 +61,14 @@
 - Residual: historical aggregates cannot be retroactively enriched; timeout-only Suspense failures remain separately classified as ROUTE_LOAD_TIMEOUT without an exception stack because no exception was thrown.
 -->
 
+<!-- 2026-08-07 RouteLoadBoundary residual TypeError / budget classification:
+- Assets/data: route keys, failure phase, and stable product error codes (S1 operational metadata); no route payload bodies or user content.
+- Flow/boundary: React render TypeErrors and named route-load budgets -> RouteLoadBoundary/lazyWithRetry producer normalization -> redacting client logger -> authenticated telemetry sink. Separate producer fix: optional-chain-then-method null intermediates on Platforms/Integrations and shared list lookups.
+- Threats: TypeError "Cannot read properties of null/undefined" collapsing through SECRET_LIKE message tokenization to CANNOT_READ_PROPERTIES_OF (repudiation), budget-exhaustion metadata-only logs lacking codes, and null intermediate arrays thrashing route boundaries (availability).
+- Controls/owner: Client Platform stamps ROUTE_RENDER_TYPEERROR / ROUTE_RENDER_FAILED / ROUTE_LOAD_BUDGET_EXHAUSTED / ROUTE_MODULE_LOAD_FAILED on real Error instances, preserves routeKey/cause codes, and hardens `obj?.array.find` to `obj?.array?.find` (plus products ?? []) so null intermediates cannot throw. Severity: medium. SLA: immediate. Status: repaired in source, pending production build/merge.
+- Residual: historical CANNOT_READ_PROPERTIES_OF aggregates cannot be retroactively rewritten; slow routes may still exhaust the 15s budget truthfully as ROUTE_LOAD_BUDGET_EXHAUSTED.
+-->
+
 <!-- 2026-08-06 AgentContext error-attribution repair:
 - Assets/data: user-owned Session identifiers and compaction operation identifiers (S1 operational metadata), context availability, and application-error aggregates.
 - Flow/boundary: context assembly/compaction failures -> `agent-context.ts` producer normalization -> `createLogger` redaction/classification -> principal-scoped telemetry sink.

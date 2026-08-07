@@ -161,7 +161,7 @@ export function GoalInlineDetails({ goalId }: GoalInlineDetailsProps) {
   );
   const parentValue = useMemo(() => {
     if (!goal?.parentId) return [];
-    const parent = allGoalsData?.goals.find((candidate) => candidate.id === goal.parentId);
+    const parent = allGoalsData?.goals?.find((candidate) => candidate.id === goal.parentId);
     return [
       {
         type: "goal" as const,

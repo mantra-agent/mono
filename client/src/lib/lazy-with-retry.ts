@@ -73,7 +73,7 @@ export function lazyWithRetry<T extends React.ComponentType<any>>(
         2,
         retryError,
       );
-      log.error("page module load exhausted", {
+      log.error("page module load exhausted", error, {
         attempts: error.attempts,
         errorName: error.causeName,
       });

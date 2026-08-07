@@ -104,7 +104,7 @@ export default function CompaniesPage() {
   const { toast } = useToast();
   const { data, isLoading } = useQuery<{ companies: CompanyIndex[] }>({ queryKey: ["/api/companies"] });
   usePageLoadActivity("page:companies", isLoading);
-  const selectedName = data?.companies.find(company => company.id === selectedId)?.name;
+  const selectedName = data?.companies?.find(company => company.id === selectedId)?.name;
   usePageHeader({ title: selectedName || "Companies" });
   useFocusContext(selectedId ? null : { subView: "companies" });
 

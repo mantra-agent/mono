@@ -740,7 +740,7 @@ export function LiabilitiesContent() {
                 onToggle={() => toggleCard(key)}
                 onLogPayment={() => openPayment(l)}
                 onEdit={l.type === "manual" ? () => {
-                  const manual = summary?.manualLiabilities.find(m => m.id === l.id);
+                  const manual = summary?.manualLiabilities?.find(m => m.id === l.id);
                   if (manual) openEdit(manual);
                 } : undefined}
                 onDelete={l.type === "manual" ? () => deleteMutation.mutate(l.id) : undefined}

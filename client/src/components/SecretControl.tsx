@@ -35,7 +35,7 @@ export function SecretControl({ name }: SecretControlProps) {
     queryKey: ["/api/secrets/metadata"],
   });
 
-  const meta = data?.secrets.find(s => s.name === name);
+  const meta = data?.secrets?.find(s => s.name === name);
 
   const setMutation = useMutation({
     mutationFn: async (newValue: string) => {

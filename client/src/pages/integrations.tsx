@@ -6488,8 +6488,8 @@ function ModelConnectorSection({ provider, title = "Model mapping" }: { provider
   const { toast } = useToast();
   const { data } = useQuery<{ connectors: ModelConnectorDetail[] }>({ queryKey: ["/api/models/connectors"] });
   const { data: modelsData } = useQuery<{ providers: ModelProviderDetail[] }>({ queryKey: ["/api/models/available"] });
-  const connector = data?.connectors.find((item) => item.provider === provider);
-  const models = modelsData?.providers.find((item) => item.id === provider)?.models ?? [];
+  const connector = data?.connectors?.find((item) => item.provider === provider);
+  const models = modelsData?.providers?.find((item) => item.id === provider)?.models ?? [];
   const mutation = useMutation({
     mutationFn: async (tierMappings: Record<SemanticTier, string>) => (await apiRequest("PATCH", `/api/models/connectors/${connector!.id}`, { tierMappings })).json(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/models/connectors"] }),
