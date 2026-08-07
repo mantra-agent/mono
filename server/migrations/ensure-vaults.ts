@@ -371,6 +371,29 @@ export async function ensureVaults(): Promise<void> {
       }
     }
 
+    // Legacy chat projections can predate account_id even when owner_user_id is
+    // present. Recover both ownership fields from the canonical user -> account
+    // relation before validating the Vault invariant; the generic account-based
+    // pass above cannot repair those rows because their account_id is NULL.
+    const { rowCount: recoveredChatVaultCount } = await pool.query(`
+      UPDATE document_store_documents d
+      SET account_id = u.account_id,
+          vault_id = v.id,
+          updated_at = CURRENT_TIMESTAMP
+      FROM users u
+      JOIN vaults v
+        ON v.account_id = u.account_id
+       AND v.is_default = true
+      WHERE d.document_type = 'chat'
+        AND d.scope = 'user'
+        AND d.vault_id IS NULL
+        AND d.owner_user_id = u.id
+        AND u.account_id IS NOT NULL
+    `);
+    if (recoveredChatVaultCount && recoveredChatVaultCount > 0) {
+      log.log(`Recovered Vault ownership for ${recoveredChatVaultCount} legacy chat document(s)`);
+    }
+
     // User-owned chat documents must always have one canonical Vault after the
     // default-Vault backfill. A partial check keeps system/global documents and
     // non-chat document families backward compatible while making future NULL
