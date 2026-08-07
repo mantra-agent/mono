@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Copy, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { MODAL_GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface";
 import { cn } from "@/lib/utils";
 
 export interface CopyableAuthErrorState {
@@ -30,7 +31,7 @@ export function CopyableAuthError({ error, onDismiss }: { error: CopyableAuthErr
       aria-modal="true"
       aria-labelledby="auth-error-title"
     >
-      <div className="w-full max-w-md rounded-xl border border-destructive/30 bg-card p-4 shadow-2xl">
+      <div className={cn(MODAL_GLASS_SURFACE_CLASS, "w-full max-w-md p-4")}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <h2 id="auth-error-title" className="text-base font-semibold text-destructive">

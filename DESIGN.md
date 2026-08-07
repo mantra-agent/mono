@@ -9,7 +9,7 @@
 
 **Zero Interface.** The best possible interface is no interface. The second best is the theoretical minimum that matters at any given moment. Not a dashboard, not a form. A dynamic surface, generated just-in-time for whatever matters most. Every design decision is measured against this: does it move toward the theoretical minimum, or does it add surface area the user must manage?
 
-**Dark Canvas, Trees for UI, Cards for Modals.** The background is the interface. `bg-background` (pure black in dark mode) is the default canvas. Route and embedded UIs sit directly on that canvas and organize objects through the canonical Hierarchy Tree: compact rows, nesting, disclosure, selection, and structural separators. Do not use Cards as page, dashboard, settings, detail, or object-grouping containers. The Card primitive is reserved for modal decision surfaces, where it must use `bg-card`, `overflow-hidden`, and `min-w-0`. Borders are structural separators (`border-b border-border/20`), not decoration.
+**Dark Canvas, Trees for UI, Glass for Modals.** The background is the interface. `bg-background` (pure black in dark mode) is the default canvas. Route and embedded UIs sit directly on that canvas and organize objects through the canonical Hierarchy Tree: compact rows, nesting, disclosure, selection, and structural separators. Do not use Cards as page, dashboard, settings, detail, or object-grouping containers. Every modal decision surface uses `MODAL_GLASS_SURFACE_CLASS`, the same canonical glass format as toasts: translucent warm-dark gradient, white structural edge and highlights, deep shadow, and `backdrop-blur-xl`. Preserve the standard black overlay behind the modal; glass replaces only the modal surface. Borders are structural separators (`border-b border-border/20`), not decoration.
 
 **Clarity Above All.** Remove everything that isn't essential. Every element on screen earns its place through utility, orientation, or delight. Maximize Tufte's data-ink ratio. If removing an element changes nothing about comprehension, it shouldn't be there.
 
@@ -175,13 +175,13 @@ Background color is structural first, semantic only when the surface is literall
 
 - **Route and embedded UIs**: Content sits directly on the canvas. Object sets and structured data use the canonical Hierarchy Tree, not Cards.
 - **Grouping**: Use tree sections, indentation, quiet rails, row expansion, and structural borders. Do not create a Card merely to establish visual separation.
-- **Cards**: Reserved for modal decision surfaces only. Modal Cards use `bg-card` (never black/`bg-background`) and contain their content with `overflow-hidden` and `min-w-0`.
+- **Modal surfaces**: Every modal, alert dialog, modal sheet, and modal drawer uses `MODAL_GLASS_SURFACE_CLASS`. It is the exact shared toast glass format: translucent warm-dark gradient, white structural edge/highlights, deep shadow, `overflow-hidden`, `min-w-0`, and `backdrop-blur-xl`. Keep the standard black overlay behind it; do not replace the overlay or black canvas with glass.
 - **Editable fields (settings, secrets, credentials, object detail)**: These are TreeView rows, not cards and not standalone `Input`+`Button` forms. Compose `ProfileDetailSection` (the collapsible group header) with `ProfileTreeRow` (one row per field): label + icon on the left, the value or an inline right-aligned input as the row's child, and any rotate/clear/destructive action in the `menuContent` hover overflow menu. When a field is being edited, open the input inline beneath or within the row — never in a `rounded-lg border bg-card` box. The canonical live references are the SOURCE section on the environment detail page and the Secrets screen; the pattern is demonstrated on the in-app Design page under Components → "Edit fields".
 
 | Role | Token/class | Use | Forbidden |
 |---|---|---|---|
 | Page canvas | `background` / `bg-background` | Full page, root panels, terminal/log canvases. **Default surface for all content.** | — |
-| Modal decision surface | `card` / `bg-card` | Isolated modal workflow moments only. Always pair with `overflow-hidden min-w-0`. | Using Cards for routes, dashboards, settings, detail pages, object groups, or embedded panels |
+| Modal decision surface | `MODAL_GLASS_SURFACE_CLASS` | Dialogs, alert dialogs, modal sheets, modal drawers, and custom modal surfaces. Preserve the black overlay behind it. | `bg-background`, `bg-card`, one-off gradients, or removing/replacing the black overlay |
 | Passive inset | `muted` / `bg-muted` | Code, metadata wells, disabled zones, quiet nested areas | Selected state, CTA emphasis, alerts |
 | Hover/selected chrome | `accent` / `bg-accent` | Transient hover, selected navigation rows, neutral UI chrome | Persistent semantic callouts |
 | Primary CTA fill | `cta` / `bg-cta` | The one primary action button or equivalent decisive control | Background tints, panels, generic icons, badges, decorative examples |

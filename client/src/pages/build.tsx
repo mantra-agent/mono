@@ -57,6 +57,7 @@ import {
   X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MODAL_GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface";
 import { getStatusClasses } from "@/components/nav-dot";
 import { MantraLogo } from "@/components/mantra-logo";
 import { InlineDatePicker } from "@/components/inline-date-picker";
@@ -4167,11 +4168,22 @@ export function DesignTab() {
             <div className="text-sm font-medium mb-2">Surface philosophy</div>
             <p className="text-xs leading-relaxed text-muted-foreground">
               Route and embedded UIs sit directly on the canvas and organize
-              objects through the canonical Hierarchy Tree. Do not use Cards for
-              pages, dashboards, settings, detail views, object groups, or embedded
-              panels. Cards belong only in modal decision surfaces, where they use
-              bg-card and contain their content with overflow-hidden and min-w-0.
+              objects through the canonical Hierarchy Tree. Every modal surface
+              uses the same canonical glass as toasts. The standard black overlay
+              stays behind it; glass changes the decision surface, not the canvas.
             </p>
+            <div className="mt-4 bg-black p-4">
+              <div className={cn(MODAL_GLASS_SURFACE_CLASS, "mx-auto max-w-sm p-4")}>
+                <div className="relative z-10 space-y-2">
+                  <div className="text-sm font-medium">Canonical modal glass</div>
+                  <p className="text-xs leading-relaxed text-white/70">
+                    Translucent warm-dark gradient, white structural edge and
+                    highlights, deep shadow, and backdrop blur. Never substitute
+                    bg-background, bg-card, or a one-off gradient.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </DesignSection>
 

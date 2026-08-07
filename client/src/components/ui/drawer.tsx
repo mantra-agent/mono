@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Drawer as DrawerPrimitive } from "vaul"
 
+import { MODAL_GLASS_SURFACE_CLASS } from "@/components/ui/glass-surface"
 import { cn } from "@/lib/utils"
 
 const Drawer = ({
@@ -43,7 +44,8 @@ const DrawerContent = React.forwardRef<
     <DrawerPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto flex-col rounded-t-[10px] border bg-background",
+        MODAL_GLASS_SURFACE_CLASS,
+        "fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto flex-col rounded-b-none",
         className
       )}
       {...props}
