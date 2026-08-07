@@ -311,6 +311,7 @@ export function DriveSection({
         hasValue
         showEmpty
         mobileLayout="inline"
+        valueLayout="compact"
         testId="row-google-drive"
       >
         <span className={!hasDriveScope ? "text-muted-foreground" : undefined}>{driveStatus}</span>

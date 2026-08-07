@@ -103,6 +103,7 @@ import {
   HIERARCHY_SESSION_ROW_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
+import { vaultTitleColor } from "@/lib/vault-title-color";
 import type {
   SemanticTier,
   OpenAIReasoningEffort,
@@ -2391,8 +2392,10 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
         </p>
       ) : (
         <div className="space-y-0">
-          <div className="px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Accounts</div>
-          {accounts.map((account) => {
+          <div className="px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">Accounts</div>
+          {(() => {
+            const vaultById = new Map(vaults.map((vault) => [vault.id, vault]));
+            return accounts.map((account) => {
         const missingScopes = account.missingScopes || account.scopes?.missingScopes || [];
         const needsReauth = missingScopes.length > 0 || Boolean(account.scopes && !account.scopes.hasGmailRead);
         const tokenExpired = account.healthy === false;
@@ -2401,6 +2404,12 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
         const permAccount = permAccounts.find((permissionAccount) => permissionAccount.email === account.email);
         const vaultRequired = !permAccount?.vaultId;
         const status = vaultRequired ? "Vault required" : tokenExpired ? "Token expired" : needsReauth ? "Missing permissions" : isHealthy ? "Verified" : "Connected";
+        const accountTitleColor = vaultTitleColor(
+          permAccount?.vaultId ? [permAccount.vaultId] : undefined,
+          vaultById,
+          activeVaultId,
+          1,
+        );
 
         const statusIcon = showReauth
           ? <XCircle className="h-3.5 w-3.5 text-destructive" />
@@ -2418,6 +2427,7 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
             variant="item"
             icon={<Mail className="h-3.5 w-3.5" />}
             persistKey={`google-account-${account.id}`}
+            labelColor={accountTitleColor}
             actions={(
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2446,12 +2456,12 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
             )}
           >
             <HierarchyTreeRow continues connectorAnchor="first-row-center">
-              <ProfileTreeRow label={<span>Status</span>} icon={statusIcon} hasValue showEmpty mobileLayout="inline" testId={`row-google-status-${account.id}`}>
+              <ProfileTreeRow label={<span>Status</span>} icon={statusIcon} hasValue showEmpty mobileLayout="inline" valueLayout="compact" testId={`row-google-status-${account.id}`}>
                 <span className={cn(showReauth && "text-destructive", isHealthy && "text-active")}>{status}</span>
               </ProfileTreeRow>
             </HierarchyTreeRow>
             <HierarchyTreeRow continues connectorAnchor="first-row-center">
-              <ProfileTreeRow label={<span>Vault</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(permAccount?.vault)} showEmpty mobileLayout="inline" testId={`row-google-vault-${account.id}`}>
+              <ProfileTreeRow label={<span>Vault</span>} icon={<Shield className="h-3.5 w-3.5" />} hasValue={Boolean(permAccount?.vault)} showEmpty mobileLayout="inline" valueLayout="compact" testId={`row-google-vault-${account.id}`}>
                 {permAccount?.vault ? (
                   <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: permAccount.vault.color || undefined }} />{permAccount.vault.name}</span>
                 ) : permAccount && vaults.length > 0 ? (
@@ -2501,7 +2511,8 @@ function GoogleAccountsSection({ oauthConfigured, drivePickerConfigured }: { oau
             </HierarchyTreeRow>
           </IntegrationTreeSection>
         );
-          })}
+            });
+          })()}
         </div>
       )}
 
@@ -3236,6 +3247,7 @@ function IntegrationTreeSection({
   icon,
   variant = "section",
   persistKey,
+  labelColor,
 }: {
   label: string;
   children: React.ReactNode;
@@ -3246,6 +3258,8 @@ function IntegrationTreeSection({
   icon?: React.ReactNode;
   variant?: "section" | "item";
   persistKey?: string;
+  /** Optional vault color for item-variant titles. */
+  labelColor?: string | null;
 }) {
   const storageKey = persistKey ? `integrations:section-open:${persistKey}` : null;
   const [open, setOpen] = useState(() => {
@@ -3262,22 +3276,29 @@ function IntegrationTreeSection({
       window.localStorage.setItem(storageKey, next ? "1" : "0");
     }
   };
+  const isItem = variant === "item";
 
   return (
     <Collapsible open={open} onOpenChange={handleOpenChange}>
       <div className="flex items-center">
         <CollapsibleTrigger
           className={cn(
-            "flex min-h-11 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-2 hover-elevate",
-            variant === "item"
-              ? "text-sm font-medium text-foreground"
-              : "text-xs font-bold uppercase tracking-wider text-muted-foreground",
+            "flex min-w-0 flex-1 items-center rounded-md hover-elevate",
+            // Item rows match session-menu title density (py-1.5, no min-h-11).
+            isItem
+              ? cn(HIERARCHY_SESSION_ROW_CLASS, "font-medium text-foreground")
+              : "min-h-11 gap-1.5 px-2 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground",
           )}
           data-testid={`button-${testIdPrefix}-section-${label.toLowerCase().replaceAll(" ", "-")}`}
         >
           {!expanderRight ? <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} /> : null}
           {icon ? <span className="shrink-0 text-muted-foreground">{icon}</span> : null}
-          <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+          <span
+            className="min-w-0 flex-1 truncate text-left"
+            style={isItem && labelColor ? { color: labelColor } : undefined}
+          >
+            {label}
+          </span>
           {expanderRight ? <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} /> : null}
         </CollapsibleTrigger>
         {actions}
