@@ -73,6 +73,12 @@ export function filterStepsByLayer(
     }
 
     if (step.type === "tool_call") {
+      // QuestionWidget is the single source of truth for rendering an inline
+      // question. The timeline must not also paint a non-error question step as
+      // a generic tool card, or the answered card renders twice (widget + tool
+      // card) at layers >= 1. Mirror the error-skip in questionToolCallIdsFromSegments:
+      // errored questions have no widget owner, so they remain visible here.
+      if (step.toolName === "question" && step.status !== "error") return false;
       if (layer === 1) {
         return step.toolName !== "think" && step.toolName !== "observe";
       }
