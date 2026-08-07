@@ -239,6 +239,7 @@ app.use((req, res, next) => {
   try {
     const ww = require("./wedge-watchdog");
     id = `${req.method}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    res.locals.requestId = id;
     ww.trackHttpReqStart(id, req.method, req.path);
     trackEnd = ww.trackHttpReqEnd;
   } catch { /* watchdog not available */ }
@@ -549,14 +550,28 @@ app.use((req, res, next) => {
   log(`[startup] routes registered: ${routesMs}ms`, "boot");
   bootTracker.completePhase("routes_auth");
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = status >= 500 ? "Internal Server Error" : (err.message || "Request failed");
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    const errorRecord = err && typeof err === "object" ? err as Record<string, unknown> : undefined;
+    const rawStatus = errorRecord?.status ?? errorRecord?.statusCode;
+    const status = typeof rawStatus === "number" && rawStatus >= 400 && rawStatus <= 599 ? rawStatus : 500;
+    const error = err instanceof Error
+      ? err
+      : new Error(typeof err === "string" && err.trim() ? err : "Non-Error value reached Express error middleware");
+    const message = status >= 500 ? "Internal Server Error" : (error.message || "Request failed");
+    const route = req.route && typeof req.route.path === "string" ? req.route.path : "unmatched";
 
-    serverLog.error("Internal Server Error:", err);
+    serverLog.error("request.unhandled_error", {
+      error,
+      errorCode: typeof errorRecord?.code === "string" ? errorRecord.code : "HTTP_UNHANDLED_ERROR",
+      method: req.method,
+      route,
+      status,
+      requestId: typeof res.locals.requestId === "string" ? res.locals.requestId : undefined,
+      headersSent: res.headersSent,
+    });
 
     if (res.headersSent) {
-      return next(err);
+      return next(error);
     }
 
     return res.status(status).json({ message });
