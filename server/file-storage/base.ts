@@ -37,6 +37,45 @@ interface BaseEntity {
   updatedAt: string;
 }
 
+type EntityTagSyncError = Error & {
+  code?: string;
+  operation?: "entity_tag_sync" | "entity_tag_cleanup";
+  docType?: string;
+  entityId?: string;
+};
+
+function stableTagErrorCode(docType: string, suffix: "TAG_SYNC_ERROR" | "TAG_CLEANUP_ERROR"): string {
+  const normalizedDocType = docType.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  return `${normalizedDocType}_${suffix}`;
+}
+
+// Preserve the producer Error (code + stack) so tag projection failures classify
+// stably instead of collapsing into message-derived UNCLASSIFIED identities.
+function normalizeEntityTagError(
+  value: unknown,
+  docType: string,
+  entityId: string,
+  operation: EntityTagSyncError["operation"],
+  fallbackMessage: string,
+  suffix: "TAG_SYNC_ERROR" | "TAG_CLEANUP_ERROR",
+): EntityTagSyncError {
+  let error: EntityTagSyncError;
+  if (value instanceof Error) {
+    error = value as EntityTagSyncError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(value) as EntityTagSyncError;
+  } else {
+    error = new Error(fallbackMessage, { cause: value }) as EntityTagSyncError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = stableTagErrorCode(docType, suffix);
+  }
+  error.operation = operation;
+  error.docType = docType;
+  error.entityId = entityId;
+  return error;
+}
+
 interface DocumentStoreConfig<T extends BaseEntity> {
   docType: DocType;
   logPrefix: string;
@@ -102,9 +141,16 @@ export abstract class BaseDocumentStore<T extends BaseEntity> {
     try {
       await tagService.removeEntity(this.config.docType as any, id);
     } catch (err) {
-      const tagError = err instanceof Error ? err.message : String(err);
-      this.log.error("delete tag cleanup error", { id, docType: this.config.docType, error: tagError });
-      throw err;
+      const error = normalizeEntityTagError(
+        err,
+        this.config.docType,
+        id,
+        "entity_tag_cleanup",
+        "entity tag cleanup failed",
+        "TAG_CLEANUP_ERROR",
+      );
+      this.log.error(error, { operation: error.operation, docType: this.config.docType, id });
+      throw error;
     }
     return true;
   }
@@ -127,9 +173,16 @@ export abstract class BaseDocumentStore<T extends BaseEntity> {
     try {
       await tagService.replaceEntityTags(this.config.docType as any, entity.id, this.config.getTitle(entity), entity.tags);
     } catch (err) {
-      const tagError = err instanceof Error ? err.message : String(err);
-      this.log.error(logAction + " tag sync error", { id: entity.id, docType: this.config.docType, error: tagError });
-      throw err;
+      const error = normalizeEntityTagError(
+        err,
+        this.config.docType,
+        entity.id,
+        "entity_tag_sync",
+        "entity tag sync failed",
+        "TAG_SYNC_ERROR",
+      );
+      this.log.error(error, { operation: error.operation, docType: this.config.docType, id: entity.id, action: logAction });
+      throw error;
     }
   }
 
@@ -166,9 +219,16 @@ export abstract class BaseDocumentStore<T extends BaseEntity> {
       try {
         await tagService.replaceEntityTags(this.config.docType as any, updated.id, this.config.getTitle(updated), updated.tags);
       } catch (err) {
-        const tagError = err instanceof Error ? err.message : String(err);
-        this.log.error("update tag sync error", { id: updated.id, docType: this.config.docType, error: tagError });
-        throw err;
+        const error = normalizeEntityTagError(
+          err,
+          this.config.docType,
+          updated.id,
+          "entity_tag_sync",
+          "entity tag sync failed",
+          "TAG_SYNC_ERROR",
+        );
+        this.log.error(error, { operation: error.operation, docType: this.config.docType, id: updated.id, action: "update" });
+        throw error;
       }
       return updated;
     });
