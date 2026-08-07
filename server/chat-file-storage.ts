@@ -1946,6 +1946,69 @@ export const chatFileStorage: IChatFileStorage = {
       accountId: row.accountId,
       vaultId: row.vaultId,
     }));
+
+    // Bounded working sets (primary/past) can include a recently-active child
+    // whose parent falls outside the window. Without the parent in the set, the
+    // menu treats the child as an orphaned root and floats it into "Recent"
+    // instead of nesting it. Hydrate the ancestor chain of every returned
+    // session so the tree stitches correctly. Genuinely deleted parents remain
+    // absent and are surfaced as orphans by the client, which is intended.
+    if (view === "primary") {
+      const loaded = new Set(docs.map((d) => d.docId));
+      let frontier = docs
+        .map((d) => (d.metadata?.["parentSessionId"] as string | undefined))
+        .filter((pid): pid is string => !!pid && !loaded.has(pid));
+      let guard = 0;
+      while (frontier.length > 0 && guard < 8) {
+        guard += 1;
+        const missing = [...new Set(frontier)].filter((id) => !loaded.has(id));
+        if (missing.length === 0) break;
+        const ancestorRows = await db
+          .select({
+            docId: documentStoreDocuments.documentId,
+            title: documentStoreDocuments.title,
+            createdAt: documentStoreDocuments.createdAt,
+            metadata: documentStoreDocuments.metadata,
+            ownerUserId: documentStoreDocuments.ownerUserId,
+            accountId: documentStoreDocuments.accountId,
+            vaultId: documentStoreDocuments.vaultId,
+          })
+          .from(documentStoreDocuments)
+          .where(combineWithVisibleScope(
+            principal,
+            {
+              scope: documentStoreDocuments.scope,
+              ownerUserId: documentStoreDocuments.ownerUserId,
+              accountId: documentStoreDocuments.accountId,
+              vaultId: documentStoreDocuments.vaultId,
+            },
+            and(
+              eq(documentStoreDocuments.documentType, "chat"),
+              inArray(documentStoreDocuments.documentId, missing),
+            ),
+          ));
+        if (ancestorRows.length === 0) break;
+        const nextFrontier: string[] = [];
+        for (const row of ancestorRows) {
+          if (loaded.has(row.docId)) continue;
+          loaded.add(row.docId);
+          docs.push({
+            id: 0,
+            docId: row.docId,
+            title: row.title,
+            createdAt: row.createdAt?.toISOString() ?? null,
+            metadata: row.metadata as Record<string, unknown>,
+            ownerUserId: row.ownerUserId,
+            accountId: row.accountId,
+            vaultId: row.vaultId,
+          });
+          const pid = (row.metadata as Record<string, unknown>)?.["parentSessionId"] as string | undefined;
+          if (pid && !loaded.has(pid)) nextFrontier.push(pid);
+        }
+        frontier = nextFrontier;
+      }
+    }
+
     return applySessionTreeRowsToMetadataList(docs);
   },
 
