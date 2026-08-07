@@ -10,7 +10,9 @@ export type ToolFailureCode =
   | "task_update_milestone_not_found"
   | "task_update_milestone_requires_project"
   | "task_update_patch_rejected"
+  | "task_update_internal"
   | "task_missing_title"
+  | "business_plan_internal"
   | "tool_authority_denied"
   | "build_mod_inactive"
   | "hook_name_conflict"
@@ -64,6 +66,7 @@ export type ToolFailureCode =
   | "code_unknown_action"
   | "code_missing_query"
   | "git_auth_denied"
+  | "git_ref_not_found"
   | "git_state_conflict"
   | "git_network"
   | "scratch_path_denied"
@@ -244,9 +247,18 @@ export function classifyGitError(err: unknown): ToolFailure | null {
     return transientFailure("git_network", "git network/connectivity failure");
   }
 
+  // Invalid caller-selected refs are deterministic input failures, not tool defects.
+  if (
+    /bad object\b|bad revision\b|not a valid (?:ref|object)|unknown revision|did not match any file|pathspec .* did not match|couldn't find remote ref|needed a single revision/i.test(
+      haystack,
+    )
+  ) {
+    return inputFailure("git_ref_not_found", "git ref not found");
+  }
+
   // Repo-state conflicts — the operation cannot proceed given current state.
   if (
-    /nothing to commit|no changes added to commit|nothing added to commit|updates were rejected|non-fast-forward|failed to push some refs|automatic merge failed|merge conflict|\bconflict\b|already exists|not a valid (?:ref|object)|unknown revision|did not match any file|pathspec .* did not match|not a git repository|couldn't find remote ref|needed a single revision/i.test(
+    /nothing to commit|no changes added to commit|nothing added to commit|updates were rejected|non-fast-forward|failed to push some refs|automatic merge failed|merge conflict|\bconflict\b|already exists|not a git repository/i.test(
       haystack,
     )
   ) {
