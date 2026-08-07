@@ -195,6 +195,7 @@ function PlanTitle({
 
 export default function BusinessAdvantagePage() {
   const queryClient = useQueryClient();
+  const routePlanId = useMemo(() => new URLSearchParams(window.location.search).get("plan"), []);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
   const plansQuery = useQuery<BusinessPlan[]>({ queryKey: ["/api/business/plans"] });
@@ -207,8 +208,11 @@ export default function BusinessAdvantagePage() {
   const kpisQuery = useQuery<Kpi[] | KpisResponse>({ queryKey: ["/api/business/kpis"] });
 
   const plans = asArray<BusinessPlan>(plansQuery.data);
-  // Prefer the user's selected plan; fall back only when selection is missing/stale.
-  const plan = (selectedPlanId ? plans.find((candidate) => candidate.id === selectedPlanId) : undefined) ?? plans[0];
+  // Prefer an in-page selection, then an authorized route reference, then the first plan.
+  const plan =
+    (selectedPlanId ? plans.find((candidate) => candidate.id === selectedPlanId) : undefined) ??
+    (routePlanId ? plans.find((candidate) => candidate.id === routePlanId) : undefined) ??
+    plans[0];
   const initiativeProjectIds = asArray<number>(plan?.initiativeProjectIds);
   const kpiIds = asArray<string>(plan?.kpiIds);
 
