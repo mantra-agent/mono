@@ -1,3 +1,11 @@
+<!-- 2026-08-07 Executor tool-failure attribution repair:
+- Assets/data: model-selected tool arguments, principal-scoped integration state, repository refs, task/business object metadata (S1/S2), and aggregate operational telemetry.
+- Flow/boundary: untrusted model tool call -> canonical bridge/domain handler -> structured ToolFailure -> Executor severity/code telemetry. Google/Git/provider payloads and thrown error text remain untrusted.
+- Failure/threat: caller-correctable Calendar-not-connected and Git bad-object outcomes lacked ToolFailure metadata and were emitted as generic red TOOL_FAILED, while genuine task/business handler defects collapsed to generic TOOL_INTERNAL. This mixed permission/input walls with product defects and prevented accountable remediation (STRIDE repudiation/availability analogue; OBS-01). Logging raw args, refs, or object content would create disclosure risk.
+- Controls/owner: Meetings producers stamp `integration_not_configured` permission failures; the canonical Git classifier recognizes bounded bad-object/ref signatures as non-retryable `git_ref_not_found` input failures; unexpected task updates and business actions remain red under stable `task_update_internal` / `business_plan_internal`. The Executor remains the sole severity projection owner, and no argument bodies, principal identifiers, object content, or credentials enter aggregate identity. Existing principal/Vault/integration/Git authority gates are unchanged. Owner: Agent Runtime + Tooling. Severity: medium observability/correctness. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: historical TOOL_FAILED/TOOL_INTERNAL aggregates cannot be reclassified retroactively; unmatched surprises intentionally remain red. Revert the producer classifiers, stable-code additions, and this record to restore generic aggregation without changing stored user data or tool authority.
+-->
+
 <!-- 2026-08-07 Object entity missing-request severity repair:
 - Assets/data: private Vault-scoped object paths and existence state (S1 metadata), object bytes (S2/S3), ACL rows, and aggregate operational telemetry.
 - Flow/boundary: authenticated `/objects/*` request -> principal-visible Vault candidate resolution -> physical object HEAD -> object ACL or visible Project attachment authorization -> private streaming response.

@@ -5301,7 +5301,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           failure: inputFailure("task_update_milestone_requires_project"),
         };
       }
-      return { result: `Failed to update task: ${err.message}`, error: true };
+      return {
+        result: `Failed to update task: ${err.message}`,
+        error: true,
+        failure: internalFailure("task_update_internal", err instanceof Error ? err.message : String(err)),
+      };
     }
   },
 
@@ -5995,7 +5999,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       for (const a of accounts) {
         if (await hasCalendarAccess(a.id)) connected.push(a);
       }
-      if (connected.length === 0) return { result: "No Google accounts with calendar access. Connect one in Settings > Integrations.", error: true };
+      if (connected.length === 0) return {
+        result: "No Google accounts with calendar access. Connect one in Settings > Integrations.",
+        error: true,
+        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+      };
 
       const summary = args.summary;
       if (!summary) return { result: "Missing meeting summary/title", error: true };
@@ -6148,7 +6156,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       for (const a of accounts) {
         if (await hasCalendarAccess(a.id)) connected.push(a);
       }
-      if (connected.length === 0) return { result: "No Google accounts with calendar access. Connect one in Settings > Integrations.", error: true };
+      if (connected.length === 0) return {
+        result: "No Google accounts with calendar access. Connect one in Settings > Integrations.",
+        error: true,
+        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+      };
 
       const now = new Date();
       const defaultMax = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -6240,7 +6252,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       for (const a of accounts) {
         if (await hasCalendarAccess(a.id)) connected.push(a);
       }
-      if (connected.length === 0) return { result: "No Google accounts with calendar access.", error: true };
+      if (connected.length === 0) return {
+        result: "No Google accounts with calendar access.",
+        error: true,
+        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+      };
 
       const accountId = args.accountId || connected[0].id;
       const calendarId = args.calendarId || "primary";
@@ -6292,7 +6308,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       for (const a of accounts) {
         if (await hasCalendarAccess(a.id)) connected.push(a);
       }
-      if (connected.length === 0) return { result: "No Google accounts with calendar access.", error: true };
+      if (connected.length === 0) return {
+        result: "No Google accounts with calendar access.",
+        error: true,
+        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+      };
 
       const accountId = args.accountId || connected[0].id;
       const calendarId = args.calendarId || "primary";

@@ -4,6 +4,7 @@ import { kpiStorage, metricsStorage } from "../metrics-storage";
 import type { BusinessPlan } from "@shared/schema";
 import type { Kpi, Metric, MetricSample } from "@shared/models/metrics";
 import type { ToolHandler } from "../bridge-tools";
+import { internalFailure } from "../tool-failure";
 
 // The `business` tool owns three separate action groups behind one bounded
 // context: Business Plans, KPIs, and Metrics. Plans compose goals + initiatives
@@ -349,6 +350,11 @@ export const handleBusiness: ToolHandler = async (args) => {
     if (PLAN_ACTIONS.has(action)) return await handlePlanAction(action, args);
     return { result: `Unknown business action: ${action}`, error: true };
   } catch (error: unknown) {
-    return { result: safeBusinessError(error), error: true };
+    const message = safeBusinessError(error);
+    return {
+      result: message,
+      error: true,
+      failure: internalFailure("business_plan_internal", `${action}:${message}`),
+    };
   }
 };
