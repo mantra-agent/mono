@@ -174,7 +174,10 @@ async function resolveSource(input: OpenPdfInput): Promise<ResolvedSource> {
   if (discriminators !== 1) throw httpError(400, "Exactly one PDF source is required");
   if (hasProviderTuple) {
     if (!input.provider || !input.providerFileId || !input.vaultId) throw httpError(400, "provider, providerFileId, and vaultId are required together");
-    return { kind: "external", provider: input.provider, providerFileId: input.providerFileId, vaultId: input.vaultId, rootDriveResourceId: input.rootDriveResourceId };
+    // Provider coordinates are authorized by FilesApi against the current Vault
+    // binds. rootDriveResourceId is a legacy navigation hint, not ACL authority:
+    // stale links must not override the canonical live whitelist resolver.
+    return { kind: "external", provider: input.provider, providerFileId: input.providerFileId, vaultId: input.vaultId };
   }
   if (input.driveResourceId) return { kind: "external", driveResourceId: input.driveResourceId };
   if (input.documentId) {
@@ -219,7 +222,6 @@ function viewerUrlFor(input: OpenPdfInput, documentId: string | null): string | 
       provider: input.provider,
       vaultId: input.vaultId,
     });
-    if (input.rootDriveResourceId) params.set("rootDriveResourceId", input.rootDriveResourceId);
     return `/documents/${encodeURIComponent(input.providerFileId)}?${params.toString()}`;
   }
   if (input.objectPath || input.uploadId) {
@@ -282,8 +284,13 @@ export interface ExtractPdfTextResult {
   sourceKind: string;
 }
 
+type PdfJsLoadingTask = {
+  promise: Promise<PdfJsDocument>;
+  destroy: () => Promise<void>;
+};
+
 type PdfJsModule = {
-  getDocument: (src: Record<string, unknown>) => { promise: Promise<PdfJsDocument> };
+  getDocument: (src: Record<string, unknown>) => PdfJsLoadingTask;
   GlobalWorkerOptions?: { workerSrc: string };
 };
 
@@ -367,7 +374,10 @@ async function extractPagesFromBuffer(
     }
     return { pageCount, pages, truncated };
   } finally {
-    await doc.destroy();
+    // PDF.js owns worker/fake-worker teardown on the loading task. Destroying the
+    // document proxy delegates through an internal transport shape that is not
+    // stable across the Node bundle; the public loading-task contract is.
+    await loadingTask.destroy();
   }
 }
 

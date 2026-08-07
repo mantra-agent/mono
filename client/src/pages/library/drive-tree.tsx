@@ -138,7 +138,6 @@ function pdfViewerHref(args: {
   vaultId?: string;
   provider?: "google" | "box" | "mantra";
   providerFileId?: string;
-  rootDriveResourceId?: string;
   webViewLink?: string | null;
 }): string {
   const params = new URLSearchParams({ source: args.source });
@@ -147,7 +146,6 @@ function pdfViewerHref(args: {
     params.set("provider", args.provider);
     params.set("providerLabel", providerOpenLabel(args.provider));
   }
-  if (args.rootDriveResourceId) params.set("rootDriveResourceId", args.rootDriveResourceId);
   if (args.webViewLink) params.set("providerHref", args.webViewLink);
   const routeId =
     args.source === "provider" && args.providerFileId
@@ -768,7 +766,6 @@ function FolderChildren({
               vaultId,
               provider: c.provider,
               providerFileId: c.providerFileId,
-              rootDriveResourceId,
               webViewLink: c.webViewLink,
             }),
           );
