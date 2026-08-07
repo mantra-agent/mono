@@ -168,4 +168,38 @@ export const businessPlanStorage = {
       .returning();
     return updated;
   },
+
+  async mutateInitiative(id: string, projectId: number, operation: "add" | "remove"): Promise<BusinessPlan> {
+    const principal = requireCurrentUserPrincipal();
+    if (operation === "add") await assertProjects([projectId]);
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(businessPlans)
+        .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id)))
+        .limit(1).for("update");
+      assertWritable(principal, current as unknown as Record<string, unknown> | undefined, "Business Plan");
+      const ids = current.initiativeProjectIds;
+      const next = operation === "add" ? (ids.includes(projectId) ? ids : [...ids, projectId]) : ids.filter((candidate) => candidate !== projectId);
+      if (next.length === ids.length && next.every((candidate, index) => candidate === ids[index])) return current;
+      const [updated] = await tx.update(businessPlans).set({ initiativeProjectIds: next, updatedAt: new Date() })
+        .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id))).returning();
+      return updated;
+    });
+  },
+
+  async mutateKpi(id: string, kpiId: string, operation: "add" | "remove"): Promise<BusinessPlan> {
+    const principal = requireCurrentUserPrincipal();
+    if (operation === "add") await assertKpis([kpiId]);
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(businessPlans)
+        .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id)))
+        .limit(1).for("update");
+      assertWritable(principal, current as unknown as Record<string, unknown> | undefined, "Business Plan");
+      const ids = current.kpiIds;
+      const next = operation === "add" ? (ids.includes(kpiId) ? ids : [...ids, kpiId]) : ids.filter((candidate) => candidate !== kpiId);
+      if (next.length === ids.length && next.every((candidate, index) => candidate === ids[index])) return current;
+      const [updated] = await tx.update(businessPlans).set({ kpiIds: next, updatedAt: new Date() })
+        .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id))).returning();
+      return updated;
+    });
+  },
 };
