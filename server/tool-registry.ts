@@ -385,6 +385,7 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
   business_plans: {
     description: "Manage Business Plans through the canonical principal- and Vault-scoped storage boundary. Assignment changes occur only through explicit actions; outputs include canonical @business_plan:id references.",
+    category: "strategy",
     parameters: {
       action: { type: "string", enum: ["list", "get", "create", "rename", "delete", "set_thematic_goal", "clear_thematic_goal", "add_initiative", "remove_initiative", "add_kpi", "remove_kpi", "assign_vault"], description: "Action to perform" },
       id: { type: "string", description: "Business Plan ID (required except list/create)" },
