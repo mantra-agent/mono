@@ -7223,7 +7223,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
     function requireWriteOwnership(dirName: string): string | null {
       if (!isOwnedBySession(dirName)) {
-        return `Directory repos/${dirName} belongs to another session. Clone your own copy with git(action: "clone", url: "..."). Each session operates on its own working tree.`;
+        return `Directory repos/${dirName} belongs to another session. Clone your own copy with git(action: "clone") or git(action: "clone_from_environment", platformEnvironmentId: <id>). Each session operates on its own working tree.`;
       }
       return null;
     }
@@ -7600,37 +7600,37 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       switch (action) {
         case "clone":
         case "clone_from_environment": {
+          // Sparse-patch normalization: empty strings / non-positive IDs are absence, not routing.
           const requestedEnvironmentId = Number(args.platformEnvironmentId);
-          if (action === "clone_from_environment" && (!Number.isInteger(requestedEnvironmentId) || requestedEnvironmentId <= 0)) {
+          const hasEnvironmentId = Number.isInteger(requestedEnvironmentId) && requestedEnvironmentId > 0;
+          // Absorb the transitional dialect: clone + platformEnvironmentId means environment clone.
+          const environmentClone = action === "clone_from_environment" || (action === "clone" && hasEnvironmentId);
+          if (action === "clone_from_environment" && !hasEnvironmentId) {
             return contractReject(
               "clone_from_environment requires a positive platformEnvironmentId.",
               "git_platform_environment_required",
             );
           }
-          if (action === "clone" && Number.isFinite(requestedEnvironmentId) && requestedEnvironmentId > 0) {
+
+          const nonEmpty = (value: unknown): value is string =>
+            typeof value === "string" && value.trim().length > 0;
+          // Caller-owned coordinates remain forbidden. connectionId is never caller-owned on clone —
+          // the authorized source binding supplies it — so ignore dumped/stale connectionId values.
+          if (nonEmpty(args.url) || nonEmpty(args.directory) || nonEmpty(args.branch)) {
             return contractReject(
-              "Normal clone takes no environment input. Use clone_from_environment for an exceptional target.",
-              "git_clone_routing_forbidden",
-            );
-          }
-          const forbiddenRoutingInputs = [args.url, args.directory, args.branch]
-            .some((value) => typeof value === "string" && value.trim().length > 0)
-            || (Number.isFinite(Number(args.connectionId)) && Number(args.connectionId) > 0);
-          if (forbiddenRoutingInputs) {
-            return contractReject(
-              "Clone routing is owned by the Platform source binding; url, connectionId, directory, and branch are not accepted.",
+              "Clone routing is owned by the Platform source binding; url, directory, and branch are not accepted. Use bare clone or clone_from_environment with platformEnvironmentId.",
               "git_clone_routing_forbidden",
             );
           }
 
           const { resolveGitCloneSource } = await import("./git-source-resolver");
           const source = await resolveGitCloneSource(
-            action === "clone_from_environment" ? requestedEnvironmentId : null,
+            environmentClone ? requestedEnvironmentId : null,
           );
           if (!source) {
-            const target = action === "clone"
-              ? "canonical Mantra / Web / stage"
-              : `Platform Environment #${requestedEnvironmentId}`;
+            const target = environmentClone
+              ? `Platform Environment #${requestedEnvironmentId}`
+              : "canonical Mantra / Web / stage";
             return contractReject(
               `No active GitHub source binding with an available provider credential exists for ${target}.`,
               "git_source_binding_unavailable",
@@ -7642,7 +7642,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
           // Session isolation: destination identity is derived only from the authorized source binding.
           const repositoryName = source.repo.replace(/[^a-zA-Z0-9._-]/g, "-");
-          const baseName = action === "clone_from_environment"
+          const baseName = environmentClone
             ? `${repositoryName}-env-${source.environmentId}`
             : repositoryName;
           const dirName = sessionSuffix ? `${baseName}-${sessionSuffix}` : baseName;
@@ -7658,6 +7658,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           }
 
           const cloneArgs = ["clone", "--branch", source.branch, url, targetDir];
+          const effectiveAction = environmentClone ? "clone_from_environment" : "clone";
           const sourceContext = {
             platformEnvironmentId: source.environmentId,
             connectionId: source.connectionId,
@@ -7669,7 +7670,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           try {
             toolExec.log("git.clone.source_bound_attempt", {
               directory: dirName,
-              action,
+              action: effectiveAction,
+              requestedAction: action,
               ...sourceContext,
             });
             await git(cloneArgs, REPOS_DIR, authEnv);
@@ -7678,7 +7680,8 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             await rmAsync(targetDir, { recursive: true, force: true });
             toolExec.warn("git.clone.source_bound_failed", {
               directory: dirName,
-              action,
+              action: effectiveAction,
+              requestedAction: action,
               error: message,
               ...sourceContext,
             });

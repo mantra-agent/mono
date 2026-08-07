@@ -2,7 +2,7 @@
 
 ## Git clone source identity
 
-Normal `git.clone` has no caller-owned repository coordinates. `server/git-source-resolver.ts` resolves the canonical `Mantra / Web / stage` source binding; `clone_from_environment` is the explicit exceptional path and requires one positive Platform Environment ID. Clone URL, provider connection, credential, branch, and destination identity must remain derived from the authorized source binding with no legacy credential fallback.
+Normal `git.clone` has no caller-owned repository coordinates. `server/git-source-resolver.ts` resolves the canonical `Mantra / Web / stage` source binding. A positive `platformEnvironmentId` on either `clone` or `clone_from_environment` selects that Platform Environment through the same resolver (transitional `clone + platformEnvironmentId` is absorbed, not rejected). Clone URL, provider connection, credential, branch, and destination identity must remain derived from the authorized source binding with no legacy credential fallback and no caller-owned `url`.
 
 ## Persona catalog and bundle data
 
@@ -511,7 +511,7 @@ Environment knobs:
 
 Git write actions (clone, add, commit, push, create_pr, merge_pr, delete_branch) are available in interactive sessions and explicitly delegated engineering children, with **session-scoped working trees** preventing concurrent sessions from clobbering each other's branches and commits.
 
-**Clone isolation:** The `clone` action always appends `-{sessionId[:8]}` to the directory name. `git(clone, url, directory: "xyz")` produces `repos/xyz-{sessionId[:8]}`. This is structural, not optional. Clone is idempotent: re-cloning in the same session returns the existing directory.
+**Clone isolation:** Clone destination identity is derived only from the authorized source binding plus the calling session suffix. Bare `git(action: "clone")` yields `repos/{repo}-{sessionId[:8]}`; environment-bound clone yields `repos/{repo}-env-{environmentId}-{sessionId[:8]}`. This is structural, not optional. Clone is idempotent: re-cloning in the same session returns the existing directory.
 
 **Write ownership:** All git write operations (pull, branch create/switch, checkout, add, commit, push, create_pr, merge_pr, delete_branch) verify the directory ends with the calling session's suffix. A session cannot write to another session's clone. Read operations (status, log, diff, show, branch list) are unrestricted.
 

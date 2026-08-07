@@ -965,14 +965,14 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   git: {
-    description: "Interact with Git repositories. Normal clone takes no routing inputs and resolves the canonical Mantra / Web / stage source binding; clone_from_environment is the explicit exceptional path. Write actions only work on session-owned clones in repos/.",
+    description: "Interact with Git repositories. Normal clone takes no routing inputs and resolves the canonical Mantra / Web / stage source binding; clone + platformEnvironmentId or clone_from_environment targets one Platform Environment through the same resolver. Write actions only work on session-owned clones in repos/.",
     category: "work",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["clone", "clone_from_environment", "pull", "status", "log", "diff", "branch", "checkout", "show", "add", "commit", "push", "create_pr", "merge_pr", "delete_branch"], description: "Action to perform. clone uses the canonical Mantra / Web / stage source binding; clone_from_environment is the explicit exceptional path." },
-        platformEnvironmentId: { type: "number", description: "Required only for clone_from_environment. Normal clone takes no repository routing input." },
+        action: { type: "string", enum: ["clone", "clone_from_environment", "pull", "status", "log", "diff", "branch", "checkout", "show", "add", "commit", "push", "create_pr", "merge_pr", "delete_branch"], description: "Action to perform. Bare clone uses the canonical Mantra / Web / stage source binding; clone + platformEnvironmentId or clone_from_environment selects that environment." },
+        platformEnvironmentId: { type: "number", description: "Optional on clone and required on clone_from_environment. When present and positive, resolves that Platform Environment source binding instead of the canonical stage default." },
         directory: { type: "string", description: "Omit to use the sole repository clone owned by this session. If multiple session clones exist, pass the directory name returned by clone. Use \".\" or \"self\" only for read-only inspection of the workspace root repo." },
         branch: { type: "string", description: "Branch name" },
         ref: { type: "string", description: "Git ref (for show/checkout)" },
