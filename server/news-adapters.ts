@@ -1119,7 +1119,7 @@ export async function buildInterestGraph(): Promise<InterestTopic[]> {
     const { goalsService } = await import("./goals-service");
     const goals = await goalsService.listAll();
     for (const g of goals) {
-      if (g.status !== "active" && g.status !== "on_track") continue;
+      if (!g || (g.status !== "active" && g.status !== "on_track")) continue;
       if (g.shortName) {
         const words = g.shortName.split(/\s+/).filter((w: string) => w.length > 3);
         for (const word of words.slice(0, 2)) {

@@ -313,9 +313,19 @@ export class SignalStorage {
         return { item: result[0], isNew: true };
       }
       // Already existed. Refresh scan-owned fields, but preserve explicit user statuses.
+      // Fingerprint uniqueness is global; a conflict with a non-visible row is an ownership
+      // collision, not a successful upsert. Never return an undefined item for callers to
+      // dereference (.status/.id) — fail closed with a stable code and no foreign-row leak.
       const [existing] = await db.select().from(signalItems)
         .where(visibleItems(eq(signalItems.fingerprint, normalizedData.fingerprint)));
-      if (!existing) return { item: existing, isNew: false };
+      if (!existing) {
+        const error = new Error(
+          `Signal fingerprint ownership conflict for fingerprint=${normalizedData.fingerprint}`,
+        ) as Error & { code?: string };
+        error.code = "SIGNAL_FINGERPRINT_OWNERSHIP_CONFLICT";
+        error.name = "SignalFingerprintOwnershipConflict";
+        throw error;
+      }
       const nextStatus = existing.status === "saved" || existing.status === "dismissed"
         ? existing.status
         : normalizedData.status;

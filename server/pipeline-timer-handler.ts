@@ -15,7 +15,26 @@ const PIPELINE_COMMAND_HANDLERS: Record<string, PipelineCommandHandler> = {
     const { runLandscapeScan } = await import("./news-scan-service");
     const result = await runLandscapeScan();
 
-    if (result.outcome === "already_running") {
+    // LandscapeScanResult uses `outcome` as the single discriminant. Never read
+    // `.status` or assume a defined result — absent/malformed contracts fail closed.
+    if (!result || typeof result !== "object") {
+      const error = new Error(
+        "News scan returned no result contract",
+      ) as Error & { code?: string };
+      error.code = "NEWS_SCAN_RESULT_MISSING";
+      throw error;
+    }
+
+    const outcome = result.outcome;
+    if (outcome !== "already_running" && outcome !== "failed" && outcome !== "completed") {
+      const error = new Error(
+        `News scan returned invalid outcome discriminant: ${String(outcome)}`,
+      ) as Error & { code?: string };
+      error.code = "NEWS_SCAN_RESULT_INVALID";
+      throw error;
+    }
+
+    if (outcome === "already_running") {
       return {
         outcome: "deferred",
         reason: "news_scan_already_running",
@@ -23,10 +42,10 @@ const PIPELINE_COMMAND_HANDLERS: Record<string, PipelineCommandHandler> = {
       };
     }
 
-    if (result.outcome === "failed") {
+    if (outcome === "failed") {
       return {
         outcome: "failed",
-        error: result.message,
+        error: result.message || "News scan failed without message",
         output: result,
       };
     }
