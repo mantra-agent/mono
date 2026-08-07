@@ -20,7 +20,7 @@ import { getCurrentPrincipal } from "./principal-context";
 import { filterBuildToolSchemas } from "./mods/build-tool-access";
 import { hasActiveBuildAccess } from "./mods/build-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
-import { BUILD_OWNED_SKILL_NAME_SET, resolveSkillRunName } from "./skill-identities";
+import { BUILD_OWNED_SKILL_FALLBACK_INSTRUCTIONS, BUILD_OWNED_SKILL_NAME_SET, resolveSkillRunName, type BuildOwnedSkillName } from "./skill-identities";
 import type { ChecklistItem } from "@shared/schema";
 
 const logger = createLogger("AutonomousSkillRunner");
@@ -1416,14 +1416,27 @@ async function runSkillPipeline(
       try {
         skillProcessText = await getSkillProcess(promptId);
       } catch (error: unknown) {
+        // Build-owned skills are code-owned: the optional global Skill row may be
+        // absent (it predates the bootstrap fixture and is not a builtin default),
+        // and their scheduled launch path supplies no preContext. When the row is
+        // missing, run launch-supplied instructions if present, otherwise the
+        // single code-owned fallback contract. Everything else stays fail-closed.
         const isMissingSkill = error instanceof Error
           && error.message.startsWith("Required skill not found in DB:");
-        const isBuildOwnedSkill = BUILD_OWNED_SKILL_NAME_SET.has(resolveSkillRunName(promptId));
-        if (!isMissingSkill || !isBuildOwnedSkill || !options.preContext?.trim()) {
+        const buildOwnedName = resolveSkillRunName(promptId);
+        const isBuildOwnedSkill = BUILD_OWNED_SKILL_NAME_SET.has(buildOwnedName);
+        const codeOwnedInstructions = isBuildOwnedSkill
+          ? BUILD_OWNED_SKILL_FALLBACK_INSTRUCTIONS[buildOwnedName as BuildOwnedSkillName]
+          : undefined;
+        const hasLaunchInstructions = Boolean(options.preContext?.trim());
+        if (!isMissingSkill || !isBuildOwnedSkill || (!hasLaunchInstructions && !codeOwnedInstructions?.trim())) {
           throw error;
         }
+        if (!hasLaunchInstructions) {
+          skillProcessText = codeOwnedInstructions;
+        }
         logger.warn(
-          `[SkillChat] [${sessionId}] Build-owned skill "${promptId}" has no DB definition; using its managed run instructions`,
+          `[SkillChat] [${sessionId}] Build-owned skill "${promptId}" has no DB definition; using ${hasLaunchInstructions ? "launch" : "code-owned managed"} instructions`,
         );
       }
       instructions = `[SKILL — ${config.label}]\n\n${skillProcessText ?? options.preContext}`;
