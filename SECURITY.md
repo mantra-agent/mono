@@ -1312,7 +1312,22 @@ Uploaded DOCX files are A02/S2 data crossing F07/B07 and B10 from private object
 
 **Status:** Mitigated in code (2026-08-05); production build verified. **Severity:** High. **Owner:** Agent Runtime / Security Program Owner. **SLA:** Release-blocking for model-context injection paths. **Assets/data:** A02/S0-S3 retrieved and external tool content, A03 session/run state, A07 telemetry, A08 model-context availability. **Flows:** F02, F03, F06, F12. **Boundaries:** B03, B04, B05, B06, B14. **Threat:** A tool or external provider can return unexpectedly large, adversarial, secret-bearing, or malformed content; pagination is not a security boundary. Unbounded insertion can exhaust context, amplify prompt injection, or leak payloads through logs. Archive failure could otherwise cause raw fallback reinjection. **Deterministic controls:** Every model-facing tool result crosses the shared `maybeOffloadToolOutput` admission boundary. Inline admission is independently capped by both characters and estimated tokens; oversized/binary output is durably scoped through `ContentIndexer`, replaced with a compact canonical `@file` manifest, section handles, untrusted-content framing, and bounded retrieval guidance. Errors do not bypass admission. Archive failure fails closed with structured recovery metadata and no raw payload. Telemetry records only tool/action identifiers, disposition, size/token counts, run/session IDs, and artifact identity; it never records result content or secrets. `indexed_content` remains responsible for authenticated, user-scoped artifact retrieval. **Configuration:** `TOOL_OUTPUT_INLINE_CHAR_BUDGET=12000`, `TOOL_OUTPUT_INLINE_TOKEN_BUDGET=3000`, `TOOL_OUTPUT_PREVIEW_CHAR_BUDGET=1200`; environment overrides may only tune within the same central boundary. **Residual risk:** Token estimation is approximate; a future executor that bypasses the shared projector could evade admission; retrieved sections remain untrusted data and require the existing model instruction hierarchy and artifact authorization controls.
 
-### 11.21 Git clone source-binding authority, August 6, 2026
+### 11.22 Goal Vault ownership boundary, August 6, 2026
+
+**Status:** Closed in source.
+**Severity:** High before controls; Low residual.
+**Owner:** Goal System / Identity and Data.
+**SLA:** Closed before Goal Vault ownership shipped.
+
+**Assets/data:** A01 identity, A03 Goal state, A04 Vault/account relationships. **Flows:** authenticated Goal create, read, list, and update. **Boundaries:** B01 application authorization and B04 persistence.
+
+**Threat:** A caller could omit Vault ownership or submit an inaccessible Vault ID, leaving Goals outside the Vault model or attaching Goal metadata to another account's context. Client-only selection would not protect tool, API, migration, or background creation paths.
+
+**Deterministic controls:** `GoalStorage` is the canonical boundary. Every Goal resolves exactly one `vaultId`, defaults missing ownership to the principal's active authorized Vault (then first visible Vault), rejects inaccessible Vault IDs, validates persisted metadata during reads, and projects the field to every list consumer. The shared create/update schemas expose only one scalar Vault ID, so multi-membership cannot be represented.
+
+**Evidence:** `shared/models/goals.ts`, `server/goal-storage.ts`, `client/src/components/goal-inline-details.tsx`, and `client/src/pages/goals.tsx`. Control mapping: AUTHZ-01, DATA-03, INPUT-01. **Residual risk:** Legacy Goals are assigned when next read rather than through an eager bulk migration; this is deterministic per principal and writes back immediately.
+
+## 11.21 Git clone source-binding authority, August 6, 2026
 
 Git clone crosses B03/B08 and F11 over A08/S0-S2: it invokes a credentialed external executable, retrieves provider-controlled source, and creates a session-owned mutable workspace. The prior contract accepted an arbitrary repository URL plus optional environment/connection hints, selected credentials from those coordinates, and could fall back to legacy Git credentials. A model, stale producer, or retrieved prompt could therefore request an unintended repository, create repository/environment mismatch, or cause credentials to be selected outside the canonical Platform source-binding identity.
 

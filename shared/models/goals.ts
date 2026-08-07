@@ -87,6 +87,7 @@ export interface Goal {
   horizon: GoalHorizon;
   parentId: string | null;
   owner: string;
+  vaultId: string;
   tags: string[];
   status: GoalStatus;
   notes: GoalNote[];
@@ -126,6 +127,7 @@ export interface GoalIndexEntry {
   description: string;
   horizon: GoalHorizon;
   owner: string;
+  vaultId: string;
   tags: string[];
   parentId: string | null;
   status: GoalStatus;
@@ -144,6 +146,7 @@ export const createGoalSchema = z.object({
   horizon: horizonSchema,
   parentId: z.string().nullable().optional(),
   owner: z.string().default("me"),
+  vaultId: z.string().min(1).optional(),
   tags: z.array(z.string()).default([]),
   status: goalStatusSchema.optional().default("active"),
   targetDate: z.string().nullable().optional(),
@@ -161,6 +164,7 @@ export const updateGoalSchema = z.object({
   horizon: horizonSchema.optional(),
   parentId: z.string().nullable().optional(),
   owner: z.string().optional(),
+  vaultId: z.string().min(1).optional(),
   tags: z.array(z.string()).optional(),
   status: goalStatusSchema.optional(),
   targetDate: z.string().nullable().optional(),

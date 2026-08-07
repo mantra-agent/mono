@@ -34,6 +34,8 @@ import { HORIZON_LABELS, goalHorizons } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { GoalInlineDetails } from "@/components/goal-inline-details";
+import { useVaults, type Vault } from "@/hooks/use-vaults";
+import { vaultTitleColor, MUTED_TITLE_ALPHA } from "@/lib/vault-title-color";
 
 const log = createLogger("Goals");
 
@@ -54,6 +56,7 @@ interface GoalRow {
   shortName: string;
   horizon: GoalHorizon;
   parentId: string | null;
+  vaultId: string;
   status?: GoalStatus;
   targetDate?: string | null;
   completedAt?: string | null;
@@ -72,6 +75,8 @@ interface GoalTreeSectionProps {
   allGoals: GoalRow[];
   selectedGoalId: string | null;
   onSelectGoal: (id: string) => void;
+  vaultById: Map<string, Vault>;
+  activeVaultId: string | null;
   creatingInHorizon: GoalHorizon | null;
   onCreateGoal: (name: string) => void;
   onCancelCreate: () => void;
@@ -84,6 +89,8 @@ interface GoalTreeRowProps {
   depth: number;
   selectedGoalId: string | null;
   onSelectGoal: (id: string) => void;
+  vaultById: Map<string, Vault>;
+  activeVaultId: string | null;
 }
 
 interface GoalRowMenuProps {
@@ -202,6 +209,8 @@ function UnifiedGoalsView() {
   const search = useSearch();
   const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
+  const { vaults, activeVaultId } = useVaults();
+  const vaultById = useMemo(() => new Map(vaults.map((vault) => [vault.id, vault])), [vaults]);
   const selectedGoalId = new URLSearchParams(search).get("goal");
   const [creatingInHorizon, setCreatingInHorizon] = useState<GoalHorizon | null>(null);
   const { data: goalsData, isLoading, isError } = useQuery<{ goals: GoalRow[] }>({
@@ -357,6 +366,8 @@ function UnifiedGoalsView() {
           allGoals={allGoals}
           selectedGoalId={selectedGoalId}
           onSelectGoal={handleSelectGoal}
+          vaultById={vaultById}
+          activeVaultId={activeVaultId}
           creatingInHorizon={creatingInHorizon}
           onCreateGoal={handleCreateGoal}
           onCancelCreate={() => setCreatingInHorizon(null)}
@@ -372,6 +383,8 @@ function GoalTreeSection({
   allGoals,
   selectedGoalId,
   onSelectGoal,
+  vaultById,
+  activeVaultId,
   creatingInHorizon,
   onCreateGoal,
   onCancelCreate,
@@ -426,6 +439,8 @@ function GoalTreeSection({
                 depth={0}
                 selectedGoalId={selectedGoalId}
                 onSelectGoal={onSelectGoal}
+                vaultById={vaultById}
+                activeVaultId={activeVaultId}
               />
             ))
           )}
@@ -618,7 +633,7 @@ function GoalRowMenu({ goal, onStartRename }: GoalRowMenuProps) {
   );
 }
 
-function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: GoalTreeRowProps) {
+function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal, vaultById, activeVaultId }: GoalTreeRowProps) {
   const {
     isRenaming, renameValue, setRenameValue, setRenameCursor, renameInputRef,
     startRename, submitRename, cancelRename, mention,
@@ -627,6 +642,12 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: Go
   const achieved = goal.status === "achieved";
   const blocked = goal.status === "blocked";
   const isSelected = selectedGoalId === goal.id;
+  const goalTitleColor = vaultTitleColor(
+    [goal.vaultId],
+    vaultById,
+    activeVaultId,
+    achieved ? MUTED_TITLE_ALPHA : 1,
+  );
 
   const handleStartRename = () => {
     focusWithMobileKeyboard();
@@ -690,7 +711,8 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: Go
             ) : (
               <div className="relative min-w-0 flex-1 overflow-hidden">
                 <span
-                  className={`pointer-events-none inline-flex max-w-full min-w-0 items-baseline text-left align-baseline ${achieved ? "text-neutral line-through decoration-neutral/60" : ""}`}
+                  className={`pointer-events-none inline-flex max-w-full min-w-0 items-baseline text-left align-baseline ${achieved ? "line-through decoration-neutral/60" : ""}`}
+                  style={goalTitleColor ? { color: goalTitleColor } : undefined}
                   aria-hidden="true"
                 >
                   <InlineReferenceText text={goal.shortName} className="truncate" />
@@ -739,6 +761,8 @@ function GoalTreeRow({ goal, allGoals, depth, selectedGoalId, onSelectGoal }: Go
               depth={depth + 1}
               selectedGoalId={selectedGoalId}
               onSelectGoal={onSelectGoal}
+              vaultById={vaultById}
+              activeVaultId={activeVaultId}
             />
           ))}
         </div>

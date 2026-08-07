@@ -80,6 +80,18 @@ export class GoalStorage {
     this._listCache.invalidateAll();
   }
 
+  private resolveVaultId(requestedVaultId?: string | null): string {
+    const principal = requireCurrentUserPrincipal();
+    const vaultId = requestedVaultId ?? principal.activeVaultId ?? principal.visibleVaultIds[0];
+    if (!vaultId) {
+      throw new Error("A Goal must belong to a Vault");
+    }
+    if (principal.actorType !== "system" && !principal.visibleVaultIds.includes(vaultId)) {
+      throw new Error("Vault access denied");
+    }
+    return vaultId;
+  }
+
   private toIndexEntry(goal: Goal): GoalIndexEntry {
     return {
       id: goal.id,
@@ -87,6 +99,7 @@ export class GoalStorage {
       description: goal.description ?? "",
       horizon: goal.horizon,
       owner: goal.owner,
+      vaultId: goal.vaultId,
       tags: goal.tags,
       parentId: goal.parentId ?? null,
       status: goal.status,
@@ -112,6 +125,13 @@ export class GoalStorage {
       dirty = true;
     }
     if (goal.domain) { delete goal.domain; dirty = true; }
+
+    if (!goal.vaultId) {
+      goal.vaultId = this.resolveVaultId();
+      dirty = true;
+    } else {
+      goal.vaultId = this.resolveVaultId(goal.vaultId);
+    }
 
     // Remove deprecated fields
     if (goal.deadlineType !== undefined) { delete goal.deadlineType; dirty = true; }
@@ -259,6 +279,7 @@ export class GoalStorage {
       horizon: input.horizon,
       parentId,
       owner: input.owner || "me",
+      vaultId: this.resolveVaultId(input.vaultId),
       tags: input.tags || [],
       status: input.status || "active",
       notes: [],
@@ -310,6 +331,7 @@ export class GoalStorage {
       activities: goal.activities,
       updatedAt: now,
       completedAt,
+      vaultId: updates.vaultId !== undefined ? this.resolveVaultId(updates.vaultId) : goal.vaultId,
     };
     if (changedFields.length > 0) {
       updated.activities.push({

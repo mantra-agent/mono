@@ -13,6 +13,7 @@ import {
   Tag,
   Target,
   User,
+  Vault as VaultIcon,
 } from "lucide-react";
 import type { Goal, GoalIndexEntry, GoalStatus } from "@shared/schema";
 import { goalHorizons, goalStatuses, HORIZON_LABELS } from "@shared/schema";
@@ -28,6 +29,7 @@ import { GoalRelationshipsRow } from "@/components/goal-relationships-row";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { createLogger } from "@/lib/logger";
+import { useVaults } from "@/hooks/use-vaults";
 
 const log = createLogger("GoalInlineDetails");
 
@@ -76,6 +78,11 @@ function commitTextInput(
 export function GoalInlineDetails({ goalId }: GoalInlineDetailsProps) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { vaults, visibleVaultIds } = useVaults();
+  const visibleVaults = useMemo(
+    () => vaults.filter((vault) => visibleVaultIds.includes(vault.id)),
+    [vaults, visibleVaultIds],
+  );
   const [newNote, setNewNote] = useState("");
 
   const { data: goal, isLoading, isError } = useQuery<Goal>({
@@ -209,6 +216,17 @@ export function GoalInlineDetails({ goalId }: GoalInlineDetailsProps) {
         testId={`row-goal-description-${goalId}`}
       >
         <span className="block w-full truncate text-muted-foreground">{goal.description || "Add"}</span>
+      </ProfileTreeRow>
+
+      <ProfileTreeRow label="Vault" icon={<VaultIcon className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId={`row-goal-vault-${goalId}`}>
+        <Select value={goal.vaultId} onValueChange={(vaultId) => updateMutation.mutate({ vaultId })} disabled={updateMutation.isPending}>
+          <SelectTrigger className="h-7 border-0 bg-transparent px-0 text-sm shadow-none focus:ring-0" data-testid={`select-goal-vault-${goalId}`}>
+            <SelectValue placeholder="Choose Vault" />
+          </SelectTrigger>
+          <SelectContent>
+            {visibleVaults.map((vault) => <SelectItem key={vault.id} value={vault.id}>{vault.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </ProfileTreeRow>
 
       <ProfileTreeRow label="Horizon" icon={<Flag className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" testId={`row-goal-horizon-${goalId}`}>
