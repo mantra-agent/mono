@@ -712,7 +712,11 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   }, [activeSessionTitle, setMobileSessionTitle, showMobileSessionTranscriptPanel]);
 
   // Transcript panel width must be computed before headerAndPanel JSX that references it.
-  const transcriptPanelWidth = columnWidth - sidebarWidth - 1; // -1px for divider
+  // When the session menu is collapsed, reclaim its reserved width so the right
+  // column does not leave an empty black gutter beside the transcript.
+  const transcriptPanelWidth = widgetOpen
+    ? columnWidth - sidebarWidth - 1 // -1px for divider
+    : columnWidth;
 
   const headerAndPanel = (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
@@ -851,8 +855,8 @@ function FocusWidgetPanel({ isAgentRunning, contained }: FocusWidgetPanelProps) 
   }
 
   // Desktop: docked right column with fixed width. The aside is always the
-  // full columnWidth. When the session menu is hidden, the transcript panel keeps
-  // its width and the sidebar space becomes empty — the divider doesn't move.
+  // full columnWidth. When the session menu is hidden, the transcript expands
+  // into the full column so no empty black gutter remains.
   return (
     <aside
       className="relative flex shrink-0 min-w-0 bg-background h-full"
