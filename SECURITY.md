@@ -1,3 +1,10 @@
+<!-- 2026-08-06 session-search index operational-probe repair:
+- Assets/data: A02/S2 private session-search projection content and A08 database availability cross B03/B06 through boot-owned concurrent index provisioning and its authorized operational EXPLAIN probe.
+- Failure/threat: the physical principal-neutral GIN index was provisioned, but the probe treated PostgreSQL's cost-sensitive choice not to use it on a small/current relation as proof it was missing. That false failure retried maintenance, emitted duplicate unclassified errors, and obscured genuine index drift (STRIDE denial of service/repudiation; PRIV-01/OBS-01).
+- Controls/owner: Memory owns one canonical index definition and boot provisioning path. The maintenance connection now disables sequential scans only while proving that the production query can use the required index, restores the session setting before pool release, retains the canonical user/account/Vault-scoped query and synthetic principal, emits one stable `SESSION_SEARCH_REQUIRED_INDEX_UNUSED` failure with bounded index names, and preserves the original error identity. Production query planning and authorization are unchanged. Severity: medium. SLA: immediate. Status: repaired in source, pending build/merge.
+- Residual/rollback: planner usability remains distinct from production cost choice; the existing 2.5-second production statement timeout remains the runtime availability bound. Revert this source delta to restore prior probing without changing schema or user data.
+-->
+
 <!-- 2026-08-06 SegmentStream lifecycle-boundary repair:
 - Assets/data: user-owned streamed message segments and execution-step visibility (S2 conversation content), active transport/replay state, and client error telemetry.
 - Flow/boundary: authenticated chat/subsession transport or persisted replay -> SegmentStream normalization -> visibility filtering -> React rendering; cancellation may replace live segments with persisted replay while component modules remain mounted.
