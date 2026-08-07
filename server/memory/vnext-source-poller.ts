@@ -13,8 +13,6 @@ import {
   cleanupAutonomousSessionSources,
 } from "./vnext-source-queue";
 import {
-  buildFullSessionContent,
-  buildLibraryPageContent,
   chunkContent,
   hashContent,
   buildChunkHeader,
@@ -26,6 +24,7 @@ import {
   type ClaimCandidate,
   type ObservationRelationshipCandidate,
 } from "./vnext-claim-extraction";
+import { loadSemanticSourceContent } from "./semantic-source-adapters";
 
 const log = createLogger("VnextSourcePoller");
 
@@ -44,7 +43,7 @@ const MAX_CLAIMS_PER_SOURCE = 3;
 const STUCK_PROCESSING_TIMEOUT_MINUTES = 30;
 
 // ---------------------------------------------------------------------------
-// Source content loading
+// Source content loading (SemanticSourceAdapter registry)
 // ---------------------------------------------------------------------------
 
 interface SourceContent {
@@ -84,50 +83,16 @@ function buildSessionPageSourceRefs(chunk: string) {
 async function loadSourceContent(
   row: MemoryVnextSourceQueueRow,
 ): Promise<SourceContent | null> {
-  if (row.sourceType === "session") {
-    const result = await buildFullSessionContent(row.sourceId);
-    if (!result.content.trim()) {
-      log.debug(`loadSourceContent: empty session id=${row.sourceId}`);
-      return null;
-    }
+  const envelope = await loadSemanticSourceContent(row.sourceType, row.sourceId);
+  if (!envelope) return null;
 
-    const titleMatch = result.content.match(/^Session title: (.+)$/m);
-    const topicsMatch = result.content.match(/^Topics: (.+)$/m);
-    const title = titleMatch?.[1] || "Untitled Session";
-    const topics = topicsMatch?.[1]?.split(", ") || [];
-
-    return {
-      content: result.content,
-      title,
-      topics,
-      splitMode: "message",
-      sourceType: "chat_journal",
-    };
-  }
-
-  if (row.sourceType === "library_page") {
-    const result = await buildLibraryPageContent(row.sourceId);
-    if (!result.content.trim()) {
-      log.debug(`loadSourceContent: empty library page id=${row.sourceId}`);
-      return null;
-    }
-
-    const titleMatch = result.content.match(/^Page title: (.+)$/m);
-    const tagsMatch = result.content.match(/^Tags: (.+)$/m);
-    const title = titleMatch?.[1] || "Untitled Page";
-    const topics = tagsMatch?.[1]?.split(", ") || [];
-
-    return {
-      content: result.content,
-      title,
-      topics,
-      splitMode: "paragraph",
-      sourceType: "library",
-    };
-  }
-
-  log.warn(`loadSourceContent: unknown source type=${row.sourceType}`);
-  return null;
+  return {
+    content: envelope.content,
+    title: envelope.title,
+    topics: envelope.topics,
+    splitMode: envelope.splitMode,
+    sourceType: envelope.observationSource,
+  };
 }
 
 // ---------------------------------------------------------------------------

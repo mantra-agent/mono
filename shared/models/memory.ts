@@ -1518,7 +1518,7 @@ export type InsertCodeEmbedding = z.infer<typeof insertCodeEmbeddingSchema>;
 // Sources (sessions, library pages) are queued here on edit,
 // settled after a configurable quiet period, then batch-extracted.
 
-export const VNEXT_SOURCE_TYPES = ["session", "library_page"] as const;
+export const VNEXT_SOURCE_TYPES = ["session", "library_page", "drive_file"] as const;
 export type VnextSourceType = (typeof VNEXT_SOURCE_TYPES)[number];
 
 export const VNEXT_SOURCE_QUEUE_STATUSES = ["pending", "processing", "completed"] as const;
