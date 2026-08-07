@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Activity, Database, FunctionSquare, Loader2, Plus, PenLine } from "lucide-react";
+import { Database, FunctionSquare, Loader2, Plus, PenLine } from "lucide-react";
 import {
   METRIC_ADAPTER_KINDS,
   METRIC_DIRECTIONS,
@@ -23,12 +23,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
   HierarchySectionHeader,
+  HIERARCHY_PRIMARY_ACTION_CLASS,
   HIERARCHY_TREE_STACK_CLASS,
 } from "@/components/hierarchy-section-header";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -53,18 +54,6 @@ const ADAPTER_SECTION_LABEL: Record<MetricAdapterKind, string> = {
   internal: "Internal",
   expression: "Expression",
 };
-
-function relativeTime(iso: string | null | undefined): string {
-  if (!iso) return "never";
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "never";
-  const diff = Date.now() - then;
-  const hours = diff / (1000 * 60 * 60);
-  if (hours < 1) return "just now";
-  if (hours < 24) return `${Math.round(hours)}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
-}
 
 function formatValue(value: number, unit: string): string {
   const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
@@ -166,14 +155,12 @@ function MetricTreeRow({ metric }: { metric: Metric }) {
       hasValue
       showEmpty
       mobileLayout="inline"
+      valueLayout="compact"
       testId={`metric-row-${metric.slug}`}
       expandedContent={<RecordSampleForm metric={metric} />}
     >
-      <span className="flex min-w-0 items-center justify-end gap-2">
-        <span className={cn("truncate font-mono", !sample && "text-muted-foreground")}>
-          {sample ? formatValue(sample.value, sample.unit) : "—"}
-        </span>
-        <span className="shrink-0 text-muted-foreground">{relativeTime(sample?.observedAt)}</span>
+      <span className={cn("whitespace-nowrap font-mono", !sample && "text-muted-foreground")}>
+        {sample ? formatValue(sample.value, sample.unit) : "—"}
       </span>
     </ProfileTreeRow>
   );
@@ -215,9 +202,10 @@ function CreateMetricDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" data-testid="create-metric">
-          <Plus className="mr-1 h-4 w-4" /> New metric
-        </Button>
+        <button type="button" className={HIERARCHY_PRIMARY_ACTION_CLASS} data-testid="create-metric">
+          <Plus className="h-3.5 w-3.5 shrink-0" />
+          <span>New Metric</span>
+        </button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -266,7 +254,6 @@ function CreateMetricDialog() {
 }
 
 export default function BusinessMetricsPage() {
-  usePageHeader({ title: "Metrics" });
   const [query, setQuery] = useState("");
 
   const { data, isLoading } = useQuery<MetricsResponse>({
@@ -292,23 +279,16 @@ export default function BusinessMetricsPage() {
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold">
-            <Activity className="h-5 w-5 text-muted-foreground" /> Metrics
-          </h1>
-          <p className="text-sm text-muted-foreground">Measurements collected through adapters. KPIs read from these.</p>
-        </div>
+      <div className={HIERARCHY_TREE_STACK_CLASS}>
+        <HierarchySearchInput
+          value={query}
+          onChange={setQuery}
+          inputTestId="metrics-search"
+          clearTestId="button-clear-metrics-search"
+          ariaLabel="Search metrics"
+        />
         <CreateMetricDialog />
       </div>
-
-      <Input
-        placeholder="Search metrics…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        className="mb-4"
-        data-testid="metrics-search"
-      />
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">
