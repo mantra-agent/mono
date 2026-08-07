@@ -1,3 +1,11 @@
+<!-- 2026-08-06 AgentContext error-attribution repair:
+- Assets/data: user-owned Session identifiers and compaction operation identifiers (S1 operational metadata), context availability, and application-error aggregates.
+- Flow/boundary: context assembly/compaction failures -> `agent-context.ts` producer normalization -> `createLogger` redaction/classification -> principal-scoped telemetry sink.
+- Threats: string-flattened failures losing source attribution and delaying availability repair (repudiation/DoS), non-Error throws collapsing to UNCLASSIFIED, or diagnostics leaking context/session content (information disclosure).
+- Controls/owner: Agent Context preserves original Error stacks, normalizes non-Error values, assigns bounded stable codes at the producer, and emits only operation/session/compaction IDs through the existing redacting logger; no context body, transcript, principal identity, archive path, or provider payload is logged. Owner Agent Context. Severity: medium. SLA: immediate. Status: repaired in source, pending production build/merge.
+- Residual: historical fingerprints cannot be retroactively enriched; future occurrences become deterministically attributable, while the observed three-minute compaction wall-time exhaustion remains a truthful bounded failure rather than an unidentified defect.
+-->
+
 <!-- 2026-08-06 ModelClient Grok quota circuit repair:
 - Assets/data: connected model-provider credentials (S3 secrets), sanitized provider failure envelopes (S1 operational metadata), connector identifiers, and inference availability.
 - Flow/boundary: untrusted Grok subscription response -> `model-client.ts` normalized provider failure -> process-local connector admission for subsequent routed inference calls.
