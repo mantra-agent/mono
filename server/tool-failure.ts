@@ -27,6 +27,11 @@ export type ToolFailureCode =
   | "files_input_invalid"
   | "files_access_denied"
   | "files_provider_transient"
+  // Core PDF tool rejects
+  | "pdf_input_invalid"
+  | "pdf_access_denied"
+  | "pdf_provider_transient"
+  | "pdf_extract_failed"
   // Progressive tool-schema loading rejects
   | "tools_input_invalid"
   | "tools_authority_denied"

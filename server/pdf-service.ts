@@ -1,16 +1,27 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { documentArtifacts, type DocumentArtifact } from "@shared/models/documents";
 import { db } from "./db";
 import { filesApi } from "./files-api";
 import type { FilesProvider } from "./files-providers";
+import { createLogger } from "./log";
 import { objectStorageService, type StorageObjectRef } from "./object_storage";
 import { ObjectPermission } from "./object_storage/objectAcl";
 import { requireCurrentUserPrincipal } from "./principal-context";
 import { ownedInsertValues, visibleScopePredicate } from "./scoped-storage";
 
+const log = createLogger("PdfService");
+
 const HANDLE_TTL_SECONDS = 120;
 const PDF_MIME = "application/pdf";
+/** Same family as the viewer: Mozilla PDF.js. Caps keep Agent extract bounded. */
+const MAX_EXTRACT_BYTES = 25 * 1024 * 1024;
+const DEFAULT_MAX_PAGES = 40;
+const HARD_MAX_PAGES = 200;
+const MAX_TOTAL_CHARS = 400_000;
+const MAX_PAGE_CHARS = 20_000;
+const DEFAULT_LIST_LIMIT = 50;
+const HARD_LIST_LIMIT = 100;
 
 type ExternalSource = { kind: "external"; driveResourceId?: string; provider?: FilesProvider; providerFileId?: string; vaultId?: string };
 type InternalSource = { kind: "internal"; objectPath: string; document?: DocumentArtifact };
@@ -36,6 +47,7 @@ export interface OpenPdfResult {
     byteSize: number;
     pageCount: number | null;
     sourceKind: string;
+    viewerUrl: string | null;
   };
 }
 
@@ -179,21 +191,46 @@ async function readSource(source: ResolvedSource): Promise<{ buffer: Buffer; con
   return { buffer: result.buffer, contentType: result.contentType, title: source.document?.title ?? result.ref.name.split("/").pop() ?? "PDF", sourceKind: source.document?.sourceKind ?? "upload", document: source.document ?? null };
 }
 
+function viewerUrlFor(input: OpenPdfInput, documentId: string | null): string | null {
+  if (documentId) return `/documents/${encodeURIComponent(documentId)}`;
+  if (input.driveResourceId) {
+    const params = new URLSearchParams({ source: "drive_resource" });
+    if (input.vaultId) params.set("vaultId", input.vaultId);
+    return `/documents/${encodeURIComponent(input.driveResourceId)}?${params.toString()}`;
+  }
+  if (input.provider && input.providerFileId && input.vaultId) {
+    const params = new URLSearchParams({
+      source: "provider",
+      provider: input.provider,
+      vaultId: input.vaultId,
+    });
+    return `/documents/${encodeURIComponent(input.providerFileId)}?${params.toString()}`;
+  }
+  if (input.objectPath || input.uploadId) {
+    const objectPath = input.objectPath ?? input.uploadId!;
+    const params = new URLSearchParams({ source: "object", objectPath });
+    return `/documents/${encodeURIComponent(objectPath)}?${params.toString()}`;
+  }
+  return null;
+}
+
 export async function openPdf(input: OpenPdfInput): Promise<OpenPdfResult> {
   const source = await resolveSource(input);
   const bytes = await readSource(source);
   assertPdf(bytes.buffer, bytes.contentType);
   const handle = issueHandle(source);
+  const documentId = bytes.document?.id ?? null;
   return {
     handle,
     streamUrl: `/api/pdf/content/${encodeURIComponent(handle)}`,
     metadata: {
-      documentId: bytes.document?.id ?? null,
+      documentId,
       title: bytes.title,
       mimeType: PDF_MIME,
       byteSize: bytes.buffer.length,
       pageCount: bytes.document?.pageCount ?? null,
       sourceKind: bytes.sourceKind,
+      viewerUrl: viewerUrlFor(input, documentId),
     },
   };
 }
@@ -204,4 +241,273 @@ export async function readPdfContentHandle(handle: string): Promise<Buffer> {
   const bytes = await readSource(payload.src);
   assertPdf(bytes.buffer, bytes.contentType);
   return bytes.buffer;
+}
+
+export type ExtractPdfTextInput = OpenPdfInput & {
+  /** 1-based inclusive start page (default 1). */
+  startPage?: number;
+  /** Max pages to return from startPage (default 40, hard cap 200). */
+  maxPages?: number;
+};
+
+export interface ExtractedPdfPage {
+  index: number;
+  text: string;
+}
+
+export interface ExtractPdfTextResult {
+  documentId: string | null;
+  title: string;
+  pageCount: number;
+  pages: ExtractedPdfPage[];
+  truncated: boolean;
+  textExtractStatus: DocumentArtifact["textExtractStatus"] | "ready" | "failed";
+  byteSize: number;
+  sourceKind: string;
+}
+
+type PdfJsModule = {
+  getDocument: (src: Record<string, unknown>) => { promise: Promise<PdfJsDocument> };
+  GlobalWorkerOptions?: { workerSrc: string };
+};
+
+type PdfJsDocument = {
+  numPages: number;
+  getPage: (pageNumber: number) => Promise<{
+    getTextContent: () => Promise<{ items?: Array<{ str?: string }> }>;
+  }>;
+  destroy: () => Promise<void> | void;
+};
+
+let pdfJsLoad: Promise<PdfJsModule> | null = null;
+
+async function loadPdfJs(): Promise<PdfJsModule> {
+  if (!pdfJsLoad) {
+    pdfJsLoad = (async () => {
+      // Same Mozilla PDF.js family as the client viewer (pdfjs-dist@6.2.108).
+      // Production installs from package-lock; do not CDN-import in Node.
+      const mod = await import("pdfjs-dist");
+      return mod as unknown as PdfJsModule;
+    })();
+  }
+  return pdfJsLoad;
+}
+
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  const n = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function pageTextFromContent(content: { items?: Array<{ str?: string }> }): string {
+  const parts: string[] = [];
+  for (const item of content.items ?? []) {
+    if (typeof item?.str === "string" && item.str.length > 0) parts.push(item.str);
+  }
+  return parts.join(" ").replace(/[ \t]+\n/g, "\n").replace(/\s+/g, " ").trim();
+}
+
+async function extractPagesFromBuffer(
+  buffer: Buffer,
+  startPage: number,
+  maxPages: number,
+): Promise<{ pageCount: number; pages: ExtractedPdfPage[]; truncated: boolean }> {
+  const pdfjs = await loadPdfJs();
+  if (pdfjs.GlobalWorkerOptions) {
+    // Server extract is single-threaded; never spin a browser worker.
+    pdfjs.GlobalWorkerOptions.workerSrc = "";
+  }
+  const data = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const loadingTask = pdfjs.getDocument({
+    data,
+    disableWorker: true,
+    isEvalSupported: false,
+    useSystemFonts: true,
+    verbosity: 0,
+  });
+  const doc = await loadingTask.promise;
+  try {
+    const pageCount = doc.numPages;
+    const start = Math.min(Math.max(1, startPage), Math.max(1, pageCount));
+    const endExclusive = Math.min(pageCount + 1, start + maxPages);
+    const pages: ExtractedPdfPage[] = [];
+    let totalChars = 0;
+    let truncated = endExclusive - 1 < pageCount || start > 1;
+
+    for (let index = start; index < endExclusive; index += 1) {
+      const page = await doc.getPage(index);
+      const raw = pageTextFromContent(await page.getTextContent());
+      let text = raw.length > MAX_PAGE_CHARS ? raw.slice(0, MAX_PAGE_CHARS) : raw;
+      if (raw.length > MAX_PAGE_CHARS) truncated = true;
+      if (totalChars + text.length > MAX_TOTAL_CHARS) {
+        text = text.slice(0, Math.max(0, MAX_TOTAL_CHARS - totalChars));
+        truncated = true;
+        if (text.length > 0) pages.push({ index, text });
+        break;
+      }
+      totalChars += text.length;
+      pages.push({ index, text });
+      if (totalChars >= MAX_TOTAL_CHARS) {
+        truncated = truncated || index < pageCount;
+        break;
+      }
+    }
+    return { pageCount, pages, truncated };
+  } finally {
+    await doc.destroy();
+  }
+}
+
+async function markTextExtractStatus(
+  documentId: string | null | undefined,
+  status: "pending" | "ready" | "failed",
+  patch?: {
+    pageCount?: number | null;
+    provenanceExtract?: Record<string, unknown>;
+  },
+): Promise<void> {
+  if (!documentId) return;
+  const principal = requireCurrentUserPrincipal();
+  const [existing] = await db.select().from(documentArtifacts).where(and(
+    eq(documentArtifacts.id, documentId),
+    visibleScopePredicate(principal, {
+      ownerUserId: documentArtifacts.ownerUserId,
+      accountId: documentArtifacts.accountId,
+      vaultId: documentArtifacts.vaultId,
+    }),
+  )).limit(1);
+  if (!existing) return;
+
+  const provenance = {
+    ...(existing.provenance && typeof existing.provenance === "object" ? existing.provenance as Record<string, unknown> : {}),
+    ...(patch?.provenanceExtract ? { textExtract: patch.provenanceExtract } : {}),
+  };
+
+  await db.update(documentArtifacts).set({
+    textExtractStatus: status,
+    pageCount: patch?.pageCount ?? existing.pageCount,
+    provenance,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(documentArtifacts.id, documentId),
+    visibleScopePredicate(principal, {
+      ownerUserId: documentArtifacts.ownerUserId,
+      accountId: documentArtifacts.accountId,
+      vaultId: documentArtifacts.vaultId,
+    }),
+  ));
+}
+
+/**
+ * Authorize via the exact openPdf resolve+read path, then extract plain text per page.
+ * Extract status/cache on document_artifacts is a derivative only — never ACL authority.
+ */
+export async function extractPdfText(input: ExtractPdfTextInput): Promise<ExtractPdfTextResult> {
+  const startPage = clampInt(input.startPage, 1, 1, HARD_MAX_PAGES);
+  const maxPages = clampInt(input.maxPages, DEFAULT_MAX_PAGES, 1, HARD_MAX_PAGES);
+  const source = await resolveSource(input);
+  const bytes = await readSource(source);
+  assertPdf(bytes.buffer, bytes.contentType);
+  if (bytes.buffer.length > MAX_EXTRACT_BYTES) {
+    throw httpError(413, `PDF exceeds extract size cap (${MAX_EXTRACT_BYTES} bytes)`);
+  }
+
+  const documentId = bytes.document?.id ?? (input.documentId ?? null);
+  await markTextExtractStatus(documentId, "pending");
+
+  try {
+    const extracted = await extractPagesFromBuffer(bytes.buffer, startPage, maxPages);
+    await markTextExtractStatus(documentId, "ready", {
+      pageCount: extracted.pageCount,
+      // Derivative metadata only — full page text is returned to the caller, not
+      // persisted as a second ACL-bearing body. Re-authorize on every extract.
+      provenanceExtract: {
+        status: "ready",
+        extractedAt: new Date().toISOString(),
+        startPage,
+        maxPages,
+        pageCount: extracted.pageCount,
+        returnedPages: extracted.pages.length,
+        truncated: extracted.truncated,
+        engine: "pdfjs-dist@6.2.108",
+      },
+    });
+    log.debug(`extractPdfText ready pages=${extracted.pages.length} truncated=${extracted.truncated}`);
+    return {
+      documentId,
+      title: bytes.title,
+      pageCount: extracted.pageCount,
+      pages: extracted.pages,
+      truncated: extracted.truncated,
+      textExtractStatus: "ready",
+      byteSize: bytes.buffer.length,
+      sourceKind: bytes.sourceKind,
+    };
+  } catch (error) {
+    await markTextExtractStatus(documentId, "failed", {
+      provenanceExtract: {
+        status: "failed",
+        failedAt: new Date().toISOString(),
+        message: error instanceof Error ? error.message.slice(0, 200) : "extract_failed",
+      },
+    });
+    log.warn(`extractPdfText failed: ${error instanceof Error ? error.message : String(error)}`);
+    if (error && typeof error === "object" && typeof (error as { status?: unknown }).status === "number") {
+      throw error;
+    }
+    throw httpError(500, "PDF text extraction failed");
+  }
+}
+
+export interface ListDocumentArtifactsInput {
+  vaultId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listDocumentArtifacts(input: ListDocumentArtifactsInput = {}): Promise<{
+  count: number;
+  documents: Array<{
+    id: string;
+    title: string;
+    mimeType: string;
+    sourceKind: string;
+    vaultId: string;
+    byteSize: number | null;
+    pageCount: number | null;
+    textExtractStatus: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }>;
+}> {
+  const principal = requireCurrentUserPrincipal();
+  const limit = clampInt(input.limit, DEFAULT_LIST_LIMIT, 1, HARD_LIST_LIMIT);
+  const offset = clampInt(input.offset, 0, 0, 10_000);
+  const vaultId = typeof input.vaultId === "string" && input.vaultId.trim() ? input.vaultId.trim() : undefined;
+  if (vaultId && !principal.visibleVaultIds?.includes(vaultId)) {
+    throw httpError(403, "Document vault access denied");
+  }
+
+  const scope = visibleScopePredicate(principal, {
+    ownerUserId: documentArtifacts.ownerUserId,
+    accountId: documentArtifacts.accountId,
+    vaultId: documentArtifacts.vaultId,
+  });
+  const where = vaultId
+    ? and(scope, eq(documentArtifacts.vaultId, vaultId), eq(documentArtifacts.mimeType, PDF_MIME))
+    : and(scope, eq(documentArtifacts.mimeType, PDF_MIME));
+
+  const rows = await db.select({
+    id: documentArtifacts.id,
+    title: documentArtifacts.title,
+    mimeType: documentArtifacts.mimeType,
+    sourceKind: documentArtifacts.sourceKind,
+    vaultId: documentArtifacts.vaultId,
+    byteSize: documentArtifacts.byteSize,
+    pageCount: documentArtifacts.pageCount,
+    textExtractStatus: documentArtifacts.textExtractStatus,
+    createdAt: documentArtifacts.createdAt,
+    updatedAt: documentArtifacts.updatedAt,
+  }).from(documentArtifacts).where(where).orderBy(desc(documentArtifacts.updatedAt)).limit(limit).offset(offset);
+
+  return { count: rows.length, documents: rows };
 }

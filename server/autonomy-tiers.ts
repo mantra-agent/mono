@@ -20,6 +20,9 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   ui: { default: 2 },
   scratch: { default: 1, actions: { read: 0, list: 0, search: 0 } },
   files: { default: 1, actions: { read: 0, list: 0 } },
+  // PDF open/extract/list are verified principal-scoped reads. Default stays tier 2 so
+  // future write/generate actions fail closed until explicitly classified.
+  pdf: { default: 2, actions: { open: 0, extract: 0, list: 0 } },
   shell: { default: 1 },
   // Dependency mutation changes repository source and may resolve registry metadata.
   // Keep it tier 2 so autonomous/timer/hook origins remain default-denied unless

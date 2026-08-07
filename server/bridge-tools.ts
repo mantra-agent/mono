@@ -15020,6 +15020,78 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     }
     return result;
   },
+  async pdf(args) {
+    const action = typeof args.action === "string" ? args.action.trim() : "";
+    if (!action) {
+      return contractReject("Missing action parameter", "pdf_input_invalid");
+    }
+
+    const sourceInput = {
+      documentId: typeof args.documentId === "string" ? args.documentId.trim() : undefined,
+      driveResourceId: typeof args.driveResourceId === "string" ? args.driveResourceId.trim() : undefined,
+      provider: typeof args.provider === "string" ? args.provider.trim() : undefined,
+      providerFileId: typeof args.providerFileId === "string" ? args.providerFileId.trim() : undefined,
+      vaultId: typeof args.vaultId === "string" ? args.vaultId.trim() : undefined,
+      objectPath: typeof args.objectPath === "string" ? args.objectPath.trim() : undefined,
+      uploadId: typeof args.uploadId === "string" ? args.uploadId.trim() : undefined,
+    };
+
+    const classifyPdfError = (err: unknown): ToolFailure | undefined => {
+      if (!err || typeof err !== "object") return undefined;
+      const status = (err as { status?: unknown }).status;
+      if (status === 401 || status === 403) return permissionFailure("pdf_access_denied", `http_${status}`);
+      if (status === 408 || status === 429 || (typeof status === "number" && status >= 500)) {
+        return transientFailure("pdf_provider_transient", `http_${status}`);
+      }
+      if (typeof status === "number" && status >= 400) {
+        return inputFailure("pdf_input_invalid", `http_${status}`);
+      }
+      const filesFailure = classifyFilesToolError(err);
+      if (filesFailure) return filesFailure;
+      return undefined;
+    };
+
+    try {
+      const {
+        openPdf,
+        extractPdfText,
+        listDocumentArtifacts,
+      } = await import("./pdf-service");
+
+      if (action === "open") {
+        const opened = await openPdf(sourceInput as any);
+        return { result: JSON.stringify(opened, null, 2) };
+      }
+
+      if (action === "extract") {
+        const extracted = await extractPdfText({
+          ...(sourceInput as any),
+          startPage: typeof args.startPage === "number" ? args.startPage : undefined,
+          maxPages: typeof args.maxPages === "number" ? args.maxPages : undefined,
+        });
+        return { result: JSON.stringify(extracted, null, 2) };
+      }
+
+      if (action === "list") {
+        const listed = await listDocumentArtifacts({
+          vaultId: sourceInput.vaultId,
+          limit: typeof args.limit === "number" ? args.limit : undefined,
+          offset: typeof args.offset === "number" ? args.offset : undefined,
+        });
+        return { result: JSON.stringify(listed, null, 2) };
+      }
+
+      return contractReject(`Unknown pdf action: ${action}`, "pdf_input_invalid");
+    } catch (err: any) {
+      const failure = classifyPdfError(err)
+        ?? (action === "extract" ? internalFailure("pdf_extract_failed") : undefined);
+      return {
+        result: `pdf.${action} failed: ${err?.message || String(err)}`,
+        error: true,
+        failure,
+      };
+    }
+  },
   async weather(args) {
     const action = args.action;
     if (!action) return { result: "Missing action parameter", error: true };
