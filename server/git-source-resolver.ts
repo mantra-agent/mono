@@ -54,6 +54,9 @@ export async function createGitAskpassEnv(token: string): Promise<Record<string,
 
 interface ResolveOptions {
   platformEnvironmentId?: number | null;
+  platformName?: string | null;
+  productName?: string | null;
+  environmentName?: string | null;
   connectionId?: number | null;
   repoUrl?: string | null;
   branch?: string | null;
@@ -96,6 +99,9 @@ export async function resolveGitSource(options: ResolveOptions = {}): Promise<Re
     if (row.provider !== "github") return false;
     if (!row.connectionId) return false;
     if (row.connectionStatus && row.connectionStatus !== "active") return false;
+    if (options.platformName && row.platformName !== options.platformName) return false;
+    if (options.productName && row.productName !== options.productName) return false;
+    if (options.environmentName && row.environmentName !== options.environmentName) return false;
     if (options.connectionId && row.connectionId !== options.connectionId) return false;
     if (options.requireIndexingEnabled && !row.codeIndexingEnabled) return false;
     if (repoRef) {
@@ -139,6 +145,17 @@ export async function resolveGitSource(options: ResolveOptions = {}): Promise<Re
     codeIndexingEnabled: selected.codeIndexingEnabled,
     token,
   };
+}
+
+export async function resolveGitCloneSource(platformEnvironmentId?: number | null): Promise<ResolvedGitSource | null> {
+  if (platformEnvironmentId) {
+    return resolveGitSource({ platformEnvironmentId });
+  }
+  return resolveGitSource({
+    platformName: "Mantra",
+    productName: "Web",
+    environmentName: "stage",
+  });
 }
 
 export async function resolveDefaultIndexedGitSource(): Promise<ResolvedGitSource | null> {

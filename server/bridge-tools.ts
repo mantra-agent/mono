@@ -7455,13 +7455,6 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       return createAskpassEnv(legacy.token);
     }
 
-    async function getCloneAuthCandidates(repoUrl: string): Promise<GitAuthCandidate[]> {
-      const candidates: GitAuthCandidate[] = [];
-      const platform = await resolvePlatformGitAuth(repoUrl);
-      if (platform) candidates.push(platform);
-      return candidates;
-    }
-
     async function ensureWorkspaceDependenciesHydrated(): Promise<string> {
       const packageLockPath = resolve(WORKSPACE_DIR, "package-lock.json");
       const rootNodeModules = resolve(WORKSPACE_DIR, "node_modules");
@@ -7591,36 +7584,65 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
     }
 
     try {
-      const implicitSessionClone = action === "clone" ? null : await resolveImplicitSessionCloneDirectory();
+      const implicitSessionClone = action === "clone" || action === "clone_from_environment"
+        ? null
+        : await resolveImplicitSessionCloneDirectory();
       if (implicitSessionClone && "error" in implicitSessionClone) {
         return contractReject(implicitSessionClone.error, implicitSessionClone.code);
       }
       if (implicitSessionClone) args.directory = implicitSessionClone.directory;
 
       switch (action) {
-        case "clone": {
-          const url = args.url;
-          if (!url) return contractReject("Missing url parameter for clone", "git_missing_url");
-
-          try { new URL(url); } catch {
-            return contractReject("Invalid repository URL", "git_invalid_url");
-          }
-
-          if (!await dirExists(REPOS_DIR)) await mkdirAsync(REPOS_DIR, { recursive: true });
-
-          // Session isolation: always append -{sessionId[:8]} to the directory name.
-          // This ensures each session gets its own working tree. No shared mutable state.
-          const baseName = args.directory || basename(url.replace(/\.git$/, "")).replace(/[^a-zA-Z0-9._-]/g, "-");
-          if (SELF_DIR_ALIASES.has(baseName)) {
+        case "clone":
+        case "clone_from_environment": {
+          const requestedEnvironmentId = Number(args.platformEnvironmentId);
+          if (action === "clone_from_environment" && (!Number.isInteger(requestedEnvironmentId) || requestedEnvironmentId <= 0)) {
             return contractReject(
-              "Cannot clone into the workspace root. Clones always go into repos/.",
-              "git_workspace_root_forbidden",
+              "clone_from_environment requires a positive platformEnvironmentId.",
+              "git_platform_environment_required",
+            );
+          }
+          if (action === "clone" && Number.isFinite(requestedEnvironmentId) && requestedEnvironmentId > 0) {
+            return contractReject(
+              "Normal clone takes no environment input. Use clone_from_environment for an exceptional target.",
+              "git_clone_routing_forbidden",
+            );
+          }
+          const forbiddenRoutingInputs = [args.url, args.directory, args.branch]
+            .some((value) => typeof value === "string" && value.trim().length > 0)
+            || (Number.isFinite(Number(args.connectionId)) && Number(args.connectionId) > 0);
+          if (forbiddenRoutingInputs) {
+            return contractReject(
+              "Clone routing is owned by the Platform source binding; url, connectionId, directory, and branch are not accepted.",
+              "git_clone_routing_forbidden",
             );
           }
 
+          const { resolveGitCloneSource } = await import("./git-source-resolver");
+          const source = await resolveGitCloneSource(
+            action === "clone_from_environment" ? requestedEnvironmentId : null,
+          );
+          if (!source) {
+            const target = action === "clone"
+              ? "canonical Mantra / Web / stage"
+              : `Platform Environment #${requestedEnvironmentId}`;
+            return contractReject(
+              `No active GitHub source binding with an available provider credential exists for ${target}.`,
+              "git_source_binding_unavailable",
+            );
+          }
+
+          const url = source.repoUrl;
+          if (!await dirExists(REPOS_DIR)) await mkdirAsync(REPOS_DIR, { recursive: true });
+
+          // Session isolation: destination identity is derived only from the authorized source binding.
+          const repositoryName = source.repo.replace(/[^a-zA-Z0-9._-]/g, "-");
+          const baseName = action === "clone_from_environment"
+            ? `${repositoryName}-env-${source.environmentId}`
+            : repositoryName;
           const dirName = sessionSuffix ? `${baseName}-${sessionSuffix}` : baseName;
           const targetDir = resolveRepoDir(dirName);
-          if (!targetDir) return contractReject("Invalid directory name", "git_directory_required");
+          if (!targetDir) return contractReject("Invalid source-bound repository name", "git_directory_required");
 
           // Idempotent: if this session already cloned here, return the existing clone.
           if (await dirExists(targetDir)) {
@@ -7630,111 +7652,48 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
             return { result: `Already cloned at repos/${dirName} (reusing existing clone)\nBranch: ${currentBranch}\nDependencies: ${hydrationStatus}\nRecent commits:\n${log}` };
           }
 
-          const cloneArgs = ["clone"];
-          const branch = sanitizeBranch(args.branch);
-          if (branch) cloneArgs.push("--branch", branch);
-          cloneArgs.push(url, targetDir);
-
-          const candidates = await getCloneAuthCandidates(url);
-          const failures: Array<{ mode: GitAuthMode; context: Record<string, unknown>; error: string }> = [];
-          let usedMode: GitAuthMode | null = null;
-          let degraded = false;
-          let usedContext: Record<string, unknown> = {};
-          let legacyFallbackQueued = false;
-
-          if (candidates.length === 0) {
-            const legacy = await resolveLegacyGitAuth(url);
-            candidates.push(legacy);
-            legacyFallbackQueued = true;
-            toolExec.log("git.clone.legacy_auth_started_no_platform_binding", {
+          const cloneArgs = ["clone", "--branch", source.branch, url, targetDir];
+          const sourceContext = {
+            platformEnvironmentId: source.environmentId,
+            connectionId: source.connectionId,
+            owner: source.owner,
+            repo: source.repo,
+            branch: source.branch,
+          };
+          const authEnv = await createAskpassEnv(source.token);
+          try {
+            toolExec.log("git.clone.source_bound_attempt", {
               directory: dirName,
-              url,
+              action,
+              ...sourceContext,
             });
-          }
-
-          for (let index = 0; index < candidates.length; index += 1) {
-            const candidate = candidates[index];
-            const authEnv = await createAskpassEnv(candidate.token);
-            try {
-              toolExec.log(`git.clone.${candidate.mode}_auth_attempted`, {
-                directory: dirName,
-                url,
-                ...candidate.context,
-              });
-              await git(cloneArgs, REPOS_DIR, authEnv);
-              usedMode = candidate.mode;
-              degraded = candidate.mode === "legacy" && failures.some(failure => failure.mode === "platform");
-              usedContext = candidate.context;
-              const successPayload = {
-                directory: dirName,
-                url,
-                authMode: candidate.mode,
-                degraded,
-                ...candidate.context,
-              };
-              if (degraded) {
-                toolExec.warn("git.clone.legacy_fallback_succeeded_degraded", successPayload);
-              } else {
-                toolExec.log(`git.clone.${candidate.mode}_auth_succeeded`, successPayload);
-              }
-              break;
-            } catch (err: any) {
-              const message = scrubTokens(err?.stderr || err?.message || String(err));
-              failures.push({ mode: candidate.mode, context: candidate.context, error: message });
-              toolExec.warn(`git.clone.${candidate.mode}_auth_failed`, {
-                directory: dirName,
-                url,
-                authMode: candidate.mode,
-                error: message,
-                ...candidate.context,
-              });
-              await rmAsync(targetDir, { recursive: true, force: true });
-              if (candidate.mode === "platform" && !legacyFallbackQueued) {
-                try {
-                  const legacy = await resolveLegacyGitAuth(url);
-                  candidates.push(legacy);
-                  legacyFallbackQueued = true;
-                  toolExec.warn("git.clone.legacy_fallback_started", {
-                    directory: dirName,
-                    url,
-                    platformFailure: message,
-                    ...candidate.context,
-                  });
-                } catch (legacyErr: any) {
-                  const legacyError = scrubTokens(legacyErr?.message || String(legacyErr));
-                  failures.push({ mode: "legacy", context: {}, error: legacyError });
-                  toolExec.warn("git.clone.legacy_fallback_unavailable", {
-                    directory: dirName,
-                    url,
-                    error: legacyError,
-                  });
-                }
-              }
-            } finally {
-              await cleanupAskpass(authEnv);
-            }
-          }
-
-          if (!usedMode) {
-            const failureSummary = failures.map(failure => {
-              const context = Object.keys(failure.context).length > 0 ? ` ${JSON.stringify(failure.context)}` : "";
-              return `${failure.mode}${context}: ${failure.error}`;
-            }).join("\n");
-            // Reaching this branch means every auth candidate was tried and rejected,
-            // so the failure is an expected operational denial (auth/network/access),
-            // not a code surprise. Classify from the accumulated stderr; default to
-            // auth-denied since all auth modes were exhausted.
-            const failure = classifyGitError({ stderr: failureSummary }) ?? permissionFailure("git_auth_denied", "clone_auth_exhausted");
-            return { result: `Git clone failed after platform-first auth and legacy fallback.\n${failureSummary}`, error: true, failure };
+            await git(cloneArgs, REPOS_DIR, authEnv);
+          } catch (err: any) {
+            const message = scrubTokens(err?.stderr || err?.message || String(err));
+            await rmAsync(targetDir, { recursive: true, force: true });
+            toolExec.warn("git.clone.source_bound_failed", {
+              directory: dirName,
+              action,
+              error: message,
+              ...sourceContext,
+            });
+            const failure = classifyGitError({ stderr: message })
+              ?? permissionFailure("git_auth_denied", "source_bound_clone_failed");
+            return {
+              result: `Git clone failed for the authorized Platform source binding.\n${message}`,
+              error: true,
+              failure,
+            };
+          } finally {
+            await cleanupAskpass(authEnv);
           }
 
           const hydrationStatus = await ensureCloneUsesSharedNodeModules(targetDir, dirName);
-
           const log = await git(["log", "--oneline", "-5"], targetDir);
           const currentBranch = await git(["branch", "--show-current"], targetDir);
-          const authLine = `Auth: ${usedMode}${degraded ? " (legacy fallback, degraded)" : ""}`;
-          const contextLine = Object.keys(usedContext).length > 0 ? `\nAuth context: ${JSON.stringify(usedContext)}` : "";
-          return { result: `Cloned into repos/${dirName}\nBranch: ${currentBranch}\n${authLine}${contextLine}\nDependencies: ${hydrationStatus}\nRecent commits:\n${log}` };
+          return {
+            result: `Cloned into repos/${dirName}\nBranch: ${currentBranch}\nAuth: platform source binding\nSource context: ${JSON.stringify(sourceContext)}\nDependencies: ${hydrationStatus}\nRecent commits:\n${log}`,
+          };
         }
 
         case "pull": {
