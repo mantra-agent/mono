@@ -30,12 +30,13 @@
 - Residual: Box tenant admins control upstream item access and may revoke tokens asynchronously; revocation endpoint failure is currently best-effort during disconnect, while local deletion still removes Mantra access. Rollback: clear BOX_CLIENT_ID and BOX_CLIENT_SECRET in Secrets, then revert the connector PR; existing bindings fail closed without tokens.
 -->
 
-<!-- 2026-08-06 Document-store chat Vault membership recovery residual:
+<!-- 2026-08-06 Document-store chat Vault ownership convergence residual:
 - Assets/data: user-owned chat documents and their account/Vault ownership (S2 conversation data and S1 ownership metadata).
-- Flow/boundary: legacy document_store_documents rows -> boot-time vault schema convergence -> validated database ownership constraint.
-- Residual verified on Stage after #2033: recovery SQL referenced users.account_id, which does not exist (code 42703), so EnsureVaults still failed closed before constraint validation completed.
-- Controls/owner: Data Platform recovers account_id and the account's canonical default Vault only through memberships.user_id -> accounts.kind='personal' -> vaults.is_default=true; unresolved rows remain rejected by validation rather than guessed. Severity: high. SLA: immediate. Status: residual repair in source.
-- Rollback/residual: revert the memberships join and Stage returns to the column-missing failure; ownerless or multi-membership-inconsistent legacy rows remain fail-closed.
+- Flow/boundary: legacy document_store_documents rows -> boot-time Vault schema convergence -> validated database ownership constraint.
+- Residual verified on Stage after #2033/#2048: the invalid users.account_id reference was removed, but membership-based recovery still left user-chat rows without a Vault and validation failed with SQLSTATE 23514.
+- Threat/failure: memberships express account access rather than canonical ownership; using them to infer a document owner is ambiguous when a user has additional access and incomplete when the owner's membership row is absent (STRIDE information disclosure/elevation plus availability through repeated boot convergence failure).
+- Controls/owner: Data Platform recovers only through document.owner_user_id -> accounts(kind='personal', owner_user_id) -> that account's default Vault. The personal-account owner relation is unique and authoritative; unresolved rows remain rejected by the database constraint. Diagnostics expose aggregate shape counts only—never document IDs, principal identity, titles, paths, metadata, or content. Severity: high. SLA: immediate. Status: repaired in source, pending build/merge/deploy.
+- Rollback/residual: revert the owner relation repair to restore the membership-based path. A legacy row with no owner or no personal account remains fail-closed and will be identified only by bounded aggregate class for the next explicit recovery step.
 -->
 
 <!-- 2026-08-06 session-search index operational-probe repair:
