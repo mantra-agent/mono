@@ -42,6 +42,68 @@ const BACKFILL_LOOKBACK_DAYS = 30;
 const BACKFILL_INITIAL_RETRY_MS = 5_000;
 const BACKFILL_MAX_RETRY_MS = 5 * 60_000;
 const READINESS_CACHE_MS = 30_000;
+
+type ProjectionOperation =
+  | "worker_tick"
+  | "reconcile_event"
+  | "backfill_batch"
+  | "replace_projection"
+  | "restore_principal"
+  | "boot_start";
+
+type ProjectionOperationError = Error & {
+  code?: string;
+  operation?: ProjectionOperation;
+  postgresCode?: string | null;
+  failureCount?: number;
+  retryMs?: number;
+  projectionVersion?: number;
+  eventId?: string;
+  attempt?: number;
+};
+
+function normalizeProjectionError(
+  value: unknown,
+  operation: ProjectionOperation,
+  fallbackCode: string,
+  message?: string,
+): ProjectionOperationError {
+  let error: ProjectionOperationError;
+  if (value instanceof Error) {
+    error = value as ProjectionOperationError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(message || value) as ProjectionOperationError;
+  } else {
+    error = new Error(message || "Session search projection failed", { cause: value }) as ProjectionOperationError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = fallbackCode;
+  }
+  error.operation = operation;
+  const postgresCode = getPostgresErrorCode(value) || getPostgresErrorCode(error);
+  if (postgresCode) error.postgresCode = postgresCode;
+  return error;
+}
+
+function projectionLogContext(options: {
+  operation: ProjectionOperation;
+  failureCount?: number;
+  retryMs?: number;
+  projectionVersion?: number;
+  eventId?: string;
+  attempt?: number;
+  postgresCode?: string | null;
+}) {
+  return {
+    operation: options.operation,
+    failureCount: options.failureCount,
+    retryMs: options.retryMs,
+    projectionVersion: options.projectionVersion,
+    eventId: options.eventId,
+    attempt: options.attempt,
+    postgresCode: options.postgresCode ?? undefined,
+  };
+}
 type SearchableMessage = {
   id?: string | null;
   role?: string | null;
@@ -483,21 +545,39 @@ async function markProjectionEventPublished(id: string): Promise<void> {
 
 async function retryProjectionEvent(row: TransactionalOutboxRow, error: unknown): Promise<void> {
   const retryMs = projectionRetryDelayMs(row.deliveryAttempts);
-  const errorCode = getPostgresErrorCode(error) || (error instanceof Error ? error.name : typeof error);
+  const normalized = normalizeProjectionError(
+    error,
+    "reconcile_event",
+    "SESSION_SEARCH_PROJECTION_RECONCILE_FAILED",
+  );
+  const errorCode = (
+    normalized.postgresCode
+    || normalized.code
+    || normalized.name
+    || "SESSION_SEARCH_PROJECTION_RECONCILE_FAILED"
+  ).slice(0, 120);
   await runWithPrincipal(PROJECTION_WORKER_PRINCIPAL, () => db
     .update(transactionalOutbox)
     .set({
       availableAt: new Date(Date.now() + retryMs),
-      lastErrorCode: errorCode.slice(0, 120),
+      lastErrorCode: errorCode,
     })
     .where(and(eq(transactionalOutbox.id, row.id), isNull(transactionalOutbox.publishedAt))));
-  log.warn("session search projection reconciliation deferred", {
-    eventId: row.id,
-    aggregateId: row.aggregateId,
-    attempt: row.deliveryAttempts,
-    retryMs,
-    errorCode: errorCode.slice(0, 120),
-  });
+  normalized.eventId = row.id;
+  normalized.attempt = row.deliveryAttempts;
+  normalized.retryMs = retryMs;
+  // Deferred retries remain warn-level: the worker continues and will reclaim the event.
+  log.warn(
+    "session search projection reconciliation deferred",
+    projectionLogContext({
+      operation: "reconcile_event",
+      eventId: row.id,
+      attempt: row.deliveryAttempts,
+      retryMs,
+      postgresCode: normalized.postgresCode,
+      projectionVersion: SESSION_SEARCH_PROJECTION_VERSION,
+    }),
+  );
 }
 
 async function reconcileProjectionEvent(row: TransactionalOutboxRow): Promise<void> {
@@ -610,13 +690,25 @@ export function startSessionSearchProjectionBackfill(): void {
     } catch (error) {
       backfillFailureCount += 1;
       retryMs = projectionRetryDelayMs(backfillFailureCount);
-      log.error("session search projection worker failed", {
-        errorName: error instanceof Error ? error.name : typeof error,
-        postgresCode: getPostgresErrorCode(error),
-        failureCount: backfillFailureCount,
-        retryMs,
-        projectionVersion: SESSION_SEARCH_PROJECTION_VERSION,
-      });
+      const normalized = normalizeProjectionError(
+        error,
+        "worker_tick",
+        "SESSION_SEARCH_PROJECTION_WORKER_FAILED",
+      );
+      normalized.failureCount = backfillFailureCount;
+      normalized.retryMs = retryMs;
+      normalized.projectionVersion = SESSION_SEARCH_PROJECTION_VERSION;
+      log.error(
+        "session search projection worker failed",
+        normalized,
+        projectionLogContext({
+          operation: "worker_tick",
+          failureCount: backfillFailureCount,
+          retryMs,
+          projectionVersion: SESSION_SEARCH_PROJECTION_VERSION,
+          postgresCode: normalized.postgresCode,
+        }),
+      );
     }
     setTimeout(run, retryMs).unref();
   };

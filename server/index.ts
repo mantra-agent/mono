@@ -628,8 +628,19 @@ app.use((req, res, next) => {
           startSessionSearchProjectionBackfill();
         })
         .catch((err) => {
-          serverLog.error("session search projection backfill unavailable", {
-            errorName: err instanceof Error ? err.name : typeof err,
+          // Keep normalization local: this catch may fire when the module itself failed to load.
+          const error = (err instanceof Error
+            ? err
+            : new Error("session search projection backfill unavailable", { cause: err })) as Error & {
+            code?: string;
+            operation?: string;
+          };
+          if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+            error.code = "SESSION_SEARCH_PROJECTION_BOOT_UNAVAILABLE";
+          }
+          error.operation = "boot_start";
+          serverLog.error("session search projection backfill unavailable", error, {
+            operation: "boot_start",
           });
         });
 
