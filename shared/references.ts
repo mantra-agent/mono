@@ -154,7 +154,7 @@ export const REFERENCE_REGISTRY: Readonly<Record<KnownReferenceType, ReferenceTy
   kpi: definition("kpi", "opaque", OPAQUE_PATTERN, { route: id => `/business/kpis?kpi=${encodeURIComponent(id)}` }),
   business_plan: definition("business_plan", "opaque", OPAQUE_PATTERN, { aliases: ["business-plan"], route: id => `/business/advantage?plan=${encodeURIComponent(id)}` }),
   file: definition("file", "path", PATH_PATTERN, { graph: false }),
-  document: definition("document", "uuid", UUID_PATTERN),
+  document: definition("document", "uuid", UUID_PATTERN, { route: id => `/documents/${encodeURIComponent(id)}` }),
   news: definition("news", "opaque", OPAQUE_PATTERN, { route: id => `/news?signal=${encodeURIComponent(id)}` }),
   web_article: definition("web_article", "url", URL_PATTERN, { graph: false }),
   x_item: definition("x_item", "url", URL_PATTERN, { graph: false }),
