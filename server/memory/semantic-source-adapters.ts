@@ -131,6 +131,7 @@ type DriveFileReadTarget =
       vaultId: string;
       provider: "google" | "box" | "mantra";
       providerFileId: string;
+      rootDriveResourceId: string;
       name: string;
     };
 
@@ -163,6 +164,7 @@ async function resolveDriveFileReadTarget(sourceId: string): Promise<DriveFileRe
       vaultId: indexedFileSources.vaultId,
       provider: indexedFileSources.provider,
       providerFileId: indexedFileSources.providerFileId,
+      rootDriveResourceId: indexedFileSources.rootDriveResourceId,
       driveResourceId: indexedFileSources.driveResourceId,
       name: indexedFileSources.name,
       discoveryState: indexedFileSources.discoveryState,
@@ -186,6 +188,7 @@ async function resolveDriveFileReadTarget(sourceId: string): Promise<DriveFileRe
     vaultId: source.vaultId,
     provider: source.provider,
     providerFileId: source.providerFileId,
+    rootDriveResourceId: source.rootDriveResourceId,
     name: source.name,
   };
 }
@@ -233,6 +236,7 @@ async function loadDriveFileNormalizedText(sourceId: string): Promise<{
           vaultId: target.vaultId,
           provider: target.provider,
           providerFileId: target.providerFileId,
+          rootDriveResourceId: target.rootDriveResourceId,
         };
 
   if (target.kind === "bind") {
@@ -323,8 +327,27 @@ async function loadDriveFileNormalizedText(sourceId: string): Promise<{
   };
 
   // Prefer full staged utf8 archive (office-text / text/*) over truncated inline preview.
+  // PDFs remain encrypted binary archives in FilesApi, so normalize them through
+  // the canonical PDF.js extraction boundary while preserving mounted-root auth.
   let text: string | null = null;
-  if (readResult.archive?.encoding === "utf8") {
+  if (meta.mimeType?.toLowerCase() === "application/pdf") {
+    const { extractPdfText } = await import("../pdf-service");
+    const extracted = await extractPdfText(
+      target.kind === "bind"
+        ? { driveResourceId: target.driveResourceId, maxPages: 200 }
+        : {
+            vaultId: target.vaultId,
+            provider: target.provider,
+            providerFileId: target.providerFileId,
+            rootDriveResourceId: target.rootDriveResourceId,
+            maxPages: 200,
+          },
+    );
+    text = extracted.pages
+      .map((page) => `Page ${page.index}\n${page.text}`)
+      .join("\n\n")
+      .trim();
+  } else if (readResult.archive?.encoding === "utf8") {
     text = await readFromObjectStorage(readResult.archive.objectStoragePath);
   }
   if (text == null && readResult.text != null) {
