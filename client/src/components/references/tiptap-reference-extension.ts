@@ -10,8 +10,19 @@ import { parseReferenceText } from "@shared/reference-parser";
 import type { ReferenceRef } from "@shared/references";
 import { ReferenceRenderer } from "./reference-renderer";
 
+type ReferenceWidgetElement = HTMLElement & { __referenceRoot?: Root };
+
+function releaseReferenceRoot(node: Node): void {
+  const widget = node as ReferenceWidgetElement;
+  const root = widget.__referenceRoot;
+  if (!root) return;
+
+  delete widget.__referenceRoot;
+  queueMicrotask(() => root.unmount());
+}
+
 function createReferenceWidget(ref: ReferenceRef): HTMLElement {
-  const container = document.createElement("span");
+  const container = document.createElement("span") as ReferenceWidgetElement;
   container.dataset.referenceWidget = "true";
   container.dataset.referenceType = ref.type;
   container.dataset.referenceId = ref.id;
@@ -25,7 +36,7 @@ function createReferenceWidget(ref: ReferenceRef): HTMLElement {
     ),
   );
 
-  (container as HTMLElement & { __referenceRoot?: Root }).__referenceRoot = root;
+  container.__referenceRoot = root;
   return container;
 }
 
@@ -56,9 +67,7 @@ function referenceDecorations(doc: ProseMirrorNode): DecorationSet {
           side: -1,
           key: `${from}:${part.ref.canonical}`,
           ignoreSelection: false,
-          destroy(node) {
-            (node as HTMLElement & { __referenceRoot?: Root }).__referenceRoot?.unmount();
-          },
+          destroy: releaseReferenceRoot,
         }),
       );
       offset += rawLength;
