@@ -1,3 +1,11 @@
+<!-- 2026-08-07 Object entity missing-request severity repair:
+- Assets/data: private Vault-scoped object paths and existence state (S1 metadata), object bytes (S2/S3), ACL rows, and aggregate operational telemetry.
+- Flow/boundary: authenticated `/objects/*` request -> principal-visible Vault candidate resolution -> physical object HEAD -> object ACL or visible Project attachment authorization -> private streaming response.
+- Failure/threat: an authenticated request for a stale, deleted, never-uploaded, or otherwise absent entity correctly returned 404, but the route logged `ObjectNotFoundError` at error severity before classifying the expected client outcome. Forty such requests created a false production-error fingerprint (STRIDE repudiation/availability analogue; OBS-01). Logging the requested path or storage key would also disclose private identifiers.
+- Controls/owner: ObjectStorage classifies the canonical `ObjectNotFoundError` before telemetry, emits one warning with stable `OBJECT_ENTITY_NOT_FOUND` and no path/key/principal/content, and preserves the existing 404 response. Unexpected resolver, ACL, provider, and streaming failures remain errors. Upload persistence verification, visible-Vault resolution, private ACL default, Project attachment fallback, and authentication are unchanged. Owner: Core Object Storage / Reliability. Severity: low observability defect. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: warning recurrence can reveal continued stale references without polluting product-error aggregates; the aggregate does not identify which producer retained the path by design. Revert the route and this record to restore error-level classification. No schema or object mutation is involved.
+-->
+
 <!-- 2026-08-07 PDF mounted-viewer and PDF.js lifecycle repair:
 - Assets/data: vault-bound Drive PDF bytes and metadata (S2), live drive_resource/Vault grants, short-lived encrypted content handles, and bounded extracted text derivatives.
 - Flow/boundary: Files document link or pdf tool -> pdf-service resolve/read -> FilesApi live Vault/bind/recursive-whitelist authorization -> provider bytes -> PDF.js viewer/extractor. Provider coordinates and PDF bytes remain untrusted input.
