@@ -195,12 +195,6 @@ export async function registerLibraryRoutes(app: Express) {
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_library_page_trash_deleted_at ON library_page_trash(deleted_at)`,
     );
-    // Legacy memory_entries may be quarantined into a separate schema; guard by
-    // catalog presence so Library route boot never touches the quarantined table.
-    await pool.query(
-      `ALTER TABLE IF EXISTS public.memory_entries ADD COLUMN IF NOT EXISTS one_liner TEXT`,
-    );
-
     const { rows: sentinel } = await pool.query(`
       SELECT 1 FROM library_pages WHERE sort_order != 0 LIMIT 1
     `);
