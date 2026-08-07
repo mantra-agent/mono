@@ -183,6 +183,7 @@ function invalidateVaultScopedQueries() {
     "/api/library",
     "/api/memory",
     "/api/goals",
+    "/api/life-goals",
     "/api/projects",
     "/api/tasks",
     "/api/people",
