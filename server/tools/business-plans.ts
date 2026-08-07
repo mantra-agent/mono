@@ -109,6 +109,22 @@ function stringArray(value: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+function optionalStandingObjectiveKey(args: Record<string, unknown>): string | null | undefined {
+  const value = optionalStr(args, "standingObjectiveKey");
+  return value === "none" ? null : value;
+}
+
+function safeBusinessError(error: unknown): string {
+  if (error && typeof error === "object") {
+    const candidate = error as { status?: unknown; message?: unknown; issues?: unknown };
+    if (Array.isArray(candidate.issues) && typeof candidate.message === "string") return candidate.message;
+    if (typeof candidate.status === "number" && candidate.status >= 400 && candidate.status < 500 && typeof candidate.message === "string") {
+      return candidate.message;
+    }
+  }
+  return "Business operation failed";
+}
+
 async function handlePlanAction(action: string, args: Record<string, unknown>) {
   if (action === "list") {
     const plans = await businessPlanStorage.list();
@@ -201,7 +217,7 @@ async function handleKpiAction(action: string, args: Record<string, unknown>) {
       onTrackThreshold: optionalNumber(args, "onTrackThreshold"),
       bearThreshold: optionalNumber(args, "bearThreshold"),
       staleAfterHours: optionalNumber(args, "staleAfterHours") ?? undefined,
-      standingObjectiveKey: optionalStr(args, "standingObjectiveKey") as any,
+      standingObjectiveKey: optionalStandingObjectiveKey(args) as any,
       status: optionalStr(args, "status") as any,
     });
     return { result: safeStringify(kpiResult(kpi), { label: "bridge.business.kpis.create" }) };
@@ -221,7 +237,7 @@ async function handleKpiAction(action: string, args: Record<string, unknown>) {
       onTrackThreshold: optionalNumber(args, "onTrackThreshold"),
       bearThreshold: optionalNumber(args, "bearThreshold"),
       staleAfterHours: optionalNumber(args, "staleAfterHours") ?? undefined,
-      standingObjectiveKey: optionalStr(args, "standingObjectiveKey") as any,
+      standingObjectiveKey: optionalStandingObjectiveKey(args) as any,
       status: optionalStr(args, "status") as any,
       clearFields: stringArray(args.clearFields) as any,
     });
@@ -289,6 +305,12 @@ async function handleMetricAction(action: string, args: Record<string, unknown>)
     const samples = await metricsStorage.listSamples(metricId, limit ?? undefined);
     return { result: safeStringify({ total: samples.length, samples: samples.map(sampleResult) }, { label: "bridge.business.metrics.list_samples" }) };
   }
+  if (action === "delete_sample") {
+    const sampleId = requiredStr(args, "sampleId");
+    if (!sampleId) return { result: "business.delete_sample requires sampleId", error: true };
+    const sample = await metricsStorage.deleteSample(sampleId);
+    return { result: `Deleted metric sample ${sample.id}` };
+  }
   if (action === "record_sample") {
     const metricId = requiredStr(args, "metricId");
     const value = optionalNumber(args, "value");
@@ -316,7 +338,7 @@ const PLAN_ACTIONS = new Set([
 const KPI_ACTIONS = new Set(["list_kpis", "get_kpi", "create_kpi", "update_kpi", "delete_kpi"]);
 const METRIC_ACTIONS = new Set([
   "list_metrics", "get_metric", "create_metric", "update_metric", "delete_metric",
-  "list_samples", "record_sample",
+  "list_samples", "record_sample", "delete_sample",
 ]);
 
 export const handleBusiness: ToolHandler = async (args) => {
@@ -326,7 +348,7 @@ export const handleBusiness: ToolHandler = async (args) => {
     if (METRIC_ACTIONS.has(action)) return await handleMetricAction(action, args);
     if (PLAN_ACTIONS.has(action)) return await handlePlanAction(action, args);
     return { result: `Unknown business action: ${action}`, error: true };
-  } catch (error: any) {
-    return { result: error?.message || "Business operation failed", error: true };
+  } catch (error: unknown) {
+    return { result: safeBusinessError(error), error: true };
   }
 };
