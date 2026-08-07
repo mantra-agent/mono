@@ -66,15 +66,21 @@ export function ProfileTreeRow({
             showValue
               ? mobileLayout === "inline"
                 ? valueLayout === "compact"
-                  ? "grid-cols-[minmax(0,1fr)_max-content_auto_auto] gap-y-0"
-                  : "grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] gap-y-0"
+                  ? "grid-cols-[max-content_minmax(0,1fr)_auto_auto] gap-y-0"
+                  : "grid-cols-[max-content_minmax(0,12rem)_auto_auto] gap-y-0"
                 : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1"
               : mobileLayout === "inline"
-                ? "grid-cols-[minmax(0,1fr)_auto_auto] gap-y-0"
+                ? "grid-cols-[max-content_auto_auto] gap-y-0"
                 : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-y-1",
           )}
         >
-          <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
+          <div
+            className={cn(
+              "flex items-center gap-2 text-muted-foreground",
+              // Keep short field labels fully visible; values take remaining width.
+              mobileLayout === "inline" ? "min-w-max shrink-0" : "min-w-0",
+            )}
+          >
             {icon ? (
               <span className="flex shrink-0 items-center justify-center text-muted-foreground">
                 {icon}
@@ -82,9 +88,12 @@ export function ProfileTreeRow({
             ) : null}
             <span
               className={cn(
-                "min-w-0",
                 !icon && "w-full",
-                mobileLayout === "inline" ? "truncate" : "break-words",
+                // Inline field labels (Status, Vault, Drive) must stay fully
+                // readable; values absorb overflow, not the fixed labels.
+                mobileLayout === "inline"
+                  ? "shrink-0 whitespace-nowrap"
+                  : "min-w-0 break-words",
               )}
             >
               {label}
