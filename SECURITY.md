@@ -1,17 +1,9 @@
-<!-- 2026-08-06 Business Plan tool-registry availability repair:
-- Assets/data: principal- and Vault-scoped Business Plan tool authority metadata and ChatStream availability; no Business Plan content or principal data changes.
-- Flow/boundary: static built-in ToolMeta -> registry schema normalization -> persona-authorized ChatStream tool exposure.
-- Threats: incomplete trusted tool metadata causing registry construction to throw before model execution (availability/DoS); no new external-input or authorization boundary is introduced.
-- Controls/owner: Tool Registry restores the required strategy category on the Business Plans producer entry; existing registry typing and persona/tool authority gates remain canonical. Owner Tool Platform. Severity: medium. SLA: immediate. Status: repaired in source, pending production build/merge.
-- Residual: the production build does not run standalone TypeScript validation, so future required-metadata omissions still depend on review and runtime exercise until build-time schema validation is strengthened.
--->
-
-<!-- 2026-08-06 Document-store chat Vault convergence repair:
-- Assets/data: user-owned chat documents and their account/Vault ownership (S2 conversation data and S1 ownership metadata).
-- Flow/boundary: legacy document_store_documents rows -> boot-time vault schema convergence -> validated database ownership constraint.
-- Threats: legacy user chat rows with NULL account_id/vault_id bypassing Vault isolation or repeatedly preventing constraint validation (information disclosure / denial of service).
-- Controls/owner: Data Platform recovers account_id and the account's canonical default vault only through the deterministic document owner_user_id -> users.account_id -> vaults.account_id relation before validating document_store_user_chat_vault_required; unresolved rows remain rejected by validation rather than guessed or reassigned. Severity: high. SLA: immediate. Status: repaired in source, pending build/merge.
-- Rollback/residual: revert the convergence query and constraint validation returns to failing closed; ownerless or owner/account-inconsistent legacy rows are intentionally not auto-repaired and will continue to surface as validation failures for explicit remediation.
+<!-- 2026-08-06 SegmentStream lifecycle-boundary repair:
+- Assets/data: user-owned streamed message segments and execution-step visibility (S2 conversation content), active transport/replay state, and client error telemetry.
+- Flow/boundary: authenticated chat/subsession transport or persisted replay -> SegmentStream normalization -> visibility filtering -> React rendering; cancellation may replace live segments with persisted replay while component modules remain mounted.
+- Threats: a stale or omitted callback crossing that lifecycle boundary could bypass visibility filtering and expose internal execution detail (information disclosure), while render-phase fallback telemetry repeatedly produced unclassified errors (repudiation/availability).
+- Controls/owner: Client Platform now owns the canonical visibility policy inside SegmentStream, removes callback injection from both live-chat and inline-session consumers, and structurally prevents transport/replay lifecycle changes from making the filter non-callable. Existing layer policy is unchanged. Severity: medium. SLA: immediate. Status: repaired in source, pending production build/merge.
+- Residual: historical UNCLASSIFIED aggregates cannot be enriched retroactively; malformed persisted segment data remains governed by the shared streaming schema and React error boundary.
 -->
 
 <!-- 2026-08-06 RouteLoadBoundary error-attribution repair:

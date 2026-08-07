@@ -1,9 +1,6 @@
 import { Fragment, useEffect, useMemo, type ComponentType, type ReactNode } from "react";
 import type { ExecutionStep, MessageSegment } from "@shared/streaming-types";
-import { createLogger } from "@/lib/logger";
 import type { VisibilityLayer } from "@/hooks/use-visibility-layer";
-
-const log = createLogger("SegmentStream");
 
 function segmentDebugSummary(seg: MessageSegment, index: number) {
   if (seg.type === "content") {
@@ -34,7 +31,54 @@ type RenderSegment =
   | { type: "content"; content: string; sourceIndexes: number[] }
   | { type: "timeline"; segment: Extract<MessageSegment, { type: "timeline" }>; sourceIndexes: number[] };
 
-const identityStepFilter = (steps: ExecutionStep[]) => steps;
+/** Canonical visibility policy for streamed execution steps. Kept with the renderer so
+ * transport/replay consumers cannot omit or stale-inject a required callback. */
+export function filterStepsByLayer(
+  steps: ExecutionStep[],
+  layer: VisibilityLayer,
+  isActiveSession?: boolean,
+): ExecutionStep[] {
+  if (layer === 4) return steps;
+
+  return steps.filter((step) => {
+    if (step.type === "compacting") return false;
+
+    if (step.type === "system") {
+      if (step.systemStepName === "session_compaction")
+        return step.status === "active" || step.status === "error";
+      if (step.systemStepName === "working_context_compression")
+        return layer >= 1;
+      if (step.systemStepName === "compaction") return layer >= 1;
+      if (
+        step.systemStepName?.startsWith("voice_error") ||
+        step.systemStepName === "voice_disconnect" ||
+        step.systemStepName === "voice_reconnect_attempt" ||
+        step.systemStepName === "voice_reconnect_result" ||
+        step.systemStepName === "voice_reconnect_exhausted"
+      )
+        return layer >= 2;
+      return layer >= 4;
+    }
+
+    if (step.type === "thinking") {
+      if (layer <= 2) {
+        return (
+          !!isActiveSession && step.status === "active" && !step.thinking?.trim()
+        );
+      }
+      return layer >= 3;
+    }
+
+    if (step.type === "tool_call") {
+      if (layer === 1) {
+        return step.toolName !== "think" && step.toolName !== "observe";
+      }
+      return layer >= 2;
+    }
+
+    return true;
+  });
+}
 
 function stepOwnsActiveStatus(step: Extract<MessageSegment, { type: "timeline" }>["steps"][number]): boolean {
   if (step.status !== "active") return false;
@@ -108,7 +152,6 @@ export interface SegmentStreamProps {
   ActiveThinkingStatusComponent: ComponentType<{ startTime: Date | null; showTimer?: boolean }>;
   ExecutionTimelineComponent: ComponentType<{ steps: ExecutionStep[]; compact?: boolean; layer: VisibilityLayer; planSessionId?: string }>;
   MarkdownContentComponent: ComponentType<{ content: string; className?: string; compact?: boolean }>;
-  filterVisibleSteps: (steps: ExecutionStep[], layer: VisibilityLayer, isMainSession?: boolean) => ExecutionStep[];
   getThinkingStartTime: (segments: MessageSegment[]) => Date | null;
 }
 
@@ -130,24 +173,11 @@ export function SegmentStream({
   ActiveThinkingStatusComponent,
   ExecutionTimelineComponent,
   MarkdownContentComponent,
-  filterVisibleSteps,
   getThinkingStartTime,
 }: SegmentStreamProps) {
-  const safeFilterVisibleSteps = typeof filterVisibleSteps === "function"
-    ? filterVisibleSteps
-    : identityStepFilter;
-
-  if (typeof filterVisibleSteps !== "function") {
-    log.error("SEGMENT_STREAM:FILTER_NOT_CALLABLE", {
-      receivedType: typeof filterVisibleSteps,
-      segmentCount: segments.length,
-      timelineSegmentCount: segments.filter((segment) => segment.type === "timeline").length,
-    });
-  }
-
   const renderSegments = useMemo(
-    () => normalizeRenderSegments(segments, layer, isStreaming, safeFilterVisibleSteps),
-    [segments, isStreaming, layer, safeFilterVisibleSteps],
+    () => normalizeRenderSegments(segments, layer, isStreaming, filterStepsByLayer),
+    [segments, isStreaming, layer],
   );
   const graphSteps = useMemo(() => {
     const byId = new Map<string, Extract<MessageSegment, { type: "timeline" }>["steps"][number]>();
