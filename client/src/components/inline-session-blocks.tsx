@@ -32,7 +32,6 @@ import {
   ActiveThinkingStatus,
   ExecutionTimeline,
   MarkdownContent,
-  filterStepsByLayer,
   findThinkingStartTime,
   segmentsFromSavedMessage,
   stripMessageTimestamp,
@@ -41,7 +40,7 @@ import {
   type CrossSessionMeta,
 } from "@/components/chat-shared";
 import { useEventStream } from "@/hooks/use-event-stream";
-import { SegmentStream } from "@/components/segment-stream";
+import { SegmentStream, filterStepsByLayer } from "@/components/segment-stream";
 import { useSessionSubscription, type SessionStreamState } from "@/hooks/use-session-subscription";
 import { useVisibilityLayer, type VisibilityLayer } from "@/hooks/use-visibility-layer";
 import ReactMarkdown from "react-markdown";
@@ -409,7 +408,6 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
               ActiveThinkingStatusComponent={ActiveThinkingStatus}
               ExecutionTimelineComponent={ExecutionTimeline}
               MarkdownContentComponent={MarkdownContent}
-              filterVisibleSteps={filterStepsByLayer}
               getThinkingStartTime={findThinkingStartTime}
             />
           )}

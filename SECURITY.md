@@ -1,3 +1,11 @@
+<!-- 2026-08-06 SegmentStream lifecycle-boundary repair:
+- Assets/data: user-owned streamed message segments and execution-step visibility (S2 conversation content), active transport/replay state, and client error telemetry.
+- Flow/boundary: authenticated chat/subsession transport or persisted replay -> SegmentStream normalization -> visibility filtering -> React rendering; cancellation may replace live segments with persisted replay while component modules remain mounted.
+- Threats: a stale or omitted callback crossing that lifecycle boundary could bypass visibility filtering and expose internal execution detail (information disclosure), while render-phase fallback telemetry repeatedly produced unclassified errors (repudiation/availability).
+- Controls/owner: Client Platform now owns the canonical visibility policy inside SegmentStream, removes callback injection from both live-chat and inline-session consumers, and structurally prevents transport/replay lifecycle changes from making the filter non-callable. Existing layer policy is unchanged. Severity: medium. SLA: immediate. Status: repaired in source, pending production build/merge.
+- Residual: historical UNCLASSIFIED aggregates cannot be enriched retroactively; malformed persisted segment data remains governed by the shared streaming schema and React error boundary.
+-->
+
 <!-- 2026-08-06 RouteLoadBoundary error-attribution repair:
 - Assets/data: route keys and bounded component frames (S1 operational metadata), client exception identity, availability of lazy route modules, and application-error aggregates.
 - Flow/boundary: untrusted lazy-import or React render failures -> shared RouteLoadBoundary normalization -> redacting client logger -> authenticated telemetry sink.

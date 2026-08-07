@@ -102,63 +102,10 @@ import type {
   StreamingContent,
 } from "@shared/streaming-types";
 import { initialStreamingContent } from "@shared/streaming-types";
-import { SegmentStream } from "@/components/segment-stream";
+import { SegmentStream, filterStepsByLayer } from "@/components/segment-stream";
 import { usePlanEvents } from "@/hooks/use-plan-events";
 import type { SessionStreamMap } from "@/hooks/use-session-subscription";
 
-/** Filter execution steps by visibility layer. */
-export function filterStepsByLayer(
-  steps: ExecutionStep[],
-  layer: VisibilityLayer,
-  isActiveSession?: boolean,
-): ExecutionStep[] {
-  if (layer === 4) return steps;
-
-  return steps.filter((step) => {
-    if (step.type === "compacting") {
-      // Legacy compacting events are still journaled for replay/debugging, but
-      // the user-facing signal is the amber working_context_compression system
-      // step. Rendering both creates duplicate compression notifications.
-      return false;
-    }
-
-    if (step.type === "system") {
-      if (step.systemStepName === "session_compaction")
-        return step.status === "active" || step.status === "error";
-      if (step.systemStepName === "working_context_compression")
-        return layer >= 1;
-      if (step.systemStepName === "compaction") return layer >= 1;
-      if (
-        step.systemStepName?.startsWith("voice_error") ||
-        step.systemStepName === "voice_disconnect" ||
-        step.systemStepName === "voice_reconnect_attempt" ||
-        step.systemStepName === "voice_reconnect_result" ||
-        step.systemStepName === "voice_reconnect_exhausted"
-      )
-        return layer >= 2;
-      return layer >= 4;
-    }
-
-    if (step.type === "thinking") {
-      if (layer <= 2) {
-        return (
-          isActiveSession && step.status === "active" && !step.thinking?.trim()
-        );
-      }
-      return layer >= 3;
-    }
-
-    if (step.type === "tool_call") {
-      // Layer 1 ("Words Only") shows non-cognitive tool calls as compact icons
-      if (layer === 1) {
-        return step.toolName !== "think" && step.toolName !== "observe";
-      }
-      return layer >= 2;
-    }
-
-    return true;
-  });
-}
 import { useVisibilityLayer, type VisibilityLayer } from "@/hooks/use-visibility-layer";
 import { useToast } from "@/hooks/use-toast";
 import { ReferenceText } from "@/components/references/reference-text";
@@ -3166,7 +3113,6 @@ export const ChatTurn = memo(function ChatTurn({
                 ActiveThinkingStatusComponent={ActiveThinkingStatus}
                 ExecutionTimelineComponent={ExecutionTimeline}
                 MarkdownContentComponent={MarkdownContent}
-                filterVisibleSteps={filterStepsByLayer}
                 getThinkingStartTime={findThinkingStartTime}
               />
             ) : (
