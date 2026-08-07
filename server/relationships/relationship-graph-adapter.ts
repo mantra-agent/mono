@@ -6,12 +6,11 @@ import type {
   PersonalGraphAdapter,
 } from "@shared/life-addressing";
 import { extractPositionedReferences } from "@shared/reference-parser";
-import { opportunityInteractions, opportunityArtifacts } from "@shared/schema";
+import { opportunityArtifacts } from "@shared/schema";
 import type { Principal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
 import { createLogger } from "../log";
 import { db } from "../db";
-import { combineWithVisibleScope } from "../scoped-storage";
 import { peopleStorage, type Person } from "../people-storage";
 import { opportunityStorage } from "../opportunity-storage";
 
@@ -19,7 +18,6 @@ const log = createLogger("RelationshipGraphAdapter");
 
 const PEOPLE_LIMIT = 1_000;
 const OPPORTUNITY_LIMIT = 500;
-const INTERACTIONS_PER_PERSON = 25;
 const AUTHORED_REF_SOURCE_LIMIT = 50;
 const RECENCY_HALF_LIFE_DAYS = 7;
 const MS_PER_DAY = 86_400_000;
@@ -76,15 +74,11 @@ function edge(
   return { id, from, to, predicate, sourceClass, weight, ...(updatedAt ? { updatedAt } : {}) };
 }
 
-function interactionAddress(personId: string, interactionId: string): string {
-  return `@interaction:${encodeURIComponent(personId)}~${encodeURIComponent(interactionId)}`;
-}
-
 /**
  * Emit authored-reference candidate edges from compact structured domain text
- * (interaction summaries, opportunity descriptions). These are small fields,
- * never page or corpus bodies, so parsing them in the foreground read does not
- * violate the no-body-parsing invariant.
+ * (opportunity descriptions). These are small fields, never page or corpus
+ * bodies, so parsing them in the foreground read does not violate the
+ * no-body-parsing invariant.
  */
 function authoredEdges(sourceAddress: string, texts: Array<string | null | undefined>): GraphEdge[] {
   const seen = new Set<string>();
@@ -113,13 +107,9 @@ interface RelationshipCounts {
   people: number;
   companyEdges: number;
   introducedByEdges: number;
-  interactionNodes: number;
-  interactionEdges: number;
-  interactionAuthored: number;
   opportunities: number;
   opportunityCompanyEdges: number;
   opportunityPersonEdges: number;
-  opportunityInteractionEdges: number;
   opportunityArtifactEdges: number;
   opportunityAuthored: number;
 }
@@ -162,20 +152,8 @@ async function projectPeople(
       counts.introducedByEdges += 1;
     }
 
-    let interactionCount = 0;
-    for (const interaction of person.interactions) {
-      if (interactionCount >= INTERACTIONS_PER_PERSON) break;
-      interactionCount += 1;
-      const address = interactionAddress(person.id, interaction.id);
-      const label = `${person.name}: ${interaction.summary}`.slice(0, 120);
-      nodes.push(node(address, "interaction", label, interaction.context || undefined, interaction.date));
-      edges.push(edge(`rel:person:${person.id}:has_interaction:${interaction.id}`, personAddress, address, "has_interaction", 0.7, "domain", interaction.date));
-      counts.interactionNodes += 1;
-      counts.interactionEdges += 1;
-      const authored = authoredEdges(address, [interaction.summary, interaction.context]);
-      edges.push(...authored);
-      counts.interactionAuthored += authored.length;
-    }
+    // Interactions remain People domain truth but are intentionally excluded from
+    // the Memory Graph surface (Layers filter + 3D projection).
   }
 }
 
@@ -190,29 +168,17 @@ async function projectOpportunities(
   if (opportunities.length === 0) return;
   const opportunityIds = opportunities.map(opportunity => opportunity.id);
 
-  const interactionLinkScope = {
-    scope: opportunityInteractions.scope,
-    ownerUserId: opportunityInteractions.ownerUserId,
-    accountId: opportunityInteractions.accountId,
-  };
-  const [interactionLinks, artifactRows] = await Promise.all([
-    db.select({
-      opportunityId: opportunityInteractions.opportunityId,
-      personId: opportunityInteractions.personId,
-      interactionId: opportunityInteractions.interactionId,
-    }).from(opportunityInteractions).where(
-      combineWithVisibleScope(principal, interactionLinkScope, inArray(opportunityInteractions.opportunityId, opportunityIds)),
-    ),
-    // opportunity_artifacts has no independent scope columns; it is scoped by
-    // the already principal-visible opportunity IDs. Endpoint (Page/Session)
-    // visibility is still independently authorized by the assembler.
-    db.select({
-      opportunityId: opportunityArtifacts.opportunityId,
-      libraryPageId: opportunityArtifacts.libraryPageId,
-      sessionId: opportunityArtifacts.sessionId,
-      updatedAt: opportunityArtifacts.updatedAt,
-    }).from(opportunityArtifacts).where(inArray(opportunityArtifacts.opportunityId, opportunityIds)),
-  ]);
+  // opportunity_artifacts has no independent scope columns; it is scoped by
+  // the already principal-visible opportunity IDs. Endpoint (Page/Session)
+  // visibility is still independently authorized by the assembler.
+  // Opportunity↔interaction activity stays domain truth but is excluded from
+  // the Memory Graph surface, so those links are not loaded here.
+  const artifactRows = await db.select({
+    opportunityId: opportunityArtifacts.opportunityId,
+    libraryPageId: opportunityArtifacts.libraryPageId,
+    sessionId: opportunityArtifacts.sessionId,
+    updatedAt: opportunityArtifacts.updatedAt,
+  }).from(opportunityArtifacts).where(inArray(opportunityArtifacts.opportunityId, opportunityIds));
 
   for (const opportunity of opportunities) {
     const opportunityAddress = `@opportunity:${opportunity.id}`;
@@ -236,22 +202,6 @@ async function projectOpportunities(
     const authored = authoredEdges(opportunityAddress, [opportunity.description, opportunity.nextSteps, opportunity.followUpNote]);
     edges.push(...authored);
     counts.opportunityAuthored += authored.length;
-  }
-
-  const seenInteraction = new Set<string>();
-  for (const link of interactionLinks) {
-    const key = `${link.opportunityId}:${link.personId}:${link.interactionId}`;
-    if (seenInteraction.has(key)) continue;
-    seenInteraction.add(key);
-    edges.push(edge(
-      `rel:opportunity:${link.opportunityId}:has_activity:${link.personId}~${link.interactionId}`,
-      `@opportunity:${link.opportunityId}`,
-      interactionAddress(link.personId, link.interactionId),
-      "has_activity",
-      0.7,
-      "domain",
-    ));
-    counts.opportunityInteractionEdges += 1;
   }
 
   for (const artifact of artifactRows) {
@@ -306,9 +256,9 @@ export const relationshipGraphAdapter: PersonalGraphAdapter<Principal> = {
     const nodes: GraphNode[] = [];
     const edges: GraphEdge[] = [];
     const counts: RelationshipCounts = {
-      people: 0, companyEdges: 0, introducedByEdges: 0, interactionNodes: 0, interactionEdges: 0,
-      interactionAuthored: 0, opportunities: 0, opportunityCompanyEdges: 0, opportunityPersonEdges: 0,
-      opportunityInteractionEdges: 0, opportunityArtifactEdges: 0, opportunityAuthored: 0,
+      people: 0, companyEdges: 0, introducedByEdges: 0,
+      opportunities: 0, opportunityCompanyEdges: 0, opportunityPersonEdges: 0,
+      opportunityArtifactEdges: 0, opportunityAuthored: 0,
     };
 
     await runWithPrincipal(principal, async () => {
@@ -321,9 +271,8 @@ export const relationshipGraphAdapter: PersonalGraphAdapter<Principal> = {
 
     log.info(
       `[relationship-graph] people=${counts.people} companyEdges=${counts.companyEdges} introducedBy=${counts.introducedByEdges} ` +
-        `interactionNodes=${counts.interactionNodes} interactionEdges=${counts.interactionEdges} interactionAuthored=${counts.interactionAuthored} ` +
         `opportunities=${counts.opportunities} oppCompany=${counts.opportunityCompanyEdges} oppPerson=${counts.opportunityPersonEdges} ` +
-        `oppActivity=${counts.opportunityInteractionEdges} oppArtifact=${counts.opportunityArtifactEdges} oppAuthored=${counts.opportunityAuthored}`,
+        `oppArtifact=${counts.opportunityArtifactEdges} oppAuthored=${counts.opportunityAuthored}`,
     );
 
     return { nodes, edges };

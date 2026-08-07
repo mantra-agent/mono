@@ -143,6 +143,25 @@ function chunkValues<T>(values: T[], batchSize = CLAIM_LINK_BATCH_SIZE): T[][] {
   return chunks;
 }
 
+/**
+ * Node address types excluded from the Memory Graph surface.
+ * Domain truth remains intact; these types simply do not project into the
+ * human-facing graph or Layers filter.
+ */
+const EXCLUDED_GRAPH_NODE_TYPES = new Set([
+  "workflow",
+  "workflow_gate",
+  "task",
+  "pr",
+  "plan",
+  "plan_attempt",
+  "interaction",
+]);
+
+function isExcludedGraphNodeType(type: string): boolean {
+  return EXCLUDED_GRAPH_NODE_TYPES.has(type.trim().toLowerCase());
+}
+
 /** Map a canonical address type to the client node `source` vocabulary. */
 function sourceForAddressType(type: string): string {
   switch (type) {
@@ -447,6 +466,7 @@ export async function assemblePersonalGraph(
     for (const node of result.nodes) {
       const normalized = normalizeProtocolAddress(node.id);
       if (normalized.outcome !== "valid") continue;
+      if (isExcludedGraphNodeType(normalized.type) || isExcludedGraphNodeType(node.type)) continue;
       const key = `${normalized.type}:${normalized.id}`;
       if (nodeIdByAddress.has(key)) continue;
       const nodeId = registerNode(key, {
@@ -468,7 +488,8 @@ export async function assemblePersonalGraph(
     }
   }
 
-  function ensureEntityNode(entityType: string, entityId: string, fallbackTimestamp?: Date | string | null): number {
+  function ensureEntityNode(entityType: string, entityId: string, fallbackTimestamp?: Date | string | null): number | null {
+    if (isExcludedGraphNodeType(entityType)) return null;
     const key = `${entityType}:${entityId}`;
     const existing = nodeIdByAddress.get(key);
     if (existing !== undefined) return existing;
@@ -621,6 +642,7 @@ export async function assemblePersonalGraph(
     // change labels, not addresses; merges resolve through redirects).
     const canonical = normalizeProtocolAddress(resolution.address);
     if (canonical.outcome !== "valid") continue;
+    if (isExcludedGraphNodeType(canonical.type)) continue;
     const canonicalKey = `${canonical.type}:${canonical.id}`;
     let nodeId = nodeIdByAddress.get(canonicalKey);
     if (nodeId === undefined) {
