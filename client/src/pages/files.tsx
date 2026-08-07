@@ -6,21 +6,24 @@ import { apiRequest } from "@/lib/queryClient";
 import { useVisibleVaults } from "@/pages/library/use-vault-sections";
 import {
   DriveResourceTree,
+  FilesIndexProgressBanner,
   RecentResourceRow,
+  isRunActive,
   type DriveResource,
+  type FileIndexStatus,
 } from "@/pages/library/drive-tree";
 
 /**
- * Files — the read-only data plane for vault-bound connector resources.
+ * Files — the data plane for vault-bound connector resources plus semantic
+ * index policy controls.
  *
  * Mirrors the Library tree: a RECENT section followed by one section per
- * visible vault, rows populated by whatever the connectors (Google Drive, Box,
- * Mantra storage) expose. There is intentionally no connect / bind / allow-list
- * UI here — that control plane lives in the Integrations surface. This surface
- * only browses what is already wired.
+ * visible vault. Connector connect/bind/allow-list UI stays on Integrations.
+ * This surface browses authorized resources and opts them into indexing.
  */
 
 const RECENT_LIMIT = 8;
+const COMPLETION_HOLD_MS = 8_000;
 
 function SectionHeader({ children }: { children: ReactNode }) {
   return (
@@ -49,20 +52,69 @@ export default function FilesPage() {
     })),
   });
 
+  const indexQueries = useQueries({
+    queries: visibleVaults.map((v) => ({
+      queryKey: ["/api/files/index/status", v.id],
+      queryFn: async () => {
+        const res = await apiRequest(
+          "GET",
+          `/api/files/index/status?vaultId=${encodeURIComponent(v.id)}`,
+        );
+        return (await res.json()) as { statuses: FileIndexStatus[] };
+      },
+      enabled: !!v.id,
+      staleTime: 5_000,
+      refetchInterval: (query: { state: { data?: { statuses?: FileIndexStatus[] } } }) => {
+        const statuses = query.state.data?.statuses ?? [];
+        const hasActive = statuses.some((s) => isRunActive(s.reconciliationRun));
+        const hasFreshComplete = statuses.some((s) => {
+          const run = s.reconciliationRun;
+          if (!run?.completedAt || run.phase !== "complete") return false;
+          const age = Date.now() - Date.parse(run.completedAt);
+          return Number.isFinite(age) && age >= 0 && age < COMPLETION_HOLD_MS;
+        });
+        return hasActive || hasFreshComplete ? 2_500 : false;
+      },
+    })),
+  });
+
   const perVault = useMemo(
     () =>
-      visibleVaults.map((vault, i) => ({
-        vault,
-        resources: resourceQueries[i]?.data?.resources ?? [],
-      })),
-    [visibleVaults, resourceQueries],
+      visibleVaults.map((vault, i) => {
+        const statuses = indexQueries[i]?.data?.statuses ?? [];
+        const statusByResourceId = new Map(
+          statuses.map((s) => [s.driveResourceId, s] as const),
+        );
+        return {
+          vault,
+          resources: resourceQueries[i]?.data?.resources ?? [],
+          statuses,
+          statusByResourceId,
+        };
+      }),
+    [visibleVaults, resourceQueries, indexQueries],
+  );
+
+  const allStatuses = useMemo(
+    () => perVault.flatMap((v) => v.statuses),
+    [perVault],
   );
 
   const recent = useMemo(() => {
-    const flat: { resource: DriveResource; vaultColor: string | null }[] = [];
-    for (const { vault, resources } of perVault) {
+    const flat: {
+      resource: DriveResource;
+      vaultId: string;
+      vaultColor: string | null;
+      status?: FileIndexStatus;
+    }[] = [];
+    for (const { vault, resources, statusByResourceId } of perVault) {
       for (const resource of resources) {
-        flat.push({ resource, vaultColor: vault.color ?? null });
+        flat.push({
+          resource,
+          vaultId: vault.id,
+          vaultColor: vault.color ?? null,
+          status: statusByResourceId.get(resource.id),
+        });
       }
     }
     return flat.slice(0, RECENT_LIMIT);
@@ -80,6 +132,10 @@ export default function FilesPage() {
           </div>
         ) : (
           <>
+            <div className="pt-4">
+              <FilesIndexProgressBanner statuses={allStatuses} />
+            </div>
+
             <SectionHeader>Recent</SectionHeader>
             {recent.length === 0 ? (
               <div className="px-2 py-1 pl-2 text-xs text-muted-foreground">
@@ -87,23 +143,26 @@ export default function FilesPage() {
               </div>
             ) : (
               <div className="flex flex-col gap-0.5">
-                {recent.map(({ resource, vaultColor }) => (
+                {recent.map(({ resource, vaultId, vaultColor, status }) => (
                   <RecentResourceRow
                     key={resource.id}
                     resource={resource}
+                    vaultId={vaultId}
                     vaultColor={vaultColor}
+                    status={status}
                   />
                 ))}
               </div>
             )}
 
-            {perVault.map(({ vault, resources }) => (
+            {perVault.map(({ vault, resources, statusByResourceId }) => (
               <div key={vault.id}>
                 <SectionHeader>{vault.name}</SectionHeader>
                 <DriveResourceTree
                   vaultId={vault.id}
                   resources={resources}
                   vaultColor={vault.color ?? null}
+                  statusByResourceId={statusByResourceId}
                 />
               </div>
             ))}
