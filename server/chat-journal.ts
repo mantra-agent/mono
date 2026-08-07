@@ -89,6 +89,8 @@ export interface JournalEntry {
   midTurnToolSoftTrim?: number;
   midTurnHistoryHardTrim?: number;
   midTurnHistoryReset?: number;
+  /** Display name for the pressure gauge (not a routing key). */
+  modelName?: string;
 }
 
 const activeRunJournals = new Map<string, JournalEntry[]>();
@@ -449,6 +451,18 @@ export function publishJournalToUI(entry: JournalEntry, category: EventCategory 
     case "system_notice":
       payload.severity = entry.severity;
       payload.notice = entry.content;
+      break;
+    case "context_pressure":
+      // Gauge altitudes are absolute tokens derived server-side; clients must not re-derive policy.
+      if (entry.inputTokens != null) payload.inputTokens = entry.inputTokens;
+      if (entry.contextWindow != null) payload.contextWindow = entry.contextWindow;
+      if (entry.hardInputLimit != null) payload.hardInputLimit = entry.hardInputLimit;
+      if (entry.outputReserve != null) payload.outputReserve = entry.outputReserve;
+      if (entry.betweenTurnHistoryReset != null) payload.betweenTurnHistoryReset = entry.betweenTurnHistoryReset;
+      if (entry.midTurnToolSoftTrim != null) payload.midTurnToolSoftTrim = entry.midTurnToolSoftTrim;
+      if (entry.midTurnHistoryHardTrim != null) payload.midTurnHistoryHardTrim = entry.midTurnHistoryHardTrim;
+      if (entry.midTurnHistoryReset != null) payload.midTurnHistoryReset = entry.midTurnHistoryReset;
+      if (entry.modelName) payload.modelName = entry.modelName;
       break;
     default:
       log.warn(`unhandled event type in publishJournalToUI: ${entry.type} — publishing with base payload`);

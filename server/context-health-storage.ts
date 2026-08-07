@@ -286,75 +286,132 @@ function emptyMidTurnCompaction(status: "empty" | "degraded", degradedReason: st
   };
 }
 
+/** Chat sessions live in document_store_documents as JSON text — never cast the column as jsonb. */
+const MID_TURN_CHAT_DOC_LIMIT = 2_000;
+
+function parseChatDocumentMessages(raw: unknown): Array<Record<string, unknown>> {
+  if (raw == null) return [];
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return [];
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  const messages = (parsed as { messages?: unknown }).messages;
+  return Array.isArray(messages) ? (messages as Array<Record<string, unknown>>) : [];
+}
+
+function messageTimestampMs(message: Record<string, unknown>): number | null {
+  const raw = message.timestamp ?? message.createdAt;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw < 1_000_000_000_000 ? raw * 1000 : raw;
+  }
+  if (typeof raw === "string" || raw instanceof Date) {
+    const ms = new Date(raw).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+function countWorkingContextCompressions(message: Record<string, unknown>): number {
+  const steps = message.systemSteps;
+  if (!Array.isArray(steps)) return 0;
+  let count = 0;
+  for (const step of steps) {
+    if (!step || typeof step !== "object" || Array.isArray(step)) continue;
+    const record = step as Record<string, unknown>;
+    if (record.name === "working_context_compression" && record.status === "done") {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function summarizeCompactionCounts(counts: number[]): {
+  total: number;
+  turns: number;
+  affected: number;
+  p95: number | null;
+  max: number | null;
+} {
+  if (counts.length === 0) {
+    return { total: 0, turns: 0, affected: 0, p95: null, max: null };
+  }
+  const total = counts.reduce((sum, value) => sum + value, 0);
+  const affected = counts.filter((value) => value > 0).length;
+  return {
+    total,
+    turns: counts.length,
+    affected,
+    p95: percentile(counts, 0.95),
+    max: max(counts),
+  };
+}
+
+/**
+ * Mid-turn ladder use is persisted on assistant messages as systemSteps named
+ * `working_context_compression` (AgentExecutor mid-turn path). Between-turn
+ * durable reset uses `session_compaction` and is intentionally excluded here.
+ * Source of truth is document_store chat JSON — the legacy messages table is retired.
+ */
 async function getMidTurnCompactionSummary(windowHours: number): Promise<MidTurnCompactionSummary> {
   const principal = requireCurrentUserPrincipal();
+  const nowMs = Date.now();
+  const currentStartMs = nowMs - windowHours * 60 * 60 * 1000;
+  const priorStartMs = nowMs - windowHours * 2 * 60 * 60 * 1000;
+  const priorCutoff = new Date(priorStartMs);
+
   const result = await withQueryAttributionAsync(
     { operation: "context_health_mid_turn_compaction", requestRoute: "context-health" },
-    () => pool.query<{
-      current_total: string;
-      current_turns: string;
-      current_affected: string;
-      current_p95: string | null;
-      current_max: string | null;
-      prior_total: string;
-      prior_turns: string;
-    }>(`
-      WITH eligible AS (
-        SELECT
-          CASE WHEN m.created_at >= NOW() - ($1 * INTERVAL '1 hour') THEN 'current' ELSE 'prior' END AS window_name,
-          COALESCE((
-            SELECT COUNT(*)::int
-            FROM jsonb_array_elements(COALESCE(m.system_steps, '[]'::jsonb)) AS step
-            WHERE step->>'name' = 'working_context_compression'
-              AND step->>'status' = 'done'
-          ), 0) AS compactions
-        FROM messages m
-        INNER JOIN sessions s ON s.id = m.conversation_id
-        WHERE s.owner_user_id = $2
-          AND m.role = 'assistant'
-          AND m.created_at >= NOW() - ($1 * INTERVAL '2 hours')
-      ), current_stats AS (
-        SELECT
-          COALESCE(SUM(compactions), 0)::bigint AS total,
-          COUNT(*)::bigint AS turns,
-          COUNT(*) FILTER (WHERE compactions > 0)::bigint AS affected,
-          percentile_disc(0.95) WITHIN GROUP (ORDER BY compactions)::int AS p95,
-          MAX(compactions)::int AS max
-        FROM eligible WHERE window_name = 'current'
-      ), prior_stats AS (
-        SELECT COALESCE(SUM(compactions), 0)::bigint AS total, COUNT(*)::bigint AS turns
-        FROM eligible WHERE window_name = 'prior'
-      )
-      SELECT
-        c.total::text AS current_total,
-        c.turns::text AS current_turns,
-        c.affected::text AS current_affected,
-        c.p95::text AS current_p95,
-        c.max::text AS current_max,
-        p.total::text AS prior_total,
-        p.turns::text AS prior_turns
-      FROM current_stats c CROSS JOIN prior_stats p
-    `, [windowHours, principal.userId]),
+    () =>
+      pool.query<{ content: string | null }>(
+        `
+          SELECT content
+          FROM document_store_documents
+          WHERE document_type = 'chat'
+            AND owner_user_id = $1
+            AND updated_at >= $2
+          ORDER BY updated_at DESC
+          LIMIT $3
+        `,
+        [principal.userId, priorCutoff, MID_TURN_CHAT_DOC_LIMIT],
+      ),
   );
-  const row = result.rows[0];
-  if (!row) return emptyMidTurnCompaction("degraded", "aggregation_returned_no_row");
 
-  const totalCompactions = Number(row.current_total);
-  const eligibleTurns = Number(row.current_turns);
-  const affectedTurns = Number(row.current_affected);
-  if (!eligibleTurns) return emptyMidTurnCompaction("empty");
-  const currentRate = totalCompactions / eligibleTurns;
-  const priorTurns = Number(row.prior_turns);
-  const priorRate = priorTurns ? Number(row.prior_total) / priorTurns : null;
+  const currentCounts: number[] = [];
+  const priorCounts: number[] = [];
+
+  for (const row of result.rows) {
+    for (const message of parseChatDocumentMessages(row.content)) {
+      if (message.role !== "assistant") continue;
+      const ts = messageTimestampMs(message);
+      if (ts == null || ts < priorStartMs || ts > nowMs) continue;
+      const compactions = countWorkingContextCompressions(message);
+      if (ts >= currentStartMs) currentCounts.push(compactions);
+      else priorCounts.push(compactions);
+    }
+  }
+
+  const current = summarizeCompactionCounts(currentCounts);
+  if (!current.turns) return emptyMidTurnCompaction("empty");
+
+  const prior = summarizeCompactionCounts(priorCounts);
+  const currentRate = current.total / current.turns;
+  const priorRate = prior.turns ? prior.total / prior.turns : null;
 
   return {
-    totalCompactions,
-    eligibleTurns,
-    affectedTurns,
+    totalCompactions: current.total,
+    eligibleTurns: current.turns,
+    affectedTurns: current.affected,
     compactionsPerTurn: currentRate,
-    affectedTurnPct: (affectedTurns / eligibleTurns) * 100,
-    p95CompactionsPerTurn: row.current_p95 == null ? null : Number(row.current_p95),
-    maxCompactionsPerTurn: row.current_max == null ? null : Number(row.current_max),
+    affectedTurnPct: (current.affected / current.turns) * 100,
+    p95CompactionsPerTurn: current.p95,
+    maxCompactionsPerTurn: current.max,
     priorWindowCompactionsPerTurn: priorRate,
     trendPct: priorRate == null || priorRate === 0 ? null : ((currentRate - priorRate) / priorRate) * 100,
     status: "healthy",
