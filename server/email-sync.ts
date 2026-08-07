@@ -16,6 +16,79 @@ const FULL_SYNC_CAP = 500;
 const MAX_ACCOUNTS_PER_VAULT = 20;
 const EMAIL_SYNC_STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
 
+type EmailSyncOperation =
+  | "sync_account"
+  | "run_email_sync"
+  | "list_accounts";
+
+type EmailSyncOperationError = Error & {
+  code?: string;
+  operation?: EmailSyncOperation;
+  accountId?: string;
+  syncLogId?: number;
+  statusCode?: number;
+};
+
+function normalizeEmailSyncError(
+  value: unknown,
+  operation: EmailSyncOperation,
+  fallbackCode: string,
+  message?: string,
+): EmailSyncOperationError {
+  let error: EmailSyncOperationError;
+  if (value instanceof Error) {
+    error = value as EmailSyncOperationError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(message || value) as EmailSyncOperationError;
+  } else {
+    error = new Error(message || "Email sync operation failed", {
+      cause: value,
+    }) as EmailSyncOperationError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = fallbackCode;
+  }
+  error.operation = operation;
+  return error;
+}
+
+function emailSyncLogContext(options: {
+  operation: EmailSyncOperation;
+  accountId?: string;
+  syncLogId?: number;
+  statusCode?: number;
+}) {
+  return {
+    operation: options.operation,
+    accountId: options.accountId,
+    syncLogId: options.syncLogId,
+    statusCode: options.statusCode,
+  };
+}
+
+function classifyEmailSyncFailureCode(value: unknown): string {
+  const err = value as { code?: unknown; status?: unknown; statusCode?: unknown; message?: unknown };
+  const statusRaw = err?.status ?? err?.statusCode;
+  const status =
+    typeof statusRaw === "number"
+      ? statusRaw
+      : typeof statusRaw === "string" && /^\d+$/.test(statusRaw)
+        ? Number(statusRaw)
+        : undefined;
+  const providerCode = typeof err?.code === "number" ? err.code : undefined;
+  const codeOrStatus = status ?? providerCode;
+  if (codeOrStatus === 401 || codeOrStatus === 403) return "EMAIL_SYNC_AUTH_FAILED";
+  if (codeOrStatus === 404) return "EMAIL_SYNC_NOT_FOUND";
+  if (codeOrStatus === 429) return "EMAIL_SYNC_RATE_LIMITED";
+  if (typeof codeOrStatus === "number" && codeOrStatus >= 500) return "EMAIL_SYNC_PROVIDER_5XX";
+  const message = typeof err?.message === "string" ? err.message.toLowerCase() : "";
+  if (message.includes("invalid_grant") || message.includes("token")) return "EMAIL_SYNC_AUTH_FAILED";
+  if (message.includes("timeout") || message.includes("etimedout") || message.includes("econnreset")) {
+    return "EMAIL_SYNC_TRANSPORT_FAILED";
+  }
+  return "EMAIL_SYNC_ACCOUNT_FAILED";
+}
+
 type EmailPipelineAccountStatus = "healthy" | "stale" | "degraded" | "failed";
 type EmailPipelineStage = "sync";
 
@@ -738,14 +811,38 @@ async function syncAccountForOwner(accountId: string, owner: EmailAccountOwner):
     await storage.recordSyncComplete(syncLog.id, result.count, nextHistoryId || undefined, reconciled);
     log.log(`[syncAccount] ${runLabel} stage=completed status=success mode=${mode} cursorAdvanced=${nextHistoryId ? "yes" : "no"} cursorState=${nextHistoryId || "none"} messagesSynced=${result.count} reconciled=${reconciled} totalCached=${totalCached}`);
     return { ok: true, mutated: result.count > 0 || reconciled > 0 };
-  } catch (err: any) {
-    log.error(`[syncAccount] ${runLabel} stage=failed error=${err.message}`);
+  } catch (err: unknown) {
+    const fallbackCode = classifyEmailSyncFailureCode(err);
+    const normalized = normalizeEmailSyncError(
+      err,
+      "sync_account",
+      fallbackCode,
+      "Email account sync failed",
+    );
+    normalized.accountId = accountId;
+    normalized.syncLogId = syncLog.id;
+    const statusRaw = (err as { status?: unknown; statusCode?: unknown; code?: unknown })?.status
+      ?? (err as { statusCode?: unknown })?.statusCode
+      ?? (err as { code?: unknown })?.code;
+    if (typeof statusRaw === "number") normalized.statusCode = statusRaw;
+    else if (typeof statusRaw === "string" && /^\d+$/.test(statusRaw)) normalized.statusCode = Number(statusRaw);
+
+    log.error(
+      "email_sync.account_failed",
+      normalized,
+      emailSyncLogContext({
+        operation: "sync_account",
+        accountId,
+        syncLogId: syncLog.id,
+        statusCode: normalized.statusCode,
+      }),
+    );
     await upsertCursor(accountId, {
       lastSyncStatus: 'error',
-      lastSyncError: err.message,
+      lastSyncError: normalized.message,
     });
-    await storage.recordSyncError(syncLog.id, err.message);
-    return { ok: false, error: err.message, mutated: false };
+    await storage.recordSyncError(syncLog.id, normalized.message);
+    return { ok: false, error: normalized.message, mutated: false };
   }
 }
 
@@ -776,9 +873,31 @@ export async function runEmailSync(): Promise<{ accountsDiscovered: number; acco
       } else {
         errors.push(`account=${account.id}: ${result.error || "Email sync failed"}`);
       }
-    } catch (err: any) {
-      const msg = `account=${account.id}: ${err.message}`;
-      log.error(`[runEmailSync] ${msg}`);
+    } catch (err: unknown) {
+      const fallbackCode = classifyEmailSyncFailureCode(err);
+      const normalized = normalizeEmailSyncError(
+        err,
+        "run_email_sync",
+        fallbackCode,
+        "Email sync cycle account failed",
+      );
+      normalized.accountId = account.id;
+      const statusRaw = (err as { status?: unknown; statusCode?: unknown; code?: unknown })?.status
+        ?? (err as { statusCode?: unknown })?.statusCode
+        ?? (err as { code?: unknown })?.code;
+      if (typeof statusRaw === "number") normalized.statusCode = statusRaw;
+      else if (typeof statusRaw === "string" && /^\d+$/.test(statusRaw)) normalized.statusCode = Number(statusRaw);
+
+      const msg = `account=${account.id}: ${normalized.message}`;
+      log.error(
+        "email_sync.cycle_account_failed",
+        normalized,
+        emailSyncLogContext({
+          operation: "run_email_sync",
+          accountId: account.id,
+          statusCode: normalized.statusCode,
+        }),
+      );
       errors.push(msg);
     }
   }

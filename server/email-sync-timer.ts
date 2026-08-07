@@ -18,6 +18,57 @@ const USER_PAGE_SIZE = 50;
 const MAX_VAULTS_PER_OWNER = 20;
 const MAX_CYCLE_MS = 45 * 60 * 1000;
 
+type EmailSyncTimerOperation =
+  | "owner_pipeline"
+  | "load_owner_vaults"
+  | "cycle_budget"
+  | "manual_vault_sync";
+
+type EmailSyncTimerOperationError = Error & {
+  code?: string;
+  operation?: EmailSyncTimerOperation;
+  ownerUserId?: string;
+  vaultId?: string | null;
+  ownersScanned?: number;
+};
+
+function normalizeEmailSyncTimerError(
+  value: unknown,
+  operation: EmailSyncTimerOperation,
+  fallbackCode: string,
+  message?: string,
+): EmailSyncTimerOperationError {
+  let error: EmailSyncTimerOperationError;
+  if (value instanceof Error) {
+    error = value as EmailSyncTimerOperationError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(message || value) as EmailSyncTimerOperationError;
+  } else {
+    error = new Error(message || "EmailSyncTimer operation failed", {
+      cause: value,
+    }) as EmailSyncTimerOperationError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = fallbackCode;
+  }
+  error.operation = operation;
+  return error;
+}
+
+function emailSyncTimerLogContext(options: {
+  operation: EmailSyncTimerOperation;
+  ownerUserId?: string;
+  vaultId?: string | null;
+  ownersScanned?: number;
+}) {
+  return {
+    operation: options.operation,
+    ownerUserId: options.ownerUserId,
+    vaultId: options.vaultId ?? undefined,
+    ownersScanned: options.ownersScanned,
+  };
+}
+
 interface EmailSyncCursor {
   lastUserId: string | null;
 }
@@ -80,7 +131,13 @@ async function loadOwnerVaultPrincipals(user: User): Promise<Principal[]> {
     .limit(MAX_VAULTS_PER_OWNER + 1);
 
   if (ownedVaults.length > MAX_VAULTS_PER_OWNER) {
-    throw new Error(`owner exceeds ${MAX_VAULTS_PER_OWNER} active Vaults`);
+    const error = normalizeEmailSyncTimerError(
+      new Error(`owner exceeds ${MAX_VAULTS_PER_OWNER} active Vaults`),
+      "load_owner_vaults",
+      "EMAIL_SYNC_TIMER_VAULT_LIMIT",
+    );
+    error.ownerUserId = user.id;
+    throw error;
   }
 
   return ownedVaults.map(({ id: vaultId }) => {
@@ -255,7 +312,13 @@ export async function runCurrentUserEmailSync(): Promise<CurrentUserEmailSyncRes
         ? ownedVisibleVaults
         : ownedVisibleVaults.filter(({ id }) => outer.visibleVaultIds.includes(id));
       if (visible.length > MAX_VAULTS_PER_OWNER) {
-        throw new Error(`Email sync exceeds ${MAX_VAULTS_PER_OWNER} visible active Vaults`);
+        const error = normalizeEmailSyncTimerError(
+          new Error(`Email sync exceeds ${MAX_VAULTS_PER_OWNER} visible active Vaults`),
+          "manual_vault_sync",
+          "EMAIL_SYNC_TIMER_VAULT_LIMIT",
+        );
+        error.ownerUserId = outer.userId;
+        throw error;
       }
 
       const result: CurrentUserEmailSyncResult = {
@@ -287,7 +350,24 @@ export async function runCurrentUserEmailSync(): Promise<CurrentUserEmailSyncRes
           result.accountsSynced += vaultResult.accountsSynced;
           result.errors.push(...vaultResult.errors);
         } catch (error) {
-          result.errors.push(error instanceof Error ? error.message : String(error));
+          const normalized = normalizeEmailSyncTimerError(
+            error,
+            "manual_vault_sync",
+            "EMAIL_SYNC_TIMER_MANUAL_VAULT_FAILED",
+            "Manual email sync vault pipeline failed",
+          );
+          normalized.ownerUserId = outer.userId;
+          normalized.vaultId = vaultId;
+          result.errors.push(normalized.message);
+          log.error(
+            "email_sync_timer.manual_vault_failed",
+            normalized,
+            emailSyncTimerLogContext({
+              operation: "manual_vault_sync",
+              ownerUserId: outer.userId,
+              vaultId,
+            }),
+          );
         }
       }
       return result;
@@ -347,9 +427,24 @@ export async function runEmailSyncTimer(): Promise<EmailSyncTimerResult> {
             }
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          result.errors.push(`owner ${user.id} failed: ${message}`);
-          log.error(`owner failed userId=${user.id}: ${message}`);
+          const normalized = normalizeEmailSyncTimerError(
+            error,
+            "owner_pipeline",
+            "EMAIL_SYNC_TIMER_OWNER_FAILED",
+            "Email sync timer owner pipeline failed",
+          );
+          normalized.ownerUserId = user.id;
+          normalized.ownersScanned = result.ownersScanned;
+          result.errors.push(`owner ${user.id} failed: ${normalized.message}`);
+          log.error(
+            "email_sync_timer.owner_failed",
+            normalized,
+            emailSyncTimerLogContext({
+              operation: "owner_pipeline",
+              ownerUserId: user.id,
+              ownersScanned: result.ownersScanned,
+            }),
+          );
         } finally {
           await setSetting(CURSOR_SETTING_KEY, { lastUserId: user.id });
         }
