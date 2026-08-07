@@ -1,6 +1,6 @@
 // Use createLogger for logging ONLY
 import { createLogger } from "@/lib/logger";
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useFocusContext } from "@/hooks/use-focus-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -209,17 +209,31 @@ function UnifiedGoalsView() {
   const search = useSearch();
   const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
-  const { vaults, activeVaultId } = useVaults();
+  const { vaults, visibleVaultIds, activeVaultId } = useVaults();
   const vaultById = useMemo(() => new Map(vaults.map((vault) => [vault.id, vault])), [vaults]);
+  const visibleVaultIdSet = useMemo(() => new Set(visibleVaultIds), [visibleVaultIds]);
   const selectedGoalId = new URLSearchParams(search).get("goal");
   const [creatingInHorizon, setCreatingInHorizon] = useState<GoalHorizon | null>(null);
   const { data: goalsData, isLoading, isError } = useQuery<{ goals: GoalRow[] }>({
     queryKey: ["/api/life-goals"],
   });
 
-  const allGoals = goalsData?.goals ?? [];
+  // Only Goals in currently visible Vaults render. `visibleVaultIds` is reactive —
+  // toggling a Vault in the top bar recomputes this set and refreshes the tree.
+  const allGoals = useMemo(
+    () => (goalsData?.goals ?? []).filter((goal) => Boolean(goal.vaultId && visibleVaultIdSet.has(goal.vaultId))),
+    [goalsData?.goals, visibleVaultIdSet],
+  );
   const selectedGoal = selectedGoalId ? allGoals.find((goal) => goal.id === selectedGoalId) : null;
   useFocusContext(selectedGoal ? { entity: { type: "goal", id: selectedGoal.id, label: selectedGoal.shortName } } : null);
+
+  // If the open Goal's Vault was just hidden, drop the selection so the screen
+  // doesn't keep a stale deep-link to a row that is no longer renderable.
+  useEffect(() => {
+    if (selectedGoalId && !selectedGoal) {
+      setLocation("/goals");
+    }
+  }, [selectedGoalId, selectedGoal, setLocation]);
 
   const handleSelectGoal = useCallback((goalId: string) => {
     setLocation(selectedGoalId === goalId ? "/goals" : `/goals?goal=${encodeURIComponent(goalId)}`);
@@ -266,6 +280,7 @@ function UnifiedGoalsView() {
       shortName: name,
       horizon: creatingInHorizon,
       parentId: null,
+      vaultId: activeVaultId ?? visibleVaultIds[0] ?? "",
       status: "active",
     };
     queryClient.setQueryData<{ goals: GoalRow[] }>(["/api/life-goals"], (current) => ({
@@ -273,7 +288,7 @@ function UnifiedGoalsView() {
     }));
     createGoalMutation.mutate({ horizon: creatingInHorizon, shortName: name });
     setCreatingInHorizon(null);
-  }, [creatingInHorizon, createGoalMutation]);
+  }, [creatingInHorizon, createGoalMutation, activeVaultId, visibleVaultIds]);
 
   const startCreating = useCallback((horizon: GoalHorizon) => {
     focusWithMobileKeyboard();
