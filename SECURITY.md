@@ -1,3 +1,11 @@
+<!-- 2026-08-07 PDF mounted-viewer and PDF.js lifecycle repair:
+- Assets/data: vault-bound Drive PDF bytes and metadata (S2), live drive_resource/Vault grants, short-lived encrypted content handles, and bounded extracted text derivatives.
+- Flow/boundary: Files document link or pdf tool -> pdf-service resolve/read -> FilesApi live Vault/bind/recursive-whitelist authorization -> provider bytes -> PDF.js viewer/extractor. Provider coordinates and PDF bytes remain untrusted input.
+- Failure/threat: document links supplied a redundant rootDriveResourceId that pdf-service treated as authorization routing state; stale or mismatched hints could deny a legitimately mounted file and split ACL truth between client URLs and FilesApi (STRIDE availability/tampering analogue). Extraction also destroyed the PDFDocumentProxy rather than the public PDFDocumentLoadingTask owner, crossing an unstable Node-bundle transport shape and failing cleanup.
+- Controls/owner: pdf-service accepts the legacy root field for compatibility but excludes it from authority and generated links; FilesApi remains the sole deterministic live vault gate, bind/grant resolver, recursive whitelist, connector-token, and provider-read boundary. PDF.js cleanup now awaits the public loading-task destroy contract that owns worker/fake-worker teardown. Existing MIME/magic checks, byte/page/character caps, disabled eval, encrypted handles, and per-read ACL recheck remain unchanged. Owner: Core PDF + Files. Severity: high trust-boundary correctness. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: ordinary whitelist resolution may perform a bounded provider parent walk when no current indexed shortcut evidence exists; inaccessible and unmounted files still fail closed. Revert the pdf-service, viewer-link, and this record to restore root-hint routing and document-proxy cleanup.
+-->
+
 <!-- 2026-08-07 Workflow/Plan executor parity:
 - Assets/data: S2 workflow objectives, stage evidence, child-session output, and autonomous tool authority; S1 lease and failure metadata.
 - Flow/boundary: Workflow run -> durable stage attempt -> leased parent monitor -> child Session -> structured stage verdict -> template transition; boot recovery discovers orphaned attempts under a named system principal and restores the exact owner principal before mutation.
