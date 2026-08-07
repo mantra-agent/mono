@@ -151,19 +151,31 @@ interface RouteErrorBoundaryState {
   error: Error | null;
 }
 
+function normalizeRouteRenderError(caught: unknown): Error {
+  if (caught instanceof Error) return caught;
+
+  const error = new Error("Route render threw a non-Error value.");
+  error.name = "RouteRenderError";
+  Object.defineProperty(error, "code", {
+    value: "ROUTE_RENDER_NON_ERROR_THROW",
+    enumerable: true,
+  });
+  return error;
+}
+
 class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBoundaryState> {
   state: RouteErrorBoundaryState = { error: null };
 
-  static getDerivedStateFromError(error: Error): RouteErrorBoundaryState {
-    return { error };
+  static getDerivedStateFromError(caught: unknown): RouteErrorBoundaryState {
+    return { error: normalizeRouteRenderError(caught) };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  componentDidCatch(caught: unknown, info: ErrorInfo) {
+    const error = normalizeRouteRenderError(caught);
     attemptVersionSkewRecovery(error);
-    // Pass the real Error instance so createLogger can classify/name/code/callsite.
     log.error("route render failed", error, {
       routeKey: this.props.routeKey,
-      errorName: error.name,
+      failurePhase: error.name === "RouteLoadError" ? "module-load" : "render",
       componentFrames: info.componentStack
         ?.split("\n")
         .filter(Boolean)

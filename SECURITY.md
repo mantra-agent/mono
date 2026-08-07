@@ -1,3 +1,11 @@
+<!-- 2026-08-06 RouteLoadBoundary error-attribution repair:
+- Assets/data: route keys and bounded component frames (S1 operational metadata), client exception identity, availability of lazy route modules, and application-error aggregates.
+- Flow/boundary: untrusted lazy-import or React render failures -> shared RouteLoadBoundary normalization -> redacting client logger -> authenticated telemetry sink.
+- Threats: non-Error throws or wrapped chunk failures collapsing to UNCLASSIFIED (repudiation/DoS), lost route/phase identity delaying recovery, or arbitrary thrown payloads leaking user/provider content (information disclosure).
+- Controls/owner: Client Platform preserves real Error instances, chains lazy-import causes, assigns stable ROUTE_MODULE_LOAD_FAILED / ROUTE_RENDER_NON_ERROR_THROW codes, and emits only routeKey, bounded component frames, and failure phase through the existing redacting logger. Arbitrary non-Error payload values are deliberately not serialized. Severity: medium. SLA: immediate. Status: repaired in source, pending production build/merge.
+- Residual: historical aggregates cannot be retroactively enriched; timeout-only Suspense failures remain separately classified as ROUTE_LOAD_TIMEOUT without an exception stack because no exception was thrown.
+-->
+
 <!-- 2026-08-06 AgentContext error-attribution repair:
 - Assets/data: user-owned Session identifiers and compaction operation identifiers (S1 operational metadata), context availability, and application-error aggregates.
 - Flow/boundary: context assembly/compaction failures -> `agent-context.ts` producer normalization -> `createLogger` redaction/classification -> principal-scoped telemetry sink.

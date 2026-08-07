@@ -7,11 +7,12 @@ const IMPORT_ATTEMPT_TIMEOUT_MS = 6_000;
 const RETRY_DELAY_MS = 500;
 
 export class RouteLoadError extends Error {
+  readonly code = "ROUTE_MODULE_LOAD_FAILED";
   readonly attempts: number;
   readonly causeName: string;
 
   constructor(message: string, attempts: number, cause: unknown) {
-    super(message);
+    super(message, { cause });
     this.name = "RouteLoadError";
     this.attempts = attempts;
     this.causeName = cause instanceof Error ? cause.name : typeof cause;
