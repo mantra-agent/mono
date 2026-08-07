@@ -27,6 +27,7 @@ import { ModelProviderError, isModelContextOverflow, type StreamEvent as ModelSt
 import {
   ContextHardLimitExceededError,
   applyTokenEstimateCalibration,
+  estimateMessageInputTokens,
   estimateMessagesInputTokens,
   estimateToolDefinitionTokens,
   getContextRequestBudget,
@@ -445,6 +446,8 @@ const CONTEXT_LIMIT_PATTERNS = [
   /token.?limit/i,
   /exceeds.*max.*tokens/i,
   /request too large/i,
+  /single[- ]exchange conversation cannot be compacted/i,
+  /cannot be compacted/i,
 ];
 
 function isContextLengthError(error: unknown): boolean {
@@ -572,7 +575,8 @@ type MidTurnCompactionAction =
   | "none"
   | "mid_turn_tool_soft_trim"
   | "mid_turn_history_hard_trim"
-  | "mid_turn_history_reset";
+  | "mid_turn_history_reset"
+  | "single_exchange_body_bound";
 
 interface CompactionTelemetry {
   action: MidTurnCompactionAction;
@@ -774,6 +778,191 @@ function compactMidTurnHistoryReset(messages: ExecutorMessage[]): { messages: Ex
   });
 }
 
+/**
+ * Single-exchange / irreducible-body preflight.
+ *
+ * Multi-turn compaction needs assistant/tool pairs. When the first exchange
+ * itself exceeds the hard input limit (system + tools + attachments + user),
+ * history compaction is a no-op and the provider rejects with "Prompt is too
+ * long · single-exchange conversation cannot be compacted." Bound only
+ * non-protected message bodies; never strip the primary system/instruction
+ * message, compaction markers, or working-context capsules.
+ */
+const SINGLE_EXCHANGE_BODY_MIN_CHARS = 4_000;
+const SINGLE_EXCHANGE_BODY_SAFETY_TOKENS = 2_048;
+
+function isProtectedSingleExchangeMessage(
+  message: ExecutorMessage,
+  index: number,
+  messages: readonly ExecutorMessage[],
+): boolean {
+  if (message.model === "compaction-marker") return true;
+  if (typeof message.content === "string") {
+    const content = message.content;
+    if (
+      content.startsWith("[Working Context Capsule]")
+      || content.startsWith("[Compaction Summary]")
+      || content.includes("<security")
+      || content.includes("## Security")
+      || content.includes("SECURITY.md")
+    ) {
+      return true;
+    }
+  }
+  // Primary assembled system prompt is load-bearing instruction/security context.
+  if (message.role === "system") {
+    const firstSystemIdx = messages.findIndex((entry) => entry.role === "system");
+    if (firstSystemIdx === index) return true;
+  }
+  return false;
+}
+
+function boundTextBody(text: string, maxChars: number): { text: string; changed: boolean } {
+  if (!text || text.length <= maxChars) return { text, changed: false };
+  const floor = Math.max(SINGLE_EXCHANGE_BODY_MIN_CHARS, Math.min(maxChars, text.length));
+  if (text.length <= floor) return { text, changed: false };
+  const headBudget = Math.max(1_500, Math.floor(floor * 0.72));
+  const tailBudget = Math.max(0, floor - headBudget - 220);
+  const head = text.slice(0, headBudget).trimEnd();
+  const tail = tailBudget > 0 ? text.slice(-tailBudget).trimStart() : "";
+  const omitted = text.length - head.length - tail.length;
+  const notice =
+    `\n\n[Single-exchange context bound: omitted ${omitted.toLocaleString()} chars before provider dispatch. ` +
+    `Required instructions and security context were retained. Retrieve archived depth with indexed_content when needed.]\n\n`;
+  return {
+    text: tail ? `${head}${notice}${tail}` : `${head}${notice}`,
+    changed: true,
+  };
+}
+
+function boundContentBlocks(
+  blocks: ContentBlock[],
+  maxChars: number,
+): { blocks: ContentBlock[]; changed: boolean; charsBefore: number; charsAfter: number } {
+  let charsBefore = 0;
+  let charsAfter = 0;
+  let changed = false;
+  const next = blocks.map((block) => {
+    if (block.type === "tool_result" && typeof block.content === "string") {
+      charsBefore += block.content.length;
+      const bounded = boundTextBody(block.content, maxChars);
+      charsAfter += bounded.text.length;
+      if (bounded.changed) {
+        changed = true;
+        return { ...block, content: bounded.text };
+      }
+      return block;
+    }
+    if (block.type === "text" && typeof block.text === "string") {
+      charsBefore += block.text.length;
+      const bounded = boundTextBody(block.text, maxChars);
+      charsAfter += bounded.text.length;
+      if (bounded.changed) {
+        changed = true;
+        return { ...block, text: bounded.text };
+      }
+      return block;
+    }
+    if (block.type === "thinking" && typeof block.thinking === "string") {
+      charsBefore += block.thinking.length;
+      // Thinking is never required instruction/security context — drop aggressively.
+      if (block.thinking.length > 500) {
+        changed = true;
+        charsAfter += 0;
+        return null;
+      }
+      charsAfter += block.thinking.length;
+      return block;
+    }
+    const serialized = typeof block === "object" ? JSON.stringify(block) : String(block ?? "");
+    charsBefore += serialized.length;
+    charsAfter += serialized.length;
+    return block;
+  }).filter((block): block is ContentBlock => block != null);
+  return { blocks: next, changed, charsBefore, charsAfter };
+}
+
+function boundSingleExchangeBodies(
+  messages: ExecutorMessage[],
+  budget: ContextRequestBudget,
+  toolDefinitionTokens: number,
+): { messages: ExecutorMessage[]; compacted: boolean; bodiesBound: number; charsSaved: number } {
+  const hardCeiling = Math.max(
+    0,
+    budget.hardInputLimit - toolDefinitionTokens - SINGLE_EXCHANGE_BODY_SAFETY_TOKENS,
+  );
+  if (hardCeiling <= 0) {
+    return { messages, compacted: false, bodiesBound: 0, charsSaved: 0 };
+  }
+
+  // Measure protected vs reducible mass so we only spend the residual budget
+  // on non-protected bodies (attachments, oversized user/tool text).
+  let protectedTokens = 0;
+  const reducibleIdx: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
+    const tokens = estimateMessageInputTokens(message);
+    if (isProtectedSingleExchangeMessage(message, i, messages)) {
+      protectedTokens += tokens;
+    } else {
+      reducibleIdx.push(i);
+    }
+  }
+
+  const residualTokens = Math.max(0, hardCeiling - protectedTokens);
+  if (reducibleIdx.length === 0 || residualTokens <= 0) {
+    return { messages, compacted: false, bodiesBound: 0, charsSaved: 0 };
+  }
+
+  // Newest reducible message (usually the current user turn) keeps the largest share.
+  const weights = reducibleIdx.map((_, offset) => {
+    const fromEnd = reducibleIdx.length - 1 - offset;
+    return fromEnd === 0 ? 4 : fromEnd === 1 ? 2 : 1;
+  });
+  const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
+  const charsPerToken = 4;
+  let bodiesBound = 0;
+  let charsSaved = 0;
+  const next = messages.map((message) => ({ ...message }));
+
+  for (let offset = 0; offset < reducibleIdx.length; offset++) {
+    const index = reducibleIdx[offset];
+    const message = next[index];
+    const shareTokens = Math.max(
+      Math.floor((residualTokens * weights[offset]) / weightSum),
+      Math.floor(SINGLE_EXCHANGE_BODY_MIN_CHARS / charsPerToken),
+    );
+    const maxChars = Math.max(SINGLE_EXCHANGE_BODY_MIN_CHARS, shareTokens * charsPerToken);
+
+    if (typeof message.content === "string") {
+      const before = message.content.length;
+      const bounded = boundTextBody(message.content, maxChars);
+      if (bounded.changed) {
+        next[index] = { ...message, content: bounded.text };
+        bodiesBound += 1;
+        charsSaved += Math.max(0, before - bounded.text.length);
+      }
+      continue;
+    }
+
+    if (Array.isArray(message.content)) {
+      const bounded = boundContentBlocks(message.content as ContentBlock[], maxChars);
+      if (bounded.changed) {
+        next[index] = { ...message, content: bounded.blocks };
+        bodiesBound += 1;
+        charsSaved += Math.max(0, bounded.charsBefore - bounded.charsAfter);
+      }
+    }
+  }
+
+  return {
+    messages: next,
+    compacted: bodiesBound > 0,
+    bodiesBound,
+    charsSaved,
+  };
+}
+
 async function runCompaction(
   messages: ExecutorMessage[],
   budget: ContextRequestBudget,
@@ -877,6 +1066,27 @@ async function runCompaction(
       currentTokens = await estimateRequestTokens(messages);
       action = "mid_turn_history_reset";
       log.debug(`Mid-turn history reset complete: ${currentTokens} tokens`);
+    }
+  }
+
+  // First-exchange / irreducible bodies: history compaction cannot help when
+  // there are no assistant/tool pairs. Bound oversized non-protected bodies
+  // before the hard-limit fail-closed gate.
+  if (currentTokens > budget.hardInputLimit) {
+    publish("compacting", {
+      stepId: compactionStepId,
+      status: "active",
+      content: "Bounding oversized single-exchange content before provider dispatch...",
+    });
+    const singleExchange = boundSingleExchangeBodies(messages, budget, toolDefinitionTokens);
+    if (singleExchange.compacted) {
+      messages = singleExchange.messages;
+      currentTokens = await estimateRequestTokens(messages);
+      action = "single_exchange_body_bound";
+      log.warn(
+        `Single-exchange body bound applied: request=${currentTokens} tokens hard=${budget.hardInputLimit} ` +
+          `bodiesBound=${singleExchange.bodiesBound} charsSaved=${singleExchange.charsSaved}`,
+      );
     }
   }
 
@@ -3151,6 +3361,7 @@ export class AgentExecutor extends EventEmitter {
     messages: ExecutorMessage[],
     options: ExecutorRunOptions,
     publish: RunIterationContext["publish"],
+    toolDefinitionTokens = 0,
   ): Promise<{ compacted: boolean; hasRunMidTurnHistoryHardTrim: boolean }> {
     const emergencyTokensBefore = estimateTotalTokens(messages);
     const emergencyMessagesBefore = messages.length;
@@ -3182,7 +3393,29 @@ export class AgentExecutor extends EventEmitter {
     const historyReset = compactMidTurnHistoryReset(messages);
     if (historyReset.compacted) messages.splice(0, messages.length, ...historyReset.messages);
 
-    const compacted = historyHardTrim.compacted || historyReset.compacted;
+    // Provider overflow on a single exchange has no compactable history pairs.
+    // Bound oversized non-protected bodies using the same hard-input envelope.
+    // Prefer the live model id when present; fall back to a Claude-class window.
+    const emergencyModel =
+      typeof (options as { model?: string }).model === "string" && (options as { model?: string }).model
+        ? (options as { model: string }).model
+        : "claude-opus-4-6";
+    const emergencyBudget = getContextRequestBudget(getContextWindow(emergencyModel), 0, false);
+    const singleExchange = boundSingleExchangeBodies(
+      messages,
+      emergencyBudget,
+      Math.max(0, toolDefinitionTokens),
+    );
+    if (singleExchange.compacted) {
+      messages.splice(0, messages.length, ...singleExchange.messages);
+      log.warn(
+        `context.reduction action=single_exchange_body_bound trigger=provider_overflow outcome=applied ` +
+          `sessionId=${options.sessionId || "none"} bodiesBound=${singleExchange.bodiesBound} ` +
+          `charsSaved=${singleExchange.charsSaved}`,
+      );
+    }
+
+    const compacted = historyHardTrim.compacted || historyReset.compacted || singleExchange.compacted;
     const emergencyTokensAfter = estimateTotalTokens(messages);
     if (compacted) {
       const action = historyReset.compacted
@@ -3697,7 +3930,12 @@ export class AgentExecutor extends EventEmitter {
           throw streamErr;
         }
         log.debug(`Emergency compaction attempt ${ctx.emergencyCompactionRetries}/${MAX_EMERGENCY_RETRIES} runId=${ctx.runId}`);
-        const emergency = await this.handleEmergencyCompaction(messages, options, ctx.publish);
+        const emergency = await this.handleEmergencyCompaction(
+          messages,
+          options,
+          ctx.publish,
+          toolDefinitionTokens,
+        );
         if (emergency.compacted) {
           if (emergency.hasRunMidTurnHistoryHardTrim) hasRunMidTurnHistoryHardTrim = true;
           ctx.providerFailure = undefined;
