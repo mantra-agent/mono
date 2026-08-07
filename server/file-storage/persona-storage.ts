@@ -666,7 +666,7 @@ class PersonaStorageClass {
       .returning();
 
     if (!updated) return null;
-    this._cache.clear();
+    this.invalidateCache();
     log.info("Updated global persona template tool bundle", {
       personaId: updated.id,
       personaName: updated.name,
@@ -1138,7 +1138,24 @@ class PersonaStorageClass {
     return removed;
   }
 
-  /** Resolve the canonical global seed row without matching user-owned personas that share its name. */
+  /** Resolve a user-facing global seed template by name (excludes system seeds). */
+  async getGlobalSeedTemplateByName(name: string): Promise<PersonaEntry | null> {
+    const [row] = await db
+      .select()
+      .from(personas)
+      .where(
+        and(
+          eq(personas.source, "seed"),
+          eq(personas.scope, "global"),
+          eq(personas.isSystem, false),
+          sql`LOWER(${personas.name}) = LOWER(${name})`,
+        ),
+      )
+      .limit(1);
+    return row ? rowToEntry(row) : null;
+  }
+
+  /** Resolve any canonical global seed row by name, including system seeds. */
   private async getGlobalSeedByName(name: string): Promise<PersonaEntry | null> {
     const [row] = await db
       .select()

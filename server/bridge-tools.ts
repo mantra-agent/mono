@@ -17130,7 +17130,8 @@ const cognitionTools: Record<string, ToolHandler> = {
         const active = await resolveSessionPersona(args._sessionId);
         const lines = all.map(p => {
           const bundle = p.toolBundle && p.toolBundle.length > 0 ? `${p.toolBundle.length} bundled` : "all (passthrough)";
-          return `- ${p.id === active?.id ? "▶ " : ""}**${p.name}** (id=${p.id}, ${p.source}, tools: ${bundle})${p.isDefault ? " [default]" : ""} — ${p.description}`;
+          const lineage = p.templatePersonaId != null ? `, template=${p.templatePersonaId}` : "";
+          return `- ${p.id === active?.id ? "▶ " : ""}**${p.name}** (id=${p.id}, ${p.source}${lineage}, tools: ${bundle})${p.isDefault ? " [default]" : ""} — ${p.description}`;
         });
         return { result: `${all.length} personas:\n${lines.join("\n")}` };
       },
@@ -17193,14 +17194,21 @@ const cognitionTools: Record<string, ToolHandler> = {
       },
 
       update_global_persona_template: async (a) => {
-        if (!a.id) return { result: "Missing persona id", error: true };
         const toolBundle = a.tool_bundle ?? a.toolBundle;
         if (!Array.isArray(toolBundle) || toolBundle.length === 0) {
           return { result: "A non-empty tool bundle is required", error: true };
         }
         const { personaStorage } = await import("./file-storage/persona-storage");
-        const updated = await personaStorage.updateGlobalTemplateToolBundle(Number(a.id), toolBundle);
-        if (!updated) return { result: `Global persona template ${a.id} not found`, error: true };
+        let templateId = a.id != null ? Number(a.id) : NaN;
+        if (!Number.isFinite(templateId) || templateId <= 0) {
+          const name = typeof a.name === "string" ? a.name.trim() : "";
+          if (!name) return { result: "Missing persona id or name", error: true };
+          const resolved = await personaStorage.getGlobalSeedTemplateByName(name);
+          if (!resolved) return { result: `Global persona template named ${name} not found`, error: true };
+          templateId = resolved.id;
+        }
+        const updated = await personaStorage.updateGlobalTemplateToolBundle(templateId, toolBundle);
+        if (!updated) return { result: `Global persona template ${templateId} not found`, error: true };
         return { result: `Global persona template updated: ${updated.name} (id=${updated.id}, tools=${updated.toolBundle.join(", ")})` };
       },
 
