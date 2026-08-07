@@ -23,7 +23,11 @@ import {
 } from "./timeout";
 import { createLogger } from "./log";
 import { safeStringify, safeTruncate } from "./utils/safe-stringify";
-import { getPostgresErrorCode, isRecoverablePostgresConnectionError } from "./postgres-errors";
+import {
+  getPostgresErrorCode,
+  isPoolAcquireTimeoutError,
+  isRecoverablePostgresConnectionError,
+} from "./postgres-errors";
 
 const log = createLogger("DB");
 
@@ -32,6 +36,8 @@ if (!process.env.DATABASE_URL) {
 }
 
 const DB_CONNECTION_TIMEOUT_MS = 5000;
+/** One immediate retry after a pool-acquire timeout; never retries SQL that already started. */
+const POOL_ACQUIRE_RETRY_LIMIT = 1;
 const SLOW_QUERY_THRESHOLD_MS = 1000;
 const HIGH_IN_FLIGHT_THRESHOLD = 10;
 const LONG_RUNNING_THRESHOLD_MS = 500;
@@ -202,6 +208,28 @@ function flushRecoverableConnectionIncident(): void {
   );
 }
 
+const POOL_ACQUIRE_NODE_CODE_RE = /^(ETIMEDOUT|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ECONNRESET)$/;
+
+/**
+ * Stable telemetry codes for the DB boundary. Prefer these over provider /
+ * Node codes (ETIMEDOUT, 08xxx) so errorIdentity stays product-owned.
+ */
+function resolveDbTelemetryCode(error: unknown, fallback: string): string {
+  if (isPoolAcquireTimeoutError(error)) return "POOL_ACQUIRE_TIMEOUT";
+  const existing = error instanceof Error
+    ? (error as Error & { code?: unknown }).code
+    : undefined;
+  if (
+    typeof existing === "string" &&
+    /^[A-Z][A-Z0-9_]{1,48}$/.test(existing) &&
+    !/^[0-9A-Z]{5}$/.test(existing) &&
+    !POOL_ACQUIRE_NODE_CODE_RE.test(existing)
+  ) {
+    return existing;
+  }
+  return fallback;
+}
+
 /**
  * Build a telemetry-only Error with a stable machine code.
  * Never mutates the original provider/Postgres error — callers still need
@@ -212,16 +240,51 @@ function classifyDbLogError(error: unknown, code: string): Error {
     error instanceof Error
       ? error
       : new Error(typeof error === "string" && error.trim() ? error : "database operation failed");
+  const telemetryCode = resolveDbTelemetryCode(original, code);
   const existing = (original as Error & { code?: unknown }).code;
-  if (typeof existing === "string" && /^[A-Z][A-Z0-9_]{1,48}$/.test(existing)) {
+  if (
+    typeof existing === "string" &&
+    existing === telemetryCode &&
+    /^[A-Z][A-Z0-9_]{1,48}$/.test(existing)
+  ) {
     return original;
   }
   const classified = new Error(original.message);
   classified.name = original.name || "Error";
   classified.stack = original.stack;
-  (classified as Error & { code?: string; cause?: unknown }).code = code;
+  (classified as Error & { code?: string; cause?: unknown }).code = telemetryCode;
   (classified as Error & { cause?: unknown }).cause = original;
   return classified;
+}
+
+function poolCounts(targetPool: Pool): string {
+  return `${targetPool.totalCount}/${targetPool.idleCount}/${targetPool.waitingCount}`;
+}
+
+function logQueryFailure(opts: {
+  err: unknown;
+  lane: DatabaseLane;
+  subsystem: string;
+  label: string | null;
+  targetPool: Pool;
+  sqlDiag: string;
+  elapsedMs: number;
+  phase: "sync" | "async";
+  attempt: number;
+}): void {
+  const { err, lane, subsystem, label, targetPool, sqlDiag, elapsedMs, phase, attempt } = opts;
+  const acquireTimeout = isPoolAcquireTimeoutError(err);
+  const pgCode = getPostgresErrorCode(err);
+  const errorType = err instanceof Error ? "Error" : typeof err;
+  const counts = poolCounts(targetPool);
+  const kind = acquireTimeout ? "pool acquire timeout" : "query contract failed";
+  const code = acquireTimeout ? "POOL_ACQUIRE_TIMEOUT" : "QUERY_CONTRACT_FAILED";
+  const message =
+    `${kind} after ${elapsedMs}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} ` +
+    `pool=${counts}${sqlDiag} phase=${phase} attempt=${attempt} errorType=${errorType}` +
+    `${pgCode && pgCode !== "unknown" ? ` sqlstate=${pgCode}` : ""}` +
+    `${acquireTimeout ? " class=pool_acquire" : ""}`;
+  log.error(message, classifyDbLogError(err, code));
 }
 
 function handlePoolConnectionError(lane: ConnectionIncidentLane, error: Error): void {
@@ -821,51 +884,98 @@ function instrumentPool(targetPool: Pool, lane: DatabaseLane): void {
       sqlSnippet,
     });
     const start = Date.now();
+    let attempt = 1;
 
-    let result: any;
-    try {
-      result = (origQuery as any)(...args);
-    } catch (err) {
+    const releaseInFlight = () => {
       inFlightQueries--;
       inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
       _inFlightEntries.delete(entryId);
-      const counts = `${targetPool.totalCount}/${targetPool.idleCount}/${targetPool.waitingCount}`;
-      const pgCode = getPostgresErrorCode(err);
-      const errorType = err instanceof Error ? "Error" : typeof err;
-      log.error(
-        `query contract failed after ${Date.now() - start}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}${sqlDiag} phase=sync errorType=${errorType}${pgCode ? ` sqlstate=${pgCode}` : ""}`,
-        classifyDbLogError(err, "QUERY_CONTRACT_FAILED"),
-      );
-      throw err;
-    }
+    };
 
-    const settle = (failed: boolean, err?: unknown) => {
-      inFlightQueries--;
-      inFlightBySubsystem[subsystem] = Math.max(0, (inFlightBySubsystem[subsystem] || 0) - 1);
-      _inFlightEntries.delete(entryId);
+    const settleSuccess = () => {
+      releaseInFlight();
       const elapsed = Date.now() - start;
-      if (elapsed > SLOW_QUERY_THRESHOLD_MS || failed) {
-        if (elapsed > SLOW_QUERY_THRESHOLD_MS) {
-          recordSlowQuery(elapsed, { queryFingerprint, sqlSnippet });
-        }
-        const counts = `${targetPool.totalCount}/${targetPool.idleCount}/${targetPool.waitingCount}`;
-        let message = `${failed ? "query contract failed" : "SLOW query"} after ${elapsed}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} pool=${counts}${sqlDiag}`;
-        if (failed && err !== undefined) {
-          const pgCode = getPostgresErrorCode(err);
-          const errorType = err instanceof Error ? "Error" : typeof err;
-          message += ` phase=async errorType=${errorType}${pgCode ? ` sqlstate=${pgCode}` : ""}`;
-        }
-        if (failed) {
-          log.error(message, classifyDbLogError(err, "QUERY_CONTRACT_FAILED"));
-        } else {
-          log.warn(message);
-        }
+      if (elapsed > SLOW_QUERY_THRESHOLD_MS) {
+        recordSlowQuery(elapsed, { queryFingerprint, sqlSnippet });
+        log.warn(
+          `SLOW query after ${elapsed}ms lane=${lane} subsystem=${subsystem} label=${label || "none"} ` +
+            `pool=${poolCounts(targetPool)}${sqlDiag}`,
+        );
       }
     };
 
-    if (result && typeof result.then === "function") result.then(() => settle(false), (err: unknown) => settle(true, err));
-    else settle(false);
-    return result;
+    const settleFailure = (err: unknown) => {
+      releaseInFlight();
+      const elapsed = Date.now() - start;
+      if (elapsed > SLOW_QUERY_THRESHOLD_MS) {
+        recordSlowQuery(elapsed, { queryFingerprint, sqlSnippet });
+      }
+      logQueryFailure({
+        err,
+        lane,
+        subsystem,
+        label,
+        targetPool,
+        sqlDiag,
+        elapsedMs: elapsed,
+        phase: "async",
+        attempt,
+      });
+    };
+
+    const dispatch = (): any => {
+      let result: any;
+      try {
+        result = (origQuery as any)(...args);
+      } catch (err) {
+        // Sync throws are rare for Pool.query; still classify and never retry
+        // here because the call may have partially started.
+        releaseInFlight();
+        logQueryFailure({
+          err,
+          lane,
+          subsystem,
+          label,
+          targetPool,
+          sqlDiag,
+          elapsedMs: Date.now() - start,
+          phase: "sync",
+          attempt,
+        });
+        throw err;
+      }
+
+      if (result && typeof result.then === "function") {
+        return result.then(
+          (value: unknown) => {
+            settleSuccess();
+            return value;
+          },
+          (err: unknown) => {
+            // Retry only pool-acquire timeouts: no SQL has run yet, so the
+            // operation remains replay-safe. Statement timeouts and mid-query
+            // failures stay single-shot.
+            if (attempt <= POOL_ACQUIRE_RETRY_LIMIT && isPoolAcquireTimeoutError(err)) {
+              const retryAttempt = attempt;
+              attempt += 1;
+              log.warn(
+                `pool acquire timeout retrying once lane=${lane} subsystem=${subsystem} ` +
+                  `label=${label || "none"} pool=${poolCounts(targetPool)} ` +
+                  `attempt=${retryAttempt} elapsedMs=${Date.now() - start}`,
+              );
+              return dispatch();
+            }
+            settleFailure(err);
+            throw err;
+          },
+        );
+      }
+
+      settleSuccess();
+      return result;
+    };
+
+    return dispatch();
   };
 }
 

@@ -1440,3 +1440,18 @@ Git clone crosses B03/B08 and F11 over A08/S0-S2: it invokes a credentialed exte
 **Deterministic controls:** `ensureVaults` recovers chat ownership only through the canonical `memberships` → personal `accounts` → default `vaults` join and never invents a `users.account_id` column. `server/db.ts` continues to throw the original Postgres error unchanged for callers, while query-contract and unexpected pool-connection error logs attach a telemetry-only `Error` with stable codes `QUERY_CONTRACT_FAILED` / `UNEXPECTED_POOL_CONNECTION_ERROR`, phase, lane/subsystem/label, pool counts, fingerprint, and SQLSTATE. EnsureVaults terminal failures classify as `FAILED_TO_ENSURE_VAULT_SCHEMA`. No SQL parameters, credentials, principal identity, or arbitrary error payloads are added. Controls: DATA-03, OBS-01, AUDIT-01.
 
 **Evidence:** Live env #12 log `code=42703` on the chat Vault recovery UPDATE; `shared/schema.ts` users/memberships/accounts; `server/migrations/ensure-vaults.ts`; `server/db.ts` instrumentation. **Residual risk:** Pre-existing generic DB instrumentation may still emit bounded SQL text snippets (documented known inconsistency); this repair does not widen that surface. Historical UNCLASSIFIED aggregates cannot be retroactively enriched.
+
+## 11.24 Pool-acquire timeout classification and bounded retry, August 6, 2026
+
+**Status:** Closed in source.
+**Severity:** Medium before fix; Low residual.
+**Owner:** Identity and Data / Database Runtime.
+**SLA:** Immediate.
+
+**Assets/data:** A07 operational telemetry, A08 database availability. **Flows:** ordinary `pool.query` on general/voice lanes under load or brief network stalls. **Boundaries:** B03 persistence, B06 observability.
+
+**Threat:** node-postgres pool acquisition failures (`timeout exceeded when trying to connect`, connect `ETIMEDOUT`) escaped as generic internal errors. Telemetry either kept Node codes or collapsed into `QUERY_CONTRACT_FAILED`, so operators could not distinguish pool pressure/connect stalls from SQL contract failures, and every acquire miss failed hard with no safe retry (STRIDE: availability/repudiation; OBS-01/DATA-02). Logging SQL parameters, credentials, or principal identity would add disclosure risk.
+
+**Deterministic controls:** `isPoolAcquireTimeoutError` in `server/postgres-errors.ts` is the single detector. Instrumented general/voice `pool.query` classifies terminal acquire failures as `POOL_ACQUIRE_TIMEOUT` (not `QUERY_CONTRACT_FAILED` or raw `ETIMEDOUT`), retains lane/subsystem/label/pool counts/attempt/phase/SQLSTATE only, and retries acquire timeout **once** immediately because no application SQL has started. Statement timeouts, lock timeouts, constraint errors, and mid-query disconnects remain single-shot. Callers still receive the original thrown error. No SQL text parameters, secrets, or principal fields are added. Controls: OBS-01, AUDIT-01, DATA-02.
+
+**Evidence:** Issue 1786061326715 (five concurrent connect-timeout exceptions); live DB op-summary pool samples; `server/db.ts` instrumentation; `server/postgres-errors.ts`. **Residual risk:** Auth-pool and dedicated-client paths remain outside this instrumentation; sustained pool exhaustion still fails after one retry and requires capacity/query diagnosis rather than larger blind retries.
