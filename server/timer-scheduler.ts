@@ -15,6 +15,71 @@ import { storage } from "./storage";
 
 const log = createLogger("TimerScheduler");
 
+type TimerSchedulerOperation =
+  | "safe_set_long_timeout"
+  | "ephemeral_cleanup"
+  | "scheduler_maintenance"
+  | "deferred_retry"
+  | "queued_execution"
+  | "boot_reminder"
+  | "timer_lookup"
+  | "ephemeral_delete"
+  | "handler_failed"
+  | "compute_next_run"
+  | "compute_previous_run"
+  | "reschedule_all";
+
+type TimerSchedulerOperationError = Error & {
+  code?: string;
+  operation?: TimerSchedulerOperation;
+  timerId?: string;
+  runId?: string;
+  scheduleId?: string;
+  timerName?: string;
+  trigger?: string;
+};
+
+function normalizeTimerSchedulerError(
+  value: unknown,
+  operation: TimerSchedulerOperation,
+  fallbackCode: string,
+  message?: string,
+): TimerSchedulerOperationError {
+  let error: TimerSchedulerOperationError;
+  if (value instanceof Error) {
+    error = value as TimerSchedulerOperationError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(message || value) as TimerSchedulerOperationError;
+  } else {
+    error = new Error(message || "TimerScheduler operation failed", {
+      cause: value,
+    }) as TimerSchedulerOperationError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = fallbackCode;
+  }
+  error.operation = operation;
+  return error;
+}
+
+function timerSchedulerLogContext(options: {
+  operation: TimerSchedulerOperation;
+  timerId?: string;
+  runId?: string;
+  scheduleId?: string;
+  timerName?: string;
+  trigger?: string;
+}) {
+  return {
+    operation: options.operation,
+    timerId: options.timerId,
+    runId: options.runId,
+    scheduleId: options.scheduleId,
+    timerName: options.timerName,
+    trigger: options.trigger,
+  };
+}
+
 /**
  * Build/deploy identity for fireOnNextBuild exactly-once claims.
  * Prefer Railway deployment id (one claim per deploy) and fall back to git
@@ -77,10 +142,13 @@ export function safeSetLongTimeout(
         try {
           callback();
         } catch (err: unknown) {
-          log.error(
-            `safeSetLongTimeout callback threw:`,
-            err instanceof Error ? err.message : String(err),
+          const error = normalizeTimerSchedulerError(
+            err,
+            "safe_set_long_timeout",
+            "TIMER_SAFE_TIMEOUT_CALLBACK_FAILED",
+            "safeSetLongTimeout callback threw",
           );
+          log.error(error, timerSchedulerLogContext({ operation: error.operation! }));
         }
       }
     }, slice);
@@ -246,10 +314,13 @@ class TimerScheduler {
         log.log(`deleted ${deletedCount} completed ephemeral one-time timer(s)`);
       }
     } catch (error: unknown) {
-      log.warn(
+      const normalized = normalizeTimerSchedulerError(
+        error,
+        "ephemeral_cleanup",
+        "TIMER_EPHEMERAL_CLEANUP_FAILED",
         "completed ephemeral one-time timer cleanup failed; scheduler will continue",
-        error instanceof Error ? error.message : String(error),
       );
+      log.warn(normalized, timerSchedulerLogContext({ operation: normalized.operation! }));
     }
     await this.fireBootReminders();
     await this.rescheduleAll();
@@ -258,10 +329,13 @@ class TimerScheduler {
 
     this.checkInterval = setInterval(() => {
       this.maintainSchedules().catch((err: unknown) => {
-        log.error(
-          `scheduler maintenance error:`,
-          err instanceof Error ? err.message : String(err),
+        const error = normalizeTimerSchedulerError(
+          err,
+          "scheduler_maintenance",
+          "TIMER_SCHEDULER_MAINTENANCE_FAILED",
+          "scheduler maintenance error",
         );
+        log.error(error, timerSchedulerLogContext({ operation: error.operation! }));
       });
     }, 60_000);
   }
@@ -466,9 +540,23 @@ class TimerScheduler {
       try {
         await this.executeExistingTimerRun(timer, run, metadata);
       } catch (err: unknown) {
+        const error = normalizeTimerSchedulerError(
+          err,
+          "deferred_retry",
+          "TIMER_DEFERRED_RETRY_FAILED",
+          `deferred retry error timer=${timer.id} runId=${run.id}`,
+        );
+        error.timerId = timer.id;
+        error.runId = run.id;
+        error.timerName = timer.name;
         log.error(
-          `deferred retry error timer=${timer.id} runId=${run.id}:`,
-          err instanceof Error ? err.message : String(err),
+          error,
+          timerSchedulerLogContext({
+            operation: error.operation!,
+            timerId: timer.id,
+            runId: run.id,
+            timerName: timer.name,
+          }),
         );
       } finally {
         this.inFlightCount--;
@@ -577,9 +665,25 @@ class TimerScheduler {
           intendedFireAt,
         );
       } catch (err: unknown) {
+        const error = normalizeTimerSchedulerError(
+          err,
+          "queued_execution",
+          "TIMER_QUEUED_EXECUTION_FAILED",
+          `execution error timer=${timerId}`,
+        );
+        error.timerId = timerId;
+        error.scheduleId = scheduleId;
+        error.timerName = timerName;
+        error.trigger = "scheduled";
         log.error(
-          `execution error timer=${timerId}:`,
-          err instanceof Error ? err.message : String(err),
+          error,
+          timerSchedulerLogContext({
+            operation: error.operation!,
+            timerId,
+            scheduleId,
+            timerName,
+            trigger: "scheduled",
+          }),
         );
       } finally {
         this.inFlightCount--;
@@ -636,18 +740,37 @@ class TimerScheduler {
               currentBuildId ?? undefined,
             );
           } catch (err: unknown) {
+            const error = normalizeTimerSchedulerError(
+              err,
+              "boot_reminder",
+              "TIMER_BOOT_REMINDER_FAILED",
+              `fireBootReminders error for "${timer.name}"`,
+            );
+            error.timerId = timer.id;
+            error.scheduleId = schedule.id;
+            error.timerName = timer.name;
+            error.trigger = "scheduled";
             log.error(
-              `fireBootReminders error for "${timer.name}":`,
-              err instanceof Error ? err.message : String(err),
+              error,
+              timerSchedulerLogContext({
+                operation: error.operation!,
+                timerId: timer.id,
+                scheduleId: schedule.id,
+                timerName: timer.name,
+                trigger: "scheduled",
+              }),
             );
           }
         }
       }
     } catch (err: unknown) {
-      log.error(
-        `fireBootReminders error:`,
-        err instanceof Error ? err.message : String(err),
+      const error = normalizeTimerSchedulerError(
+        err,
+        "boot_reminder",
+        "TIMER_BOOT_REMINDER_ENUMERATION_FAILED",
+        "fireBootReminders error",
       );
+      log.error(error, timerSchedulerLogContext({ operation: error.operation! }));
     }
   }
 
@@ -743,7 +866,24 @@ class TimerScheduler {
       timerStorage.getForScheduler(timerId),
     );
     if (!timer) {
-      log.error(`timer not found: ${timerId}`);
+      const error = normalizeTimerSchedulerError(
+        new Error(`timer not found: ${timerId}`),
+        "timer_lookup",
+        "TIMER_NOT_FOUND",
+        `timer not found: ${timerId}`,
+      );
+      error.timerId = timerId;
+      error.scheduleId = scheduleId;
+      error.trigger = trigger;
+      log.error(
+        error,
+        timerSchedulerLogContext({
+          operation: error.operation!,
+          timerId,
+          scheduleId,
+          trigger,
+        }),
+      );
       return null;
     }
 
@@ -924,7 +1064,26 @@ class TimerScheduler {
 
     if (trigger === "scheduled") {
       setTimeout(() => {
-        this.rescheduleAll().catch((err) => log.warn("reschedule failed", err));
+        this.rescheduleAll().catch((err: unknown) => {
+          const error = normalizeTimerSchedulerError(
+            err,
+            "reschedule_all",
+            "TIMER_RESCHEDULE_FAILED",
+            "reschedule failed",
+          );
+          error.timerId = timerId;
+          error.scheduleId = scheduleId;
+          error.timerName = timer.name;
+          log.warn(
+            error,
+            timerSchedulerLogContext({
+              operation: error.operation!,
+              timerId,
+              scheduleId,
+              timerName: timer.name,
+            }),
+          );
+        });
       }, 1000);
     }
 
@@ -1025,9 +1184,23 @@ class TimerScheduler {
           log.debug(`skipped cleanup for changed or already-deleted one-time timer "${timer.name}"`);
         }
       } catch (error: unknown) {
-        log.error(
+        const normalized = normalizeTimerSchedulerError(
+          error,
+          "ephemeral_delete",
+          "TIMER_EPHEMERAL_DELETE_FAILED",
           `failed to delete completed ephemeral one-time timer "${timer.name}"; disabling fallback`,
-          error instanceof Error ? error.message : String(error),
+        );
+        normalized.timerId = timer.id;
+        normalized.runId = run.id;
+        normalized.timerName = timer.name;
+        log.error(
+          normalized,
+          timerSchedulerLogContext({
+            operation: normalized.operation!,
+            timerId: timer.id,
+            runId: run.id,
+            timerName: timer.name,
+          }),
         );
         await withQueryAttributionAsync("timer-scheduler", () =>
           timerStorage.disableEphemeralOneTimeForScheduler(timer),
@@ -1070,7 +1243,24 @@ class TimerScheduler {
         `completed "${timer.name}" runId=${run.id} duration=${durationMs}ms`,
       );
     } else if (result.outcome === "failed") {
-      log.error(`error "${timer.name}" runId=${run.id}:`, result.error);
+      const error = normalizeTimerSchedulerError(
+        result.error,
+        "handler_failed",
+        "TIMER_HANDLER_FAILED",
+        `error "${timer.name}" runId=${run.id}`,
+      );
+      error.timerId = timer.id;
+      error.runId = run.id;
+      error.timerName = timer.name;
+      log.error(
+        error,
+        timerSchedulerLogContext({
+          operation: error.operation!,
+          timerId: timer.id,
+          runId: run.id,
+          timerName: timer.name,
+        }),
+      );
     } else if (result.outcome === "degraded") {
       log.warn(`degraded "${timer.name}" runId=${run.id}: ${result.reason}`);
     } else {
@@ -1215,9 +1405,18 @@ export function computeNextRun(
         return null;
     }
   } catch (err: unknown) {
+    const error = normalizeTimerSchedulerError(
+      err,
+      "compute_next_run",
+      "TIMER_COMPUTE_NEXT_RUN_FAILED",
+      "computeNextRun error",
+    );
     log.error(
-      `computeNextRun error:`,
-      err instanceof Error ? err.message : String(err),
+      error,
+      timerSchedulerLogContext({
+        operation: error.operation!,
+        scheduleId: schedule.id,
+      }),
     );
     return null;
   }
@@ -1293,9 +1492,18 @@ export function computePreviousRun(
         return null;
     }
   } catch (err: unknown) {
+    const error = normalizeTimerSchedulerError(
+      err,
+      "compute_previous_run",
+      "TIMER_COMPUTE_PREVIOUS_RUN_FAILED",
+      "computePreviousRun error",
+    );
     log.error(
-      `computePreviousRun error:`,
-      err instanceof Error ? err.message : String(err),
+      error,
+      timerSchedulerLogContext({
+        operation: error.operation!,
+        scheduleId: schedule.id,
+      }),
     );
     return null;
   }
