@@ -263,6 +263,13 @@ function applyClaudeCliUsage(usage: ClaudeCliTokenUsage): { inputTokens: number;
   };
 }
 
+function classifyCliAdapterFailure(rawError: string): string {
+  if (/you(?:'|’)?ve hit your (?:weekly|daily) limit|usage limit|rate limit.*resets?/i.test(rawError)) {
+    return "CLAUDE_CLI_USAGE_LIMIT";
+  }
+  return "CLAUDE_CLI_PROVIDER_FAILED";
+}
+
 export function emitCliSubprocessCrash(ctx: CliCrashContext): void {
   const probe = probeCliRuntime();
   const { exitCode, signal } = parseExitCodeAndSignal(ctx.rawError || "");
@@ -298,7 +305,10 @@ export function emitCliSubprocessCrash(ctx: CliCrashContext): void {
     `subprocess_stderr_tail="${tail}"`,
     `last_sdk_error_raw="${raw}"`,
   ];
-  log.error(parts.join(" "));
+  const error = new Error("Claude CLI provider execution failed.");
+  error.name = "ClaudeCliProviderError";
+  (error as Error & { code: string }).code = classifyCliAdapterFailure(ctx.rawError);
+  log.error(error, parts.join(" "));
 }
 
 function friendlyCliError(raw: string, model: string): string {

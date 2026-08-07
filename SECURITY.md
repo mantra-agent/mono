@@ -1,3 +1,11 @@
+<!-- 2026-08-07 Claude CLI usage-limit classification repair:
+- Assets/data: sanitized Claude subscription failure text (S1 operational metadata), provider/model/run identifiers, bounded subprocess diagnostics, and aggregate error fingerprints.
+- Flow/boundary: untrusted Claude Agent SDK result -> `cli-sdk-adapter.ts` provider boundary -> redacting logger -> application-error aggregate.
+- Failure/threat: the SDK truthfully returned a weekly usage-limit result, but the adapter emitted only a structured text line. Canonical telemetry therefore discarded the provider condition and grouped five expected quota failures as `cli-sdk-adapter:Error:UNCLASSIFIED` (STRIDE repudiation/availability analogue; OBS-01).
+- Controls/owner: the Claude CLI adapter now attaches a real `ClaudeCliProviderError` with stable `CLAUDE_CLI_USAGE_LIMIT` only for the exact bounded usage/reset signature; all other terminal adapter/provider failures receive truthful `CLAUDE_CLI_PROVIDER_FAILED`. Existing redaction, bounded raw/stderr fields, provider audit, user-facing error, and failure semantics remain unchanged. Message text never enters aggregate identity. Owner: Model Runtime / Claude CLI adapter. Severity: medium. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: provider wording may evolve; unmatched failures remain visible under the generic provider code rather than collapsing to UNCLASSIFIED. Revert the adapter and this record to restore string-only aggregate behavior.
+-->
+
 <!-- 2026-08-07 ModelClient upstream-error HTTP classification repair:
 - Assets/data: sanitized external-provider failure envelopes (S1 operational metadata), provider/model identifiers, HTTP status, allowlisted provider codes, and aggregate error fingerprints.
 - Flow/boundary: untrusted OpenAI subscription response -> `model-client.ts` HTTP failure normalization -> bounded retry/fallback -> structured telemetry.
