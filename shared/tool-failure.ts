@@ -70,7 +70,7 @@ export function inferFailureKind(text: unknown): ToolFailureKind | null {
 
   // Permission — authority walls, forbidden actions, revoked/denied access.
   if (
-    /\b(?:access denied|permission denied|denied|forbidden|unauthorized|not allowed|not permitted|authentication failed)\b/.test(
+    /\b(?:access denied|permission denied|denied|forbidden|unauthorized|not allowed|not permitted|authentication failed|no_active_client)\b/.test(
       t,
     )
   ) {
@@ -86,9 +86,14 @@ export function inferFailureKind(text: unknown): ToolFailureKind | null {
     return "transient";
   }
 
+  // Internal — true defects that are not caller-correctable.
+  if (/\bis not a function\b|\bcannot read propert|\bundefined is not|\bnull is not an object\b/.test(t)) {
+    return "internal";
+  }
+
   // Input — caller-correctable argument/target problems.
   if (
-    /\b(?:missing|required|invalid|must be|not found|does not exist|doesn't exist|no such|unknown id|already exists|malformed|out of range)\b/.test(
+    /\b(?:missing|required|invalid|must be|not found|does not exist|doesn't exist|no such|unknown (?:id|action|tool)|already exists|malformed|out of range|old_string|title must)\b/.test(
       t,
     )
   ) {
