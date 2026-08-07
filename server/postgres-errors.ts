@@ -7,8 +7,29 @@ const RECOVERABLE_POSTGRES_CONNECTION_CODES = new Set([
 const RECOVERABLE_POSTGRES_CONNECTION_MESSAGE =
   /terminating connection|connection terminated|server closed the connection unexpectedly|connection reset by peer|ECONNRESET/i;
 
+/** node-postgres pool acquisition timeout (connectionTimeoutMillis). */
+const POOL_ACQUIRE_TIMEOUT_MESSAGE =
+  /timeout exceeded when trying to connect|Connection terminated due to connection timeout/i;
+
+/**
+ * True when node-postgres failed while acquiring a pool client, before any
+ * application SQL ran. Distinct from statement timeout (57014) and from
+ * mid-query disconnects.
+ */
+export function isPoolAcquireTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (POOL_ACQUIRE_TIMEOUT_MESSAGE.test(error.message)) return true;
+  const code = typeof (error as Error & { code?: unknown }).code === "string"
+    ? (error as Error & { code: string }).code
+    : "";
+  // node-pg may surface connect races as ETIMEDOUT; require a connection-shaped
+  // message so unrelated timeouts stay out of this class.
+  return code === "ETIMEDOUT" && /connect|connection|pool/i.test(error.message);
+}
+
 export function isRecoverablePostgresConnectionError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (isPoolAcquireTimeoutError(error)) return true;
   const code = typeof (error as Error & { code?: unknown }).code === "string"
     ? (error as Error & { code: string }).code
     : "";
