@@ -2,7 +2,7 @@ import { createHash } from "crypto";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { createLogger } from "../log";
-import { requireCurrentUserPrincipal } from "../principal-context";
+import { requireCurrentPrincipal, requireCurrentUserPrincipal } from "../principal-context";
 import { getPostgresErrorDetails } from "../postgres-errors";
 import {
   combineWithVisibleScope,
@@ -488,7 +488,7 @@ export async function executeVnextClaimTitleTwinSearch(
 export class MemoryVnextClaimStorage {
 
   async backfillOwnerScopedContentHashes(limit = 250): Promise<number> {
-    const principal = requireCurrentUserPrincipal();
+    const principal = requireCurrentPrincipal();
     if (principal.actorType !== "system") {
       throw new Error("vNext content-hash backfill requires a system principal");
     }
