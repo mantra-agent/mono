@@ -52,14 +52,27 @@ export async function seedFtuePrioritiesForUser(principal: UserPrincipal): Promi
 }
 
 export async function completeFtueSayHello(principal: UserPrincipal): Promise<void> {
-  await runWithPrincipal(principal, async () => {
-    const date = today();
-    const result = await goalsService.markPriorityStatus(FTUE_SAY_HELLO_TITLE, "completed", "today", date);
-    if ("updated" in result && !result.alreadySet) {
-      await publishGoalMutation("mark_status", FTUE_SAY_HELLO_TITLE, result.updated.id);
-      log.log("completed FTUE Say hello", { userId: principal.userId, date });
+  try {
+    await runWithPrincipal(principal, async () => {
+      const date = today();
+      const result = await goalsService.markPriorityStatus(FTUE_SAY_HELLO_TITLE, "completed", "today", date);
+      if ("updated" in result && !result.alreadySet) {
+        await publishGoalMutation("mark_status", FTUE_SAY_HELLO_TITLE, result.updated.id);
+        log.log("completed FTUE Say hello", { userId: principal.userId, date });
+      }
+    });
+  } catch (err) {
+    // FTUE completion is best-effort side work after a durable user message.
+    // Never fail chat acceptance because priority migration/list threw.
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (!(error as Error & { code?: string }).code) {
+      (error as Error & { code?: string }).code = "FTUE_SAY_HELLO_FAILED";
     }
-  });
+    log.warn("completeFtueSayHello failed", error, {
+      operation: "complete_ftue_say_hello",
+      userId: principal.userId,
+    });
+  }
 }
 
 export async function completeFtueFirstGoalAndAddGoalPriority(principal: UserPrincipal, goal: Pick<Goal, "id" | "shortName">): Promise<void> {

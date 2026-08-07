@@ -88,16 +88,41 @@ export class GoalStorage {
     const principal = requireCurrentUserPrincipal();
     const vaultId = requestedVaultId ?? principal.activeVaultId ?? principal.visibleVaultIds[0];
     if (!vaultId) {
-      throw new Error("A Goal must belong to a Vault");
+      const error = new Error("A Goal must belong to a Vault") as Error & { code?: string };
+      error.code = "GOAL_VAULT_REQUIRED";
+      throw error;
     }
     if (
       principal.actorType !== "system"
       && principal.visibleVaultIds.length > 0
       && !principal.visibleVaultIds.includes(vaultId)
     ) {
-      throw new Error("Vault access denied");
+      const error = new Error("Vault access denied") as Error & { code?: string };
+      error.code = "GOAL_VAULT_ACCESS_DENIED";
+      throw error;
     }
     return vaultId;
+  }
+
+  /**
+   * Read-path backfill for legacy goals missing vaultId.
+   * Never throws: list/get migration must not abort callers when the active
+   * Vault is temporarily outside the visible set. Prefer active when visible,
+   * else the first visible Vault; leave unset when none are available.
+   */
+  private defaultVaultIdForMigration(): string | null {
+    const principal = requireCurrentUserPrincipal();
+    if (principal.actorType === "system") {
+      return principal.activeVaultId ?? principal.visibleVaultIds[0] ?? null;
+    }
+    const visible = principal.visibleVaultIds ?? [];
+    if (visible.length === 0) {
+      return principal.activeVaultId ?? null;
+    }
+    if (principal.activeVaultId && visible.includes(principal.activeVaultId)) {
+      return principal.activeVaultId;
+    }
+    return visible[0] ?? null;
   }
 
   /** Read-path visibility: hidden Vault ownership is retained, not rewritten. */
@@ -146,10 +171,14 @@ export class GoalStorage {
 
     // Preserve existing vault ownership even when that Vault is currently hidden.
     // Visibility is enforced at list/get boundaries. Only missing vaultId is
-    // backfilled onto the principal's active/visible Vault.
+    // backfilled onto a currently assignable Vault — never via mutation-path
+    // resolveVaultId, which can throw when active is outside the visible set.
     if (!goal.vaultId) {
-      goal.vaultId = this.resolveVaultId();
-      dirty = true;
+      const vaultId = this.defaultVaultIdForMigration();
+      if (vaultId) {
+        goal.vaultId = vaultId;
+        dirty = true;
+      }
     }
 
     // Remove deprecated fields
