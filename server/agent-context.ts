@@ -12,6 +12,18 @@ import { getContextPressureThresholds } from "./context-budget";
 
 const log = createLogger("AgentContext");
 
+type AgentContextErrorCode =
+  | "CONTEXT_COMPACTION_ARCHIVE_FAILED"
+  | "CONTEXT_COMPACTION_FAILED"
+  | "CONTEXT_COMPACTION_STATE_PERSIST_FAILED";
+
+function attributableContextError(error: unknown, code: AgentContextErrorCode): Error & { code: string } {
+  const normalized = error instanceof Error ? error : new Error(String(error));
+  const coded = normalized as Error & { code: string };
+  if (!/^[A-Z][A-Z0-9_]{1,48}$/.test(coded.code ?? "")) coded.code = code;
+  return coded;
+}
+
 export type ContextProfile = "chat" | "voice" | "background";
 
 export interface TokenBudget {
@@ -336,7 +348,11 @@ export async function runBetweenTurnCompaction(
         failureReason: reason,
       });
       emitActivity({ operationId, status: "error" });
-      log.error(`betweenTurnCompaction: exact archive unavailable; preserving active history sessionId=${sessionId} operationId=${operationId}`);
+      log.error(
+        "betweenTurnCompaction.exact_archive_unavailable",
+        attributableContextError(reason, "CONTEXT_COMPACTION_ARCHIVE_FAILED"),
+        { operation: "between_turn_compaction.archive", sessionId, operationId },
+      );
       return { outcome: "archive_failed", operationId, reason };
     }
     await transitionCompactionOperation(operationId, operationAttempt, "summarizing", {
@@ -537,11 +553,19 @@ export async function runBetweenTurnCompaction(
           failureReason: reason.slice(0, 1000),
         });
       } catch (transitionError) {
-        log.error(`betweenTurnCompaction: terminal state persistence failed operationId=${operationId} error=${transitionError instanceof Error ? transitionError.message : String(transitionError)}`);
+        log.error(
+          "betweenTurnCompaction.terminal_state_persistence_failed",
+          attributableContextError(transitionError, "CONTEXT_COMPACTION_STATE_PERSIST_FAILED"),
+          { operation: "between_turn_compaction.persist_terminal_state", operationId },
+        );
       }
     }
     if (operationId) emitActivity({ operationId, status: "error" });
-    log.error(`betweenTurnCompaction: failed sessionId=${sessionId} operationId=${operationId ?? "none"} error=${reason}`);
+    log.error(
+      "betweenTurnCompaction.failed",
+      attributableContextError(err, "CONTEXT_COMPACTION_FAILED"),
+      { operation: "between_turn_compaction", sessionId, operationId: operationId ?? null },
+    );
     return { outcome: "failed", operationId, reason };
   }
 }
