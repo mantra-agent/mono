@@ -9,6 +9,7 @@ export type SecretSection =
   | "plaid"
   | "quickbooks"
   | "google"
+  | "box"
   | "github"
   | "oura"
   | "railway"
@@ -51,6 +52,14 @@ export const SECRET_CATALOG: SecretSpec[] = [
     section: "google",
     label: "Google Picker API Key",
     description: "Browser key for the Google Picker SDK (Drive file chooser). Distinct from the OAuth client ID.",
+  },
+  { name: "BOX_CLIENT_ID", section: "box", label: "Box OAuth Client ID", description: "Client ID from the Box Developer Console OAuth 2.0 app." },
+  { name: "BOX_CLIENT_SECRET", section: "box", label: "Box OAuth Client Secret", description: "Client secret from the Box Developer Console OAuth 2.0 app. Store here — not in Railway." },
+  {
+    name: "BOX_REDIRECT_URI",
+    section: "box",
+    label: "Box OAuth Redirect URI",
+    description: "Optional exact callback override. Leave blank to use https://{host}/api/box/oauth/callback for the current host.",
   },
   { name: "EXPO_ACCESS_TOKEN", section: "expo", label: "Expo Access Token", description: "Personal access token from expo.dev/accounts/[account]/settings/access-tokens. Enables EAS builds, project linking, and deployment status." },
   { name: "EXPO_PUBLIC_SENTRY_DSN", section: "sentry", label: "Sentry DSN", description: "Client-safe DSN used by the mobile app to send crash reports to Sentry." },

@@ -388,6 +388,67 @@ export async function registerIntegrationsRoutes(app: Express) {
 
   // === Connected Accounts & Permissions ===
 
+  app.get("/api/box/status", requireAuth, async (_req, res) => {
+    const { boxOAuthConfigured } = await import("../box-oauth");
+    res.json({ oauthConfigured: boxOAuthConfigured() });
+  });
+
+  app.post("/api/box/oauth/start", requireAuth, async (req, res) => {
+    try {
+      const vaultId = String(req.body?.vaultId || "");
+      if (!vaultId || !req.principal) return res.status(400).json({ error: "vaultId is required" });
+      const { getBoxAuthUrl } = await import("../box-oauth");
+      res.json({ url: await getBoxAuthUrl(vaultId, req.principal, req.get("host") || undefined) });
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/box/oauth/callback", requireAuth, async (req, res) => {
+    try {
+      const code = String(req.query.code || "");
+      const state = String(req.query.state || "");
+      if (!code || !state || !req.principal) return res.status(400).send("Missing Box OAuth code or state");
+      const { handleBoxOAuthCallback } = await import("../box-oauth");
+      const account = await handleBoxOAuthCallback(code, state, req.principal, req.get("host") || undefined);
+      const { driveResourceService } = await import("../drive-resource-service");
+      const connected = await (await import("../connected-accounts")).getAccount(account.accountId);
+      if (!connected?.vaultId) throw new Error("Box Vault binding unavailable");
+      await driveResourceService.bind({
+        vaultId: connected.vaultId,
+        connectedAccountId: account.accountId,
+        provider: "box",
+        providerFileId: "0",
+        name: "Box",
+        mimeType: "application/vnd.box.folder",
+        resourceType: "folder",
+        webViewLink: "https://app.box.com/folder/0",
+      });
+      res.redirect("/integrations?box=connected");
+    } catch (error: any) {
+      log.error("Box OAuth callback failed", { error: error.message });
+      res.redirect(`/integrations?box=error&message=${encodeURIComponent(error.message)}`);
+    }
+  });
+
+  app.delete("/api/box/accounts/:id", requireAuth, async (req, res) => {
+    try {
+      const { getAccount, deleteAccount } = await import("../connected-accounts");
+      const account = await getAccount(req.params.id);
+      if (!account || account.provider !== "box") return res.status(404).json({ error: "Box account not found" });
+      const confirmation = String(req.body?.confirmation || "");
+      if (confirmation !== (account.email || account.label)) {
+        return res.status(400).json({ error: "Account confirmation does not match" });
+      }
+      const { revokeBoxAccount } = await import("../box-oauth");
+      await revokeBoxAccount(req.params.id);
+      await deleteAccount(req.params.id);
+      res.json({ removed: true });
+    } catch (error: any) {
+      res.status(error.status || 500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/connected-accounts", requireAuth, async (req, res) => {
     try {
       // Runs under the request principal: each user sees only their own connected accounts.

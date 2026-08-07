@@ -1,3 +1,11 @@
+<!-- 2026-08-06 Box Files OAuth connector:
+- Assets/data: Box OAuth authorization codes, rotating access/refresh tokens (S3 credentials), Box account identity, vault-scoped file/folder pointers, and S2 user file content/metadata.
+- Flow/boundary: authenticated Integrations UI -> one-time principal/account/vault-bound OAuth transaction -> exact Box redirect -> encrypted connected_accounts token storage -> system-minted owner token inside FilesApi -> Box transport adapter. Box responses remain untrusted external input. App credentials (BOX_CLIENT_ID / BOX_CLIENT_SECRET / optional BOX_REDIRECT_URI) live in the Secrets page / secrets-store, not Railway env.
+- Threats: CSRF/account substitution or replay at callback (spoofing/elevation), token disclosure or stale refresh rotation (information disclosure), cross-vault account/bind access (elevation), and ambient Box crawl beyond explicit bindings (information disclosure).
+- Controls/owner: IntegrationsRoutes and google-oauth-transactions own authenticated, hashed, expiring, single-use state bound to user/account/vault/provider; ConnectedAccounts owns encrypted token persistence and principal scope; FilesApi remains the single vault/grant/recursive-whitelist authorization boundary; BoxAdapter is transport-only; callback creates only an explicit vault-scoped root-folder bind; disconnect requires account confirmation and attempts provider revocation before local deletion. OAuth secrets remain in secrets-store and tokens are never returned to the client. Severity: high trust boundary. SLA: release-blocking. Status: implemented in source, pending build/merge.
+- Residual: Box tenant admins control upstream item access and may revoke tokens asynchronously; revocation endpoint failure is currently best-effort during disconnect, while local deletion still removes Mantra access. Rollback: clear BOX_CLIENT_ID and BOX_CLIENT_SECRET in Secrets, then revert the connector PR; existing bindings fail closed without tokens.
+-->
+
 <!-- 2026-08-06 Document-store chat Vault membership recovery residual:
 - Assets/data: user-owned chat documents and their account/Vault ownership (S2 conversation data and S1 ownership metadata).
 - Flow/boundary: legacy document_store_documents rows -> boot-time vault schema convergence -> validated database ownership constraint.
