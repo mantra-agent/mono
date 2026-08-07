@@ -132,6 +132,14 @@ export const businessPlanStorage = {
     })];
   },
 
+  async get(id: string): Promise<BusinessPlan | null> {
+    const principal = requireCurrentUserPrincipal();
+    const [row] = await db.select().from(businessPlans)
+      .where(combineWithVisibleScope(principal, planScope, eq(businessPlans.id, id)))
+      .limit(1);
+    return row ?? null;
+  },
+
   async create(input: BusinessPlanCreate): Promise<BusinessPlan> {
     const principal = requireCurrentUserPrincipal();
     const vaultId = input.vaultId ?? principal.activeVaultId ?? principal.visibleVaultIds[0];
@@ -167,6 +175,16 @@ export const businessPlanStorage = {
       .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id)))
       .returning();
     return updated;
+  },
+
+  async remove(id: string): Promise<void> {
+    const principal = requireCurrentUserPrincipal();
+    const [current] = await db.select().from(businessPlans)
+      .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id)))
+      .limit(1);
+    assertWritable(principal, current as unknown as Record<string, unknown> | undefined, "Business Plan");
+    await db.delete(businessPlans)
+      .where(combineWithWritableScope(principal, planScope, eq(businessPlans.id, id)));
   },
 
   async mutateInitiative(id: string, projectId: number, operation: "add" | "remove"): Promise<BusinessPlan> {
