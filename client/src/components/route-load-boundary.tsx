@@ -3,6 +3,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ErrorInfo,
@@ -217,14 +218,32 @@ function RouteLoadCycle({ routeKey, children }: RouteLoadBoundaryProps) {
   const [manualAttempt, setManualAttempt] = useState(0);
   const [recoveryKey, setRecoveryKey] = useState(0);
   const readyRef = useRef(false);
+  const delayedTimerRef = useRef<number | null>(null);
+  const failedTimerRef = useRef<number | null>(null);
   const routeLabel = getRouteLabel(routeKey);
 
-  useEffect(() => {
+  const clearLoadTimers = useCallback(() => {
+    if (delayedTimerRef.current !== null) {
+      window.clearTimeout(delayedTimerRef.current);
+      delayedTimerRef.current = null;
+    }
+    if (failedTimerRef.current !== null) {
+      window.clearTimeout(failedTimerRef.current);
+      failedTimerRef.current = null;
+    }
+  }, []);
+
+  // Arm before paint / child useEffect. On warm lazy chunks Suspense does not
+  // suspend, so RouteReadyObserver's effect would otherwise mark ready and then
+  // this cycle's useEffect would reset readyRef and leave a false 15s failure
+  // armed over an already-visible page (Integrations/Memory/etc.).
+  useLayoutEffect(() => {
     readyRef.current = false;
     setPhase("loading");
     startActivity("route");
+    clearLoadTimers();
 
-    const delayedTimer = window.setTimeout(() => {
+    delayedTimerRef.current = window.setTimeout(() => {
       if (readyRef.current) return;
       // Delayed is status only. Remounting via recoveryKey wiped local page
       // state (open modals, drafts, in-flight UI) while the route was still live.
@@ -236,7 +255,7 @@ function RouteLoadCycle({ routeKey, children }: RouteLoadBoundaryProps) {
       setPhase("delayed");
     }, DELAYED_ROUTE_LOAD_MS);
 
-    const failedTimer = window.setTimeout(() => {
+    failedTimerRef.current = window.setTimeout(() => {
       if (readyRef.current) return;
       log.error("route load budget exhausted", {
         routeKey,
@@ -247,18 +266,19 @@ function RouteLoadCycle({ routeKey, children }: RouteLoadBoundaryProps) {
     }, FAILED_ROUTE_LOAD_MS);
 
     return () => {
-      window.clearTimeout(delayedTimer);
-      window.clearTimeout(failedTimer);
+      clearLoadTimers();
       endActivity("route");
     };
-  }, [endActivity, manualAttempt, routeKey, startActivity]);
+  }, [clearLoadTimers, endActivity, manualAttempt, routeKey, startActivity]);
 
   const handleReady = useCallback(() => {
+    if (readyRef.current) return;
     readyRef.current = true;
+    clearLoadTimers();
     setPhase("ready");
     endActivity("route");
     completeNavigation(routeKey);
-  }, [completeNavigation, endActivity, routeKey]);
+  }, [clearLoadTimers, completeNavigation, endActivity, routeKey]);
 
   const handleRetry = useCallback(() => {
     setRecoveryKey((value) => value + 1);
