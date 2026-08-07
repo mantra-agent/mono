@@ -1,3 +1,11 @@
+<!-- 2026-08-06 Scan News curate phase config repair:
+- Assets/data: principal-owned landscape signals and curation decisions (S2), skill run config/admission metadata (S1), AutonomousSkillRunner error aggregates.
+- Flow/boundary: Scan News pipeline Timer -> runLandscapeScan -> executeAutonomousSkillRun("curate") config-resolve -> skill process/tools -> news.batch_curate handoff buffer -> scan applies decisions under the owning principal.
+- Failure/threat: curate lacked a code-owned SkillRunConfig, so every scan nested run crossed dynamic DB config-resolve. Any lookup/principal/storage fault became `phase=config-resolve FAILED` and tokenized to `SKILL_CURATE_PHASE_CONFIG`, forcing fallback curation and noisy unclassified aggregates (availability/repudiation; OBS-01).
+- Controls/owner: Agent Runtime / News. `curate` now has an authoritative SKILL_RUN_CONFIGS entry (full/work/realtime/10m) so pipeline admission no longer depends on dynamic DB config-resolve; process text remains DB-owned via getSkillProcess. Residual dynamic config-resolve failures emit stable `SKILL_CONFIG_RESOLVE_FAILED` with the Error object rather than free-form message tokens. No new tool authority, principal bypass, or cross-user signal write path. Severity: medium. SLA: immediate. Status: repaired in source pending build/merge and Issue 1786061326874 resolution.
+- Residual/rollback: if the global curate skill row is missing, process load still fails closed after config resolve; revert this delta to restore DB-only config-resolve for curate.
+-->
+
 <!-- 2026-08-06 Scan News undefined-status repair:
 - Assets/data: principal-owned landscape signals (S2 external-feed metadata), global URL fingerprints, scan-run diagnostics, and Timer pipeline outcomes.
 - Flow/boundary: Scan News pipeline Timer / news.scan tool -> runLandscapeScan -> signalStorage.upsertSignal (global fingerprint unique) -> principal-scoped visible/writable refresh -> surface decision via item.status.
