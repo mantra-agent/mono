@@ -232,7 +232,7 @@ export const TOOL_ICON_MAP: Record<string, string> = {
   settings: "SlidersHorizontal",
   code: "Code",
   docx: "FileText",
-  business_plans: "ChartNoAxesCombined",
+  business: "ChartNoAxesCombined",
   goals: "Target",
   question: "CircleHelp",
   phone_call: "Phone",

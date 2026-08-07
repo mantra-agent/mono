@@ -2227,7 +2227,7 @@ async function resolveTools(request: ContextRequest): Promise<string> {
         return "ops";
       }
       if (["memory", "knowledge", "finance", "web"].includes(c) ||
-          ["finance", "news", "notion", "companies", "jobs", "business_plans", "theses", "rules", "decisions", "scenarios", "indexed_content", "files", "docx"].includes(name)) {
+          ["finance", "news", "notion", "companies", "jobs", "business", "theses", "rules", "decisions", "scenarios", "indexed_content", "files", "docx"].includes(name)) {
         return "data";
       }
       if (["code", "file"].includes(c) ||
