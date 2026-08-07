@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Database, FunctionSquare, Loader2, Plus, PenLine } from "lucide-react";
+import { Database, FunctionSquare, Loader2, Plus, PenLine, Trash2 } from "lucide-react";
 import {
   METRIC_ADAPTER_KINDS,
   METRIC_DIRECTIONS,
@@ -22,6 +22,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { HierarchySearchInput } from "@/components/hierarchy-search-input";
 import {
@@ -144,9 +155,16 @@ function RecordSampleForm({ metric }: { metric: Metric }) {
   );
 }
 
-function MetricTreeRow({ metric }: { metric: Metric }) {
+function MetricTreeRow({
+  metric,
+  onRequestDelete,
+}: {
+  metric: Metric;
+  onRequestDelete: (metric: Metric) => void;
+}) {
   const AdapterIcon = ADAPTER_ICON[metric.adapterKind] ?? Database;
   const sample = metric.latestSample;
+  const isManual = metric.adapterKind === "manual";
 
   return (
     <ProfileTreeRow
@@ -156,8 +174,28 @@ function MetricTreeRow({ metric }: { metric: Metric }) {
       showEmpty
       mobileLayout="inline"
       valueLayout="compact"
+      menuVisibility="hover"
       testId={`metric-row-${metric.slug}`}
       expandedContent={<RecordSampleForm metric={metric} />}
+      menuContent={
+        isManual ? (
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            onSelect={(event) => {
+              event.preventDefault();
+              onRequestDelete(metric);
+            }}
+            data-testid={`metric-menu-delete-${metric.slug}`}
+          >
+            <Trash2 className="mr-2 h-3.5 w-3.5" />
+            Delete
+          </DropdownMenuItem>
+        ) : (
+          // Internal/expression rows keep the SessionMenu ellipsis with a blank
+          // submenu until actions are defined.
+          <span data-testid={`metric-menu-empty-${metric.slug}`} />
+        )
+      }
     >
       <span className={cn("whitespace-nowrap font-mono", !sample && "text-muted-foreground")}>
         {sample ? formatValue(sample.value, sample.unit) : "—"}
@@ -254,10 +292,33 @@ function CreateMetricDialog() {
 }
 
 export default function BusinessMetricsPage() {
+  const { toast } = useToast();
   const [query, setQuery] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Metric | null>(null);
 
   const { data, isLoading } = useQuery<MetricsResponse>({
     queryKey: ["/api/business/metrics"],
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (metric: Metric) => {
+      const res = await apiRequest("DELETE", `/api/business/metrics/${metric.id}`);
+      return res.json();
+    },
+    onSuccess: (_result, metric) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/business/metrics"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/business/kpis"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/business/kpis/standing-scores"] });
+      toast({ title: "Metric deleted", description: metric.name });
+      setDeleteTarget(null);
+    },
+    onError: (error: unknown) => {
+      toast({
+        title: "Failed to delete metric",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    },
   });
 
   const metrics = useMemo(() => {
@@ -306,12 +367,49 @@ export default function BusinessMetricsPage() {
                 {section.label}
               </HierarchySectionHeader>
               {section.items.map((metric) => (
-                <MetricTreeRow key={metric.id} metric={metric} />
+                <MetricTreeRow
+                  key={metric.id}
+                  metric={metric}
+                  onRequestDelete={setDeleteTarget}
+                />
               ))}
             </div>
           ))}
         </div>
       )}
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete metric</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget
+                ? `Delete “${deleteTarget.name}” and its samples? This cannot be undone.`
+                : "Delete this metric and its samples? This cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-metric-delete-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!deleteTarget || deleteMutation.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (deleteTarget) deleteMutation.mutate(deleteTarget);
+              }}
+              data-testid="button-metric-delete-confirm"
+            >
+              {deleteMutation.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
