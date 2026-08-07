@@ -144,6 +144,15 @@
 - Residual risk: files selected before this repair were never granted to the OAuth app and must be explicitly re-selected; Mantra cannot manufacture that user grant server-side.
 -->
 
+<!-- 2026-08-06 DriveSection error-context delta:
+- Assets/data: connected-account identity, Vault identity, internal Drive resource IDs, Google Picker access tokens, provider file IDs/names/URLs, and document contents.
+- Flow/boundary: authenticated Drive UI -> `/api/drive/*` -> client `createLogger` -> authenticated client-log ingestion and aggregate telemetry.
+- Threats: STRIDE information disclosure if tokens or document metadata enter telemetry; repudiation/availability if list, bind, unbind, or Picker failures collapse into one unclassified error without operation or correlation context.
+- Controls/owner: Core Reliability normalizes unknown throws into `Error`, assigns stable per-operation codes, and logs only operation, provider, internal Vault/account/resource correlation, batch count, HTTP status, and pathname. Provider file IDs, names, URLs, payloads, tokens, and document contents are excluded. Existing route authorization remains authoritative.
+- Evidence: `client/src/components/integrations/drive-section.tsx`; historical fingerprint `137dde067eafa965342dcc16b83d7475e4540ef6af43636364f9af09445d47c6` contained four `DriveSection:Error:UNCLASSIFIED` occurrences with no producer context.
+- Severity/owner/SLA/status: medium observability and privacy; Core Reliability; immediate; repaired in source pending build, merge, deployment, and recurrence evidence. Residual risk: bounded internal correlation IDs remain in ephemeral operational logs and browser delivery can still be lost before flush.
+-->
+
 <!-- 2026-08-06 Drive API policy classification delta:
 - Assets/data: Google OAuth access tokens, browser-safe Picker key, user-selected Drive file metadata, connected-account identity, and Vault-scoped Drive bindings.
 - Flow/boundary: authenticated SPA -> global API policy -> `/api/drive/*` route -> principal-scoped connected-account token refresh / Vault-gated Drive resource service -> Google Picker or Files API.
