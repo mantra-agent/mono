@@ -149,8 +149,8 @@ export function classifyDiscoveryEligibility(mimeType: string | null | undefined
     return { eligible: false, unsupported: true };
   }
   if (m === "application/pdf") {
-    // PDF text extraction is not yet admitted into the semantic path.
-    return { eligible: false, unsupported: true };
+    // PDF.js extraction is owned by pdf-service and reused by the drive_file adapter.
+    return { eligible: true, unsupported: false };
   }
   if (m === "application/zip" || m === "application/x-zip-compressed") {
     return { eligible: false, unsupported: true };

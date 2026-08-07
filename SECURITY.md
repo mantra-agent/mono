@@ -1,3 +1,11 @@
+<!-- 2026-08-07 Drive PDF semantic-index eligibility repair:
+- Assets/data: vault-bound Drive PDF bytes and extracted text (S2), mounted-root bind identity, provider file IDs/fingerprints, vNext source queue rows, claims, and provenance.
+- Flow/boundary: recursive Files discovery -> eligible indexed_file_source -> owner-fenced memory Runtime -> semantic-source adapter -> FilesApi authorization/read -> canonical pdf-service PDF.js extraction -> vNext applyObservation. External PDF bytes remain untrusted input.
+- Failure/threat: discovery classified every application/pdf file as unsupported even though canonical bounded PDF extraction existed, producing availability/integrity loss; admitting PDFs without mounted-root identity could instead bypass descendant authorization or make legitimate descendants inaccessible (STRIDE elevation/information-disclosure/DoS; FILE-01/DATA-02).
+- Controls/owner: Files indexing admits only verified application/pdf MIME into this path; the adapter loads the durable root_drive_resource_id, re-enters pdf-service with vault/provider/file/root coordinates, and pdf-service reuses FilesApi readAuthorizedBytes plus MIME/magic-byte verification, 25MB/200-page/400k-character caps, disabled eval/worker behavior, and owner principal scope. vNext remains the sole graph mutation boundary. Owner: Files + Memory. Severity: high trust boundary. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: scanned/image-only PDFs may yield no semantic text and remain unsupported after extraction; encrypted/malformed/over-cap PDFs fail closed. Revert the classifier, adapter, AGENTS, and this record to restore PDF rejection without changing stored source files or claims.
+-->
+
 <!-- 2026-08-07 Claude CLI usage-limit classification repair:
 - Assets/data: sanitized Claude subscription failure text (S1 operational metadata), provider/model/run identifiers, bounded subprocess diagnostics, and aggregate error fingerprints.
 - Flow/boundary: untrusted Claude Agent SDK result -> `cli-sdk-adapter.ts` provider boundary -> redacting logger -> application-error aggregate.
