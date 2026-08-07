@@ -538,7 +538,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   people: {
-    description: "Manage personal contacts — query, search, get/get_many, agenda, notes, interactions, create/update, safe merge, safe rename (update with newName + expectedCurrentName), primary email, and Person Vault memberships; plus the contact-import queue (scan/list/search candidates, add/merge/skip/undo decisions, preview/apply batches). See the action enum for the full list. Use quickSummary for the concise current profile, notes for untimed context/evidence/history, and an interaction for time-bound information. set_vault_memberships replaces the full set (needs confirmReplace=true and at least one Vault). Use canonical @person:id syntax to link to people; legacy [person:id] is accepted during migration.",
+    description: "Personal contacts and import queue. Prefer quickSummary for current profile, notes for untimed evidence, interactions for time-bound events. set_vault_memberships is full-set replace (confirmReplace=true). Canonical @person:id.",
     category: "communication",
 
     parameters: {
@@ -645,7 +645,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   library: {
-    description: "Manage standard Library pages and Notes scratchpad. Anything the user may share externally, including drafts, specs, research, bug reports, and analysis, belongs in a Library page rather than scratch. Pages retain their Vault and parent hierarchy. Use 'browse_tree' or 'tree' to see the full page hierarchy grouped by Vault as an indented outline, 'list_vaults' to enumerate the account's Vaults (id, name, page count, visibility), and an optional vaultId filter on list/search/browse_tree to scope to one Vault; reads report each page's Vault. Use canonical @page:slug syntax in messages to link to library pages. Legacy [page:slug] syntax is accepted during migration. Prefer edit_library_page over update_library_page for targeted changes to existing page content — it avoids re-transmitting the entire document.",
+    description: "Vault-scoped Library pages and Notes. Shareable work belongs here, not scratch. Prefer edit_library_page for targeted edits; browse_tree/list_vaults for hierarchy. Canonical @page:slug.",
     category: "knowledge",
 
     parameters: {
@@ -894,25 +894,25 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   content: {
-    description: "Manage the social content queue — queue draft posts for review, list queued content, or get optimal posting time suggestions.",
+    description: "Social content queue and live X/Twitter actions: queue drafts, list queue, suggest times, and post/reply/lookup/delete/news when connected.",
     category: "communication",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", description: "Action to perform: queue_draft, list, suggest_times, x_status, x_post, x_reply, x_lookup, x_delete, x_news_search, x_news_lookup" },
+        action: { type: "string", enum: ["queue_draft", "list", "suggest_times", "x_status", "x_post", "x_reply", "x_lookup", "x_delete", "x_news_search", "x_news_lookup"], description: "Queue, schedule, or live X action" },
         platform: { type: "string", description: "Platform (default: x)" },
-        content: { type: "string", description: "Post text content (for queue_draft)" },
-        threadParts: { type: "array", items: { type: "string" }, description: "Array of tweet parts for threads (for queue_draft)" },
+        content: { type: "string", description: "Post text (for queue_draft)" },
+        threadParts: { type: "array", items: { type: "string" }, description: "Thread parts (for queue_draft)" },
         metadata: { type: "object", description: "Optional metadata (for queue_draft)" },
-        status: { type: "string", description: "Filter by status (for list)" },
-        count: { type: "number", description: "Number of time suggestions (for suggest_times, default 7)" },
-        startDate: { type: "string", description: "Start date ISO 8601 (for suggest_times)" },
-        endDate: { type: "string", description: "End date ISO 8601 (for suggest_times)" },
+        status: { type: "string", description: "Queue status filter (for list)" },
+        count: { type: "number", description: "Time suggestions count (for suggest_times, default 7)" },
+        startDate: { type: "string", description: "Start ISO 8601 (for suggest_times)" },
+        endDate: { type: "string", description: "End ISO 8601 (for suggest_times)" },
         limit: { type: "number", description: "Max results (for list, default 20)" },
         text: { type: "string", description: "Tweet text (for x_post/x_reply)" },
         tweet_id: { type: "string", description: "Tweet ID or URL (for x_reply/x_lookup/x_delete)" },
         query: { type: "string", description: "Search query (for x_news_search)" },
-        max_results: { type: "string", description: "Maximum results (for x_news_search, optional)" },
+        max_results: { type: "string", description: "Max results (for x_news_search)" },
         article_id: { type: "string", description: "X News/Grok Story ID (for x_news_lookup)" },
       },
       required: ["action"],
@@ -1288,7 +1288,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     whenToUse: "On the first turn of every session to set title, topics, and persona together — persona is REQUIRED on the first call (before any title is set) and will be rejected without it. Also for mid-session re-orientation when the conversation's purpose shifts (persona optional on updates). The active persona determines which context sections and tools load — switch persona to change what's assembled.",
   },
   session: {
-    description: "Manage session metadata, agenda, lifecycle, user conversation initiation/attention, and relationship-scoped messaging. Agenda actions: list_agenda reads the current ordered items and stable IDs; set_agenda replaces the agenda; apply_agenda_template starts the session agenda from a saved reusable template (search the agendas tool to resolve the template ID); complete_agenda_item, skip_agenda_item, and defer_agenda_item perform the common lifecycle transitions with minimal arguments. Existing get_agenda and update_agenda_item remain supported. If an item ID is uncertain, call list_agenda first and wait for its result; never guess IDs or parallelize a dependent agenda read and write. Send sparse action-specific payloads only. message_parent reaches only the direct parent; message_child and message_sibling require the corresponding direct tree relationship. Child sessions never inherit the parent's agenda. For a coding mission, set delegation=engineering; the server grants Git-write authority only when the parent has trusted engineering authority and build:write, and the child must use its own session-scoped clone.",
+    description: "Session metadata, agenda, lifecycle, attention, and tree messaging. Prefer list_agenda + complete/skip/defer; never guess item IDs. Children do not inherit agendas. Coding missions: delegation=engineering (parent needs trusted engineering + build:write; child uses its own clone).",
     category: "communication",
 
     parameters: {
@@ -1349,7 +1349,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   plan: {
-    description: "Create, inspect, associate, unlink, modify, and execute multi-step plans. Plans decompose complex work into tracked steps, each executed in a spawned child session with fresh context. Decompose by deliverable, not pipeline phase: each step is a complete mission producing one shippable, verifiable outcome. Child sessions already run the full standard operating procedure for their domain (coding children follow CODING.md's implement/build/PR/merge path inside every step), so never create steps like 'build and submit', 'create PR', or 'verify it compiles' — each step already guarantees its own mechanics. A final verification step is legitimate only for cross-cutting, whole-system behavior no single step could see. Progress is checkpointed to a Library page after every step. `needs_review` is a durable human gate: review can run only from a later interactive human turn; resume never approves it.",
+    description: "Multi-step plans as child-session missions. Decompose by shippable deliverable, not pipeline phase; children already run full domain SOP. needs_review is a human gate — only a later interactive turn may approve; resume never does.",
     category: "execution",
     parameters: {
       type: "object",
@@ -1488,7 +1488,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   cognition: {
-    description: "Manage Agent's cognitive state, self-observations, personas, and own profile. Actions: set_emotion (record new state), get_emotion (current), emotion_history (recent), observe (record a constrained metacognitive observation), get_profile, update_profile, get_persona (current active), list_personas, resolve_toolset (preview the exact tools a persona loads up front vs on demand), create_persona, update_persona, update_global_persona_template. Use the `orient` tool to activate/switch personas.",
+    description: "Cognitive state, observations, personas, and agent profile. Use orient to switch personas; resolve_toolset previews resident vs on-demand tools; update_global_persona_template mutates seed bundles (system:write).",
     category: "cognition",
     parameters: {
       type: "object",

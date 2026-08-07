@@ -487,17 +487,16 @@ export function getShellToolContractDescription(): string {
   const binaries = [...SAFE_SHELL_COMMANDS].sort().join(", ");
   const gitSubs = [...SAFE_SHELL_GIT_SUBCOMMANDS].join(", ");
   return [
-    "Execute a read-only shell command in the workspace directory.",
-    "Admission is a deterministic allowlist: illegal commands fail before execution — do not retry variants of a denied command.",
-    `Allowed binaries: ${binaries}.`,
-    "Pipelines and sequences with `|`, `||`, `&&`, and `;` are allowed when every segment starts with an allowlisted binary.",
-    "Never use newlines, backticks, `$(...)`, bare `&`, `<`/`>` file redirection, `~`, or variable expansion.",
-    "Safe redirect exceptions only: `>/dev/null`, `N>/dev/null`, and `N>&M` FD merges (e.g. `2>&1`).",
-    "Absolute paths must stay under `/app`, or name a system binary under `/bin`, `/usr/bin`, or `/usr/local/bin`.",
-    `Shell git is inspection-only (${gitSubs}); branch/remote mutation flags are denied. Write/mutate subs deny as git_write_blocked (use the git tool); unknown/non-read subs deny as shell_git_read_only.`,
-    "Shell npm is only `npm run build`. sed only as `sed -n 'N,Mp' [file]` (file optional for pipeline stdin). find may not use -exec/-delete.",
-    "Prefer scratch.read when the path is already known. Prefer parallel tool calls for independent work when latency matters; `;` sequencing is also valid for independent allowlisted segments.",
-    "A non-zero process exit (e.g. rg/grep miss, git status 1) is returned as a normal tool result with an exit header — not a tool error. Do not retry solely because exit ≠ 0; read the body. Timeouts, spawn failures, and policy denials remain tool errors.",
+    "Read-only workspace shell. Deterministic allowlist — denied commands fail closed; do not retry variants.",
+    `Allow: ${binaries}.`,
+    "Compose with `|` `||` `&&` `;` only when every segment starts allowlisted.",
+    "Deny: newlines, backticks, `$(...)`, bare `&`, `<`/`>` redirects, `~`, variable expansion.",
+    "Redirect exceptions: `>/dev/null`, `N>/dev/null`, `N>&M` (e.g. `2>&1`).",
+    "Paths: under `/app`, or system bins in `/bin` `/usr/bin` `/usr/local/bin`.",
+    `git: inspection-only (${gitSubs}). Writes → git_write_blocked (use git tool). Unknown/non-read → shell_git_read_only.`,
+    "npm: only `npm run build`. sed: `sed -n 'N,Mp' [file]`. find: no -exec/-delete.",
+    "Prefer scratch.read for known paths; parallel tool calls over serial when independent.",
+    "Exit ≠ 0 is a normal result (read body) — not a tool error. Timeouts/spawn/policy denials are tool errors.",
   ].join(" ");
 }
 
