@@ -550,8 +550,11 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
     )
   `);
   await db.execute(sql`DROP INDEX IF EXISTS metrics_account_slug_uidx`);
+  // Expression unique index so NULL vault_id cannot stack duplicate slugs
+  // (plain UNIQUE treats each NULL as distinct in PostgreSQL).
+  await db.execute(sql`DROP INDEX IF EXISTS metrics_account_vault_slug_uidx`);
   await db.execute(
-    sql`CREATE UNIQUE INDEX IF NOT EXISTS metrics_account_vault_slug_uidx ON metrics(account_id, vault_id, slug)`,
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS metrics_account_vault_slug_uidx ON metrics(account_id, COALESCE(vault_id, ''), slug)`,
   );
   await db.execute(sql`CREATE INDEX IF NOT EXISTS metrics_account_vault_idx ON metrics(account_id, vault_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS metrics_scope_owner_idx ON metrics(scope, owner_user_id)`);
@@ -583,13 +586,15 @@ export async function ensureMetricsDefinitionsSchema(): Promise<void> {
     )
   `);
   await db.execute(sql`DROP INDEX IF EXISTS kpis_account_slug_uidx`);
+  await db.execute(sql`DROP INDEX IF EXISTS kpis_account_vault_slug_uidx`);
   await db.execute(
-    sql`CREATE UNIQUE INDEX IF NOT EXISTS kpis_account_vault_slug_uidx ON kpis(account_id, vault_id, slug)`,
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS kpis_account_vault_slug_uidx ON kpis(account_id, COALESCE(vault_id, ''), slug)`,
   );
   await db.execute(sql`CREATE INDEX IF NOT EXISTS kpis_account_vault_idx ON kpis(account_id, vault_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS kpis_metric_idx ON kpis(metric_id)`);
+  await db.execute(sql`DROP INDEX IF EXISTS kpis_vault_standing_objective_uidx`);
   await db.execute(
-    sql`CREATE UNIQUE INDEX IF NOT EXISTS kpis_vault_standing_objective_uidx ON kpis(vault_id, standing_objective_key) WHERE standing_objective_key IS NOT NULL`,
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS kpis_vault_standing_objective_uidx ON kpis(COALESCE(vault_id, ''), standing_objective_key) WHERE standing_objective_key IS NOT NULL`,
   );
   await db.execute(sql`CREATE INDEX IF NOT EXISTS kpis_scope_owner_idx ON kpis(scope, owner_user_id)`);
 }

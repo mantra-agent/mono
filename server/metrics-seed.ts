@@ -3,7 +3,8 @@
  *
  * Defaults are deliberately qualitative and unmeasured. A standing objective
  * can span several eventual data sources, so the seed must not invent a proxy,
- * threshold, unit, adapter, or sample just to make the card look measured.
+ * threshold, unit, adapter, sample, or Manual metric shell just to make the
+ * card look instrumented. Manual metrics are user-authored only.
  */
 import { ADVANTAGE_STANDING_OBJECTIVES } from "@shared/models/advantage-dashboard";
 import type {
@@ -179,6 +180,13 @@ const LEGACY_SEEDS: readonly LegacySeed[] = [
   },
 ];
 
+const STANDING_OBJECTIVE_BY_KEY = new Map(
+  ADVANTAGE_STANDING_OBJECTIVES.map((objective) => [
+    objective.key as StandingObjectiveKey,
+    objective,
+  ]),
+);
+
 function sameAdapterConfig(
   actual: Record<string, unknown>,
   metricSlug: string,
@@ -236,8 +244,61 @@ function isLegacyStubSample(
   );
 }
 
+/**
+ * Manual standing-objective shells created by the post-legacy seed. They only
+ * existed to satisfy KPI.metricId and must never appear as user Manual metrics.
+ */
+function isUntouchedManualStandingShell(metric: Metric): boolean {
+  const objective = STANDING_OBJECTIVE_BY_KEY.get(
+    metric.slug as StandingObjectiveKey,
+  );
+  if (!objective) return false;
+  return (
+    metric.name === objective.label &&
+    metric.description === objective.definition &&
+    metric.unit === "" &&
+    metric.direction === "target_band" &&
+    metric.samplePeriod === "point" &&
+    metric.adapterKind === "manual" &&
+    Object.keys(metric.adapterConfig ?? {}).length === 0 &&
+    metric.status === "active"
+  );
+}
+
+function isUntouchedManualStandingKpi(kpi: Kpi, metric: Metric): boolean {
+  const objective = STANDING_OBJECTIVE_BY_KEY.get(
+    (kpi.standingObjectiveKey ?? kpi.slug) as StandingObjectiveKey,
+  );
+  if (!objective) return false;
+  return (
+    kpi.metricId === metric.id &&
+    kpi.name === objective.label &&
+    kpi.slug === objective.key &&
+    kpi.description === objective.definition &&
+    kpi.targetLabel === objective.definition &&
+    kpi.cadence === objective.cadence &&
+    kpi.ownerLabel === objective.owner &&
+    kpi.direction === "target_band" &&
+    kpi.bullThreshold == null &&
+    kpi.onTrackThreshold == null &&
+    kpi.bearThreshold == null &&
+    kpi.staleAfterHours === 168 &&
+    kpi.standingObjectiveKey === objective.key &&
+    kpi.status === "active"
+  );
+}
+
+function sameVaultScope(
+  rowVaultId: string | null | undefined,
+  activeVaultId: string,
+): boolean {
+  // NULL vault rows are pre-scoping leftovers that still render in the active
+  // vault's visible set; treat them as in-scope for retirement.
+  return rowVaultId == null || rowVaultId === activeVaultId;
+}
+
 async function retireUntouchedLegacyDefaults(
-  activeVaultId: string | null,
+  activeVaultId: string,
 ): Promise<{
   retiredMetrics: number;
   retiredKpis: number;
@@ -246,11 +307,11 @@ async function retireUntouchedLegacyDefaults(
   let retiredMetrics = 0;
   let retiredKpis = 0;
   let retiredSamples = 0;
-  const metrics = (await metricsStorage.list()).filter(
-    (metric) => metric.vaultId === activeVaultId,
+  const metrics = (await metricsStorage.list()).filter((metric) =>
+    sameVaultScope(metric.vaultId, activeVaultId),
   );
-  const kpis = (await kpiStorage.list()).filter(
-    (kpi) => kpi.vaultId === activeVaultId,
+  const kpis = (await kpiStorage.list()).filter((kpi) =>
+    sameVaultScope(kpi.vaultId, activeVaultId),
   );
 
   for (const seed of LEGACY_SEEDS) {
@@ -290,8 +351,43 @@ async function retireUntouchedLegacyDefaults(
   return { retiredMetrics, retiredKpis, retiredSamples };
 }
 
-function canonicalMetricSlug(objectiveKey: string): string {
-  return objectiveKey;
+async function retireUntouchedManualStandingShells(
+  activeVaultId: string,
+): Promise<{
+  retiredMetrics: number;
+  retiredKpis: number;
+}> {
+  let retiredMetrics = 0;
+  let retiredKpis = 0;
+  const metrics = (await metricsStorage.list()).filter((metric) =>
+    sameVaultScope(metric.vaultId, activeVaultId),
+  );
+  const kpis = (await kpiStorage.list()).filter((kpi) =>
+    sameVaultScope(kpi.vaultId, activeVaultId),
+  );
+
+  for (const metric of metrics) {
+    if (!isUntouchedManualStandingShell(metric)) continue;
+
+    const boundKpis = kpis.filter((kpi) => kpi.metricId === metric.id);
+    if (
+      boundKpis.some((kpi) => !isUntouchedManualStandingKpi(kpi, metric))
+    ) {
+      continue;
+    }
+
+    const samples = await metricsStorage.listSamples(metric.id, 1);
+    if (samples.length > 0) continue;
+
+    for (const kpi of boundKpis) {
+      await kpiStorage.delete(kpi.id);
+      retiredKpis += 1;
+    }
+    await metricsStorage.delete(metric.id);
+    retiredMetrics += 1;
+  }
+
+  return { retiredMetrics, retiredKpis };
 }
 
 export async function seedDefaultMetricsAndKpis(): Promise<{
@@ -308,74 +404,38 @@ export async function seedDefaultMetricsAndKpis(): Promise<{
   if (!activeVaultId) {
     throw new Error("Metrics/KPI defaults require an active vault");
   }
-  const retired = await retireUntouchedLegacyDefaults(activeVaultId);
-  let createdMetrics = 0;
-  let createdKpis = 0;
-  let skipped = 0;
-  const objectiveKeys: StandingObjectiveKey[] = [];
-  let metrics = (await metricsStorage.list()).filter(
-    (metric) => metric.vaultId === activeVaultId,
+
+  // Never invent Manual metrics. Standing objectives stay unmeasured until the
+  // user authors a real metric and binds a KPI. This pass only retires prior
+  // system shells (legacy internal stubs + post-legacy Manual placeholders),
+  // including NULL-vault duplicates that still render in the active vault.
+  const retiredLegacy = await retireUntouchedLegacyDefaults(activeVaultId);
+  const retiredShells = await retireUntouchedManualStandingShells(activeVaultId);
+
+  const kpis = (await kpiStorage.list()).filter((kpi) =>
+    sameVaultScope(kpi.vaultId, activeVaultId),
   );
-  const kpis = (await kpiStorage.list()).filter(
-    (kpi) => kpi.vaultId === activeVaultId,
-  );
-  const byObjective = new Map(
+  const byObjective = new Set(
     kpis
-      .filter((kpi) => kpi.standingObjectiveKey)
-      .map((kpi) => [kpi.standingObjectiveKey!, kpi]),
+      .map((kpi) => kpi.standingObjectiveKey)
+      .filter((key): key is StandingObjectiveKey => !!key),
   );
 
+  let skipped = 0;
+  const objectiveKeys: StandingObjectiveKey[] = [];
   for (const objective of ADVANTAGE_STANDING_OBJECTIVES) {
     const objectiveKey = objective.key as StandingObjectiveKey;
     objectiveKeys.push(objectiveKey);
-
-    // A modified or user-authored binding is authoritative and must survive.
-    if (byObjective.has(objectiveKey)) {
-      skipped += 1;
-      continue;
-    }
-
-    const metricSlug = canonicalMetricSlug(objective.key);
-    let metric = metrics.find((candidate) => candidate.slug === metricSlug);
-    if (!metric) {
-      metric = await metricsStorage.create({
-        name: objective.label,
-        slug: metricSlug,
-        description: objective.definition,
-        unit: "",
-        direction: "target_band",
-        samplePeriod: "point",
-        adapterKind: "manual",
-        adapterConfig: {},
-        status: "active",
-      });
-      metrics = [...metrics, metric];
-      createdMetrics += 1;
-    }
-
-    await kpiStorage.create({
-      metricId: metric.id,
-      name: objective.label,
-      slug: objective.key,
-      description: objective.definition,
-      targetLabel: objective.definition,
-      cadence: objective.cadence,
-      ownerLabel: objective.owner,
-      direction: "target_band",
-      bullThreshold: null,
-      onTrackThreshold: null,
-      bearThreshold: null,
-      standingObjectiveKey: objectiveKey,
-      status: "active",
-    });
-    createdKpis += 1;
+    if (byObjective.has(objectiveKey)) skipped += 1;
   }
 
   return {
-    createdMetrics,
-    createdKpis,
+    createdMetrics: 0,
+    createdKpis: 0,
     createdSamples: 0,
-    ...retired,
+    retiredMetrics: retiredLegacy.retiredMetrics + retiredShells.retiredMetrics,
+    retiredKpis: retiredLegacy.retiredKpis + retiredShells.retiredKpis,
+    retiredSamples: retiredLegacy.retiredSamples,
     skipped,
     objectiveKeys,
   };
