@@ -1,3 +1,11 @@
+<!-- 2026-08-06 Document-store chat Vault membership recovery residual:
+- Assets/data: user-owned chat documents and their account/Vault ownership (S2 conversation data and S1 ownership metadata).
+- Flow/boundary: legacy document_store_documents rows -> boot-time vault schema convergence -> validated database ownership constraint.
+- Residual verified on Stage after #2033: recovery SQL referenced users.account_id, which does not exist (code 42703), so EnsureVaults still failed closed before constraint validation completed.
+- Controls/owner: Data Platform recovers account_id and the account's canonical default Vault only through memberships.user_id -> accounts.kind='personal' -> vaults.is_default=true; unresolved rows remain rejected by validation rather than guessed. Severity: high. SLA: immediate. Status: residual repair in source.
+- Rollback/residual: revert the memberships join and Stage returns to the column-missing failure; ownerless or multi-membership-inconsistent legacy rows remain fail-closed.
+-->
+
 <!-- 2026-08-06 session-search index operational-probe repair:
 - Assets/data: A02/S2 private session-search projection content and A08 database availability cross B03/B06 through boot-owned concurrent index provisioning and its authorized operational EXPLAIN probe.
 - Failure/threat: the physical principal-neutral GIN index was provisioned, but the probe treated PostgreSQL's cost-sensitive choice not to use it on a small/current relation as proof it was missing. That false failure retried maintenance, emitted duplicate unclassified errors, and obscured genuine index drift (STRIDE denial of service/repudiation; PRIV-01/OBS-01).
