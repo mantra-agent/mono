@@ -118,10 +118,13 @@ export function registerObjectStorageRoutes(app: Express): void {
       const fileName = typeof req.query.name === "string" ? req.query.name : undefined;
       await objectStorageService.downloadObject(objectFile, res, 3600, fileName);
     } catch (error) {
-      log.error("Error serving object:", error);
       if (error instanceof ObjectNotFoundError) {
+        log.warn("Object request resolved to no stored object", {
+          code: "OBJECT_ENTITY_NOT_FOUND",
+        });
         return res.status(404).json({ error: "Object not found" });
       }
+      log.error("Error serving object:", error);
       return res.status(500).json({ error: "Failed to serve object" });
     }
   });
