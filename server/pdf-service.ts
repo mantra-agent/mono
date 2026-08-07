@@ -328,10 +328,8 @@ async function extractPagesFromBuffer(
   maxPages: number,
 ): Promise<{ pageCount: number; pages: ExtractedPdfPage[]; truncated: boolean }> {
   const pdfjs = await loadPdfJs();
-  if (pdfjs.GlobalWorkerOptions) {
-    // Server extract is single-threaded; never spin a browser worker.
-    pdfjs.GlobalWorkerOptions.workerSrc = "";
-  }
+  // The Node legacy build disables real workers and supplies its own module-relative
+  // fake-worker source. Do not blank workerSrc: fake-worker setup still imports it.
   const data = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   const loadingTask = pdfjs.getDocument({
     data,

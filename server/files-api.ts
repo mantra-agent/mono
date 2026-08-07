@@ -19,7 +19,11 @@
  */
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "./db";
-import { driveResources, type DriveResourceRow } from "@shared/schema";
+import {
+  driveResources,
+  indexedFileSources,
+  type DriveResourceRow,
+} from "@shared/schema";
 import { vaults } from "@shared/models/vaults";
 import { createLogger } from "./log";
 import {
@@ -1248,9 +1252,32 @@ class FilesApi {
     if (root.vaultId !== vaultId || root.provider !== provider || root.resourceType !== "folder") {
       throw httpError(403, "Mounted root does not authorize this provider source");
     }
-    const { adapter, ctx } = await adapterContextForConnector(provider, root.connectedAccountId);
-    const isDescendant = await isUnderAnyFolderBind(adapter, ctx, providerFileId, new Set([root.providerFileId]));
-    if (!isDescendant) throw httpError(403, "File is not under the authorized mounted root");
+    const [discovered] = await db
+      .select({ id: indexedFileSources.id })
+      .from(indexedFileSources)
+      .where(
+        and(
+          eq(indexedFileSources.vaultId, vaultId),
+          eq(indexedFileSources.rootDriveResourceId, root.id),
+          eq(indexedFileSources.provider, provider),
+          eq(indexedFileSources.providerFileId, providerFileId),
+          inArray(indexedFileSources.discoveryState, ["active", "unsupported"]),
+        ),
+      )
+      .limit(1);
+
+    if (!discovered) {
+      const { adapter, ctx } = await adapterContextForConnector(provider, root.connectedAccountId);
+      const isDescendant = await isUnderAnyFolderBind(
+        adapter,
+        ctx,
+        providerFileId,
+        new Set([root.providerFileId]),
+      );
+      if (!isDescendant) {
+        throw httpError(403, "File is not under the authorized mounted root");
+      }
+    }
     return { connectorId: root.connectedAccountId, driveResourceId: root.id };
   }
 
