@@ -7,6 +7,8 @@ import {
   readFile,
   realpath,
   rm,
+  symlink,
+  unlink,
   writeFile,
 } from "fs/promises";
 import { constants } from "fs";
@@ -17,6 +19,7 @@ import { WORKSPACE_DIR } from "./paths";
 
 const log = createLogger("NpmDependencyMutation");
 const execFileAsync = promisify(execFile);
+const IMMUTABLE_TOOLCHAIN_NODE_MODULES = resolve(WORKSPACE_DIR, "node_modules");
 
 const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 const EXACT_SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -162,6 +165,45 @@ async function restoreFile(path: string, original: string | null): Promise<void>
   await writeFile(path, original, "utf-8");
 }
 
+async function isImmutableToolchainSymlink(path: string): Promise<boolean> {
+  try {
+    const stats = await lstat(path);
+    if (!stats.isSymbolicLink()) return false;
+    return (await realpath(path)) === IMMUTABLE_TOOLCHAIN_NODE_MODULES;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Root session clones share the workspace toolchain via symlink. npm's
+ * lockfile-only install still materializes a real node_modules tree when that
+ * symlink is present, which this tool must never keep. Park the symlink for the
+ * npm child, scrub any tree npm creates, then restore the immutable link.
+ */
+async function parkImmutableToolchainSymlink(packageNodeModules: string): Promise<boolean> {
+  if (!(await isImmutableToolchainSymlink(packageNodeModules))) return false;
+  await unlink(packageNodeModules);
+  return true;
+}
+
+async function restoreImmutableToolchainSymlink(packageNodeModules: string): Promise<void> {
+  if (await pathExists(packageNodeModules)) {
+    if (await isImmutableToolchainSymlink(packageNodeModules)) return;
+    await rm(packageNodeModules, { recursive: true, force: true });
+  }
+  await symlink(IMMUTABLE_TOOLCHAIN_NODE_MODULES, packageNodeModules, "dir");
+}
+
+async function scrubForbiddenPackageNodeModules(
+  packageNodeModules: string,
+  isRepositoryRootPackage: boolean,
+): Promise<void> {
+  if (!(await pathExists(packageNodeModules))) return;
+  if (isRepositoryRootPackage && (await isImmutableToolchainSymlink(packageNodeModules))) return;
+  await rm(packageNodeModules, { recursive: true, force: true });
+}
+
 export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<SetNpmPackageSpecResult> {
   assertSafeInputs(input);
 
@@ -185,9 +227,7 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
   await assertSafeProjectNpmConfig(packageRoot, repositoryRoot);
   if (await pathExists(packageNodeModules)) {
     if (!isRepositoryRootPackage) throw new Error("package_node_modules_must_be_absent");
-    const stats = await lstat(packageNodeModules);
-    const canonicalNodeModules = await realpath(packageNodeModules);
-    if (!stats.isSymbolicLink() || canonicalNodeModules !== resolve(WORKSPACE_DIR, "node_modules")) {
+    if (!(await isImmutableToolchainSymlink(packageNodeModules))) {
       throw new Error("repository_root_node_modules_must_use_immutable_toolchain");
     }
   }
@@ -196,6 +236,7 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
   const originalLockfile = await readFile(lockfilePath, "utf-8");
   let mutationCommitted = false;
   let tempRoot: string | null = null;
+  let parkedImmutableToolchain = false;
 
   try {
     const manifest = JSON.parse(originalManifest) as unknown;
@@ -226,6 +267,10 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
     await mkdir(npmHome, { recursive: true });
     await writeFile(npmUserConfig, "", "utf-8");
     await writeFile(npmGlobalConfig, "", "utf-8");
+
+    if (isRepositoryRootPackage) {
+      parkedImmutableToolchain = await parkImmutableToolchainSymlink(packageNodeModules);
+    }
 
     await execFileAsync("npm", [
       "install",
@@ -259,17 +304,23 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
       },
     });
 
+    // npm --package-lock-only still materializes node_modules in some versions.
+    // Scrub any real tree; never keep it. Restore the parked toolchain link.
     if (await pathExists(packageNodeModules)) {
-      const stats = await lstat(packageNodeModules);
-      const canonicalNodeModules = await realpath(packageNodeModules);
-      const isImmutableToolchain =
-        isRepositoryRootPackage &&
-        stats.isSymbolicLink() &&
-        canonicalNodeModules === resolve(WORKSPACE_DIR, "node_modules");
-      if (!isImmutableToolchain) {
+      if (!(isRepositoryRootPackage && (await isImmutableToolchainSymlink(packageNodeModules)))) {
         await rm(packageNodeModules, { recursive: true, force: true });
-        throw new Error("npm_created_forbidden_node_modules");
+        if (!parkedImmutableToolchain) {
+          throw new Error("npm_created_forbidden_node_modules");
+        }
+        log.warn("npm dependency mutation scrubbed package-lock-only node_modules", {
+          repositoryDirectory: input.repositoryDirectory,
+          manifestPath: input.manifestPath,
+        });
       }
+    }
+    if (parkedImmutableToolchain) {
+      await restoreImmutableToolchainSymlink(packageNodeModules);
+      parkedImmutableToolchain = false;
     }
 
     const finalManifest = await readFile(manifestPath, "utf-8");
@@ -317,8 +368,17 @@ export async function setNpmPackageSpec(input: SetNpmPackageSpecInput): Promise<
     if (!mutationCommitted) {
       await restoreFile(manifestPath, originalManifest);
       await restoreFile(lockfilePath, originalLockfile);
-      if (!isRepositoryRootPackage && await pathExists(packageNodeModules)) {
-        await rm(packageNodeModules, { recursive: true, force: true });
+      await scrubForbiddenPackageNodeModules(packageNodeModules, isRepositoryRootPackage);
+    }
+    if (parkedImmutableToolchain || (isRepositoryRootPackage && mutationCommitted && !(await isImmutableToolchainSymlink(packageNodeModules)))) {
+      try {
+        await restoreImmutableToolchainSymlink(packageNodeModules);
+      } catch (restoreError) {
+        log.error("failed to restore immutable toolchain node_modules symlink", {
+          repositoryDirectory: input.repositoryDirectory,
+          errorType: restoreError instanceof Error ? restoreError.name : "UnknownError",
+          errorCode: restoreError instanceof Error ? restoreError.message : "unknown_error",
+        });
       }
     }
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
