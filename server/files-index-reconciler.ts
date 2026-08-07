@@ -706,6 +706,7 @@ async function processDiscoveringBatch(input: {
       );
     }
 
+    const discoveredFolders: DiscoveryStackEntry[] = [];
     for (const child of page.children) {
       const childKey = fileKey(child.provider, child.providerFileId);
       if (child.resourceType === "folder") {
@@ -715,7 +716,7 @@ async function processDiscoveringBatch(input: {
         // Cycle protection via visited set keyed by provider+id.
         if (seenFiles.has(`folder:${childKey}`)) continue;
         seenFiles.add(`folder:${childKey}`);
-        cursor.stack.push({
+        discoveredFolders.push({
           providerFileId: child.providerFileId,
           pageToken: null,
           path: current.path ? `${current.path}/${child.name}` : child.name,
@@ -758,12 +759,26 @@ async function processDiscoveringBatch(input: {
       }
     }
 
+    // Keep paged children directly below the current folder. The current folder
+    // remains the stack top until its final page, so a later pop can remove only
+    // that folder while preserving every child found across all pages.
+    if (discoveredFolders.length > 0) {
+      cursor.stack.splice(
+        cursor.stack.length - 1,
+        0,
+        ...discoveredFolders.reverse(),
+      );
+    }
+
     if (page.nextPageToken) {
       current.pageToken = page.nextPageToken;
     } else {
       visited.add(visitKey);
       foldersVisited += 1;
-      cursor.stack.pop();
+      const completed = cursor.stack.pop();
+      if (completed !== current) {
+        throw new Error("Discovery cursor changed while completing a folder");
+      }
     }
     batches += 1;
   }

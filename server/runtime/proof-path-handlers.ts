@@ -35,7 +35,7 @@ interface TimerSkillInput {
 
 interface MemorySourceInput {
   queueId: number;
-  sourceType: "session" | "library_page";
+  sourceType: "session" | "library_page" | "drive_file";
   sourceId: string;
   sourceVersion: string;
 }
@@ -89,7 +89,9 @@ function parseMemorySourceInput(value: unknown): MemorySourceInput {
   const input = parseObject(value, "Memory source input");
   if (!Number.isInteger(input.queueId) || Number(input.queueId) < 1) throw new Error("queueId must be a positive integer");
   const sourceType = parseBoundedString(input.sourceType, "sourceType", 30);
-  if (sourceType !== "session" && sourceType !== "library_page") throw new Error("sourceType is invalid");
+  if (sourceType !== "session" && sourceType !== "library_page" && sourceType !== "drive_file") {
+    throw new Error("sourceType is invalid");
+  }
   const sourceVersion = parseBoundedString(input.sourceVersion, "sourceVersion", 100);
   if (!Number.isFinite(new Date(sourceVersion).getTime())) throw new Error("sourceVersion must be an ISO timestamp");
   return {

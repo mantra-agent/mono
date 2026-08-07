@@ -313,7 +313,7 @@ async function loadDriveFileNormalizedText(sourceId: string): Promise<{
 
   const fingerprint = driveFileFingerprint(readResult.metadata);
   const meta = {
-    name: readResult.metadata.name || driveResourceId,
+    name: readResult.metadata.name || (target.kind === "discovered" ? target.name : sourceId),
     mimeType: readResult.metadata.mimeType,
     provider: readResult.metadata.provider,
     providerFileId: readResult.metadata.providerFileId,
@@ -334,7 +334,7 @@ async function loadDriveFileNormalizedText(sourceId: string): Promise<{
   if (text == null || !text.trim()) {
     // Binary-only archives are not yet admitted into claim extraction.
     log.debug(
-      `drive_file adapter: no normalized text id=${driveResourceId} mime=${meta.mimeType ?? "n/a"} cache=${readResult.cache}`,
+      `drive_file adapter: no normalized text id=${sourceId} mime=${meta.mimeType ?? "n/a"} cache=${readResult.cache}`,
     );
     return {
       text: "",
