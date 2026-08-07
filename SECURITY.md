@@ -95,6 +95,13 @@
 - Rollback/residual: revert the owner relation repair to restore the membership-based path. A legacy row with no owner or no personal account remains fail-closed and will be identified only by bounded aggregate class for the next explicit recovery step.
 -->
 
+<!-- 2026-08-07 session-search capability/operational-probe repair:
+- Assets/data: A02/S2 private session-search projection content and A08 database availability cross B03/B06 through boot-owned concurrent index provisioning and its authorized operational EXPLAIN probe.
+- Failure/threat: the prior repair disabled sequential scans but still required the exact scoped production join plan to name the segment GIN index. PostgreSQL could truthfully enter through the selective document/FK path and apply the trigram filter afterward, causing 15 false maintenance failures even though the index existed and was usable (STRIDE denial of service/repudiation; PRIV-01/OBS-01).
+- Controls/owner: Memory remains the sole index/probe owner. It now proves physical GIN capability with a bounded planner-forced, non-ANALYZE segment query using the canonical escaped corpus-derived pattern, restores normal planner behavior, then independently executes the exact principal/account/Vault-scoped production query under `EXPLAIN ANALYZE`. Neither probe logs SQL, parameters, principals, plans, patterns, or content. Severity: medium. SLA: immediate. Status: repaired in source, pending build/merge.
+- Residual/rollback: capability proof does not assert that PostgreSQL will choose the GIN index for every authorized scope; the exact production probe and 2.5-second runtime statement timeout remain the availability evidence and bound. Revert this source delta to restore the former combined assertion without changing schema or user data.
+-->
+
 <!-- 2026-08-06 session-search index operational-probe repair:
 - Assets/data: A02/S2 private session-search projection content and A08 database availability cross B03/B06 through boot-owned concurrent index provisioning and its authorized operational EXPLAIN probe.
 - Failure/threat: the physical principal-neutral GIN index was provisioned, but the probe treated PostgreSQL's cost-sensitive choice not to use it on a small/current relation as proof it was missing. That false failure retried maintenance, emitted duplicate unclassified errors, and obscured genuine index drift (STRIDE denial of service/repudiation; PRIV-01/OBS-01).
