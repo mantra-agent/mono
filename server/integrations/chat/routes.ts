@@ -3555,7 +3555,20 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
           const principal = getPrincipal(req);
           if (principal?.actorType === "user" && principal.userId && principal.accountId) {
-            await completeFtueSayHello(principal as typeof principal & { userId: string; accountId: string });
+            // Best-effort FTUE side effect — completeFtueSayHello already fails
+            // soft, but keep acceptance isolated from any future throw.
+            try {
+              await completeFtueSayHello(principal as typeof principal & { userId: string; accountId: string });
+            } catch (ftueErr) {
+              const error = ftueErr instanceof Error ? ftueErr : new Error(String(ftueErr));
+              if (!(error as Error & { code?: string }).code) {
+                (error as Error & { code?: string }).code = "FTUE_SAY_HELLO_FAILED";
+              }
+              chatLog.warn("FTUE say-hello side effect failed", error, {
+                operation: "complete_ftue_say_hello",
+                sessionId,
+              });
+            }
           }
           publishChatStreamEvent(sessionKey, sessionId, {
             type: "user_message",
@@ -3628,7 +3641,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             chatLog.log(`processChatStream ${err.reason} sessionId=${sessionId} generation=${err.generation}`);
             return;
           }
-          chatLog.error("processChatStream error:", err);
+          const error = err instanceof Error ? err : new Error(String(err));
+          if (!(error as Error & { code?: string }).code) {
+            (error as Error & { code?: string }).code = "CHAT_STREAM_PROCESS_FAILED";
+          }
+          (error as Error & { operation?: string }).operation = "process_chat_stream";
+          chatLog.error("processChatStream error", error, {
+            operation: "process_chat_stream",
+            sessionId,
+          });
         });
       } catch (error) {
         if (acceptedLease) chatRunLifecycle.finish(acceptedLease);
@@ -3637,7 +3658,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           if (!res.headersSent) res.status(202).json({ queued: true, superseded: true });
           return;
         }
-        chatLog.error("Error sending message:", error);
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        if (!(normalized as Error & { code?: string }).code) {
+          (normalized as Error & { code?: string }).code = "CHAT_SEND_MESSAGE_FAILED";
+        }
+        (normalized as Error & { operation?: string }).operation = "send_message";
+        chatLog.error("Error sending message", normalized, {
+          operation: "send_message",
+          sessionId,
+        });
         if (!res.headersSent) {
           res.status(500).json({ error: "Failed to send message" });
         }
