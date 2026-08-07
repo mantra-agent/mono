@@ -3,7 +3,11 @@ import { mkdirSync, createWriteStream, type WriteStream } from "fs";
 import { readFile, readdir, stat, unlink } from "fs/promises";
 import { join, resolve } from "path";
 import { redactBoundedText, redactSensitiveValue } from "./sensitive-data-redaction";
-import { deriveSafeErrorCallsite, deriveSafeErrorClassifier } from "@shared/error-callsite";
+import {
+  deriveSafeErrorCallsite,
+  deriveSafeErrorClassifier,
+  selectErrorStack,
+} from "@shared/error-callsite";
 
 /** Severity ranking for threshold-based filtering: selecting a level shows that level and above. */
 const LOG_LEVEL_RANK: Record<string, number> = { verbose: -1, debug: 0, log: 1, info: 1, warn: 2, error: 3 };
@@ -519,18 +523,22 @@ export function createLogger(module: string) {
             error: errorArg ?? nestedError,
             args,
           });
-          const stack =
-            errorArg?.stack
-            ?? (nestedError && typeof nestedError === "object" && "stack" in nestedError
-              ? String((nestedError as { stack?: unknown }).stack ?? "")
-              : undefined)
-            ?? new Error().stack;
+          // Prefer the real exception stack. Synthetic logger stacks are last
+          // resort only — bundled anonymous frames must not become the owner.
+          const stack = selectErrorStack({
+            error: errorArg,
+            nestedError,
+            fallbackStack: errorArg || nestedError ? undefined : new Error().stack,
+          });
           const callsite = deriveSafeErrorCallsite(stack);
           enqueueApplicationErrorProjection({
             logger: module,
             errorName: classifier.errorName,
             errorCode: classifier.errorCode,
             ...callsite,
+            // Logger module is the deterministic owner when stack frames are
+            // anonymous/bundled-only; never leave sourceSite empty/anonymous.
+            sourceSite: callsite.sourceSite ?? module,
           });
         })
         .catch(() => {});

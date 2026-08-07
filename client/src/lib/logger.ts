@@ -1,5 +1,9 @@
 // Use createLogger for logging ONLY — do not use console.log/warn/error directly anywhere in the codebase
-import { deriveSafeErrorCallsite, deriveSafeErrorClassifier } from "@shared/error-callsite";
+import {
+  deriveSafeErrorCallsite,
+  deriveSafeErrorClassifier,
+  selectErrorStack,
+} from "@shared/error-callsite";
 
 interface ErrorAggregateProjection {
   deliveryId: string;
@@ -166,12 +170,11 @@ export function createLogger(module: string) {
         error: errorArg ?? nestedError,
         args,
       });
-      const stack =
-        errorArg?.stack
-        ?? (nestedError && typeof nestedError === "object" && "stack" in nestedError
-          ? String((nestedError as { stack?: unknown }).stack ?? "")
-          : undefined)
-        ?? new Error().stack;
+      const stack = selectErrorStack({
+        error: errorArg,
+        nestedError,
+        fallbackStack: errorArg || nestedError ? undefined : new Error().stack,
+      });
       const callsite = deriveSafeErrorCallsite(stack);
       entry.aggregate = {
         deliveryId: crypto.randomUUID(),
@@ -179,6 +182,7 @@ export function createLogger(module: string) {
         errorName: classifier.errorName,
         errorCode: classifier.errorCode,
         ...callsite,
+        sourceSite: callsite.sourceSite ?? module,
       };
     }
     pendingLogs.push(entry);

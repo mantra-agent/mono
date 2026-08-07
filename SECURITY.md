@@ -204,6 +204,15 @@
 - Residual: historical `App:Error:UNCLASSIFIED` rows remain until dismissed or superseded by better-classified recurrences; abrupt crash still may lose an in-flight delivery.
 -->
 
+<!-- 2026-08-06 Anonymous bundled runtime error attribution repair:
+- Assets/data: A07 application-error aggregates only (logger identity, allowlisted code/name, bounded safe file/line/site). Raw stacks, messages, URLs, identities, and user content remain excluded.
+- Flow/boundary: client/server `createLogger` error emission and `captureApplicationError` -> `shared/error-callsite.ts` callsite selection -> `server/error-telemetry.ts` fingerprint projection.
+- Threats: production `dist/index.mjs` stacks with anonymous sites collapsing into ownerless `Error:UNCLASSIFIED` shells (repudiation/availability), synthetic logger stacks becoming false producers, or over-accepting stack text leaking secrets (information disclosure).
+- Controls/owner: Core Reliability. Callsite derivation now rejects anonymous/`Object.<anonymous>` sites, prefers owned `server|shared|client` frames over bundled runtime coordinates, scores frames instead of first-match, and falls back to the logger module as deterministic `sourceSite` owner when no real site exists. Synthetic logger stacks are used only when no exception stack is present. No new data classes enter aggregates.
+- Evidence: Issue 1786052296297 / fingerprint 2f17024c… (`dist/index.mjs:80`, anonymous site); `shared/error-callsite.ts`, `server/log.ts`, `client/src/lib/logger.ts`, `server/error-telemetry.ts`.
+- Residual: historical anonymous aggregates cannot be rewritten; source maps are still not required for deterministic owner attribution. Severity: medium. SLA: immediate with this repair.
+-->
+
 <!-- 2026-08-05 Privacy-safe proactive error telemetry delta:
 - Assets/data: cross-user server error signals (S2/S3-adjacent at capture), reduced to sanitized error identity, repository-relative source file/line/site, stable fingerprint, first/last seen, and count.
 - Flow/boundary: canonical Express 5xx error middleware -> deterministic in-process sanitizer/fingerprinter -> aggregate-only PostgreSQL table -> existing admin-only Issues tool `list_errors` action. Request bodies, headers, URLs, user/account IDs, raw stack bodies, and raw logs never enter this store or tool response.
