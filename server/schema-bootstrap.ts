@@ -116,6 +116,18 @@ async function ensureVoiceSessionActiveSchema(pool: {
 
 
 
+async function ensureWorkflowAttemptLeaseSchema(pool: { query: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
+  for (const [name, type] of [
+    ["execution_lease_id", "TEXT"],
+    ["execution_lease_owner", "TEXT"],
+    ["execution_lease_expires_at", "TIMESTAMPTZ"],
+    ["execution_claimed_at", "TIMESTAMPTZ"],
+  ] as const) {
+    await pool.query(`ALTER TABLE workflow_stage_attempts ADD COLUMN IF NOT EXISTS ${quoteIdent(name)} ${type}`);
+  }
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_stage_attempts_execution_lease ON workflow_stage_attempts(execution_lease_expires_at) WHERE status = 'active' AND completed_at IS NULL`);
+}
+
 async function ensureBrowserPerformanceTelemetrySchema(pool: { query: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS browser_performance_telemetry (
@@ -754,6 +766,7 @@ export async function runSchemaBootstrap(
   await ensureMeetingTurnEnrollmentSchema(pool);
   await ensureTimerOwnershipSchema(pool);
   await ensurePrincipleRevisionSchema(pool);
+  await ensureWorkflowAttemptLeaseSchema(pool);
   await ensureBrowserPerformanceTelemetrySchema(pool);
 
   // Signal/news schema is ensured on the canonical boot path — not lazily on the

@@ -2209,6 +2209,10 @@ export const workflowStageAttempts = pgTable("workflow_stage_attempts", {
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   durationSeconds: integer("duration_seconds"),
+  executionLeaseId: text("execution_lease_id"),
+  executionLeaseOwner: text("execution_lease_owner"),
+  executionLeaseExpiresAt: timestamp("execution_lease_expires_at", { withTimezone: true }),
+  executionClaimedAt: timestamp("execution_claimed_at", { withTimezone: true }),
   scope: text("scope").notNull().default("user"),
   ownerUserId: text("owner_user_id"),
   accountId: text("account_id"),
@@ -2222,6 +2226,7 @@ export const workflowStageAttempts = pgTable("workflow_stage_attempts", {
   index("idx_workflow_stage_attempts_child_session").on(table.childSessionId),
   index("idx_workflow_stage_attempts_owner").on(table.ownerUserId),
   index("idx_workflow_stage_attempts_account").on(table.accountId),
+  index("idx_workflow_stage_attempts_execution_lease").on(table.executionLeaseExpiresAt),
 ]);
 
 export const workflowTransitions = pgTable("workflow_transitions", {

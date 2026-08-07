@@ -1,7 +1,7 @@
 import crypto from "crypto";
-import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { acquireAdvisoryTransactionLock, ADVISORY_LOCK_NS, db, runWithDatabaseTransaction } from "../db";
-import { getCurrentPrincipal, requireCurrentPrincipal } from "../principal-context";
+import { getCurrentPrincipal, requireCurrentPrincipal, runWithPrincipal } from "../principal-context";
 import { combineWithVisibleScope, combineWithWritableScope, ownedInsertValues } from "../scoped-storage";
 import { createLogger, getRecentLogs } from "../log";
 import {
@@ -12,6 +12,8 @@ import {
   workflowStageAttempts,
   workflowTemplates,
   workflowTransitions,
+  accounts,
+  users,
   type WorkflowArtifact,
   type WorkflowGate,
   type WorkflowRun,
@@ -47,12 +49,13 @@ import { extractDeploymentMeta, fetchDeploymentsForEnvironment, getLatestDeploym
 import { compareRefs } from "../integrations/github-pr";
 import { getCloudflareLatestDeployment } from "../services/provider-connection-service";
 import { buildWorkflowRunPageContent, buildWorkflowStages, parseWorkflowDefinition, type WorkflowEnvironmentTruth, type WorkflowRunDetail } from "./workflow-renderer";
-import { monitorChildSession, truncateOutput, type MonitorResult } from "../child-session-monitor";
+import { abortAndConfirmChildTermination, monitorChildSession, truncateOutput } from "../child-session-monitor";
 import { chatFileStorage } from "../chat-file-storage";
 import { getArtifactsBySession } from "../session-artifacts";
 import { canonicalExecutionArtifactAddress } from "../execution-provenance-address";
 import { linkWorkflowArtifactProduced } from "../execution-provenance-links";
 import { hasActiveBuildAccess } from "../mods/build-access";
+import { createNamedSystemPrincipal, createUserPrincipalFromUser } from "../principal";
 
 const log = createLogger("WorkflowService");
 
@@ -60,6 +63,35 @@ const log = createLogger("WorkflowService");
 const WORKFLOW_STAGE_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS = 12 * 60 * 1000;
 const ACCEPTANCE_DEPLOY_POLL_INTERVAL_MS = 15 * 1000;
+export const WORKFLOW_ATTEMPT_LEASE_MS = 2 * 60 * 1000;
+const WORKFLOW_RECOVERY_JOB = "workflow-recovery";
+
+type ActiveWorkflowMonitor = {
+  abortController: AbortController;
+  leaseId: string;
+};
+
+const activeWorkflowMonitors = new Map<number, ActiveWorkflowMonitor>();
+
+function workflowRuntimeInstanceId(): string {
+  return process.env.RAILWAY_REPLICA_ID || process.env.HOSTNAME || "local";
+}
+
+function workflowRuntimeBootId(): string {
+  return process.env.WATCHDOG_BOOT_ID || `pid:${process.pid}`;
+}
+
+function workflowMonitorOwner(runId: string): string {
+  return `${workflowRuntimeInstanceId()}@${workflowRuntimeBootId()}:${runId}`;
+}
+
+function ownedByCurrentWorkflowRuntime(ownerValue: string | null): boolean {
+  return Boolean(ownerValue?.startsWith(`${workflowRuntimeInstanceId()}@${workflowRuntimeBootId()}:`));
+}
+
+function ownedByPriorWorkflowBoot(ownerValue: string | null): boolean {
+  return Boolean(ownerValue?.startsWith(`${workflowRuntimeInstanceId()}@`) && !ownedByCurrentWorkflowRuntime(ownerValue));
+}
 
 const templateScopeColumns = { scope: workflowTemplates.scope, ownerUserId: workflowTemplates.ownerUserId, accountId: workflowTemplates.accountId };
 const runScopeColumns = { scope: workflowRuns.scope, ownerUserId: workflowRuns.ownerUserId, accountId: workflowRuns.accountId };
@@ -583,6 +615,58 @@ async function ensureWorkflowParentSession(detail: WorkflowRunDetail): Promise<s
   return session.id;
 }
 
+async function claimWorkflowAttemptMonitor(
+  attemptId: number,
+  ownerValue: string,
+  leaseMs = WORKFLOW_ATTEMPT_LEASE_MS,
+  staleOwner?: string | null,
+): Promise<{ claimed: true; leaseId: string } | { claimed: false }> {
+  const leaseId = crypto.randomUUID();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + leaseMs);
+  const rows = await db.update(workflowStageAttempts).set({
+    executionLeaseId: leaseId,
+    executionLeaseOwner: ownerValue,
+    executionLeaseExpiresAt: expiresAt,
+    executionClaimedAt: now,
+    updatedAt: now,
+  }).where(writable(attemptScopeColumns, and(
+    eq(workflowStageAttempts.id, attemptId),
+    eq(workflowStageAttempts.status, "active"),
+    isNull(workflowStageAttempts.completedAt),
+    or(
+      isNull(workflowStageAttempts.executionLeaseExpiresAt),
+      lt(workflowStageAttempts.executionLeaseExpiresAt, now),
+      staleOwner ? eq(workflowStageAttempts.executionLeaseOwner, staleOwner) : undefined,
+    ),
+  ))).returning({ id: workflowStageAttempts.id });
+  return rows.length ? { claimed: true, leaseId } : { claimed: false };
+}
+
+async function renewWorkflowAttemptMonitor(attemptId: number, leaseId: string): Promise<boolean> {
+  const rows = await db.update(workflowStageAttempts).set({
+    executionLeaseExpiresAt: new Date(Date.now() + WORKFLOW_ATTEMPT_LEASE_MS),
+    updatedAt: new Date(),
+  }).where(writable(attemptScopeColumns, and(
+    eq(workflowStageAttempts.id, attemptId),
+    eq(workflowStageAttempts.status, "active"),
+    eq(workflowStageAttempts.executionLeaseId, leaseId),
+  ))).returning({ id: workflowStageAttempts.id });
+  return rows.length > 0;
+}
+
+async function releaseWorkflowAttemptMonitor(attemptId: number, leaseId: string): Promise<void> {
+  await db.update(workflowStageAttempts).set({
+    executionLeaseId: null,
+    executionLeaseOwner: null,
+    executionLeaseExpiresAt: null,
+    updatedAt: new Date(),
+  }).where(writable(attemptScopeColumns, and(
+    eq(workflowStageAttempts.id, attemptId),
+    eq(workflowStageAttempts.executionLeaseId, leaseId),
+  )));
+}
+
 function acceptanceStageContext(detail: WorkflowRunDetail): Record<string, unknown> | undefined {
   if (detail.template.id !== BUILD_WORKFLOW_TEMPLATE_ID || detail.run.currentStageKey !== "acceptance") return undefined;
   const truth = detail.environmentTruth || null;
@@ -681,13 +765,34 @@ async function monitorWorkflowChild(
   stageKey: string,
   stageTitle: string,
   attemptNumber: number,
+  options: { staleOwner?: string | null } = {},
 ): Promise<void> {
-  const result = await monitorChildSession(
-    childSessionId,
-    WORKFLOW_STAGE_IDLE_TIMEOUT_MS,
-    undefined, // no abort signal — workflows don't have a pause/abort mechanism yet
-    parentSessionId || undefined,
-  );
+  const existingLocal = activeWorkflowMonitors.get(attemptId);
+  if (existingLocal) return;
+  const lease = await claimWorkflowAttemptMonitor(attemptId, workflowMonitorOwner(runId), WORKFLOW_ATTEMPT_LEASE_MS, options.staleOwner);
+  if (!lease.claimed) {
+    log.debug(`[monitor] Workflow attempt ${attemptId} is owned by another monitor`);
+    return;
+  }
+
+  const abortController = new AbortController();
+  activeWorkflowMonitors.set(attemptId, { abortController, leaseId: lease.leaseId });
+  const renewal = setInterval(() => {
+    void renewWorkflowAttemptMonitor(attemptId, lease.leaseId).then((renewed) => {
+      if (!renewed) abortController.abort("workflow_monitor_lease_lost");
+    }).catch((error) => {
+      log.warn(`[monitor] Workflow attempt ${attemptId} lease renewal failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, Math.floor(WORKFLOW_ATTEMPT_LEASE_MS / 3));
+  renewal.unref?.();
+
+  try {
+    const result = await monitorChildSession(
+      childSessionId,
+      WORKFLOW_STAGE_IDLE_TIMEOUT_MS,
+      abortController.signal,
+      parentSessionId || undefined,
+    );
 
   // Check if the attempt was already completed by the child's own tool call.
   // The idempotency guard in completeStageAttempt will no-op, but we can
@@ -757,8 +862,158 @@ async function monitorWorkflowChild(
       break;
     }
   }
+  } finally {
+    clearInterval(renewal);
+    activeWorkflowMonitors.delete(attemptId);
+    await releaseWorkflowAttemptMonitor(attemptId, lease.leaseId).catch(() => undefined);
+  }
 }
 
+
+async function runAsWorkflowOwner<T>(
+  run: { ownerUserId: string | null; accountId: string | null },
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!run.ownerUserId || !run.accountId) throw new Error("Workflow recovery requires durable owner identity");
+  const [identity] = await db.select({ user: users })
+    .from(users)
+    .innerJoin(accounts, and(
+      eq(accounts.id, run.accountId),
+      eq(accounts.kind, "personal"),
+      eq(accounts.ownerUserId, run.ownerUserId),
+    ))
+    .where(eq(users.id, run.ownerUserId))
+    .limit(1);
+  if (!identity) throw new Error(`Workflow owner identity is no longer valid for account ${run.accountId}`);
+  return runWithPrincipal(createUserPrincipalFromUser(identity.user, run.accountId), fn);
+}
+
+async function recoverWorkflowAttempt(
+  detail: WorkflowRunDetail,
+  attempt: WorkflowStageAttempt,
+  options: { staleOwner?: string | null; forceCurrentRuntime?: boolean } = {},
+): Promise<boolean> {
+  if (attempt.status !== "active" || attempt.completedAt) return false;
+
+  const localMonitor = activeWorkflowMonitors.get(attempt.id);
+  if (localMonitor && options.forceCurrentRuntime) {
+    localMonitor.abortController.abort("workflow_resume_recovery");
+  }
+  if (attempt.executionLeaseExpiresAt && attempt.executionLeaseExpiresAt.getTime() > Date.now()) {
+    if (!localMonitor || !options.forceCurrentRuntime) return false;
+    const deadline = Date.now() + 15_000;
+    while (activeWorkflowMonitors.has(attempt.id) && Date.now() < deadline) {
+      await sleep(250);
+    }
+    const refreshed = await getWorkflowRun(detail.run.id);
+    const refreshedAttempt = refreshed?.stages.flatMap((stage) => stage.attempts).find((candidate) => candidate.id === attempt.id);
+    if (!refreshedAttempt || refreshedAttempt.status !== "active") return true;
+    if (activeWorkflowMonitors.has(attempt.id)) {
+      throw new Error(`Workflow attempt ${attempt.id} is still settling after pause; retry resume once termination completes.`);
+    }
+  }
+
+  const lease = await claimWorkflowAttemptMonitor(
+    attempt.id,
+    `recovery:${workflowRuntimeInstanceId()}@${workflowRuntimeBootId()}`,
+    WORKFLOW_ATTEMPT_LEASE_MS,
+    options.staleOwner,
+  );
+  if (!lease.claimed) return false;
+
+  try {
+    const currentDetail = await getWorkflowRun(detail.run.id);
+    const currentAttempt = currentDetail?.stages.flatMap((stage) => stage.attempts).find((candidate) => candidate.id === attempt.id);
+    if (!currentDetail || !currentAttempt || currentAttempt.status !== "active" || currentAttempt.completedAt) return false;
+
+    let result: "failed" | "blocked" = "failed";
+    let reason = "interrupted_by_process_restart";
+    let message = "Workflow stage monitoring was interrupted before a structured verdict was recorded.";
+    if (currentAttempt.childSessionId) {
+      const child = await chatFileStorage.getSession(currentAttempt.childSessionId).catch(() => null);
+      if ((child as { status?: string } | null)?.status === "saved") {
+        reason = "missing_verdict";
+        message = "Workflow child completed without recording the required structured stage verdict.";
+      } else {
+        const termination = await abortAndConfirmChildTermination(currentAttempt.childSessionId, "cancelled");
+        if (!termination.confirmed) {
+          result = "blocked";
+          reason = "termination_unconfirmed";
+          message = `Interrupted Workflow child could not be proven terminated after ${termination.waitedMs}ms; retry is fenced.`;
+        }
+      }
+    } else {
+      reason = "child_session_missing";
+      message = "Workflow attempt was interrupted before its child session was persisted.";
+    }
+
+    await completeStageAttempt(currentDetail.run.id, currentAttempt.id, {
+      result,
+      outputSummary: message,
+      failureContext: {
+        reason,
+        source: WORKFLOW_RECOVERY_JOB,
+        childSessionId: currentAttempt.childSessionId,
+        nextSuggestedFix: result === "blocked"
+          ? "Confirm the prior child is terminal before resuming."
+          : "Resume the workflow to start a fresh attempt with the preserved failure packet.",
+      },
+    });
+    return true;
+  } finally {
+    await releaseWorkflowAttemptMonitor(attempt.id, lease.leaseId).catch(() => undefined);
+  }
+}
+
+const scheduledWorkflowRecoveries = new Map<number, NodeJS.Timeout>();
+
+function scheduleWorkflowRecovery(attemptId: number, expiresAt: Date): void {
+  const existing = scheduledWorkflowRecoveries.get(attemptId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    scheduledWorkflowRecoveries.delete(attemptId);
+    void recoverInterruptedWorkflows();
+  }, Math.max(1_000, expiresAt.getTime() - Date.now() + 1_000));
+  timer.unref?.();
+  scheduledWorkflowRecoveries.set(attemptId, timer);
+}
+
+export async function recoverInterruptedWorkflows(): Promise<number> {
+  return runWithPrincipal(createNamedSystemPrincipal(WORKFLOW_RECOVERY_JOB), async () => {
+    const activeAttempts = await db.select({ attempt: workflowStageAttempts, run: workflowRuns })
+      .from(workflowStageAttempts)
+      .innerJoin(workflowRuns, eq(workflowRuns.id, workflowStageAttempts.workflowRunId))
+      .where(and(
+        eq(workflowStageAttempts.status, "active"),
+        isNull(workflowStageAttempts.completedAt),
+      ))
+      .limit(100);
+
+    let recovered = 0;
+    for (const row of activeAttempts) {
+      if (ownedByCurrentWorkflowRuntime(row.attempt.executionLeaseOwner) && activeWorkflowMonitors.has(row.attempt.id)) continue;
+      const staleOwner = ownedByPriorWorkflowBoot(row.attempt.executionLeaseOwner)
+        ? row.attempt.executionLeaseOwner
+        : null;
+      if (!staleOwner && row.attempt.executionLeaseExpiresAt && row.attempt.executionLeaseExpiresAt.getTime() > Date.now()) {
+        scheduleWorkflowRecovery(row.attempt.id, row.attempt.executionLeaseExpiresAt);
+        continue;
+      }
+      const didRecover = await runAsWorkflowOwner(row.run, async () => {
+        const detail = await getWorkflowRun(row.run.id);
+        const attempt = detail?.stages.flatMap((stage) => stage.attempts).find((candidate) => candidate.id === row.attempt.id);
+        if (!detail || !attempt) return false;
+        return recoverWorkflowAttempt(detail, attempt, { staleOwner });
+      }).catch((error) => {
+        log.warn(`[recovery] Workflow attempt ${row.attempt.id} failed to recover: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
+      });
+      if (didRecover) recovered += 1;
+    }
+    if (recovered > 0) log.log(`[recovery] Recovered ${recovered} interrupted Workflow attempt(s)`);
+    return recovered;
+  });
+}
 
 export const BUILD_WORKFLOW_TEMPLATE_ID = "build-v1";
 
@@ -1335,16 +1590,39 @@ export async function startWorkflowRun(runId: string): Promise<WorkflowRunDetail
   return (await getWorkflowRun(runId))!;
 }
 
-export async function pauseWorkflowRun(runId: string, reason = "paused"): Promise<WorkflowRunDetail> {
-  await recordTransition({ workflowRunId: runId, fromStageKey: (await getWorkflowRun(runId))?.run.currentStageKey ?? null, toStageKey: (await getWorkflowRun(runId))?.run.currentStageKey ?? null, trigger: "manual", reason, render: false });
-  return updateWorkflowRun(runId, { status: "paused" });
+function abortWorkflowRunMonitors(detail: WorkflowRunDetail, reason: string): void {
+  for (const attempt of detail.stages.flatMap((stage) => stage.attempts)) {
+    if (attempt.status !== "active") continue;
+    activeWorkflowMonitors.get(attempt.id)?.abortController.abort(reason);
+  }
 }
 
-export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetail> { return startWorkflowRun(runId); }
+export async function pauseWorkflowRun(runId: string, reason = "paused"): Promise<WorkflowRunDetail> {
+  const detail = await getWorkflowRun(runId);
+  if (!detail) throw new Error(`Workflow run not found: ${runId}`);
+  await recordTransition({ workflowRunId: runId, fromStageKey: detail.run.currentStageKey, toStageKey: detail.run.currentStageKey, trigger: "manual", reason, render: false });
+  const paused = await updateWorkflowRun(runId, { status: "paused" });
+  abortWorkflowRunMonitors(detail, "workflow_paused");
+  return paused;
+}
+
+export async function resumeWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
+  const detail = await getWorkflowRun(runId);
+  if (!detail) throw new Error(`Workflow run not found: ${runId}`);
+  const activeAttempt = detail.stages.flatMap((stage) => stage.attempts).find((attempt) => attempt.status === "active" && !attempt.completedAt);
+  if (activeAttempt) {
+    await recoverWorkflowAttempt(detail, activeAttempt, { forceCurrentRuntime: true });
+  }
+  return startWorkflowRun(runId);
+}
+
 export async function cancelWorkflowRun(runId: string, reason = "canceled"): Promise<WorkflowRunDetail> {
   const detail = await getWorkflowRun(runId);
-  await recordTransition({ workflowRunId: runId, fromStageKey: detail?.run.currentStageKey ?? null, toStageKey: null, trigger: "manual", reason, render: false });
-  return updateWorkflowRun(runId, { status: "canceled", currentStageKey: null });
+  if (!detail) throw new Error(`Workflow run not found: ${runId}`);
+  await recordTransition({ workflowRunId: runId, fromStageKey: detail.run.currentStageKey, toStageKey: null, trigger: "manual", reason, render: false });
+  const canceled = await updateWorkflowRun(runId, { status: "canceled", currentStageKey: null });
+  abortWorkflowRunMonitors(detail, "workflow_canceled");
+  return canceled;
 }
 
 function stageFor(detail: WorkflowRunDetail, stageKey: string) {

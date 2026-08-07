@@ -1,3 +1,11 @@
+<!-- 2026-08-07 Workflow/Plan executor parity:
+- Assets/data: S2 workflow objectives, stage evidence, child-session output, and autonomous tool authority; S1 lease and failure metadata.
+- Flow/boundary: Workflow run -> durable stage attempt -> leased parent monitor -> child Session -> structured stage verdict -> template transition; boot recovery discovers orphaned attempts under a named system principal and restores the exact owner principal before mutation.
+- Failure/threat: process-local Workflow monitoring could be lost on restart, while Pause did not abort children; Resume could then create a retry beside a still-running child or leave active attempts orphaned (STRIDE tampering/repudiation/elevation/availability and agentic duplicate-authority analogue).
+- Controls/owner: Workflow Service owns expiring attempt-monitor leases with compare-and-set claim/renew/release, terminal-attempt CAS, bounded recovery scans, exact owner restoration, confirmed child termination before retry, and the existing explicit `complete_stage_attempt` verdict boundary. A terminal child without a verdict fails as `missing_verdict`; no prose can advance a stage. Owner: Build Mod / Workflow Runtime. Severity: high. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: a partitioned child may continue briefly after monitor lease expiry, but recovery must confirm termination and terminal-attempt CAS prevents duplicate advancement. Nullable additive columns are rollback-safe; reverting service/boot behavior leaves them inert.
+-->
+
 <!-- 2026-08-07 Claude CLI usage-limit classification repair:
 - Assets/data: sanitized Claude subscription failure text (S1 operational metadata), provider/model/run identifiers, bounded subprocess diagnostics, and aggregate error fingerprints.
 - Flow/boundary: untrusted Claude Agent SDK result -> `cli-sdk-adapter.ts` provider boundary -> redacting logger -> application-error aggregate.
