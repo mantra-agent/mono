@@ -62,6 +62,9 @@ export interface AdapterChild {
   resourceType: "file" | "folder";
   iconUrl: string | null;
   webViewLink: string | null;
+  /** Cheap discovery fingerprint when the provider returns it on list. */
+  modifiedTime?: string | null;
+  md5Checksum?: string | null;
 }
 
 export interface AdapterBytes {
@@ -182,7 +185,7 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
         pageSize: Math.min(Math.max(opts.pageSize ?? 50, 1), 100),
         pageToken: opts.pageToken,
         fields:
-          "nextPageToken, files(id,name,mimeType,iconLink,webViewLink,size,modifiedTime)",
+          "nextPageToken, files(id,name,mimeType,iconLink,webViewLink,size,modifiedTime,md5Checksum)",
         supportsAllDrives: true,
         includeItemsFromAllDrives: true,
       });
@@ -201,6 +204,8 @@ class GoogleDriveAdapter implements FilesProviderAdapter {
                 : ("file" as const),
             iconUrl: f.iconLink ?? null,
             webViewLink: f.webViewLink ?? null,
+            modifiedTime: f.modifiedTime ?? null,
+            md5Checksum: f.md5Checksum ?? null,
           };
         });
       return {

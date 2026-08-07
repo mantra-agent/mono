@@ -805,6 +805,15 @@ app.use((req, res, next) => {
       setTimeout(runVnextSourcePoller, 30_000).unref();
       setInterval(runVnextSourcePoller, VNEXT_SOURCE_POLLER_INTERVAL_MS).unref();
 
+      // Files folder reconciler: resumable recursive discovery + durable run progress.
+      import("./files-index-reconciler")
+        .then(({ startFilesIndexReconciler }) => startFilesIndexReconciler())
+        .catch((error) => {
+          serverLog.error("Files index reconciler unavailable", {
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        });
+
       import("./mods/build-deployment-observer")
         .then(({ startBuildDeploymentObserver }) => startBuildDeploymentObserver())
         .catch((error) => {

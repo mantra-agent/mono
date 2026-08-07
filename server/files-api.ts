@@ -69,6 +69,9 @@ export interface FilesChild {
   resourceType: "file" | "folder";
   iconUrl: string | null;
   webViewLink: string | null;
+  /** Cheap discovery fingerprint when the provider returns it on list. */
+  modifiedTime: string | null;
+  md5Checksum: string | null;
   /** Set when this child is itself an explicit bind. */
   driveResourceId: string | null;
   /** True when visible only via an ancestor folder bind. */
@@ -776,6 +779,8 @@ class FilesApi {
         resourceType: c.resourceType,
         iconUrl: c.iconUrl,
         webViewLink: c.webViewLink,
+        modifiedTime: c.modifiedTime ?? null,
+        md5Checksum: c.md5Checksum ?? null,
         driveResourceId: bind?.id ?? null,
         viaFolderBind: !bind && folderBindIds.size > 0,
       };

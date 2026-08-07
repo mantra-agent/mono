@@ -3,14 +3,14 @@
  *
  * Indexing is a policy over canonical drive_resources:
  * - file toggle → mode self|off; materialize/retire one indexed_file_source; enqueue drive_file
- * - folder toggle → mode recursive|off; schedule reconciliation run stub (worker = step 3)
+ * - folder toggle → mode recursive|off; schedule reconciliation run (worker advances phases)
  *
  * Coverage (v1, no per-child exclusions):
  * A discovered file stays indexed while ANY active policy covers it (explicit self on the
  * bind, or recursive ancestor). Turning a folder off stops future discovery and retires only
  * sources whose sole covering policy was that folder. Overlap-safe retirement is finalized by
  * the reconciler; this service retires the direct self-source on disable and enqueues a
- * reconciliation stub so recursive coverage can be recomputed.
+ * reconciliation run so recursive coverage can be recomputed.
  *
  * Semantic extraction state remains exclusively in memory_vnext_source_queue.
  */
@@ -33,6 +33,7 @@ import { requireCurrentUserPrincipal } from "./principal-context";
 import type { Principal } from "./principal";
 import { liveVaultGatePredicate, type ObjectRole } from "./authorize";
 import { markSourceChanged } from "./memory/vnext-source-queue";
+import { retryFailedFilesIndexRun } from "./files-index-reconciler";
 
 const log = createLogger("FilesIndexService");
 
@@ -460,9 +461,9 @@ export class FilesIndexService {
   }
 
   /**
-   * Enqueue a durable reconciliation run stub. Idempotent while a run is already
+   * Enqueue a durable reconciliation run. Idempotent while a run is already
    * queued/discovering/indexing for the same policy — returns the active row.
-   * The worker that advances phase lives in step 3.
+   * The background reconciler advances phase and counters.
    */
   private async enqueueReconciliationRun(input: {
     principal: Principal;
@@ -494,6 +495,32 @@ export class FilesIndexService {
         createdAt: now,
       })
       .returning();
+    return row;
+  }
+
+  /**
+   * Retry only failed files from a partial/failed run without restarting full
+   * tree discovery. Overlap-safe and principal-scoped.
+   */
+  async retryFailedRun(runId: string): Promise<FileIndexStatus> {
+    const principal = requireCurrentUserPrincipal();
+    const run = await retryFailedFilesIndexRun({ principal, runId });
+    return this.getStatus(run.rootDriveResourceId);
+  }
+
+  async getRun(runId: string): Promise<FileIndexReconciliationRunRow> {
+    const principal = requireCurrentUserPrincipal();
+    const [row] = await db
+      .select()
+      .from(fileIndexReconciliationRuns)
+      .where(
+        and(
+          eq(fileIndexReconciliationRuns.id, runId),
+          eq(fileIndexReconciliationRuns.accountId, principal.accountId!),
+        ),
+      )
+      .limit(1);
+    if (!row) throw httpError("Reconciliation run not found", 404);
     return row;
   }
 }
