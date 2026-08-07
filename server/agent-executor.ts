@@ -2796,14 +2796,23 @@ export class AgentExecutor extends EventEmitter {
     if (outcome === "failed" || outcome === "cancelled") {
       // Prefer the handler's machine code; fall back to kind-derived synthetic codes.
       const outcomeCode = toExecutorErrorCode(failureCode, "EXECUTOR_TOOL_OUTCOME_FAILED");
-      log.error(
-        "agent.tool_outcome",
-        attributableExecutorError(
-          `tool=${name} outcome=${outcome}${failureCode ? ` code=${failureCode}` : ""}`,
-          outcomeCode,
-        ),
-        metadata,
+      const outcomeError = attributableExecutorError(
+        `tool=${name} outcome=${outcome}${failureCode ? ` code=${failureCode}` : ""}`,
+        outcomeCode,
       );
+      // Amber classes (permission/input/transient) are expected caller/policy
+      // outcomes — keep them observable at warn without polluting product-error
+      // aggregates (log.error → application_error_aggregates). Only internal
+      // defects and unclassified failures remain product errors.
+      const isAmberOutcome =
+        failureKind === "permission" ||
+        failureKind === "input" ||
+        failureKind === "transient";
+      if (isAmberOutcome) {
+        log.warn("agent.tool_outcome", outcomeError, metadata);
+      } else {
+        log.error("agent.tool_outcome", outcomeError, metadata);
+      }
     } else if (outcome === "degraded") {
       log.warn("agent.tool_outcome", metadata);
     } else {
