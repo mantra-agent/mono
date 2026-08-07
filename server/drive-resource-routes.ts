@@ -2,8 +2,10 @@ import type { Express, Response } from "express";
 import { createLogger } from "./log";
 import { driveResourceService } from "./drive-resource-service";
 import { filesApi } from "./files-api";
+import { filesIndexService } from "./files-index-service";
 import { getDriveAccessTokenForAccount } from "./gmail";
 import { getSecretSync } from "./secrets-store";
+import type { FileIndexPolicyMode } from "@shared/schema";
 
 const log = createLogger("DriveResourceRoutes");
 
@@ -226,6 +228,65 @@ export function registerDriveResourceRoutes(app: Express) {
       res.json({ ok: true, resource });
     } catch (error) {
       handleError(res, error, "Failed to authorize file access");
+    }
+  });
+
+  // ── Files semantic index policy (toggle + status for Files UI) ───────────
+  // GET  /api/files/index/status?vaultId= | &driveResourceId=
+  // POST /api/files/index/toggle  { driveResourceId, enabled? , mode? }
+  // Canonical mutation boundary: filesIndexService.setIndexPolicy (idempotent).
+
+  app.get("/api/files/index/status", async (req, res) => {
+    try {
+      const driveResourceId =
+        typeof req.query.driveResourceId === "string" ? req.query.driveResourceId : "";
+      const vaultId = typeof req.query.vaultId === "string" ? req.query.vaultId : "";
+      if (driveResourceId) {
+        res.json({ status: await filesIndexService.getStatus(driveResourceId) });
+        return;
+      }
+      if (vaultId) {
+        res.json({ statuses: await filesIndexService.listStatusesForVault(vaultId) });
+        return;
+      }
+      throw Object.assign(new Error("vaultId or driveResourceId is required"), { status: 400 });
+    } catch (error) {
+      handleError(res, error, "Failed to load file index status");
+    }
+  });
+
+  app.post("/api/files/index/toggle", async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const driveResourceId = String(body.driveResourceId ?? "").trim();
+      if (!driveResourceId) {
+        throw Object.assign(new Error("driveResourceId is required"), { status: 400 });
+      }
+      const modeRaw = body.mode == null ? undefined : String(body.mode);
+      const mode =
+        modeRaw === "off" || modeRaw === "self" || modeRaw === "recursive"
+          ? (modeRaw as FileIndexPolicyMode)
+          : undefined;
+      if (modeRaw != null && mode == null) {
+        throw Object.assign(new Error("mode must be off, self, or recursive"), { status: 400 });
+      }
+      const enabled =
+        typeof body.enabled === "boolean"
+          ? body.enabled
+          : body.enabled == null
+            ? undefined
+            : body.enabled === true || body.enabled === "true";
+      if (enabled == null && mode == null) {
+        throw Object.assign(new Error("enabled or mode is required"), { status: 400 });
+      }
+      const status = await filesIndexService.setIndexPolicy({
+        driveResourceId,
+        enabled,
+        mode,
+      });
+      res.json({ status });
+    } catch (error) {
+      handleError(res, error, "Failed to toggle file index policy");
     }
   });
 }
