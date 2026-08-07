@@ -6,6 +6,14 @@
 - Residual/rollback: warning recurrence can reveal continued stale references without polluting product-error aggregates; the aggregate does not identify which producer retained the path by design. Revert the route and this record to restore error-level classification. No schema or object mutation is involved.
 -->
 
+<!-- 2026-08-07 Gmail reply sender-account regression repair:
+- Assets/data: cached Gmail thread envelope metadata (S2), connected sender account identity and Gmail authorization state (S3 boundary), and persisted native reply drafts.
+- Flow/boundary: principal-scoped email reference -> reply handler -> canonical sender-availability boundary -> principal-scoped EmailDraftStorage create. The model-supplied account selector and cached provider coordinates remain untrusted inputs.
+- Failure/threat: the reply-all caller passed the Principal object into the one-argument sender-account helper, so the helper compared an object against connected-account IDs and rejected every valid sender. This caused deterministic availability loss and a misleading authorization diagnosis; weakening validation could instead create sender substitution/spoofing risk.
+- Controls/owner: Gmail Tooling now passes only the exact cached or referenced connected-account ID into `assertAvailableGmailSenderAccount`; ambient principal scope remains owned by connected-account storage, and the canonical helper continues to require visibility, Gmail send permission/scope, and healthy tokens before draft creation. No fallback sender, principal bypass, or provider send was introduced. Severity: high availability/correctness. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: draft creation still fails closed when the exact thread account is genuinely unavailable; the user must reconnect or deliberately choose another sender rather than silently changing identity. Revert this caller correction and record to restore the regression.
+-->
+
 <!-- 2026-08-07 PDF mounted-viewer and PDF.js lifecycle repair:
 - Assets/data: vault-bound Drive PDF bytes and metadata (S2), live drive_resource/Vault grants, short-lived encrypted content handles, and bounded extracted text derivatives.
 - Flow/boundary: Files document link or pdf tool -> pdf-service resolve/read -> FilesApi live Vault/bind/recursive-whitelist authorization -> provider bytes -> PDF.js viewer/extractor. Provider coordinates and PDF bytes remain untrusted input.
