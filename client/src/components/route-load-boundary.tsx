@@ -226,13 +226,14 @@ function RouteLoadCycle({ routeKey, children }: RouteLoadBoundaryProps) {
 
     const delayedTimer = window.setTimeout(() => {
       if (readyRef.current) return;
-      log.warn("route load exceeded delayed budget; pulsing boundary", {
+      // Delayed is status only. Remounting via recoveryKey wiped local page
+      // state (open modals, drafts, in-flight UI) while the route was still live.
+      log.warn("route load exceeded delayed budget", {
         routeKey,
         elapsedMs: DELAYED_ROUTE_LOAD_MS,
         manualAttempt,
       });
       setPhase("delayed");
-      setRecoveryKey((value) => value + 1);
     }, DELAYED_ROUTE_LOAD_MS);
 
     const failedTimer = window.setTimeout(() => {

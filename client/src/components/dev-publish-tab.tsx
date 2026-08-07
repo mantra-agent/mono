@@ -1266,44 +1266,81 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
     }
   }
 
-  // Loading state
-  if (isLoading) {
-    return (
-      <div
-        className="flex-1 flex items-center justify-center"
-        data-testid="publish-loading"
-      >
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  // Error state (no cached data)
-  if (error && !data) {
-    return (
-      <div className="p-6" data-testid="publish-error">
-        <div className="rounded-md border p-4 flex items-center gap-3">
-          <AlertTriangle className="h-5 w-5 text-warning" />
-          <div className="flex-1">
-            <p className="text-sm font-medium">Couldn't load publish status.</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {(error as Error).message}
-            </p>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => refetch()}
-            data-testid="button-retry-publish"
-          >
-            Retry
-          </Button>
+  // Keep the publish modal mounted across summary refetch/error. Early returns
+  // here unmount Dialog and drop preparing/review state mid-flight.
+  if (!publishOpen) {
+    if (isLoading) {
+      return (
+        <div
+          className="flex-1 flex items-center justify-center"
+          data-testid="publish-loading"
+        >
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
-      </div>
-    );
+      );
+    }
+
+    if (error && !data) {
+      return (
+        <div className="p-6" data-testid="publish-error">
+          <div className="rounded-md border p-4 flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-warning" />
+            <div className="flex-1">
+              <p className="text-sm font-medium">Couldn't load publish status.</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {(error as Error).message}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => refetch()}
+              data-testid="button-retry-publish"
+            >
+              Retry
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    if (!data) return null;
   }
 
-  if (!data) return null;
+  if (!data) {
+    return (
+      <Dialog
+        open={publishOpen}
+        onOpenChange={(open) => {
+          if (!open && !publishBusy) closePublishModal();
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-lg"
+          onInteractOutside={(event) => {
+            if (publishBusy) event.preventDefault();
+          }}
+          onEscapeKeyDown={(event) => {
+            if (publishBusy) event.preventDefault();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Publish to production</DialogTitle>
+            <DialogDescription>
+              {publishPhase === "preparing"
+                ? "Preparing release notes…"
+                : publishPhase === "publishing"
+                  ? "Publishing…"
+                  : "Waiting for publish status…"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   const pipelineStatus: PipelineStatus = isRunning
     ? "running"
