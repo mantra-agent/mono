@@ -1,15 +1,77 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { toolOutputAdmissions } from "@shared/schema";
 import type { Principal } from "./principal";
 import { createLogger } from "./log";
-import { getPostgresErrorDetails } from "./postgres-errors";
+import { getPostgresErrorDetails, isPoolAcquireTimeoutError } from "./postgres-errors";
 
 const log = createLogger("ToolOutputPressure");
 
 const MAX_LIMIT = 50;
 const MAX_OFFSET = 5_000;
 const MAX_HOURS = 720;
+
+type PressureOperation = "rank_query" | "record_admission";
+
+type PressureOperationError = Error & {
+  code?: string;
+  operation?: PressureOperation;
+  pgCode?: string;
+  errorType?: string;
+  causeDepth?: number;
+  hours?: number;
+  limit?: number;
+  offset?: number;
+  toolName?: string;
+  disposition?: string;
+};
+
+function normalizePressureError(
+  value: unknown,
+  operation: PressureOperation,
+  fallbackCode: string,
+  message?: string,
+): PressureOperationError {
+  let error: PressureOperationError;
+  if (value instanceof Error) {
+    error = value as PressureOperationError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(message || value) as PressureOperationError;
+  } else {
+    error = new Error(message || "Tool-output pressure operation failed", {
+      cause: value,
+    }) as PressureOperationError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = fallbackCode;
+  }
+  error.operation = operation;
+  return error;
+}
+
+function pressureLogContext(options: {
+  operation: PressureOperation;
+  pgCode?: string;
+  errorType?: string;
+  causeDepth?: number;
+  hours?: number;
+  limit?: number;
+  offset?: number;
+  toolName?: string;
+  disposition?: string;
+}) {
+  return {
+    operation: options.operation,
+    pgCode: options.pgCode,
+    errorType: options.errorType,
+    causeDepth: options.causeDepth,
+    hours: options.hours,
+    limit: options.limit,
+    offset: options.offset,
+    toolName: options.toolName,
+    disposition: options.disposition,
+  };
+}
 
 export interface AdmissionMetadata {
   principal: Principal;
@@ -26,20 +88,52 @@ export interface AdmissionMetadata {
 }
 
 export async function recordToolOutputAdmission(value: AdmissionMetadata): Promise<void> {
-  await db.insert(toolOutputAdmissions).values({
-    ownerAccountId: value.principal.accountId,
-    ownerUserId: value.principal.userId,
-    sessionId: value.sessionId || null,
-    runId: value.runId || null,
-    toolCallId: value.toolCallId || null,
-    toolName: value.toolName.slice(0, 120),
-    action: (value.action || "").slice(0, 120),
-    disposition: value.disposition.slice(0, 32),
-    rawChars: Math.max(0, value.rawChars),
-    rawTokens: Math.max(0, value.rawTokens),
-    injectedChars: Math.max(0, value.injectedChars),
-    injectedTokens: Math.max(0, value.injectedTokens),
-  });
+  try {
+    await db.insert(toolOutputAdmissions).values({
+      ownerAccountId: value.principal.accountId,
+      ownerUserId: value.principal.userId,
+      sessionId: value.sessionId || null,
+      runId: value.runId || null,
+      toolCallId: value.toolCallId || null,
+      toolName: value.toolName.slice(0, 120),
+      action: (value.action || "").slice(0, 120),
+      disposition: value.disposition.slice(0, 32),
+      rawChars: Math.max(0, value.rawChars),
+      rawTokens: Math.max(0, value.rawTokens),
+      injectedChars: Math.max(0, value.injectedChars),
+      injectedTokens: Math.max(0, value.injectedTokens),
+    });
+  } catch (valueThrown) {
+    const details = getPostgresErrorDetails(valueThrown);
+    const code = isPoolAcquireTimeoutError(valueThrown)
+      ? "TOOL_OUTPUT_ADMISSION_POOL_TIMEOUT"
+      : "TOOL_OUTPUT_ADMISSION_WRITE_FAILED";
+    const error = normalizePressureError(
+      valueThrown,
+      "record_admission",
+      code,
+      `Tool-output admission write failed (pgCode=${details.code}, errorType=${details.errorType})`,
+    );
+    error.pgCode = details.code;
+    error.errorType = details.errorType;
+    error.causeDepth = details.causeDepth;
+    error.toolName = value.toolName.slice(0, 120);
+    error.disposition = value.disposition.slice(0, 32);
+    // Fail-open telemetry: preserve classification for diagnosis without failing the tool path.
+    log.warn(
+      "tool_output.admission_write_failed",
+      error,
+      pressureLogContext({
+        operation: "record_admission",
+        pgCode: details.code,
+        errorType: details.errorType,
+        causeDepth: details.causeDepth,
+        toolName: error.toolName,
+        disposition: error.disposition,
+      }),
+    );
+    throw error;
+  }
 }
 
 export async function rankToolOutputPressure(args: {
@@ -92,12 +186,37 @@ export async function rankToolOutputPressure(args: {
       ORDER BY total_raw_tokens DESC, max_result_chars DESC, tool_name, action
       LIMIT ${limit} OFFSET ${offset}
     `);
-  } catch (error) {
-    const details = getPostgresErrorDetails(error);
-    log.error(
-      `tool_output.pressure_query_failed pgCode=${details.code} errorType=${details.errorType} causeDepth=${details.causeDepth} hours=${hours} limit=${limit} offset=${offset}`,
+  } catch (valueThrown) {
+    const details = getPostgresErrorDetails(valueThrown);
+    const code = isPoolAcquireTimeoutError(valueThrown)
+      ? "TOOL_OUTPUT_PRESSURE_POOL_TIMEOUT"
+      : "TOOL_OUTPUT_PRESSURE_QUERY_FAILED";
+    const error = normalizePressureError(
+      valueThrown,
+      "rank_query",
+      code,
+      `Tool-output pressure query failed (pgCode=${details.code}, errorType=${details.errorType})`,
     );
-    throw new Error(`Tool-output pressure query failed (pgCode=${details.code}, errorType=${details.errorType})`);
+    error.pgCode = details.code;
+    error.errorType = details.errorType;
+    error.causeDepth = details.causeDepth;
+    error.hours = hours;
+    error.limit = limit;
+    error.offset = offset;
+    log.error(
+      "tool_output.pressure_query_failed",
+      error,
+      pressureLogContext({
+        operation: "rank_query",
+        pgCode: details.code,
+        errorType: details.errorType,
+        causeDepth: details.causeDepth,
+        hours,
+        limit,
+        offset,
+      }),
+    );
+    throw error;
   }
 
   return {
@@ -105,7 +224,10 @@ export async function rankToolOutputPressure(args: {
     limit,
     offset,
     nextOffset: rows.rows.length === limit && offset + limit <= MAX_OFFSET ? offset + limit : null,
-    correlation: { workingContextRefresh: "unavailable", reason: "No deterministic admission-to-refresh event key is persisted." },
+    correlation: {
+      workingContextRefresh: "unavailable",
+      reason: "No deterministic admission-to-refresh event key is persisted.",
+    },
     offenders: rows.rows,
   };
 }
