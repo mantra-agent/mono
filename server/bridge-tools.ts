@@ -1946,7 +1946,7 @@ async function handleGmailReply(args: Record<string, any>): Promise<ToolHandlerR
   const { assertAvailableGmailSenderAccount } = await import("./gmail");
   let senderAccount: Awaited<ReturnType<typeof assertAvailableGmailSenderAccount>>;
   try {
-    senderAccount = await assertAvailableGmailSenderAccount(principal, accountId || latest.accountId);
+    senderAccount = await assertAvailableGmailSenderAccount(accountId || latest.accountId);
   } catch (error: any) {
     return { result: error?.message || "Selected Gmail sender account is unavailable.", error: true };
   }
