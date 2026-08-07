@@ -197,7 +197,7 @@ function toClaim(preference: LegacyPreference): ClaimCandidate {
 }
 
 async function deleteLegacyPreference(preference: LegacyPreference, principal: Principal): Promise<void> {
-  await tagService.removeEntityTags("preference", preference.documentId);
+  await tagService.removeEntity("preference", preference.documentId);
 
   await db
     .delete(documentStoreDocuments)

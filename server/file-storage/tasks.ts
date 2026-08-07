@@ -23,13 +23,37 @@ import { tagService } from "../tag-service";
 
 const log = createLogger("StoreTasks");
 
+type TaskTagSyncError = Error & {
+  code?: string;
+  operation?: "task_tag_sync";
+  taskId?: number;
+};
+
+function normalizeTaskTagSyncError(value: unknown, taskId: number): TaskTagSyncError {
+  let error: TaskTagSyncError;
+  if (value instanceof Error) {
+    error = value as TaskTagSyncError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(value) as TaskTagSyncError;
+  } else {
+    error = new Error("task tag sync failed", { cause: value }) as TaskTagSyncError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = "TASK_TAG_SYNC_ERROR";
+  }
+  error.operation = "task_tag_sync";
+  error.taskId = taskId;
+  return error;
+}
+
 async function syncTaskTags(task: Task): Promise<void> {
   try {
+    // Canonical TagService mutation boundary — never call retired facade names.
     await tagService.replaceEntityTags("task", String(task.id), task.title, task.tags || []);
   } catch (err) {
-    const tagError = err instanceof Error ? err.message : String(err);
-    log.error("task tag sync error", { id: task.id, error: tagError });
-    throw err;
+    const error = normalizeTaskTagSyncError(err, task.id);
+    log.error(error, { operation: error.operation, taskId: task.id });
+    throw error;
   }
 }
 
@@ -566,8 +590,10 @@ export class FileTaskStorage {
       try {
         await tagService.removeEntity("task", String(id));
       } catch (err) {
-        const tagError = err instanceof Error ? err.message : String(err);
-        log.error("task tag cleanup error", { id, error: tagError });
+        const error = normalizeTaskTagSyncError(err, id);
+        error.code = "TASK_TAG_CLEANUP_ERROR";
+        error.operation = "task_tag_sync";
+        log.error(error, { operation: "task_tag_cleanup", taskId: id });
       }
     }
     log.log(`deleteTask id=${id} success=${deleted}`);

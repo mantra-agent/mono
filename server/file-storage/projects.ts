@@ -28,13 +28,37 @@ import { tagService } from "../tag-service";
 
 const log = createLogger("StoreProjects");
 
+type ProjectTagSyncError = Error & {
+  code?: string;
+  operation?: "project_tag_sync";
+  projectId?: number;
+};
+
+function normalizeProjectTagSyncError(value: unknown, projectId: number): ProjectTagSyncError {
+  let error: ProjectTagSyncError;
+  if (value instanceof Error) {
+    error = value as ProjectTagSyncError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(value) as ProjectTagSyncError;
+  } else {
+    error = new Error("project tag sync failed", { cause: value }) as ProjectTagSyncError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = "PROJECT_TAG_SYNC_ERROR";
+  }
+  error.operation = "project_tag_sync";
+  error.projectId = projectId;
+  return error;
+}
+
 async function syncProjectTags(project: Project): Promise<void> {
   try {
+    // Canonical TagService mutation boundary — never call retired facade names.
     await tagService.replaceEntityTags("project", String(project.id), project.title, project.tags || []);
   } catch (err) {
-    const tagError = err instanceof Error ? err.message : String(err);
-    log.error("project tag sync error", { id: project.id, error: tagError });
-    throw err;
+    const error = normalizeProjectTagSyncError(err, project.id);
+    log.error(error, { operation: error.operation, projectId: project.id });
+    throw error;
   }
 }
 

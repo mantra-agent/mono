@@ -106,7 +106,7 @@ function ownerPrincipal(row: AuditedRuleRow): Principal {
 async function deleteAuditedRule(row: AuditedRuleRow): Promise<void> {
   const principal = ownerPrincipal(row);
   await runWithPrincipal(principal, async () => {
-    await tagService.removeEntityTags("rule", row.documentId);
+    await tagService.removeEntity("rule", row.documentId);
     await db
       .delete(documentStoreDocuments)
       .where(combineWithWritableScope(

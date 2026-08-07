@@ -100,7 +100,7 @@ export abstract class BaseDocumentStore<T extends BaseEntity> {
     }
     this.log.log("delete id=" + id);
     try {
-      await tagService.removeEntityTags(this.config.docType as any, id);
+      await tagService.removeEntity(this.config.docType as any, id);
     } catch (err) {
       const tagError = err instanceof Error ? err.message : String(err);
       this.log.error("delete tag cleanup error", { id, docType: this.config.docType, error: tagError });
