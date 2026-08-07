@@ -1,3 +1,11 @@
+<!-- 2026-08-06 Business Plan tool-registry availability repair:
+- Assets/data: principal- and Vault-scoped Business Plan tool authority metadata and ChatStream availability; no Business Plan content or principal data changes.
+- Flow/boundary: static built-in ToolMeta -> registry schema normalization -> persona-authorized ChatStream tool exposure.
+- Threats: incomplete trusted tool metadata causing registry construction to throw before model execution (availability/DoS); no new external-input or authorization boundary is introduced.
+- Controls/owner: Tool Registry restores the required strategy category on the Business Plans producer entry; existing registry typing and persona/tool authority gates remain canonical. Owner Tool Platform. Severity: medium. SLA: immediate. Status: repaired in source, pending production build/merge.
+- Residual: the production build does not run standalone TypeScript validation, so future required-metadata omissions still depend on review and runtime exercise until build-time schema validation is strengthened.
+-->
+
 <!-- 2026-08-06 Document-store chat Vault convergence repair:
 - Assets/data: user-owned chat documents and their account/Vault ownership (S2 conversation data and S1 ownership metadata).
 - Flow/boundary: legacy document_store_documents rows -> boot-time vault schema convergence -> validated database ownership constraint.
