@@ -151,6 +151,73 @@ function getErrorMessage(err: unknown): string {
   return "Unknown error";
 }
 
+type ClientVoiceSessionOperation =
+  | "finalize"
+  | "sdk_error"
+  | "connection"
+  | "event_ws"
+  | "start_session";
+
+type ClientVoiceSessionOperationError = Error & {
+  code?: string;
+  operation?: ClientVoiceSessionOperation;
+  phase?: string;
+  reason?: string;
+  attempt?: number;
+};
+
+function normalizeClientVoiceSessionError(
+  value: unknown,
+  operation: ClientVoiceSessionOperation,
+  fallbackCode: string,
+  message?: string,
+): ClientVoiceSessionOperationError {
+  let error: ClientVoiceSessionOperationError;
+  if (value instanceof Error) {
+    error = value as ClientVoiceSessionOperationError;
+  } else if (typeof value === "string" && value.trim()) {
+    error = new Error(message || value.slice(0, 300)) as ClientVoiceSessionOperationError;
+  } else if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const reason =
+      typeof record.reason === "string"
+        ? record.reason
+        : typeof record.error === "string"
+          ? record.error
+          : undefined;
+    error = new Error(message || reason || "VoiceSession client operation failed", {
+      cause: value,
+    }) as ClientVoiceSessionOperationError;
+    if (reason) error.reason = reason.slice(0, 120);
+    if (typeof record.attempt === "number") error.attempt = record.attempt;
+  } else {
+    error = new Error(message || "VoiceSession client operation failed", {
+      cause: value,
+    }) as ClientVoiceSessionOperationError;
+  }
+  if (!error.code || !/^[A-Z][A-Z0-9_]{1,47}$/.test(String(error.code))) {
+    error.code = fallbackCode;
+  }
+  error.operation = operation;
+  return error;
+}
+
+function clientVoiceSessionLogContext(options: {
+  operation: ClientVoiceSessionOperation;
+  phase?: string;
+  reason?: string;
+  attempt?: number;
+  agentMode?: string;
+}) {
+  return {
+    operation: options.operation,
+    phase: options.phase,
+    reason: options.reason,
+    attempt: options.attempt,
+    agentMode: options.agentMode,
+  };
+}
+
 function toBoundedLogError(err: unknown): { name?: string; message: string } {
   if (err instanceof Error) {
     return { name: err.name || undefined, message: err.message || "Unknown error" };
@@ -666,7 +733,19 @@ export function VoiceSessionProvider({
           }
           if (payload.outcome === "not_finalized") {
             const settlement = { outcome: "not_finalized", reason: payload.reason } as const;
-            log.error("VOICE:FINALIZE:NOT_FINALIZED", { attempt, reason: payload.reason });
+            const error = normalizeClientVoiceSessionError(
+              settlement,
+              "finalize",
+              "VOICE_FINALIZE_NOT_FINALIZED",
+              "voice finalize not finalized",
+            );
+            error.attempt = attempt;
+            error.reason = payload.reason;
+            log.error(error, clientVoiceSessionLogContext({
+              operation: "finalize",
+              reason: payload.reason,
+              attempt,
+            }));
             phoneDiag("finalize_not_finalized", { attempt, reason: payload.reason }, { critical: true });
             toast({
               title: "Session not saved",
@@ -704,7 +783,17 @@ export function VoiceSessionProvider({
       return reconciled;
     }
     if (reconciled.outcome === "not_finalized") {
-      log.error("VOICE:FINALIZE:NOT_FINALIZED", reconciled);
+      const error = normalizeClientVoiceSessionError(
+        reconciled,
+        "finalize",
+        "VOICE_FINALIZE_NOT_FINALIZED",
+        "voice finalize not finalized after reconcile",
+      );
+      error.reason = reconciled.reason;
+      log.error(error, clientVoiceSessionLogContext({
+        operation: "finalize",
+        reason: reconciled.reason,
+      }));
       phoneDiag("finalize_not_finalized", reconciled, { critical: true });
       toast({
         title: "Session not saved",
@@ -962,7 +1051,16 @@ export function VoiceSessionProvider({
 
   const handleVoiceError = useCallback((error: string) => {
     const errorMsg = typeof error === "string" ? error : JSON.stringify(error);
-    log.error("VOICE:ERROR", { error: errorMsg.slice(0, 300), agentMode: agentModeRef.current });
+    const normalized = normalizeClientVoiceSessionError(
+      errorMsg,
+      "sdk_error",
+      "VOICE_SDK_ERROR",
+      "voice SDK error",
+    );
+    log.error(normalized, clientVoiceSessionLogContext({
+      operation: "sdk_error",
+      agentMode: agentModeRef.current,
+    }));
     phoneDiag("error", { error: errorMsg, agentMode: agentModeRef.current });
     emitVoiceDiag("error", errorMsg || "Voice error", "error");
 
@@ -1499,8 +1597,16 @@ export function VoiceSessionProvider({
         return false;
       }
       const msg = getErrorMessage(err);
-      const stack = err instanceof Error ? err.stack : "";
-      log.error("VOICE:CONNECTION:FAILED", { error: msg.slice(0, 300), hasStack: Boolean(stack) });
+      const normalized = normalizeClientVoiceSessionError(
+        err,
+        "connection",
+        "VOICE_CONNECTION_FAILED",
+        "voice connection failed",
+      );
+      log.error(normalized, clientVoiceSessionLogContext({
+        operation: "connection",
+        reason: msg.slice(0, 120),
+      }));
       phoneDiag("connection_failed", { error: msg });
 
       if (!isReconnect) {
@@ -1840,7 +1946,13 @@ export function VoiceSessionProvider({
           }
         }
       } catch (err: unknown) {
-        log.error("VOICE:EVENT_WS:MESSAGE_PROCESSING_FAILED", toBoundedLogError(err));
+        const normalized = normalizeClientVoiceSessionError(
+          err,
+          "event_ws",
+          "VOICE_EVENT_WS_MESSAGE_FAILED",
+          "voice event websocket message processing failed",
+        );
+        log.error(normalized, clientVoiceSessionLogContext({ operation: "event_ws" }));
       }
     });
     sharedWS.addOpenHandler(handlerId, resumeVoiceEvents);
@@ -1907,8 +2019,16 @@ export function VoiceSessionProvider({
       const rawMsg = getErrorMessage(err);
       const userMsg = startFailureMessageRef.current || rawMsg || "Could not start voice session";
       startFailureMessageRef.current = null;
-      const stack = err instanceof Error ? err.stack : "";
-      log.error("VOICE:START_SESSION:FAILED", { error: rawMsg.slice(0, 300), hasStack: Boolean(stack) });
+      const normalized = normalizeClientVoiceSessionError(
+        err,
+        "start_session",
+        "VOICE_START_SESSION_FAILED",
+        "voice start session failed",
+      );
+      log.error(normalized, clientVoiceSessionLogContext({
+        operation: "start_session",
+        reason: rawMsg.slice(0, 120),
+      }));
       if (!onboardingToken) {
         toast({ title: "Failed to Start", description: userMsg, variant: "destructive" });
       }
