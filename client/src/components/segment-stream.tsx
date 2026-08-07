@@ -1,6 +1,9 @@
 import { Fragment, useEffect, useMemo, type ComponentType, type ReactNode } from "react";
 import type { ExecutionStep, MessageSegment } from "@shared/streaming-types";
 import type { VisibilityLayer } from "@/hooks/use-visibility-layer";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("SegmentStream");
 
 function segmentDebugSummary(seg: MessageSegment, index: number) {
   if (seg.type === "content") {
