@@ -6,6 +6,14 @@
 - Residual: cooldown state is replica-local and intentionally non-durable; one failure per replica can recur after restart or expiry, while configured fallback capacity remains an operational dependency.
 -->
 
+<!-- 2026-08-06 Business Plan first-class references:
+- Assets/data: Business Plan identifiers and names (S1), vault membership, universal reference search results, and route-selection query input.
+- Flows/boundaries: authenticated Business Plan list -> shared picker; canonical @business_plan parser -> batch address resolver -> rich renderer; browser query string -> Business Advantage local selection.
+- Abuse case / STRIDE: a user guesses a plan ID to disclose another vault's plan name, or crafts a route reference that changes protected initiative/KPI assignments (information disclosure / elevation of privilege).
+- Canonical controls: existing authenticated `/api/business/plans` principal scope; `combineWithVisibleScope` in shared address resolution; route selection accepts only IDs present in the scoped list and performs no persistence mutation. Owner: Business Plan storage + shared reference resolver.
+- Finding: verified low residual risk. No new write authority, public route, secret, dependency, or external trust boundary; malformed/inaccessible IDs safely fall back to the first visible plan. Release is not blocked.
+-->
+
 <!-- 2026-08-06 ModelClient provider-failure classifier repair:
 - Assets/data: sanitized external-provider failure envelopes (S1 operational metadata), provider/model identifiers, HTTP status, allowlisted provider codes, and aggregate error fingerprints.
 - Flow/boundary: untrusted model-provider response -> `model-client.ts` normalization -> structured server logger args -> privacy-safe application-error classifier/projection.

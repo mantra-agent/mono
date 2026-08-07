@@ -130,6 +130,11 @@ const registry: Record<string, RegistryEntry> = {
     fallbackLabel: ref => metadataString(ref, "label") || `Timer ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/timers?timer=${encodeURIComponent(ref.id)}`,
   },
+  business_plan: {
+    Icon: FileJson2,
+    fallbackLabel: ref => metadataString(ref, "label") || `Business Plan ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/business/advantage?plan=${encodeURIComponent(ref.id)}`,
+  },
   wellness_activity: {
     Icon: Heart,
     fallbackLabel: ref => metadataString(ref, "label") || ref.id,
