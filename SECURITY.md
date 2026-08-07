@@ -214,6 +214,14 @@
 - Residual/rollback: provider ancestry remains bounded and provider-dependent; reverting restores viewer failure and ambient bind rediscovery without schema rollback.
 -->
 
+<!-- 2026-08-07 mounted Drive PDF residual repair:
+- Assets/data: S2 Drive PDF bytes/metadata, recursive-discovery provenance, Vault/bind identity, connector credentials, and encrypted short-lived content handles.
+- Flow/boundary: authenticated recursive Drive tree -> `/api/pdf/open` or `pdf.extract` -> PdfService -> FilesApi mounted-root authorization -> provider bytes; PDF.js Node legacy build -> fake-worker module import.
+- Failure/threat: shortcut-backed files are reached through an authorized listing edge but their concrete Google parent chain does not lead to the bound shortcut/root, so ancestry-only revalidation returned Not found. Separately, extraction overwrote PDF.js's Node-owned `workerSrc` with an empty string, making fake-worker setup fail. Accepting arbitrary caller IDs under a root would be an IDOR/confused-deputy risk; disabling authorization to restore availability is forbidden.
+- Controls/owner: FilesApi first independently authorizes the exact folder bind and Vault/provider tuple, then accepts only an active/unsupported `indexed_file_sources` row whose exact vault, provider, provider_file_id, and root_drive_resource_id were produced by the bounded owner-principal recursive reconciler; ordinary provider ancestry remains the fallback for non-indexed descendants. PdfService preserves the repository-pinned legacy build's module-relative fake-worker source. Content handles remain locators and re-run this same live authorization on every byte read. Owner: Core Application Platform / Files API. Severity: high authorization-integrity plus medium availability. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: recursive-discovery evidence is current-state authorization only while the row remains active/unsupported and the root bind remains live; a stale/deleted/retired row fails closed. Revert this delta to restore shortcut viewer denial and extraction failure without schema rollback.
+-->
+
 <!-- 2026-08-06 Recursive Google Drive folder bindings:
 - Assets/data: explicitly selected Drive file/folder IDs, descendant metadata/content, connected-account identity, short-lived `drive.readonly` access tokens, and Vault-scoped Drive bindings.
 - Flow/boundary: authenticated SPA receives a short-lived Picker token plus a separate browser-safe API key/project number -> the user selects files or folders in My Drive or shared drives -> the binding stores the selecting connected account -> every list/read resolves that account server-side, proves the target is the bound root or a descendant, then calls the read-only adapter.
