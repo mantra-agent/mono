@@ -1,13 +1,14 @@
 /**
  * Single PDF.js load boundary for the Core PDF viewer.
  *
- * Package dependency is declared as pdfjs-dist@6.2.108. The browser loads the
- * matching official ESM build + worker so there is exactly one renderer version
- * and one worker-backed path.
+ * Package dependency is declared as pdfjs-dist@6.2.108. Vite emits the matching
+ * renderer and worker from that installed package so one application build owns
+ * the complete worker-backed path.
  */
 
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
+
 export const PDFJS_VERSION = "6.2.108" as const;
-const PDFJS_CDN_BASE = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}`;
 
 export type PdfJsModule = {
   getDocument: (src: unknown) => { promise: Promise<PdfJsDocument> };
@@ -48,16 +49,15 @@ export type PdfJsDocument = {
 let loadPromise: Promise<PdfJsModule> | null = null;
 
 async function importPdfJs(): Promise<PdfJsModule> {
-  // Load the exact package version declared in package.json / package-lock.
-  // Runtime URL import keeps the session build independent of shared node_modules
-  // while still pinning Mozilla PDF.js as the sole renderer.
-  const moduleUrl = `${PDFJS_CDN_BASE}/build/pdf.mjs`;
-  const remote = await import(/* @vite-ignore */ moduleUrl);
-  return remote as unknown as PdfJsModule;
+  // The application build owns both halves of the PDF.js contract. Runtime CDN
+  // imports make document availability depend on a third-party origin and can
+  // pair a cached renderer with a different worker response.
+  const bundled = await import("pdfjs-dist/build/pdf.mjs");
+  return bundled as unknown as PdfJsModule;
 }
 
 export function pdfWorkerSrc(): string {
-  return `${PDFJS_CDN_BASE}/build/pdf.worker.mjs`;
+  return pdfWorkerUrl;
 }
 
 export function loadPdfJs(): Promise<PdfJsModule> {
