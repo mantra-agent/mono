@@ -15878,7 +15878,15 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       try {
         const { getToolStats } = await import("./file-storage/tool-stats");
         const stats = getToolStats();
-        return { result: JSON.stringify({ total: stats.length, tools: stats }) };
+        return {
+          result: JSON.stringify({
+            scope: "cumulative",
+            window: null,
+            note: "Tool statistics are lifetime cumulative counters persisted across process restarts; time-window filtering is not supported.",
+            total: stats.length,
+            tools: stats,
+          }),
+        };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return { result: `Failed to get tool stats: ${msg}`, error: true };
