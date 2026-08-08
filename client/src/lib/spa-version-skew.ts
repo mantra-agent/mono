@@ -104,7 +104,7 @@ async function fetchServerBuildId(): Promise<string | null> {
 
 async function checkForVersionSkew(
   force: boolean,
-  showPromptOnFailure = false,
+  recoverChunkFailure = false,
 ): Promise<VersionSkewRecoveryOutcome> {
   if (__MANTRA_BUILD_ID__ === "development") return "same_build";
 
@@ -116,9 +116,12 @@ async function checkForVersionSkew(
   inFlight = (async () => {
     try {
       const serverBuildId = await fetchServerBuildId();
-      if (!serverBuildId || serverBuildId === __MANTRA_BUILD_ID__) return "same_build";
+      if (!serverBuildId) return "same_build";
 
-      log.warn("SPA version skew detected", {
+      const buildChanged = serverBuildId !== __MANTRA_BUILD_ID__;
+      if (!buildChanged && !recoverChunkFailure) return "same_build";
+
+      log.warn(buildChanged ? "SPA version skew detected" : "SPA chunk response invalid", {
         clientBuildId: __MANTRA_BUILD_ID__,
         serverBuildId,
       });
@@ -140,7 +143,7 @@ async function checkForVersionSkew(
       log.warn("SPA version check unavailable", {
         error: error instanceof Error ? error.message : String(error),
       });
-      if (showPromptOnFailure) showUpdatePrompt();
+      if (recoverChunkFailure) showUpdatePrompt();
       return "check_unavailable";
     } finally {
       inFlight = null;
