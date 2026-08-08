@@ -109,7 +109,7 @@ function SimpleSectionGroup({
   };
 
   return (
-    <section className="scroll-mt-6">
+    <section className="scroll-mt-6 [content-visibility:auto] [contain-intrinsic-size:auto_320px]">
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-2 py-1 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md">
           <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
@@ -307,7 +307,7 @@ function LibrarySurfaceInbox({ peopleItems, newsItems, emailItems, feedItems }: 
   if (surfacedPages.length === 0 && peopleItems.length === 0 && newsItems.length === 0 && emailItems.length === 0 && feedItems.length === 0) return null;
 
   return (
-    <section className="scroll-mt-6">
+    <section className="scroll-mt-6 [content-visibility:auto] [contain-intrinsic-size:auto_320px]">
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
           <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
@@ -374,7 +374,7 @@ function LibrarySurfaceSnoozed({ peopleItems, newsItems }: { peopleItems: Simple
   if (!hasItems) return null;
 
   return (
-    <section className="scroll-mt-6">
+    <section className="scroll-mt-6 [content-visibility:auto] [contain-intrinsic-size:auto_320px]">
       <button
         type="button"
         className="flex w-full items-center gap-1.5 px-2 py-1 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
