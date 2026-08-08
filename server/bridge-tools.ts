@@ -11858,21 +11858,14 @@ ${refs}` : ""),
         const slots = admissionController.getSlots();
         const suspendedSlots = admissionController.getSuspendedSlots();
         const zombies = getZombieMetrics();
-        const accountedRunIds = new Set([
-          ...slots.map((slot) => slot.runId),
-          ...suspendedSlots.map((slot) => slot.runId),
-        ]);
-        let drift = 0;
-        const driftParts: string[] = [];
-        const orphanRuns = runs.filter((run) => run.admitted && !run.aborted && !accountedRunIds.has(run.runId)).length;
-        if (orphanRuns > 0) { drift += orphanRuns; driftParts.push(`${orphanRuns} admitted run(s) without ownership`); }
-        const abortedCount = runs.filter(r => r.aborted).length;
-        if (zombies.active > abortedCount) {
-          const delta = zombies.active - abortedCount;
-          drift += delta;
-          driftParts.push(`${delta} unattributed zombie(s)`);
-        }
-        parts.push(`**Books vs Reality:** drift=${drift}${driftParts.length ? ` — ${driftParts.join("; ")}` : " (in sync)"}`);
+        const { classifyRunDivergence } = await import("./run-divergence");
+        const divergence = classifyRunDivergence({
+          runs,
+          slots,
+          suspendedSlots,
+          activeZombies: zombies.active,
+        });
+        parts.push(`**Books vs Reality:** drift=${divergence.value}${divergence.detail === "in sync" ? " (in sync)" : ` — ${divergence.detail}`}`);
       } catch { parts.push("**Books vs Reality:** unavailable"); }
 
       try {

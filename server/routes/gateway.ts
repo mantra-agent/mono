@@ -322,20 +322,14 @@ export async function registerGatewayRoutes(app: Express) {
       const transportMetrics = getRealtimeTransportMetrics();
       const sessionMetrics = sessionManager.getSubscriptionMetrics();
 
-      const accountedRunIds = new Set([
-        ...slots.map((slot) => slot.runId),
-        ...suspendedSlots.map((slot) => slot.runId),
-      ]);
-      let divergence = 0;
-      const divergenceParts: string[] = [];
-      const orphanRuns = runs.filter((run) => run.admitted && !run.aborted && !accountedRunIds.has(run.runId));
-      divergence += orphanRuns.length;
-      if (orphanRuns.length > 0) divergenceParts.push(`${orphanRuns.length} admitted executor run(s) without admission ownership`);
-      if (zombies.active > 0 && runs.filter(r => r.aborted).length < zombies.active) {
-        const delta = zombies.active - runs.filter(r => r.aborted).length;
-        divergence += delta;
-        divergenceParts.push(`${delta} unattributed zombie(s)`);
-      }
+      const { classifyRunDivergence } = await import("../run-divergence");
+      const divergence = classifyRunDivergence({
+        runs,
+        slots,
+        suspendedSlots,
+        activeZombies: zombies.active,
+        now,
+      });
 
       resources = {
         generatedAt: now,
@@ -414,10 +408,7 @@ export async function registerGatewayRoutes(app: Express) {
           rssUsedPct: diag?.memoryUsage?.rssUsedPct ?? null,
           limitSource: diag?.memoryUsage?.limitSource ?? null,
         },
-        divergence: {
-          value: divergence,
-          detail: divergenceParts.length > 0 ? divergenceParts.join("; ") : "in sync",
-        },
+        divergence,
       };
     } catch (err: any) {
       failures.push(`resources: ${err?.message || String(err)}`);
