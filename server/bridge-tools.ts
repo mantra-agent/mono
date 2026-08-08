@@ -17188,7 +17188,7 @@ const cognitionTools: Record<string, ToolHandler> = {
     // to existing handlers so validation, provenance, and profile permissions stay
     // at their deterministic per-action authority boundaries.
     if (action === "observe") {
-      return actionTools.observe({ ...args, type: args.observation_type, content: args.observation });
+      return systemTools.observe({ ...args, type: args.observation_type, content: args.observation });
     }
     if (action === "get_profile" || action === "update_profile") {
       return utilityTools.agent_profile({ ...args, action: action === "get_profile" ? "get" : "update" });
