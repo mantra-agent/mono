@@ -7,7 +7,6 @@ import {
   extractDeploymentMeta,
   fetchBuildLogs,
   fetchDeploymentLogs,
-  fetchDeploymentsForEnvironment,
   fetchProjects,
   fetchServiceVariables,
   redeployDeployment,
@@ -15,6 +14,7 @@ import {
   type RailwayDeployment,
   type RailwayLogEntry,
 } from "./client";
+import { getSharedRailwayDeploymentSnapshot, type RailwayDeploymentSnapshot } from "./deployment-state";
 
 const IN_FLIGHT_STATUSES = new Set(["BUILDING", "DEPLOYING", "WAITING", "QUEUED", "INITIALIZING"]);
 
@@ -71,23 +71,27 @@ export async function verifyRailwayEnvironmentCapability(control: RailwayEnviron
   };
 }
 
+export async function fetchEnvironmentDeploymentSnapshot(
+  control: RailwayEnvironmentControl,
+  limit = 20,
+  options: { forceRefresh?: boolean } = {},
+): Promise<RailwayDeploymentSnapshot> {
+  return getSharedRailwayDeploymentSnapshot(control, limit, options);
+}
+
 export async function fetchEnvironmentDeployments(
   control: RailwayEnvironmentControl,
   limit = 20,
 ): Promise<RailwayDeployment[]> {
-  return fetchDeploymentsForEnvironment(
-    control.projectId,
-    control.serviceId,
-    control.railwayEnvironmentId,
-    limit,
-    control.token,
-  );
+  const snapshot = await fetchEnvironmentDeploymentSnapshot(control, limit);
+  return snapshot.deployments.slice(0, limit);
 }
 
 export async function fetchLatestEnvironmentDeployment(
   control: RailwayEnvironmentControl,
 ): Promise<RailwayDeployment | null> {
-  const deployments = await fetchEnvironmentDeployments(control, 1);
+  const snapshot = await fetchEnvironmentDeploymentSnapshot(control, 1, { forceRefresh: true });
+  const deployments = snapshot.deployments;
   return deployments[0] ?? null;
 }
 
