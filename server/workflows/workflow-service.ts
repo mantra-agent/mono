@@ -425,8 +425,8 @@ function buildRetryContext(detail: WorkflowRunDetail, stageKey: string, stageTit
 }
 
 const BUILD_STAGE_PURPOSES: Record<string, string> = {
-  scope: "Design the smallest coherent change that satisfies the originating request. Expand only when repository evidence proves the narrower design cannot preserve a named invariant.",
-  design_review: "Find defects, omissions, unsupported scope expansion, unjustified complexity, and governing-context violations before implementation begins.",
+  scope: "Produce the durable specification for the smallest coherent change that satisfies the originating request. Inspect repository and runtime evidence here, name every governing standard the specification relies on, and expand only when evidence proves the narrower design cannot preserve a named invariant.",
+  design_review: "Review only the Design-produced specification against its named governing standards. Reject only concrete violations cited to a specific standard; do not perform fresh architecture or repository discovery, and do not introduce requirements absent from those standards.",
   implement: "Implement the approved design completely, preserve its constraints, and produce build and change evidence.",
   code_review: "Find defects, inconsistencies, technical debt, and governing-context violations in the resulting implementation and every affected system. This is an implementation review, not merely a code or build check.",
   acceptance: "Confirm the deployed system boots successfully and does what the approved specification says it must do in the target environment.",
@@ -514,7 +514,9 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
     `## Purpose`,
     context.purpose,
     "",
-    `Work adversarially against this purpose. Do not let completed prior work, a passing build, or lifecycle progress substitute for the judgment this stage exists to make.`,
+    context.stageKey === "design_review"
+      ? `Apply the review boundary literally. A rejection without an exact specification citation and an exact provision from a named governing standard is invalid.`
+      : `Work adversarially against this purpose. Do not let completed prior work, a passing build, or lifecycle progress substitute for the judgment this stage exists to make.`,
     "",
     `## Originating Request`,
     context.originatingRequest || "No separate originating request was captured; use the objective below without expanding it.",
@@ -1029,16 +1031,16 @@ const buildDefinition = workflowTemplateDefinitionSchema.parse({
   stages: [
     {
       key: "scope", title: "Design", position: 0, autonomyMode: "autonomous", persona: "Architect",
-      entryCriteria: ["Start from the originating request. Inspect only enough repository and runtime evidence to identify the failed invariant and the smallest coherent repair."],
-      evidenceRequirements: ["A durable specification artifact (`kind: spec`) that names the smallest coherent implementation, success conditions, target truth, verification path, and terminal state. Any expansion beyond the request must cite the repository evidence and invariant that require it."],
-      exitCriteria: ["The design satisfies the request without speculative systems, migrations, abstractions, or adjacent improvements."],
+      entryCriteria: ["Start from the originating request. Inspect the repository and runtime only as needed to identify the failed invariant, the smallest coherent repair, and the named governing standards the specification must satisfy."],
+      evidenceRequirements: ["A durable specification artifact (`kind: spec`) that names the smallest coherent implementation, success conditions, target truth, verification path, terminal state, and every governing standard relied upon. Any expansion beyond the request must cite the repository evidence and invariant that require it."],
+      exitCriteria: ["The specification satisfies the request without speculative systems, migrations, abstractions, or adjacent improvements and is complete enough for implementation without Design Review adding architecture or requirements."],
       allowedTransitions: [{ toStageKey: "design_review", on: "pass" }],
     },
     {
       key: "design_review", title: "Design Review", position: 1, autonomyMode: "requires_agent_review", persona: "Architect",
-      entryCriteria: ["Compare the proposed design directly with the originating request, relevant repository evidence, and only the governing artifacts implicated by that change."],
-      evidenceRequirements: ["Find and report material defects, omissions, unsupported scope expansion, unjustified complexity, and governing-context violations. Require structural cures before passing."],
-      exitCriteria: ["Pass only when every material component is necessary to satisfy the originating request or preserve a repository-proven invariant. Reject speculative systems and adjacent improvements."],
+      entryCriteria: ["Load the Design-produced specification and the named governing standards from Stage Inputs. Do not perform fresh architecture, repository, runtime, or dependency discovery."],
+      evidenceRequirements: ["For each rejection, cite the exact specification statement and the exact named governing-standard provision it violates. Do not introduce a requirement that is absent from those standards. Security review remains authoritative: concrete violations of named SECURITY.md requirements may reject the specification."],
+      exitCriteria: ["Pass unless the specification contains a concrete cited violation of a named governing standard. Unsupported preferences, newly discovered architecture concerns, and uncited best practices are not rejection grounds."],
       allowedTransitions: [{ toStageKey: "implement", on: "pass" }],
     },
     {
