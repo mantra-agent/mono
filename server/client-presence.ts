@@ -7,12 +7,14 @@ import { storage } from "./storage";
 import { createUserSessionPrincipal, resolveUserIdentityFoundation, type Principal } from "./principal";
 import { createLogger } from "./log";
 import type { ClientPresenceEntry, ClientPresenceKind, ClientPresenceSnapshot } from "@shared/client-presence";
+import { observeHoursUsedPresence } from "./hours-used";
 
 const log = createLogger("ClientPresence");
 
 type PresenceConnection = {
   id: string;
   accountId: string;
+  userId?: string;
   kind: ClientPresenceKind;
   connectedAt: Date;
   lastSeenAt: Date;
@@ -56,7 +58,10 @@ function pruneHttpClients(accountId: string): void {
   for (const [id, client] of account.clients) {
     if (!client.httpLastSeenAt || client.httpLastSeenAt.getTime() >= cutoff) continue;
     client.httpLastSeenAt = undefined;
-    if (client.wsRefCount === 0 && !client.external) account.clients.delete(id);
+    if (client.wsRefCount === 0 && !client.external) {
+      account.clients.delete(id);
+      if (client.userId) observeHoursUsedPresence({ ...client, userId: client.userId, active: false, clientId: client.id });
+    }
     changed = true;
   }
   if (changed) broadcast(accountId);
@@ -184,6 +189,7 @@ export function subscribeClientPresence(ws: WebSocket, accountId: string): void 
 export function registerClientPresence(
   ws: WebSocket,
   accountId: string,
+  userId: string,
   kind: ClientPresenceKind,
   clientId?: string,
 ): void {
@@ -193,6 +199,7 @@ export function registerClientPresence(
     if (existing) {
       existing.kind = kind;
       existing.lastSeenAt = new Date();
+      if (existing.userId) observeHoursUsedPresence({ ...existing, userId: existing.userId, active: true, clientId: existing.id });
       broadcast(existingSocketPresence.accountId);
       return;
     }
@@ -204,6 +211,7 @@ export function registerClientPresence(
   const account = getAccount(accountId);
   const existing = account.clients.get(id);
   if (existing) {
+    existing.userId = userId;
     existing.kind = kind;
     existing.lastSeenAt = now;
     existing.wsRefCount += 1;
@@ -211,6 +219,7 @@ export function registerClientPresence(
     account.clients.set(id, {
       id,
       accountId,
+      userId,
       kind,
       connectedAt: now,
       lastSeenAt: now,
@@ -218,6 +227,8 @@ export function registerClientPresence(
       external: false,
     });
   }
+  const current = account.clients.get(id);
+  if (current?.userId) observeHoursUsedPresence({ ...current, userId: current.userId, active: true, clientId: current.id });
   wsPresenceIds.set(ws, { accountId, presenceId: id });
   broadcast(accountId);
 }
@@ -234,6 +245,7 @@ export function unregisterSocketPresence(ws: WebSocket): void {
       const httpAlive = !!client.httpLastSeenAt && client.httpLastSeenAt.getTime() >= Date.now() - HTTP_CLIENT_TTL_MS;
       if (client.wsRefCount === 0 && !httpAlive && !client.external) {
         account.clients.delete(socketPresence.presenceId);
+        if (client.userId) observeHoursUsedPresence({ ...client, userId: client.userId, active: false, clientId: client.id });
       }
       broadcast(socketPresence.accountId);
       maybeDeleteAccount(socketPresence.accountId);
@@ -299,13 +311,14 @@ export function getClientPresenceSnapshot(accountId: string): ClientPresenceSnap
   return toSnapshot(accountId);
 }
 
-export function upsertHttpClientPresence(accountId: string, clientId: string, kind: ClientPresenceKind): ClientPresenceSnapshot {
+export function upsertHttpClientPresence(accountId: string, userId: string, clientId: string, kind: ClientPresenceKind): ClientPresenceSnapshot {
   const account = getAccount(accountId);
   const id = normalizePresenceId(clientId);
   if (!id) return toSnapshot(accountId);
   const now = new Date();
   const existing = account.clients.get(id);
   if (existing) {
+    existing.userId = userId;
     existing.kind = kind;
     existing.lastSeenAt = now;
     existing.httpLastSeenAt = now;
@@ -313,6 +326,7 @@ export function upsertHttpClientPresence(accountId: string, clientId: string, ki
     account.clients.set(id, {
       id,
       accountId,
+      userId,
       kind,
       connectedAt: now,
       lastSeenAt: now,
@@ -321,6 +335,8 @@ export function upsertHttpClientPresence(accountId: string, clientId: string, ki
       external: false,
     });
   }
+  const current = account.clients.get(id);
+  if (current?.userId) observeHoursUsedPresence({ ...current, userId: current.userId, active: true, clientId: current.id });
   broadcast(accountId);
   return toSnapshot(accountId);
 }

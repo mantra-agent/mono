@@ -1075,6 +1075,8 @@ async function shutdownApplication(input: RuntimeTerminationInput): Promise<void
     })}`);
 
     timerScheduler.stop();
+    const { stopHoursUsedRollups } = await import("./hours-used");
+    stopHoursUsedRollups();
     runtimeDispatcher.beginShutdown();
     const { stopMeetingAudioExpiry } = await import("./meeting/audio-retention-expiry");
     stopMeetingAudioExpiry();
@@ -1152,6 +1154,14 @@ function startDeferredBackgroundServices(): void {
       log("[startup] code embedding listener registered", "boot");
     }).catch((err) => {
       log(`[startup] code embedding listener registration failed: ${err.message}`, "boot");
+    })
+  );
+
+  services.push(
+    import("./hours-used").then(({ startHoursUsedRollups }) => startHoursUsedRollups()).then(() => {
+      log("[startup] Hours Used rollups started", "boot");
+    }).catch(err => {
+      log(`[startup] Hours Used rollups failed to start: ${err instanceof Error ? err.message : String(err)}`, "boot");
     })
   );
 
