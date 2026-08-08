@@ -86,6 +86,12 @@ Names describe what something does or when to use it, not how it currently works
 
 A function does one thing. If you need "and" to describe it, split it. Functions longer than roughly 40 lines are almost always doing too much.
 
+**Consistent File Shape**
+
+Comparable files should look and read alike. Follow the nearest established pattern for files with the same role; do not invent a new internal arrangement for personal preference. Unless a framework or subsystem convention requires otherwise, order files top-down as: imports, module constants and logger, public types/contracts, private types, public entry points or primary export, then private helpers in first-use order. Keep imports grouped consistently, keep side effects explicit and near the entry point that owns them, and keep exports deliberate rather than scattered accidentally through the file.
+
+Consistency follows responsibility, not forced sameness: a route, React component, schema module, and storage adapter may each have a different canonical shape, but peer files of the same kind should share one. When no pattern exists, establish the smallest clear pattern and document it in the nearest `AGENTS.md` only if it is reusable. Do not churn unrelated files solely to restyle them; bring touched code toward the canonical local shape without obscuring the functional change.
+
 **Leave No Zombies**
 
 Unused code, commented-out blocks, and workarounds actively mislead. Delete what isn't used. Fix causes, not symptoms. When you touch a file, leave it closer to these principles than you found it.
