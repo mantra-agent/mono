@@ -1,3 +1,13 @@
+<!-- 2026-08-07 Session transport duplication hardening:
+- Assets/data: authenticated user session transcripts and live assistant output (S2 private conversation content); subscription owner metadata and run/turn/attempt identifiers (S1 operational metadata).
+- Flows/boundaries: authenticated browser -> `/ws/events` -> principal-scoped session authorization -> process-local `SessionManager` -> client transcript projection; live output -> durable session document handoff.
+- Abuse/failure case: stale asynchronous subscribe work can reattach an owner after unsubscribe, duplicate refresh paths can amplify reconnect churn, and partial/missing stream identity can cause one logical response to render as multiple owners. This risks unintended repeated display and delivery inside the authorized principal scope; no cross-principal bypass was observed.
+- STRIDE/agentic threats: replay and race-driven tampering of client projection order; repudiation/diagnostic ambiguity from missing canonical identity; availability degradation from resubscription storms.
+- Deterministic controls/owners: validated per-owner `subscriptionEpoch` at the WebSocket route and `SessionManager`; lexicographic `(runGeneration,eventSeq)` client fence; one coalesced recovery coordinator; required `{runId,turnId,assistantAttemptId}` at runtime registration. Auth and principal-scoped visibility remain owned by `server/routes/events.ts`.
+- Finding: Medium — duplicate Session delivery/projection under transport turbulence. Owner: Realtime/Chat. SLA: cure before the next live promotion. Evidence: production SharedWS reconnect churn plus source audit of async subscribe and parallel resume paths. Status: remediated in code pending build/merge/deploy verification.
+- Residual risk: process-local runtime authority across replicas and legacy persisted messages without the complete identity tuple remain separately bounded gaps; this change does not claim to cure them.
+-->
+
 <!-- 2026-08-07 Hours Used production metric:
 - Assets/data: account/user/client identifiers and connection timestamps (S1 behavioral/operational metadata), bounded hourly/daily usage aggregates, and compact Metric samples. No content, URL, IP, user agent, interaction payload, or S2/S3 data is stored.
 - Flow/boundary: authenticated shared WebSocket registration and existing authenticated HTTP fallback heartbeat -> canonical `server/client-presence.ts` account state -> metrics database (`METRICS_DATABASE_URL`, primary fallback) -> principal-owned Metric definition in primary PostgreSQL -> existing scoped Metrics/KPI UI.

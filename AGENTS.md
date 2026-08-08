@@ -358,7 +358,11 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 
 ## Main Data Flows
 
-1. **Chat Streaming** — Server-side `SessionManager` maintains authoritative streaming state per session. Clients subscribe via WebSocket (`session.subscribe`) and receive snapshot + deltas. Single channel, single source of truth. Types in `shared/streaming-types.ts`, reducers in `server/streaming-reducers.ts`
+1. **Chat Streaming** — Server-side `SessionManager` maintains authoritative streaming state per session. Clients subscribe via WebSocket (`session.subscribe`) and receive snapshot + deltas. Single channel, single source of truth. Types in `shared/streaming-types.ts`, reducers in `server/streaming-reducers.ts`.
+   - Every logical `(connection, owner, session)` subscribe or unsubscribe advances `subscriptionEpoch`. Revalidate it after asynchronous authorization/hydration and immediately before registration or delivery; stale work is an idempotent no-op.
+   - Every snapshot and delta carries `(runGeneration, eventSeq)`. Clients accept only advancing tuples; equal/regressive same-generation payloads and older generations cannot replace current state. Idle snapshots use generation `0`.
+   - Reconnect, visibility, `pageshow`, and focus feed one coalesced recovery coordinator owned by the app-level subscription layer. Transcript renderers must not install parallel browser-resume refetch loops; durable revision advancement owns terminal handoff.
+   - Every active stream is registered with a complete `{ runId, turnId, assistantAttemptId }` tuple before its first event, checkpoint, draft, or snapshot. Live events and durable messages reuse that tuple; new producers may not omit or heuristically reconstruct identity.
 2. **Chat → Memory** — Persisted sessions enqueue canonical vNext sources → bounded extraction → claim persistence and source provenance
 3. **Session → Artifact Linking** — Tool call succeeds → `recordSessionArtifact()` → `session_artifacts` table; session resolves → scorer enriches transcript with artifact content; output buffer reads linked pages from artifacts table
 4. **Timer → Skill** — Timer fires → scheduler preconditions → pre-context → autonomous skill execution

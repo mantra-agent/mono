@@ -282,30 +282,6 @@ export function SessionTranscriptPanel({
       receivedSessionId: sessionData.id,
     });
   }, [activeSession, sessionData]);
-  useEffect(() => {
-    if (!activeSession) return;
-    const refreshDurableSession = (reason: string) => {
-      log.debug("STREAM:DURABLE_SESSION_REFRESH", { activeSession, reason });
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions", activeSession] });
-      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
-    };
-    const handleVisibilityResume = () => {
-      if (document.visibilityState === "visible") {
-        refreshDurableSession("visibility-visible");
-      }
-    };
-    const handlePageShow = () => refreshDurableSession("pageshow");
-    const handleWindowFocus = () => refreshDurableSession("window-focus");
-    document.addEventListener("visibilitychange", handleVisibilityResume);
-    window.addEventListener("pageshow", handlePageShow);
-    window.addEventListener("focus", handleWindowFocus);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityResume);
-      window.removeEventListener("pageshow", handlePageShow);
-      window.removeEventListener("focus", handleWindowFocus);
-    };
-  }, [activeSession]);
-
   const messages = useMemo(() => sortMessagesByCreatedAt(persistedMessages), [persistedMessages]);
 
   const linkedEntities = useLinkedEntities(persistedMessages);

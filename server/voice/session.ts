@@ -156,13 +156,14 @@ export function publishVoiceDiagnostic(
 export async function publishVoiceLifecycleEvent(
   session: VoiceSession,
   event: "assistant_attempt_started" | "assistant_attempt_superseded" | "assistant_attempt_committed",
-  payload: { turnId: string; assistantAttemptId: string; transcriptRevision: number; turn: number },
+  payload: { runId: string; turnId: string; assistantAttemptId: string; transcriptRevision: number; turn: number },
 ): Promise<void> {
   if (session.chatSessionId) {
     const { sessionManager } = await import("../session-manager");
     sessionManager.applyEvent(session.chatSessionId, { type: event, ...payload });
   }
   publishVoiceEvent(session, event, {
+    runId: payload.runId,
     voiceTurnId: payload.turnId,
     assistantAttemptId: payload.assistantAttemptId,
     transcriptRevision: payload.transcriptRevision,
@@ -278,6 +279,7 @@ export function createVoiceSession(
     activeVoiceTurnId: null,
     activeVoiceUserOrdinal: null,
     activeTranscriptRevision: 0,
+    activeRunId: null,
     activeAssistantAttemptId: null,
     principal,
     originatingClientId: null,
