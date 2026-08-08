@@ -5,18 +5,13 @@ import {
 
 type ChimeNote = { freq: number; offset: number; duration: number; gain: number };
 
-type ThinkingLoop = {
-  ctx: AudioContext;
-  master: GainNode;
-  source: AudioBufferSourceNode;
-  stopped: boolean;
-};
-
 const THINKING_MASTER_GAIN = 0.336;
 const THINKING_TEXTURE_PEAK = 0.14;
+const THINKING_MEDIA_SAMPLE_RATE = 48_000;
 
 let sharedVoiceAudioContext: AudioContext | null = null;
-let thinkingLoop: ThinkingLoop | null = null;
+let thinkingAudioElement: HTMLAudioElement | null = null;
+let thinkingAudioUrl: string | null = null;
 
 type AudioContextConstructor = new (options?: AudioContextOptions) => AudioContext;
 
@@ -40,22 +35,102 @@ function getVoiceAudioContext(): AudioContext | null {
   }
 }
 
+function writeAscii(view: DataView, offset: number, value: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+}
+
+function buildThinkingMediaUrl(): string {
+  if (thinkingAudioUrl) return thinkingAudioUrl;
+
+  const frameCount = Math.max(1, Math.floor(THINKING_MEDIA_SAMPLE_RATE * VOICE_THINKING_LOOP_SECONDS));
+  const samples = renderVoiceThinkingTexture({
+    sampleRate: THINKING_MEDIA_SAMPLE_RATE,
+    frameCount,
+    targetPeak: THINKING_TEXTURE_PEAK,
+  });
+  const bytesPerSample = 2;
+  const dataBytes = frameCount * bytesPerSample;
+  const wav = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(wav);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, THINKING_MEDIA_SAMPLE_RATE, true);
+  view.setUint32(28, THINKING_MEDIA_SAMPLE_RATE * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  for (let index = 0; index < frameCount; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index] || 0));
+    view.setInt16(44 + index * bytesPerSample, Math.round(sample * 0x7fff), true);
+  }
+
+  thinkingAudioUrl = URL.createObjectURL(new Blob([wav], { type: "audio/wav" }));
+  return thinkingAudioUrl;
+}
+
+function getThinkingAudioElement(): HTMLAudioElement | null {
+  try {
+    if (thinkingAudioElement) return thinkingAudioElement;
+    const element = new Audio(buildThinkingMediaUrl());
+    element.loop = true;
+    element.preload = "auto";
+    element.volume = THINKING_MASTER_GAIN;
+    thinkingAudioElement = element;
+    return element;
+  } catch {
+    return null;
+  }
+}
+
 export function unlockVoiceAudioContext(): void {
   const ctx = getVoiceAudioContext();
-  if (!ctx) return;
+  if (ctx) {
+    try {
+      void ctx.resume();
+      const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.035), ctx.sampleRate);
+      const source = ctx.createBufferSource();
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      source.buffer = buffer;
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      source.start(ctx.currentTime);
+      source.stop(ctx.currentTime + 0.035);
+    } catch {
+      // Browsers may deny WebAudio unlock while preserving media playback.
+    }
+  }
+
+  // The thinking bed uses one persistent media element. Unlocking that exact
+  // element in the initiating gesture lets iOS keep it in the media playback
+  // path when WebAudio is suspended after the screen locks.
+  const thinkingAudio = getThinkingAudioElement();
+  if (!thinkingAudio) return;
   try {
-    void ctx.resume();
-    const buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.035), ctx.sampleRate);
-    const source = ctx.createBufferSource();
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    source.buffer = buffer;
-    source.connect(gain);
-    gain.connect(ctx.destination);
-    source.start(ctx.currentTime);
-    source.stop(ctx.currentTime + 0.035);
+    const previousVolume = thinkingAudio.volume;
+    thinkingAudio.volume = 0;
+    const unlock = thinkingAudio.play();
+    if (unlock) {
+      void unlock.then(() => {
+        thinkingAudio.pause();
+        thinkingAudio.currentTime = 0;
+        thinkingAudio.volume = previousVolume;
+      }).catch(() => {
+        thinkingAudio.volume = previousVolume;
+      });
+    }
   } catch {
-    // Non-critical: browsers that deny unlock still keep visual feedback intact.
+    // Visual feedback remains available when autoplay policy denies unlock.
   }
 }
 
@@ -103,72 +178,31 @@ export function playDisconnectionChime(): void {
   ]);
 }
 
-function buildThinkingTexture(ctx: AudioContext): AudioBuffer {
-  const length = Math.max(1, Math.floor(ctx.sampleRate * VOICE_THINKING_LOOP_SECONDS));
-  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-  buffer.copyToChannel(renderVoiceThinkingTexture({
-    sampleRate: ctx.sampleRate,
-    frameCount: length,
-    targetPeak: THINKING_TEXTURE_PEAK,
-  }), 0);
-  return buffer;
-}
-
-function closeThinkingLoop(loop: ThinkingLoop, immediate: boolean): void {
-  if (loop.stopped) return;
-  loop.stopped = true;
-  const now = loop.ctx.currentTime;
-
-  try {
-    loop.master.gain.cancelScheduledValues(now);
-    if (immediate) {
-      loop.master.gain.setValueAtTime(0, now);
-      loop.source.stop(now);
-      return;
-    }
-
-    loop.master.gain.setValueAtTime(loop.master.gain.value, now);
-    loop.master.gain.linearRampToValueAtTime(0, now + 0.12);
-    loop.source.stop(now + 0.13);
-  } catch {
-    // The shared voice AudioContext stays alive for future feedback sounds.
-  }
-}
-
 /**
- * Starts the restrained soft-digital-typing texture. The caller owns onset and
- * speech gating; this producer owns one loop source and teardown.
+ * Starts the restrained soft-digital-typing texture through a persistent media
+ * element. Unlike WebAudio, this playback path remains eligible for iOS
+ * background and lock-screen audio alongside the conversation stream.
  */
 export function startVoiceThinkingLoop(): void {
-  if (thinkingLoop) return;
+  const thinkingAudio = getThinkingAudioElement();
+  if (!thinkingAudio || !thinkingAudio.paused) return;
 
   try {
-    const ctx = getVoiceAudioContext();
-    if (!ctx) return;
-    void ctx.resume();
-
-    const source = ctx.createBufferSource();
-    source.buffer = buildThinkingTexture(ctx);
-    source.loop = true;
-
-    const master = ctx.createGain();
-    master.gain.setValueAtTime(0, ctx.currentTime);
-    master.gain.linearRampToValueAtTime(THINKING_MASTER_GAIN, ctx.currentTime + 0.18);
-
-    source.connect(master);
-    master.connect(ctx.destination);
-
-    const loop: ThinkingLoop = { ctx, master, source, stopped: false };
-    thinkingLoop = loop;
-    source.start(ctx.currentTime);
+    thinkingAudio.volume = THINKING_MASTER_GAIN;
+    void thinkingAudio.play();
   } catch {
-    // AudioContext may be blocked or unavailable. Visual feedback still works.
+    // Audio may remain policy-blocked; visual feedback still works.
   }
 }
 
-export function stopVoiceThinkingLoop(options?: { immediate?: boolean }): void {
-  const loop = thinkingLoop;
-  thinkingLoop = null;
-  if (!loop) return;
-  closeThinkingLoop(loop, options?.immediate === true);
+export function stopVoiceThinkingLoop(_options?: { immediate?: boolean }): void {
+  const thinkingAudio = thinkingAudioElement;
+  if (!thinkingAudio || thinkingAudio.paused) return;
+
+  // Timers and animation frames are throttled while iOS is locked. Pause at
+  // the state boundary so the thinking bed cannot bleed into speech in pocket
+  // mode; the next onset restores the canonical volume.
+  thinkingAudio.pause();
+  thinkingAudio.currentTime = 0;
+  thinkingAudio.volume = THINKING_MASTER_GAIN;
 }
