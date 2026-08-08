@@ -248,7 +248,25 @@ const SAFE_SHELL_COMMANDS = new Set([
   "cut", "tr", "echo", "printf", "test", "[", "basename", "dirname", "stat", "du", "file", "diff", "git", "npm",
   // Binary presence checks only — no flags that execute the resolved path.
   "which",
+  // Exactly one explicitly allowlisted non-sensitive variable; see classifyNamedEnvironmentRead.
+  "printenv",
 ]);
+
+const SAFE_SHELL_ENVIRONMENT_NAMES = new Set([
+  "CI",
+  "NODE_ENV",
+  "PORT",
+  "RAILWAY_ENVIRONMENT_NAME",
+  "RAILWAY_GIT_COMMIT_SHA",
+  "RAILWAY_PUBLIC_DOMAIN",
+  "RAILWAY_SERVICE_NAME",
+]);
+
+function classifyNamedEnvironmentRead(segment: string): string | null {
+  const match = segment.match(/^printenv\s+([A-Z_][A-Z0-9_]*)$/);
+  if (!match) return "forbidden:env_dump";
+  return SAFE_SHELL_ENVIRONMENT_NAMES.has(match[1]) ? null : "forbidden:env_name";
+}
 
 /** Read-only git subcommands permitted via shell. Writes always go through the git tool. */
 const SAFE_SHELL_GIT_SUBCOMMANDS = new Set([
@@ -317,7 +335,9 @@ const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: st
   { pattern: /~/, reason: "forbidden:home_expansion", maskPolicy: "all" },
   { pattern: /\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet)\b/i, reason: "forbidden:network_binary", maskPolicy: "all" },
   { pattern: /\b(?:python|python3|node|deno|bun|perl|ruby|php|lua|eval|source)\b/i, reason: "forbidden:interpreter", maskPolicy: "all" },
-  { pattern: /\b(?:env|printenv)\b/i, reason: "forbidden:env_dump", maskPolicy: "all" },
+  // `env` remains categorically blocked. `printenv` is classified from parsed command segments below
+  // so quoted search text and paths cannot trip a fuzzy full-command denial.
+  { pattern: /\benv\b/i, reason: "forbidden:env_dump", maskPolicy: "all" },
   // Path-consuming classes: never masked. See ShellMaskPolicy "none" doc above.
   { pattern: /\/(?:proc|sys|dev|root|home)\//i, reason: "forbidden:sensitive_path", maskPolicy: "none" },
   { pattern: /(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)/i, reason: "forbidden:dotfile_secret", maskPolicy: "none" },
@@ -491,6 +511,7 @@ export function getShellToolContractDescription(): string {
     `Allow: ${binaries}.`,
     "Compose with `|` `||` `&&` `;` only when every segment starts allowlisted.",
     "Deny: newlines, backticks, `$(...)`, bare `&`, `<`/`>` redirects, `~`, variable expansion.",
+    `Environment: bare env/printenv, options, assignments, multiple names, and unapproved names are denied; printenv permits exactly one of: ${[...SAFE_SHELL_ENVIRONMENT_NAMES].sort().join(", ")}.`,
     "Redirect exceptions: `>/dev/null`, `N>/dev/null`, `N>&M` (e.g. `2>&1`).",
     "Paths: under `/app`, or system bins in `/bin` `/usr/bin` `/usr/local/bin`.",
     `git: inspection-only (${gitSubs}). Writes → git_write_blocked (use git tool). Unknown/non-read → shell_git_read_only.`,
@@ -590,6 +611,10 @@ export function validateShellCommand(command: string): ToolAuthorityDecision {
     if (first === "which" && !/^which(?:\s+(?:--\s+)?[A-Za-z0-9._+-]+)+$/.test(segment)) {
       return { allowed: false, reason: "which_binary_name_required" };
     }
+    if (first === "printenv") {
+      const environmentDeny = classifyNamedEnvironmentRead(segment);
+      if (environmentDeny) return { allowed: false, reason: environmentDeny };
+    }
     if (first === "find" && /-(?:exec|execdir|delete|ok|okdir|fprintf|fprint0?|fls)\b/.test(segment)) return { allowed: false, reason: "mutating_find_blocked" };
     if (first === "sort" && /(?:^|\s)(?:-o(?:\s|$)|--output(?:=|\s)|--compress-program(?:=|\s))/.test(segment)) return { allowed: false, reason: "sort_write_or_program_blocked" };
     if (first === "uniq" && /(?:^|\s)--?output(?:=|\s)/.test(segment)) return { allowed: false, reason: "uniq_output_blocked" };
@@ -634,7 +659,9 @@ const SHELL_DENIAL_GUIDANCE: Readonly<Record<string, string>> = {
   "forbidden:interpreter":
     "Language interpreters (python/node/…) are blocked. Use the allowlisted read-only binaries, or run code through `npm run build`.",
   "forbidden:env_dump":
-    "`env`/`printenv` are blocked. Read specific values from tracked config files instead of dumping the environment.",
+    "Bulk environment reads are blocked. `printenv` accepts exactly one explicitly allowlisted non-sensitive variable name with no options, assignments, expansion, or additional arguments.",
+  "forbidden:env_name":
+    "That environment variable is not on the non-sensitive read allowlist. Read tracked configuration instead; do not retry with aliases or broader environment commands.",
   "forbidden:sensitive_path":
     "That system path is blocked to prevent secret/host exposure. Inspect tracked files inside the session clone instead.",
   "forbidden:dotfile_secret":
