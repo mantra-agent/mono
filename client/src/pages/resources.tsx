@@ -48,6 +48,7 @@ const RELIABILITY_WINDOWS = [
 function reliabilityHealthStatus(health: ReliabilityHealth | "no_data" | undefined): Status {
   if (health === "critical" || health === "failing") return "red";
   if (health === "degraded") return "amber";
+  if (!health || health === "no_data") return "unknown";
   return "ok";
 }
 
@@ -852,7 +853,7 @@ function ResourcesView({
                       <MetricRow
                         label="Sample health"
                         value={`${frontendExperience.sampleHealth} · ${frontendExperience.sampleCount}`}
-                        status={frontendExperience.sampleHealth === "healthy" ? "ok" : "amber"}
+                        status={frontendExperience.sampleCount === 0 ? "unknown" : frontendExperience.sampleHealth === "healthy" ? "ok" : "amber"}
                         detail={<DetailText>{frontendExperience.windowHours}h window · raw retention {frontendExperience.rawRetentionDays}d · {frontendExperience.hiddenSampleCount} hidden-tab samples filtered where throttling invalidates the metric · same summary used by system.frontend_performance.</DetailText>}
                         testId="tile-frontend-sample-health"
                       />
@@ -925,7 +926,7 @@ function ResourcesView({
                     <MetricRow
                       label="Frontend summary"
                       value="Unavailable"
-                      status="amber"
+                      status="unknown"
                       detail={<DetailText>No browser telemetry summary was returned with system resources.</DetailText>}
                     />
                   )}
@@ -941,7 +942,7 @@ function ResourcesView({
                       <MetricRow
                         label="Scope"
                         value={`${contextHealth.callCount} rows · ${contextHealth.callsPerHour}/h`}
-                        status={contextHealth.callCount > 0 ? "ok" : "amber"}
+                        status={contextHealth.callCount > 0 ? "ok" : "unknown"}
                         detail={(
                           <DetailList
                             items={[
@@ -960,7 +961,11 @@ function ResourcesView({
                           : contextHealth.midTurnCompaction.status === "empty"
                             ? "No eligible turns"
                             : `${contextHealth.midTurnCompaction.compactionsPerTurn?.toFixed(2)} / turn · ${contextHealth.midTurnCompaction.affectedTurnPct?.toFixed(1)}% affected`}
-                        status={contextHealth.midTurnCompaction.status === "healthy" ? "ok" : "amber"}
+                        status={contextHealth.midTurnCompaction.status === "healthy"
+                          ? "ok"
+                          : contextHealth.midTurnCompaction.status === "empty"
+                            ? "unknown"
+                            : "amber"}
                         detail={
                           <DetailList
                             items={contextHealth.midTurnCompaction.status === "degraded"
@@ -981,7 +986,7 @@ function ResourcesView({
                       <MetricRow
                         label="Comparable population"
                         value={`${contextHealth.comparableCallCount} in · ${contextHealth.excludedCallCount} out`}
-                        status={contextHealth.comparableCallCount > 0 ? "ok" : "amber"}
+                        status={contextHealth.comparableCallCount > 0 ? "ok" : "unknown"}
                         detail={(
                           <DetailList
                             items={[
@@ -998,14 +1003,22 @@ function ResourcesView({
                       <MetricRow
                         label="Provider TTFP"
                         value={`${formatMs(contextHealth.avgTtfpMs)} / ${formatMs(contextHealth.p95TtfpMs)}`}
-                        status={contextHealth.p95TtfpMs !== null && contextHealth.p95TtfpMs > contextHealth.budgets.providerTtfpP95Ms ? "amber" : contextHealth.ttfpSampleCount > 0 ? "ok" : "amber"}
+                        status={contextHealth.ttfpSampleCount === 0
+                          ? "unknown"
+                          : contextHealth.p95TtfpMs !== null && contextHealth.p95TtfpMs > contextHealth.budgets.providerTtfpP95Ms
+                            ? "amber"
+                            : "ok"}
                         detail={<DetailText>first progress (thinking/text/tool) · avg / p95 · n={contextHealth.ttfpSampleCount} · primary felt budget {formatMs(contextHealth.budgets.providerTtfpP95Ms)}.</DetailText>}
                         testId="tile-context-ttfp"
                       />
                       <MetricRow
                         label="Provider TTFT"
                         value={`${formatMs(contextHealth.avgTtftMs)} / ${formatMs(contextHealth.p95TtftMs)}`}
-                        status={contextHealth.p95TtftMs !== null && contextHealth.p95TtftMs > contextHealth.budgets.providerTtftP95Ms ? "amber" : contextHealth.ttftSampleCount > 0 ? "ok" : "amber"}
+                        status={contextHealth.ttftSampleCount === 0
+                          ? "unknown"
+                          : contextHealth.p95TtftMs !== null && contextHealth.p95TtftMs > contextHealth.budgets.providerTtftP95Ms
+                            ? "amber"
+                            : "ok"}
                         detail={<DetailText>first visible text · avg / p95 · n={contextHealth.ttftSampleCount} · budget {formatMs(contextHealth.budgets.providerTtftP95Ms)} (secondary to TTFP).</DetailText>}
                         testId="tile-context-ttft"
                       />
@@ -1078,7 +1091,7 @@ function ResourcesView({
                     <MetricRow
                       label="Context summary"
                       value="Unavailable"
-                      status="amber"
+                      status="unknown"
                       detail={<DetailText>No context-health summary was returned.</DetailText>}
                     />
                   )}
