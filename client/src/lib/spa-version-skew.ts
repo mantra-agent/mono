@@ -9,8 +9,15 @@ interface VersionResponse {
   buildId?: unknown;
 }
 
+export type VersionSkewRecoveryOutcome =
+  | "not_chunk_failure"
+  | "same_build"
+  | "reload_started"
+  | "update_prompted"
+  | "check_unavailable";
+
 let installed = false;
-let inFlight: Promise<void> | null = null;
+let inFlight: Promise<VersionSkewRecoveryOutcome> | null = null;
 let lastCheckAt = 0;
 
 function isChunkLoadFailure(value: unknown): boolean {
@@ -98,18 +105,18 @@ async function fetchServerBuildId(): Promise<string | null> {
 async function checkForVersionSkew(
   force: boolean,
   showPromptOnFailure = false,
-): Promise<void> {
-  if (__MANTRA_BUILD_ID__ === "development") return;
+): Promise<VersionSkewRecoveryOutcome> {
+  if (__MANTRA_BUILD_ID__ === "development") return "same_build";
 
   const now = Date.now();
-  if (!force && now - lastCheckAt < MIN_CHECK_INTERVAL_MS) return;
+  if (!force && now - lastCheckAt < MIN_CHECK_INTERVAL_MS) return "same_build";
   if (inFlight) return inFlight;
 
   lastCheckAt = now;
   inFlight = (async () => {
     try {
       const serverBuildId = await fetchServerBuildId();
-      if (!serverBuildId || serverBuildId === __MANTRA_BUILD_ID__) return;
+      if (!serverBuildId || serverBuildId === __MANTRA_BUILD_ID__) return "same_build";
 
       log.warn("SPA version skew detected", {
         clientBuildId: __MANTRA_BUILD_ID__,
@@ -119,19 +126,25 @@ async function checkForVersionSkew(
       try {
         if (sessionStorage.getItem(AUTO_RELOAD_KEY) === serverBuildId) {
           showUpdatePrompt();
-          return;
+          return "update_prompted";
         }
 
         sessionStorage.setItem(AUTO_RELOAD_KEY, serverBuildId);
         window.location.reload();
+        return "reload_started";
       } catch {
         showUpdatePrompt();
+        return "update_prompted";
       }
     } catch (error) {
       log.warn("SPA version check unavailable", {
         error: error instanceof Error ? error.message : String(error),
       });
-      if (showPromptOnFailure) showUpdatePrompt();
+      if (showPromptOnFailure) {
+        showUpdatePrompt();
+        return "update_prompted";
+      }
+      return "check_unavailable";
     } finally {
       inFlight = null;
     }
@@ -140,9 +153,11 @@ async function checkForVersionSkew(
   return inFlight;
 }
 
-export function attemptVersionSkewRecovery(error: unknown): void {
-  if (!isChunkLoadFailure(error)) return;
-  void checkForVersionSkew(true, true);
+export function attemptVersionSkewRecovery(
+  error: unknown,
+): Promise<VersionSkewRecoveryOutcome> {
+  if (!isChunkLoadFailure(error)) return Promise.resolve("not_chunk_failure");
+  return checkForVersionSkew(true, true);
 }
 
 export function installSpaVersionSkewGuard(): void {

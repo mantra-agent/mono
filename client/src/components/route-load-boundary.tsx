@@ -214,8 +214,7 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
 
   componentDidCatch(caught: unknown, info: ErrorInfo) {
     const error = normalizeRouteRenderError(caught);
-    attemptVersionSkewRecovery(error);
-    log.error("route render failed", error, {
+    const diagnostics = {
       routeKey: this.props.routeKey,
       failurePhase: error.name === "RouteLoadError" ? "module-load" : "render",
       componentFrames: info.componentStack
@@ -223,6 +222,20 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
         .filter(Boolean)
         .slice(0, 12)
         .map((frame) => frame.trim()),
+    };
+
+    void attemptVersionSkewRecovery(error).then((recoveryOutcome) => {
+      if (recoveryOutcome === "reload_started" || recoveryOutcome === "update_prompted") {
+        log.warn("route module failure recovered through deployment skew", {
+          ...diagnostics,
+          recoveryOutcome,
+        });
+        return;
+      }
+      log.error("route render failed", error, {
+        ...diagnostics,
+        recoveryOutcome,
+      });
     });
   }
 
