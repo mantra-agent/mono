@@ -65,7 +65,7 @@ export async function registerEventsRoutes(app: Express, wss: WebSocketServer, e
           return;
         }
         if (msg.type === "client_presence.register" && isClientPresenceKind(msg.kind)) {
-          registerClientPresence(ws, accountId, msg.kind, typeof msg.clientId === "string" ? msg.clientId : undefined);
+          registerClientPresence(ws, accountId, principal.userId, msg.kind, typeof msg.clientId === "string" ? msg.clientId : undefined);
           return;
         }
         if (isUiInteractionResult(msg)) {
