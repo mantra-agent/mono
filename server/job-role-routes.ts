@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { ZodError } from "zod";
 import { requireAuth } from "./auth";
 import { requirePermission } from "./permissions";
 import { jobRoleStorage } from "./job-role-storage";
@@ -8,8 +9,9 @@ import { createLogger } from "./log";
 const log = createLogger("JobRoleRoutes");
 
 function statusOf(error: unknown): number {
+  if (error instanceof ZodError) return 400;
   const status = (error as { status?: unknown })?.status;
-  return typeof status === "number" ? status : 400;
+  return typeof status === "number" && status >= 400 && status < 600 ? status : 500;
 }
 
 function messageOf(error: unknown): string {
@@ -20,7 +22,12 @@ function messageOf(error: unknown): string {
 
 function handleError(res: Response, operation: string, error: unknown): void {
   const status = statusOf(error);
-  log.error(`${operation} failed`, { status, code: (error as { code?: unknown })?.code });
+  const context = { status, code: (error as { code?: unknown })?.code };
+  if (status >= 500) {
+    log.error(`${operation} failed`, context);
+  } else {
+    log.warn(`${operation} rejected`, context);
+  }
   res.status(status).json({ error: messageOf(error) });
 }
 
