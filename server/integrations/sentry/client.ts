@@ -22,6 +22,12 @@ export interface SentryConfig {
   project: string | null;
 }
 
+export interface SentryUptimeAggregate {
+  checkCount: number;
+  failureRatePercent: number;
+  incomplete: boolean;
+}
+
 export async function getSentryConfig(): Promise<SentryConfig> {
   const token = await getSecret("SENTRY_AUTH_TOKEN");
   const org = await getSecret("SENTRY_ORG");
@@ -168,6 +174,48 @@ export async function fetchLatestEvent(
     `/organizations/${org}/issues/${issueId}/events/latest/?full=true`
   );
   return res.json();
+}
+
+export async function fetchUptimeAggregate(
+  org: string,
+  project: string,
+  input: { start: Date; end: Date; query?: string },
+): Promise<SentryUptimeAggregate> {
+  const projectRes = await sentryFetch(`/projects/${org}/${project}/`);
+  const projectPayload = await projectRes.json() as { id?: unknown };
+  const projectId = String(projectPayload.id ?? "");
+  if (!/^\d+$/.test(projectId)) {
+    throw new SentryApiError("Sentry returned an invalid project identity", 502);
+  }
+
+  const params = new URLSearchParams();
+  params.set("dataset", "uptime_results");
+  params.append("project", projectId);
+  params.append("field", "count()");
+  params.append("field", "failure_rate()");
+  params.set("start", input.start.toISOString());
+  params.set("end", input.end.toISOString());
+  params.set("per_page", "1");
+  const query = input.query?.trim();
+  if (query) params.set("query", query.slice(0, 500));
+
+  const res = await sentryFetch(`/organizations/${org}/events/?${params}`);
+  const payload = await res.json() as {
+    data?: Array<Record<string, unknown>>;
+    meta?: { fields?: Record<string, string> };
+  };
+  const row = payload.data?.[0];
+  if (!row) return { checkCount: 0, failureRatePercent: 0, incomplete: true };
+  const checkCount = Number(row["count()"]);
+  const failureRatePercent = Number(row["failure_rate()"]);
+  if (!Number.isFinite(checkCount) || checkCount < 0 || !Number.isFinite(failureRatePercent) || failureRatePercent < 0 || failureRatePercent > 100) {
+    throw new SentryApiError("Sentry returned an invalid uptime aggregate", 502);
+  }
+  return {
+    checkCount: Math.floor(checkCount),
+    failureRatePercent,
+    incomplete: false,
+  };
 }
 
 export async function updateIssueStatus(

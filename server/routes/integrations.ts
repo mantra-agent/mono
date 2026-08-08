@@ -99,6 +99,27 @@ function verifyGitHubWebhookSignature(rawBody: unknown, signatureHeader: string 
 }
 
 export async function registerIntegrationsRoutes(app: Express) {
+  app.get(
+    "/api/integrations/sentry/status",
+    requireAuth,
+    requirePermission("system:read"),
+    async (_req, res) => {
+      const { getSentryAvailabilityStatus } = await import("../sentry-availability");
+      res.json(await getSentryAvailabilityStatus());
+    },
+  );
+
+  app.post(
+    "/api/integrations/sentry/sync-availability",
+    requireAuth,
+    requirePermission("system:write"),
+    async (_req, res) => {
+      const { syncSentryAvailability } = await import("../sentry-availability");
+      const result = await syncSentryAvailability();
+      res.status(result.status.status === "ready" ? 200 : 409).json(result);
+    },
+  );
+
   app.get("/api/gmail/status", async (_req, res) => {
     try {
       // Runs under the request principal: users only see their own Gmail integration state.

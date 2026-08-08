@@ -98,7 +98,8 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
     status: 0, deployments: 0, logs: 0, build_logs: 0, list_variables: 0,
   }},
   sentry: { default: 2, actions: {
-    status: 0, issues: 0, issue: 0, events: 0, latest_event: 0,
+    status: 0, issues: 0, issue: 0, events: 0, latest_event: 0, uptime: 0,
+    sync_availability: 2,
   }},
   platforms: { default: 2, actions: {
     list_connections: 0, get_connection: 0, test_connection: 0,

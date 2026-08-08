@@ -11058,7 +11058,7 @@ ${refs}` : ""),
   async sentry(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
-    const allowed = new Set(["status", "issues", "issue", "events", "latest_event", "resolve", "unresolve", "ignore"]);
+    const allowed = new Set(["status", "issues", "issue", "events", "latest_event", "uptime", "sync_availability", "resolve", "unresolve", "ignore"]);
     if (!allowed.has(action)) {
       return {
         result: `Unknown sentry action: ${action}. Allowed: ${[...allowed].join(", ")}.`,
@@ -11105,6 +11105,14 @@ ${refs}` : ""),
               url: `https://sentry.io/organizations/${org}/issues/?project=&query=is%3Aunresolved`,
             }),
           };
+        }
+        case "uptime": {
+          const { getSentryAvailabilityStatus } = await import("./sentry-availability");
+          return { result: JSON.stringify(await getSentryAvailabilityStatus()) };
+        }
+        case "sync_availability": {
+          const { syncSentryAvailability } = await import("./sentry-availability");
+          return { result: JSON.stringify(await syncSentryAvailability()) };
         }
         case "issues": {
           const limit = Math.min(100, Math.max(1, Number(args.limit) || 25));
