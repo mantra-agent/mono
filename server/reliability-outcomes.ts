@@ -18,10 +18,8 @@ import { db } from "./db";
 import { getCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope, type ScopeColumns } from "./scoped-storage";
 
-const DOC_SCOPE: ScopeColumns = {
-  ownerUserId: documentStoreDocuments.ownerUserId,
+const RELIABILITY_CHAT_SCOPE: ScopeColumns = {
   accountId: documentStoreDocuments.accountId,
-  scope: documentStoreDocuments.scope,
 };
 
 const PLAN_SCOPE: ScopeColumns = {
@@ -92,6 +90,23 @@ const ERROR_MAX_CHARS = 400;
 
 function emptyCounts(): OutcomeCounts {
   return { succeeded: 0, failed: 0, amberFailures: 0, unclassifiedErrors: 0, excluded: 0 };
+}
+
+function reliabilityChatPredicate(
+  principal: NonNullable<ReturnType<typeof getCurrentPrincipal>>,
+  start: Date,
+) {
+  if (!principal.accountId) {
+    throw new Error("Account principal required for reliability outcomes");
+  }
+  return combineWithVisibleScope(
+    principal,
+    RELIABILITY_CHAT_SCOPE,
+    and(
+      eq(documentStoreDocuments.documentType, "chat"),
+      gte(documentStoreDocuments.updatedAt, start),
+    ),
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -589,16 +604,7 @@ export async function getReliabilityOutcomeSummary(
       updatedAt: documentStoreDocuments.updatedAt,
     })
     .from(documentStoreDocuments)
-    .where(
-      combineWithVisibleScope(
-        principal,
-        DOC_SCOPE,
-        and(
-          eq(documentStoreDocuments.documentType, "chat"),
-          gte(documentStoreDocuments.updatedAt, start),
-        ),
-      ),
-    );
+    .where(reliabilityChatPredicate(principal, start));
 
   const toolExecutions = emptyCounts();
   const conversationalTurns = emptyCounts();
@@ -713,16 +719,7 @@ export async function listReliabilityTurnFailures(input?: {
       updatedAt: documentStoreDocuments.updatedAt,
     })
     .from(documentStoreDocuments)
-    .where(
-      combineWithVisibleScope(
-        principal,
-        DOC_SCOPE,
-        and(
-          eq(documentStoreDocuments.documentType, "chat"),
-          gte(documentStoreDocuments.updatedAt, start),
-        ),
-      ),
-    );
+    .where(reliabilityChatPredicate(principal, start));
 
   const rows: ReliabilityTurnFailureRow[] = [];
   for (const doc of chatDocs) {
@@ -779,16 +776,7 @@ export async function listReliabilityToolFailures(input?: {
       updatedAt: documentStoreDocuments.updatedAt,
     })
     .from(documentStoreDocuments)
-    .where(
-      combineWithVisibleScope(
-        principal,
-        DOC_SCOPE,
-        and(
-          eq(documentStoreDocuments.documentType, "chat"),
-          gte(documentStoreDocuments.updatedAt, start),
-        ),
-      ),
-    );
+    .where(reliabilityChatPredicate(principal, start));
 
   const failures: ReliabilityToolFailureRow[] = [];
   for (const doc of chatDocs) {
