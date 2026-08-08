@@ -13,7 +13,7 @@ export type ToolInvocationOrigin =
   | "http"
   | "internal";
 
-export type TrustedEngineeringDelegation = "plan" | "workflow" | "child";
+export type TrustedEngineeringDelegation = "plan" | "workflow" | "child" | "build_skill";
 
 export interface AgentAuthorityContext {
   origin?: ToolInvocationOrigin;
