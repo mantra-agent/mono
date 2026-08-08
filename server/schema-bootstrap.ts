@@ -6634,6 +6634,11 @@ export async function runSchemaBootstrap(
     `);
   });
 
+  await heal("Railway shared deployment state", async () => {
+    const { ensureRailwayDeploymentStateSchema } = await import("./integrations/railway/deployment-state");
+    await ensureRailwayDeploymentStateSchema();
+  });
+
   await heal("canonical Tag schema", ensureCanonicalTagSchema);
 
   log(`schema bootstrap complete (reason=${reason})`, "migration");
