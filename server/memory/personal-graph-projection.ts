@@ -5,6 +5,7 @@ import {
   memoryVnextClaims,
   memoryVnextClaimLinks,
   memoryVnextEntityLinks,
+  memoryVnextSourceLinks,
   memoryVnextSourceRefs,
 } from "@shared/schema";
 import { libraryPages } from "@shared/models/info";
@@ -93,6 +94,7 @@ export interface PersonalGraphMetrics {
   relationshipEdgeCount: number;
   decisionStrategyEdgeCount: number;
   executionProvenanceEdgeCount: number;
+  sourceObjectEdgeCount: number;
   resolvedTargetCount: number;
   adapterQueryCount: number;
   tagNodeCount: number;
@@ -210,6 +212,11 @@ export async function assemblePersonalGraph(
     ownerUserId: memoryVnextEntityLinks.ownerUserId,
     accountId: memoryVnextEntityLinks.accountId,
   };
+  const sourceLinkScopeColumns = {
+    scope: memoryVnextSourceLinks.scope,
+    ownerUserId: memoryVnextSourceLinks.ownerUserId,
+    accountId: memoryVnextSourceLinks.accountId,
+  };
   const sourceRefScopeColumns = {
     scope: memoryVnextSourceRefs.scope,
     ownerUserId: memoryVnextSourceRefs.ownerUserId,
@@ -267,6 +274,11 @@ export async function assemblePersonalGraph(
   adapterQueryCount += 8;
   const occurrenceProjection = occurrenceEdges;
   const authoredOccurrenceEdges = occurrenceProjection.edges;
+  const sourceObjectLinks = await db.select().from(memoryVnextSourceLinks)
+    .where(combineWithVisibleScope(principal, sourceLinkScopeColumns))
+    .orderBy(desc(memoryVnextSourceLinks.observedAt))
+    .limit(2_000);
+  adapterQueryCount += 1;
 
   // Domain adapter projections. Each adapter emits canonical candidates only; the
   // assembler owns client-node conversion, address-based merging, and independent
@@ -585,8 +597,7 @@ export async function assemblePersonalGraph(
         provider: file.provider,
         providerFileId: file.providerFileId,
         vaultId: file.vaultId,
-        // Protocol @file: is path-shaped today; durable identity remains drive_resource id.
-        reference: `file:${file.id}`,
+        reference: `@file:${file.id}`,
       },
       createdAt: serializeDate(createdTs),
       updatedAt: serializeDate(createdTs),
@@ -615,6 +626,13 @@ export async function assemblePersonalGraph(
   }
   // Every domain-adapter target is independently resolved below. Invalid legacy
   // coordinates or copied provider IDs simply drop without creating an edge.
+  for (const link of sourceObjectLinks) {
+    for (const address of [link.sourceAddress, link.targetAddress]) {
+      const normalized = normalizeProtocolAddress(address);
+      if (normalized.outcome !== "valid" || nodeIdByAddress.has(`${normalized.type}:${normalized.id}`)) continue;
+      unresolvedTargets.add(normalized.address);
+    }
+  }
   for (const { result } of adapterProjections) {
     for (const edge of result.edges) {
       const normalized = normalizeProtocolAddress(edge.to);
@@ -778,6 +796,26 @@ export async function assemblePersonalGraph(
     }
   }
 
+  let sourceObjectEdgeCount = 0;
+  for (const link of sourceObjectLinks) {
+    const from = normalizeProtocolAddress(link.sourceAddress);
+    const to = normalizeProtocolAddress(link.targetAddress);
+    if (from.outcome !== "valid" || to.outcome !== "valid") continue;
+    const fromId = nodeIdByAddress.get(`${from.type}:${from.id}`);
+    const toId = nodeIdByAddress.get(`${to.type}:${to.id}`);
+    if (fromId === undefined || toId === undefined || fromId === toId) continue;
+    links.push({
+      id: nextSyntheticLinkId--,
+      fromId,
+      toId,
+      relationship: link.linkKind === "explicit_reference" ? `references_${to.type}` : `mentions_${to.type}`,
+      strength: link.confidence,
+      createdAt: serializeDate(link.observedAt),
+      relationshipType: `source_object:${link.linkKind}`,
+    });
+    sourceObjectEdgeCount++;
+  }
+
   // ---- Bounded Tag layer (default-hidden semantic overlay) ----
   // Canonical Tag identities become graph nodes; each assignment to an
   // already-projected entity becomes a `tagged_with` edge, turning the shared
@@ -866,6 +904,7 @@ export async function assemblePersonalGraph(
     relationshipEdgeCount,
     decisionStrategyEdgeCount,
     executionProvenanceEdgeCount,
+    sourceObjectEdgeCount,
     resolvedTargetCount: resolvedByAddress.size,
     adapterQueryCount,
     tagNodeCount,
@@ -885,7 +924,7 @@ export async function assemblePersonalGraph(
   log.info(
     `[personal-graph] libraryFirst=${libraryFirst} pages=${projection.pageCount} claims=${projection.claimCount} ` +
       `nodes=${projection.nodeCount} edges=${projection.edgeCount} occurrenceEdges=${occurrenceEdgeCount} canonicalOccurrenceEdges=${projection.canonicalOccurrenceEdgeCount} compatibilityOccurrenceEdges=${projection.compatibilityOccurrenceEdgeCount} compatibilitySources=${projection.compatibilityOccurrenceSourceCount} unprojectedPages=${projection.unprojectedLibraryPageCount} ` +
-      `meetingEdges=${projection.meetingEdgeCount} workEdges=${projection.workEdgeCount} relationshipEdges=${projection.relationshipEdgeCount} decisionStrategyEdges=${projection.decisionStrategyEdgeCount} executionProvenanceEdges=${projection.executionProvenanceEdgeCount} structural=${structuralLinkCount} tagNodes=${projection.tagNodeCount} tagEdges=${projection.tagEdgeCount} resolvedTargets=${projection.resolvedTargetCount} ` +
+      `meetingEdges=${projection.meetingEdgeCount} workEdges=${projection.workEdgeCount} relationshipEdges=${projection.relationshipEdgeCount} decisionStrategyEdges=${projection.decisionStrategyEdgeCount} executionProvenanceEdges=${projection.executionProvenanceEdgeCount} sourceObjectEdges=${projection.sourceObjectEdgeCount} structural=${structuralLinkCount} tagNodes=${projection.tagNodeCount} tagEdges=${projection.tagEdgeCount} resolvedTargets=${projection.resolvedTargetCount} ` +
       `adapterQueries=${projection.adapterQueryCount} payloadKB=${(projection.payloadBytes / 1024).toFixed(1)} assemblyMs=${projection.assemblyMs}`,
   );
   eventBus.publish({
