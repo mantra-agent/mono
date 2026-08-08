@@ -1993,7 +1993,11 @@ function EnvironmentSection({
   };
 
   return (
-    <Collapsible open={open} onOpenChange={handleOpenChange}>
+    <Collapsible
+      open={open}
+      onOpenChange={handleOpenChange}
+      className="[content-visibility:auto] [contain-intrinsic-size:auto_240px]"
+    >
       <CollapsibleTrigger className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-bold text-muted-foreground uppercase tracking-wider hover-elevate rounded-md">
         <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
         {label}
