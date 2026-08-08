@@ -93,16 +93,21 @@ class RuntimeDispatcher {
     const started = await startRuntimeAttempt(fence, "in_process_trusted");
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     let heartbeatFailure: unknown = null;
-    const heartbeat = async (usageDelta: Record<string, number> = {}) => {
-      try {
-        const state = await heartbeatRuntimeAttempt(fence, usageDelta);
-        if (state.cancellationRequested) {
-          heartbeatFailure = Object.assign(new Error("Runtime cancellation requested"), { code: "cancellation_requested" });
+    let heartbeatQueue = Promise.resolve();
+    const heartbeat = (usageDelta: Record<string, number> = {}): Promise<void> => {
+      const operation = heartbeatQueue.then(async () => {
+        try {
+          const state = await heartbeatRuntimeAttempt(fence, usageDelta);
+          if (state.cancellationRequested) {
+            heartbeatFailure = Object.assign(new Error("Runtime cancellation requested"), { code: "cancellation_requested" });
+          }
+        } catch (error) {
+          heartbeatFailure = error;
+          throw error;
         }
-      } catch (error) {
-        heartbeatFailure = error;
-        throw error;
-      }
+      });
+      heartbeatQueue = operation.catch(() => undefined);
+      return operation;
     };
     const context: RuntimeExecutionContext = {
       fence,
@@ -114,13 +119,19 @@ class RuntimeDispatcher {
     try {
       heartbeatTimer = setInterval(() => {
         void heartbeat().catch((error) => {
-          log.error("runtime.dispatch.heartbeat_failed", {
+          const expectedLeaseLoss = error && typeof error === "object" && "code" in error && error.code === "stale_fence";
+          const details = {
             runId: started.run.id,
             attemptId: started.attempt.id,
             accountId: started.run.accountId,
             resourcePool: started.run.resourcePool,
             errorType: error instanceof Error ? error.name : typeof error,
-          });
+          };
+          if (expectedLeaseLoss) {
+            log.debug("runtime.dispatch.heartbeat_lease_lost", details);
+          } else {
+            log.error("runtime.dispatch.heartbeat_failed", details);
+          }
         });
       }, HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
@@ -146,6 +157,7 @@ class RuntimeDispatcher {
           payload: { errorType: error instanceof Error ? error.name : typeof error },
         }).catch(() => undefined);
       }
+      await heartbeatQueue;
       if (heartbeatFailure && decision.kind === "complete") {
         decision = {
           kind: "retry",
