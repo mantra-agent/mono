@@ -348,13 +348,13 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
 
   sentry: {
-    description: "Query Sentry crash reports and error tracking for the mobile app. Uses stored SENTRY_AUTH_TOKEN, SENTRY_ORG, and SENTRY_PROJECT secrets. Actions: status (check connection), issues (list issues with optional query/sort/limit), issue (get issue details by issueId), events (list events for an issue with full stacktraces), latest_event (get the most recent event for an issue), resolve (resolve an issue), unresolve (reopen an issue), ignore (ignore an issue).",
+    description: "Query the existing Sentry integration for crash reports and external uptime evidence. Actions: status, issues, issue, events, latest_event, uptime (completed-day availability readiness), sync_availability (project a ready completed day into Metrics), resolve, unresolve, ignore.",
     category: "system",
     connectorKey: "sentry",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["status", "issues", "issue", "events", "latest_event", "resolve", "unresolve", "ignore"], description: "Action to perform" },
+        action: { type: "string", enum: ["status", "issues", "issue", "events", "latest_event", "uptime", "sync_availability", "resolve", "unresolve", "ignore"], description: "Action to perform" },
         issueId: { type: "string", description: "Sentry issue ID (required for issue, events, latest_event, resolve, unresolve, ignore)" },
         query: { type: "string", description: "Sentry search query (for issues, default: is:unresolved)" },
         sort: { type: "string", description: "Sort order for issues: date, new, freq, user (default: date)" },

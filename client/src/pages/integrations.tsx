@@ -3581,33 +3581,61 @@ function DeepgramDetail() {
   return <div className="min-w-0 space-y-2"><IntegrationTreeSection label="Connection" initialOpen={!status?.connected}><ProviderConnectionRow provider="deepgram" connected={Boolean(status?.connected)} error={status?.error} pending={test.isPending} onTest={() => test.mutate()} /></IntegrationTreeSection></div>;
 }
 
+type SentryAvailabilityStatus =
+  | { status: "not_configured"; configured: false; missing: string[] }
+  | { status: "monitor_pending"; configured: true; checkCount: number; expectedChecks: number; coverage: number; periodStart: string; periodEnd: string }
+  | { status: "ready"; configured: true; checkCount: number; expectedChecks: number; coverage: number; availability: number; failureRate: number; periodStart: string; periodEnd: string }
+  | { status: "unavailable"; configured: true; error: string };
+
 function SentryDetail() {
+  const { toast } = useToast();
+  const { data: status, isLoading } = useQuery<SentryAvailabilityStatus>({
+    queryKey: ["/api/integrations/sentry/status"],
+    refetchInterval: false,
+  });
+  const sync = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/integrations/sentry/sync-availability")).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations/sentry/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/business/metrics"] });
+      toast({ title: "Availability synced", description: "The completed day is now in Metrics." });
+    },
+    onError: (error: Error) => toast({ title: "Availability not synced", description: error.message, variant: "destructive" }),
+  });
+  const uptimeValue = isLoading
+    ? <Skeleton className="h-4 w-28" />
+    : status?.status === "ready"
+      ? <span className="text-active">{status.availability.toFixed(3)}% · {status.checkCount} checks</span>
+      : status?.status === "monitor_pending"
+        ? <span className="text-foreground">Waiting for a complete day · {status.checkCount}/{status.expectedChecks}</span>
+        : status?.status === "unavailable"
+          ? <span className="text-error">{status.error}</span>
+          : <span className="text-muted-foreground">Configure Sentry credentials</span>;
+
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base font-semibold">
-            <Shield className="h-4 w-4" />
-            Sentry Crash Reporting
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-            Add these values to activate mobile crash reporting and symbolicated stack traces. Build &gt; Mobile reads this same setup status, so Sentry will stay visibly inactive until the required keys are present.
-          </div>
-          <p className="text-sm text-muted-foreground">Manage these keys on the Secrets page.</p>
-          <div className="grid gap-2 text-xs text-muted-foreground @md:grid-cols-2">
-            <div className="rounded-lg border p-3">
-              <div className="font-medium text-foreground">Mobile app runtime</div>
-              <p>Requires <code>EXPO_PUBLIC_SENTRY_DSN</code>. This DSN is client-safe and lets the app send crash reports.</p>
-            </div>
-            <div className="rounded-lg border p-3">
-              <div className="font-medium text-foreground">EAS source maps</div>
-              <p>Requires <code>SENTRY_AUTH_TOKEN</code>, <code>SENTRY_ORG</code>, and <code>SENTRY_PROJECT</code>. Add the auth token as an EAS secret before relying on production stack traces.</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="min-w-0 space-y-2">
+      <IntegrationTreeSection label="Crash reporting" initialOpen={status?.status === "not_configured"} testIdPrefix="sentry">
+        <ProfileTreeRow label="Sentry API" icon={<Shield className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+          <span className={status?.configured ? "text-active" : "text-muted-foreground"}>{status?.configured ? "Configured" : "Needs credentials"}</span>
+        </ProfileTreeRow>
+        <div className="min-w-0 px-2 py-1.5"><SecretsForSection section="sentry" /></div>
+      </IntegrationTreeSection>
+      <IntegrationTreeSection label="Uptime" initialOpen={status?.status !== "ready"} testIdPrefix="sentry">
+        <ProfileTreeRow
+          label="Service availability"
+          icon={<Activity className="h-3.5 w-3.5" />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          valueLayout="compact"
+          menuContent={status?.status === "ready" ? <DropdownMenuItem onSelect={() => sync.mutate()} disabled={sync.isPending}>{sync.isPending ? "Syncing…" : "Sync completed day"}</DropdownMenuItem> : undefined}
+        >
+          {uptimeValue}
+        </ProfileTreeRow>
+        <ProfileTreeRow label="Monitor target" icon={<Globe className="h-3.5 w-3.5" />} hasValue showEmpty mobileLayout="inline" valueLayout="compact">
+          <code className="text-xs text-muted-foreground">https://app.trymantra.ai/api/health</code>
+        </ProfileTreeRow>
+      </IntegrationTreeSection>
     </div>
   );
 }
