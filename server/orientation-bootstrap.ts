@@ -96,8 +96,17 @@ export function buildBootstrapSystemPrompt(router: PersonaEntry): string {
     router.promptOverlay || "You are the session router. Classify the opening and return only JSON.",
     "",
     "Return a JSON object with exactly these fields:",
-    '- "title": 1-3 word session title',
+    '- "title": 1-3 word session title that identifies the specific subject, object, person, product, or decision',
     '- "topics": array of up to 8 short topic keywords',
+    "",
+    "Title rules:",
+    "- Optimize for distinction in a long Session list: the title must answer which one, not merely what kind of work occurred.",
+    "- Preserve the most specific named entity or concrete object from the opening, then add the action or issue only when useful.",
+    "- Never use a generic activity or artifact alone: Audit, Review, Planning, Research, Debugging, Discussion, UI Audit, System Audit, Code Review.",
+    "- Broad modifiers such as System, General, New, or Quick do not create specificity. Name the component, feature, company, person, document, or decision instead.",
+    "- Prefer compact noun phrases over meta-descriptions. Do not title the user's request mechanics.",
+    "- Examples: 'audit the Session menu UI' -> 'Session Menu Audit'; 'review TIVE pricing' -> 'TIVE Pricing Review'; 'debug duplicate question widgets' -> 'Question Widget Duplication'; 'improve the router that names Sessions' -> 'Session Naming Router'.",
+    "- Before returning, apply this test: could this title distinguish the Session from five others involving the same kind of work? If not, make the subject more specific.",
     '- "persona": the persona name that best fits the opening (use "Default" when ambiguous)',
   ].join("\n");
 }
