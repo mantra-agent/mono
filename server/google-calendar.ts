@@ -212,7 +212,8 @@ export async function getEvent(
 export async function createEvent(
   accountId: string,
   calendarId: string,
-  event: CalendarEventInput
+  event: CalendarEventInput,
+  options: { sendUpdates?: "all" | "externalOnly" | "none" } = {},
 ): Promise<CalendarEvent> {
   const calendar = await getCalendarClient(accountId);
   const tokens = await loadAccountTokens(accountId);
@@ -221,6 +222,7 @@ export async function createEvent(
   const res = await calendar.events.insert({
     calendarId,
     requestBody: event,
+    sendUpdates: options.sendUpdates,
   });
   return mapEvent(res.data, calendarId, accountId, accountEmail);
 }

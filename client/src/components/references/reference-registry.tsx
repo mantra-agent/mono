@@ -249,6 +249,11 @@ const registry: Record<string, RegistryEntry> = {
     fallbackLabel: ref => metadataString(ref, "label") || `Draft ${ref.id}`,
     href: ref => metadataString(ref, "href") || `/email`,
   },
+  meeting_draft: {
+    Icon: CalendarDays,
+    fallbackLabel: ref => metadataString(ref, "label") || `Meeting draft ${ref.id}`,
+    href: ref => metadataString(ref, "href") || `/`,
+  },
 
   news: {
     Icon: Globe,

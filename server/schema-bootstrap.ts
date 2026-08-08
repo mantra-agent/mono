@@ -4124,6 +4124,25 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_email_drafts_vault ON email_drafts (vault_id)`);
   });
 
+  await heal("meeting_drafts table", async () => {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS meeting_drafts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(), owner_user_id TEXT, account_id TEXT,
+        scope TEXT NOT NULL DEFAULT 'user', created_by_user_id TEXT, session_id TEXT,
+        google_account_id TEXT, calendar_id TEXT NOT NULL DEFAULT 'primary',
+        summary TEXT NOT NULL DEFAULT '', start_at TEXT NOT NULL DEFAULT '', end_at TEXT,
+        time_zone TEXT NOT NULL DEFAULT 'America/Chicago', attendees TEXT[] NOT NULL DEFAULT '{}',
+        location TEXT, description TEXT, visibility TEXT NOT NULL DEFAULT 'default',
+        status TEXT NOT NULL DEFAULT 'draft', google_event_id TEXT, scheduled_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_meeting_drafts_owner ON meeting_drafts (owner_user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_meeting_drafts_account ON meeting_drafts (account_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_meeting_drafts_session ON meeting_drafts (session_id)`);
+  });
+
   await heal("magic demo sessions tables", async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS magic_demo_sessions (

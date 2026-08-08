@@ -111,6 +111,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ReferenceText } from "@/components/references/reference-text";
 import type { ReferenceSurface } from "@/components/references/reference-renderer";
 import { EmailDraftWidget } from "@/components/email-draft-widget";
+import { MeetingDraftWidget } from "@/components/meeting-draft-widget";
 import {
   QuestionWidget,
   questionPromptFromToolCall,
@@ -2175,6 +2176,7 @@ export function MarkdownContent({
   const suppressedDrafts = useContext(SuppressedEmailDraftsContext);
   const parts = parseReferenceText(remaining);
   const draftIds: string[] = [];
+  const meetingDraftIds: string[] = [];
   const textWithoutWidgets = parts
     .map((part) => {
       if (
@@ -2184,6 +2186,14 @@ export function MarkdownContent({
       ) {
         draftIds.push(part.ref.id);
         return ""; // Strip from inline text — rendered as block widget below.
+      }
+      if (
+        part.kind === "reference"
+        && part.ref.type === "meeting_draft"
+        && isValidReferenceIdentifier("meeting_draft", part.ref.id)
+      ) {
+        meetingDraftIds.push(part.ref.id);
+        return "";
       }
       return part.kind === "text"
         ? part.text
@@ -2229,6 +2239,9 @@ export function MarkdownContent({
         .map((id) => (
           <EmailDraftWidget key={id} draftId={id} />
         ))}
+      {meetingDraftIds.map((id) => (
+        <MeetingDraftWidget key={id} draftId={id} />
+      ))}
     </>
   );
 }

@@ -51,6 +51,7 @@ export const REFERENCE_TYPES = [
   "email_thread",
   "email_message",
   "email_draft",
+  "meeting_draft",
 ] as const;
 
 export type KnownReferenceType = typeof REFERENCE_TYPES[number];
@@ -169,6 +170,7 @@ export const REFERENCE_REGISTRY: Readonly<Record<KnownReferenceType, ReferenceTy
   email_thread: definition("email_thread", "composite", EMAIL_THREAD_PATTERN, { route: () => "/comms", graph: false }),
   email_message: definition("email_message", "integer", INTEGER_PATTERN, { route: () => "/comms", graph: false }),
   email_draft: definition("email_draft", "uuid", UUID_PATTERN, { aliases: ["draft"], route: id => `/email?draft=${encodeURIComponent(id)}`, graph: false }),
+  meeting_draft: definition("meeting_draft", "uuid", UUID_PATTERN, { aliases: ["calendar_draft"], route: () => "/", graph: false }),
 };
 
 const REFERENCE_TYPE_ALIASES = new Map<string, KnownReferenceType>(

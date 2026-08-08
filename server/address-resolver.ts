@@ -15,6 +15,7 @@ import {
   businessPlans,
   companies,
   emailDrafts,
+  meetingDrafts,
   emailMessages,
   documentArtifacts,
   driveResources,
@@ -712,6 +713,13 @@ const adapters: AddressResolverAdapter[] = [
       .where(combineWithVisibleScope(principal, emailDraftScope, inArray(emailDrafts.id, refs.map(ref => ref.id))));
     const byId = new Map(rows.map(row => [row.id, row]));
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.subject || "Email draft", updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
+  }),
+  simpleAdapter("meeting_draft", async (principal, refs) => {
+    const scope = { scope: meetingDrafts.scope, ownerUserId: meetingDrafts.ownerUserId, accountId: meetingDrafts.accountId };
+    const rows = await db.select({ id: meetingDrafts.id, summary: meetingDrafts.summary, updatedAt: meetingDrafts.updatedAt }).from(meetingDrafts)
+      .where(combineWithVisibleScope(principal, scope, inArray(meetingDrafts.id, refs.map(ref => ref.id))));
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.summary || "Meeting draft", updatedAt: byId.get(ref.id)!.updatedAt })]] : []));
   }),
 ];
 
