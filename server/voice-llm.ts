@@ -205,8 +205,9 @@ export async function handleCustomLLM(req: Request, res: Response): Promise<void
       log.debug(`[TurnCoalesce] COALESCED callback — inflight turn=${session.inflightTurn} chunksDelivered=${session.inflightChunksDelivered} executorStarted=${executorAlreadyStarted} lockHeld=${lockHeld} prefixDiff="${prefixDiff.slice(0, 100)}" session=${sessionId}`);
 
       publishVoiceDiagnostic(session, "coalesce_detected", `User continued speaking — merging transcript (${prevFired.length}→${lastUserContent.length} chars)`, { turn: session.turnCount, status: "done" });
-      if (session.activeAssistantAttemptId) {
+      if (session.activeRunId && session.activeAssistantAttemptId) {
         await publishVoiceLifecycleEvent(session, "assistant_attempt_superseded", {
+          runId: session.activeRunId,
           turnId: voiceTurnId,
           assistantAttemptId: session.activeAssistantAttemptId,
           transcriptRevision,
@@ -374,7 +375,9 @@ async function executeVoiceTurn(
   const currentTurn = session.turnCount;
   // The logical turn survives transcript growth. Each generated answer is a new attempt.
   const turnId = voiceTurnId;
+  const runId = `voice-run-${session.id}-${currentTurn}-${Date.now()}`;
   const assistantAttemptId = `${voiceTurnId}-attempt-${currentTurn}-${Date.now()}`;
+  session.activeRunId = runId;
   session.activeAssistantAttemptId = assistantAttemptId;
   const userMsgs = messages.filter((m: VoiceMessage) => m.role === "user");
   const lastUserContentFull = (userMsgs[userMsgs.length - 1]?.content || "").trim() || "(none)";
@@ -387,9 +390,13 @@ async function executeVoiceTurn(
     try {
       const { sessionManager } = await import("./session-manager");
       const voiceSessionKey = session.chatSessionKey || session.chatSessionId;
-      sessionManager.registerSession(session.chatSessionId, voiceSessionKey, "voice");
-      // Set canonical turnId on the streaming projection
+      sessionManager.registerSession(session.chatSessionId, voiceSessionKey, "voice", {
+        runId,
+        turnId,
+        assistantAttemptId,
+      });
       await publishVoiceLifecycleEvent(session, "assistant_attempt_started", {
+        runId,
         turnId,
         assistantAttemptId,
         transcriptRevision,

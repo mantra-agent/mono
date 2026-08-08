@@ -5,7 +5,6 @@ import { chatRunLifecycle } from "../integrations/chat/run-lifecycle";
 import { createLogger } from "../log";
 import { createNamedSystemPrincipal } from "../principal";
 import { runWithPrincipal } from "../principal-context";
-import { sessionManager } from "../session-manager";
 import {
   assessMeetingTurnCompleteness,
   inferMeetingParticipation,
@@ -102,20 +101,9 @@ export function createMeetingTurnCoordinator(
       return false;
     }
 
-    let runGeneration: number | undefined;
-    try {
-      runGeneration = sessionManager.registerSession(
-        turn.sessionId,
-        turn.sessionKey,
-        "meeting",
-      );
-    } catch (error) {
-      await releaseMeetingTurnExecutionClaim(
-        turn,
-        `runtime registration failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return false;
-    }
+    // processChatStream owns runtime registration after minting the complete
+    // run/turn/assistant-attempt identity tuple.
+    const runGeneration: number | undefined = undefined;
     await chatStorage
       .updateSessionStatus(turn.sessionId, "streaming")
       .catch((error) =>

@@ -81,6 +81,7 @@ export interface SessionStreamState {
   canStop: boolean;
   visibleAssistantActivity: VisibleAssistantActivity;
   eventSeq?: number;
+  runGeneration?: number;
   durableRevision: number | null;
   handoffPhase: DurableHandoffPhase;
   /** Client's current segment-patch baseline (protocol v2); null when unknown. */
@@ -97,6 +98,7 @@ interface SessionMessage {
   streamingContent?: StreamingContent;
   status?: string;
   eventSeq?: number;
+  runGeneration?: number;
   eventType?: string;
   subscriberCount?: number;
   runActive?: boolean;
@@ -219,6 +221,9 @@ export function useSessionSubscriptions(
   const wsOwnerId = `${owner}:${handlerId}`;
   const subscribedIdsRef = useRef<Set<string>>(new Set());
   const requestedIdsRef = useRef<Set<string>>(new Set());
+  const subscriptionEpochRef = useRef<Record<string, number>>({});
+  const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRecoveryReasonsRef = useRef<Set<string>>(new Set());
   const wsConnectedRef = useRef(false);
   // Per-session contiguous patch baseline + last full content, read synchronously
   // for gap detection and patch application (protocol v2).
@@ -253,7 +258,9 @@ export function useSessionSubscriptions(
     requestedIdsRef.current.add(id);
     const currentActiveSession = activeSessionRef.current;
     log.debug("STREAM:SUBSCRIBE", { handlerId, owner, tabId, activeSession: currentActiveSession, sessionId: id });
-    ws.send({ type: "session.subscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession, supportsDelta: true });
+    const subscriptionEpoch = (subscriptionEpochRef.current[id] ?? 0) + 1;
+    subscriptionEpochRef.current[id] = subscriptionEpoch;
+    ws.send({ type: "session.subscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession, subscriptionEpoch, supportsDelta: true });
   }, [handlerId, owner, tabId]);
 
   const sendUnsubscribe = useCallback((id: string) => {
@@ -262,7 +269,9 @@ export function useSessionSubscriptions(
     if (!ws || ws.getReadyState() !== WebSocket.OPEN) return;
     const currentActiveSession = activeSessionRef.current;
     log.debug("STREAM:UNSUBSCRIBE", { handlerId, owner, tabId, activeSession: currentActiveSession, sessionId: id });
-    ws.send({ type: "session.unsubscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession });
+    const subscriptionEpoch = (subscriptionEpochRef.current[id] ?? 0) + 1;
+    subscriptionEpochRef.current[id] = subscriptionEpoch;
+    ws.send({ type: "session.unsubscribe", sessionId: id, handlerId, owner, tabId, activeSession: currentActiveSession, subscriptionEpoch });
   }, [handlerId, owner, tabId]);
 
   // A dropped or out-of-baseline patch means the client's baseline is stale.
@@ -278,19 +287,34 @@ export function useSessionSubscriptions(
   const upsertStream = useCallback((sessionId: string, patch: Partial<SessionStreamState>) => {
     const connected = wsConnectedRef.current;
     const current = store.getState(sessionId) ?? getIdleStreamState(connected);
+    const incomingGeneration = patch.runGeneration;
+    const currentGeneration = current.runGeneration;
     const incomingSeq = patch.eventSeq;
     const currentSeq = current.eventSeq;
 
-    // Snapshots and deltas share one monotonically increasing server sequence.
-    // A delayed streaming payload must never resurrect a run after its terminal
-    // delta has already cleared the canonical projection.
-    if (
+    // Runtime payloads advance lexicographically by (runGeneration, eventSeq).
+    // Equal-sequence snapshots are replay acknowledgements, not new state;
+    // equal-sequence deltas are likewise duplicates. Rejecting either prevents
+    // delayed recovery from overwriting a newer baseline while still allowing a
+    // higher generation to reset patchSeq.
+    const generationRegressed =
+      typeof incomingGeneration === "number" &&
+      typeof currentGeneration === "number" &&
+      incomingGeneration < currentGeneration;
+    const sameGeneration =
+      incomingGeneration === undefined ||
+      currentGeneration === undefined ||
+      incomingGeneration === currentGeneration;
+    const sequenceDidNotAdvance =
+      sameGeneration &&
       typeof incomingSeq === "number" &&
       typeof currentSeq === "number" &&
-      incomingSeq < currentSeq
-    ) {
+      incomingSeq <= currentSeq;
+    if (generationRegressed || sequenceDidNotAdvance) {
       log.debug("STREAM:STALE_EVENT_REJECTED", {
         sessionId,
+        incomingGeneration,
+        currentGeneration,
         incomingSeq,
         currentSeq,
         incomingStatus: patch.status,
@@ -311,6 +335,7 @@ export function useSessionSubscriptions(
       next.canStop === current.canStop &&
       next.visibleAssistantActivity === current.visibleAssistantActivity &&
       next.eventSeq === current.eventSeq &&
+      next.runGeneration === current.runGeneration &&
       next.durableRevision === current.durableRevision &&
       next.handoffPhase === current.handoffPhase &&
       next.patchSeq === current.patchSeq &&
@@ -344,6 +369,7 @@ export function useSessionSubscriptions(
         canStop: msg.canStop ?? serverStreaming,
         visibleAssistantActivity: msg.visibleAssistantActivity ?? (serverStreaming ? "thinking" : "none"),
         eventSeq: msg.eventSeq,
+        runGeneration: msg.runGeneration,
         durableRevision: msg.durableRevision ?? null,
         handoffPhase: msg.handoffPhase ?? "live",
         patchSeq: msg.patchSeq ?? null,
@@ -387,6 +413,7 @@ export function useSessionSubscriptions(
       patch.canStop = msg.canStop ?? serverStreaming;
       patch.visibleAssistantActivity = msg.visibleAssistantActivity ?? (serverStreaming ? "thinking" : "none");
       patch.eventSeq = msg.eventSeq;
+      patch.runGeneration = msg.runGeneration;
       if (msg.patchSeq !== undefined) patch.patchSeq = msg.patchSeq;
       if (msg.durableRevision !== undefined) patch.durableRevision = msg.durableRevision;
       if (msg.handoffPhase !== undefined) patch.handoffPhase = msg.handoffPhase;
@@ -412,9 +439,20 @@ export function useSessionSubscriptions(
     ids.forEach(sendSubscribe);
   }, [handlerId, owner, sendSubscribe, tabId]);
 
-  const handleReconnect = useCallback(() => {
-    refreshSubscriptions("reconnect");
+  const requestRecovery = useCallback((reason: string) => {
+    pendingRecoveryReasonsRef.current.add(reason);
+    if (recoveryTimerRef.current) return;
+    recoveryTimerRef.current = setTimeout(() => {
+      recoveryTimerRef.current = null;
+      const reasons = Array.from(pendingRecoveryReasonsRef.current).sort();
+      pendingRecoveryReasonsRef.current.clear();
+      refreshSubscriptions(reasons.join("+"));
+    }, 50);
   }, [refreshSubscriptions]);
+
+  const handleReconnect = useCallback(() => {
+    requestRecovery("reconnect");
+  }, [requestRecovery]);
 
   useEffect(() => {
     log.debug("STREAM:HOOK:MOUNT", { handlerId, owner, tabId, activeSession: activeSessionRef.current, initialSessionIds: initialSessionIdsRef.current });
@@ -436,11 +474,11 @@ export function useSessionSubscriptions(
 
     const handleVisibilityResume = () => {
       if (document.visibilityState === "visible") {
-        refreshSubscriptions("visibility-visible");
+        requestRecovery("visibility-visible");
       }
     };
-    const handlePageShow = () => refreshSubscriptions("pageshow");
-    const handleWindowFocus = () => refreshSubscriptions("window-focus");
+    const handlePageShow = () => requestRecovery("pageshow");
+    const handleWindowFocus = () => requestRecovery("window-focus");
     document.addEventListener("visibilitychange", handleVisibilityResume);
     window.addEventListener("pageshow", handlePageShow);
     window.addEventListener("focus", handleWindowFocus);
@@ -449,6 +487,11 @@ export function useSessionSubscriptions(
       document.removeEventListener("visibilitychange", handleVisibilityResume);
       window.removeEventListener("pageshow", handlePageShow);
       window.removeEventListener("focus", handleWindowFocus);
+      if (recoveryTimerRef.current) {
+        clearTimeout(recoveryTimerRef.current);
+        recoveryTimerRef.current = null;
+      }
+      pendingRecoveryReasonsRef.current.clear();
       subscribedIdsRef.current.forEach(sendUnsubscribe);
       subscribedIdsRef.current.clear();
       requestedIdsRef.current.clear();
@@ -462,7 +505,7 @@ export function useSessionSubscriptions(
       sharedWS.setStreamActive(wsOwnerId, false);
       releaseSharedWS(wsOwnerId);
     };
-  }, [handlerId, handleMessage, handleReconnect, owner, refreshSubscriptions, sendSubscribe, sendUnsubscribe, setStreamConnected, tabId, wsOwnerId]);
+  }, [handlerId, handleMessage, handleReconnect, owner, requestRecovery, sendSubscribe, sendUnsubscribe, setStreamConnected, tabId, wsOwnerId]);
 
   useEffect(() => {
     if (sharedWSRef.current?.getReadyState() !== WebSocket.OPEN) return;
