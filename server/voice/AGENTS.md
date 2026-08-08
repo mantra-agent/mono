@@ -73,6 +73,7 @@ Uses per-iteration content model (`iterationResults[]`) with explicit `mergeIter
 - STT adapters consume `SpeechRecognitionHints`; meeting/voice entry points resolve user-owned identity, roster, and People vocabulary once and providers only translate that contract to their wire format
 - `SpeechRecognitionStreamCoordinator` owns protocol-ready candidate startup, bounded audio buffering/backpressure, same-binding reconnect with a fresh attempt ID, and graceful finish for Recall and native meeting capture. Adapters own only wire protocol and provider EOS.
 - Every coordinator attempt owns one bounded serialized recognition sink. Consumer/database failures settle and log separately from provider transport failures and never become unhandled rejections.
+- Every voice assistant attempt mints and retains one complete `{ runId, turnId, assistantAttemptId }` tuple before `SessionManager.registerSession`; supersession events reuse that tuple, and a revised attempt replaces it atomically rather than reconstructing partial identity.
 
 ### Speech Synthesis Ownership
 Normal voice configuration is the sole source of truth for voice identity, model, expression tags, pronunciation, and voice settings. `voice/synthesis.ts` owns the portable provider request: `streamVoiceAudio()` returns progressive audio, and buffered consumers derive bytes through `synthesizeVoiceAudio()` rather than opening a second provider path. Meeting/Recall and phone/Twilio may deliver, buffer, or transcode that audio, but must not own provider selection or speech configuration.

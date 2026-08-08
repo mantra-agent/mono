@@ -69,6 +69,7 @@ export interface VoiceSession {
   /** ElevenLabs conversation user-message ordinal for the active physical utterance. */
   activeVoiceUserOrdinal: number | null;
   activeTranscriptRevision: number;
+  activeRunId: string | null;
   activeAssistantAttemptId: string | null;
   /** Principal captured by the durable voice lease; required for every authenticated chat access. */
   principal: Principal;

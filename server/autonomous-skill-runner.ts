@@ -1061,10 +1061,23 @@ export async function executeAutonomousSkillRun(
     payload: { sessionId, skillId, skillName: config.label, addToMemory, sessionKey },
   });
 
-  // Register with SessionManager so WS subscribers (inline child widgets) receive live streaming content
+  // Register with one complete identity tuple before any autonomous stream event.
+  const autonomousRunId = options.runtimeFence?.runId ?? `skill-run-${sessionId}`;
+  const autonomousTurnId = `skill-turn-${sessionId}`;
+  const autonomousAttemptId = `${autonomousRunId}-attempt-1`;
   try {
     const { sessionManager } = await import("./session-manager");
-    sessionManager.registerSession(sessionId, sessionKey, "text");
+    sessionManager.registerSession(sessionId, sessionKey, "text", {
+      runId: autonomousRunId,
+      turnId: autonomousTurnId,
+      assistantAttemptId: autonomousAttemptId,
+    });
+    sessionManager.applyEvent(sessionId, {
+      type: "run_start",
+      runId: autonomousRunId,
+      turnId: autonomousTurnId,
+      assistantAttemptId: autonomousAttemptId,
+    });
   } catch (regErr) {
     logger.debug(`[SkillChat] [${sessionId}] sessionManager.registerSession skipped: ${regErr instanceof Error ? regErr.message : String(regErr)}`);
   }
