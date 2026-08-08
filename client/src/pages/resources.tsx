@@ -1104,7 +1104,9 @@ function ResourcesView({
           >
                   <MetricRow
                     label="Server transport"
-                    value={`${r.realtime.eventSockets + r.realtime.sessionSockets} sockets`}
+                    value={transportStatus === "red"
+                      ? `${r.realtime.staleSessionSocketLinks} stale · ${r.realtime.subscriptionDivergence} diverged`
+                      : `${r.realtime.eventSockets + r.realtime.sessionSockets} sockets`}
                     status={transportStatus}
                     detail={(
                       <DetailList
