@@ -1901,17 +1901,10 @@ function modelProviderErrorFromAttempt(
     ...base,
     userMessage: buildProviderUserMessage(base),
   };
-  const modelError = new ModelProviderError(providerFailure, err.bodySnippet);
-  // Pass the Error object so aggregates retain code + producer stack. Do not
-  // stringify the failure envelope into the primary log arg — session/token
-  // substrings collapse message-token classification to UNCLASSIFIED.
-  log.error(
-    `model.provider_failure provider=${providerFailure.provider} model=${providerFailure.model ?? "unknown"} ` +
-      `kind=${providerFailure.kind} status=${providerFailure.status || "n/a"} phase=${providerFailure.phase} ` +
-      `code=${modelError.code} attempts=${providerFailure.attempts}`,
-    modelError,
-  );
-  return modelError;
+  // Construction is side-effect free. The tracked chat/stream or modality
+  // boundary that terminally rejects the operation owns the one error log and
+  // inference record; retries and propagation must not multiply fingerprints.
+  return new ModelProviderError(providerFailure, err.bodySnippet);
 }
 
 // ─── Grok Subscription completions (xAI, OpenAI-compatible via api.x.ai/v1) ───
