@@ -2117,7 +2117,20 @@ export type InsertPlanStepReview = typeof planStepReviews.$inferInsert;
 export const workflowTemplateStatuses = ["draft", "active", "deprecated"] as const;
 export const workflowRunStatuses = ["draft", "active", "blocked", "needs_review", "completed", "failed", "canceled", "paused"] as const;
 export const workflowStageStatuses = ["pending", "active", "passed", "failed", "blocked", "skipped", "needs_review"] as const;
-export const workflowAttemptResults = ["passed", "failed", "blocked", "skipped", "needs_review"] as const;
+export const workflowAttemptResults = [
+  "passed",
+  "changes_requested",
+  "product_failure",
+  "specification_failure",
+  "continue",
+  "update_docs",
+  "gate",
+  "fail_back",
+  "failed",
+  "blocked",
+  "skipped",
+  "needs_review",
+] as const;
 export const workflowAutonomyModes = ["autonomous", "requires_user_review", "requires_agent_review", "manual_external"] as const;
 export const workflowTransitionTriggers = ["autonomous", "agent_review", "user_review", "system", "manual"] as const;
 export const workflowArtifactKinds = ["spec", "plan", "pr", "commit", "deployment", "screenshot", "logs", "review", "docs", "calibration", "acceptance", "library_page", "session", "other"] as const;
@@ -2145,7 +2158,7 @@ export const workflowStageDefinitionSchema = z.object({
   maxAttempts: z.number().int().positive().optional(),
   allowedTransitions: z.array(z.object({
     toStageKey: z.string().nullable(),
-    on: z.enum(["pass", "fail", "blocked", "needs_review", "manual"]),
+    on: z.string().trim().min(1),
     reason: z.string().optional(),
   })).default([]),
 });
