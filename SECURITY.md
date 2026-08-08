@@ -1,3 +1,11 @@
+<!-- 2026-08-08 profile-picture upload boundary:
+- Assets/data: authenticated user identity and account ownership (S1), one private avatar object and profile metadata path (S2), and bounded upload diagnostics.
+- Flow/boundary: authenticated Profile UI -> narrow multipart `/api/auth/profile-picture` -> deterministic JPEG/PNG/WebP signature and dimension parser -> account-private object storage + ACL -> exact `user_profiles` metadata projection -> authenticated `/objects/*` serving.
+- Failure/threat: spoofed MIME, malformed or decompression-heavy images, oversized payloads, cross-account profile mutation/read, concurrent replacement races, unbounded historical retention, or internal object coordinates escaping (STRIDE spoofing/tampering/information disclosure/elevation/availability; DATA-01/FILE-01).
+- Controls/owner: Core Identity/Profile requires an exact user/account Principal, one file capped at 5 MB, declared-MIME plus bounded signature/header parsing, 4096px and 16MP ceilings, UUID account-private object identity, private owner/account ACL, verified persistence before a transaction-scoped per-user metadata swap, and best-effort prior-object retirement. `/api/auth/me` remains the canonical projection and the response exposes only the authenticated object path. Owner: Core Identity/Profile. Severity: high privacy/integrity. SLA: release-blocking. Status: implemented in source pending build/merge/deploy acceptance.
+- Residual/rollback: header parsing bounds dimensions but does not fully decode image content; browser decode remains an untrusted-content boundary. A failed prior-object cleanup can leave one inaccessible private orphan and is logged without identifiers. Revert the profile-avatar service, endpoint/UI projection, advisory namespace, and this record; existing metadata paths remain harmless and the UI falls back to initials.
+-->
+
 <!-- 2026-08-08 shell named environment-read policy:
 - Assets/data: process environment variable names and values (S1 operational metadata through S3 credentials), shell command text, and bounded denial telemetry.
 - Flow/boundary: model-selected shell command -> canonical `validateShellCommand` admission -> read-only process execution. Command text is untrusted; environment values never enter policy logs.
