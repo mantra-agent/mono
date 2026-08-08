@@ -17,6 +17,7 @@ import { getSideEffectTier, type SideEffectTier } from "./autonomy-tiers";
 import { isAgentType } from "@shared/instance-config";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { getCurrentPrincipal } from "./principal-context";
+import { authorizeToolInvocation, type TrustedEngineeringDelegation } from "./agent-authority";
 import { filterBuildToolSchemas } from "./mods/build-tool-access";
 import { hasActiveBuildAccess } from "./mods/build-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
@@ -424,6 +425,18 @@ const SKILL_RUN_CONFIGS: Record<string, SkillRunConfig> = {
     sessionType: "autonomous",
     admissionTier: "background",
   },
+  "self-heal": {
+    skillId: "self-heal",
+    label: "Self Heal",
+    callType: "full",
+    activity: ACTIVITY_WORK,
+    temperature: 0.2,
+    timeoutMs: 3 * 60 * 60 * 1000,
+    // Self Heal remains a separate autonomous execution, but its result is a
+    // user-facing Agent conversation rather than hidden SYSTEM maintenance.
+    sessionType: "agent",
+    admissionTier: "background",
+  },
   "enrich-email": {
     skillId: "enrich-email",
     label: "Enrich Email",
@@ -763,6 +776,26 @@ export async function executeAutonomousSkillRun(
     const { hasActiveWellnessAccess } = await import("./mods/wellness-access");
     if (!principal || !(await hasActiveWellnessAccess(principal))) {
       throw new Error(`Wellness Mod is inactive; Skill ${config.skillId} cannot run`);
+    }
+  }
+
+  const engineeringDelegation: TrustedEngineeringDelegation | undefined = config.skillId === "self-heal"
+    ? "build_skill"
+    : undefined;
+  if (engineeringDelegation) {
+    const principal = getCurrentPrincipal();
+    const capabilityProbe = authorizeToolInvocation(
+      "git",
+      { action: "merge_pr" },
+      { origin: "autonomous", trustedDelegation: engineeringDelegation },
+      principal,
+    );
+    if (!capabilityProbe.allowed) {
+      const blocker = new Error(
+        `Self Heal capability contract unavailable before diagnosis: ${capabilityProbe.reason}`,
+      ) as Error & { code?: string };
+      blocker.code = "SELF_HEAL_ENGINEERING_CAPABILITY_UNAVAILABLE";
+      throw blocker;
     }
   }
 
@@ -1479,7 +1512,13 @@ async function runSkillPipeline(
       },
       sessionKey,
     });
-    const trustedDelegation = options.planId ? "plan" : options.workflowRunId ? "workflow" : undefined;
+    const trustedDelegation: TrustedEngineeringDelegation | undefined = options.planId
+      ? "plan"
+      : options.workflowRunId
+        ? "workflow"
+        : config.skillId === "self-heal"
+          ? "build_skill"
+          : undefined;
     const { tools, toolExecutor } = await getSkillTools(config.activity, sessionKey, sessionId, authoritySkillId, trustedDelegation);
 
     let toolCallCount = 0;
