@@ -1,3 +1,11 @@
+<!-- 2026-08-08 shell named environment-read policy:
+- Assets/data: process environment variable names and values (S1 operational metadata through S3 credentials), shell command text, and bounded denial telemetry.
+- Flow/boundary: model-selected shell command -> canonical `validateShellCommand` admission -> read-only process execution. Command text is untrusted; environment values never enter policy logs.
+- Failure/threat: fuzzy full-command matching denied harmless repository searches containing environment-command words, while broadly permitting process environment enumeration would expose credentials or operational topology (STRIDE information disclosure/elevation/availability; IAM-02/AGENT-03/EXEC-04).
+- Controls/owner: non-installable Core Agent Authority parses every command segment, categorically denies `env`, and admits `printenv` only with exactly one strict uppercase identifier from a code-owned non-sensitive allowlist. Bare/multiple/option/assignment/expansion/substitution forms and unknown or sensitive names fail closed under stable reasons; denial guidance never includes values. Existing binary, path, interpreter, redirection, expansion, and trusted-engineering gates remain independent. Owner: Core Agent Authority. Severity: high confidentiality / medium availability. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: the allowlist reveals only names already selected as operationally non-sensitive; a future variable whose semantics change must be removed in code before use. Revert the named-read classifier and this record to restore categorical `printenv` denial without widening any other shell authority.
+-->
+
 <!-- 2026-08-07 Sentry external availability projection:
 - Assets/data: server-only Sentry auth token (S3), Sentry organization/project identity and uptime check count/failure rate (S1 operational metadata), and principal-owned Service Availability Metric samples. No monitored URL, request headers/body, region, IP, response body, or S2/S3 content is persisted by Mantra.
 - Flow/boundary: authenticated `system:read`/`system:write` Sentry UI or authorized Sentry tool -> secrets-store credential -> fixed-origin Sentry Explore `uptime_results` API -> bounded validated completed-day aggregate -> canonical principal-scoped Metrics definition/sample mutation.
