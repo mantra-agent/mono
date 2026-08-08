@@ -1,7 +1,8 @@
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import {
   MEMORY_VNEXT_LIFECYCLE_STAGE,
   driveResources,
+  indexedFileSources,
   memoryVnextClaims,
   memoryVnextClaimLinks,
   memoryVnextEntityLinks,
@@ -43,6 +44,8 @@ const MS_PER_DAY = 86_400_000;
 const CLAIM_LINK_BATCH_SIZE = 500;
 /** Whole-corpus page seed ceiling; bounds payload, never gated on corpus size beyond this. */
 const PERSONAL_GRAPH_PAGE_LIMIT = 5_000;
+/** Whole-corpus indexed-file seed ceiling; bounds payload like the Library page seed. */
+const PERSONAL_GRAPH_FILE_LIMIT = 5_000;
 /** Max distinct occurrence-target addresses resolved through adapters (chunked by 50). */
 const OCCURRENCE_TARGET_RESOLVE_LIMIT = 500;
 
@@ -83,6 +86,7 @@ export interface PersonalGraphMetrics {
   nodeCount: number;
   edgeCount: number;
   pageCount: number;
+  fileCount: number;
   claimCount: number;
   occurrenceEdgeCount: number;
   canonicalOccurrenceEdgeCount: number;
@@ -234,10 +238,18 @@ export async function assemblePersonalGraph(
     vaultId: libraryPages.vaultId,
   };
 
-  // Base seed: every visible live Library page (slim metadata only) plus vNext claims,
-  // current work, meetings, and the whole-corpus authored occurrence edges. One query
-  // per adapter; none scales with corpus size beyond its bounded row limit.
-  const [visiblePages, claims, meetingProjection, workProjection, relationshipProjection, decisionStrategyProjection, executionProvenanceProjection, occurrenceEdges] =
+  const driveGrantIdentity = objectGrantIdentity("drive_resource", {
+    objectId: driveResources.id,
+    ownerUserId: driveResources.addedByUserId,
+    accountId: driveResources.accountId,
+    vaultId: driveResources.vaultId,
+  });
+
+  // Base seed: every visible live Library page and every authorized active indexed
+  // file (slim metadata only) plus vNext claims, current work, meetings, and the
+  // whole-corpus authored occurrence edges. Semantic processing enriches these
+  // source nodes later; it does not control their admission to the graph.
+  const [visiblePages, indexedFiles, claims, meetingProjection, workProjection, relationshipProjection, decisionStrategyProjection, executionProvenanceProjection, occurrenceEdges] =
     await Promise.all([
       libraryFirst
         ? db
@@ -255,6 +267,37 @@ export async function assemblePersonalGraph(
             .orderBy(desc(libraryPages.updatedAt))
             .limit(PERSONAL_GRAPH_PAGE_LIMIT)
         : Promise.resolve([] as Array<{ id: string; slug: string; title: string; summary: string | null; oneLiner: string | null; createdAt: Date; updatedAt: Date }>),
+      libraryFirst && principal.accountId
+        ? db
+            .select({
+              id: driveResources.id,
+              name: indexedFileSources.name,
+              provider: indexedFileSources.provider,
+              providerFileId: indexedFileSources.providerFileId,
+              mimeType: indexedFileSources.mimeType,
+              vaultId: indexedFileSources.vaultId,
+              createdAt: indexedFileSources.createdAt,
+              updatedAt: indexedFileSources.updatedAt,
+              title: indexedFileSources.title,
+              oneLiner: indexedFileSources.oneLiner,
+              summary: indexedFileSources.summary,
+              tags: indexedFileSources.tags,
+            })
+            .from(indexedFileSources)
+            .innerJoin(driveResources, eq(indexedFileSources.driveResourceId, driveResources.id))
+            .where(and(
+              eq(indexedFileSources.discoveryState, "active"),
+              isNull(indexedFileSources.retiredAt),
+              eq(indexedFileSources.accountId, principal.accountId),
+              or(
+                eq(driveResources.accountId, principal.accountId),
+                liveObjectGrantPredicate(principal, driveGrantIdentity, "read"),
+                liveVaultGatePredicate(principal, driveResources.vaultId, "read"),
+              ),
+            ))
+            .orderBy(desc(indexedFileSources.updatedAt))
+            .limit(PERSONAL_GRAPH_FILE_LIMIT)
+        : Promise.resolve([]),
       db
         .select()
         .from(memoryVnextClaims)
@@ -271,7 +314,7 @@ export async function assemblePersonalGraph(
       executionProvenanceGraphAdapter.project(principal, { limit: 500, selectedAddresses: input.selectedAddresses }),
       getLibraryCorpusOccurrenceEdges(principal, LIBRARY_REFERENCE_NEIGHBORHOOD_LIMIT),
     ]);
-  adapterQueryCount += 8;
+  adapterQueryCount += 9;
   const occurrenceProjection = occurrenceEdges;
   const authoredOccurrenceEdges = occurrenceProjection.edges;
   const sourceObjectLinks = await db.select().from(memoryVnextSourceLinks)
@@ -349,12 +392,13 @@ export async function assemblePersonalGraph(
 
   // Session + drive_file source nodes (pages are all seeded; these load only when cited).
   const sourceSessionIds = [...new Set(sourceRefs.filter((ref) => ref.sourceType === "session").map((ref) => ref.sourceId))];
-  const sourceDriveFileIds = [...new Set(
-    sourceRefs
+  const sourceDriveFileIds = [...new Set([
+    ...indexedFiles.map((file) => file.id),
+    ...sourceRefs
       .filter((ref) => ref.sourceType === "drive_file" || ref.sourceType === "file")
       .map((ref) => ref.sourceId)
       .filter(Boolean),
-  )];
+  ])];
   const sessionBatches: Array<Awaited<ReturnType<typeof chatFileStorage.getSession>>> = [];
   for (const batch of chunkValues(sourceSessionIds)) sessionBatches.push(...await chatFileStorage.getSessions(batch));
   const sourceSessionById = new Map(
@@ -375,12 +419,6 @@ export async function assemblePersonalGraph(
     createdAt: Date;
   }>();
   if (sourceDriveFileIds.length > 0 && principal.accountId) {
-    const driveGrantIdentity = objectGrantIdentity("drive_resource", {
-      objectId: driveResources.id,
-      ownerUserId: driveResources.addedByUserId,
-      accountId: driveResources.accountId,
-      vaultId: driveResources.vaultId,
-    });
     for (const batch of chunkValues(sourceDriveFileIds)) {
       const rows = await db
         .select({
@@ -570,29 +608,38 @@ export async function assemblePersonalGraph(
     });
   }
 
+  const indexedFileById = new Map(indexedFiles.map((file) => [file.id, file]));
+
   function ensureDriveFileNode(sourceId: string, createdAt?: Date | string | null): number | null {
     const file = sourceDriveFileById.get(sourceId);
     if (!file) return null;
+    const indexedFile = indexedFileById.get(sourceId);
     // Canonical durable file identity for graph/source refs is drive_resource id.
     const key = `file:${file.id}`;
     const existing = nodeIdByAddress.get(key);
     if (existing !== undefined) return existing;
-    const createdTs = file.createdAt || createdAt;
-    const summary = [file.provider, file.mimeType].filter(Boolean).join(" · ") || "Indexed file";
+    const createdTs = indexedFile?.createdAt || file.createdAt || createdAt;
+    const updatedTs = indexedFile?.updatedAt || createdTs;
+    const fallbackSummary = [file.provider, file.mimeType].filter(Boolean).join(" · ") || "Indexed file";
+    const summary = indexedFile?.summary || indexedFile?.oneLiner || fallbackSummary;
+    const indexedTags = Array.isArray(indexedFile?.tags)
+      ? indexedFile.tags.filter((tag): tag is string => typeof tag === "string")
+      : [];
     return registerNode(key, {
       id: nextSyntheticNodeId--,
       content: summary,
-      title: file.name || sourceId,
+      title: indexedFile?.title || file.name || sourceId,
       summary,
       layer: "long",
       source: "file",
       sourceId: file.id,
-      tags: ["file", file.provider].filter(Boolean),
+      tags: [...new Set(["file", file.provider, ...indexedTags].filter(Boolean))],
       graphed: true,
       metadata: {
         graphStorage: "vnext",
         nodeKind: "source",
         nodeType: "file",
+        indexed: indexedFile !== undefined,
         driveResourceId: file.id,
         provider: file.provider,
         providerFileId: file.providerFileId,
@@ -600,10 +647,12 @@ export async function assemblePersonalGraph(
         reference: `@file:${file.id}`,
       },
       createdAt: serializeDate(createdTs),
-      updatedAt: serializeDate(createdTs),
-      recency: computeNodeRecency(createdTs, createdTs),
+      updatedAt: serializeDate(updatedTs),
+      recency: computeNodeRecency(createdTs, updatedTs),
     });
   }
+
+  for (const file of indexedFiles) ensureDriveFileNode(file.id, file.createdAt);
 
   for (const ref of sourceRefs) {
     if (!visibleClaimIds.has(ref.claimId)) continue;
@@ -893,6 +942,7 @@ export async function assemblePersonalGraph(
     nodeCount: entries.length,
     edgeCount: links.length,
     pageCount: visiblePages.length,
+    fileCount: indexedFiles.length,
     claimCount: claims.length,
     occurrenceEdgeCount,
     canonicalOccurrenceEdgeCount,
@@ -922,7 +972,7 @@ export async function assemblePersonalGraph(
   projection.payloadBytes = Buffer.byteLength(JSON.stringify({ entries, links }), "utf8");
 
   log.info(
-    `[personal-graph] libraryFirst=${libraryFirst} pages=${projection.pageCount} claims=${projection.claimCount} ` +
+    `[personal-graph] libraryFirst=${libraryFirst} pages=${projection.pageCount} files=${projection.fileCount} claims=${projection.claimCount} ` +
       `nodes=${projection.nodeCount} edges=${projection.edgeCount} occurrenceEdges=${occurrenceEdgeCount} canonicalOccurrenceEdges=${projection.canonicalOccurrenceEdgeCount} compatibilityOccurrenceEdges=${projection.compatibilityOccurrenceEdgeCount} compatibilitySources=${projection.compatibilityOccurrenceSourceCount} unprojectedPages=${projection.unprojectedLibraryPageCount} ` +
       `meetingEdges=${projection.meetingEdgeCount} workEdges=${projection.workEdgeCount} relationshipEdges=${projection.relationshipEdgeCount} decisionStrategyEdges=${projection.decisionStrategyEdgeCount} executionProvenanceEdges=${projection.executionProvenanceEdgeCount} sourceObjectEdges=${projection.sourceObjectEdgeCount} structural=${structuralLinkCount} tagNodes=${projection.tagNodeCount} tagEdges=${projection.tagEdgeCount} resolvedTargets=${projection.resolvedTargetCount} ` +
       `adapterQueries=${projection.adapterQueryCount} payloadKB=${(projection.payloadBytes / 1024).toFixed(1)} assemblyMs=${projection.assemblyMs}`,
@@ -936,6 +986,7 @@ export async function assemblePersonalGraph(
       nodeCount: projection.nodeCount,
       edgeCount: projection.edgeCount,
       pageCount: projection.pageCount,
+      fileCount: projection.fileCount,
       payloadBytes: projection.payloadBytes,
       adapterQueryCount: projection.adapterQueryCount,
       occurrenceEdgeCount: projection.occurrenceEdgeCount,
