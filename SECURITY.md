@@ -32,6 +32,14 @@
 - Residual/rollback: abrupt network/process loss can overcount by at most the 45-second liveness tail; process-local presence may briefly exist on multiple replicas, but durable per-client interval identity and per-user union prevent double counting. Revert the observer/rollup lifecycle and this record; additive telemetry tables/indexes remain inert and can be dropped separately after retention.
 -->
 
+<!-- 2026-08-08 indexed Drive graph admission:
+- Assets/data: Vault-bound indexed File identity and slim metadata (S2), stable `drive_resources.id`, active `indexed_file_sources` admission state, and Memory Graph payloads.
+- Flow/boundary: Files policy/reconciliation -> active indexed source joined to canonical drive resource -> independently authorized personal-graph read projection. Semantic processing may later add claims and relationships but is not an authorization or graph-admission prerequisite.
+- Threats: cross-account or revoked File metadata exposure, retired/inaccessible sources remaining visible, provider IDs being mistaken for durable identity, or graph presence being mistaken for File access (STRIDE information disclosure/elevation/tampering; FILE-01/DATA-02).
+- Controls/owner: the projection requires the exact Principal account, active/non-retired Files admission, a live canonical `drive_resources` join, and the existing account ownership OR live object-grant OR live Vault-gate predicate. Nodes use only stable internal `@file:<drive_resources.id>` identity and bounded slim metadata; every actual File open/read still reauthorizes through FilesApi. Owner: Files + Memory. Severity: high trust-boundary correctness. SLA: release-blocking. Status: implemented in source pending build/merge/deploy.
+- Residual/rollback: authorized isolated File nodes can increase graph payload up to the explicit 5,000-file ceiling; this is bounded but not yet measured against a maximum-size live Vault. Set `LIBRARY_FIRST_GRAPH_ENABLED=false` for immediate projection rollback or revert the indexed-file seed query; no source or semantic state is mutated.
+-->
+
 <!-- 2026-08-08 indexed Drive source linking trust boundary:
 - Assets/data: Vault-bound external file identity/content (S2), stable internal `drive_resources.id`, vNext source revisions, extracted claims, explicit canonical references, inferred mentions, evidence/provenance/confidence, and Memory Graph projections.
 - Flow/boundary: Files-authorized provider content -> bounded vNext extraction/model output (untrusted) -> independently authorized canonical address resolution -> replay-safe `memory_vnext_source_links` replacement -> read-only Memory Graph projection. External text and model output remain evidence, never authority or instructions.
