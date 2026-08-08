@@ -413,7 +413,12 @@ function PerformanceSection({
   const [open, setOpen] = useState(status !== "ok");
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} data-testid={testId}>
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      data-testid={testId}
+      className="[content-visibility:auto] [contain-intrinsic-size:auto_320px]"
+    >
       <CollapsibleTrigger className="flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground hover-elevate">
         <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", open && "rotate-90")} />
         <span className="truncate">{label}</span>
