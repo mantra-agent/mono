@@ -86,6 +86,12 @@ Names describe what something does or when to use it, not how it currently works
 
 A function does one thing. If you need "and" to describe it, split it. Functions longer than roughly 40 lines are almost always doing too much.
 
+**Consistent File Shape**
+
+Comparable files should look and read alike. Follow the nearest established pattern for files with the same role; do not invent a new internal arrangement for personal preference. Unless a framework or subsystem convention requires otherwise, order files top-down as: imports, module constants and logger, public types/contracts, private types, public entry points or primary export, then private helpers in first-use order. Keep imports grouped consistently, keep side effects explicit and near the entry point that owns them, and keep exports deliberate rather than scattered accidentally through the file.
+
+Consistency follows responsibility, not forced sameness: a route, React component, schema module, and storage adapter may each have a different canonical shape, but peer files of the same kind should share one. When no pattern exists, establish the smallest clear pattern and document it in the nearest `AGENTS.md` only if it is reusable. Do not churn unrelated files solely to restyle them; bring touched code toward the canonical local shape without obscuring the functional change.
+
 **Leave No Zombies**
 
 Unused code, commented-out blocks, and workarounds actively mislead. Delete what isn't used. Fix causes, not symptoms. When you touch a file, leave it closer to these principles than you found it.
@@ -358,7 +364,11 @@ Skills are runnable workflows with run identity, sessions, scoring, and operator
 
 ## Main Data Flows
 
-1. **Chat Streaming** — Server-side `SessionManager` maintains authoritative streaming state per session. Clients subscribe via WebSocket (`session.subscribe`) and receive snapshot + deltas. Single channel, single source of truth. Types in `shared/streaming-types.ts`, reducers in `server/streaming-reducers.ts`
+1. **Chat Streaming** — Server-side `SessionManager` maintains authoritative streaming state per session. Clients subscribe via WebSocket (`session.subscribe`) and receive snapshot + deltas. Single channel, single source of truth. Types in `shared/streaming-types.ts`, reducers in `server/streaming-reducers.ts`.
+   - Every logical `(connection, owner, session)` subscribe or unsubscribe advances `subscriptionEpoch`. Revalidate it after asynchronous authorization/hydration and immediately before registration or delivery; stale work is an idempotent no-op.
+   - Every snapshot and delta carries `(runGeneration, eventSeq)`. Clients accept only advancing tuples; equal/regressive same-generation payloads and older generations cannot replace current state. Idle snapshots use generation `0`.
+   - Reconnect, visibility, `pageshow`, and focus feed one coalesced recovery coordinator owned by the app-level subscription layer. Transcript renderers must not install parallel browser-resume refetch loops; durable revision advancement owns terminal handoff.
+   - Every active stream is registered with a complete `{ runId, turnId, assistantAttemptId }` tuple before its first event, checkpoint, draft, or snapshot. Live events and durable messages reuse that tuple; new producers may not omit or heuristically reconstruct identity.
 2. **Chat → Memory** — Persisted sessions enqueue canonical vNext sources → bounded extraction → claim persistence and source provenance
 3. **Session → Artifact Linking** — Tool call succeeds → `recordSessionArtifact()` → `session_artifacts` table; session resolves → scorer enriches transcript with artifact content; output buffer reads linked pages from artifacts table
 4. **Timer → Skill** — Timer fires → scheduler preconditions → pre-context → autonomous skill execution

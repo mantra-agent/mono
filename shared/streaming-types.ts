@@ -75,17 +75,27 @@ export interface ContextPressureSnapshot {
   modelName?: string;
 }
 
+export interface SessionStreamIdentity {
+  /** Canonical execution identity, minted before the first live or durable projection. */
+  runId: string;
+  /** Canonical logical user-turn identity. */
+  turnId: string;
+  /** Canonical assistant response attempt within the turn. */
+  assistantAttemptId: string;
+}
+
 export interface StreamingContent {
   segments: MessageSegment[];
   source: StreamingSource;
   model?: string | null;
   autoTier?: string | null;
   persona?: { id: number; name: string; icon: string } | null;
-  runId?: string | null;
-  /** Canonical logical voice-turn identity, stable across transcript revisions. */
-  turnId?: string | null;
+  /** Legacy idle projections may be null; every active run must carry all three identities. */
+  runId: string | null;
+  /** Canonical logical user-turn identity, stable across transcript revisions. */
+  turnId: string | null;
   /** Canonical assistant response attempt. Changes when revised speech supersedes a response. */
-  assistantAttemptId?: string | null;
+  assistantAttemptId: string | null;
   /** Transcript revision answered by the active assistant attempt. */
   transcriptRevision?: number | null;
   cost?: number | null;

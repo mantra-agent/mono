@@ -17,6 +17,7 @@ import {
   emailDrafts,
   emailMessages,
   documentArtifacts,
+  driveResources,
   inferencePayloadCaptures,
   jobRoles,
   milestones,
@@ -49,7 +50,7 @@ import { signalItems } from "@shared/models/signal";
 import { wellnessActivities } from "@shared/models/health";
 import { db } from "./db";
 import { combineWithVisibleScope } from "./scoped-storage";
-import { combineWithAuthorizedScope } from "./authorize";
+import { combineWithAuthorizedScope, liveObjectGrantPredicate, liveVaultGatePredicate, objectGrantIdentity } from "./authorize";
 import { combineWithProjectAccess, combineWithProjectDerivedWorkAccess, combineWithTaskAccess } from "./project-vault-access";
 import { libraryPageIsLive } from "./library-trash";
 import { visiblePlatform } from "./platforms/platform-access";
@@ -602,7 +603,37 @@ const adapters: AddressResolverAdapter[] = [
     return new Map(refs.flatMap(ref => byId.has(ref.id) ? [[requestedAddress(ref), resolved(ref, { label: byId.get(ref.id)!.title })]] : []));
   }),
   simpleAdapter("file", async (principal, refs) => {
-    const entries = await Promise.all(refs.map(async ref => {
+    const durableRefs = refs.filter((ref) => !ref.id.startsWith("/objects/"));
+    const legacyRefs = refs.filter((ref) => ref.id.startsWith("/objects/"));
+    const map = new Map<string, AddressResolutionResult>();
+    if (durableRefs.length > 0 && principal.accountId) {
+      const identity = objectGrantIdentity("drive_resource", {
+        objectId: driveResources.id,
+        ownerUserId: driveResources.addedByUserId,
+        accountId: driveResources.accountId,
+        vaultId: driveResources.vaultId,
+      });
+      const rows = await db.select({
+        id: driveResources.id,
+        name: driveResources.name,
+        mimeType: driveResources.mimeType,
+        createdAt: driveResources.createdAt,
+      }).from(driveResources).where(and(
+        inArray(driveResources.id, durableRefs.map((ref) => ref.id)),
+        eq(driveResources.resourceType, "file"),
+        or(
+          eq(driveResources.accountId, principal.accountId),
+          liveObjectGrantPredicate(principal, identity, "read"),
+          liveVaultGatePredicate(principal, driveResources.vaultId, "read"),
+        ),
+      ));
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      for (const ref of durableRefs) {
+        const row = byId.get(ref.id);
+        if (row) map.set(requestedAddress(ref), resolved(ref, { label: row.name, summary: row.mimeType, updatedAt: row.createdAt }));
+      }
+    }
+    const legacyEntries = await Promise.all(legacyRefs.map(async ref => {
       try {
         const objectFile = await objectStorageService.getObjectEntityFile(ref.id, principal);
         const allowed = await objectStorageService.canAccessObjectEntity({ principal, objectFile, requestedPermission: ObjectPermission.READ });
@@ -613,7 +644,8 @@ const adapters: AddressResolverAdapter[] = [
         return null;
       }
     }));
-    return new Map(entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
+    for (const entry of legacyEntries) if (entry) map.set(entry[0], entry[1]);
+    return map;
   }),
   simpleAdapter("document", async (principal, refs) => {
     const rows = await db.select({

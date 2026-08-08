@@ -18,9 +18,6 @@ type ExecutorErrorCode =
   | "EXECUTOR_EMERGENCY_COMPACTION_RETRY_LIMIT"
   | "EXECUTOR_REPEATED_TOOL_FAILURE"
   | "EXECUTOR_RUN_ERROR"
-  | "EXECUTOR_RUN_ERROR_STACK"
-  | "EXECUTOR_RUN_ERROR_TRACE"
-  | "EXECUTOR_TERMINAL_DECISION"
   | "EXECUTOR_DRAIN_BACKGROUND_THREW";
 
 /** Upper-snake machine code for error aggregates (mirrors shared/error-callsite). */
@@ -4915,40 +4912,45 @@ export class AgentExecutor extends EventEmitter {
         );
       }
 
-      const runError = attributableExecutorError(err instanceof Error ? err : errorMsg, "EXECUTOR_RUN_ERROR");
-      log.error(
-        "executor.run_error",
-        runError,
-        {
-          operation: "run_error",
+      // The provider boundary owns ModelProviderError telemetry. Re-logging the
+      // same Error here creates a second product fingerprint; stack/trace and
+      // terminal decision are diagnostic fields on the canonical event, not
+      // independent failures.
+      if (err instanceof ModelProviderError) {
+        log.warn("executor.run_provider_failure", {
+          operation: "run_provider_failure",
           runId,
           model: modelString,
-          abortReason: ctx.abortReason ?? "none",
-        },
-      );
-      if (errorStack) {
-        log.error(
-          "executor.run_error_stack",
-          attributableExecutorError(errorStack, "EXECUTOR_RUN_ERROR_STACK"),
-          { operation: "run_error_stack", runId },
-        );
-      }
-      log.error(
-        "executor.run_error_trace",
-        attributableExecutorError(
-          `lastStep=${ctx.diagnosticLastStep ?? "none"}`,
-          "EXECUTOR_RUN_ERROR_TRACE",
-        ),
-        {
-          operation: "run_error_trace",
-          runId,
+          providerCode: err.code,
+          providerKind: err.kind,
+          providerPhase: err.phase,
+          retryable: err.retryable,
+          attempts: err.attempts,
           lastStep: ctx.diagnosticLastStep ?? "none",
           execTrace: safeStringify(ctx.execTrace ? ctx.execTrace.slice(-40) : [], {
             maxBytes: 8192,
             label: "agent-executor.execTrace",
           }),
-        },
-      );
+        });
+      } else {
+        const runError = attributableExecutorError(err instanceof Error ? err : errorMsg, "EXECUTOR_RUN_ERROR");
+        log.error(
+          "executor.run_error",
+          runError,
+          {
+            operation: "run_error",
+            runId,
+            model: modelString,
+            abortReason: ctx.abortReason ?? "none",
+            errorStack: errorStack ? errorStack.slice(0, 4000) : undefined,
+            lastStep: ctx.diagnosticLastStep ?? "none",
+            execTrace: safeStringify(ctx.execTrace ? ctx.execTrace.slice(-40) : [], {
+              maxBytes: 8192,
+              label: "agent-executor.execTrace",
+            }),
+          },
+        );
+      }
       if (!ctx.providerFailure) {
         ctx.publish("error", { error: errorMsg });
       }
@@ -4973,25 +4975,11 @@ export class AgentExecutor extends EventEmitter {
         providerFailure: ctx.providerFailure,
         source: options.activity || "agent",
       };
-      log.error(
-        "executor.terminal_decision",
-        attributableExecutorError(
-          `status=error reason=error lastStep=${ctx.diagnosticLastStep || "terminal"}`,
-          "EXECUTOR_TERMINAL_DECISION",
-        ),
-        {
-          operation: "terminal_decision",
-          runId,
-          status: "error",
-          reason: "error",
-          iterations: ctx.iteration,
-          durationMs: Date.now() - startTime,
-          lastStep: ctx.diagnosticLastStep || "terminal",
-          decision: safeStringify(terminalDecision, {
-            maxBytes: 4096,
-            label: "agent-executor.terminalDecision.error",
-          }),
-        },
+      log.log(
+        `agent.run.terminal_decision ${safeStringify(terminalDecision, {
+          maxBytes: 4096,
+          label: "agent-executor.terminalDecision.error",
+        })}`,
       );
       eventBus.publish({
         category: "agent",

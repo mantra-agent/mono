@@ -1681,7 +1681,7 @@ function ProjectTreeNode({
   const hasProjectLinks = (project.pages?.length || 0) > 0 || (project.files?.length || 0) > 0 || (project.people?.length || 0) > 0;
   const hasChildren = true;
   const isMilestoneExpanded = (milestone: Milestone) =>
-    expandedMilestones[milestone.id] ?? milestone.status === "active";
+    expandedMilestones[milestone.id] ?? false;
   const toggleMilestoneExpanded = (milestone: Milestone) => {
     setExpandedMilestones(prev => ({ ...prev, [milestone.id]: !isMilestoneExpanded(milestone) }));
   };

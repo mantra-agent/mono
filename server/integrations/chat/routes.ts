@@ -2136,8 +2136,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       error?: string;
     }) => Promise<void> | void,
     clientId?: string,
+    acceptedTurnId?: string,
   ) {
     const lease = acceptedLease ?? chatRunLifecycle.begin(sessionId, sessionKey);
+    const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const turnId = acceptedTurnId || `turn-${sessionId}-${lease.generation}`;
+    const assistantAttemptId = `${runId}-attempt-1`;
     if (sayAloud) setMeetingVisualizerState(sessionId, "turn", "thinking");
     const visualizerToolCalls = new Set<string>();
     let selectedAutoTier = autoTier;
@@ -2152,7 +2156,11 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let runGeneration = registeredRunGeneration;
     if (runGeneration === undefined) {
       try {
-        runGeneration = sessionManager.registerSession(sessionId, sessionKey, "text");
+        runGeneration = sessionManager.registerSession(sessionId, sessionKey, "text", {
+          runId,
+          turnId,
+          assistantAttemptId,
+        });
       } catch (regErr) {
         chatLog.warn(
           `processChatStream runtime registration failed sessionId=${sessionId}: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
@@ -2215,10 +2223,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     let terminalDurableRevision: number | undefined;
     let terminalPersistenceEndedAt: number | undefined;
 
-    // This identity begins before executor initialization because pre-executor
-    // checkpoints are already durable. The executor must publish this same ID;
-    // otherwise one logical turn acquires conflicting persisted/live owners.
-    const runId = `run-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    // This identity began before runtime registration because pre-executor
+    // checkpoints are already durable. The executor and persistence reuse it.
     const diagnosticTurnId = `system-turn-${runId}`;
     const turnStartedAt = Date.now();
     // Update the pre-initialized turn step with actual IDs and timing
@@ -2274,7 +2280,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       // orientation. DO NOT emit live during pre-executor phase; emit atomically
       // after context assembly completes. This ensures the entire tree arrives
       // in one event, so parent-child relationships are always resolvable.
-      // publishChatStreamEvent(sessionKey, sessionId, { type: "run_start", runId });
+      sessionManager.applyEvent(sessionId, {
+        type: "run_start",
+        runId,
+        turnId,
+        assistantAttemptId,
+      });
       // publishChatStreamEvent(sessionKey, sessionId, {
       //   type: "system_step",
       //   step: "turn",
@@ -2485,6 +2496,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       assistantDraft = await chatStorage.createAssistantDraft(sessionId, {
         model: chatModel,
         runId,
+        turnId,
       });
       assistantDraftMessageId = assistantDraft?.id;
       chatRunLifecycle.assertCurrent(lease);
@@ -3592,16 +3604,6 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           }
         }
 
-        let runGeneration: number | undefined;
-        try {
-          const { sessionManager } = await import("../../session-manager");
-          runGeneration = sessionManager.registerSession(sessionId, sessionKey, "text");
-        } catch (regErr) {
-          chatLog.warn(
-            `sessionManager.registerSession failed: ${regErr instanceof Error ? regErr.message : String(regErr)}`,
-          );
-        }
-
         await chatStorage.updateSessionStatus(sessionId, "streaming").catch((err) =>
           chatLog.warn(`status update to streaming failed sessionId=${sessionId}`, err),
         );
@@ -3631,11 +3633,12 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           undefined,
           session.type === "meeting" && session.meeting?.botStatus === "live",
           undefined,
-          runGeneration,
+          undefined,
           acceptedLease,
           undefined,
           undefined,
           clientId,
+          clientTurnId,
         ).catch((err) => {
           if (err instanceof ChatRunInvalidatedError) {
             chatLog.log(`processChatStream ${err.reason} sessionId=${sessionId} generation=${err.generation}`);
@@ -3835,6 +3838,8 @@ export async function registerChatRoutes(app: Express): Promise<void> {
       undefined,
       request.currentMessageIds,
       request.onSettled,
+      undefined,
+      request.turn.id,
     );
   });
 

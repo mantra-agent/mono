@@ -625,6 +625,37 @@ export const insertMemoryVnextSourceRefSchema = createInsertSchema(
 export type MemoryVnextSourceRef = typeof memoryVnextSourceRefs.$inferSelect;
 export type InsertMemoryVnextSourceRef = z.infer<typeof insertMemoryVnextSourceRefSchema>;
 
+export const memoryVnextSourceLinks = pgTable(
+  "memory_vnext_source_links",
+  {
+    id: serial("id").primaryKey(),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceRevision: text("source_revision").notNull(),
+    sourceAddress: text("source_address").notNull(),
+    targetAddress: text("target_address").notNull(),
+    linkKind: text("link_kind").notNull(),
+    evidence: text("evidence").notNull().default(""),
+    confidence: real("confidence").notNull(),
+    provenance: jsonb("provenance").notNull().default(sql`'{}'::jsonb`),
+    observedAt: timestamp("observed_at", { withTimezone: true, precision: 6 }).notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id").notNull(),
+    accountId: text("account_id").notNull(),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  },
+  (table) => [
+    unique("uk_memory_vnext_source_link").on(table.ownerUserId, table.accountId, table.sourceType, table.sourceId, table.linkKind, table.targetAddress),
+    index("idx_memory_vnext_source_links_source").on(table.sourceType, table.sourceId),
+    index("idx_memory_vnext_source_links_target").on(table.targetAddress),
+    index("idx_memory_vnext_source_links_owner").on(table.scope, table.ownerUserId),
+    check("memory_vnext_source_links_kind_check", sql`${table.linkKind} IN ('explicit_reference', 'inferred_mention')`),
+    check("memory_vnext_source_links_confidence_check", sql`${table.confidence} >= 0 AND ${table.confidence} <= 1`),
+  ],
+);
+export type MemoryVnextSourceLink = typeof memoryVnextSourceLinks.$inferSelect;
+
 export const memoryVnextEntityLinks = pgTable(
   "memory_vnext_entity_links",
   {

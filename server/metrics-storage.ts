@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { metrics, kpis, metricSamples } from "@shared/schema";
 import {
@@ -311,6 +311,52 @@ export const metricsStorage = {
     if (!row) {
       throw Object.assign(new Error("Metric sample not found"), { status: 404 });
     }
+    return mapSample(row);
+  },
+
+  async recordPeriodSample(input: MetricSampleCreate & { idempotencyKey: string }): Promise<MetricSample> {
+    const principal = currentPrincipal();
+    const parsed = metricSampleCreateSchema.parse(input);
+    const metric = await this.get(parsed.metricId);
+    assertWritable(principal, metric, "Metric");
+    if (!principal.accountId) {
+      throw Object.assign(new Error("Account required"), { status: 400 });
+    }
+    if (!parsed.periodStart || !parsed.periodEnd) {
+      throw Object.assign(new Error("Period start and end are required"), { status: 400 });
+    }
+    await ensureMetricsSamplesSchema();
+    const idempotencyDigest = createHash("sha256").update(input.idempotencyKey).digest("hex").slice(0, 32);
+    const id = `msamp_period_${idempotencyDigest}`;
+    const observedAt = parsed.observedAt ? new Date(parsed.observedAt) : new Date(parsed.periodEnd);
+    const [row] = await metricsDb
+      .insert(metricSamples)
+      .values({
+        id,
+        metricId: metric.id,
+        accountId: principal.accountId,
+        vaultId: metric.vaultId,
+        value: parsed.value,
+        unit: parsed.unit ?? metric.unit ?? "",
+        observedAt,
+        sourceRef: parsed.sourceRef ?? "internal",
+        evidence: parsed.evidence ?? null,
+        periodStart: new Date(parsed.periodStart),
+        periodEnd: new Date(parsed.periodEnd),
+      })
+      .onConflictDoUpdate({
+        target: metricSamples.id,
+        set: {
+          value: parsed.value,
+          unit: parsed.unit ?? metric.unit ?? "",
+          observedAt,
+          sourceRef: parsed.sourceRef ?? "internal",
+          evidence: parsed.evidence ?? null,
+          periodStart: new Date(parsed.periodStart),
+          periodEnd: new Date(parsed.periodEnd),
+        },
+      })
+      .returning();
     return mapSample(row);
   },
 

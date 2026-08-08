@@ -48,7 +48,7 @@ export const UI_INTERACTION_TARGET_ROUTES = {
   "navigation.prompts.open": { href: "/system?tab=prompts", permission: "build:read" },
   "navigation.context.open": { href: "/brain?tab=context" },
   "navigation.router.open": { href: "/system?tab=inference", permission: "system:read" },
-  "navigation.models.open": { href: "/brain?tab=model" },
+  "navigation.models.open": { href: "/brain?tab=model", permission: "system:read" },
   "navigation.cost.open": { href: "/system?tab=cost", permission: "system:read" },
   "navigation.audiences.open": { href: "/audiences", permission: "system:read" },
   "navigation.campaigns.open": { href: "/campaigns", permission: "system:read" },

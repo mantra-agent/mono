@@ -534,7 +534,6 @@ function AppShell() {
   const mobileSurfaceActive = interfaceMode === "mobile_detail" || interfaceMode === "mobile_simple";
 
   return (
-    <PageActivityProvider>
     <ClientPresenceProvider>
       <PageHeaderProvider>
         <VoiceSessionProvider>
@@ -558,7 +557,6 @@ function AppShell() {
         </VoiceSessionProvider>
       </PageHeaderProvider>
     </ClientPresenceProvider>
-    </PageActivityProvider>
   );
 }
 
@@ -641,19 +639,21 @@ function App() {
       <ThemeProvider>
         <ClaimVisualHandoff />
         <QueryClientProvider client={queryClient}>
-          <TooltipProvider>
-            {provisionalOnboardingToken !== null ? (
-              <AppShellImmersive onboardingToken={provisionalOnboardingToken} />
-            ) : (
-              <AuthGate>
-                <BootGate>
-                  <VaultProvider>
-                    <AppShell />
-                  </VaultProvider>
-                </BootGate>
-              </AuthGate>
-            )}
-          </TooltipProvider>
+          <PageActivityProvider>
+            <TooltipProvider>
+              {provisionalOnboardingToken !== null ? (
+                <AppShellImmersive onboardingToken={provisionalOnboardingToken} />
+              ) : (
+                <AuthGate>
+                  <BootGate>
+                    <VaultProvider>
+                      <AppShell />
+                    </VaultProvider>
+                  </BootGate>
+                </AuthGate>
+              )}
+            </TooltipProvider>
+          </PageActivityProvider>
         </QueryClientProvider>
       </ThemeProvider>
     </ErrorBoundary>

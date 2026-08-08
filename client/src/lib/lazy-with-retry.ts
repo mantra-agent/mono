@@ -1,6 +1,7 @@
 import { lazy } from "react";
 import { createLogger } from "@/lib/logger";
 import { markNavigationLazyReady } from "@/lib/navigation-trace";
+import { attemptVersionSkewRecovery } from "@/lib/spa-version-skew";
 
 const log = createLogger("lazyWithRetry");
 const IMPORT_ATTEMPT_TIMEOUT_MS = 6_000;
@@ -73,13 +74,17 @@ export function lazyWithRetry<T extends React.ComponentType<any>>(
         2,
         retryError,
       );
-      window.dispatchEvent(
-        new CustomEvent("mantra:route-module-load-failed", { detail: error }),
-      );
-      log.error("page module load exhausted", error, {
+      const recoveryOutcome = await attemptVersionSkewRecovery(error);
+      const diagnostics = {
         attempts: error.attempts,
         errorName: error.causeName,
-      });
+        recoveryOutcome,
+      };
+      if (recoveryOutcome === "reload_started" || recoveryOutcome === "update_prompted") {
+        log.warn("page module load exhausted during deployment skew", diagnostics);
+      } else {
+        log.error("page module load exhausted", error, diagnostics);
+      }
       throw error;
     }
   });

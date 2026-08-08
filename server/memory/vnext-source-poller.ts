@@ -25,6 +25,7 @@ import {
   type ObservationRelationshipCandidate,
 } from "./vnext-claim-extraction";
 import { loadSemanticSourceContent } from "./semantic-source-adapters";
+import { replaceVnextSourceLinks } from "./vnext-source-linking";
 
 const log = createLogger("VnextSourcePoller");
 
@@ -48,6 +49,7 @@ const STUCK_PROCESSING_TIMEOUT_MINUTES = 30;
 
 interface SourceContent {
   content: string;
+  fingerprint: string | null;
   title: string;
   topics: string[];
   splitMode: "message" | "paragraph";
@@ -88,6 +90,7 @@ async function loadSourceContent(
 
   return {
     content: envelope.content,
+    fingerprint: envelope.fingerprint,
     title: envelope.title,
     topics: envelope.topics,
     splitMode: envelope.splitMode,
@@ -270,11 +273,39 @@ export async function processSourceForRuntime(
       row.lastModifiedAt,
       fence,
       principal,
-      () => persistPollerObservation(observation, sourceContent, row),
+      async () => {
+        const persisted = await persistPollerObservation(observation, sourceContent, row);
+        if (row.sourceType === "drive_file") {
+          await replaceVnextSourceLinks({
+            principal,
+            sourceType: row.sourceType,
+            sourceId: row.sourceId,
+            sourceRevision: sourceContent.fingerprint ?? hashContent(sourceContent.content),
+            sourceAddress: `@file:${row.sourceId}`,
+            content: sourceContent.content,
+            claims: observation.claims.map(({ claim }) => claim),
+            observedAt: row.lastModifiedAt,
+          });
+        }
+        return persisted;
+      },
     );
     result.created = persistResult.created;
     result.reinforced = persistResult.reinforced;
     result.skipped = persistResult.skipped;
+  } else if (row.sourceType === "drive_file") {
+    await withSourceRuntimeFence(row.id, row.lastModifiedAt, fence, principal, () =>
+      replaceVnextSourceLinks({
+        principal,
+        sourceType: row.sourceType,
+        sourceId: row.sourceId,
+        sourceRevision: sourceContent.fingerprint ?? hashContent(sourceContent.content),
+        sourceAddress: `@file:${row.sourceId}`,
+        content: sourceContent.content,
+        claims: [],
+        observedAt: row.lastModifiedAt,
+      }),
+    );
   }
 
   // Absence from a re-extraction pass is not negative evidence. Existing claims,

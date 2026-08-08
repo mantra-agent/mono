@@ -348,13 +348,13 @@ export const TOOLS: Record<string, ToolMeta> = {
   },
 
   sentry: {
-    description: "Query Sentry crash reports and error tracking for the mobile app. Uses stored SENTRY_AUTH_TOKEN, SENTRY_ORG, and SENTRY_PROJECT secrets. Actions: status (check connection), issues (list issues with optional query/sort/limit), issue (get issue details by issueId), events (list events for an issue with full stacktraces), latest_event (get the most recent event for an issue), resolve (resolve an issue), unresolve (reopen an issue), ignore (ignore an issue).",
+    description: "Query the existing Sentry integration for crash reports and external uptime evidence. Actions: status, issues, issue, events, latest_event, uptime (completed-day availability readiness), sync_availability (project a ready completed day into Metrics), resolve, unresolve, ignore.",
     category: "system",
     connectorKey: "sentry",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["status", "issues", "issue", "events", "latest_event", "resolve", "unresolve", "ignore"], description: "Action to perform" },
+        action: { type: "string", enum: ["status", "issues", "issue", "events", "latest_event", "uptime", "sync_availability", "resolve", "unresolve", "ignore"], description: "Action to perform" },
         issueId: { type: "string", description: "Sentry issue ID (required for issue, events, latest_event, resolve, unresolve, ignore)" },
         query: { type: "string", description: "Sentry search query (for issues, default: is:unresolved)" },
         sort: { type: "string", description: "Sort order for issues: date, new, freq, user (default: date)" },
@@ -868,13 +868,13 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   system: {
-    description: "System operations — get system state snapshot, retrieve runtime logs, check budget, inspect principal-scoped reliability outcomes, rank principal-scoped tool-output pressure, list recent tool failures for pattern diagnosis, view current-process events, active runs, clear terminal zombie runs, connected accounts, and tool stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename. For reliability, omit detail for the aggregate health summary; set detail='turn_failures' to list failed conversational turns or detail='tool_failures' to list individual failed tool calls in the window (tool failures are filterable by failureKind/tool/code).",
+    description: "System operations — get system state snapshot, retrieve runtime logs, check budget, inspect principal-scoped reliability outcomes, rank principal-scoped tool-output pressure, list recent tool failures for pattern diagnosis, view current-process events, active runs, clear terminal zombie runs, connected accounts, and cumulative tool stats. A full log archive is available in the logs/ directory. Use log_files to list all available log files (with size and date). Use logs with the file parameter to read any historical log file by filename. For reliability, omit detail for the aggregate health summary; set detail='turn_failures' to list failed conversational turns or detail='tool_failures' to list individual failed tool calls in the window (tool failures are filterable by failureKind/tool/code).",
     category: "system",
 
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["state", "logs", "log_files", "budget", "frontend_performance", "context_health", "reliability", "tool_output_pressure", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action to perform. Use log_files to list available log files; use logs to read a specific log file." },
+        action: { type: "string", enum: ["state", "logs", "log_files", "budget", "frontend_performance", "context_health", "reliability", "tool_output_pressure", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action to perform. Use log_files to list available log files; use logs to read a specific log file. tool_stats returns lifetime cumulative counters and does not support a time window." },
         limit: { type: "number", description: "Max entries to return (for logs/events default 100; for reliability detail=tool_failures default 50, max 200)" },
         level: { type: "string", description: "Filter by log level: debug, info, warn, error (for logs)" },
         source: { type: "string", description: "Filter by source module name (for logs)" },

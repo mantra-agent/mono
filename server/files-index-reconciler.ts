@@ -496,6 +496,36 @@ async function upsertDiscoveredFile(input: {
       fp,
     );
 
+  // Files owns selection and freshness. Materialize every selected descendant as a
+  // stable internal drive_resource pointer so semantic systems never identify it
+  // by provider path, display name, or URL. Reconciliation metadata remains here.
+  const [durableResource] = await db
+    .insert(driveResources)
+    .values({
+      accountId: root.accountId,
+      vaultId: root.vaultId,
+      connectedAccountId: root.connectedAccountId,
+      provider: child.provider,
+      providerFileId: child.providerFileId,
+      name: child.name,
+      mimeType: child.mimeType,
+      resourceType: "file",
+      iconUrl: child.iconUrl ?? null,
+      webViewLink: child.webViewLink ?? null,
+      addedByUserId: principal.userId,
+    })
+    .onConflictDoUpdate({
+      target: [driveResources.vaultId, driveResources.provider, driveResources.providerFileId],
+      set: {
+        connectedAccountId: root.connectedAccountId,
+        name: child.name,
+        mimeType: child.mimeType,
+        iconUrl: child.iconUrl ?? null,
+        webViewLink: child.webViewLink ?? null,
+      },
+    })
+    .returning({ id: driveResources.id });
+
   const [row] = await db
     .insert(indexedFileSources)
     .values({
@@ -504,7 +534,7 @@ async function upsertDiscoveredFile(input: {
       vaultId: root.vaultId,
       policyId: policy.id,
       rootDriveResourceId: root.id,
-      driveResourceId: child.driveResourceId,
+      driveResourceId: durableResource.id,
       provider: child.provider,
       providerFileId: child.providerFileId,
       name: child.name,
@@ -528,7 +558,7 @@ async function upsertDiscoveredFile(input: {
       set: {
         policyId: policy.id,
         rootDriveResourceId: root.id,
-        driveResourceId: child.driveResourceId ?? existing?.driveResourceId ?? null,
+        driveResourceId: durableResource.id,
         name: child.name,
         mimeType: child.mimeType,
         providerPath: input.path,

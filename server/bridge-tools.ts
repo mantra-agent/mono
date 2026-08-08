@@ -1946,7 +1946,7 @@ async function handleGmailReply(args: Record<string, any>): Promise<ToolHandlerR
   const { assertAvailableGmailSenderAccount } = await import("./gmail");
   let senderAccount: Awaited<ReturnType<typeof assertAvailableGmailSenderAccount>>;
   try {
-    senderAccount = await assertAvailableGmailSenderAccount(principal, accountId || latest.accountId);
+    senderAccount = await assertAvailableGmailSenderAccount(accountId || latest.accountId);
   } catch (error: any) {
     return { result: error?.message || "Selected Gmail sender account is unavailable.", error: true };
   }
@@ -5301,7 +5301,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
           failure: inputFailure("task_update_milestone_requires_project"),
         };
       }
-      return { result: `Failed to update task: ${err.message}`, error: true };
+      return {
+        result: `Failed to update task: ${err.message}`,
+        error: true,
+        failure: internalFailure("task_update_internal", err instanceof Error ? err.message : String(err)),
+      };
     }
   },
 
@@ -5995,7 +5999,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       for (const a of accounts) {
         if (await hasCalendarAccess(a.id)) connected.push(a);
       }
-      if (connected.length === 0) return { result: "No Google accounts with calendar access. Connect one in Settings > Integrations.", error: true };
+      if (connected.length === 0) return {
+        result: "No Google accounts with calendar access. Connect one in Settings > Integrations.",
+        error: true,
+        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+      };
 
       const summary = args.summary;
       if (!summary) return { result: "Missing meeting summary/title", error: true };
@@ -6148,7 +6156,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       for (const a of accounts) {
         if (await hasCalendarAccess(a.id)) connected.push(a);
       }
-      if (connected.length === 0) return { result: "No Google accounts with calendar access. Connect one in Settings > Integrations.", error: true };
+      if (connected.length === 0) return {
+        result: "No Google accounts with calendar access. Connect one in Settings > Integrations.",
+        error: true,
+        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+      };
 
       const now = new Date();
       const defaultMax = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -6240,7 +6252,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       for (const a of accounts) {
         if (await hasCalendarAccess(a.id)) connected.push(a);
       }
-      if (connected.length === 0) return { result: "No Google accounts with calendar access.", error: true };
+      if (connected.length === 0) return {
+        result: "No Google accounts with calendar access.",
+        error: true,
+        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+      };
 
       const accountId = args.accountId || connected[0].id;
       const calendarId = args.calendarId || "primary";
@@ -6292,7 +6308,11 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       for (const a of accounts) {
         if (await hasCalendarAccess(a.id)) connected.push(a);
       }
-      if (connected.length === 0) return { result: "No Google accounts with calendar access.", error: true };
+      if (connected.length === 0) return {
+        result: "No Google accounts with calendar access.",
+        error: true,
+        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
+      };
 
       const accountId = args.accountId || connected[0].id;
       const calendarId = args.calendarId || "primary";
@@ -11038,7 +11058,7 @@ ${refs}` : ""),
   async sentry(args: Record<string, any>): Promise<ToolHandlerResult> {
     const action = typeof args.action === "string" ? args.action : "";
     if (!action) return { result: "Missing 'action' parameter", error: true };
-    const allowed = new Set(["status", "issues", "issue", "events", "latest_event", "resolve", "unresolve", "ignore"]);
+    const allowed = new Set(["status", "issues", "issue", "events", "latest_event", "uptime", "sync_availability", "resolve", "unresolve", "ignore"]);
     if (!allowed.has(action)) {
       return {
         result: `Unknown sentry action: ${action}. Allowed: ${[...allowed].join(", ")}.`,
@@ -11085,6 +11105,14 @@ ${refs}` : ""),
               url: `https://sentry.io/organizations/${org}/issues/?project=&query=is%3Aunresolved`,
             }),
           };
+        }
+        case "uptime": {
+          const { getSentryAvailabilityStatus } = await import("./sentry-availability");
+          return { result: JSON.stringify(await getSentryAvailabilityStatus()) };
+        }
+        case "sync_availability": {
+          const { syncSentryAvailability } = await import("./sentry-availability");
+          return { result: JSON.stringify(await syncSentryAvailability()) };
         }
         case "issues": {
           const limit = Math.min(100, Math.max(1, Number(args.limit) || 25));
@@ -15858,7 +15886,15 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
       try {
         const { getToolStats } = await import("./file-storage/tool-stats");
         const stats = getToolStats();
-        return { result: JSON.stringify({ total: stats.length, tools: stats }) };
+        return {
+          result: JSON.stringify({
+            scope: "cumulative",
+            window: null,
+            note: "Tool statistics are lifetime cumulative counters persisted across process restarts; time-window filtering is not supported.",
+            total: stats.length,
+            tools: stats,
+          }),
+        };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return { result: `Failed to get tool stats: ${msg}`, error: true };

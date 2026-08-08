@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useLocation } from "wouter";
 import { ClipboardList, FileText, Activity, Heart, User, SlidersHorizontal, Loader2 } from "lucide-react";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
+import { useAuth } from "@/hooks/use-auth";
 
 const ContextContent = lazyWithRetry(() => import("@/pages/context-page"));
 const ObservationsContent = lazyWithRetry(() => import("@/pages/thoughts-page"));
@@ -26,12 +27,13 @@ const brainTabs = [
   { value: "context", label: "Context", icon: <FileText className="h-3.5 w-3.5" />, testId: "tab-brain-context" },
   { value: "emotion", label: "Emotion", icon: <Heart className="h-3.5 w-3.5" />, testId: "tab-brain-emotion" },
   { value: "persona", label: "Persona", icon: <User className="h-3.5 w-3.5" />, testId: "tab-brain-persona" },
-  { value: "model", label: "Model", icon: <SlidersHorizontal className="h-3.5 w-3.5" />, testId: "tab-brain-model" },
+  { value: "model", label: "Model", icon: <SlidersHorizontal className="h-3.5 w-3.5" />, testId: "tab-brain-model", permission: "system:read" },
   { value: "plans", label: "Plans", icon: <ClipboardList className="h-3.5 w-3.5" />, testId: "tab-brain-plans" },
 ];
 
 export default function BrainPage() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
+  const { hasPermission } = useAuth();
 
   const readUrlParams = useCallback(() => {
     const params = new URLSearchParams(window.location.search);
@@ -40,22 +42,35 @@ export default function BrainPage() {
     };
   }, []);
 
+  const visibleTabs = useMemo(
+    () => brainTabs.filter((tab) => !tab.permission || hasPermission(tab.permission)),
+    [hasPermission],
+  );
+
   const [activeTab, setActiveTab] = useState(() => readUrlParams().tab);
 
   useEffect(() => {
     const p = readUrlParams();
-    setActiveTab(p.tab);
-  }, [location, readUrlParams]);
+    const nextTab = visibleTabs.some((tab) => tab.value === p.tab) ? p.tab : (visibleTabs[0]?.value ?? "observations");
+    if (nextTab !== p.tab) {
+      setLocation(`/brain?tab=${encodeURIComponent(nextTab)}`, { replace: true });
+      return;
+    }
+    setActiveTab(nextTab);
+  }, [location, readUrlParams, setLocation, visibleTabs]);
 
   useEffect(() => {
-    const syncFromHistory = () => setActiveTab(readUrlParams().tab);
+    const syncFromHistory = () => {
+      const p = readUrlParams();
+      setActiveTab(visibleTabs.some((tab) => tab.value === p.tab) ? p.tab : (visibleTabs[0]?.value ?? "observations"));
+    };
     window.addEventListener("popstate", syncFromHistory);
     return () => window.removeEventListener("popstate", syncFromHistory);
-  }, [readUrlParams]);
+  }, [readUrlParams, visibleTabs]);
 
   usePageHeader({
     title: activeTab === "persona" ? "Personas" : "Brain",
-    tabs: brainTabs,
+    tabs: visibleTabs,
     activeTab,
     onTabChange: setActiveTab,
   });
@@ -75,7 +90,7 @@ export default function BrainPage() {
             <PersonaContent />
           </div>
         )}
-        {activeTab === "model" && (
+        {activeTab === "model" && hasPermission("system:read") && (
           <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
             <ModelContent />
           </div>

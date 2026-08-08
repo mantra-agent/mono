@@ -19,7 +19,7 @@ import {
   resolveSystemStep,
   settleStream,
 } from "./streaming-reducers";
-import type { ExecutionStep, StreamingContent, StreamingSource, SegmentPatch, MessageSegment } from "@shared/streaming-types";
+import type { ExecutionStep, StreamingContent, StreamingSource, SegmentPatch, MessageSegment, SessionStreamIdentity } from "@shared/streaming-types";
 import { initialStreamingContent } from "@shared/streaming-types";
 
 const log = createLogger("session-manager");
@@ -43,6 +43,7 @@ interface LiveSession {
   cleanupTimer: ReturnType<typeof setTimeout> | null;
   eventSeq: number;
   runGeneration: number;
+  identity: SessionStreamIdentity;
   durableRevision: number | null;
   handoffPhase: DurableHandoffPhase;
   /** Contiguous per-session sequence for incremental segment patches (protocol v2). */
@@ -57,6 +58,7 @@ export interface SessionSubscriberIdentity {
   handlerId?: string;
   owner?: string;
   activeSession?: string | null;
+  subscriptionEpoch?: number;
 }
 
 export type ActiveSessionClientResolution =
@@ -126,6 +128,7 @@ export interface SessionSnapshot {
   durableRevision: number | null;
   handoffPhase: DurableHandoffPhase;
   patchSeq: number;
+  runGeneration: number;
 }
 
 /** Delta broadcast to subscribers after each event. */
@@ -231,6 +234,8 @@ class SessionManager {
    * snapshots. Enables mixed old/new clients during rolling deploys.
    */
   private socketProtocol = new WeakMap<WebSocket, "delta" | "snapshot">();
+  /** Survives LiveSession cleanup so a later run can never reuse a generation. */
+  private runGenerations = new Map<string, number>();
   private sweepTimer: ReturnType<typeof setInterval>;
 
   constructor() {
@@ -242,7 +247,12 @@ class SessionManager {
 
   // ── Registration ──────────────────────────────────────────────────
 
-  registerSession(sessionId: string, sessionKey: string, source: StreamingSource): number {
+  registerSession(
+    sessionId: string,
+    sessionKey: string,
+    source: Exclude<StreamingSource, null>,
+    identity: SessionStreamIdentity,
+  ): number {
     const existing = this.sessions.get(sessionId);
     if (existing) {
       log.debug(`registerSession: already registered sessionId=${sessionId} — resetting`);
@@ -254,17 +264,21 @@ class SessionManager {
     const interestedSockets = this.subscriptionOwners.get(sessionId);
     const mergedSubscribers = new Set<WebSocket>(interestedSockets?.keys() ?? []);
 
+    const runGeneration = (this.runGenerations.get(sessionId) ?? existing?.runGeneration ?? 0) + 1;
+    this.runGenerations.set(sessionId, runGeneration);
+
     const session: LiveSession = {
       sessionId,
       sessionKey,
       source,
-      streamingContent: { ...initialStreamingContent, source },
+      streamingContent: { ...initialStreamingContent, source, ...identity },
       status: "streaming",
       subscribers: mergedSubscribers,
       finalizedAt: null,
       cleanupTimer: null,
       eventSeq: nextEventSeq(existing?.eventSeq ?? 0),
-      runGeneration: (existing?.runGeneration ?? 0) + 1,
+      runGeneration,
+      identity,
       durableRevision: null,
       handoffPhase: "live",
       patchSeq: 0,
@@ -288,6 +302,7 @@ class SessionManager {
         durableRevision: session.durableRevision,
         handoffPhase: session.handoffPhase,
         patchSeq: session.patchSeq,
+        runGeneration: session.runGeneration,
         ...runtimeProjection(session),
       });
       for (const ws of session.subscribers) {
@@ -425,17 +440,31 @@ class SessionManager {
         break;
 
       case "run_start":
-        prev = { ...prev, runId: event.runId || null, turnId: event.turnId ?? prev.turnId ?? null };
+        if (
+          event.runId !== session.identity.runId ||
+          event.turnId !== session.identity.turnId ||
+          event.assistantAttemptId !== session.identity.assistantAttemptId
+        ) {
+          throw new Error(`Session stream identity mismatch for ${sessionId}`);
+        }
+        prev = { ...prev, ...session.identity };
         break;
 
       case "turn_start":
       case "assistant_attempt_started":
+        if (!event.runId || !event.turnId || !event.assistantAttemptId) {
+          throw new Error(`Incomplete assistant attempt identity for ${sessionId}`);
+        }
+        session.identity = {
+          runId: event.runId,
+          turnId: event.turnId,
+          assistantAttemptId: event.assistantAttemptId,
+        };
         // A new attempt is a replacement, never an append to superseded output.
         prev = {
           ...initialStreamingContent,
           source: session.source ?? "voice",
-          turnId: event.turnId || prev.turnId || null,
-          assistantAttemptId: event.assistantAttemptId || null,
+          ...session.identity,
           transcriptRevision: event.transcriptRevision ?? null,
         };
         session.status = "streaming";
@@ -448,7 +477,7 @@ class SessionManager {
           prev = {
             ...initialStreamingContent,
             source: session.source ?? "voice",
-            turnId: event.turnId || prev.turnId || null,
+            ...session.identity,
             transcriptRevision: event.transcriptRevision ?? prev.transcriptRevision ?? null,
           };
         } else {
@@ -570,6 +599,13 @@ class SessionManager {
       owners = new Map();
       sockets.set(ws, owners);
     }
+    const previous = owners.get(ownerId);
+    const previousEpoch = previous?.subscriptionEpoch ?? -1;
+    const incomingEpoch = identity.subscriptionEpoch ?? 0;
+    if (incomingEpoch < previousEpoch) {
+      log.debug(`SESSION:SUBSCRIBE_STALE_EPOCH session=${sessionId} owner=${ownerId} incoming=${incomingEpoch} current=${previousEpoch}`);
+      return null;
+    }
     const alreadySubscribed = owners.has(ownerId);
     owners.set(ownerId, identity);
 
@@ -590,6 +626,7 @@ class SessionManager {
       eventSeq: session.eventSeq,
       subscriberCount: session.subscribers.size,
       patchSeq: session.patchSeq,
+      runGeneration: session.runGeneration,
       ...runtimeProjection(session),
     };
   }
@@ -598,6 +635,12 @@ class SessionManager {
     const ownerId = identity.handlerId || "connection";
     const sockets = this.subscriptionOwners.get(sessionId);
     const owners = sockets?.get(ws);
+    const currentEpoch = owners?.get(ownerId)?.subscriptionEpoch ?? -1;
+    const incomingEpoch = identity.subscriptionEpoch ?? 0;
+    if (incomingEpoch < currentEpoch) {
+      log.debug(`SESSION:UNSUBSCRIBE_STALE_EPOCH session=${sessionId} owner=${ownerId} incoming=${incomingEpoch} current=${currentEpoch}`);
+      return true;
+    }
     owners?.delete(ownerId);
 
     if (owners && owners.size > 0) {
@@ -792,6 +835,7 @@ class SessionManager {
       visibleAssistantActivity: delta.visibleAssistantActivity,
       durableRevision: delta.durableRevision,
       handoffPhase: delta.handoffPhase,
+      runGeneration: session.runGeneration,
     };
 
     let patchPayload: string | null = null;

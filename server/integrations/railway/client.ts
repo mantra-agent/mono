@@ -7,6 +7,45 @@ import { createLogger } from "../../log";
 const log = createLogger("RailwayClient");
 
 const RAILWAY_GRAPHQL_ENDPOINT = "https://backboard.railway.app/graphql/v2";
+const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 5 * 60_000;
+const MAX_RATE_LIMIT_COOLDOWN_MS = 60 * 60_000;
+let rateLimitCooldownUntil = 0;
+
+function parseRateLimitCooldownMs(headers: Headers, now: number): number {
+  const retryAfter = headers.get("retry-after")?.trim();
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(MAX_RATE_LIMIT_COOLDOWN_MS, Math.max(1_000, Math.ceil(seconds * 1_000)));
+    }
+    const retryAt = Date.parse(retryAfter);
+    if (Number.isFinite(retryAt) && retryAt > now) {
+      return Math.min(MAX_RATE_LIMIT_COOLDOWN_MS, Math.max(1_000, retryAt - now));
+    }
+  }
+
+  const reset = headers.get("x-ratelimit-reset")?.trim();
+  if (reset) {
+    const numericReset = Number(reset);
+    const resetAt = Number.isFinite(numericReset)
+      ? numericReset > 10_000_000_000 ? numericReset : numericReset * 1_000
+      : Date.parse(reset);
+    if (Number.isFinite(resetAt) && resetAt > now) {
+      return Math.min(MAX_RATE_LIMIT_COOLDOWN_MS, Math.max(1_000, resetAt - now));
+    }
+  }
+
+  return DEFAULT_RATE_LIMIT_COOLDOWN_MS;
+}
+
+function assertRailwayRequestAllowed(now: number): void {
+  if (rateLimitCooldownUntil <= now) return;
+  const retryAfterSeconds = Math.max(1, Math.ceil((rateLimitCooldownUntil - now) / 1_000));
+  throw new RailwayApiError(
+    `Railway API rate-limit cooldown active; retry after ${retryAfterSeconds}s`,
+    429,
+  );
+}
 
 /** Resolve the credential attached to a canonical Railway provider connection. */
 export async function getRailwayTokenForConnection(connectionId: number): Promise<string> {
@@ -101,6 +140,7 @@ async function railwayRequest<T>(query: string, variables?: Record<string, unkno
   if (!token) {
     throw new RailwayApiError("A Railway provider connector credential is required", 400);
   }
+  assertRailwayRequestAllowed(Date.now());
   let res: Response;
   try {
     res = await fetch(RAILWAY_GRAPHQL_ENDPOINT, {
@@ -114,6 +154,16 @@ async function railwayRequest<T>(query: string, variables?: Record<string, unkno
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new RailwayApiError(`Railway request failed: ${msg}`, 502);
+  }
+
+  if (res.status === 429) {
+    const now = Date.now();
+    const cooldownMs = parseRateLimitCooldownMs(res.headers, now);
+    rateLimitCooldownUntil = Math.max(rateLimitCooldownUntil, now + cooldownMs);
+    throw new RailwayApiError(
+      `Railway API rate limited requests; cooldown active for ${Math.ceil(cooldownMs / 1_000)}s`,
+      429,
+    );
   }
 
   let body: unknown;

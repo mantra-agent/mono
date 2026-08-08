@@ -871,7 +871,15 @@ app.use((req, res, next) => {
           });
         })
         .catch((err) => {
-          serverLog.error(`[startup] Memory watchdog disabled: Railway serviceInstanceLimits could not be resolved: ${err instanceof Error ? err.message : String(err)}`);
+          const status = typeof (err as { status?: unknown })?.status === "number"
+            ? (err as { status: number }).status
+            : null;
+          serverLog.warn("startup.memory_watchdog_disabled", {
+            reason: "railway_service_instance_limits_unavailable",
+            degradedBehavior: "provider_memory_limit_remains_authoritative_and_oom_restart_remains_available",
+            errorName: err instanceof Error ? err.name : typeof err,
+            providerStatus: status,
+          });
         });
 
       // Pool-wedge self-exit watchdog: if the pool heartbeat goes silent
@@ -1067,6 +1075,8 @@ async function shutdownApplication(input: RuntimeTerminationInput): Promise<void
     })}`);
 
     timerScheduler.stop();
+    const { stopHoursUsedRollups } = await import("./hours-used");
+    stopHoursUsedRollups();
     runtimeDispatcher.beginShutdown();
     const { stopMeetingAudioExpiry } = await import("./meeting/audio-retention-expiry");
     stopMeetingAudioExpiry();
@@ -1144,6 +1154,14 @@ function startDeferredBackgroundServices(): void {
       log("[startup] code embedding listener registered", "boot");
     }).catch((err) => {
       log(`[startup] code embedding listener registration failed: ${err.message}`, "boot");
+    })
+  );
+
+  services.push(
+    import("./hours-used").then(({ startHoursUsedRollups }) => startHoursUsedRollups()).then(() => {
+      log("[startup] Hours Used rollups started", "boot");
+    }).catch(err => {
+      log(`[startup] Hours Used rollups failed to start: ${err instanceof Error ? err.message : String(err)}`, "boot");
     })
   );
 

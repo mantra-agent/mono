@@ -82,6 +82,7 @@ const INTEGER_PATTERN = /^[1-9]\d*$/;
 const OPAQUE_PATTERN = /^[^\s\]<>]+$/;
 const URL_PATTERN = /^https?:\/\/[^\s\]<>]+$/i;
 const PATH_PATTERN = /^\/objects\/[^\s\]<>]+$/;
+const FILE_PATTERN = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|\/objects\/[^\s\]<>]+)$/i;
 const COMPOSITE_PATTERN = /^[^\s~\]<>]+~[^\s~\]<>]+$/;
 const EMAIL_THREAD_PATTERN = /^[^\s:\]<>]+:.+$/;
 const PR_PATTERN = /^(?:[^\s/]+\/)?[^\s/]+\/\d+$/;
@@ -153,7 +154,7 @@ export const REFERENCE_REGISTRY: Readonly<Record<KnownReferenceType, ReferenceTy
   metric: definition("metric", "opaque", OPAQUE_PATTERN, { route: id => `/business/metrics?metric=${encodeURIComponent(id)}` }),
   kpi: definition("kpi", "opaque", OPAQUE_PATTERN, { route: id => `/business/kpis?kpi=${encodeURIComponent(id)}` }),
   business_plan: definition("business_plan", "opaque", OPAQUE_PATTERN, { aliases: ["business-plan"], route: id => `/business/advantage?plan=${encodeURIComponent(id)}` }),
-  file: definition("file", "path", PATH_PATTERN, { graph: false }),
+  file: definition("file", "opaque", FILE_PATTERN, { route: id => id.startsWith("/objects/") ? id : `/files?driveResource=${encodeURIComponent(id)}` }),
   document: definition("document", "uuid", UUID_PATTERN, { route: id => `/documents/${encodeURIComponent(id)}` }),
   news: definition("news", "opaque", OPAQUE_PATTERN, { route: id => `/news?signal=${encodeURIComponent(id)}` }),
   web_article: definition("web_article", "url", URL_PATTERN, { graph: false }),

@@ -13,17 +13,18 @@ const heartbeatSchema = z.object({
   kind: z.custom<import("@shared/client-presence").ClientPresenceKind>(isClientPresenceKind, "invalid client kind"),
 });
 
-function accountIdForRequest(req: any): string {
+function identityForRequest(req: any): { accountId: string; userId: string } {
   const principal = getPrincipal(req);
   const accountId = principal?.accountId;
-  if (!accountId) throw Object.assign(new Error("Authentication required"), { status: 401 });
-  return accountId;
+  const userId = principal?.userId;
+  if (!accountId || !userId) throw Object.assign(new Error("Authentication required"), { status: 401 });
+  return { accountId, userId };
 }
 
 export function registerClientPresenceRoutes(app: Express) {
   app.get("/api/client-presence", requireAuth, (req, res) => {
     try {
-      const accountId = accountIdForRequest(req);
+      const { accountId } = identityForRequest(req);
       res.json(getClientPresenceSnapshot(accountId));
     } catch (err) {
       const status = (err as any)?.status ?? 500;
@@ -35,9 +36,9 @@ export function registerClientPresenceRoutes(app: Express) {
 
   app.post("/api/client-presence/heartbeat", requireAuth, (req, res) => {
     try {
-      const accountId = accountIdForRequest(req);
+      const { accountId, userId } = identityForRequest(req);
       const parsed = heartbeatSchema.parse(req.body ?? {});
-      const snapshot = upsertHttpClientPresence(accountId, parsed.clientId, parsed.kind);
+      const snapshot = upsertHttpClientPresence(accountId, userId, parsed.clientId, parsed.kind);
       res.json(snapshot);
     } catch (err) {
       const status = (err as any)?.status ?? (err instanceof z.ZodError ? 400 : 500);

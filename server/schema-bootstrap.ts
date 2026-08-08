@@ -116,6 +116,35 @@ async function ensureVoiceSessionActiveSchema(pool: {
 
 
 
+async function ensureVnextSourceLinksSchema(pool: { query: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS memory_vnext_source_links (
+      id SERIAL PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      source_revision TEXT NOT NULL,
+      source_address TEXT NOT NULL,
+      target_address TEXT NOT NULL,
+      link_kind TEXT NOT NULL,
+      evidence TEXT NOT NULL DEFAULT '',
+      confidence REAL NOT NULL,
+      provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+      observed_at TIMESTAMPTZ(6) NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'user',
+      owner_user_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      created_by_user_id TEXT,
+      created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT memory_vnext_source_links_kind_check CHECK (link_kind IN ('explicit_reference', 'inferred_mention')),
+      CONSTRAINT memory_vnext_source_links_confidence_check CHECK (confidence >= 0 AND confidence <= 1)
+    )
+  `);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uk_memory_vnext_source_link ON memory_vnext_source_links(owner_user_id, account_id, source_type, source_id, link_kind, target_address)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_source_links_source ON memory_vnext_source_links(source_type, source_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_source_links_target ON memory_vnext_source_links(target_address)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_memory_vnext_source_links_owner ON memory_vnext_source_links(scope, owner_user_id)`);
+}
+
 async function ensureWorkflowAttemptLeaseSchema(pool: { query: (sql: string, params?: unknown[]) => Promise<unknown> }): Promise<void> {
   for (const [name, type] of [
     ["execution_lease_id", "TEXT"],
@@ -6242,6 +6271,10 @@ export async function runSchemaBootstrap(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_sessions_stage ON workflow_sessions(stage_attempt_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_sessions_owner ON workflow_sessions(owner_user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_workflow_sessions_account ON workflow_sessions(account_id)`);
+  });
+
+  await heal("vNext source links", async () => {
+    await ensureVnextSourceLinksSchema(pool);
   });
 
   await heal("session_tree spawn_status column", async () => {
