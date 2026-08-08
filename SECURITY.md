@@ -30,6 +30,14 @@
 - Residual/rollback: draft creation still fails closed when the exact thread account is genuinely unavailable; the user must reconnect or deliberately choose another sender rather than silently changing identity. Revert this caller correction and record to restore the regression.
 -->
 
+<!-- 2026-08-07 PDF viewer build-owned runtime repair:
+- Assets/data: authenticated Vault-authorized PDF bytes (S2), short-lived encrypted content handles, browser worker code, and availability/error telemetry.
+- Flow/boundary: canonical server resolve/authorize/content handle -> authenticated same-origin byte fetch -> build-owned PDF.js renderer + worker. PDF bytes remain untrusted input.
+- Failure/threat: the viewer loaded both renderer and worker from a runtime CDN despite pdfjs-dist being a pinned application dependency. A third-party outage, block, cache mismatch, or response substitution could prevent every authorized document from opening or execute provider-controlled code in the document surface (STRIDE denial-of-service/tampering/supply-chain analogue; FILE-01/OBS-01).
+- Controls/owner: Vite now emits both the renderer and worker from the exact locked pdfjs-dist package. The application build is their single version/provenance owner, and the worker URL is a same-origin hashed asset. Existing server authorization, live ACL recheck, MIME/magic verification, encrypted handle expiry, and client Uint8Array handoff remain unchanged. Owner: Core PDF + Client Platform. Severity: high. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: deployment skew can still leave an old browser shell requesting a retired hashed worker until refresh; ordinary route/build recovery remains the mitigation. Revert the client loader and this record to restore runtime CDN dependence without changing PDF data or authority.
+-->
+
 <!-- 2026-08-07 PDF mounted-viewer and PDF.js lifecycle repair:
 - Assets/data: vault-bound Drive PDF bytes and metadata (S2), live drive_resource/Vault grants, short-lived encrypted content handles, and bounded extracted text derivatives.
 - Flow/boundary: Files document link or pdf tool -> pdf-service resolve/read -> FilesApi live Vault/bind/recursive-whitelist authorization -> provider bytes -> PDF.js viewer/extractor. Provider coordinates and PDF bytes remain untrusted input.
