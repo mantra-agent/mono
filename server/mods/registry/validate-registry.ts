@@ -245,11 +245,13 @@ function validateContribution(owner: string, c: AnyContribution, ctx: Contributi
     case "timer-template":
       requireKey("timerTemplate", c.templateKey, c.id, ctx);
       break;
+    case "skill":
+      requireKey("skill", c.skillKey, c.id, ctx);
+      break;
     case "server-route-group":
       requireKey("routeGroup", c.routeGroupKey, c.id, ctx);
       break;
     case "tool":
-    case "skill":
     case "hook-template":
       push(`Contribution "${c.id}" of kind "${c.kind}" is not supported in the Phase 1 registry.`);
       break;

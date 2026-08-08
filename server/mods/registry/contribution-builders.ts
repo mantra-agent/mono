@@ -14,6 +14,7 @@ import type {
   WidgetSlot,
   WorkflowContribution,
   TimerTemplateContribution,
+  SkillContribution,
 } from "@shared/models/mod-registry";
 import type { UiInteractionTarget } from "@shared/ui-interaction";
 import type {
@@ -25,6 +26,7 @@ import type {
   RegisteredWidgetKey,
   RegisteredWorkflowKey,
   RegisteredTimerTemplateKey,
+  RegisteredSkillKey,
 } from "./registered-keys";
 
 interface RouteOpts {
@@ -133,4 +135,11 @@ export function timerTemplateRef(
   templateKey: RegisteredTimerTemplateKey,
 ): TimerTemplateContribution {
   return { kind: "timer-template", id, templateKey, audience: "diagnostic" };
+}
+
+export function skillRef(
+  id: string,
+  skillKey: RegisteredSkillKey,
+): SkillContribution {
+  return { kind: "skill", id, skillKey, audience: "diagnostic" };
 }

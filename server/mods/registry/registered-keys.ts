@@ -172,12 +172,17 @@ export type RegisteredCollectorKey = (typeof REGISTERED_COLLECTOR_KEYS)[number];
 export const REGISTERED_WORKFLOW_KEYS = ["build-v1"] as const;
 export type RegisteredWorkflowKey = (typeof REGISTERED_WORKFLOW_KEYS)[number];
 
+// Code-owned built-in Skill definitions referenced by Mod contributions.
+export const REGISTERED_SKILL_KEYS = ["self-heal"] as const;
+export type RegisteredSkillKey = (typeof REGISTERED_SKILL_KEYS)[number];
+
 // Code-owned managed Timer templates. These keys are lifecycle identities,
 // never permission or credential grants.
 export const REGISTERED_TIMER_TEMPLATE_KEYS = [
   "build-reliability-sentinel-30m",
   "build-security-sentinel-weekly",
   "post-build-regression",
+  "build-self-heal-nightly",
   "weekly-reflection",
   "monthly-reflection",
   "reflect-daily",
@@ -217,6 +222,7 @@ export const REGISTERED_KEY_CATALOGS = {
   widget: new Set<string>(REGISTERED_WIDGET_KEYS),
   collector: new Set<string>(REGISTERED_COLLECTOR_KEYS),
   workflow: new Set<string>(REGISTERED_WORKFLOW_KEYS),
+  skill: new Set<string>(REGISTERED_SKILL_KEYS),
   timerTemplate: new Set<string>(REGISTERED_TIMER_TEMPLATE_KEYS),
   routeGroup: new Set<string>(REGISTERED_ROUTE_GROUP_KEYS),
   command: new Set<string>(REGISTERED_COMMAND_KEYS),
