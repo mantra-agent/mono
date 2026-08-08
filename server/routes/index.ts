@@ -24,6 +24,7 @@ import { registerWellnessRoutes } from "./wellness";
 import { registerLibraryRoutes } from "./library";
 import { registerEmailRoutes } from "./email";
 import { registerEmailDraftRoutes } from "./email-drafts";
+import { registerMeetingDraftRoutes } from "./meeting-drafts";
 import { registerSessionDisplayRoutes } from "./session-display";
 import { registerContentRoutes } from "./content";
 import { registerHooksRoutes } from "./hooks";
@@ -78,7 +79,7 @@ export async function registerDomainRoutes(
   // Confirmed user-data leak surfaces: never rely on client-side tab filtering.
   // Prefix gates ensure principal context is established before integration, email,
   // goal/priority, and voice-goal handlers touch principal-scoped storage.
-  app.use(["/api/gmail", "/api/email", "/api/email-drafts", "/api/goals", "/api/import-queue", "/api/notifications", "/api/quickbooks"], requireAuth);
+  app.use(["/api/gmail", "/api/email", "/api/email-drafts", "/api/meeting-drafts", "/api/goals", "/api/import-queue", "/api/notifications", "/api/quickbooks"], requireAuth);
 
   await registerIntegrationsRoutes(app);
   await registerOuraRoutes(app);
@@ -97,6 +98,7 @@ export async function registerDomainRoutes(
   await registerLibraryRoutes(app);
   registerEmailRoutes(app);
   registerEmailDraftRoutes(app);
+  registerMeetingDraftRoutes(app);
   registerSessionDisplayRoutes(app);
   registerContentRoutes(app);
   registerHooksRoutes(app);

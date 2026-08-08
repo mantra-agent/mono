@@ -1609,6 +1609,37 @@ export const insertEmailDraftSchema = createInsertSchema(emailDrafts).omit({
 export type EmailDraft = typeof emailDrafts.$inferSelect;
 export type InsertEmailDraft = z.infer<typeof insertEmailDraftSchema>;
 
+export const meetingDraftStatuses = ["draft", "scheduling", "scheduled", "discarded"] as const;
+export const meetingDrafts = pgTable("meeting_drafts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerUserId: text("owner_user_id"),
+  accountId: text("account_id"),
+  scope: text("scope").notNull().default("user"),
+  createdByUserId: text("created_by_user_id"),
+  sessionId: text("session_id"),
+  googleAccountId: text("google_account_id"),
+  calendarId: text("calendar_id").notNull().default("primary"),
+  summary: text("summary").notNull().default(""),
+  startAt: text("start_at").notNull().default(""),
+  endAt: text("end_at"),
+  timeZone: text("time_zone").notNull().default("America/Chicago"),
+  attendees: text("attendees").array().notNull().default(sql`'{}'::text[]`),
+  location: text("location"),
+  description: text("description"),
+  visibility: text("visibility").notNull().default("default"),
+  status: text("status", { enum: meetingDraftStatuses }).notNull().default("draft"),
+  googleEventId: text("google_event_id"),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+}, table => [
+  index("idx_meeting_drafts_owner").on(table.ownerUserId),
+  index("idx_meeting_drafts_account").on(table.accountId),
+  index("idx_meeting_drafts_session").on(table.sessionId),
+]);
+
+export type MeetingDraft = typeof meetingDrafts.$inferSelect;
+
 export const MEETING_JOIN_MODES = ["dont_join", "note_taking", "join_and_talk"] as const;
 export type MeetingJoinMode = typeof MEETING_JOIN_MODES[number];
 

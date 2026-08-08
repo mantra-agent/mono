@@ -1031,7 +1031,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     },
   },
   meetings: {
-    description: "Manage calendar events, create bounded focus blocks, dispatch the live meeting bot, and query completed meeting records. Calendar add/update/delete, create_calendar_block, and meeting-bot join/leave remain independently authorization-gated. Before creating an event, verify the title, date, start time, duration/end time, and attendees; do not create until those details are confirmed.",
+    description: "Manage calendar events, create bounded focus blocks, dispatch the live meeting bot, and query completed meeting records. Action add creates an editable Meeting Draft inline widget; only the authenticated human can approve and schedule it. Direct calendar update/delete, create_calendar_block, and meeting-bot join/leave remain independently authorization-gated.",
     category: "calendar",
 
     parameters: {

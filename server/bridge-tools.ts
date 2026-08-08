@@ -5987,77 +5987,34 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
 
   async add_meeting(args) {
     try {
-      const calPermCheck = await checkGmailPermission(args.accountId, "calendarCreate", "create calendar events");
-      if (calPermCheck.denied) return calPermCheck.result;
-
-      const { createEvent, listAllEvents, hasCalendarAccess } = await import("./google-calendar");
-      const { listGmailAccounts } = await import("./gmail");
-      const { getTimezone } = await import("./timezone");
-
-      const accounts = await listGmailAccounts();
-      const connected = [];
-      for (const a of accounts) {
-        if (await hasCalendarAccess(a.id)) connected.push(a);
-      }
-      if (connected.length === 0) return {
-        result: "No Google accounts with calendar access. Connect one in Settings > Integrations.",
-        error: true,
-        failure: permissionFailure("integration_not_configured", "google_calendar_access"),
-      };
-
-      const summary = args.summary;
+      const summary = typeof args.summary === "string" ? args.summary.trim() : "";
+      const start = typeof args.start === "string" ? args.start.trim() : "";
+      const end = typeof args.end === "string" && args.end.trim() ? args.end.trim() : undefined;
       if (!summary) return { result: "Missing meeting summary/title", error: true };
+      if (!start) return { result: "Missing start time. Provide an ISO 8601 datetime.", error: true };
 
-      const accountId = args.accountId || connected[0].id;
-      const calendarId = args.calendarId || "primary";
-      const tz = getTimezone();
-
-      const event: any = { summary };
-      if (args.description) event.description = args.description;
-      if (args.location) event.location = args.location;
-
-      if (args.start) {
-        event.start = args.start.date
-          ? { date: args.start.date }
-          : { dateTime: args.start.dateTime || args.start, timeZone: args.start.timeZone || tz };
-        if (typeof event.start === "object" && typeof args.start === "string") {
-          event.start = { dateTime: args.start, timeZone: tz };
-        }
-      } else {
-        return { result: "Missing start time. Provide start.dateTime (ISO 8601) or start.date (YYYY-MM-DD).", error: true };
-      }
-
-      if (args.end) {
-        event.end = args.end.date
-          ? { date: args.end.date }
-          : { dateTime: args.end.dateTime || args.end, timeZone: args.end.timeZone || tz };
-        if (typeof event.end === "object" && typeof args.end === "string") {
-          event.end = { dateTime: args.end, timeZone: tz };
-        }
-      } else {
-        const startDt = event.start.dateTime || event.start.date;
-        if (startDt && startDt.includes("T")) {
-          const endDt = new Date(new Date(startDt).getTime() + 60 * 60 * 1000).toISOString();
-          event.end = { dateTime: endDt, timeZone: tz };
-        } else {
-          event.end = { ...event.start };
-        }
-      }
-
-      if (args.attendees) {
-        event.attendees = args.attendees.map((a: any) =>
-          typeof a === "string" ? { email: a } : a
-        );
-      }
-
-      if (args.visibility) event.visibility = args.visibility;
-
-      const created = await createEvent(accountId, calendarId, event);
-      await safeInvalidateCalendarCache("create_meeting");
-      const startStr = created.start?.dateTime || created.start?.date || "";
-      return { result: `Meeting created: "${created.summary}" on ${startStr}${created.attendees?.length ? ` with ${created.attendees.filter((a: any) => !a.self).map((a: any) => a.displayName || a.email).join(", ")}` : ""}${created.htmlLink ? ` — ${created.htmlLink}` : ""}` };
+      const { getTimezone } = await import("./timezone");
+      const { meetingDraftStorage } = await import("./meeting-draft-storage");
+      const principal = requireCurrentPrincipal();
+      const attendees = Array.isArray(args.attendees)
+        ? args.attendees.filter((value: unknown): value is string => typeof value === "string" && value.trim().length > 0).map((value: string) => value.trim())
+        : [];
+      const draft = await meetingDraftStorage.create(principal, {
+        sessionId: typeof args._sessionId === "string" ? args._sessionId : undefined,
+        googleAccountId: typeof args.accountId === "string" ? args.accountId : undefined,
+        calendarId: typeof args.calendarId === "string" ? args.calendarId : "primary",
+        summary,
+        start,
+        end,
+        timeZone: typeof args.timeZone === "string" && args.timeZone.trim() ? args.timeZone.trim() : getTimezone(),
+        attendees,
+        location: typeof args.location === "string" && args.location.trim() ? args.location.trim() : undefined,
+        description: typeof args.description === "string" && args.description.trim() ? args.description.trim() : undefined,
+        visibility: args.visibility,
+      });
+      return { result: `Meeting draft ready for human review: @meeting_draft:${draft.id}` };
     } catch (err: any) {
-      return { result: `Failed to create meeting: ${err.message}`, error: true };
+      return { result: `Failed to create meeting draft: ${err.message}`, error: true };
     }
   },
 
