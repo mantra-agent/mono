@@ -140,10 +140,7 @@ async function checkForVersionSkew(
       log.warn("SPA version check unavailable", {
         error: error instanceof Error ? error.message : String(error),
       });
-      if (showPromptOnFailure) {
-        showUpdatePrompt();
-        return "update_prompted";
-      }
+      if (showPromptOnFailure) showUpdatePrompt();
       return "check_unavailable";
     } finally {
       inFlight = null;
