@@ -1,4 +1,10 @@
-import { useState, Suspense } from "react";
+import { useRef, useState, Suspense } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { useAuth, type AuthUser, type AuthPrincipal } from "@/hooks/use-auth";
+import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { Compass, TableProperties, Briefcase, Loader2, ChevronRight } from "lucide-react";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
@@ -92,6 +98,29 @@ function ProfileTreeNode({
 export default function ProfilePage() {
   usePageHeader({ title: "Profile" });
 
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/auth/profile-picture", { method: "POST", body: form, credentials: "include" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || "Profile picture upload failed");
+      }
+      return await response.json() as { avatarObjectPath: string };
+    },
+    onSuccess: ({ avatarObjectPath }) => {
+      queryClient.setQueryData<{ user: AuthUser; principal?: AuthPrincipal | null } | null>(["/api/auth/me"], (current) =>
+        current ? { ...current, user: { ...current.user, avatarObjectPath } } : current,
+      );
+    },
+    onError: (error: Error) => toast({ title: "Upload failed", description: error.message, variant: "destructive" }),
+  });
+
+  const initials = user?.email.slice(0, 2).toUpperCase() ?? "";
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     () => new Set(["mission"]),
   );
@@ -130,6 +159,33 @@ export default function ProfilePage() {
       className="flex flex-col h-full min-w-0 overflow-auto bg-background p-2"
       data-testid="profile-page"
     >
+      <div className="flex min-h-20 items-center gap-4 border-b border-border/20 px-2 py-2">
+        <Avatar className="h-16 w-16">
+          {user?.avatarObjectPath && <AvatarImage src={user.avatarObjectPath} alt="Profile picture" className="object-cover" />}
+          <AvatarFallback className="text-base font-semibold">{initials}</AvatarFallback>
+        </Avatar>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="sr-only"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) upload.mutate(file);
+            event.target.value = "";
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          disabled={upload.isPending}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {upload.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-active" />}
+          Upload photo
+        </Button>
+      </div>
       <div className="space-y-0">
         {items.map((item) => (
           <ProfileTreeNode

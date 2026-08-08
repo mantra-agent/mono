@@ -15,6 +15,8 @@ import { storage } from "./storage";
 import { getSetting, setSetting } from "./system-settings";
 import { getAutomationAuthToken } from "./automation-auth-token";
 import { loginSchema, registerSchema, users, type User } from "@shared/schema";
+import multer from "multer";
+import { getAvatarObjectPath, replaceProfileAvatar } from "./profile-avatar";
 import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import {
@@ -403,12 +405,13 @@ function saveSession(req: Request, context: string): Promise<void> {
   });
 }
 
-function userResponse(user: User, principal?: Principal | null) {
+function userResponse(user: User, principal?: Principal | null, avatarObjectPath: string | null = null) {
   return {
     user: {
       id: user.id,
       email: user.email,
       role: user.role,
+      avatarObjectPath,
     },
     principal: principal ? {
       actorType: principal.actorType,
@@ -718,8 +721,9 @@ export function setupAuth(app: Express) {
       req.session.destroy(() => {});
       return res.status(401).json({ error: "User not found" });
     }
+    const avatarObjectPath = await getAvatarObjectPath(principal);
     authTrace(req, "me:success", { userId: user.id });
-    res.json(userResponse(user, principal));
+    res.json(userResponse(user, principal, avatarObjectPath));
   });
 
   app.post("/api/auth/setup", enforceAuthBudget("setup", 5), async (req: Request, res: Response) => {
@@ -1137,6 +1141,29 @@ export function setupAuth(app: Express) {
       }
     },
   );
+
+  const profilePictureUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 0 },
+  });
+
+  app.post("/api/auth/profile-picture", requireAuth, (req: Request, res: Response) => {
+    profilePictureUpload.single("file")(req, res, async (uploadError) => {
+      if (uploadError) return res.status(400).json({ error: "Image must be 5 MB or smaller" });
+      if (!req.file) return res.status(400).json({ error: "Choose an image to upload" });
+      const principal = getPrincipal(req);
+      if (!principal?.userId || !principal.accountId) return res.status(401).json({ error: "User session required" });
+      try {
+        const avatarObjectPath = await replaceProfileAvatar(principal, req.file.buffer, req.file.mimetype);
+        res.json({ avatarObjectPath });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Profile picture upload failed";
+        if (message.includes("image") || message.includes("Image")) return res.status(400).json({ error: message });
+        log.error("Profile picture upload failed", { errorType: error instanceof Error ? error.name : typeof error });
+        res.status(500).json({ error: "Profile picture upload failed" });
+      }
+    });
+  });
 
   app.post(
     "/api/auth/change-password",
