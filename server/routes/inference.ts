@@ -927,7 +927,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
     }
   });
 
-  app.get("/api/models/connectors", async (_req, res) => {
+  app.get("/api/models/connectors", requirePermission("system:read"), async (_req, res) => {
     try {
       res.json({ connectors: await listModelConnectors() });
     } catch (error: any) {
@@ -962,7 +962,7 @@ export async function registerInferenceRoutes(app: Express, serverStartTime: Dat
     }
   });
 
-  app.get("/api/models/available", async (_req, res) => {
+  app.get("/api/models/available", requirePermission("system:read"), async (_req, res) => {
     try {
       const config = await executorManager.readConfig();
 
