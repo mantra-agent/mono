@@ -30,7 +30,7 @@ import {
   RESOURCES_THRESHOLDS as THRESHOLDS,
 } from "./resources-thresholds";
 
-type Status = "ok" | "amber" | "red";
+type Status = "ok" | "unknown" | "amber" | "red";
 
 const RELIABILITY_DOMAINS: Array<{ key: ReliabilityDomainKey; label: string }> = [
   { key: "toolExecutions", label: "Tool executions" },
@@ -130,18 +130,21 @@ function highestStatus(statuses: Status[]): Status {
 function statusLabel(status: Status): string {
   if (status === "red") return "Critical";
   if (status === "amber") return "Attention";
+  if (status === "unknown") return "Unavailable";
   return "Healthy";
 }
 
 function statusDot(status: Status): string {
   if (status === "red") return "bg-destructive";
   if (status === "amber") return "bg-warning";
+  if (status === "unknown") return "bg-muted-foreground";
   return "bg-success";
 }
 
 function statusText(status: Status): string {
   if (status === "red") return "text-destructive";
   if (status === "amber") return "text-warning-foreground dark:text-warning";
+  if (status === "unknown") return "text-muted-foreground";
   return "text-success";
 }
 
@@ -177,10 +180,10 @@ function cpuStatus(percent: number): Status {
 }
 
 function memoryStatus(memory: SystemResourcesData["memory"]): Status {
-  if (!memory.maxMemoryBytes) return "amber";
+  if (!memory.maxMemoryBytes) return "unknown";
   const ratio = memory.rss / memory.maxMemoryBytes;
-  if (ratio >= 0.85) return "red";
-  if (ratio >= 0.7) return "amber";
+  if (ratio >= 0.9) return "red";
+  if (ratio >= 0.8) return "amber";
   return "ok";
 }
 
@@ -216,8 +219,8 @@ function zombieStatus(zombies: SystemResourcesData["zombies"]): Status {
 }
 
 function eventLoopStatus(eventLoop: SystemResourcesData["eventLoop"]): Status {
-  if (eventLoop.currentMs >= THRESHOLDS.eventLoopRedMs || eventLoop.maxMs >= THRESHOLDS.eventLoopRedMs) return "red";
-  if (eventLoop.currentMs >= THRESHOLDS.eventLoopAmberMs || eventLoop.maxMs >= THRESHOLDS.eventLoopAmberMs) return "amber";
+  if (eventLoop.currentMs >= THRESHOLDS.eventLoopRedMs || eventLoop.avgMs >= THRESHOLDS.eventLoopRedMs) return "red";
+  if (eventLoop.currentMs >= THRESHOLDS.eventLoopAmberMs || eventLoop.avgMs >= THRESHOLDS.eventLoopAmberMs) return "amber";
   return "ok";
 }
 
@@ -228,7 +231,8 @@ function slowQueryStatus(slowQueries: SystemResourcesData["slowQueries"]): Statu
 }
 
 function frontendExperienceStatus(frontend: BrowserTelemetrySummary | null): Status {
-  if (!frontend || frontend.sampleHealth !== "healthy") return "amber";
+  if (!frontend || frontend.sampleCount === 0) return "unknown";
+  if (frontend.sampleHealth !== "healthy") return "amber";
   if (frontend.metrics.some(metric => metric.p95 !== null && metric.p95 > frontendMetricBudget(frontend, metric.kind, metric.name))) return "amber";
   if (frontend.navigationTraces.p95Ms !== null && frontend.navigationTraces.p95Ms > frontend.budgets.navigation.p95Ms) return "amber";
   return "ok";
@@ -255,11 +259,11 @@ function frontendMetricBudget(frontend: BrowserTelemetrySummary, kind: string, n
 }
 
 function contextHealthStatus(context: ContextHealthSummary | null): Status {
-  if (!context || context.callCount === 0) return "amber";
+  if (!context || context.callCount === 0) return "unknown";
   // Primary felt-latency gate is time-to-first-progress; fall back to first-text
   // where no progress samples exist yet.
   const sampleCount = context.ttfpSampleCount || context.ttftSampleCount;
-  if (sampleCount === 0) return "amber";
+  if (sampleCount === 0) return "unknown";
   const p95 = context.p95TtfpMs ?? context.p95TtftMs;
   const budget = context.budgets.providerTtfpP95Ms ?? context.budgets.providerTtftP95Ms;
   if (p95 !== null && p95 > budget) return "amber";
@@ -629,7 +633,9 @@ function ResourcesView({
   const contextStatus = contextHealthStatus(contextHealth);
   const reliabilityStatus: Status = reliabilityError
     ? "red"
-    : reliabilityHealthStatus(reliability?.health);
+    : reliability
+      ? reliabilityHealthStatus(reliability.health)
+      : "unknown";
 
   const memoryPercent = r.memory.maxMemoryBytes
     ? r.memory.rssUsedPct ?? Math.round((r.memory.rss / r.memory.maxMemoryBytes) * 1000) / 10

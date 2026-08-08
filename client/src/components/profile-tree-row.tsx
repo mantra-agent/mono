@@ -67,7 +67,7 @@ export function ProfileTreeRow({
               ? mobileLayout === "inline"
                 ? valueLayout === "compact"
                   ? "grid-cols-[max-content_minmax(0,1fr)_auto_auto] gap-y-0"
-                  : "grid-cols-[max-content_minmax(0,12rem)_auto_auto] gap-y-0"
+                  : "grid-cols-[max-content_minmax(0,1fr)_12rem_auto_auto] gap-y-0"
                 : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1"
               : mobileLayout === "inline"
                 ? "grid-cols-[max-content_auto_auto] gap-y-0"
