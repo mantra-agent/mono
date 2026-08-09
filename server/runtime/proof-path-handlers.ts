@@ -16,6 +16,7 @@ import { runtimeHandlerRegistry, type RuntimeAttemptDecision, type RuntimeHandle
 const WEEKLY_IDEAS_HANDLER_KEY = "skill.execute.weekly_ideas";
 const TIMER_SKILL_HANDLER_KEY = "skill.execute.timer";
 const MEMORY_SOURCE_HANDLER_KEY = "memory.source.process";
+const PLAN_EXECUTION_HANDLER_KEY = "plan.execute";
 const HANDLER_VERSION = 1;
 const INPUT_SCHEMA_VERSION = 1;
 const AUTHORITY_POLICY_VERSION = "proof-path-v1";
@@ -31,6 +32,13 @@ interface TimerSkillInput {
   timerRunId: string;
   skillId: string;
   prompt?: string;
+}
+
+interface PlanExecutionInput {
+  planId: string;
+  originSessionId: string;
+  planTitle: string;
+  parentRuntimeRunId: string;
 }
 
 interface MemorySourceInput {
@@ -82,6 +90,16 @@ function parseTimerSkillInput(value: unknown): TimerSkillInput {
     timerRunId: parseBoundedString(input.timerRunId, "timerRunId", 160),
     skillId: parseBoundedString(input.skillId, "skillId", 100),
     prompt,
+  };
+}
+
+function parsePlanExecutionInput(value: unknown): PlanExecutionInput {
+  const input = parseObject(value, "Plan execution input");
+  return {
+    planId: parseBoundedString(input.planId, "planId", 160),
+    originSessionId: parseBoundedString(input.originSessionId, "originSessionId", 160),
+    planTitle: parseBoundedString(input.planTitle, "planTitle", 300),
+    parentRuntimeRunId: parseBoundedString(input.parentRuntimeRunId, "parentRuntimeRunId", 160),
   };
 }
 
@@ -270,6 +288,54 @@ async function executeTimerSkill(
   };
 }
 
+async function authorizePlanExecution(principal: Principal, input: PlanExecutionInput) {
+  requireUserPrincipal(principal);
+  const { resolvePlanByIdOrPage } = await import("../plan-service");
+  const plan = await resolvePlanByIdOrPage(input.planId);
+  const allowed = Boolean(
+    plan
+    && plan.id === input.planId
+    && plan.originSessionId === input.originSessionId
+    && (plan.status === "created" || plan.status === "paused" || plan.status === "executing")
+    && plan.ownerUserId === principal.userId
+    && plan.accountId === principal.accountId,
+  );
+  return { allowed, reasonCode: allowed ? "plan_execution_authorized" : "plan_execution_authority_revoked" };
+}
+
+async function executePlanRuntime(
+  context: Parameters<RuntimeHandler<PlanExecutionInput>["execute"]>[0],
+  input: PlanExecutionInput,
+): Promise<RuntimeAttemptDecision> {
+  const { executePlan } = await import("../plan-executor");
+  const result = await executePlan(input.planId, input.originSessionId, input.planTitle, true, context.signal);
+  const outputRefs = [`@plan:${input.planId}`];
+  await context.appendEvidence({
+    eventType: "verification",
+    reasonCode: "plan_execution_observed",
+    payload: {
+      planId: input.planId,
+      parentRuntimeRunId: input.parentRuntimeRunId,
+      status: result.status,
+      completedSteps: result.completedSteps,
+      totalSteps: result.totalSteps,
+    },
+  });
+  if (context.signal.aborted) {
+    return { kind: "complete", outcome: "cancelled", reasonCode: "plan_execution_cancelled", attribution: "runtime", outputRefs, verificationLevel: "observed" };
+  }
+  if (result.status === "completed" || result.status === "completed_with_failures") {
+    return { kind: "complete", outcome: result.status === "completed" ? "succeeded" : "degraded", reasonCode: `plan_execution_${result.status}`, attribution: "handler", outputRefs, verificationLevel: "observed" };
+  }
+  if (result.status === "needs_review") {
+    return { kind: "complete", outcome: "needs_review", reasonCode: "plan_execution_needs_review", attribution: "handler", outputRefs, verificationLevel: "observed" };
+  }
+  if (result.status === "paused") {
+    return { kind: "complete", outcome: "degraded", reasonCode: "plan_execution_paused", attribution: "handler", outputRefs, verificationLevel: "observed" };
+  }
+  return { kind: "complete", outcome: "failed", reasonCode: "plan_execution_failed", attribution: "handler", outputRefs, verificationLevel: "observed" };
+}
+
 async function authorizeMemorySource(principal: Principal, input: MemorySourceInput) {
   requireUserPrincipal(principal);
   const { getSourceQueueRow } = await import("../memory/vnext-source-queue");
@@ -377,6 +443,17 @@ export function registerRuntimeProofPathHandlers(): void {
       }
     },
   });
+  runtimeHandlerRegistry.register<PlanExecutionInput>({
+    key: PLAN_EXECUTION_HANDLER_KEY,
+    version: HANDLER_VERSION,
+    inputSchemaVersion: INPUT_SCHEMA_VERSION,
+    inputSchema: { parse: parsePlanExecutionInput },
+    resourcePool: "background_agent",
+    executorProfile: "in_process_trusted",
+    requiredCapabilities: ["plan:execute"],
+    authorize: authorizePlanExecution,
+    execute: executePlanRuntime,
+  });
   runtimeHandlerRegistry.register<MemorySourceInput>({
     key: MEMORY_SOURCE_HANDLER_KEY,
     version: HANDLER_VERSION,
@@ -445,6 +522,26 @@ export async function enqueueWeeklyIdeasRuntimeRun(
     inputRefs: [],
     authorityPolicyVersionAtEnqueue: AUTHORITY_POLICY_VERSION,
     budget: runtimeBudget(15 * 60 * 1000),
+    retryPolicy: runtimeRetryPolicy(),
+  });
+}
+
+export async function enqueuePlanExecutionRuntimeRun(
+  principal: Principal,
+  input: PlanExecutionInput,
+) {
+  requireUserPrincipal(principal);
+  return enqueueRuntimeRun(principal, {
+    kind: "plan.execution",
+    handler: { key: PLAN_EXECUTION_HANDLER_KEY, version: HANDLER_VERSION },
+    source: { type: "plan", id: input.planId },
+    idempotencyKey: `plan-execution/${input.planId}`,
+    deadlineAt: new Date(Date.now() + 24 * HOUR_MS),
+    inputSchemaVersion: INPUT_SCHEMA_VERSION,
+    input,
+    inputRefs: [`@plan:${input.planId}`, `@session:${input.originSessionId}`],
+    authorityPolicyVersionAtEnqueue: AUTHORITY_POLICY_VERSION,
+    budget: runtimeBudget(12 * HOUR_MS),
     retryPolicy: runtimeRetryPolicy(),
   });
 }

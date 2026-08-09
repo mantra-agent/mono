@@ -21,6 +21,9 @@ export interface AgentAuthorityContext {
   activity?: string;
   /** Canonical DB skill row ID, resolved by the autonomous runner. Never model-provided. */
   skillId?: string;
+  /** Native Runtime ownership, injected by the runner and never accepted from model arguments. */
+  runtimeRunId?: string;
+  runtimeAttemptId?: string;
   sessionId?: string;
   sessionKey?: string;
 }
