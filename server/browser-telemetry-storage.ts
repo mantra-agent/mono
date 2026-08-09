@@ -295,10 +295,17 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
     );
     const sorted = eligible.map((row) => Number(row.value)).filter(Number.isFinite).sort((a, b) => a - b);
     const pick = (pct: number) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * pct))] : null;
+    // Ordinary experience = mean of best 95% (drop only the slowest 5%). Require n>=20 before trimming.
+    const trimCount = sorted.length >= 20 ? Math.ceil(sorted.length * 0.05) : 0;
+    const ordinary = trimCount > 0 ? sorted.slice(0, -trimCount) : sorted;
+    const upperTrimmedMean95 = ordinary.length
+      ? ordinary.reduce((sum, value) => sum + value, 0) / ordinary.length
+      : null;
     return {
       kind: group[0].kind,
       name: group[0].name,
       count: eligible.length,
+      upperTrimmedMean95,
       p50: pick(0.5),
       p95: pick(0.95),
       latestAt: eligible[0]?.receivedAt instanceof Date ? eligible[0].receivedAt.toISOString() : null,
@@ -325,6 +332,11 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
   const navigationDurations = completedNavigationRows.map((row) => Number(row.value)).filter(Number.isFinite).sort((a, b) => a - b);
   const navigationPick = (pct: number) => navigationDurations.length
     ? navigationDurations[Math.min(navigationDurations.length - 1, Math.floor((navigationDurations.length - 1) * pct))]
+    : null;
+  const navigationTrim = navigationDurations.length >= 20 ? Math.ceil(navigationDurations.length * 0.05) : 0;
+  const navigationOrdinary = navigationTrim > 0 ? navigationDurations.slice(0, -navigationTrim) : navigationDurations;
+  const navigationUpperTrimmedMean95Ms = navigationOrdinary.length
+    ? navigationOrdinary.reduce((sum, value) => sum + value, 0) / navigationOrdinary.length
     : null;
   const diagnosisCounts = Object.fromEntries(NAVIGATION_TRACE_DIAGNOSES.map((diagnosis) => [diagnosis, 0])) as Record<NavigationTraceDiagnosis, number>;
   const navigationIncidents: NavigationTraceIncident[] = [];
@@ -374,6 +386,7 @@ export async function getBrowserTelemetrySummary(principal: Principal, windowHou
       count: navigationRows.length,
       completedCount,
       incompleteCount: navigationRows.length - completedCount,
+      upperTrimmedMean95Ms: navigationUpperTrimmedMean95Ms,
       p50Ms: navigationPick(0.5),
       p95Ms: navigationPick(0.95),
       diagnosisCounts,
