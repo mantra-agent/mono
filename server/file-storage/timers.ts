@@ -200,7 +200,8 @@ export class FileTimerStorage {
   async getByIdOrName(idOrName: string): Promise<Timer | null> {
     const byId = await this.get(idOrName);
     if (byId) return byId;
-    const principal = getCurrentPrincipalOrThrow();
+    // Fail closed on missing/non-user principal — same boundary as get/searchByName.
+    const principal = requireCurrentUserPrincipal();
     const [bySystemKey] = await db.select().from(timers).where(and(
       eq(timers.systemKey, idOrName),
       userTimerPredicate(principal),
