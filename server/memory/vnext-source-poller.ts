@@ -5,8 +5,7 @@ import { getPostgresErrorDetails } from "../postgres-errors";
 import type { MemoryVnextSourceQueueRow, MemorySource } from "@shared/schema";
 import { parseReferenceText } from "@shared/reference-parser";
 import {
-  pollSettledSources,
-  bindSourceRuntimeRun,
+  bindNextSettledSourceRuntime,
   completeSourceForRuntime,
   withSourceRuntimeFence,
   resetLegacyStuckProcessing,
@@ -413,43 +412,43 @@ export async function enqueueSettledSources(): Promise<{
   // reclaimed solely by the kernel's expired-attempt reconciliation.
   await resetLegacyStuckProcessing(STUCK_PROCESSING_TIMEOUT_MINUTES);
 
-  const sources = await pollSettledSources(SETTLE_MINUTES, MAX_SOURCES_PER_RUN);
-
-  if (sources.length === 0) {
-    log.debug("enqueueSettledSources: no settled sources");
-    return { enqueued: 0, existing: 0, errors: migrationErrors };
-  }
-
-  log.info(`enqueueSettledSources: found ${sources.length} settled sources`);
-
   let enqueued = 0;
   let existing = 0;
   let errors = migrationErrors;
 
-  for (const row of sources) {
+  for (let index = 0; index < MAX_SOURCES_PER_RUN; index++) {
+    let attemptedRow: MemoryVnextSourceQueueRow | null = null;
     try {
-      const principal = buildOwnerPrincipal(row);
-      await runWithPrincipal(principal, async () => {
-        const { enqueueMemorySourceRuntimeRun } = await import("../runtime/proof-path-handlers");
-        const result = await enqueueMemorySourceRuntimeRun(principal, row);
-        if (!await bindSourceRuntimeRun(row.id, row.lastModifiedAt, result.run.id, principal)) {
-          throw Object.assign(new Error("Memory source version changed before Runtime binding"), { code: "source_version_changed" });
-        }
-        if (result.disposition === "created") enqueued++;
-        else existing++;
+      const claimed = await bindNextSettledSourceRuntime(SETTLE_MINUTES, async (row) => {
+        attemptedRow = row;
+        const principal = buildOwnerPrincipal(row);
+        return runWithPrincipal(principal, async () => {
+          const { enqueueMemorySourceRuntimeRun } = await import("../runtime/proof-path-handlers");
+          const result = await enqueueMemorySourceRuntimeRun(principal, row);
+          return { runId: result.run.id, disposition: result.disposition };
+        });
       });
+      if (!claimed) break;
+      if (claimed.disposition === "created") enqueued++;
+      else existing++;
     } catch (err) {
       errors++;
       const errorDetails = getPostgresErrorDetails(err);
       log.error(JSON.stringify({
         event: "memory.vnext.source_enqueue_failed",
-        sourceType: row.sourceType,
-        queueId: row.id,
+        sourceType: attemptedRow?.sourceType ?? "unknown",
+        queueId: attemptedRow?.id ?? null,
         ...errorDetails,
       }));
+      // The failed transaction releases this row unchanged. Stop this bounded
+      // pass rather than selecting and failing the same oldest source again.
+      break;
     }
   }
 
+  if (enqueued === 0 && existing === 0) {
+    log.debug("enqueueSettledSources: no settled sources");
+  }
   log.info(`enqueueSettledSources: complete enqueued=${enqueued} existing=${existing} errors=${errors}`);
   return { enqueued, existing, errors };
 }

@@ -357,59 +357,53 @@ export async function registerSourceIfAbsent(
 }
 
 /**
- * Find sources that have been pending long enough to be considered settled.
- * A source is settled when its last_modified_at is older than the settle threshold,
- * meaning no new edits have come in during the quiet period.
+ * Atomically select one settled source version, enqueue its idempotent Runtime
+ * Run through the restored owner principal, and bind that Run to the queue row.
+ * The row lock is held only across bounded database work; extraction remains in
+ * the Runtime handler outside this transaction. SKIP LOCKED distributes intake
+ * across replicas without creating a second lease beside Runtime.
  */
-export async function pollSettledSources(
+export async function bindNextSettledSourceRuntime(
   settleMinutes: number,
-  limit: number,
-): Promise<MemoryVnextSourceQueueRow[]> {
-  const settleThreshold = sql`NOW() - INTERVAL '${sql.raw(String(settleMinutes))} minutes'`;
+  enqueue: (row: MemoryVnextSourceQueueRow) => Promise<{ runId: string; disposition: "created" | "existing" }>,
+): Promise<{ row: MemoryVnextSourceQueueRow; disposition: "created" | "existing" } | null> {
+  const boundedSettleMinutes = Math.max(1, Math.min(Math.floor(settleMinutes), 24 * 60));
+  const settleThreshold = sql`NOW() - INTERVAL '${sql.raw(String(boundedSettleMinutes))} minutes'`;
 
-  const rows = await db
-    .select()
-    .from(memoryVnextSourceQueue)
-    .where(
-      and(
+  return db.transaction(async (tx) => runWithDatabaseTransaction(tx, async () => {
+    const [row] = await tx
+      .select()
+      .from(memoryVnextSourceQueue)
+      .where(and(
         eq(memoryVnextSourceQueue.status, "pending"),
         isNull(memoryVnextSourceQueue.runtimeRunId),
         lt(memoryVnextSourceQueue.lastModifiedAt, settleThreshold),
-      ),
-    )
-    .orderBy(memoryVnextSourceQueue.lastModifiedAt)
-    .limit(limit);
+      ))
+      .orderBy(memoryVnextSourceQueue.lastModifiedAt)
+      .limit(1)
+      .for("update", { skipLocked: true });
+    if (!row) return null;
 
-  log.debug(
-    `polled settleMinutes=${settleMinutes} limit=${limit} found=${rows.length}`,
-  );
-  return rows;
-}
-
-/** Bind one settled source version to its idempotent Runtime Run. */
-export async function bindSourceRuntimeRun(
-  id: number,
-  sourceVersion: Date,
-  runtimeRunId: string,
-  principal: Principal,
-): Promise<boolean> {
-  const [row] = await db
-    .update(memoryVnextSourceQueue)
-    .set({ runtimeRunId, runtimeSourceVersion: sourceVersion })
-    .where(
-      combineWithWritableScope(
-        principal,
-        scopeColumns,
-        and(
-          eq(memoryVnextSourceQueue.id, id),
-          eq(memoryVnextSourceQueue.status, "pending"),
-          eq(memoryVnextSourceQueue.lastModifiedAt, sourceVersion),
-          or(isNull(memoryVnextSourceQueue.runtimeRunId), eq(memoryVnextSourceQueue.runtimeRunId, runtimeRunId)),
-        ),
-      ),
-    )
-    .returning({ id: memoryVnextSourceQueue.id });
-  return Boolean(row);
+    const result = await enqueue(row);
+    const [bound] = await tx
+      .update(memoryVnextSourceQueue)
+      .set({ runtimeRunId: result.runId, runtimeSourceVersion: row.lastModifiedAt })
+      .where(and(
+        eq(memoryVnextSourceQueue.id, row.id),
+        eq(memoryVnextSourceQueue.status, "pending"),
+        eq(memoryVnextSourceQueue.lastModifiedAt, row.lastModifiedAt),
+        isNull(memoryVnextSourceQueue.runtimeRunId),
+        eq(memoryVnextSourceQueue.ownerUserId, row.ownerUserId),
+        eq(memoryVnextSourceQueue.accountId, row.accountId),
+      ))
+      .returning();
+    if (!bound) {
+      throw Object.assign(new Error("Memory source version changed before Runtime binding"), {
+        code: "source_version_changed",
+      });
+    }
+    return { row: bound, disposition: result.disposition };
+  }));
 }
 
 /** Claim domain processing only with the current native Runtime fence. */

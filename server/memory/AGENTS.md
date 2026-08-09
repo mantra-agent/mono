@@ -2,32 +2,25 @@
 
 The memory subsystem is in staged retirement. vNext claims are the active semantic graph and the nightly sleep substrate. The ordinary HTTP registrar is vNext-only: legacy 410 shims, retention purge, document/workspace compatibility, and legacy maintenance routes are not registered. Legacy `memory_entries` tiers remain as compatibility/archive data while non-route readers migrate; automatic legacy propagation and maintenance launchers are disabled. The separately registered privileged migration boundary retains only explicit document-store migration controls and legacy-memory quarantine status/prepare/apply operations.
 
-## Core Tables
+## Active Tables and Ownership
 
-| Table | Purpose | Key Columns |
+| Table | Purpose | Authority |
 |---|---|---|
-| `memory_entries` | All memory content | `id`, `content`, `layer`, `source`, `embedding` (pgvector 1536d), `metadata` (JSONB), `recallCount`, `lastRecalledAt`, `deletionScheduledAt` |
-| `memory_links` | Graph edges between entries | `fromId`, `toId`, `relationship`, `strength` (0–1), `metadata` |
-| `memory_entity_links` | Cross-domain associations | `memoryEntryId`, `entityType`, `entityId` |
-| `memory_observations` | Metacognitive observations | `type` (pattern/gap/change/connection/opportunity), `content` |
-| `memory_graph_cache` | Neighborhood pre-computation | `entryId`, `neighbors` (JSONB), `computedAt` |
-| `memory_files` | Named knowledge files | `fileName`, `content` (e.g., PRINCIPLES.md, RELATIONSHIPS.md) |
+| `memory_vnext_source_queue` | Versioned source admission and Runtime projection | Source owner + exact `last_modified_at`; atomic settled-source Runtime binding |
+| `memory_vnext_claims` | Principal-owned semantic claims and lifecycle metadata | `applyObservation()` for ingestion; lifecycle service for stage transitions |
+| `memory_vnext_sources` | Claim provenance and source-to-claim evidence | Written with the claim observation, never as a detached mirror |
+| `memory_vnext_claim_links` | Typed claim relationships and transition evidence | `vnext-transition-graph.ts` |
+| `memory_vnext_entity_links` | Principal-scoped entity associations | vNext entity-resolution/link boundaries |
+| `memory_vnext_exposures` | Replay-safe passive context exposure telemetry | Context build ID + claim identity; no strength authority |
+| `memory_vnext_strength_events` | Explicit reinforcement/decay evidence | Canonical typed event mutations only |
 
-## Processing State Contract
+Legacy `memory_entries` and its graph closure are archive/compatibility state, not active memory tables. Their physical retention and quarantine gates are documented below. Do not describe them as the source of truth for cognition, context, retrieval, lifecycle, or observations.
 
-Memory processing state is stored directly on `memory_entries`, not in a side table. The lifecycle stage and the processing claim are both per-entry invariants, so keeping them on the entry prevents split-brain state between the row being advanced and a separate coordinator record.
+## Source Processing State Contract
 
-Columns:
+`memory_vnext_source_queue` owns source admission and projects the exact native Runtime identity that may process each source version. `pending` rows have no Runtime binding; the bounded poller atomically selects one settled row with `FOR UPDATE SKIP LOCKED`, enqueues the idempotent Runtime Run inside the same database transaction, and persists `runtime_run_id` plus `runtime_source_version` before releasing the row. Replica races therefore distribute intake without creating another lease.
 
-| Column | Meaning |
-|---|---|
-| `processing_status` | One of `idle`, `processing`, or `error`. Existing rows default to `idle`. |
-| `processing_run_id` | Worker/run claim token while `processing_status='processing'`. Cleared on success or error. |
-| `processing_started_at` | Time the active claim began. Cleared on success or error. |
-| `processing_error` | Last bounded error message when status is `error`; null otherwise. |
-| `processing_updated_at` | Last state transition time, used with stale-processing TTL recovery. |
-
-Metadata may keep historical stage-sweep details for audit/display, but it is not the concurrency or API contract. Sweep code must claim, complete, fail, and recover stale work using these columns.
+Native Runtime owns capacity and attempts. Its handler alone advances a bound source to `processing` by projecting `runtime_attempt_id` and `runtime_lease_epoch`. Graph mutation revalidates that exact source version and attempt under row lock; completion clears only the attempt projection and retains the durable Run/version relation. A later attempt may take over only after the previous Runtime attempt is durably retryable or lost. Legacy recovery may reset only rows with no Runtime projection.
 
 ## vNext Orthogonal Claim Dimensions
 
@@ -61,57 +54,11 @@ Report both until all consumers migrate.
 
 The nightly sleep cycle no longer operates on integration stages or layers; it maintains vNext claims only. Stage semantics remain relevant for legacy consolidation/enrichment code until Phase B removal.
 
-## Three-Tier Architecture
+## Active Architecture
 
-### Short-Term Memory
-- **Source**: Chat messages, tool results, observations
-- **Lifetime**: Hours to days
-- **Ingestion**: `ingestShortTermMemory()` in `server/memory/ingestion.ts`
-- **Content**: Raw exchange data with session context
+Semantic memory has one active claim graph, not short/mid/long stores. Sources enter `memory_vnext_source_queue`; native Runtime performs bounded extraction; `applyObservation()` atomically commits claims, provenance, and typed relationships; lifecycle derives integration without copying claims between tiers. `extracted | sourced | linked | canonical | retired` is compatibility processing metadata over the same claim identity.
 
-### Mid-Term Memory
-- **Source**: Consolidated from short-term clusters
-- **Lifetime**: Days to weeks
-- **Promotion**: `consolidateShortTerm()` in `server/memory/consolidation.ts` groups by topic similarity, merges clusters into summaries
-- **Content**: Synthesized summaries with source links preserved
-
-### Long-Term Memory
-- **Source**: Integrated from mid-term when count threshold met
-- **Lifetime**: Permanent (subject to decay)
-- **Promotion**: `integrateMidToLong()` in `server/memory/integration.ts`
-- **Content**: Distilled knowledge, patterns, and tendencies
-
-## Ingestion Pipeline
-
-```
-Raw content → ingestShortTermMemory()
-  → generateEmbedding() (OpenAI text-embedding-3-small, 1536d)
-  → INSERT into memory_entries (layer='short', source tagged)
-  → linkToRelated() — find top-k similar entries, create memory_links
-```
-
-Key files:
-- `server/memory/ingestion.ts` — `ingestShortTermMemory()`, `ingestMemoryEntry()`
-- `server/memory/embeddings.ts` — `generateEmbedding()`, `cosineSimilarity()`
-- `server/memory/storage.ts` — All CRUD operations on memory tables
-
-## Consolidation (Short → Mid)
-
-Runs on a 30-minute timer. Groups short-term entries by semantic similarity using embedding clusters.
-
-- `server/memory/consolidation.ts` — `consolidateShortTerm()`
-- Clusters entries with cosine similarity above threshold
-- Generates summary via LLM for each cluster
-- Creates mid-term entry linked to source short-term entries
-- Source entries get `deletionScheduledAt` set
-
-## Integration (Mid → Long)
-
-Runs when mid-term count exceeds threshold (or forced).
-
-- `server/memory/integration.ts` — `integrateMidToLong()`
-- Synthesizes related mid-term entries into durable long-term knowledge
-- Preserves graph links through promotion
+Legacy consolidation/integration modules remain only where quarantine, migration, or rollback contracts still import them. Their presence does not make timer-driven tier promotion active, and no new caller may revive it.
 
 ## Retrieval
 
@@ -137,11 +84,6 @@ Key files:
 4. **Source diversity** — bonus for mixing source types
 
 Legacy `lastRecalledAt` and `recallCount` remain readable for migration diagnostics only. They are excluded from vNext ranking and must not be reintroduced as strength or certainty proxies.
-
-### Graph Neighborhood Cache
-- `memory_graph_cache` stores pre-computed neighbor lists per entry
-- Refreshed during myelination (sleep cycle phase)
-- `server/memory/graph.ts` — `computeNeighborhood()`, `cacheNeighborhoods()`
 
 ### Retrieval Ownership
 
@@ -195,12 +137,7 @@ vNext-only. No legacy `memory_entries` fallback. Rendered output explicitly iden
 
 ## Graph System
 
-Entries are linked via `memory_links` with typed relationships and strength scores.
-
-- `server/memory/graph.ts` — `createLink()`, `pruneWeakLinks()`, `myelinate()`
-- Link types: `related`, `supports`, `contradicts`, `supersedes`, `derived_from`
-- Strength decays over time if not reinforced
-- Myelination strengthens frequently-co-recalled links
+Claims are connected through principal-owned `memory_vnext_claim_links`. `vnext-transition-graph.ts` owns typed relationship mutation, provenance, replay identity, and bounded transition-path projection. Passive recall never strengthens links; explicit evidence and typed strength events own semantic change.
 
 ## Personal Graph Projection (Library-first)
 
@@ -236,19 +173,11 @@ Legacy sleep phases (entry decay, reinforcement, NREM over `memory_entries`, bud
 
 ## Entity Links
 
-Cross-domain associations connecting memories to people, goals, projects, etc.
+Cross-domain associations live in principal-owned `memory_vnext_entity_links`. Agent tools delegate reads and mutations to `MemoryVnextClaimStorage`; entity resolution stays in `vnext-entity-resolution.ts`. Canonical domain IDs are evidence links, never authorization shortcuts.
 
-- `server/memory/entity-links.ts` — `linkEntity()`, `getEntityLinks()`
-- `entityType`: person, project, goal, skill, decision, etc.
-- Enables queries like "all memories about person X"
+## Memory Files Compatibility
 
-## Memory Files
-
-Named markdown files for durable reference knowledge:
-
-- `server/memory/files.ts` — `readFile()`, `writeFile()`
-- Examples: `PRINCIPLES.md`, `RELATIONSHIPS.md`, `VOICE.md`
-- These are separate from memory_entries — documents, not graph nodes
+The `memory.read` / `memory.write` file actions remain a separate compatibility surface for named workspace knowledge documents. They are not semantic claims, do not participate in lifecycle or retrieval, and must not be described as graph nodes or a substitute source of truth.
 
 ## Legacy Memory Quarantine
 
@@ -262,7 +191,7 @@ Memory uses the ordinary instrumented `db` proxy in `server/db.ts`; it does not 
 
 Active context retrieval is bounded but multi-query: `retrieveVnextContext()` generates one embedding, runs semantic and five-row recency seeds in parallel, expands at most two sequential graph hops with an 80-row frontier, hydrates claims by batched IDs, and reads source refs once for the resulting set. The surrounding graph cache is process-local for five minutes and records replay-safe exposure rows on fresh or cached use. Cache hits reduce retrieval reads on one replica; they do not provide cross-replica coherence.
 
-The source poller is scheduled by `server/index.ts` after 30 seconds and every five minutes. One invocation discovers at most 10 settled, unbound source versions and performs idempotent Runtime enqueue only; it never extracts claims or authorizes processing. The account-scoped Runtime idempotency key names the queue row plus exact `last_modified_at` version, so replica races converge on one run. Native `short_worker` dispatch is the sole execution owner: the queue projects the current run/attempt/epoch fence, a later attempt may take over only after the prior attempt is durably `retry` or `lost`, and legacy maintenance never clears Runtime-bound fences. Extraction/model work stays outside transactions. Before graph writes, `withSourceRuntimeFence()` locks and revalidates the exact source version and attempt; `applyObservation()` inherits that ambient transaction, so a concurrent source edit cannot commit obsolete evidence. Completion clears only the attempt projection while retaining the Runtime run/source-version relation. Claim/source dedup remains replay protection, not lease authority.
+The source poller is scheduled by `server/index.ts` after 30 seconds and every five minutes. One invocation binds at most 10 settled source versions. Each iteration uses `bindNextSettledSourceRuntime()` to select one unbound row with `FOR UPDATE SKIP LOCKED`, restore its exact owner principal, enqueue the account-scoped idempotent Runtime Run, and persist the Run/source-version relation in the same transaction. This transaction contains bounded database work only; extraction and model calls remain outside it. Native `short_worker` dispatch is the sole execution owner: the queue projects the current run/attempt/epoch fence, a later attempt may take over only after the prior attempt is durably `retry` or `lost`, and legacy maintenance never clears Runtime-bound fences. Before graph writes, `withSourceRuntimeFence()` locks and revalidates the exact source version and attempt; `applyObservation()` inherits that ambient transaction, so a concurrent source edit cannot commit obsolete evidence. Completion clears only the attempt projection while retaining the Runtime run/source-version relation. Claim/source dedup remains replay protection, not lease authority.
 
 `semantic-source-adapters.ts` is the only source-content load boundary for the poller. `VNEXT_SOURCE_TYPES` currently includes `session`, `library_page`, and `drive_file`. Adapters are thin: identify → authorize → normalize text → return one envelope. Queue hashing, claim extraction, provenance, retries, and Runtime fencing stay in the shared core. `drive_file` source ids prefer `drive_resources.id` for explicit binds and fall back to `indexed_file_sources.id` for discovered descendants; content loads only through `FilesApi` (authorize + staged archive/normalized text). Personal graph projection maps `drive_file` source refs to durable `file:<id>` nodes under the same principal visibility rules as FilesApi.
 
