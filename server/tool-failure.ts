@@ -25,6 +25,7 @@ export type ToolFailureCode =
   | "python_execution_timeout"
   | "python_output_limit_exceeded"
   | "tool_schema_invalid"
+  | "tool_registered_handler_missing"
   // Plan contract rejects
   | "plan_input_invalid"
   | "plan_principal_required"

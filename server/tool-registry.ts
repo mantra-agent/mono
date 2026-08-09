@@ -1940,9 +1940,9 @@ function toolMetaToDefinition(name: string, meta: ToolMeta): ToolDefinition {
   return {
     ...schema,
 
-    // The unified registry contains built-in executable tools. Dispatch
-    // ownership belongs to bridge-tools; importing its handler object here
-    // recreates a synchronous ESM cycle and can trigger a bundled TDZ.
+    // The unified registry contains every public executable tool. Handler
+    // composition is private to bridge-tools and must never become a second
+    // registration source.
     source: "bridge",
     usageCount: 0,
     lastUsed: null,
@@ -2027,18 +2027,21 @@ export function invalidateSchemaCache() {
 export function getToolSchemas(): ToolSchema[] {
   if (!cachedSchemas) {
     const schemas = Object.entries(TOOLS).map(([name, meta]) => toolMetaToSchema(name, meta));
-    // Include alias schemas so validation resolves for canonical tool names
-    for (const [alias, target] of Object.entries(TOOL_ALIASES)) {
-      const meta = TOOLS[target];
-      if (meta) schemas.push(toolMetaToSchema(alias, meta));
-    }
     cachedSchemas = schemas;
-    log.debug(`getToolSchemas: total=${cachedSchemas.length} (${Object.keys(TOOL_ALIASES).length} aliases)`);
+    log.debug(`getToolSchemas: total=${cachedSchemas.length}`);
   }
   // Readiness gate is applied per-call and never cached: a secret-backed
   // integration tool whose connector is unconfigured must not be advertised as
   // callable, and must re-appear the moment it is configured (no restart).
   return withoutUnreadyIntegrationTools(cachedSchemas);
+}
+
+/** Resolve one registered public tool name through the canonical alias map. */
+export function resolveRegisteredTool(name: string): { name: string; schema: ToolSchema } | null {
+  const canonicalName = TOOL_ALIASES[name] ?? name;
+  const meta = toolMetaForName(canonicalName);
+  if (!meta) return null;
+  return { name: canonicalName, schema: toolMetaToSchema(canonicalName, meta) };
 }
 
 /** Resolve tool metadata for a canonical name or compatibility alias. */

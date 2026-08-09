@@ -24,7 +24,8 @@ export async function routeCapture(
   try {
     switch (classification.type) {
       case "task": {
-        const result = await executeBridgeTool("create_task", `capture-route-${Date.now()}`, {
+        const result = await executeBridgeTool("tasks", `capture-route-${Date.now()}`, {
+          action: "create",
           title: classification.summary,
           description: `From quick capture: ${rawText}`,
           priority: "mid",
@@ -95,7 +96,8 @@ export async function routeCapture(
 
       case "reminder": {
         const timeNote = classification.timeRef ? ` [Due: ${classification.timeRef}]` : "";
-        const result = await executeBridgeTool("create_task", `capture-reminder-${Date.now()}`, {
+        const result = await executeBridgeTool("tasks", `capture-reminder-${Date.now()}`, {
+          action: "create",
           title: `${classification.summary}${timeNote}`,
           description: `From quick capture (reminder): ${rawText}${classification.timeRef ? `\nTime reference: ${classification.timeRef}` : ""}`,
           priority: "mid",

@@ -499,11 +499,13 @@ Provider-bound inference payload captures are durable diagnostic evidence, not p
 
 ## Tool Architecture
 
-126 bridge tool handlers in a single dispatch table. Three invocation paths converge on one `executeTool()` entry point.
+Public tool identity has one source: `tool-registry.ts`. Handler composition remains concentrated in `bridge-tools.ts`, but a handler-table key is never registration or authority; every invocation must resolve a registered canonical name before dispatch. Chat, voice, autonomous, Hook, and authenticated HTTP callers converge on one `executeTool()` entry point.
 
 ### Key Files
-- `bridge-tools.ts` (11,670 lines / 587KB) — **The monolith.** All handlers, `DISPATCH_MAP`, `executeTool()`
-- `tool-registry.ts` (1,602 lines) — Tool metadata (`TOOLS` map), schema generation, `buildRegistry()`
+- `tool-registry.ts` — Public tool names, compatibility aliases, metadata, schemas, readiness projection, and `resolveRegisteredTool()`
+- `tools/contracts.ts` — Dependency-light handler, invocation-context, and result interfaces for domain adapters
+- `tools/invocation.ts` — Canonical sparse-input normalization plus schema validation; optional empty values mean omission and explicit edit empties are narrowly allowlisted
+- `bridge-tools.ts` — Handler composition, canonical `executeTool()` dispatch, authority/Mod gates, engineering preflight, telemetry, and remaining legacy domain handlers
 - `tool-details.ts` (358 lines) — Extended per-tool documentation
 - `cli-sdk-adapter.ts` (1,005 lines) — Claude Agent SDK/MCP bridge, Zod schema conversion
 - `agent-executor.ts` (1,771 lines) — `AgentExecutor` class: multi-iteration LLM loop, write-ordering, compaction
@@ -578,7 +580,7 @@ The `gitWriteOverride` field on session metadata is retained as an admin escape 
 ### When Working Here
 - Treat tool arguments as sparse patches, not full records. Optional empty strings, empty arrays, and empty objects are absence unless a handler explicitly allows empties. Destructive clears must flow through an explicit clear contract, never through schema-default blank values.
 - Every umbrella tool exposed to autonomous runs must have an explicit `autonomy-tiers.ts` entry. Keep the tool default at tier 2 and allowlist verified read actions at tier 0 so future actions fail closed instead of silently inheriting observation authority.
-- **Never add a handler without also adding it to `TOOLS` in `tool-registry.ts`** — unregistered handlers are invisible to the LLM
+- **Never add a handler without also adding it to `TOOLS` in `tool-registry.ts`** — unregistered handler keys are private implementation details and canonical dispatch rejects them. Internal producers call registered umbrella tools or the owning domain service, never hidden handler names.
 - **New `TOOLS` entries must be top-level keys** — inserting inside an existing tool's object literal silently nests the new entry as a property of that tool instead of registering it. Always verify the new entry is a direct child of the `TOOLS` object (same indentation as `meta:`, `expo:`, `railway:`, etc.) and that the preceding entry's `},` is closed before the new key starts.
 - Tool handlers use lazy dynamic imports for storage modules — `const { foo } = await import("./bar")`
 - DOCX reads accept workspace files and canonical `/objects/...` attachment paths. Object-backed reads must resolve through `ObjectStorageService`, require the current user principal, enforce the existing object ACL before download, and parse from the authorized buffer without minting a public URL or raw storage key.
