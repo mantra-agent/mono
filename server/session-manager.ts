@@ -228,13 +228,15 @@ class SessionManager {
    * removing one owner must not detach the others.
    */
   private subscriptionOwners = new Map<string, Map<WebSocket, Map<string, SessionSubscriberIdentity>>>();
+  /** Latest requested subscription mutation, including authorization work still in flight. */
+  private subscriptionEpochs = new Map<string, Map<WebSocket, Map<string, number>>>();
   /**
    * Per-socket wire protocol. A socket that advertised `supportsDelta` receives
    * incremental segment patches; every other socket keeps receiving full
    * snapshots. Enables mixed old/new clients during rolling deploys.
    */
   private socketProtocol = new WeakMap<WebSocket, "delta" | "snapshot">();
-  /** Survives LiveSession cleanup so a later run can never reuse a generation. */
+  /** Survives LiveSession cleanup so a later run in this boot cannot reuse a generation. */
   private runGenerations = new Map<string, number>();
   private sweepTimer: ReturnType<typeof setInterval>;
 
@@ -264,7 +266,12 @@ class SessionManager {
     const interestedSockets = this.subscriptionOwners.get(sessionId);
     const mergedSubscribers = new Set<WebSocket>(interestedSockets?.keys() ?? []);
 
-    const runGeneration = (this.runGenerations.get(sessionId) ?? existing?.runGeneration ?? 0) + 1;
+    const generationFloor = Math.max(
+      this.runGenerations.get(sessionId) ?? 0,
+      existing?.runGeneration ?? 0,
+      Date.now() - 1,
+    );
+    const runGeneration = generationFloor + 1;
     this.runGenerations.set(sessionId, runGeneration);
 
     const session: LiveSession = {
@@ -587,6 +594,39 @@ class SessionManager {
     this.socketProtocol.set(ws, protocol);
   }
 
+  beginSubscriptionMutation(
+    sessionId: string,
+    ws: WebSocket,
+    identity: SessionSubscriberIdentity = {},
+  ): boolean {
+    const ownerId = identity.handlerId || "connection";
+    let sockets = this.subscriptionEpochs.get(sessionId);
+    if (!sockets) {
+      sockets = new Map();
+      this.subscriptionEpochs.set(sessionId, sockets);
+    }
+    let owners = sockets.get(ws);
+    if (!owners) {
+      owners = new Map();
+      sockets.set(ws, owners);
+    }
+    const incomingEpoch = identity.subscriptionEpoch ?? 0;
+    const currentEpoch = owners.get(ownerId) ?? -1;
+    if (incomingEpoch < currentEpoch) return false;
+    owners.set(ownerId, incomingEpoch);
+    return true;
+  }
+
+  isSubscriptionMutationCurrent(
+    sessionId: string,
+    ws: WebSocket,
+    identity: SessionSubscriberIdentity = {},
+  ): boolean {
+    const ownerId = identity.handlerId || "connection";
+    const currentEpoch = this.subscriptionEpochs.get(sessionId)?.get(ws)?.get(ownerId);
+    return currentEpoch === (identity.subscriptionEpoch ?? 0);
+  }
+
   subscribe(sessionId: string, ws: WebSocket, identity: SessionSubscriberIdentity = {}): SessionSnapshot | null {
     const ownerId = identity.handlerId || "connection";
     let sockets = this.subscriptionOwners.get(sessionId);
@@ -599,11 +639,8 @@ class SessionManager {
       owners = new Map();
       sockets.set(ws, owners);
     }
-    const previous = owners.get(ownerId);
-    const previousEpoch = previous?.subscriptionEpoch ?? -1;
-    const incomingEpoch = identity.subscriptionEpoch ?? 0;
-    if (incomingEpoch < previousEpoch) {
-      log.debug(`SESSION:SUBSCRIBE_STALE_EPOCH session=${sessionId} owner=${ownerId} incoming=${incomingEpoch} current=${previousEpoch}`);
+    if (!this.isSubscriptionMutationCurrent(sessionId, ws, identity)) {
+      log.debug(`SESSION:SUBSCRIBE_STALE_EPOCH session=${sessionId} owner=${ownerId}`);
       return null;
     }
     const alreadySubscribed = owners.has(ownerId);
@@ -635,10 +672,8 @@ class SessionManager {
     const ownerId = identity.handlerId || "connection";
     const sockets = this.subscriptionOwners.get(sessionId);
     const owners = sockets?.get(ws);
-    const currentEpoch = owners?.get(ownerId)?.subscriptionEpoch ?? -1;
-    const incomingEpoch = identity.subscriptionEpoch ?? 0;
-    if (incomingEpoch < currentEpoch) {
-      log.debug(`SESSION:UNSUBSCRIBE_STALE_EPOCH session=${sessionId} owner=${ownerId} incoming=${incomingEpoch} current=${currentEpoch}`);
+    if (!this.isSubscriptionMutationCurrent(sessionId, ws, identity)) {
+      log.debug(`SESSION:UNSUBSCRIBE_STALE_EPOCH session=${sessionId} owner=${ownerId}`);
       return true;
     }
     owners?.delete(ownerId);
@@ -658,6 +693,10 @@ class SessionManager {
 
   unsubscribeAll(ws: WebSocket): void {
     let removed = 0;
+    for (const [sessionId, sockets] of this.subscriptionEpochs) {
+      sockets.delete(ws);
+      if (sockets.size === 0) this.subscriptionEpochs.delete(sessionId);
+    }
     for (const [sessionId, sockets] of this.subscriptionOwners) {
       if (sockets.delete(ws)) removed++;
       if (sockets.size === 0) this.subscriptionOwners.delete(sessionId);
