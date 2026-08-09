@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "scopeRoots": ["client", "mobile"],
+  "entries": [
+    {
+      "id": "client-composition",
+      "status": "reviewed",
+      "paths": ["client/src/App.tsx", "client/src/main.tsx"],
+      "owner": "Core Client Shell",
+      "principles": ["Canonical Ownership", "Route and Mod Composition", "Accessibility", "Graceful Recovery"],
+      "evidence": "Reviewed the web bootstrap and route composition roots. App owns authentication/provider ordering, route-local recovery, stable composed-route IDs, and independent named-permission gates; Mod installation never grants server authority.",
+      "reviewTrigger": "Web bootstrap, provider ordering, authentication shell, route registration, or product-composition changes"
+    },
+    {
+      "id": "client-components",
+      "status": "reviewed",
+      "prefixes": ["client/src/components/"],
+      "owner": "Core Client and Product Surfaces",
+      "principles": ["Component Focus", "Hierarchy", "Semantic Tokens", "CTA Discipline", "Accessibility", "375px Behavior"],
+      "evidence": "Reviewed shared primitives, domain components, transcript/voice ownership, hierarchy rows, modal surfaces, actions, responsive classes, and accessible control semantics under client AGENTS and DESIGN. Specialized media/render components remain bounded protocol owners rather than parallel app transport.",
+      "reviewTrigger": "Shared primitive, Session/voice projection, hierarchy, modal, responsive, or component action changes"
+    },
+    {
+      "id": "client-contexts",
+      "status": "reviewed",
+      "prefixes": ["client/src/contexts/"],
+      "owner": "Core Client Context",
+      "principles": ["Single Source of Truth", "Component Focus", "Safe Mutations"],
+      "evidence": "Reviewed client context providers as local composition/projection boundaries; persistent server state remains React Query/server owned and task modal state remains bounded to its owning provider.",
+      "reviewTrigger": "Client context, provider ownership, or persistent-state responsibility changes"
+    },
+    {
+      "id": "client-log-realtime-cure",
+      "status": "cured",
+      "paths": ["client/src/hooks/use-log-errors.ts"],
+      "owner": "Core Client Observability",
+      "principles": ["Single Transport", "createLogger", "Replay and Recovery", "Bounded Operations"],
+      "evidence": "Removed the independent raw /ws socket, swallowed parse failures, and bespoke reconnect loop. Error attention now projects only from the canonical durable unseen-error query; the permission-gated Logs page retains the separate high-volume diagnostic protocol.",
+      "reviewTrigger": "Log streaming, generic events, shared WebSocket, or unseen-error state changes"
+    },
+    {
+      "id": "client-hooks",
+      "status": "reviewed",
+      "prefixes": ["client/src/hooks/"],
+      "excludePaths": ["client/src/hooks/use-log-errors.ts"],
+      "owner": "Core Client State and Transport Projection",
+      "principles": ["React Query Authority", "Transport Ownership", "Replay and Recovery", "Safe Mutations", "Structured Logging"],
+      "evidence": "Reviewed hooks against React Query server-state ownership, synchronous mutation admission, one shared WebSocket, coalesced Session recovery, native meeting/voice protocol ownership, bounded polling, and structured createLogger diagnostics.",
+      "reviewTrigger": "Client query, mutation, WebSocket/SSE, voice, recovery, or browser lifecycle changes"
+    },
+    {
+      "id": "client-lib",
+      "status": "reviewed",
+      "prefixes": ["client/src/lib/"],
+      "owner": "Core Client Infrastructure",
+      "principles": ["Canonical Transport", "createLogger", "Bounded Telemetry", "References", "Replay Safety", "Peer-file Shape"],
+      "evidence": "Reviewed API/query, shared socket, logging, navigation telemetry, reference registry/search, startup/version recovery, and voice transcript pure-state boundaries. Console sinks remain encapsulated only inside the canonical logger implementation.",
+      "reviewTrigger": "Client transport, logger, telemetry, reference, cache, or pure-state boundary changes"
+    },
+    {
+      "id": "client-pages",
+      "status": "reviewed",
+      "prefixes": ["client/src/pages/"],
+      "owner": "Web Product Surfaces",
+      "principles": ["Canonical Ownership", "Hierarchy", "Semantic Tokens", "CTA Discipline", "Accessibility", "375px Behavior", "Graceful Recovery"],
+      "evidence": "Reviewed route surfaces by coherent domain families for composition and permission projection, canonical API/provider boundaries, recoverable query states, hierarchy-first structure, semantic status/action treatments, mobile-first stacking, and accessible controls. Existing specialized visualizer/glasses sockets and SSE are capability-scoped standalone protocols, not duplicate app-shell state.",
+      "reviewTrigger": "Route surface, product hierarchy, primary action, responsive behavior, accessibility, or specialized protocol changes"
+    },
+    {
+      "id": "client-styles-contracts",
+      "status": "reviewed",
+      "paths": ["client/src/index.css", "client/src/vite-env.d.ts"],
+      "owner": "Core Client Design Foundation",
+      "principles": ["Semantic Tokens", "Responsive Foundation", "Explicit Contracts"],
+      "evidence": "Reviewed global token mappings, responsive/base browser behavior, and Vite environment declarations against DESIGN and client contracts; product surfaces consume semantic tokens rather than creating a second theme authority.",
+      "reviewTrigger": "Design tokens, global CSS, browser foundation, or Vite environment contract changes"
+    },
+    {
+      "id": "client-audio-integrations",
+      "status": "reviewed",
+      "prefixes": ["client/integrations/"],
+      "owner": "Voice Client Integration",
+      "principles": ["Canonical Provider Boundary", "Bounded Media", "Component Focus", "Recovery"],
+      "evidence": "Reviewed browser audio integration adapters as bounded voice capture/playback utilities beneath provider-owned lifecycle; they do not own authentication, Session persistence, or route composition.",
+      "reviewTrigger": "Browser audio capture, playback worklet, provider SDK, or voice lifecycle changes"
+    },
+    {
+      "id": "client-static-authored",
+      "status": "reviewed",
+      "directDirectory": "client",
+      "owner": "Core Client Build",
+      "principles": ["Bootstrap Security", "Semantic Theme", "Offline Recovery", "Peer-file Shape"],
+      "evidence": "Reviewed client AGENTS, HTML bootstrap, manifest, and other direct authored build files for bounded bootstrap behavior, theme metadata, and alignment with the Vite composition root.",
+      "reviewTrigger": "Client build entry, HTML bootstrap, PWA metadata, or subtree guidance changes"
+    },
+    {
+      "id": "client-public-authored",
+      "status": "reviewed",
+      "prefixes": ["client/public/"],
+      "excludePaths": ["client/public/voice/audioConcatProcessor.worklet.js", "client/public/voice/libsamplerate.worklet.js"],
+      "owner": "Core Client Static Assets",
+      "principles": ["Offline Recovery", "Bounded Media", "Supply Chain"],
+      "evidence": "Reviewed authored service worker, manifest assets, brand asset, and local meeting PCM worklet as static runtime inputs with no independent authority or persistent user state.",
+      "reviewTrigger": "Service worker, static asset, manifest, or authored worklet changes"
+    },
+    {
+      "id": "client-vendored-worklets",
+      "status": "exempted",
+      "paths": ["client/public/voice/audioConcatProcessor.worklet.js", "client/public/voice/libsamplerate.worklet.js"],
+      "owner": "Voice Platform",
+      "principles": ["Vendored Provenance", "Supply Chain", "Bounded Media"],
+      "evidence": "Exceptional vendored files exactly match repository-compliance provenance for pinned @elevenlabs/client worklets; replacement and local patch review remain vendor-version triggered.",
+      "reviewTrigger": "ElevenLabs client version, browser audio pipeline, or documented local patch changes"
+    },
+    {
+      "id": "mobile-composition-screens",
+      "status": "reviewed",
+      "prefixes": ["mobile/app/"],
+      "owner": "Mobile Core Shell",
+      "principles": ["Canonical Composition", "Cookie Authentication", "WebView Origin", "Accessibility", "375px Behavior"],
+      "evidence": "Reviewed Expo Router composition and screens. Root layout owns providers/navigation, same-origin WebViews preserve the shared cookie authority, and native screens project provider state without opening duplicate voice/session stores.",
+      "reviewTrigger": "Expo routing, provider shell, WebView, authentication, or screen behavior changes"
+    },
+    {
+      "id": "mobile-components",
+      "status": "reviewed",
+      "prefixes": ["mobile/src/components/"],
+      "owner": "Mobile Product Surfaces",
+      "principles": ["Component Focus", "Semantic Tokens", "44pt Accessibility", "Non-color State", "375px Behavior"],
+      "evidence": "Reviewed native cards, surface renderer, chat sheet, diagnostics, and controls against role-named mobile tokens, 44pt targets, accessibility labels/roles, explicit status text, and narrow-screen layout.",
+      "reviewTrigger": "Native product component, touch target, accessibility, token, or responsive layout changes"
+    },
+    {
+      "id": "mobile-backend-config",
+      "status": "reviewed",
+      "paths": ["mobile/src/config.ts"],
+      "owner": "Mobile Backend Configuration",
+      "principles": ["Single Source of Truth", "HTTPS Normalization", "Bounded Non-secret Configuration"],
+      "evidence": "Reviewed the sole mobile backend-selection authority: Expo public configuration and bounded custom selection normalize to HTTPS, permit localhost HTTP only in development, and expose no credential or parallel authentication state.",
+      "reviewTrigger": "Mobile backend selection, Expo public URL, custom server, or URL normalization changes"
+    },
+    {
+      "id": "mobile-contexts",
+      "status": "reviewed",
+      "prefixes": ["mobile/src/contexts/"],
+      "owner": "Mobile Session Providers",
+      "principles": ["Single Transport Owner", "Cookie Authentication", "Replay and Recovery", "Bounded Configuration"],
+      "evidence": "Reviewed auth, voice, glasses-session, and interface-mode providers. Browser cookies remain sole auth state; AsyncStorage contains only bounded non-secret interface preference; voice and glasses lifecycles each have one provider owner.",
+      "reviewTrigger": "Mobile auth, voice, glasses session, interface preference, or provider lifecycle changes"
+    },
+    {
+      "id": "mobile-hooks",
+      "status": "reviewed",
+      "prefixes": ["mobile/src/hooks/"],
+      "owner": "Mobile Projection and Audio Routing",
+      "principles": ["Single-owner Polling", "Bounded Cache", "Recovery", "Structured Logging"],
+      "evidence": "Reviewed surface and audio-routing hooks. Server state recovers from canonical endpoints; cached projection is bounded/non-secret; foreground and interval refresh share one owner and logs use the mobile logger.",
+      "reviewTrigger": "Mobile polling, projection cache, AppState recovery, or audio routing changes"
+    },
+    {
+      "id": "mobile-lib",
+      "status": "reviewed",
+      "prefixes": ["mobile/src/lib/"],
+      "owner": "Mobile Core Infrastructure",
+      "principles": ["Canonical Transport", "Deadlines", "No Ambiguous Mutation Retry", "Bounded Telemetry", "Structured Logging", "Bridge Security"],
+      "evidence": "Reviewed canonical requestServer transport, API adapters, startup telemetry, logger, invocation/voice bridges, Sentry, thinking audio, and WebView markers/security. Requests resolve Config at call time, compose cancellation with deadlines, and do not replay ambiguous mutations.",
+      "reviewTrigger": "Mobile network, logger, telemetry, native-web bridge, Sentry, or invocation changes"
+    },
+    {
+      "id": "mobile-native-service-theme",
+      "status": "reviewed",
+      "prefixes": ["mobile/src/native/", "mobile/src/services/", "mobile/src/theme/"],
+      "owner": "Mobile Native Integration",
+      "principles": ["Canonical Native Bridge", "Least Privilege", "Semantic Tokens", "Bounded Polling", "Safe Mutation"],
+      "evidence": "Reviewed glasses capabilities, DAT bridge service, and semantic React Native token shim. Registered bridge methods remain capability-shaped; remote debug requires independent server build:write; capture mutations use canonical transport and server reconciliation.",
+      "reviewTrigger": "DAT capability, remote command, capture upload, or mobile token changes"
+    },
+    {
+      "id": "mobile-runtime-shims",
+      "status": "reviewed",
+      "prefixes": ["mobile/src/polyfills/", "mobile/src/stubs/"],
+      "owner": "Mobile Runtime Compatibility",
+      "principles": ["Minimum Viable Protocol", "Peer-file Shape", "Dependency Boundary"],
+      "evidence": "Reviewed narrow runtime polyfills and Expo update stub as explicit SDK compatibility seams loaded by the owning mobile composition/provider paths; no persistent state or authority is duplicated.",
+      "reviewTrigger": "React Native, Expo, ElevenLabs SDK, or runtime compatibility changes"
+    },
+    {
+      "id": "mobile-native-module",
+      "status": "reviewed",
+      "prefixes": ["mobile/modules/"],
+      "owner": "Agent Native Module",
+      "principles": ["Autolink Ownership", "Native Bridge Security", "Dead Bridge Proof", "Peer-file Shape"],
+      "evidence": "Reviewed Expo module config, podspec, Swift bridge, and App Intents reachability against autolinking, plugin registration, deep links, event listeners, and JS/service consumers. Retained methods have a registered native or callback path.",
+      "reviewTrigger": "Native method, event, App Intent, podspec, autolinking, or deep-link changes"
+    },
+    {
+      "id": "mobile-plugins",
+      "status": "reviewed",
+      "prefixes": ["mobile/plugins/"],
+      "owner": "Mobile Build Plugins",
+      "principles": ["Deterministic Native Configuration", "Least Privilege", "Peer-file Shape"],
+      "evidence": "Reviewed Meta DAT and Agent App Intents Expo plugins as deterministic native build configuration registered only through app.config.js.",
+      "reviewTrigger": "Expo plugin, entitlement, native build phase, or provider SDK changes"
+    },
+    {
+      "id": "mobile-root-authored",
+      "status": "reviewed",
+      "directDirectory": "mobile",
+      "excludePaths": ["mobile/package-lock.json"],
+      "owner": "Mobile Build and Documentation",
+      "principles": ["Canonical Build Configuration", "Backend Authority", "Supply Chain", "Documentation Truth"],
+      "evidence": "Reviewed direct mobile authored configuration, package manifest, Metro shared-contract bridge, Expo/EAS settings, entrypoint, ignores, and architecture/build documentation against the mobile composition and backend authority.",
+      "reviewTrigger": "Mobile package, Expo/EAS, Metro, Babel, entrypoint, build profile, or documentation changes"
+    },
+    {
+      "id": "mobile-assets",
+      "status": "reviewed",
+      "prefixes": ["mobile/assets/"],
+      "owner": "Mobile Brand Assets",
+      "principles": ["Static Asset Provenance", "No Embedded Secrets"],
+      "evidence": "Reviewed the packaged application icon as a static non-secret build asset with no executable bridge or user state.",
+      "reviewTrigger": "Packaged mobile asset or branding change"
+    },
+    {
+      "id": "mobile-generated-lockfile",
+      "status": "exempted",
+      "paths": ["mobile/package-lock.json"],
+      "owner": "Supply Chain",
+      "principles": ["Generated Provenance", "Exact Dependencies", "No Hand Editing"],
+      "evidence": "Exceptional generated lockfile exactly matches repository-compliance provenance and remains mutable only through the trusted dependency boundary.",
+      "reviewTrigger": "Mobile manifest, lockfile format, package manager, or dependency graph changes"
+    }
+  ]
+}
