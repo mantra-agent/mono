@@ -83,6 +83,8 @@ export interface PipelineCockpitProps {
   statusDetail?: ReactNode;
   primaryAction?: PipelineAction;
   secondaryActions?: ReactNode;
+  /** Native ProfileTreeRow overflow items for tree appearance. */
+  menuContent?: ReactNode;
   primaryActionPosition?: "left" | "right";
   summary?: PipelineSummaryItem[];
   steps?: PipelineStep[];
@@ -260,18 +262,32 @@ function PipelineStepCard({ step }: { step: PipelineStep }) {
   );
 }
 
-function PipelineActionButton({ action }: { action: PipelineAction }) {
+function PipelineActionButton({
+  action,
+  density = "default",
+}: {
+  action: PipelineAction;
+  density?: "default" | "tree";
+}) {
   const icon = action.pending ? (
     <Loader2 className="h-3.5 w-3.5 animate-spin" />
   ) : (
     action.icon
   );
-  const size = action.showLabel ? "sm" : "icon";
-  const className = action.showLabel ? "h-7 gap-1.5 px-2.5" : "h-7 w-7";
+  const showLabel = action.showLabel && density !== "tree";
+  const size = showLabel ? "sm" : "icon";
+  const className =
+    density === "tree"
+      ? "h-6 min-h-6 w-6 min-w-6 rounded-md text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+      : showLabel
+        ? "h-7 gap-1.5 px-2.5"
+        : "h-7 w-7";
+  const variant =
+    density === "tree" ? "ghost" : action.variant ?? (action.href ? "outline" : "default");
   const content = (
     <>
       {icon}
-      <span className={action.showLabel ? undefined : "sr-only"}>{action.label}</span>
+      <span className={showLabel ? undefined : "sr-only"}>{action.label}</span>
     </>
   );
 
@@ -280,7 +296,7 @@ function PipelineActionButton({ action }: { action: PipelineAction }) {
       <Button
         asChild
         size={size}
-        variant={action.variant ?? "outline"}
+        variant={variant}
         disabled={action.disabled}
         data-testid={action.testId}
         className={className}
@@ -297,7 +313,7 @@ function PipelineActionButton({ action }: { action: PipelineAction }) {
   return (
     <Button
       size={size}
-      variant={action.variant ?? "default"}
+      variant={variant}
       onClick={action.onClick}
       disabled={action.disabled || action.pending}
       data-testid={action.testId}
@@ -336,6 +352,7 @@ export function PipelineCockpit({
   statusDetail,
   primaryAction,
   secondaryActions,
+  menuContent,
   primaryActionPosition = "left",
   summary = [],
   steps = [],
@@ -350,15 +367,70 @@ export function PipelineCockpit({
   if (appearance === "tree") {
     return (
       <div className={cn("min-w-0", className)} data-testid={testId}>
-        <ProfileTreeRow label={title} icon={<StatusIcon status={status} />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" defaultOpen={status === "running" || status === "failed" || status === "blocked"} actionContent={primaryAction ? <PipelineActionButton action={primaryAction} /> : secondaryActions} expandedContentClassName="[content-visibility:auto] [contain-intrinsic-size:auto_320px]" expandedContent={hasExpandableContent ? (
-          <div className="space-y-1 border-l border-border/30 pl-2">
-            {statusDetail ? <div className="px-2 py-1.5 text-xs text-muted-foreground">{statusDetail}</div> : null}
-            {summary.map((item) => <ProfileTreeRow key={item.label} label={item.label} hasValue showEmpty mobileLayout="inline" valueLayout="compact" testId={item.testId}><span className="truncate">{item.value}</span></ProfileTreeRow>)}
-            {emptyState ? <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyState.title}</div> : null}
-            {steps.map((step) => <ProfileTreeRow key={step.id} label={step.label} icon={<StepIcon step={step} />} hasValue={Boolean(step.meta || step.description)} showEmpty mobileLayout="inline" valueLayout="compact" defaultOpen={step.status === "running" || step.status === "failed"} expandedContentClassName="[content-visibility:auto] [contain-intrinsic-size:auto_280px]" expandedContent={step.detail ? <div className="min-w-0">{step.detail}</div> : undefined} testId={step.testId ?? `pipeline-step-${step.id}`}><span className={cn("truncate", step.status === "failed" && "text-error")}>{step.meta || step.description}</span></ProfileTreeRow>)}
-            {primaryAction && secondaryActions ? <div className="flex justify-end px-2 py-1.5">{secondaryActions}</div> : null}
-          </div>
-        ) : undefined}><span className={statusClasses[status].icon}>{statusCopy[status]}</span></ProfileTreeRow>
+        <ProfileTreeRow
+          label={title}
+          icon={<StatusIcon status={status} />}
+          hasValue
+          showEmpty
+          mobileLayout="inline"
+          valueLayout="compact"
+          defaultOpen={status === "running" || status === "failed" || status === "blocked"}
+          actionContent={
+            primaryAction ? (
+              <PipelineActionButton action={primaryAction} density="tree" />
+            ) : undefined
+          }
+          menuContent={menuContent}
+          expandedContentClassName="[content-visibility:auto] [contain-intrinsic-size:auto_320px]"
+          expandedContent={
+            hasExpandableContent ? (
+              <div className="space-y-1 border-l border-border/30 pl-2">
+                {statusDetail ? (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">{statusDetail}</div>
+                ) : null}
+                {summary.map((item) => (
+                  <ProfileTreeRow
+                    key={item.label}
+                    label={item.label}
+                    hasValue
+                    showEmpty
+                    mobileLayout="inline"
+                    valueLayout="compact"
+                    testId={item.testId}
+                  >
+                    <span className="truncate">{item.value}</span>
+                  </ProfileTreeRow>
+                ))}
+                {emptyState ? (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyState.title}</div>
+                ) : null}
+                {steps.map((step) => (
+                  <ProfileTreeRow
+                    key={step.id}
+                    label={step.label}
+                    icon={<StepIcon step={step} />}
+                    hasValue={Boolean(step.meta || step.description)}
+                    showEmpty
+                    mobileLayout="inline"
+                    valueLayout="compact"
+                    defaultOpen={step.status === "running" || step.status === "failed"}
+                    expandedContentClassName="[content-visibility:auto] [contain-intrinsic-size:auto_280px]"
+                    expandedContent={
+                      step.detail ? <div className="min-w-0">{step.detail}</div> : undefined
+                    }
+                    testId={step.testId ?? `pipeline-step-${step.id}`}
+                  >
+                    <span className={cn("truncate", step.status === "failed" && "text-error")}>
+                      {step.meta || step.description}
+                    </span>
+                  </ProfileTreeRow>
+                ))}
+              </div>
+            ) : undefined
+          }
+        >
+          <span className={statusClasses[status].icon}>{statusCopy[status]}</span>
+        </ProfileTreeRow>
       </div>
     );
   }
