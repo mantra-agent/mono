@@ -1079,9 +1079,9 @@ export const ADVISORY_LOCK_NS = {
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";
 
-// Stable 32-bit FNV-1a hash, returned as a signed int32 (so it always fits
-// in Postgres int4). Postgres `pg_advisory_xact_lock(int4,int4)` requires
-// int4 args and silently truncates >32-bit numbers, so we keep this exact.
+// Stable 32-bit FNV-1a hash, returned as a signed int32. Advisory locks use a
+// single bigint assembled from the namespace and key halves so Drizzle emits
+// one ordinary parameter instead of its broken two-number SQL interpolation.
 export function fnv1a32(s: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -1097,15 +1097,23 @@ export function libraryParentLockKey(parentId: string | null): number {
 
 export type DrizzleTx = DrizzleTransaction;
 
+function advisoryLockKey(namespace: number, key: number): string {
+  const combined = (BigInt(namespace >>> 0) << 32n) | BigInt(key >>> 0);
+  return BigInt.asIntN(64, combined).toString();
+}
+
+async function acquireAdvisoryLock(tx: DrizzleTx, namespace: number, key: number): Promise<void> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(${advisoryLockKey(namespace, key)}::bigint)`,
+  );
+}
+
 export async function acquireAdvisoryTransactionLock(
   tx: DrizzleTx,
   namespace: number,
   logicalKey: string,
 ): Promise<void> {
-  const key = fnv1a32(logicalKey);
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(CAST(${namespace} AS int4), CAST(${key} AS int4))`,
-  );
+  await acquireAdvisoryLock(tx, namespace, fnv1a32(logicalKey));
 }
 
 // Acquire pg advisory locks (transaction-scoped) for the given parent ids.
@@ -1120,12 +1128,8 @@ export async function acquireLibraryParentLocks(
   const uniq = Array.from(
     new Set(parentIds.map((p) => (p === null ? LIBRARY_ROOT_SENTINEL : p))),
   ).sort();
-  const ns = ADVISORY_LOCK_NS.LIBRARY_PARENT;
   for (const k of uniq) {
-    const key = fnv1a32(k);
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(CAST(${ns} AS int4), CAST(${key} AS int4))`,
-    );
+    await acquireAdvisoryLock(tx, ADVISORY_LOCK_NS.LIBRARY_PARENT, fnv1a32(k));
   }
 }
 
