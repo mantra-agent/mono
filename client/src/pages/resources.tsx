@@ -231,12 +231,31 @@ function slowQueryStatus(slowQueries: SystemResourcesData["slowQueries"]): Statu
   return "ok";
 }
 
+function isChatLatencyMetric(kind: string): boolean {
+  return kind === "chat_latency";
+}
+
+function chatExperienceStatus(frontend: BrowserTelemetrySummary | null): Status {
+  if (!frontend) return "unknown";
+  const chatMetrics = frontend.metrics.filter(metric => isChatLatencyMetric(metric.kind));
+  if (chatMetrics.length === 0) return "unknown";
+  // Health = ordinary experience (mean of best 95%) vs target — not the tail.
+  if (chatMetrics.some(metric => metric.upperTrimmedMean95 !== null && metric.upperTrimmedMean95 > frontendMetricBudget(frontend, metric.kind, metric.name))) {
+    return "amber";
+  }
+  return "ok";
+}
+
 function frontendExperienceStatus(frontend: BrowserTelemetrySummary | null): Status {
   if (!frontend || frontend.sampleCount === 0) return "unknown";
   if (frontend.sampleHealth !== "healthy") return "amber";
-  // Health = ordinary experience (mean of best 95%) vs target — not the tail.
-  if (frontend.metrics.some(metric => metric.upperTrimmedMean95 !== null && metric.upperTrimmedMean95 > frontendMetricBudget(frontend, metric.kind, metric.name))) return "amber";
-  if (frontend.navigationTraces.upperTrimmedMean95Ms !== null && frontend.navigationTraces.upperTrimmedMean95Ms > frontend.budgets.navigation.p95Ms) return "amber";
+  // Chat owns its own section; Frontend health is browser chrome only.
+  if (frontend.metrics.some(metric => !isChatLatencyMetric(metric.kind) && metric.upperTrimmedMean95 !== null && metric.upperTrimmedMean95 > frontendMetricBudget(frontend, metric.kind, metric.name))) {
+    return "amber";
+  }
+  if (frontend.navigationTraces.upperTrimmedMean95Ms !== null && frontend.navigationTraces.upperTrimmedMean95Ms > frontend.budgets.navigation.p95Ms) {
+    return "amber";
+  }
   return "ok";
 }
 
@@ -246,12 +265,14 @@ function frontendMetricBudget(frontend: BrowserTelemetrySummary, kind: string, n
     const lower = name.toLowerCase();
     if (lower.includes("cls")) return frontend.budgets.webVital.clsGoodScore;
     if (lower.includes("inp")) return frontend.budgets.webVital.inpGoodMs;
+    if (lower.includes("fid")) return frontend.budgets.webVital.inpGoodMs;
     return frontend.budgets.webVital.lcpGoodMs;
   }
   if (kind === "chat_latency") {
     if (name.includes("ack")) return frontend.budgets.chatLatency.submitToAckP95Ms;
-    if (name.includes("first")) return frontend.budgets.chatLatency.submitToFirstTokenP95Ms;
-    return frontend.budgets.chatLatency.submitToCompleteP95Ms;
+    if (name.includes("complete")) return frontend.budgets.chatLatency.submitToCompleteP95Ms;
+    // first_progress and first_token share the first-text target until a dedicated progress budget exists
+    return frontend.budgets.chatLatency.submitToFirstTokenP95Ms;
   }
   if (kind === "transport_gap") return frontend.budgets.transportGapP95Ms;
   if (kind === "long_task") return frontend.budgets.longTaskP95Ms;
@@ -269,13 +290,8 @@ function againstTarget(value: number | null, target: number | null | undefined):
 }
 
 function contextHealthStatus(context: ContextHealthSummary | null): Status {
+  // Context is diagnostic-only: presence of data, not provider latency, owns section color.
   if (!context || context.callCount === 0) return "unknown";
-  // Ordinary experience (best 95% mean) for first progress, else first text.
-  const sampleCount = context.ttfpSampleCount || context.ttftSampleCount;
-  if (sampleCount === 0) return "unknown";
-  const ordinary = context.upperTrimmedMean95TtfpMs ?? context.upperTrimmedMean95TtftMs;
-  const budget = context.budgets.providerTtfpP95Ms ?? context.budgets.providerTtftP95Ms;
-  if (ordinary !== null && ordinary > budget) return "amber";
   return "ok";
 }
 
@@ -323,8 +339,45 @@ function sharedWsStatus(diagnostics: SharedWSDiagnostics): Status {
   return "ok";
 }
 
-function formatMetricName(kind: string, name: string): string {
-  return `${kind.replace(/_/g, " ")} · ${name.replace(/_/g, " ")}`;
+/** Row title = measurement only. Section owns the domain. */
+function formatMetricTitle(kind: string, name: string): string {
+  const key = `${kind}:${name}`.toLowerCase();
+  const titles: Record<string, string> = {
+    "chat_latency:submit_to_ack": "Ack",
+    "chat_latency:submit_to_first_progress": "First progress",
+    "chat_latency:submit_to_first_token": "First text",
+    "chat_latency:submit_to_complete": "Complete",
+    "frame_contention:slow_frame": "Slow frame",
+    "long_task:main_thread_blocked": "Long task",
+    "web_vital:lcp": "LCP",
+    "web_vital:fid": "FID",
+    "web_vital:cls": "CLS",
+    "web_vital:inp": "INP",
+    "transport_gap:reconnect": "Reconnect",
+    "event_loop_responsiveness:timer_lag": "Timer lag",
+    "navigation:spa_navigation": "Navigation",
+    "graph:first_interactive": "First interactive",
+    "graph:init_task": "Init task",
+    "graph:layout_settled": "Layout settled",
+  };
+  if (titles[key]) return titles[key];
+  // Fallback: measurement name only — never re-prefix the kind (section already names the domain).
+  return name.replace(/_/g, " ");
+}
+
+const CHAT_METRIC_ORDER = [
+  "submit_to_ack",
+  "submit_to_first_progress",
+  "submit_to_first_token",
+  "submit_to_complete",
+] as const;
+
+function sortChatMetrics<T extends { name: string }>(metrics: T[]): T[] {
+  return [...metrics].sort((a, b) => {
+    const ai = CHAT_METRIC_ORDER.indexOf(a.name as (typeof CHAT_METRIC_ORDER)[number]);
+    const bi = CHAT_METRIC_ORDER.indexOf(b.name as (typeof CHAT_METRIC_ORDER)[number]);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+  });
 }
 
 function formatNavigationDiagnosis(value: string): string {
@@ -644,8 +697,15 @@ function ResourcesView({
   const transportStatus = realtimeStatus(r.realtime);
   const browserStatus = sharedWsStatus(clientWs);
   const realtimeBranchStatus = highestStatus([transportStatus, browserStatus]);
+  const chatStatus = chatExperienceStatus(frontendExperience);
   const frontendStatus = frontendExperienceStatus(frontendExperience);
   const contextStatus = contextHealthStatus(contextHealth);
+  const chatMetrics = frontendExperience
+    ? sortChatMetrics(frontendExperience.metrics.filter(metric => isChatLatencyMetric(metric.kind)))
+    : [];
+  const frontendMetrics = frontendExperience
+    ? frontendExperience.metrics.filter(metric => !isChatLatencyMetric(metric.kind)).slice(0, 8)
+    : [];
   const reliabilityStatus: Status = reliabilityError
     ? "red"
     : reliability
@@ -767,14 +827,14 @@ function ResourcesView({
                     testId="tile-db-pool"
                   />
                   <MetricRow
-                    label="In-flight queries"
+                    label="In-flight"
                     value={String(r.inFlight.total)}
                     status={inFlightStatus(r.inFlight)}
                     detail={<DetailList items={[`High threshold: ${r.inFlight.highThreshold}`, ...(inFlightSubsystems.length ? inFlightSubsystems : ["No active query subsystems."])]} />}
                     testId="tile-in-flight"
                   />
                   <MetricRow
-                    label="Admission queue"
+                    label="Queue"
                     value={`${r.admission.queueDepth} queued`}
                     status={admissionStatus(r.admission)}
                     detail={(
@@ -790,7 +850,7 @@ function ResourcesView({
                     testId="tile-admission"
                   />
                   <MetricRow
-                    label="Executor runs"
+                    label="Runs"
                     value={String(r.executor.activeRuns)}
                     status={executorStatus(r.executor)}
                     detail={(
@@ -824,7 +884,7 @@ function ResourcesView({
                     testId="tile-slow-queries"
                   />
                   <MetricRow
-                    label="Long-running queries"
+                    label="Long queries"
                     value={String(r.longRunningQueries.rows.length)}
                     status={longRunningStatus(r.longRunningQueries)}
                     detail={(
@@ -841,14 +901,14 @@ function ResourcesView({
                     testId="card-long-running-queries"
                   />
                   <MetricRow
-                    label="Zombie runs"
+                    label="Zombies"
                     value={String(r.zombies.active)}
                     status={zombieStatus(r.zombies)}
                     detail={<DetailText>Peak since boot: {r.zombies.peak}</DetailText>}
                     testId="tile-zombies"
                   />
                   <MetricRow
-                    label="Books vs reality"
+                    label="Drift"
                     value={String(r.divergence.value)}
                     status={divergenceStatus(r.divergence)}
                     detail={<DetailText>{r.divergence.detail}</DetailText>}
@@ -856,6 +916,46 @@ function ResourcesView({
                   />
           </PerformanceSection>
 
+          <PerformanceSection
+            label="Chat"
+            status={chatStatus}
+            testId="section-chat-latency"
+          >
+                  {frontendExperience && chatMetrics.length > 0 ? (
+                    chatMetrics.map(metric => {
+                      const budget = frontendMetricBudget(frontendExperience, metric.kind, metric.name);
+                      return (
+                        <MetricRow
+                          key={`${metric.kind}:${metric.name}`}
+                          label={formatMetricTitle(metric.kind, metric.name)}
+                          value={formatFrontendMetricValue(metric.kind, metric.name, metric.upperTrimmedMean95)}
+                          status={againstTarget(metric.upperTrimmedMean95, budget)}
+                          detail={(
+                            <DetailList
+                              items={[
+                                `Ordinary experience (mean of best 95%) vs target ${formatFrontendMetricValue(metric.kind, metric.name, budget)}`,
+                                metric.count < 20
+                                  ? `n=${metric.count} · fewer than 20 samples; no slow samples trimmed`
+                                  : `n=${metric.count} · slowest ${Math.ceil(metric.count * 0.05)} sample(s) excluded`,
+                                `p50 ${formatFrontendMetricValue(metric.kind, metric.name, metric.p50)} · p95 ${formatFrontendMetricValue(metric.kind, metric.name, metric.p95)}`,
+                                `latest ${formatRelative(metric.latestAt ? new Date(metric.latestAt).getTime() : null, now)}`,
+                              ]}
+                            />
+                          )}
+                          testId={`tile-chat-${metric.name}`}
+                        />
+                      );
+                    })
+                  ) : (
+                    <MetricRow
+                      label="Summary"
+                      value="Unavailable"
+                      status="unknown"
+                      detail={<DetailText>No chat latency samples in this window.</DetailText>}
+                      testId="tile-chat-summary"
+                    />
+                  )}
+          </PerformanceSection>
 
           <PerformanceSection
             label="Frontend"
@@ -865,18 +965,18 @@ function ResourcesView({
                   {frontendExperience ? (
                     <>
                       <MetricRow
-                        label="Sample health"
+                        label="Samples"
                         value={`${frontendExperience.sampleHealth} · ${frontendExperience.sampleCount}`}
                         status={frontendExperience.sampleCount === 0 ? "unknown" : frontendExperience.sampleHealth === "healthy" ? "ok" : "amber"}
                         detail={<DetailText>{frontendExperience.windowHours}h window · raw retention {frontendExperience.rawRetentionDays}d · {frontendExperience.hiddenSampleCount} hidden-tab samples filtered where throttling invalidates the metric · same summary used by system.frontend_performance.</DetailText>}
                         testId="tile-frontend-sample-health"
                       />
-                      {frontendExperience.metrics.slice(0, 8).map(metric => {
+                      {frontendMetrics.map(metric => {
                         const budget = frontendMetricBudget(frontendExperience, metric.kind, metric.name);
                         return (
                           <MetricRow
                             key={`${metric.kind}:${metric.name}`}
-                            label={formatMetricName(metric.kind, metric.name)}
+                            label={formatMetricTitle(metric.kind, metric.name)}
                             value={formatFrontendMetricValue(metric.kind, metric.name, metric.upperTrimmedMean95)}
                             status={againstTarget(metric.upperTrimmedMean95, budget)}
                             detail={(
@@ -895,7 +995,7 @@ function ResourcesView({
                         );
                       })}
                       <MetricRow
-                        label="SPA navigation health"
+                        label="Navigation"
                         value={formatFrontendMetricValue("navigation", "spa_navigation", frontendExperience.navigationTraces.upperTrimmedMean95Ms)}
                         status={frontendExperience.navigationTraces.incompleteCount > 0
                           ? "amber"
@@ -913,7 +1013,7 @@ function ResourcesView({
                         testId="tile-navigation-health"
                       />
                       <MetricRow
-                        label="Navigation incidents"
+                        label="Incidents"
                         value={String(frontendExperience.recentNavigationIncidents.length)}
                         status={frontendExperience.recentNavigationIncidents.length ? "amber" : "ok"}
                         detail={(
@@ -926,7 +1026,7 @@ function ResourcesView({
                         testId="tile-navigation-incidents"
                       />
                       <MetricRow
-                        label="Recent degradation history"
+                        label="History"
                         value={String(frontendExperience.recentDegradations.length)}
                         status="ok"
                         detail={(
@@ -936,7 +1036,7 @@ function ResourcesView({
                                 "Informational history only; each metric row colors against its target.",
                                 `Targets · navigation ${formatMs(frontendExperience.budgets.navigation.p95Ms)} · long task ${formatMs(frontendExperience.budgets.longTaskP95Ms)} · frame ${formatMs(frontendExperience.budgets.frameContentionP95Ms)}`,
                                 `Chat · ack ${formatMs(frontendExperience.budgets.chatLatency.submitToAckP95Ms)} · first progress ${formatMs(frontendExperience.budgets.chatLatency.submitToFirstTokenP95Ms)} · complete ${formatMs(frontendExperience.budgets.chatLatency.submitToCompleteP95Ms)}`,
-                                ...frontendExperience.recentDegradations.slice(0, 7).map(item => `${formatMetricName(item.kind, item.name)} · ${formatMs(item.value)}${item.routeKey ? ` · ${item.routeKey}` : ""} · ${formatRelative(new Date(item.occurredAt).getTime(), now)}`),
+                                ...frontendExperience.recentDegradations.slice(0, 7).map(item => `${formatMetricTitle(item.kind, item.name)} · ${formatMs(item.value)}${item.routeKey ? ` · ${item.routeKey}` : ""} · ${formatRelative(new Date(item.occurredAt).getTime(), now)}`),
                               ]
                               : ["No threshold-only frontend degradations in this window."]}
                           />
@@ -946,7 +1046,7 @@ function ResourcesView({
                     </>
                   ) : (
                     <MetricRow
-                      label="Frontend summary"
+                      label="Summary"
                       value="Unavailable"
                       status="unknown"
                       detail={<DetailText>No browser telemetry summary was returned with system resources.</DetailText>}
@@ -971,13 +1071,14 @@ function ResourcesView({
                               `${contextHealth.windowHours}h window · system-wide · row cap ${contextHealth.rowLimit.toLocaleString()}`,
                               `Source: ${contextHealth.measurementContract.source}`,
                               `Same canonical summary used by system.context_health.`,
+                              "Diagnostic only — provider latency does not gate this section.",
                             ]}
                           />
                         )}
                         testId="tile-context-calls"
                       />
                       <MetricRow
-                        label="Mid-turn compaction"
+                        label="Compaction"
                         value={contextHealth.midTurnCompaction.status === "degraded"
                           ? "Degraded"
                           : contextHealth.midTurnCompaction.status === "empty"
@@ -1006,7 +1107,7 @@ function ResourcesView({
                         }
                       />
                       <MetricRow
-                        label="Comparable population"
+                        label="Coverage"
                         value={`${contextHealth.comparableCallCount} in · ${contextHealth.excludedCallCount} out`}
                         status={contextHealth.comparableCallCount > 0 ? "ok" : "unknown"}
                         detail={(
@@ -1023,7 +1124,7 @@ function ResourcesView({
                         testId="tile-context-population"
                       />
                       <MetricRow
-                        label="Provider TTFP"
+                        label="First progress"
                         value={formatMs(contextHealth.upperTrimmedMean95TtfpMs)}
                         status={contextHealth.ttfpSampleCount === 0
                           ? "unknown"
@@ -1034,13 +1135,14 @@ function ResourcesView({
                               "Provider request → first progress (thinking/text/tool)",
                               `Ordinary experience (mean of best 95%) vs target ${formatMs(contextHealth.budgets.providerTtfpP95Ms)}`,
                               `avg ${formatMs(contextHealth.avgTtfpMs)} · p95 ${formatMs(contextHealth.p95TtfpMs)} · n=${contextHealth.ttfpSampleCount}`,
+                              "Supporting diagnostic — does not gate Context section status.",
                             ]}
                           />
                         )}
                         testId="tile-context-ttfp"
                       />
                       <MetricRow
-                        label="Provider TTFT"
+                        label="First text"
                         value={formatMs(contextHealth.upperTrimmedMean95TtftMs)}
                         status={contextHealth.ttftSampleCount === 0
                           ? "unknown"
@@ -1051,13 +1153,14 @@ function ResourcesView({
                               "Provider request → first visible text",
                               `Ordinary experience (mean of best 95%) vs target ${formatMs(contextHealth.budgets.providerTtftP95Ms)}`,
                               `avg ${formatMs(contextHealth.avgTtftMs)} · p95 ${formatMs(contextHealth.p95TtftMs)} · n=${contextHealth.ttftSampleCount}`,
+                              "Supporting diagnostic — does not gate Context section status.",
                             ]}
                           />
                         )}
                         testId="tile-context-ttft"
                       />
                       <MetricRow
-                        label="Context tokens"
+                        label="Tokens"
                         value={formatTokens(contextHealth.medianContextTokens)}
                         detail={(
                           <DetailList
@@ -1073,13 +1176,13 @@ function ResourcesView({
                         testId="tile-context-tokens"
                       />
                       <MetricRow
-                        label="Output tokens"
+                        label="Output"
                         value={formatTokens(contextHealth.avgOutputTokens)}
                         detail={<DetailText>Comparable-row average output tokens · comparable-row average total tokens {formatTokens(contextHealth.avgTotalTokens)}.</DetailText>}
                         testId="tile-context-output"
                       />
                       <MetricRow
-                        label="Call duration"
+                        label="Duration"
                         value={formatMs(contextHealth.upperTrimmedMean95DurationMs)}
                         detail={(
                           <DetailList
@@ -1092,13 +1195,13 @@ function ResourcesView({
                         testId="tile-context-duration"
                       />
                       <MetricRow
-                        label="Model errors"
+                        label="Errors"
                         value={`${formatPercent(contextHealth.errorRate)} · ${contextHealth.errorCount}`}
                         detail={<DetailText>{contextHealth.successCount} successful · {contextHealth.errorCount} errors · {contextHealth.abortedCount} aborted · {contextHealth.partialCount} partial. Informational until a real service error budget is established.</DetailText>}
                         testId="tile-context-errors"
                       />
                       <MetricRow
-                        label="Provider coverage"
+                        label="Providers"
                         value={String(contextHealth.byProvider.length)}
                         detail={(
                           <DetailList
@@ -1113,7 +1216,7 @@ function ResourcesView({
                         testId="tile-context-providers"
                       />
                       <MetricRow
-                        label="Model rows"
+                        label="Models"
                         value={String(contextHealth.byModel.length)}
                         detail={(
                           <DetailList
@@ -1130,7 +1233,7 @@ function ResourcesView({
                     </>
                   ) : (
                     <MetricRow
-                      label="Context summary"
+                      label="Summary"
                       value="Unavailable"
                       status="unknown"
                       detail={<DetailText>No context-health summary was returned.</DetailText>}
