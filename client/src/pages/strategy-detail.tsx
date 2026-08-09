@@ -2341,8 +2341,13 @@ function ChildMoveCard({
   return (
     <Card className="p-3" data-testid={`card-child-move-${move.id}`}>
       <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => onNavigate(move.id)}>
-          <div className="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          className="min-w-0 flex-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onNavigate(move.id)}
+          aria-label={`Open move ${move.title || definition?.title || "Unknown Move"}`}
+        >
+          <span className="flex items-center gap-2 flex-wrap">
             {actor && (
               <span className="text-xs text-muted-foreground shrink-0" data-testid={`text-child-move-actor-${move.id}`}>
                 {actor.name}
@@ -2352,23 +2357,24 @@ function ChildMoveCard({
               {move.title || definition?.title || "Unknown Move"}
             </span>
             {move.source === "simulated" && (
-              <Bot className="h-3 w-3 text-muted-foreground/50" />
+              <Bot className="h-3 w-3 text-muted-foreground/50" aria-hidden="true" />
             )}
-          </div>
+          </span>
           {move.description && (
-            <p className="text-xs text-muted-foreground mt-1" data-testid={`text-child-move-desc-${move.id}`}>{move.description}</p>
+            <span className="mt-1 block text-xs text-muted-foreground" data-testid={`text-child-move-desc-${move.id}`}>{move.description}</span>
           )}
           {move.impact && (
-            <p className="text-xs mt-1" data-testid={`text-child-move-impact-${move.id}`}>
+            <span className="mt-1 block text-xs" data-testid={`text-child-move-impact-${move.id}`}>
               <span className="text-muted-foreground">Impact:</span> {move.impact}
-            </p>
+            </span>
           )}
-        </div>
+        </button>
         <Button
           size="icon"
           variant="ghost"
           onClick={() => deleteMutation.mutate()}
           disabled={deleteMutation.isPending}
+          aria-label={`Delete move ${move.title || definition?.title || "Unknown Move"}`}
           data-testid={`button-delete-child-move-${move.id}`}
         >
           <X className="h-3.5 w-3.5" />

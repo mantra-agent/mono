@@ -234,18 +234,19 @@ function RequirePermission({ permission, children }: { permission: string; child
   return hasPermission(permission) ? <>{children}</> : <ForbiddenPage />;
 }
 
-function RequireBuild({ children }: { children: ReactNode }) {
+function RequireComposedRoute({ routeId, children }: { routeId: string; children: ReactNode }) {
   const { data: composition, isLoading, isError } = useProductComposition();
-  if (isLoading) return <PageFallback label="Checking Build access…" />;
-  if (isError || !composition?.activeMods.some((mod) => mod.key === "build")) return <ForbiddenPage />;
-  return <RequirePermission permission="build:read">{children}</RequirePermission>;
+  if (isLoading) return <PageFallback label="Checking product access…" />;
+  if (isError || !composition?.routes.some((route) => route.id === routeId)) return <ForbiddenPage />;
+  return <>{children}</>;
 }
 
-function RequireWellness({ children }: { children: ReactNode }) {
-  const { data: composition, isLoading, isError } = useProductComposition();
-  if (isLoading) return <PageFallback label="Checking Wellness access…" />;
-  if (isError || !composition?.activeMods.some((mod) => mod.key === "wellness")) return <ForbiddenPage />;
-  return <>{children}</>;
+function RequireBuild({ routeId, children }: { routeId: string; children: ReactNode }) {
+  return (
+    <RequireComposedRoute routeId={routeId}>
+      <RequirePermission permission="build:read">{children}</RequirePermission>
+    </RequireComposedRoute>
+  );
 }
 
 function preserveCurrentQuery(targetPath: string): string {
@@ -309,13 +310,13 @@ function Router() {
         <Route path="/create" component={CreatePage} />
         <Route path="/projects" component={ProjectsPage} />
         <Route path="/work">{() => <Redirect to="/projects" />}</Route>
-        <Route path="/platforms/environments/:id">{() => <RequireBuild><PlatformEnvironmentDetailPage /></RequireBuild>}</Route>
-        <Route path="/platforms">{() => <RequireBuild><PlatformsPage /></RequireBuild>}</Route>
+        <Route path="/platforms/environments/:id">{() => <RequireBuild routeId="build.route.platform-environment-detail"><PlatformEnvironmentDetailPage /></RequireBuild>}</Route>
+        <Route path="/platforms">{() => <RequireBuild routeId="build.route.platforms"><PlatformsPage /></RequireBuild>}</Route>
         <Route path="/memory" component={MemoryPageFull} />
         <Route path="/journal">{() => <Redirect to="/memory?tab=maintenance" />}</Route>
-        <Route path="/build">{() => <RequireBuild><BuildPage /></RequireBuild>}</Route>
-        <Route path="/database">{() => <RequireBuild><DatabasePage /></RequireBuild>}</Route>
-        <Route path="/design">{() => <RequireBuild><DesignPage /></RequireBuild>}</Route>
+        <Route path="/build">{() => <RequireBuild routeId="build.route.build"><BuildPage /></RequireBuild>}</Route>
+        <Route path="/database">{() => <RequireBuild routeId="build.route.database"><DatabasePage /></RequireBuild>}</Route>
+        <Route path="/design">{() => <RequireBuild routeId="build.route.design"><DesignPage /></RequireBuild>}</Route>
         <Route path="/dev">{() => <Redirect to="/build" />}</Route>
         <Route path="/people/:id" component={PeoplePage} />
         <Route path="/people" component={PeoplePage} />
@@ -347,9 +348,9 @@ function Router() {
         <Route path="/integrations" component={IntegrationsPage} />
         <Route path="/mods">{() => <RequirePermission permission="mods:read"><ModsPage /></RequirePermission>}</Route>
         <Route path="/settings">{() => <Redirect to="/integrations" />}</Route>
-        <Route path="/issues/:id">{() => <RequireBuild><IssueDetailPage /></RequireBuild>}</Route>
+        <Route path="/issues/:id">{() => <RequireBuild routeId="build.route.issue-detail"><IssueDetailPage /></RequireBuild>}</Route>
         <Route path="/chat">{() => <Redirect to={preserveCurrentQuery("/session")} />}</Route>
-        <Route path="/wellness">{() => <RequireWellness><WellnessPage /></RequireWellness>}</Route>
+        <Route path="/wellness">{() => <RequireComposedRoute routeId="wellness.route.wellness"><WellnessPage /></RequireComposedRoute>}</Route>
         <Route path="/profile" component={ProfilePage} />
         <Route path="/workflows/:id" component={WorkflowsPage} />
         <Route path="/workflows" component={WorkflowsPage} />
