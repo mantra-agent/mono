@@ -12451,7 +12451,10 @@ ${refs}` : ""),
           log.debug(`[Images] generate complete: ${buffer.length} bytes → ${downloadLink}`);
           // Auto-register in media registry
           try {
-            const { registerMediaItem } = await import("./media/media-storage");
+            const [{ registerMediaItem }, { requireCurrentPrincipal }] = await Promise.all([
+              import("./media/media-storage"),
+              import("./principal-context"),
+            ]);
             await registerMediaItem({
               name: fileName,
               mediaType: "image",
@@ -12462,7 +12465,7 @@ ${refs}` : ""),
               width: parseInt(size.split("x")[0]) || 1024,
               height: parseInt(size.split("x")[1]) || 1024,
               metadata: { prompt: prompt.slice(0, 500) },
-            });
+            }, requireCurrentPrincipal());
           } catch (regErr: any) {
             log.warn(`[Images] media registry write failed: ${regErr.message}`);
           }
@@ -12530,7 +12533,10 @@ ${refs}` : ""),
           log.debug(`[Images] edit complete: ${buffer.length} bytes → ${downloadLink}`);
           // Auto-register in media registry
           try {
-            const { registerMediaItem } = await import("./media/media-storage");
+            const [{ registerMediaItem }, { requireCurrentPrincipal }] = await Promise.all([
+              import("./media/media-storage"),
+              import("./principal-context"),
+            ]);
             await registerMediaItem({
               name: fileName,
               mediaType: "image",
@@ -12539,7 +12545,7 @@ ${refs}` : ""),
               mimeType: contentType,
               fileSize: buffer.length,
               metadata: { prompt: prompt.slice(0, 500) },
-            });
+            }, requireCurrentPrincipal());
           } catch (regErr: any) {
             log.warn(`[Images] media registry write failed: ${regErr.message}`);
           }

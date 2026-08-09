@@ -1,8 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { randomUUID } from "crypto";
-import { storageBackend } from "../object_storage/s3-backend";
-import { vaultObjectKeyFromPrincipal } from "../object_storage/vault-keys";
-import { setObjectAclPolicy } from "../object_storage/objectAcl";
+import { objectStorageService } from "../object_storage/objectStorage";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
 import { registerMediaItem } from "../media/media-storage";
@@ -122,20 +119,22 @@ export function registerMobileDATDebugRoutes(app: Express) {
 
       const ext = contentType === 'image/png' ? '.png' : '.jpg';
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const objectId = `${timestamp}-${randomUUID().slice(0, 8)}`;
-      const fileName = `glasses-capture-${objectId}${ext}`;
-      const key = vaultObjectKeyFromPrincipal(principal, `users/${principal.userId}/uploads`, `${objectId}${ext}`);
-      await storageBackend.putObject(key, buffer, { contentType });
-      await setObjectAclPolicy(key, {
-        owner: principal.userId,
-        ownerUserId: principal.userId,
-        accountId: principal.accountId,
-        createdByUserId: principal.userId,
-        scope: "user",
-        visibility: "private",
+      const fileName = `glasses-capture-${timestamp}${ext}`;
+      const uploaded = await objectStorageService.uploadObjectEntity(buffer, {
+        extension: ext,
+        contentType,
+        category: `users/${principal.userId}/uploads`,
+        principal,
+        acl: {
+          owner: principal.userId,
+          ownerUserId: principal.userId,
+          accountId: principal.accountId,
+          createdByUserId: principal.userId,
+          scope: "user",
+          visibility: "private",
+        },
       });
-
-      const objectPath = `/objects/users/${principal.userId}/uploads/${objectId}${ext}`;
+      const { objectPath, objectKey: key } = uploaded;
       const media = await registerMediaItem({
         name: fileName,
         mediaType: "image",

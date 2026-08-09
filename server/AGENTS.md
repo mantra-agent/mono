@@ -1,5 +1,13 @@
 # Authority
 
+## Domain provider transport boundary
+
+`server/integrations/provider-http.ts` owns the shared resource ceiling for fixed-origin domain provider adapters: it composes caller cancellation with a real request deadline and caps untrusted error-response bytes before adapters inspect or retain them. Provider adapters still own credentials, endpoint allowlists, schemas, status semantics, idempotency, retries, and degraded outcomes; the transport helper never retries mutations or turns ambiguous timeout into success. New direct provider `fetch` calls must name why this boundary cannot express their transport contract.
+
+## Media persistence boundary
+
+`media_items` is the principal-scoped registry for uploaded, generated, and rendered Media. `registerMediaItem(...)` requires an explicit Principal, overwrites caller-supplied ownership with that Principal, and resolves object-path replay only through the same Principal's visible scope. Cross-account/system compatibility adoption uses the named `media-backfill` system Principal. Server-produced Media bytes must cross `ObjectStorageService.uploadObjectEntity(...)` so Vault key derivation, ACL persistence, byte verification, and compensation remain one canonical mutation before Media registration.
+
 ## Integration diagnostic readiness
 
 Secret-backed integration tools are normally withheld from the advertised registry when configuration is provably absent. A tool may opt into `advertiseWhenUnready` only when it owns a bounded, provider-free status action that returns a successful explicit readiness discriminant; every provider-dependent action must still fail closed through its ordinary credential, permission, side-effect, and origin gates. Sentry uses this exception so Reliability Sentinel can record `not_configured` as a coverage gap without converting missing optional telemetry into tool-authority failure.

@@ -2,11 +2,9 @@ import { Router, type Request, type Response } from "express";
 import { createRenderJob, getRenderJob, updateRenderJob, listRenderJobs } from "./render-storage";
 import { getMediaItem, registerMediaItem } from "./media-storage";
 import { concatVideos, probeFile, isAvailable, isRenderActive } from "./ffmpeg-service";
-import { storageBackend } from "../object_storage/s3-backend";
+import { objectStorageService, storageBackend } from "../object_storage/objectStorage";
 import { requireAuth } from "../auth";
 import { getPrincipal, type Principal } from "../principal";
-import { setObjectAclPolicy } from "../object_storage/objectAcl";
-import { vaultObjectKeyFromPrincipal } from "../object_storage/vault-keys";
 import { createLogger } from "../log";
 
 const log = createLogger("RenderRoutes");
@@ -206,13 +204,25 @@ async function runRender(
       },
     });
 
-    // Upload output to object storage with vault prefix
+    // Persist bytes and ACL through the canonical compensating upload boundary.
     const outputBuffer = await fs.readFile(outputPath);
-    const ownerPrefix = principal.userId ? `users/${principal.userId}` : "system";
-    const outputKey = vaultObjectKeyFromPrincipal(principal, `${ownerPrefix}/renders`, `${jobId}.mp4`);
-    await storageBackend.putObject(outputKey, outputBuffer, { contentType: "video/mp4" });
-    const outputObjectPath = `/objects/${ownerPrefix}/renders/${jobId}.mp4`;
-    await setObjectAclPolicy(outputKey, principal.userId ? { owner: principal.userId, ownerUserId: principal.userId, accountId: principal.accountId ?? null, createdByUserId: principal.userId, scope: "user", visibility: "private", vaultId: principal.activeVaultId ?? undefined } : { owner: "system", scope: "system", visibility: "private" });
+    const uploaded = await objectStorageService.uploadObjectEntity(outputBuffer, {
+      extension: ".mp4",
+      contentType: "video/mp4",
+      category: principal.userId ? `users/${principal.userId}/renders` : "system/renders",
+      principal,
+      acl: principal.userId
+        ? {
+            owner: principal.userId,
+            ownerUserId: principal.userId,
+            accountId: principal.accountId ?? null,
+            createdByUserId: principal.userId,
+            scope: "user",
+            visibility: "private",
+          }
+        : { owner: "system", scope: "system", visibility: "private" },
+    });
+    const outputObjectPath = uploaded.objectPath;
 
     // Register output as media item
     const outputMedia = await registerMediaItem({
@@ -221,7 +231,7 @@ async function runRender(
       source: "render",
       objectPath: outputObjectPath,
       mimeType: "video/mp4",
-      fileSize: outputBuffer.length,
+      fileSize: uploaded.size,
       duration: totalDuration,
       metadata: { clipIds: clips.map((c) => c.id), resolution: resolution || "original" },
     }, principal);

@@ -1,4 +1,5 @@
 import { getSecretSync } from "../../secrets-store";
+import { providerFetch } from "../provider-http";
 
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01";
 
@@ -54,13 +55,13 @@ export function getTwilioConfig(): TwilioConfig {
 }
 
 async function fetchTwilioJson<T>(url: string, accountSid: string, authToken: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
+  const response = await providerFetch(url, {
     ...init,
     headers: {
       Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
       ...init.headers,
     },
-    signal: AbortSignal.timeout(10_000),
+    timeoutMs: 10_000,
   });
   if (!response.ok) {
     const providerRequestId = response.headers.get("twilio-request-id");

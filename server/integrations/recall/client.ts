@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { getSecret } from "../../secrets-store";
 import { createLogger } from "../../log";
+import { providerFetch, readBoundedProviderBody } from "../provider-http";
 
 const log = createLogger("RecallClient");
 
@@ -65,7 +66,7 @@ async function recallFetch(path: string, options: RequestInit = {}): Promise<Res
   const url = `https://${cfg.region}.recall.ai${path}`;
   log.debug(`${options.method ?? "GET"} ${path}`);
 
-  const res = await fetch(url, {
+  const res = await providerFetch(url, {
     ...options,
     headers: {
       Authorization: key,
@@ -79,13 +80,8 @@ async function recallFetch(path: string, options: RequestInit = {}): Promise<Res
 
 async function parseJsonOrThrow<T>(res: Response, label: string): Promise<T> {
   if (!res.ok) {
-    let details: unknown;
-    try {
-      details = await res.json();
-    } catch {
-      details = await res.text().catch(() => undefined);
-    }
-    throw new RecallApiError(`${label} failed (${res.status})`, res.status, details);
+    const details = await readBoundedProviderBody(res).catch(() => undefined);
+    throw new RecallApiError(`${label} failed (${res.status})`, res.status, details || undefined);
   }
   return (await res.json()) as T;
 }
@@ -190,13 +186,8 @@ export async function leaveRecallBot(botId: string): Promise<void> {
     method: "POST",
   });
   if (!res.ok && res.status !== 404) {
-    let details: unknown;
-    try {
-      details = await res.json();
-    } catch {
-      details = undefined;
-    }
-    throw new RecallApiError(`Leave call failed (${res.status})`, res.status, details);
+    const details = await readBoundedProviderBody(res).catch(() => undefined);
+    throw new RecallApiError(`Leave call failed (${res.status})`, res.status, details || undefined);
   }
 }
 
