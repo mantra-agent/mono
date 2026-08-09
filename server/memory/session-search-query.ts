@@ -77,6 +77,17 @@ export function buildTargetSessionSearchQuery(
   const searchPattern = buildLiteralSubstringPattern(searchTerm);
   const updatedAt = sql`coalesce(${documentStoreDocuments.metadata}->>'updatedAt', ${documentStoreDocuments.updatedAt}::text, ${documentStoreDocuments.createdAt}::text)`;
   const matchOffset = sql`greatest(strpos(lower(${sessionSearchSegments.content}), lower(${searchTerm})) - 80, 1)`;
+  const targetCandidate = sql`${documentStoreDocuments.id} IN (
+    SELECT ${documentStoreDocuments.id}
+    FROM ${documentStoreDocuments}
+    WHERE ${documentStoreDocuments.documentType} = 'chat'
+      AND ${documentStoreDocuments.title} ILIKE ${searchPattern} ESCAPE '!'
+    UNION
+    SELECT ${sessionSearchSegments.documentStoreId}
+    FROM ${sessionSearchSegments}
+    WHERE ${sessionSearchSegments.projectionVersion} = ${SESSION_SEARCH_PROJECTION_VERSION}
+      AND ${sessionSearchSegments.content} ILIKE ${searchPattern} ESCAPE '!'
+  )`;
 
   return db
     .select({
@@ -84,12 +95,17 @@ export function buildTargetSessionSearchQuery(
       title: documentStoreDocuments.title,
       metadata: documentStoreDocuments.metadata,
       updatedAt: documentStoreDocuments.updatedAt,
-      matchSnippet: sql<string>`min(substring(${sessionSearchSegments.content} from ${matchOffset} for 280))`,
+      matchSnippet: sql<string>`coalesce(min(substring(${sessionSearchSegments.content} from ${matchOffset} for 280)), '')`,
     })
-    .from(sessionSearchSegments)
-    .innerJoin(
-      documentStoreDocuments,
-      eq(sessionSearchSegments.documentStoreId, documentStoreDocuments.id),
+    .from(documentStoreDocuments)
+    .leftJoin(
+      sessionSearchSegments,
+      and(
+        eq(sessionSearchSegments.documentStoreId, documentStoreDocuments.id),
+        eq(sessionSearchSegments.projectionVersion, SESSION_SEARCH_PROJECTION_VERSION),
+        sql`${sessionSearchSegments.projectionRevision} = coalesce((${documentStoreDocuments.metadata}->>'durableRevision')::int, 0)`,
+        sql`${sessionSearchSegments.content} ILIKE ${searchPattern} ESCAPE '!'`,
+      ),
     )
     .where(
       combineWithVisibleScope(
@@ -99,9 +115,7 @@ export function buildTargetSessionSearchQuery(
           sql`${documentStoreDocuments.documentType} = 'chat'`,
           sql`${updatedAt} >= ${cutoffIso}`,
           sql`coalesce((${documentStoreDocuments.metadata}->>'messageCount')::int, 0) > 0`,
-          eq(sessionSearchSegments.projectionVersion, SESSION_SEARCH_PROJECTION_VERSION),
-          sql`${sessionSearchSegments.projectionRevision} = coalesce((${documentStoreDocuments.metadata}->>'durableRevision')::int, 0)`,
-          sql`${sessionSearchSegments.content} ILIKE ${searchPattern} ESCAPE '!'`,
+          targetCandidate,
         ),
       ),
     )
