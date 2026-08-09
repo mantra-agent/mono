@@ -142,40 +142,54 @@ const statusClasses: Record<
   },
 };
 
-function StatusIcon({ status }: { status: PipelineStatus }) {
+function StatusIcon({
+  status,
+  density = "default",
+}: {
+  status: PipelineStatus;
+  density?: "default" | "tree";
+}) {
+  const size = density === "tree" ? "h-3.5 w-3.5" : "h-5 w-5";
   if (status === "running")
     return (
       <Loader2
-        className={cn("h-5 w-5 animate-spin", statusClasses[status].icon)}
+        className={cn(size, "animate-spin", statusClasses[status].icon)}
       />
     );
   if (status === "failed" || status === "blocked")
     return (
-      <AlertTriangle className={cn("h-5 w-5", statusClasses[status].icon)} />
+      <AlertTriangle className={cn(size, statusClasses[status].icon)} />
     );
   if (status === "succeeded")
     return (
-      <CheckCircle2 className={cn("h-5 w-5", statusClasses[status].icon)} />
+      <CheckCircle2 className={cn(size, statusClasses[status].icon)} />
     );
   if (status === "cancelled")
-    return <Ban className={cn("h-5 w-5", statusClasses[status].icon)} />;
-  return <Circle className={cn("h-5 w-5", statusClasses[status].icon)} />;
+    return <Ban className={cn(size, statusClasses[status].icon)} />;
+  return <Circle className={cn(size, statusClasses[status].icon)} />;
 }
 
-function StepIcon({ step }: { step: PipelineStep }) {
+function StepIcon({
+  step,
+  density = "default",
+}: {
+  step: PipelineStep;
+  density?: "default" | "tree";
+}) {
   const Icon = step.icon;
+  const size = density === "tree" ? "h-3.5 w-3.5" : "h-5 w-5";
   if (step.status === "running")
-    return <Loader2 className="h-5 w-5 animate-spin text-active" />;
+    return <Loader2 className={cn(size, "animate-spin text-active")} />;
   if (step.status === "succeeded")
-    return <CheckCircle2 className="h-5 w-5 text-success" />;
+    return <CheckCircle2 className={cn(size, "text-success")} />;
   if (step.status === "failed")
-    return <AlertTriangle className="h-5 w-5 text-error" />;
+    return <AlertTriangle className={cn(size, "text-error")} />;
   if (step.status === "skipped")
-    return <Ban className="h-5 w-5 text-muted-foreground" />;
+    return <Ban className={cn(size, "text-muted-foreground")} />;
   return Icon ? (
-    <Icon className="h-5 w-5 text-muted-foreground" />
+    <Icon className={cn(size, "text-muted-foreground")} />
   ) : (
-    <Circle className="h-5 w-5 text-muted-foreground/60" />
+    <Circle className={cn(size, "text-muted-foreground/60")} />
   );
 }
 
@@ -278,7 +292,7 @@ function PipelineActionButton({
   const size = showLabel ? "sm" : "icon";
   const className =
     density === "tree"
-      ? "h-6 min-h-6 w-6 min-w-6 rounded-md text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+      ? "h-6 min-h-6 w-6 min-w-6 rounded-md p-0 text-muted-foreground/60 hover:bg-accent hover:text-foreground [&_svg]:size-3.5"
       : showLabel
         ? "h-7 gap-1.5 px-2.5"
         : "h-7 w-7";
@@ -369,7 +383,7 @@ export function PipelineCockpit({
       <div className={cn("min-w-0", className)} data-testid={testId}>
         <ProfileTreeRow
           label={title}
-          icon={<StatusIcon status={status} />}
+          icon={<StatusIcon status={status} density="tree" />}
           hasValue
           showEmpty
           mobileLayout="inline"
@@ -408,7 +422,7 @@ export function PipelineCockpit({
                   <ProfileTreeRow
                     key={step.id}
                     label={step.label}
-                    icon={<StepIcon step={step} />}
+                    icon={<StepIcon step={step} density="tree" />}
                     hasValue={Boolean(step.meta || step.description)}
                     showEmpty
                     mobileLayout="inline"
