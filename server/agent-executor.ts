@@ -376,6 +376,10 @@ export interface ExecutorRunResult {
   model: string;
   provider: string;
   usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  responseGenerationLimit?: {
+    configuredOutputTokens: number;
+    finalResponseOutputTokens: number;
+  };
   iterations: number;
   terminationReason: TerminationReason;
   durationMs: number;
@@ -1174,6 +1178,10 @@ interface RunIterationContext {
   allThinking: string[];
   resolvedToolCalls: ExecutorRunResult["toolCalls"];
   totalUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  responseGenerationLimit: {
+    configuredOutputTokens: number;
+    finalResponseOutputTokens: number;
+  };
   /**
    * Raw (pre-calibration) baseline estimate for the current iteration's request,
    * paired with provider-reported input after the call so the estimator can learn.
@@ -2168,6 +2176,7 @@ export class AgentExecutor extends EventEmitter {
       case "usage":
         if (event.usage) {
           ctx.iterationUsage = { ...event.usage };
+          ctx.responseGenerationLimit.finalResponseOutputTokens = event.usage.outputTokens;
           ctx.iterationUsageMetadata = (event as { metadata?: Record<string, unknown> }).metadata;
           ctx.totalUsage.inputTokens += event.usage.inputTokens;
           ctx.totalUsage.outputTokens += event.usage.outputTokens;
@@ -3104,6 +3113,9 @@ export class AgentExecutor extends EventEmitter {
       lastAssistantVisibleTextLength: ctx.diagnosticLastAssistantVisibleTextLength,
       emptyFinalTurnRetries: ctx.emptyFinalTurnRetries,
       budgetExhaustion: ctx.budgetExhaustion ?? null,
+      responseGenerationLimit: degradationReason === "empty_response_output_limit"
+        ? ctx.responseGenerationLimit
+        : null,
       toolCallsUsed: ctx.budgets.toolCallsUsed,
       maxToolCalls: ctx.budgets.maxToolCalls,
       maxIterations: ctx.budgets.maxIterations,
@@ -3160,6 +3172,9 @@ export class AgentExecutor extends EventEmitter {
       model: ctx.resolvedModel,
       provider: ctx.resolvedProvider,
       usage: ctx.totalUsage,
+      responseGenerationLimit: degradationReason === "empty_response_output_limit"
+        ? ctx.responseGenerationLimit
+        : undefined,
       iterations: ctx.iteration,
       terminationReason,
       durationMs: Date.now() - startTime,
@@ -3409,6 +3424,10 @@ export class AgentExecutor extends EventEmitter {
       execTrace: [],
       allThinking: [], resolvedToolCalls: [],
       totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      responseGenerationLimit: {
+        configuredOutputTokens: maxTokens,
+        finalResponseOutputTokens: 0,
+      },
       preflightRawEstimateTokens: 0,
       resolvedModel: modelString, resolvedProvider: routingDecision.provider, routingDecision, routingTier,
       iteration: 0, emergencyCompactionRetries: 0, emptyFinalTurnRetries: 0, streamIdleRecoveryAttempts: 0, aborted: false,
@@ -4915,6 +4934,7 @@ export class AgentExecutor extends EventEmitter {
           const configuredMaxOutputAfterSwitch = (routingDecision.modelConfig as { maxOutputTokens?: number } | undefined)?.maxOutputTokens;
           outputReserveIsExplicit = typeof configuredMaxOutputAfterSwitch === "number" && configuredMaxOutputAfterSwitch > 0;
           outputReserveTokens = outputReserveIsExplicit ? (configuredMaxOutputAfterSwitch as number) : maxTokens;
+          ctx.responseGenerationLimit.configuredOutputTokens = maxTokens;
           contextBudget = getContextRequestBudget(
             getContextWindow(modelString),
             outputReserveTokens,
