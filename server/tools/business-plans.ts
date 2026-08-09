@@ -299,12 +299,12 @@ async function handleMetricAction(action: string, args: Record<string, unknown>)
     await metricsStorage.delete(metricId);
     return { result: `Deleted @metric:${metricId}` };
   }
-  if (action === "sample_usage") {
+  if (action === "sample_range" || action === "sample_usage") {
     const start = requiredStr(args, "start");
     const end = requiredStr(args, "end");
-    if (!start || !end) return { result: "business.sample_usage requires start and end", error: true };
+    if (!start || !end) return { result: `business.${action} requires start and end`, error: true };
     const sample = await metricsStorage.sampleRange(new Date(start), new Date(end));
-    return { result: safeStringify(sample, { label: "bridge.business.metrics.sample_usage" }) };
+    return { result: safeStringify(sample, { label: `bridge.business.metrics.${action}` }) };
   }
   if (action === "list_samples") {
     const metricId = requiredStr(args, "metricId");
@@ -346,7 +346,7 @@ const PLAN_ACTIONS = new Set([
 const KPI_ACTIONS = new Set(["list_kpis", "get_kpi", "create_kpi", "update_kpi", "delete_kpi"]);
 const METRIC_ACTIONS = new Set([
   "list_metrics", "get_metric", "create_metric", "update_metric", "delete_metric",
-  "sample_usage", "list_samples", "record_sample", "delete_sample",
+  "sample_range", "sample_usage", "list_samples", "record_sample", "delete_sample",
 ]);
 
 export const handleBusiness: ToolHandler = async (args) => {

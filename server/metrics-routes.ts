@@ -98,7 +98,7 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.get(
-    "/api/business/metrics/usage-sample",
+    ["/api/business/metrics/range-sample", "/api/business/metrics/usage-sample"],
     requireAuth,
     requirePermission("system:read"),
     async (req: Request, res: Response) => {
