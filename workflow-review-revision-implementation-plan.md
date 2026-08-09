@@ -7,10 +7,11 @@ A declared review verdict is a domain transition, not an execution fault. The en
 ## Smallest coherent repair
 
 1. Derive each stage visit from the latest canonical inbound transition from a different stage.
-2. Count only failed/blocked execution attempts within that visit against `maxAttemptsPerStage`; preserve the persisted stage attempt ordinal solely as identity/history.
-3. Derive a revision assignment from the inbound transition's source attempt when its declared verdict is not `passed`, carrying the review/acceptance evidence and attempt-bound artifacts directly from canonical workflow state.
-4. Render execution retry context and domain revision context independently. Never require or synthesize a failure packet merely because a stage has been visited before.
-5. Document the invariant in `server/AGENTS.md` and update the canonical security finding.
+2. Count only `failed` execution faults within that visit against `maxAttemptsPerStage`; intentional `blocked` holds consume no retry budget, and the persisted stage attempt ordinal remains identity/history only.
+3. Make the canonical workflow result vocabulary own both template transition declarations and the model-facing completion schema so every declared domain verdict is representable and unknown outcomes fail validation.
+4. Derive a revision assignment from the inbound transition's source attempt when its declared verdict is not `passed`, carrying the review/acceptance evidence and attempt-bound artifacts directly from canonical workflow state.
+5. Render execution retry context and domain revision context independently. Never require or synthesize a failure packet merely because a stage has been visited before.
+6. Document the invariant in `server/AGENTS.md` and update the canonical security finding.
 
 ## Engineering Principles check
 

@@ -11,6 +11,7 @@ import {
 import { getShellToolContractDescription } from "./agent-authority";
 import { secretConnectorReadiness } from "./mods/composition/connector-readiness";
 import type { RegisteredConnectorKey } from "./mods/registry/registered-keys";
+import { workflowAttemptResults } from "@shared/schema";
 
 const log = createLogger("ToolRegistry");
 
@@ -1532,7 +1533,7 @@ export const TOOLS: Record<string, ToolMeta> = {
         stageKey: { type: "string", description: "Stage key for start_stage_attempt" },
         attemptId: { type: "number", description: "Stage attempt ID for complete_stage_attempt" },
         stageAttemptId: { type: "number", description: "Stage attempt ID for artifact/evidence attachment" },
-        result: { type: "string", enum: ["passed", "failed", "blocked", "skipped", "needs_review"], description: "Attempt result" },
+        result: { type: "string", enum: [...workflowAttemptResults], description: "Stage verdict. Use a template-declared domain outcome for transitions; use failed only for execution faults." },
         outputSummary: { type: "string", description: "Attempt output summary" },
         evidence: { type: "object", description: "Compact evidence packet" },
         gateId: { type: "number", description: "Gate ID" },
