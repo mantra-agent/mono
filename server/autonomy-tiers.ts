@@ -37,7 +37,7 @@ const SIDE_EFFECT_TIERS: Record<string, { default: SideEffectTier; actions?: Rec
   gmail: { default: 0, actions: { draft: 1 } },
   twitter: { default: 0, actions: { post: 2, reply: 2, delete: 2 } }, // Hidden compatibility alias.
   content: { default: 1, actions: { list: 0, suggest_times: 0, x_status: 0, x_lookup: 0, x_news_search: 0, x_news_lookup: 0, x_post: 2, x_reply: 2, x_delete: 2 } },
-  meetings: { default: 0, actions: { add: 2, update: 2, delete: 2, create_calendar_block: 2, join: 2, leave: 2 } },
+  meetings: { default: 0, actions: { add: 1, update: 2, delete: 2, create_calendar_block: 2, join: 2, leave: 2 } },
   // Hidden migration aliases retain their independently gated external-effect tiers.
   create_calendar_block: { default: 2 },
   meeting_bot: { default: 0, actions: { join: 2, leave: 2 } },
