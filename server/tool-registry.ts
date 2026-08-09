@@ -52,6 +52,12 @@ export interface ToolMeta {
    * (OAuth/provider-backed), always pass through.
    */
   connectorKey?: RegisteredConnectorKey;
+  /**
+   * Keep the tool advertised when its connector is unconfigured because at least
+   * one action returns a bounded, non-error readiness result. Provider actions
+   * remain independently fail closed in the handler.
+   */
+  advertiseWhenUnready?: boolean;
 }
 
 export const TOOLS: Record<string, ToolMeta> = {
@@ -364,6 +370,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     description: "Query the existing Sentry integration for crash reports and external uptime evidence. Actions: status, issues, issue, events, latest_event, uptime (completed-day availability readiness), sync_availability (project a ready completed day into Metrics), resolve, unresolve, ignore.",
     category: "system",
     connectorKey: "sentry",
+    advertiseWhenUnready: true,
     parameters: {
       type: "object",
       properties: {
@@ -2035,11 +2042,8 @@ export function getToolSchemas(): ToolSchema[] {
 }
 
 /** Resolve the connector a tool (or one of its aliases) is backed by, if any. */
-function connectorKeyForTool(name: string): RegisteredConnectorKey | undefined {
-  const direct = TOOLS[name]?.connectorKey;
-  if (direct) return direct;
-  const target = TOOL_ALIASES[name];
-  return target ? TOOLS[target]?.connectorKey : undefined;
+function toolMetaForName(name: string): ToolMeta | undefined {
+  return TOOLS[name] ?? TOOLS[TOOL_ALIASES[name]];
 }
 
 /**
@@ -2063,8 +2067,9 @@ function connectorKeyForTool(name: string): RegisteredConnectorKey | undefined {
 function withoutUnreadyIntegrationTools<T extends { name: string }>(schemas: T[]): T[] {
   const withheld: string[] = [];
   const filtered = schemas.filter((schema) => {
-    const connectorKey = connectorKeyForTool(schema.name);
-    if (!connectorKey) return true;
+    const meta = toolMetaForName(schema.name);
+    const connectorKey = meta?.connectorKey;
+    if (!connectorKey || meta?.advertiseWhenUnready) return true;
     if (secretConnectorReadiness(connectorKey) === "setup-required") {
       withheld.push(schema.name);
       return false;

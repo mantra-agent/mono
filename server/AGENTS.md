@@ -1,5 +1,9 @@
 # Authority
 
+## Integration diagnostic readiness
+
+Secret-backed integration tools are normally withheld from the advertised registry when configuration is provably absent. A tool may opt into `advertiseWhenUnready` only when it owns a bounded, provider-free status action that returns a successful explicit readiness discriminant; every provider-dependent action must still fail closed through its ordinary credential, permission, side-effect, and origin gates. Sentry uses this exception so Reliability Sentinel can record `not_configured` as a coverage gap without converting missing optional telemetry into tool-authority failure.
+
 ## Railway request priority boundary
 
 `server/integrations/railway/client.ts` is the single outbound Railway API boundary and every request is classified as `observation` or `release`. The shared deployment snapshot may spend only the observation budget and must preserve hourly capacity for a human-approved release; `forceRefresh` never bypasses that guard. Publish-owned deployment reads and redeploy mutations use the release class, remain bounded and identity-fenced, and do not fail because an observation budget is exhausted. Railway-issued `Retry-After` / reset guidance remains authoritative across both classes: release priority reserves local capacity but never bypasses provider cooldown. Platform binding, connector credential, permissions, manual production approval, idempotency, and rollback remain independent gates.
