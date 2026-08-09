@@ -1104,7 +1104,7 @@ export async function acquireAdvisoryTransactionLock(
 ): Promise<void> {
   const key = fnv1a32(logicalKey);
   await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(${namespace}::int4, ${key}::int4)`,
+    sql`SELECT pg_advisory_xact_lock(CAST(${namespace} AS int4), CAST(${key} AS int4))`,
   );
 }
 
@@ -1123,7 +1123,9 @@ export async function acquireLibraryParentLocks(
   const ns = ADVISORY_LOCK_NS.LIBRARY_PARENT;
   for (const k of uniq) {
     const key = fnv1a32(k);
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${ns}::int4, ${key}::int4)`);
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(CAST(${ns} AS int4), CAST(${key} AS int4))`,
+    );
   }
 }
 
