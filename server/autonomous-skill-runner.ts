@@ -17,7 +17,7 @@ import { getSideEffectTier, type SideEffectTier } from "./autonomy-tiers";
 import { isAgentType } from "@shared/instance-config";
 import { resolveCurrentProfileIdentity } from "./profile-identity";
 import { getCurrentPrincipal } from "./principal-context";
-import { authorizeToolInvocation, type TrustedEngineeringDelegation } from "./agent-authority";
+import type { TrustedEngineeringDelegation } from "./agent-authority";
 import { filterBuildToolSchemas } from "./mods/build-tool-access";
 import { hasActiveBuildAccess } from "./mods/build-access";
 import { buildStructuralRunEvidence, evaluateStructuralItem } from "./skill-scoring";
@@ -779,26 +779,6 @@ export async function executeAutonomousSkillRun(
     }
   }
 
-  const engineeringDelegation: TrustedEngineeringDelegation | undefined = config.skillId === "self-heal"
-    ? "build_skill"
-    : undefined;
-  if (engineeringDelegation) {
-    const principal = getCurrentPrincipal();
-    const capabilityProbe = authorizeToolInvocation(
-      "git",
-      { action: "merge_pr" },
-      { origin: "autonomous", trustedDelegation: engineeringDelegation },
-      principal,
-    );
-    if (!capabilityProbe.allowed) {
-      const blocker = new Error(
-        `Self Heal capability contract unavailable before diagnosis: ${capabilityProbe.reason}`,
-      ) as Error & { code?: string };
-      blocker.code = "SELF_HEAL_ENGINEERING_CAPABILITY_UNAVAILABLE";
-      throw blocker;
-    }
-  }
-
   // Global per-skill dedupe is for top-level autoruns (e.g. cron-triggered
   // skills that should never overlap themselves). Parented child spawns
   // (e.g. Council fanning two `advocate` runs in parallel) are
@@ -1516,9 +1496,7 @@ async function runSkillPipeline(
       ? "plan"
       : options.workflowRunId
         ? "workflow"
-        : config.skillId === "self-heal"
-          ? "build_skill"
-          : undefined;
+        : undefined;
     const { tools, toolExecutor } = await getSkillTools(config.activity, sessionKey, sessionId, authoritySkillId, trustedDelegation);
 
     let toolCallCount = 0;
