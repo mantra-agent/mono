@@ -432,6 +432,11 @@ export async function ensureVaults(): Promise<void> {
     // default-Vault backfill. A partial check keeps system/global documents and
     // non-chat document families backward compatible while making future NULL
     // user Session ownership structurally invalid.
+    //
+    // ADD ... NOT VALID still rejects new violating writes. VALIDATE scans the
+    // full table and must wait until residual legacy rows are recovered; running
+    // it against known residuals aborts the rest of EnsureVaults (SQLSTATE 23514)
+    // without mutating data and without improving the invariant.
     await pool.query(`
       DO $session_vault_required$
       BEGIN
@@ -447,19 +452,51 @@ export async function ensureVaults(): Promise<void> {
         END IF;
       END $session_vault_required$;
     `);
-    await pool.query(`
-      DO $validate_session_vault_required$
-      BEGIN
-        IF to_regclass('public.document_store_documents') IS NOT NULL
-          AND EXISTS (
-            SELECT 1 FROM pg_constraint
-            WHERE conname = 'document_store_user_chat_vault_required'
-          ) THEN
-          ALTER TABLE document_store_documents
-          VALIDATE CONSTRAINT document_store_user_chat_vault_required;
-        END IF;
-      END $validate_session_vault_required$;
-    `);
+    if (unresolvedChatVaultCount > 0) {
+      log.warn("Deferred document_store_user_chat_vault_required validation", {
+        unresolvedCount: unresolvedChatVaultCount,
+        missingOwnerCount: Number(unresolvedChatVaults?.missing_owner_count ?? 0),
+        missingPersonalAccountCount: Number(
+          unresolvedChatVaults?.missing_personal_account_count ?? 0,
+        ),
+        reason: "residual_legacy_user_chats",
+      });
+    } else {
+      try {
+        await pool.query(`
+          DO $validate_session_vault_required$
+          BEGIN
+            IF to_regclass('public.document_store_documents') IS NOT NULL
+              AND EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'document_store_user_chat_vault_required'
+              ) THEN
+              ALTER TABLE document_store_documents
+              VALIDATE CONSTRAINT document_store_user_chat_vault_required;
+            END IF;
+          END $validate_session_vault_required$;
+        `);
+      } catch (validateErr) {
+        const sqlState =
+          typeof validateErr === "object" &&
+          validateErr !== null &&
+          "code" in validateErr &&
+          typeof (validateErr as { code?: unknown }).code === "string"
+            ? (validateErr as { code: string }).code
+            : undefined;
+        // Concurrent residual rows can still violate between the aggregate count
+        // and VALIDATE. Keep the NOT VALID constraint and finish EnsureVaults
+        // rather than aborting later vault backfills on a known legacy residue.
+        if (sqlState === "23514") {
+          log.warn("document_store_user_chat_vault_required validation deferred after race", {
+            sqlState,
+            reason: "check_violation_during_validate",
+          });
+        } else {
+          throw validateErr;
+        }
+      }
+    }
 
     // Derived Google data inherits the Vault from its connected source account.
     // Unresolvable rows remain NULL and therefore fail closed.
