@@ -172,6 +172,9 @@ export const documentStoreDocuments = pgTable(
     index("idx_document_store_source_row").on(table.sourceTable, table.sourceRowId),
     index("idx_document_store_path").on(table.path),
     index("idx_document_store_updated_at").on(table.updatedAt),
+    index("idx_document_store_chat_account_updated_at")
+      .on(table.accountId, table.updatedAt)
+      .where(sql`${table.documentType} = 'chat'`),
     index(DOCUMENT_STORE_CHAT_SEARCH_INDEXES.title)
       .using("gin", sql`${table.title} gin_trgm_ops`)
       .where(sql`${table.documentType} = 'chat'`),
