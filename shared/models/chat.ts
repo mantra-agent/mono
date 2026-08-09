@@ -274,7 +274,9 @@ export type TerminationReason =
 export type TerminalDegradationReason =
   | "empty_response"
   | "empty_response_output_limit"
-  | "tool_failure_recovered";
+  | "tool_failure_recovered"
+  | "iteration_budget_exhausted"
+  | "tool_call_budget_exhausted";
 
 export interface ProviderTransportErrorInfo {
   name?: string;

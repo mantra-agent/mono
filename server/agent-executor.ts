@@ -267,6 +267,10 @@ export interface ExecutorRunOptions {
   /** Diagnostic tier override for specialized callers. Prefer routingDecision for pre-resolved routing. */
   routingTier?: string;
   temperature?: number;
+  /** Maximum provider iterations admitted for this run. Clamped to the Core executor ceiling. */
+  maxIterations?: number;
+  /** Maximum actual tool executions admitted across both SDK- and executor-owned paths. */
+  maxToolCalls?: number;
   thinkingBudget?: number;
   thinking?: ThinkingTierConfig;
   signal?: AbortSignal;
@@ -1204,6 +1208,16 @@ interface RunIterationContext {
   iterationStopReason?: string;
   lastIterationFailureKey?: string;
   consecutiveFailureIterations: number;
+  budgets: {
+    maxIterations: number;
+    maxToolCalls: number;
+    toolCallsUsed: number;
+  };
+  budgetExhaustion?: {
+    kind: "iterations" | "tool_calls";
+    limit: number;
+    used: number;
+  };
   // Last error string yielded by the model adapter via {type:"error", error:"…"}.
   // Captured here so result.error reflects the real underlying message even when
   // an upstream abort or other path bypasses the run's outer catch block.
@@ -1277,6 +1291,19 @@ interface RunIterationContext {
 const ZOMBIE_CHECK_INTERVAL_MS = 60_000;
 const ZOMBIE_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
 const ZOMBIE_HARD_CAP_MS = 40 * 60 * 1000;
+
+const DEFAULT_MAX_ITERATIONS = 32;
+const HARD_MAX_ITERATIONS = 128;
+const DEFAULT_MAX_TOOL_CALLS = 96;
+const HARD_MAX_TOOL_CALLS = 256;
+
+function resolveRunBudget(value: number | undefined, fallback: number, ceiling: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`Executor run budget must be a positive finite number; received ${String(value)}`);
+  }
+  return Math.min(Math.floor(value), ceiling);
+}
 
 const ITERATION_CONTENT_SEPARATOR = "\n\n";
 // A completed model turn (no tool calls, no await-user pause) that produces no
@@ -2376,6 +2403,24 @@ export class AgentExecutor extends EventEmitter {
     execute: () => Promise<ToolExecutorResult>,
   ): Promise<ToolExecutorResult> {
     const normalizedName = normalizeMcpToolName(name) || name;
+    if (ctx.budgets.toolCallsUsed >= ctx.budgets.maxToolCalls) {
+      ctx.budgetExhaustion ??= {
+        kind: "tool_calls",
+        limit: ctx.budgets.maxToolCalls,
+        used: ctx.budgets.toolCallsUsed,
+      };
+      log.warn(
+        `agent.loop.budget_exhausted runId=${ctx.runId} kind=tool_calls ` +
+        `limit=${ctx.budgets.maxToolCalls} used=${ctx.budgets.toolCallsUsed} deniedTool=${normalizedName}`,
+      );
+      return {
+        result: `Tool execution budget exhausted after ${ctx.budgets.toolCallsUsed} calls. No additional tool was executed.`,
+        error: true,
+        outcome: "cancelled",
+        recoveryDecision: "none",
+      };
+    }
+    ctx.budgets.toolCallsUsed++;
     const result = await ctx.operationRecovery.execute(ctx.runId, normalizedName, args, execute);
     if (result.recoveryDecision === "quarantined" && result.failure) {
       ctx.terminalToolFailure ??= {
@@ -2931,6 +2976,21 @@ export class AgentExecutor extends EventEmitter {
     ].join("\n\n");
   }
 
+  private synthesizeBudgetExhaustion(ctx: RunIterationContext): string {
+    const exhaustion = ctx.budgetExhaustion;
+    if (!exhaustion) return ctx.allText.join("");
+    const completedTools = ctx.resolvedToolCalls.filter((call) => call.outcome === "succeeded").length;
+    const workSummary = completedTools > 0
+      ? `I preserved ${completedTools} completed tool operation${completedTools === 1 ? "" : "s"}.`
+      : "No completed operation was discarded.";
+    const budgetLabel = exhaustion.kind === "iterations" ? "model-iteration" : "tool-call";
+    return [
+      workSummary,
+      `I stopped after reaching this run's ${budgetLabel} budget (${exhaustion.used}/${exhaustion.limit}).`,
+      "Send another message to continue from the saved state.",
+    ].join("\n\n");
+  }
+
   private async publishRunResult(
     ctx: RunIterationContext,
     options: ExecutorRunOptions,
@@ -2938,8 +2998,10 @@ export class AgentExecutor extends EventEmitter {
     finalContent: string,
     terminationReason: TerminationReason,
   ): Promise<ExecutorRunResult> {
-    if (ctx.terminalToolFailure) {
-      finalContent = this.synthesizeToolFailureRecovery(ctx);
+    if (ctx.terminalToolFailure || ctx.budgetExhaustion) {
+      finalContent = ctx.terminalToolFailure
+        ? this.synthesizeToolFailureRecovery(ctx)
+        : this.synthesizeBudgetExhaustion(ctx);
       terminationReason = "complete";
       ctx.aborted = false;
       ctx.abortReason = undefined;
@@ -2948,6 +3010,7 @@ export class AgentExecutor extends EventEmitter {
       ctx.lastError = undefined;
       ctx.allText = [finalContent];
       ctx.iterationText = finalContent;
+      ctx.diagnosticLastAssistantVisibleTextLength = finalContent.trim().length;
       ctx.contentBuf = "";
       ctx.thinkingBuf = "";
       ctx.chronologyContentBuf = "";
@@ -2994,14 +3057,17 @@ export class AgentExecutor extends EventEmitter {
     const degradationReason: TerminalDegradationReason | undefined =
       ctx.terminalToolFailure
         ? "tool_failure_recovered"
-        : emptyCompletedResponse
-          ? lastStopReason === "max_tokens"
-            ? "empty_response_output_limit"
-            : "empty_response"
-          : undefined;
+        : ctx.budgetExhaustion?.kind === "iterations"
+          ? "iteration_budget_exhausted"
+          : ctx.budgetExhaustion?.kind === "tool_calls"
+            ? "tool_call_budget_exhausted"
+            : emptyCompletedResponse
+              ? lastStopReason === "max_tokens"
+                ? "empty_response_output_limit"
+                : "empty_response"
+              : undefined;
     const status: ExecutorRunResult["status"] =
-      ctx.terminalToolFailure ? "degraded"
-      : degradationReason ? "degraded"
+      degradationReason ? "degraded"
       : terminationReason === "yield_to_interactive" ? "yielded"
       : terminationReason === "complete" ? "succeeded"
       : "failed";
@@ -3037,6 +3103,10 @@ export class AgentExecutor extends EventEmitter {
       lastAssistantTextLength: ctx.diagnosticLastAssistantTextLength,
       lastAssistantVisibleTextLength: ctx.diagnosticLastAssistantVisibleTextLength,
       emptyFinalTurnRetries: ctx.emptyFinalTurnRetries,
+      budgetExhaustion: ctx.budgetExhaustion ?? null,
+      toolCallsUsed: ctx.budgets.toolCallsUsed,
+      maxToolCalls: ctx.budgets.maxToolCalls,
+      maxIterations: ctx.budgets.maxIterations,
       finalMessageId: ctx.runId ? `done:${ctx.runId}` : null,
       source: options.activity || "agent",
     };
@@ -3359,6 +3429,11 @@ export class AgentExecutor extends EventEmitter {
       activeSystemSpans: new Map(),
       toolUseReceivedAt: new Map(),
       operationRecovery: new ToolOperationRecovery(),
+      budgets: {
+        maxIterations: resolveRunBudget(options.maxIterations, DEFAULT_MAX_ITERATIONS, HARD_MAX_ITERATIONS),
+        maxToolCalls: resolveRunBudget(options.maxToolCalls, DEFAULT_MAX_TOOL_CALLS, HARD_MAX_TOOL_CALLS),
+        toolCallsUsed: 0,
+      },
       diagnosticLastAssistantTextLength: 0,
       diagnosticLastAssistantVisibleTextLength: 0,
       diagnosticHadToolErrors: false,
@@ -3402,7 +3477,11 @@ export class AgentExecutor extends EventEmitter {
       runId,
       sessionKey: options.sessionKey,
     });
-    log.log(`run START runId=${runId} executionMode=${ctx.executionMode} model=${modelString} activity=${options.activity || "agent"} sessionKey=${options.sessionKey}`);
+    log.log(
+      `run START runId=${runId} executionMode=${ctx.executionMode} model=${modelString} ` +
+      `activity=${options.activity || "agent"} sessionKey=${options.sessionKey} ` +
+      `maxIterations=${ctx.budgets.maxIterations} maxToolCalls=${ctx.budgets.maxToolCalls}`,
+    );
     ctx.publish("run_start", { runId });
     const persona = options.sessionId
       ? await import("./session-persona")
@@ -4689,6 +4768,23 @@ export class AgentExecutor extends EventEmitter {
       let lastExitCause: "natural_stop" | "aborted" | "circuit_breaker" | "yield_to_interactive" | undefined;
 
       while (true) {
+        if (ctx.iteration >= ctx.budgets.maxIterations) {
+          ctx.budgetExhaustion ??= {
+            kind: "iterations",
+            limit: ctx.budgets.maxIterations,
+            used: ctx.iteration,
+          };
+          lastExitCause = "natural_stop";
+          log.warn(
+            `agent.loop.budget_exhausted runId=${runId} sessionId=${options.sessionId || "none"} ` +
+            `kind=iterations limit=${ctx.budgets.maxIterations} used=${ctx.iteration}`,
+          );
+          break;
+        }
+        if (ctx.budgetExhaustion) {
+          lastExitCause = "natural_stop";
+          break;
+        }
         if (abortController.signal.aborted) {
           ctx.aborted = true;
           ctx.abortReason ??= getAbortReason(abortController.signal);

@@ -1613,18 +1613,20 @@ async function runSkillPipeline(
 
     if (result.status === "degraded") {
       const reason = result.degradationReason || "executor_degraded";
-      await persistExecutorResult(
-        sessionId,
-        result,
-        "The model reached its output limit before producing final text. Completed tool work remains saved.",
-      ).catch((e: unknown) => {
+      const budgetExhausted = reason === "iteration_budget_exhausted" || reason === "tool_call_budget_exhausted";
+      const degradedNotice = budgetExhausted
+        ? "The executor reached its bounded work budget. Completed work remains saved; continue in a later run."
+        : "The model reached its output limit before producing final text. Completed tool work remains saved.";
+      await persistExecutorResult(sessionId, result, degradedNotice).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to persist degraded result: ${e instanceof Error ? e.message : String(e)}`);
       });
       logger.warn(`[SkillChat] [${sessionId}] Skill degraded: ${reason} (${durationMs}ms, ${toolCallCount} tool calls)`);
       return {
         sessionId,
         status: "degraded",
-        summary: "Executor completed without final text; completed work remains saved.",
+        summary: budgetExhausted
+          ? "Executor work budget exhausted; completed work remains saved."
+          : "Executor completed without final text; completed work remains saved.",
         error: reason,
         durationMs,
       };
