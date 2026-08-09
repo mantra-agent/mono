@@ -67,15 +67,19 @@ export function objectGrantIdentity(objectType: AuthorizableObjectType, columns:
 
 /**
  * Membership-expansion seam. A principal matches its own `('user', userId)` grants, plus any
- * `('team', teamId)` grant for a team it belongs to. Team membership is expanded live via an EXISTS
- * against team_members so revoking membership immediately revokes team-derived access — every call
- * site keeps working unchanged. Organization subjects would slot in here the same way.
+ * `('team', teamId)` grant for an account-scoped team it belongs to. Team membership is expanded live
+ * only while the user also retains membership in the Team's owning Account, so either revocation
+ * immediately removes team-derived access — every call site keeps working unchanged. Organization
+ * subjects are intentionally cross-account and expand through their separate ownership contract.
  */
 function subjectMatchPredicate(principal: Principal): SQL {
   return sql`(
     (${objectGrants.subjectType} = 'user' AND ${objectGrants.subjectId} = ${principal.userId})
     OR (${objectGrants.subjectType} = 'team' AND EXISTS (
-      SELECT 1 FROM team_members tm
+      SELECT 1
+      FROM team_members tm
+      INNER JOIN teams t ON t.id = tm.team_id
+      INNER JOIN memberships am ON am.account_id = t.account_id AND am.user_id = tm.user_id
       WHERE tm.team_id = ${objectGrants.subjectId}
         AND tm.user_id = ${principal.userId}
     ))
