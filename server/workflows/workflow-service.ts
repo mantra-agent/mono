@@ -61,7 +61,7 @@ const log = createLogger("WorkflowService");
 
 /** Default idle timeout for workflow stage children: 15 minutes */
 const WORKFLOW_STAGE_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
-const ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS = 12 * 60 * 1000;
+const ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
 const ACCEPTANCE_DEPLOY_POLL_INTERVAL_MS = 15 * 1000;
 export const WORKFLOW_ATTEMPT_LEASE_MS = 2 * 60 * 1000;
 const WORKFLOW_RECOVERY_JOB = "workflow-recovery";
@@ -789,9 +789,12 @@ async function monitorWorkflowChild(
   renewal.unref?.();
 
   try {
+    const stageIdleTimeoutMs = stageKey === "acceptance"
+      ? ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS + WORKFLOW_STAGE_IDLE_TIMEOUT_MS
+      : WORKFLOW_STAGE_IDLE_TIMEOUT_MS;
     const result = await monitorChildSession(
       childSessionId,
-      WORKFLOW_STAGE_IDLE_TIMEOUT_MS,
+      stageIdleTimeoutMs,
       abortController.signal,
       parentSessionId || undefined,
     );
@@ -2103,6 +2106,17 @@ function deploymentReadinessMessage(readiness: DeploymentReadiness, provider: st
   return `Deployment status unavailable: ${status}.`;
 }
 
+function waitableDeploymentUnavailability(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return /provider cooldown|rate limit(?:ed)?|retry after \d+s|no bounded .* deployment can be proven to contain workflow commit|no bounded .* deployment was created after workflow boundary/i.test(reason);
+}
+
+function deploymentRetryDelayMs(reason: string | undefined, remainingMs: number): number {
+  const retryAfterSeconds = reason?.match(/retry after\s+(\d+)s/i)?.[1];
+  const providerDelayMs = retryAfterSeconds ? Number(retryAfterSeconds) * 1_000 + 1_000 : ACCEPTANCE_DEPLOY_POLL_INTERVAL_MS;
+  return Math.max(0, Math.min(providerDelayMs, remainingMs));
+}
+
 function deploymentCommitSha(deployment: WorkflowEnvironmentTruth["deployment"] | null | undefined): string | null {
   const sha = deployment?.latest?.commitSha;
   return typeof sha === "string" && sha.trim() ? sha.trim().toLowerCase() : null;
@@ -2190,7 +2204,13 @@ async function waitForAcceptanceDeploymentTruth(runId: string, initialTruth: Wor
     };
 
     if (!deployment?.available) {
-      const readiness: DeploymentReadiness = { status: "unavailable", ...base, message: deployment?.reason || "Deployment status is unavailable." };
+      if (waitableDeploymentUnavailability(deployment?.reason) && waitedMs < ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS) {
+        await sleep(deploymentRetryDelayMs(deployment?.reason, ACCEPTANCE_DEPLOY_WAIT_TIMEOUT_MS - waitedMs));
+        continue;
+      }
+      const status = waitableDeploymentUnavailability(deployment?.reason) ? "timeout" : "unavailable";
+      const readiness: DeploymentReadiness = { status, ...base, message: deployment?.reason || "Deployment status is unavailable." };
+      if (status === "timeout") readiness.message = deploymentReadinessMessage(readiness, deployment?.provider || "hosting");
       return { truth, readiness };
     }
     if (category === "green" && deploymentIsCurrent(deployment, expected)) {
