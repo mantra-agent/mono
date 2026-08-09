@@ -189,6 +189,7 @@ export async function executePlan(
   originSessionId: string,
   planTitle: string,
   blocking: boolean = true,
+  executionSignal?: AbortSignal,
 ): Promise<PlanExecutionResult> {
   const plan = await getPlanFromDb(planId);
   if (!plan) {
@@ -210,6 +211,9 @@ export async function executePlan(
   }
 
   const abortController = new AbortController();
+  const abortFromExecutionOwner = () => abortController.abort(executionSignal?.reason ?? "cancelled");
+  if (executionSignal?.aborted) abortFromExecutionOwner();
+  else executionSignal?.addEventListener("abort", abortFromExecutionOwner, { once: true });
   activePlans.set(planId, { abortController, pageId: plan.pageId });
   const leaseRenewal = setInterval(() => {
     void renewPlanExecution(planId, lease.leaseId).then((renewed) => {
@@ -224,6 +228,7 @@ export async function executePlan(
 
   const releaseActivePlan = async () => {
     clearInterval(leaseRenewal);
+    executionSignal?.removeEventListener("abort", abortFromExecutionOwner);
     try { await releasePlanExecution(planId, lease.leaseId); } catch { /* best effort */ }
     activePlans.delete(planId);
   };

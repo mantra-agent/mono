@@ -576,12 +576,22 @@ async function getSkillTools(
   sessionId: string,
   authoritySkillId?: string,
   trustedDelegation?: import("./agent-authority").TrustedEngineeringDelegation,
+  runtimeFence?: { runId: string; attemptId: string },
 ): Promise<{
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   toolExecutor: (name: string, args: Record<string, unknown>) => Promise<import("./agent-executor").ToolExecutorResult>;
 }> {
   const { filterToolSchemasForAuthority } = require("./agent-authority") as typeof import("./agent-authority");
-  const authority = { origin: "autonomous" as const, trustedDelegation, activity, skillId: authoritySkillId, sessionKey, sessionId };
+  const authority = {
+    origin: "autonomous" as const,
+    trustedDelegation,
+    activity,
+    skillId: authoritySkillId,
+    runtimeRunId: runtimeFence?.runId,
+    runtimeAttemptId: runtimeFence?.attemptId,
+    sessionKey,
+    sessionId,
+  };
   const principal = getCurrentPrincipal();
   if (!principal) throw new Error("Skill tool discovery requires an explicit user principal");
   const { filterWellnessToolSchemas } = await import("./mods/wellness-tool-access");
@@ -1497,7 +1507,14 @@ async function runSkillPipeline(
       : options.workflowRunId
         ? "workflow"
         : undefined;
-    const { tools, toolExecutor } = await getSkillTools(config.activity, sessionKey, sessionId, authoritySkillId, trustedDelegation);
+    const { tools, toolExecutor } = await getSkillTools(
+      config.activity,
+      sessionKey,
+      sessionId,
+      authoritySkillId,
+      trustedDelegation,
+      options.runtimeFence,
+    );
 
     let toolCallCount = 0;
     const toolCallLog: Array<{ name: string; action?: string; error?: boolean; result?: string }> = [];

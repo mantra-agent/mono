@@ -46,6 +46,7 @@ export interface RuntimeFence {
 
 export interface RuntimeExecutionContext {
   fence: RuntimeFence;
+  signal: AbortSignal;
   effectIdempotencyKey(effectName: string): string;
   heartbeat(usageDelta?: Record<string, number>): Promise<void>;
   appendEvidence(input: {
