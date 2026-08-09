@@ -110,7 +110,17 @@ async function checkForVersionSkew(
 
   const now = Date.now();
   if (!force && now - lastCheckAt < MIN_CHECK_INTERVAL_MS) return "same_build";
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    const sharedOutcome = await inFlight;
+    if (
+      recoverChunkFailure &&
+      sharedOutcome !== "reload_started" &&
+      sharedOutcome !== "update_prompted"
+    ) {
+      return checkForVersionSkew(true, true);
+    }
+    return sharedOutcome;
+  }
 
   lastCheckAt = now;
   inFlight = (async () => {
