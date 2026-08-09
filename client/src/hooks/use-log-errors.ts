@@ -1,6 +1,12 @@
 import { useEffect, useCallback, useSyncExternalStore } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("LogErrors");
+const LOG_ERRORS_OWNER = "logErrors";
+const LOG_ERRORS_HANDLER = "logErrors";
 
 let realtimeErrorTimestamp = 0;
 let snapshotVersion = 0;
@@ -27,36 +33,36 @@ function recordError(ts: number) {
   }
 }
 
-let initialized = false;
-
-function init() {
-  if (initialized) return;
-  initialized = true;
-
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-
-  ws.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      if (data.type === "log" && data.log && data.log.level === "error") {
-        const ts = data.log.timestamp ? new Date(data.log.timestamp).getTime() : Date.now();
-        recordError(ts);
-      }
-    } catch {}
-  };
-
-  ws.onclose = () => {
-    initialized = false;
-    setTimeout(init, 5000);
-  };
+function isLogErrorMessage(message: unknown): message is { type: "log"; log: { level?: string; timestamp?: string } } {
+  if (!message || typeof message !== "object") return false;
+  const candidate = message as { type?: unknown; log?: { level?: unknown; timestamp?: unknown } };
+  return candidate.type === "log" && Boolean(candidate.log) && candidate.log?.level === "error";
 }
 
 export function useLogErrors() {
   const version = useSyncExternalStore(subscribe, getSnapshot);
 
   useEffect(() => {
-    init();
+    const sharedWS = acquireSharedWS(LOG_ERRORS_OWNER);
+
+    sharedWS.addMessageHandler(LOG_ERRORS_HANDLER, (message) => {
+      if (!isLogErrorMessage(message)) return;
+      const ts = message.log.timestamp ? new Date(message.log.timestamp).getTime() : Date.now();
+      if (Number.isNaN(ts)) {
+        log.warn("Ignoring log error event with invalid timestamp");
+        return;
+      }
+      recordError(ts);
+    });
+
+    if (sharedWS.getReadyState() !== WebSocket.OPEN) {
+      sharedWS.connect();
+    }
+
+    return () => {
+      sharedWS.removeMessageHandler(LOG_ERRORS_HANDLER);
+      releaseSharedWS(LOG_ERRORS_OWNER);
+    };
   }, []);
 
   const { data: unseenData } = useQuery<{ hasUnseen: boolean; latestErrorAt: string | null }>({

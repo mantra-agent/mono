@@ -1,5 +1,6 @@
 import React from 'react';
 import { Pressable, Text, StyleSheet } from 'react-native';
+import { productTheme } from '../theme/glasses';
 
 type Status = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -39,31 +40,33 @@ const styles = StyleSheet.create({
   button: {
     width: 100,
     height: 100,
+    minWidth: 44,
+    minHeight: 44,
     borderRadius: 50,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: productTheme.colors.surfaceMuted,
     borderWidth: 2,
-    borderColor: '#333',
+    borderColor: productTheme.colors.borderMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
   buttonActive: {
-    backgroundColor: '#dc2626',
-    borderColor: '#dc2626',
+    backgroundColor: productTheme.colors.destructive,
+    borderColor: productTheme.colors.destructive,
   },
   buttonConnecting: {
-    borderColor: '#f59e0b',
+    borderColor: productTheme.colors.connection.connecting,
     opacity: 0.6,
   },
   buttonPressed: {
     opacity: 0.7,
   },
   text: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 18,
     fontWeight: '600',
     letterSpacing: 0.5,
   },
   textActive: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
   },
 });

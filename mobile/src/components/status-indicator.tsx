@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Animated, StyleSheet, Text } from 'react-native';
+import { productTheme } from '../theme/glasses';
 
 type Status = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -9,11 +10,11 @@ interface Props {
 }
 
 function getColor(status: Status, isSpeaking: boolean): string {
-  if (status === 'disconnected') return '#333';
-  if (status === 'connecting') return '#f59e0b';
-  if (status === 'error') return '#ef4444';
-  if (isSpeaking) return '#3b82f6';
-  return '#22c55e';
+  if (status === 'disconnected') return productTheme.colors.connection.disconnected;
+  if (status === 'connecting') return productTheme.colors.connection.connecting;
+  if (status === 'error') return productTheme.colors.connection.error;
+  if (isSpeaking) return productTheme.colors.connection.speaking;
+  return productTheme.colors.connection.connected;
 }
 
 function getLabel(status: Status, isSpeaking: boolean): string {
@@ -93,8 +94,8 @@ const styles = StyleSheet.create({
   },
   label: {
     marginTop: 20,
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: productTheme.typography.label.fontSize,
+    fontWeight: productTheme.typography.label.fontWeight,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },

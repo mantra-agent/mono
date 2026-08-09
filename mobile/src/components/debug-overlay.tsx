@@ -213,7 +213,7 @@ const styles = StyleSheet.create({
     zIndex: 9999,
   },
   panel: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: glassesTheme.colors.surfaceElevated,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     paddingHorizontal: 16,
@@ -238,10 +238,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   closeButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: glassesTheme.colors.actionPrimary,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -255,10 +255,10 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
-  okDot: { backgroundColor: '#4ade80' },
-  errorDot: { backgroundColor: '#f87171' },
-  unknownDot: { backgroundColor: '#94a3b8' },
-  pendingDot: { backgroundColor: '#facc15' },
+  okDot: { backgroundColor: glassesTheme.colors.connection.connected },
+  errorDot: { backgroundColor: glassesTheme.colors.status.errorText },
+  unknownDot: { backgroundColor: glassesTheme.colors.textDim },
+  pendingDot: { backgroundColor: glassesTheme.colors.connection.connecting },
   actions: {
     gap: 6,
     paddingBottom: 8,
@@ -301,7 +301,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   deviceTextSelected: {
-    color: '#4ade80',
+    color: glassesTheme.colors.connection.connected,
   },
   logScroll: {
     maxHeight: 180,

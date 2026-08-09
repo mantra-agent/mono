@@ -29,6 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useTimezone } from "@/hooks/use-timezone";
 import { useLogErrors } from "@/hooks/use-log-errors";
 import { createLogger, setVerboseEnabled } from "@/lib/logger";
+import { acquireSharedWS, releaseSharedWS } from "@/lib/ws-connection";
 import { usePageHeader } from "@/hooks/use-page-header";
 
 const log = createLogger("logs-page");
@@ -291,8 +292,9 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
   }, [initialResult]);
 
   useEffect(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const logsWs = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    const ownerId = "logsPageRealtime";
+    const handlerId = "logsPageRealtime";
+    const sharedWS = acquireSharedWS(ownerId);
     let frameId: number | null = null;
     let pendingEntries: LogEntry[] = [];
 
@@ -304,25 +306,28 @@ export default function LogsPage({ embedded }: { embedded?: boolean }) {
       setRealtimeLogs((previous) => [...previous, ...batch].slice(-2000));
     };
 
-    logsWs.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.type === "log" && data.log) {
-          pendingEntries.push({
-            id: `${realtimeConnectionId.current}:${++realtimeSequence.current}`,
-            ts: data.log.timestamp || new Date().toISOString(),
-            level: data.log.level || "info",
-            source: data.log.source || "server",
-            message: data.log.message || "",
-            line: Date.now(),
-          });
-          if (frameId === null) frameId = window.requestAnimationFrame(flushPendingEntries);
-        }
-      } catch {}
-    };
+    sharedWS.addMessageHandler(handlerId, (message) => {
+      const data = message as { type?: unknown; log?: { timestamp?: string; level?: string; source?: string; message?: string } };
+      if (data.type !== "log" || !data.log) return;
+      pendingEntries.push({
+        id: `${realtimeConnectionId.current}:${++realtimeSequence.current}`,
+        ts: data.log.timestamp || new Date().toISOString(),
+        level: data.log.level || "info",
+        source: data.log.source || "server",
+        message: data.log.message || "",
+        line: Date.now(),
+      });
+      if (frameId === null) frameId = window.requestAnimationFrame(flushPendingEntries);
+    });
+
+    if (sharedWS.getReadyState() !== WebSocket.OPEN) {
+      sharedWS.connect();
+    }
+
     return () => {
       if (frameId !== null) window.cancelAnimationFrame(frameId);
-      logsWs.close();
+      sharedWS.removeMessageHandler(handlerId);
+      releaseSharedWS(ownerId);
     };
   }, []);
 

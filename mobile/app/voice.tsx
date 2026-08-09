@@ -8,6 +8,7 @@ import { useAudioRouting } from '../src/hooks/use-audio-routing';
 import { useVoiceSession } from '../src/contexts/voice-session';
 import { useGlassesAgentSession } from '../src/contexts/glasses-agent-session';
 import { VoiceDiagnostics } from '../src/components/voice-diagnostics';
+import { productTheme } from '../src/theme/glasses';
 
 /**
  * Voice screen — demoted from default to /voice route.
@@ -30,6 +31,7 @@ export default function VoiceScreen() {
         style={styles.settingsButton}
         onPress={() => router.push('/settings')}
         accessibilityLabel="Settings"
+        accessibilityRole="button"
       >
         <Text style={styles.settingsIcon}>⚙</Text>
       </Pressable>
@@ -48,7 +50,12 @@ export default function VoiceScreen() {
           </Text>
         </View>
         {audioRouting.error ? <Text style={styles.routeError}>{audioRouting.error}</Text> : null}
-        <Pressable style={styles.refreshButton} onPress={audioRouting.refreshRoute}>
+        <Pressable
+          style={styles.refreshButton}
+          onPress={audioRouting.refreshRoute}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh audio route"
+        >
           <Text style={styles.refreshButtonText}>Refresh route</Text>
         </Pressable>
       </View>
@@ -57,10 +64,22 @@ export default function VoiceScreen() {
         <Text style={styles.magicStripLabel}>Glasses session</Text>
         <Text style={styles.magicStripText}>{glassesSession.phase.replace(/_/g, ' ')}</Text>
         <View style={styles.magicStripActions}>
-          <Pressable style={styles.magicStripButton} onPress={glassesSession.rehearseVoiceOnly} disabled={glassesSession.isBusy}>
+          <Pressable
+            style={styles.magicStripButton}
+            onPress={glassesSession.rehearseVoiceOnly}
+            disabled={glassesSession.isBusy}
+            accessibilityRole="button"
+            accessibilityLabel="Rehearse voice"
+          >
             <Text style={styles.magicStripButtonText}>Rehearse voice</Text>
           </Pressable>
-          <Pressable style={styles.magicStripButton} onPress={glassesSession.runQuickVision} disabled={glassesSession.isBusy}>
+          <Pressable
+            style={styles.magicStripButton}
+            onPress={glassesSession.runQuickVision}
+            disabled={glassesSession.isBusy}
+            accessibilityRole="button"
+            accessibilityLabel="Quick vision"
+          >
             <Text style={styles.magicStripButtonText}>Quick vision</Text>
           </Pressable>
         </View>
@@ -83,7 +102,7 @@ function formatRouteStatus(status: ReturnType<typeof useAudioRouting>['status'])
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: productTheme.colors.canvas,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -91,34 +110,38 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 60,
     right: 24,
+    minWidth: 44,
+    minHeight: 44,
     padding: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   routeCard: {
     position: 'absolute',
     top: 116,
     left: 20,
     right: 20,
-    backgroundColor: '#0d0d0d',
+    backgroundColor: productTheme.colors.surface,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
-    borderRadius: 16,
+    borderColor: productTheme.colors.borderStrong,
+    borderRadius: productTheme.radius.card,
     padding: 14,
     gap: 6,
   },
   routeEyebrow: {
-    color: '#777',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.2,
+    color: productTheme.colors.textQuiet,
+    fontSize: productTheme.typography.eyebrow.fontSize,
+    fontWeight: productTheme.typography.eyebrow.fontWeight,
+    letterSpacing: productTheme.typography.eyebrow.letterSpacing,
     textTransform: 'uppercase',
   },
   routeStatus: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 15,
     fontWeight: '700',
   },
   routeLine: {
-    color: '#bbb',
+    color: productTheme.colors.textSoft,
     fontSize: 12,
     lineHeight: 17,
   },
@@ -129,7 +152,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   routeFact: {
-    borderRadius: 999,
+    borderRadius: productTheme.radius.pill,
     paddingVertical: 4,
     paddingHorizontal: 8,
     fontSize: 11,
@@ -137,53 +160,54 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   routeFactGood: {
-    color: '#86efac',
-    backgroundColor: 'rgba(34, 197, 94, 0.14)',
+    color: productTheme.colors.status.successText,
+    backgroundColor: productTheme.colors.status.successFill,
   },
   routeFactWarn: {
-    color: '#fbbf24',
-    backgroundColor: 'rgba(245, 158, 11, 0.14)',
+    color: productTheme.colors.status.warningText,
+    backgroundColor: productTheme.colors.status.warningFill,
   },
   routeError: {
-    color: '#f87171',
+    color: productTheme.colors.status.errorText,
     fontSize: 12,
   },
   refreshButton: {
     alignSelf: 'flex-start',
-    borderRadius: 999,
+    borderRadius: productTheme.radius.pill,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: productTheme.colors.borderMuted,
     paddingVertical: 6,
     paddingHorizontal: 10,
     marginTop: 2,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   refreshButtonText: {
-    color: '#ddd',
+    color: productTheme.colors.textSubtle,
     fontSize: 12,
     fontWeight: '600',
   },
-
   magicStrip: {
     position: 'absolute',
     bottom: 44,
     left: 20,
     right: 20,
-    backgroundColor: '#0d0d0d',
+    backgroundColor: productTheme.colors.surface,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
-    borderRadius: 16,
+    borderColor: productTheme.colors.borderStrong,
+    borderRadius: productTheme.radius.card,
     padding: 12,
     gap: 6,
   },
   magicStripLabel: {
-    color: '#777',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.2,
+    color: productTheme.colors.textQuiet,
+    fontSize: productTheme.typography.eyebrow.fontSize,
+    fontWeight: productTheme.typography.eyebrow.fontWeight,
+    letterSpacing: productTheme.typography.eyebrow.letterSpacing,
     textTransform: 'uppercase',
   },
   magicStripText: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -192,19 +216,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   magicStripButton: {
-    borderRadius: 999,
+    borderRadius: productTheme.radius.pill,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: productTheme.colors.borderMuted,
     paddingVertical: 7,
     paddingHorizontal: 10,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   magicStripButtonText: {
-    color: '#ddd',
+    color: productTheme.colors.textSubtle,
     fontSize: 12,
     fontWeight: '600',
   },
   voiceError: {
-    color: '#f87171',
+    color: productTheme.colors.status.errorText,
     fontSize: 12,
     textAlign: 'center',
     paddingHorizontal: 24,
@@ -212,6 +238,6 @@ const styles = StyleSheet.create({
   },
   settingsIcon: {
     fontSize: 24,
-    color: '#666',
+    color: productTheme.colors.textFaint,
   },
 });

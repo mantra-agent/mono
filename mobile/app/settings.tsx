@@ -26,6 +26,7 @@ import {
   type NativeEnvironment,
 } from '../src/native/glasses-capabilities';
 import { useAudioRouting } from '../src/hooks/use-audio-routing';
+import { productTheme } from '../src/theme/glasses';
 
 export default function SettingsScreen() {
   const [agentId, setAgentId] = useState('');
@@ -176,7 +177,7 @@ export default function SettingsScreen() {
             value={agentId}
             onChangeText={setAgentId}
             placeholder="Agent ID"
-            placeholderTextColor="#666"
+            placeholderTextColor={productTheme.colors.textFaint}
             autoCapitalize="none"
             autoCorrect={false}
           />
@@ -211,7 +212,7 @@ export default function SettingsScreen() {
                 value={customServerUrl}
                 onChangeText={setCustomServerUrl}
                 placeholder="https://example.up.railway.app"
-                placeholderTextColor="#666"
+                placeholderTextColor={productTheme.colors.textFaint}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
@@ -394,7 +395,7 @@ function buildRouteEvidence(payload: {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: productTheme.colors.canvas,
   },
   scrollContent: {
     padding: 20,
@@ -405,12 +406,12 @@ const styles = StyleSheet.create({
     marginBottom: 40,
   },
   backButton: {
-    color: '#3b82f6',
+    color: productTheme.colors.cta,
     fontSize: 16,
     marginBottom: 16,
   },
   title: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 28,
     fontWeight: '700',
   },
@@ -418,59 +419,62 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   label: {
-    color: '#999',
+    color: productTheme.colors.textDim,
     fontSize: 14,
     fontWeight: '500',
     marginTop: 8,
   },
   input: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: productTheme.colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: productTheme.colors.borderMuted,
     borderRadius: 8,
     padding: 14,
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 16,
+    minHeight: 44,
   },
   targetGrid: {
     gap: 8,
   },
   targetButton: {
-    backgroundColor: '#111',
+    backgroundColor: productTheme.colors.surfaceElevated,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: productTheme.colors.borderMuted,
     borderRadius: 10,
     padding: 12,
+    minHeight: 44,
   },
   targetButtonSelected: {
-    borderColor: '#3b82f6',
-    backgroundColor: '#101827',
+    borderColor: productTheme.colors.cta,
+    backgroundColor: productTheme.colors.ctaMuted,
   },
   targetButtonLabel: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 14,
     fontWeight: '600',
     marginBottom: 4,
   },
   targetButtonDescription: {
-    color: '#999',
+    color: productTheme.colors.textDim,
     fontSize: 12,
     lineHeight: 16,
   },
   activeUrl: {
-    color: '#bbb',
+    color: productTheme.colors.textSoft,
     fontSize: 12,
     lineHeight: 17,
   },
   saveButton: {
-    backgroundColor: '#3b82f6',
+    backgroundColor: productTheme.colors.cta,
     borderRadius: 8,
     padding: 16,
     alignItems: 'center',
     marginTop: 24,
+    minHeight: 44,
   },
   saveText: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 16,
     fontWeight: '600',
   },
@@ -478,27 +482,28 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 16,
     alignItems: 'center',
+    minHeight: 44,
   },
   resetText: {
-    color: '#666',
+    color: productTheme.colors.textFaint,
     fontSize: 14,
   },
   diagnosticCard: {
-    backgroundColor: '#111',
+    backgroundColor: productTheme.colors.surfaceElevated,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: productTheme.colors.borderMuted,
     borderRadius: 12,
     padding: 16,
     marginTop: 24,
     gap: 12,
   },
   diagnosticTitle: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 16,
     fontWeight: '600',
   },
   diagnosticDescription: {
-    color: '#999',
+    color: productTheme.colors.textDim,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -506,48 +511,49 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   diagnosticButton: {
-    backgroundColor: '#222',
+    backgroundColor: productTheme.colors.surfaceStrong,
     borderWidth: 1,
-    borderColor: '#444',
+    borderColor: productTheme.colors.borderSoft,
     borderRadius: 8,
     padding: 12,
     alignItems: 'center',
+    minHeight: 44,
   },
   diagnosticButtonDisabled: {
     opacity: 0.5,
   },
   diagnosticButtonText: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 14,
     fontWeight: '600',
   },
   routeOverview: {
     gap: 4,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: productTheme.colors.viewport,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
+    borderColor: productTheme.colors.borderStrong,
     borderRadius: 10,
     padding: 12,
   },
   diagnosticResult: {
     gap: 4,
     borderTopWidth: 1,
-    borderTopColor: '#222',
+    borderTopColor: productTheme.colors.surfaceStrong,
     paddingTop: 10,
   },
   sectionTitle: {
-    color: '#fff',
+    color: productTheme.colors.textPrimary,
     fontSize: 13,
     fontWeight: '600',
     marginBottom: 2,
   },
   diagnosticLine: {
-    color: '#bbb',
+    color: productTheme.colors.textSoft,
     fontSize: 12,
     lineHeight: 17,
   },
   diagnosticError: {
-    color: '#f87171',
+    color: productTheme.colors.status.errorText,
     fontSize: 12,
   },
 });

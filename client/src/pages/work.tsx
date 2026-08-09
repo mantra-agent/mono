@@ -1307,11 +1307,7 @@ function ProjectsView({ selectedProjectId }: { selectedProjectId?: number | null
         {showCreate && <CreateProjectForm onClose={() => setShowCreate(false)} />}
 
         {(!projects || projects.length === 0) && !showCreate && (
-          <div className="flex flex-col items-center justify-center rounded-lg border border-border/30 bg-card py-12 px-4 text-center">
-            <FolderKanban className="h-6 w-6 text-muted-foreground" />
-            <p className="mt-3 text-sm font-medium">No projects yet</p>
-            <p className="mt-1 text-xs text-muted-foreground">Create one to organize your work.</p>
-          </div>
+          <div className="px-2 py-1.5 text-sm text-muted-foreground">No projects yet.</div>
         )}
 
         {groupedProjects.length > 0 && (

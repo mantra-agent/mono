@@ -10,7 +10,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Plus, Trash2, Pencil, X, Check, Loader2, Users, DollarSign, MapPin, Building2, Trophy, ChevronDown, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getInstanceName } from "@/lib/instance-config";
 
 function formatDateRange(startDate: string | null, endDate: string | null): string {
   if (!startDate) return "";
@@ -263,7 +262,7 @@ function MetricsBank({ experienceId }: { experienceId: number }) {
                 </div>
               ) : (
                 <div className="flex items-center gap-2 group text-sm">
-                  <Trophy className="h-3 w-3 text-amber-500 shrink-0" />
+                  <Trophy className="h-3 w-3 text-warning shrink-0" />
                   <span className="font-medium text-xs">{m.metric}</span>
                   <span className="text-xs text-muted-foreground">—</span>
                   <span className="text-xs">{m.value}</span>
@@ -513,7 +512,7 @@ function ExperienceForm({
           <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Skills</span>
           <div className="flex flex-wrap gap-1.5 mt-1">
             {(exp.linkedSkills || []).map(s => (
-              <Badge key={s.id} variant="secondary" className="bg-primary/10 text-primary border border-primary/20 rounded-sm text-xs px-2 py-0.5 gap-1">
+              <Badge key={s.id} variant="secondary" className="bg-muted text-foreground border border-border rounded-sm text-xs px-2 py-0.5 gap-1">
                 {s.name}
                 <button
                   type="button"
@@ -775,7 +774,7 @@ export default function ExecExperienceTab() {
                       <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Skills</span>
                       <div className="flex flex-wrap gap-1 mt-1">
                         {exp.linkedSkills.map(s => (
-                          <Badge key={s.id} variant="secondary" className="bg-primary/10 text-primary border border-primary/20 rounded-sm text-xs px-2 py-0.5">
+                          <Badge key={s.id} variant="secondary" className="bg-muted text-foreground border border-border rounded-sm text-xs px-2 py-0.5">
                             {s.name}
                           </Badge>
                         ))}
@@ -826,12 +825,7 @@ export default function ExecExperienceTab() {
         )}
 
         {experiences.length === 0 && !showAdd && (
-          <EmptyState
-            icon={Trophy}
-            title="No experience entries yet"
-            message={`Add your first domain experience, or talk to ${getInstanceName()}.`}
-            testId="profile-experience-empty"
-          />
+          <EmptyState message="No experience entries yet." testId="profile-experience-empty" />
         )}
       </div>
     </div>

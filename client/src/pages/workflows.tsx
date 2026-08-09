@@ -332,14 +332,8 @@ function jsonPreview(value: unknown) {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
-function EmptyState({ icon: Icon, title, body }: { icon: React.ComponentType<{ className?: string }>; title: string; body?: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-12 text-center">
-      <Icon className="mb-3 h-6 w-6 text-muted-foreground" />
-      <p className="text-sm font-medium text-muted-foreground">{title}</p>
-      {body && <p className="mt-1 max-w-[340px] text-xs text-muted-foreground/70">{body}</p>}
-    </div>
-  );
+function EmptyState({ title }: { icon?: React.ComponentType<{ className?: string }>; title: string; body?: string }) {
+  return <div className="px-2 py-1.5 text-sm text-muted-foreground">{title}</div>;
 }
 
 function useWorkflowAction(runId: string, action: "start" | "pause" | "resume" | "cancel") {
