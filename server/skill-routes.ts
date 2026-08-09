@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import type { Express } from "express";
 import { storage } from "./storage";
 import { insertSkillSchema } from "@shared/schema";
@@ -131,13 +132,17 @@ export function registerSkillRoutes(app: Express): void {
       if (!skill) return res.status(404).json({ error: "Skill not found" });
       if (skill.status !== "active") return res.status(409).json({ error: `Skill ${skill.name} is not active` });
 
-      const { executeAutonomousSkillRun } = await import("./autonomous-skill-runner");
-      const launched = await executeAutonomousSkillRun(skill.id, {
+      const { requireCurrentUserPrincipal } = await import("./principal-context");
+      const { enqueueSkillExecutionRuntimeRun } = await import("./runtime/proof-path-handlers");
+      const principal = requireCurrentUserPrincipal();
+      const launchKey = `ui/${skill.id}/${crypto.randomUUID()}`;
+      const launched = await enqueueSkillExecutionRuntimeRun(principal, {
+        skillId: skill.id,
+        launchKey,
         spawnerTool: "skills.ui.run",
       });
-      if (!launched) return res.status(409).json({ error: `Skill ${skill.name} is already running` });
-      log.log(`Completed skill name=${skill.name} id=${skill.id} session=${launched.sessionId} status=${launched.status}`);
-      res.status(200).json({ started: true, skillId: skill.id, skillName: skill.name, sessionId: launched.sessionId, status: launched.status });
+      log.info("skill.runtime.accepted", { skillId: skill.id, skillName: skill.name, runtimeRunId: launched.run.id, disposition: launched.disposition });
+      res.status(202).json({ accepted: true, skillId: skill.id, skillName: skill.name, runtimeRunId: launched.run.id, status: launched.run.phase });
     } catch (err: any) {
       log.error(`POST /api/skills/${req.params.id}/run error:`, err.message);
       res.status(500).json({ error: err.message || "Failed to run skill" });
