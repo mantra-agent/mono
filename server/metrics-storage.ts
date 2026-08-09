@@ -21,7 +21,7 @@ import {
   type MetricUpdate,
   type StandingObjectiveKey,
 } from "@shared/models/metrics";
-import type { UsageRangeSample } from "./hours-used";
+import { USAGE_LEASE_TAIL_MS, type UsageRangeSample } from "./hours-used";
 import type { WorkRangeSample } from "./work-metrics";
 import type { IdentityRangeSample } from "./identity-metrics";
 import { db } from "./db";
@@ -341,7 +341,9 @@ export const metricsStorage = {
     return rows.map(mapSample);
   },
 
-  async sampleRange(start: Date, end: Date): Promise<UsageRangeSample & WorkRangeSample & IdentityRangeSample> {
+  async sampleRange(start: Date, end: Date): Promise<UsageRangeSample & WorkRangeSample & IdentityRangeSample & {
+    coverage: { status: "provisional" | "finalized"; finalizesAt: string };
+  }> {
     const principal = currentPrincipal();
     if (!principal.accountId) {
       throw Object.assign(new Error("Account required"), { status: 400 });
@@ -356,7 +358,16 @@ export const metricsStorage = {
       sampleWorkRange(start, end),
       sampleIdentityRange(start, end),
     ]);
-    return { ...usage, ...work, ...identity };
+    const finalizesAt = new Date(end.getTime() + USAGE_LEASE_TAIL_MS);
+    return {
+      ...usage,
+      ...work,
+      ...identity,
+      coverage: {
+        status: finalizesAt.getTime() > Date.now() ? "provisional" : "finalized",
+        finalizesAt: finalizesAt.toISOString(),
+      },
+    };
   },
 
   async deleteSample(id: string): Promise<MetricSample> {
