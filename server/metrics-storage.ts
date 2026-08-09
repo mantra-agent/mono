@@ -32,6 +32,7 @@ import {
   type ScopeColumns,
 } from "./scoped-storage";
 import { getCurrentPrincipal } from "./principal-context";
+import { eventBus } from "./event-bus";
 
 const metricScope: ScopeColumns = {
   scope: metrics.scope,
@@ -158,6 +159,64 @@ async function latestSampleFor(metricId: string, accountId: string): Promise<Met
     .orderBy(desc(metricSamples.observedAt))
     .limit(1);
   return row ? mapSample(row) : null;
+}
+
+export interface InternalPeriodSampleInput {
+  id: string;
+  metricId: string;
+  accountId: string;
+  ownerUserId: string;
+  vaultId: string | null;
+  value: number;
+  unit: string;
+  observedAt: Date;
+  sourceRef: string;
+  evidence: string | null;
+  periodStart: Date;
+  periodEnd: Date;
+}
+
+export async function upsertInternalPeriodSample(input: InternalPeriodSampleInput): Promise<MetricSample> {
+  await ensureMetricsSamplesSchema();
+  const [row] = await metricsDb
+    .insert(metricSamples)
+    .values({
+      id: input.id,
+      metricId: input.metricId,
+      accountId: input.accountId,
+      vaultId: input.vaultId,
+      value: input.value,
+      unit: input.unit,
+      observedAt: input.observedAt,
+      sourceRef: input.sourceRef,
+      evidence: input.evidence,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+    })
+    .onConflictDoUpdate({
+      target: metricSamples.id,
+      set: {
+        value: input.value,
+        unit: input.unit,
+        observedAt: input.observedAt,
+        sourceRef: input.sourceRef,
+        evidence: input.evidence,
+        periodStart: input.periodStart,
+        periodEnd: input.periodEnd,
+      },
+    })
+    .returning();
+  eventBus.publish({
+    category: "data",
+    event: "data:metrics_changed",
+    payload: { metricId: input.metricId },
+    audience: {
+      scope: "user",
+      ownerUserId: input.ownerUserId,
+      accountId: input.accountId,
+    },
+  });
+  return mapSample(row);
 }
 
 export const metricsStorage = {
@@ -325,39 +384,22 @@ export const metricsStorage = {
     if (!parsed.periodStart || !parsed.periodEnd) {
       throw Object.assign(new Error("Period start and end are required"), { status: 400 });
     }
-    await ensureMetricsSamplesSchema();
     const idempotencyDigest = createHash("sha256").update(input.idempotencyKey).digest("hex").slice(0, 32);
-    const id = `msamp_period_${idempotencyDigest}`;
     const observedAt = parsed.observedAt ? new Date(parsed.observedAt) : new Date(parsed.periodEnd);
-    const [row] = await metricsDb
-      .insert(metricSamples)
-      .values({
-        id,
-        metricId: metric.id,
-        accountId: principal.accountId,
-        vaultId: metric.vaultId,
-        value: parsed.value,
-        unit: parsed.unit ?? metric.unit ?? "",
-        observedAt,
-        sourceRef: parsed.sourceRef ?? "internal",
-        evidence: parsed.evidence ?? null,
-        periodStart: new Date(parsed.periodStart),
-        periodEnd: new Date(parsed.periodEnd),
-      })
-      .onConflictDoUpdate({
-        target: metricSamples.id,
-        set: {
-          value: parsed.value,
-          unit: parsed.unit ?? metric.unit ?? "",
-          observedAt,
-          sourceRef: parsed.sourceRef ?? "internal",
-          evidence: parsed.evidence ?? null,
-          periodStart: new Date(parsed.periodStart),
-          periodEnd: new Date(parsed.periodEnd),
-        },
-      })
-      .returning();
-    return mapSample(row);
+    return upsertInternalPeriodSample({
+      id: `msamp_period_${idempotencyDigest}`,
+      metricId: metric.id,
+      accountId: principal.accountId,
+      ownerUserId: principal.userId,
+      vaultId: metric.vaultId,
+      value: parsed.value,
+      unit: parsed.unit ?? metric.unit ?? "",
+      observedAt,
+      sourceRef: parsed.sourceRef ?? "internal",
+      evidence: parsed.evidence ?? null,
+      periodStart: new Date(parsed.periodStart),
+      periodEnd: new Date(parsed.periodEnd),
+    });
   },
 
   async recordSample(input: MetricSampleCreate): Promise<MetricSample> {
