@@ -16,6 +16,7 @@ const ROLLUP_MAX_OUTPUT_TOKENS = 600;
 const HISTORY_TOKEN_BUDGET = 2_400;
 const DEFAULT_HISTORY_TIMEZONE = "America/Chicago";
 const ROLLUP_LEVELS = ["hour", "day", "week", "month", "quarter", "year"] as const;
+const HISTORY_PROJECTION_LEVELS = ["turn", "hour", "day", "week", "month", "quarter", "year"] as const;
 type RollupLevel = (typeof ROLLUP_LEVELS)[number];
 type ContinuityLevel = "turn" | RollupLevel;
 
@@ -425,7 +426,7 @@ export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET
     )
     SELECT id, vault_id, level, timezone, bucket_start, bucket_end, summary, source_start, source_end, source_count, session_id, assistant_message_id
     FROM ranked WHERE (level='turn' AND rn<=24) OR (level='hour' AND rn<=48) OR (level='day' AND rn<=31) OR (level='week' AND rn<=16) OR (level='month' AND rn<=18) OR (level='quarter' AND rn<=12) OR (level='year' AND rn<=10)
-    ORDER BY vault_id, CASE level WHEN 'year' THEN 1 WHEN 'quarter' THEN 2 WHEN 'month' THEN 3 WHEN 'week' THEN 4 WHEN 'day' THEN 5 WHEN 'hour' THEN 6 ELSE 7 END, bucket_start ASC
+    ORDER BY vault_id, CASE level WHEN 'turn' THEN 1 WHEN 'hour' THEN 2 WHEN 'day' THEN 3 WHEN 'week' THEN 4 WHEN 'month' THEN 5 WHEN 'quarter' THEN 6 ELSE 7 END, bucket_start DESC
   `);
   const rows = (result.rows as Array<Record<string, unknown>>)
     .map(normalizeContinuityRow)
@@ -441,7 +442,7 @@ export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET
     const header = `# HISTORY.md — ${vault.name}\n\nVault: ${vault.name}\nModel-derived chronology for continuity. Times are local to ${projectionTimezone}. Raw transcripts remain authoritative; memory candidates require independent provenance and validation.\n`;
     const budget = { used: estimateTokens(header), tokenBudget: perVaultBudget };
     const sections: string[] = [];
-    for (const level of ["year", "quarter", "month", "week", "day", "hour", "turn"] as const) {
+    for (const level of HISTORY_PROJECTION_LEVELS) {
       const section = renderHistoryLevelSection(
         level,
         vaultRows.filter((row) => row.level === level),
