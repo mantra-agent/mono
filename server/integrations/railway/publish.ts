@@ -908,6 +908,7 @@ export async function startRun(
           cfg.environmentId,
           1,
           target.credential,
+          { requestClass: "release" },
         );
         run.baselineDeploymentId = baseline[0]?.id ?? null;
       } catch (err) {
@@ -1371,6 +1372,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
             prodCfg.environmentId,
             3,
             railwayToken,
+            { requestClass: "release" },
           );
           for (const d of latest) {
             // Skip the pre-merge baseline AND any deployment id this run was
@@ -1417,6 +1419,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
               prodCfg.environmentId,
               5,
               railwayToken,
+              { requestClass: "release" },
             );
             const dep = latest.find((d) => d.id === newDeploymentId);
             if (!dep) break;
@@ -1477,6 +1480,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
               prodCfg.environmentId,
               10,
               railwayToken,
+              { requestClass: "release" },
             );
             for (const d of pre) knownIds.add(d.id);
           } catch (err) {
@@ -1510,6 +1514,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
               prodCfg.environmentId,
               5,
               railwayToken,
+              { requestClass: "release" },
             );
             const found = latest.find((d) => {
               if (knownIds.has(d.id)) return false;
@@ -1571,6 +1576,7 @@ async function runPipeline(run: PublishRun, signal: AbortSignal): Promise<void> 
             prodCfg.environmentId,
             5,
             railwayToken,
+            { requestClass: "release" },
           );
           const dep = latest.find((d) => d.id === newDeploymentId);
           if (dep) {
