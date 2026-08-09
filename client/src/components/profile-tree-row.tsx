@@ -53,6 +53,11 @@ export function ProfileTreeRow({
 
   const canExpand = Boolean(expandedContent);
   const showValue = hasRenderableChildren(children);
+  const showAction = Boolean(actionContent);
+  const showMenu = Boolean(menuContent);
+  const trailingCount = (canExpand ? 1 : 0) + (showAction ? 1 : 0) + (showMenu ? 1 : 0);
+  const trailingCols =
+    trailingCount > 0 ? ` ${Array.from({ length: trailingCount }, () => "auto").join(" ")}` : "";
   const usesSessionMenuControls = mobileLayout === "inline";
   const sessionDisclosureControlClassName = "h-5 min-h-5 w-5 min-w-5 rounded [&_svg]:size-3";
   const sessionOverflowControlClassName = "h-6 min-h-6 w-6 min-w-6 rounded-md [&_svg]:size-3.5";
@@ -67,12 +72,12 @@ export function ProfileTreeRow({
             showValue
               ? mobileLayout === "inline"
                 ? valueLayout === "compact"
-                  ? "grid-cols-[max-content_minmax(0,1fr)_auto_auto] gap-y-0"
-                  : "grid-cols-[max-content_minmax(0,1fr)_12rem_auto_auto] gap-y-0"
-                : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto_auto] sm:gap-y-1"
+                  ? `grid-cols-[max-content_minmax(0,1fr)${trailingCols}] gap-y-0`
+                  : `grid-cols-[max-content_minmax(0,1fr)_12rem${trailingCols}] gap-y-0`
+                : `grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)${trailingCols}] sm:gap-y-1`
               : mobileLayout === "inline"
-                ? "grid-cols-[max-content_auto_auto] gap-y-0"
-                : "grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-y-1",
+                ? `grid-cols-[max-content${trailingCols}] gap-y-0`
+                : `grid-cols-[minmax(0,1fr)_auto] gap-y-1 sm:grid-cols-[minmax(0,1fr)${trailingCols}] sm:gap-y-1`,
           )}
         >
           <div
@@ -138,19 +143,13 @@ export function ProfileTreeRow({
                 <ChevronRight className={cn("h-3 w-3 transition-transform", open && "rotate-90")} />
               </Button>
             </CollapsibleTrigger>
-          ) : actionContent ? (
-            <div
-              className={cn(
-                "shrink-0",
-                usesSessionMenuControls
-                  ? "h-6 min-h-6 w-6 min-w-6"
-                  : "min-h-11 min-w-11 sm:min-h-5 sm:min-w-5",
-              )}
-            >
+          ) : null}
+          {showAction ? (
+            <div className="flex shrink-0 items-center justify-end">
               {actionContent}
             </div>
           ) : null}
-          {menuContent ? (
+          {showMenu ? (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button

@@ -1514,9 +1514,8 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         onClick: () => cancelMut.mutate(),
         pending: cancelMut.isPending,
         variant: "outline" as const,
-        icon: <XCircle className="h-4 w-4" />,
+        icon: <XCircle className="h-3.5 w-3.5" />,
         testId: "button-primary-action",
-        showLabel: appearance === "tree",
       }
     : canRetry
       ? {
@@ -1524,58 +1523,61 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
           onClick: () => retryMut.mutate(),
           pending: retryMut.isPending,
           variant: "outline" as const,
-          icon: <RotateCw className="h-4 w-4" />,
+          icon: <RotateCw className="h-3.5 w-3.5" />,
           testId: "button-primary-action",
-          showLabel: appearance === "tree",
         }
       : {
           label: "Publish",
           onClick: openPublishModal,
           disabled: !canStart || publishBusy,
           pending: publishBusy,
-          icon: <Play className="h-4 w-4" />,
+          icon: <Play className="h-3.5 w-3.5" />,
           testId: "button-primary-action",
           tooltip: inSyncReason ?? disabledReason ?? undefined,
-          showLabel: appearance === "tree",
         };
 
-  const secondaryActions = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-7 w-7"
-          data-testid="button-overflow-menu"
-          aria-label="Production actions"
-        >
-          <MoreHorizontal className="h-3.5 w-3.5" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          onClick={() => setRedeployConfirmOpen(true)}
-          disabled={redeployMut.isPending || prodDeploying}
-          data-testid="menu-redeploy"
-        >
+  const overflowMenuItems = (
+    <>
+      <DropdownMenuItem
+        onClick={() => setRedeployConfirmOpen(true)}
+        disabled={redeployMut.isPending || prodDeploying}
+        data-testid="menu-redeploy"
+      >
+        <RotateCw className="mr-2 h-4 w-4" />
+        Redeploy production
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onClick={() => refetch()}
+        disabled={isFetching}
+        data-testid="menu-refresh"
+      >
+        {isFetching ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
           <RotateCw className="mr-2 h-4 w-4" />
-          Redeploy production
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => refetch()}
-          disabled={isFetching}
-          data-testid="menu-refresh"
-        >
-          {isFetching ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <RotateCw className="mr-2 h-4 w-4" />
-          )}
-          Refresh
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        )}
+        Refresh
+      </DropdownMenuItem>
+    </>
   );
+
+  const secondaryActions =
+    appearance === "tree" ? undefined : (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-7 w-7"
+            data-testid="button-overflow-menu"
+            aria-label="Production actions"
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">{overflowMenuItems}</DropdownMenuContent>
+      </DropdownMenu>
+    );
 
   return (
     <div className="min-w-0" data-testid="publish-tab">
@@ -1589,6 +1591,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
         }
         primaryAction={primaryAction}
         secondaryActions={secondaryActions}
+        menuContent={appearance === "tree" ? overflowMenuItems : undefined}
         primaryActionPosition="right"
         summary={[
           {
