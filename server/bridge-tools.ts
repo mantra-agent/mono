@@ -5994,6 +5994,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (!start) return { result: "Missing start time. Provide an ISO 8601 datetime.", error: true };
 
       const { getTimezone } = await import("./timezone");
+      const { requireCurrentPrincipal } = await import("./principal-context");
       const { meetingDraftStorage } = await import("./meeting-draft-storage");
       const principal = requireCurrentPrincipal();
       const attendees = Array.isArray(args.attendees)
@@ -11040,6 +11041,11 @@ ${refs}` : ""),
       if (!cfg.hasToken) missing.push("SENTRY_AUTH_TOKEN");
       if (!cfg.org) missing.push("SENTRY_ORG");
       if (!cfg.project) missing.push("SENTRY_PROJECT");
+      if (action === "status") {
+        return {
+          result: JSON.stringify({ configured: false, status: "not_configured", missing }),
+        };
+      }
       const detail = missing.join(", ");
       return {
         result: `Sentry not configured. Missing: ${detail}. Add them via the Integrations page.`,
@@ -17177,7 +17183,7 @@ const cognitionTools: Record<string, ToolHandler> = {
     // to existing handlers so validation, provenance, and profile permissions stay
     // at their deterministic per-action authority boundaries.
     if (action === "observe") {
-      return systemTools.observe({ ...args, type: args.observation_type, content: args.observation });
+      return umbrellaHandlers.observe({ ...args, type: args.observation_type, content: args.observation });
     }
     if (action === "get_profile" || action === "update_profile") {
       return utilityTools.agent_profile({ ...args, action: action === "get_profile" ? "get" : "update" });

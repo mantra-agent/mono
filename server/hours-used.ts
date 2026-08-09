@@ -8,7 +8,7 @@ import { enqueueTelemetryWrite } from "./telemetry-write";
 import { upsertInternalPeriodSample } from "./metrics-storage";
 
 const log = createLogger("HoursUsed");
-const LEASE_TAIL_MS = 45_000;
+export const USAGE_LEASE_TAIL_MS = 45_000;
 const RAW_RETENTION_DAYS = 400;
 const ROLLUP_RETENTION_DAYS = 400;
 export const USAGE_SAMPLE_MAX_DAYS = 400;
@@ -206,15 +206,15 @@ export async function sampleUsageRange(accountId: string, start: Date, end: Date
       SELECT user_id,
         tstzrange(
           GREATEST(connected_at, ${start}),
-          LEAST(COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')), ${end}),
+          LEAST(COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')), ${end}),
           '[)'
         ) AS span,
         connected_at,
-        COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')) AS effective_end
+        COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')) AS effective_end
       FROM hours_used_intervals
       WHERE account_id = ${accountId}
         AND connected_at < ${end}
-        AND COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')) > ${start}
+        AND COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')) > ${start}
     ), merged AS (
       SELECT user_id, unnest(range_agg(span)) AS span
       FROM bounded
@@ -251,12 +251,12 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
         SELECT account_id, user_id,
           tstzrange(
             GREATEST(connected_at, ${hourStart}),
-            LEAST(COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')), ${hourEnd}),
+            LEAST(COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')), ${hourEnd}),
             '[)'
           ) AS span
         FROM hours_used_intervals
         WHERE connected_at < ${hourEnd}
-          AND COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')) > ${hourStart}
+          AND COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')) > ${hourStart}
       ) bounded
       WHERE NOT isempty(span)
       GROUP BY account_id, user_id
@@ -317,14 +317,14 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
           tstzrange(
             GREATEST(connected_at, ${currentDayStart}),
             LEAST(
-              COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')),
+              COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')),
               ${now}
             ),
             '[)'
           ) AS span
         FROM hours_used_intervals
         WHERE connected_at < ${now}
-          AND COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')) > ${currentDayStart}
+          AND COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond')) > ${currentDayStart}
       ) bounded
       WHERE NOT isempty(span)
       GROUP BY account_id, user_id
@@ -359,7 +359,7 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
 
   await metricsDb.execute(sql`
     DELETE FROM hours_used_intervals
-    WHERE COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond'))
+    WHERE COALESCE(disconnected_at, last_seen_at + (${USAGE_LEASE_TAIL_MS} * interval '1 millisecond'))
       < CURRENT_TIMESTAMP - (${RAW_RETENTION_DAYS} * interval '1 day')
   `);
   await metricsDb.execute(sql`

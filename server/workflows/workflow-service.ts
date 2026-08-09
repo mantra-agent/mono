@@ -218,6 +218,18 @@ type WorkflowRetryContext = {
   instruction: string;
 };
 
+type WorkflowRevisionContext = {
+  sourceStageKey: string;
+  sourceStageTitle: string;
+  sourceAttemptId: number;
+  verdict: string;
+  transitionReason: string;
+  outputSummary: string | null;
+  evidence: unknown;
+  artifacts: WorkflowArtifactBrief[];
+  instruction: string;
+};
+
 type WorkflowStageInputContext = {
   workflowRunId: string;
   workflowTitle: string;
@@ -225,10 +237,12 @@ type WorkflowStageInputContext = {
   stageKey: string;
   stageTitle: string;
   attemptNumber: number;
+  executionAttemptNumber: number;
   retryCount: number;
   maxAttempts: number;
   previousFailurePacket?: unknown;
   retryContext?: WorkflowRetryContext;
+  revisionContext?: WorkflowRevisionContext;
   relevantArtifacts: WorkflowArtifactBrief[];
   originatingRequest?: string;
   entryCriteria?: string[];
@@ -420,7 +434,41 @@ function buildRetryContext(detail: WorkflowRunDetail, stageKey: string, stageTit
     childSessionId: latestFailure.childSessionId,
     artifacts: attemptArtifacts(detail, latestFailure.id),
     runFailurePacket: detail.run.failurePacket || null,
-    instruction: "Address this failure directly. Do not redo unrelated discovery or repeat the failed approach unless the changed premise is explicit.",
+    instruction: "Address this execution failure directly. Do not redo unrelated discovery or repeat the failed approach unless the changed premise is explicit.",
+  };
+}
+
+function latestInboundStageTransition(detail: WorkflowRunDetail, stageKey: string) {
+  return [...detail.transitions]
+    .filter((transition) => transition.toStageKey === stageKey && transition.fromStageKey !== stageKey)
+    .sort((a, b) => b.id - a.id)[0];
+}
+
+function attemptsInCurrentStageVisit(detail: WorkflowRunDetail, stageKey: string): WorkflowStageAttempt[] {
+  const stageAttempts = detail.stages.find((stage) => stage.key === stageKey)?.attempts || [];
+  const inbound = latestInboundStageTransition(detail, stageKey);
+  if (!inbound?.fromAttemptId) return stageAttempts;
+  return stageAttempts.filter((attempt) => attempt.id > inbound.fromAttemptId!);
+}
+
+function buildRevisionContext(detail: WorkflowRunDetail, stageKey: string): WorkflowRevisionContext | undefined {
+  const inbound = latestInboundStageTransition(detail, stageKey);
+  if (!inbound?.fromAttemptId || !inbound.fromStageKey) return undefined;
+  const sourceAttempt = detail.stages
+    .flatMap((stage) => stage.attempts)
+    .find((attempt) => attempt.id === inbound.fromAttemptId);
+  const verdict = String(sourceAttempt?.result || "");
+  if (!sourceAttempt || !verdict || verdict === "passed") return undefined;
+  return {
+    sourceStageKey: sourceAttempt.stageKey,
+    sourceStageTitle: sourceAttempt.stageTitle,
+    sourceAttemptId: sourceAttempt.id,
+    verdict,
+    transitionReason: inbound.reason || "",
+    outputSummary: sourceAttempt.outputSummary,
+    evidence: sourceAttempt.evidence,
+    artifacts: attemptArtifacts(detail, sourceAttempt.id),
+    instruction: "Apply the requested domain revision directly. This is not an execution failure and does not consume the execution retry budget.",
   };
 }
 
@@ -459,12 +507,13 @@ async function resolveGoverningArtifacts(environmentId: number | null, stageKey:
 
 
 async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: string, stageDef: WorkflowStageDefinition, attemptNumber: number, extraContext?: unknown): Promise<WorkflowStageInputContext & { extraContext?: unknown; environmentTruth?: WorkflowEnvironmentTruth | null; lifecycleSnapshot?: unknown }> {
-  const stageAttempts = detail.stages.find((stage) => stage.key === stageKey)?.attempts || [];
-  const allAttempts = detail.stages.flatMap((stage) => stage.attempts);
-  const retryCount = Math.max(0, attemptNumber - 1);
-  const retrySourceAttempts = failedAttempts(stageAttempts).length > 0 ? stageAttempts : allAttempts;
-  const previousFailurePacket = buildPreviousFailurePacket(retrySourceAttempts);
-  const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageDef.title, retrySourceAttempts) : undefined;
+  const visitAttempts = attemptsInCurrentStageVisit(detail, stageKey);
+  const executionFailures = failedAttempts(visitAttempts);
+  const retryCount = executionFailures.length;
+  const executionAttemptNumber = retryCount + 1;
+  const previousFailurePacket = buildPreviousFailurePacket(visitAttempts);
+  const retryContext = retryCount > 0 ? buildRetryContext(detail, stageKey, stageDef.title, visitAttempts) : undefined;
+  const revisionContext = buildRevisionContext(detail, stageKey);
   const governingArtifacts = detail.template.id === BUILD_WORKFLOW_TEMPLATE_ID
     ? await resolveGoverningArtifacts(detail.run.linkedEnvironmentId, stageKey)
     : [];
@@ -475,10 +524,12 @@ async function buildStageInputContext(detail: WorkflowRunDetail, stageKey: strin
     stageKey,
     stageTitle: stageDef.title,
     attemptNumber,
+    executionAttemptNumber,
     retryCount,
     maxAttempts: getMaxAttempts(detail),
     previousFailurePacket,
     retryContext,
+    revisionContext,
     relevantArtifacts: stageArtifacts(detail, stageKey),
     originatingRequest: originatingRequest(detail),
     entryCriteria: stageDef.entryCriteria,
@@ -541,13 +592,19 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
     lines.push(`- ${artifact.kind}: ${artifact.title}${ref ? ` — ${ref}` : ""}${artifact.summary ? ` — ${artifact.summary}` : ""}`);
   }
 
+  if (context.revisionContext) {
+    lines.push("", "## Revision Assignment");
+    lines.push("Apply the prior stage's requested revision directly. This is a declared domain transition, not an execution failure.");
+    lines.push("```json", JSON.stringify(context.revisionContext, null, 2), "```");
+  }
+
   if (context.retryCount > 0) {
     const retryAssignment = context.retryContext || context.previousFailurePacket;
     if (!retryAssignment) {
-      throw new Error(`Workflow ${context.workflowRunId} cannot start ${context.stageTitle} retry ${context.attemptNumber} without a failure packet.`);
+      throw new Error(`Workflow ${context.workflowRunId} cannot start ${context.stageTitle} execution retry ${context.executionAttemptNumber} without failure evidence.`);
     }
-    lines.push("", "## Retry Assignment");
-    lines.push("Address the prior failure directly with a materially different approach. Do not repeat unrelated discovery.");
+    lines.push("", "## Execution Retry Assignment");
+    lines.push("Address the prior execution failure directly with a materially different approach. Do not repeat unrelated discovery.");
     lines.push("```json", JSON.stringify(retryAssignment, null, 2), "```");
   }
 
@@ -589,7 +646,7 @@ function buildStageBrief(context: WorkflowStageInputContext & { extraContext?: u
   lines.push(
     "",
     "## Completion",
-    `Workflow run: ${context.workflowRunId}.${stageAttemptIdForCompletion !== null ? ` Stage attempt: ${stageAttemptIdForCompletion}.` : ""} Attempt ${context.attemptNumber}/${context.maxAttempts}.`,
+    `Workflow run: ${context.workflowRunId}.${stageAttemptIdForCompletion !== null ? ` Stage attempt: ${stageAttemptIdForCompletion}.` : ""} Execution attempt ${context.executionAttemptNumber}/${context.maxAttempts}.`,
     "Execute only this assigned stage. Do not create or start another workflow; this workflow owns downstream orchestration.",
     `Your terminal action MUST be a single \`complete_stage_attempt\` call that records this attempt's verdict as structured data: pass the workflow run ID, the stage attempt ID above, and \`result\` set to one of this stage's declared Outcomes${context.allowedTransitions?.length ? ` (${context.allowedTransitions.map((transition) => transition.on).join(", ")})` : ""}. Use \`failed\` only for execution faults such as a tool failure, crash, timeout, missing/malformed verdict, or lost session/lease; use \`blocked\`, \`needs_review\`, or \`skipped\` only when the domain is intentionally held. Include the evidence produced and, for faults or holds, the reason and next required action.`,
     "Do not report the verdict only as prose. A stage attempt that ends without a `complete_stage_attempt` call records no verdict, is treated as a failed attempt, and holds the workflow on this stage for explicit recovery.",
@@ -1675,7 +1732,8 @@ export async function startStageAttempt(runId: string, stageKey?: string, option
   const maxAttempt = Math.max(0, ...(stageState?.attempts.map((a) => a.attemptNumber) || [0]));
   const attemptNumber = maxAttempt + 1;
   const maxAttempts = getMaxAttempts(detail);
-  if (attemptNumber > maxAttempts) throw new Error(`Workflow run ${runId} stage ${key} exceeded max attempts (${maxAttempts}).`);
+  const executionAttemptNumber = failedAttempts(attemptsInCurrentStageVisit(detail, key)).length + 1;
+  if (executionAttemptNumber > maxAttempts) throw new Error(`Workflow run ${runId} stage ${key} exceeded max execution attempts (${maxAttempts}) in its current visit.`);
 
   const parentSessionId = await ensureWorkflowParentSession(detail);
   const stageSpecificContext = key === "acceptance" ? acceptanceStageContext(detail) : key === "calibration" ? calibrationStageContext(detail) : undefined;
