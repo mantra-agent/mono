@@ -3,7 +3,7 @@
  * Uses METRICS_DATABASE_URL when set; falls back to primary DATABASE_URL in dev
  * so local/single-db environments still work without a second Postgres.
  */
-import { Pool } from "pg";
+import { createManagedDatabasePool } from "./database-adapters";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
@@ -30,7 +30,7 @@ if (!metricsConnectionString) {
 
 const usingDedicatedMetricsDb = Boolean(process.env.METRICS_DATABASE_URL);
 
-export const metricsPool = new Pool({
+const metricsPoolAdapter = createManagedDatabasePool("metrics", {
   connectionString: metricsConnectionString,
   max: METRICS_DB_POOL_MAX,
   min: METRICS_DB_POOL_MIN,
@@ -41,10 +41,7 @@ export const metricsPool = new Pool({
   keepAliveInitialDelayMillis: 10_000,
   application_name: usingDedicatedMetricsDb ? "mantra-metrics" : "mantra-metrics-fallback",
 } as any);
-
-metricsPool.on("error", (err) => {
-  log.error("metrics pool error", err.message);
-});
+export const metricsPool = metricsPoolAdapter.pool;
 
 export const metricsDb = drizzle(metricsPool, { schema });
 
@@ -89,14 +86,6 @@ export async function ensureMetricsSamplesSchema(): Promise<void> {
     });
   }
   await samplesSchemaReady;
-}
-
-export async function closeMetricsDatabasePool(): Promise<void> {
-  try {
-    await metricsPool.end();
-  } catch (err) {
-    log.warn("metrics pool close failed", (err as Error)?.message);
-  }
 }
 
 export function getMetricsPoolStats(): {

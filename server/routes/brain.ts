@@ -1,7 +1,8 @@
 // Use createLogger for logging ONLY
 import type { Express } from "express";
 import { db, APP_NAME } from "../db";
-import { Client, type ClientConfig } from "pg";
+import type { ClientConfig } from "pg";
+import { createDedicatedDatabaseClient } from "../database-adapters";
 import { pathExists } from "./shared";
 import { WORKSPACE_DIR } from "../paths";
 import { documentStorage } from "../memory";
@@ -513,7 +514,7 @@ async function exportTableStreamingCursor(
     // safety net for hung exports, not statement_timeout.
     statement_timeout: 0,
   };
-  const client = new Client(clientConfig);
+  const client = createDedicatedDatabaseClient("brain-export", clientConfig);
 
   await client.connect();
 
@@ -751,7 +752,7 @@ export async function exportBrain(options: ExportBrainOptions): Promise<ExportBr
   // in-flight query per connection); on this dataset the whole sweep is
   // sub-second, well below any reaper window.
   if (mode !== "schema" && options.onPreflight) {
-    const preflightClient = new Client({
+    const preflightClient = createDedicatedDatabaseClient("brain-preflight", {
       connectionString: process.env.DATABASE_URL,
       application_name: `${APP_NAME}-sync-preflight`,
       keepAlive: true,

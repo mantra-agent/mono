@@ -143,15 +143,16 @@ A completed stage emits one structured verdict. The seeded `build-v1` template i
 
 ### Connection and access model
 
-`server/db.ts` owns the ordinary application database boundary over Railway-injected `DATABASE_URL`:
+`server/database-adapters.ts` is the sole PostgreSQL constructor and pool-lifecycle registry. Every pool or dedicated client declares one named workload there; `closeDatabasePools()` closes the complete managed-pool registry during graceful shutdown. `server/db.ts` owns ordinary execution policy over those adapters:
 
-- `pool`: node-postgres general lane, `max=50`, `min=16`, 5 s acquisition timeout, 10 s server-side `statement_timeout`, 60 s idle timeout.
-- `voicePool`: reserved real-time lane, `max=min=4`, 750 ms acquisition timeout, 4 s server-side `statement_timeout`.
+- `general`: node-postgres general lane, `max=50`, `min=16`, 5 s acquisition timeout, 10 s server-side `statement_timeout`, 60 s idle timeout.
+- `voice`: reserved real-time lane, `max=min=4`, 750 ms acquisition timeout, 4 s server-side `statement_timeout`.
 - `db`: the canonical Drizzle proxy. AsyncLocalStorage selects an ambient transaction first, otherwise the voice lane when `withDatabaseLane("voice")` is active, otherwise the general lane. `runWithDatabaseTransaction(...)` lets nested storage calls share the caller's transaction; durable diagnostics may deliberately exit it with `runOutsideDatabaseTransaction(...)`.
-- `setupAuth()` creates a separate 5-connection node-postgres pool for `connect-pg-simple`. It is outside `server/db.ts` lane selection, query attribution, saturation counters, and `closeDatabasePools()`; account for it when reasoning about per-process connection demand.
-- Dedicated `pg.Client` connections are exceptional but real: the pool-wedge `pg_stat_activity` dump and Brain export/preflight paths bypass the application pools so diagnostics or long cursor exports do not occupy ordinary request capacity. Brain cursor exports intentionally disable statement timeout and rely on bounded fetches, progress heartbeats, cancellation, and the export reaper.
+- `auth-session`: the 5-connection `connect-pg-simple` adapter. It remains isolated from ordinary lane selection and query counters so auth availability does not depend on general saturation, but it shares canonical lifecycle ownership.
+- `metrics`: the high-volume sample adapter, optionally backed by `METRICS_DATABASE_URL`; fallback to `DATABASE_URL` still counts against primary deployment demand.
+- Dedicated clients are exceptional named adapters: `watchdog`, `brain-export`, `brain-preflight`, and `role-provisioning`. They do not consume ordinary request slots. Each caller owns bounded work and closes its client in `finally`; Brain cursor exports intentionally disable statement timeout and instead rely on bounded fetches, progress heartbeats, cancellation, and the export reaper.
 
-The configured ordinary budget is 54 connections per app process, not per deployment; with auth it is up to 59 pooled clients before exceptional dedicated clients. Live idle/total counts are demand-driven and may remain below configured `min` because node-postgres does not proactively create the minimum. Scaling replicas multiplies every pool. There is currently no application evidence that Railway PgBouncer is enabled: Live exposes only `DATABASE_URL`, not an unpooled companion variable. Railway's current transaction-pooling contract would be incompatible with session-scoped advisory locks, session `SET`, `LISTEN/NOTIFY`, and concurrent index maintenance unless those paths use an unpooled connection; do not put PgBouncer in front of every path by assumption.
+The configured ordinary budget is 54 connections per app process, not per deployment; with auth it is up to 59 pooled clients, plus up to 8 metrics clients when the metrics adapter falls back to the primary database, before exceptional dedicated clients. Live idle/total counts are demand-driven and may remain below configured `min` because node-postgres does not proactively create the minimum. Scaling replicas multiplies every pool. There is currently no application evidence that Railway PgBouncer is enabled: Live exposes only `DATABASE_URL`, not an unpooled companion variable. Railway's current transaction-pooling contract would be incompatible with session-scoped advisory locks, session `SET`, `LISTEN/NOTIFY`, and concurrent index maintenance unless those paths use an unpooled connection; do not put PgBouncer in front of every path by assumption.
 
 Drizzle is the default query builder and schema mapper, not the only SQL path. Raw `pool.query`, checked-out `PoolClient`, `db.execute(sql\`...\`)`, and `sql.raw` are used for DDL/catalog work, PostgreSQL-specific JSONB/array/vector/trigram operators, bulk SQL, locks, and migrations. New ordinary domain reads/writes should use `db` plus scoped-storage helpers. Use raw pool/client access only when the contract cannot be represented truthfully through that path, preserve explicit ownership predicates, and accept that bypasses lose ambient transaction and voice-lane selection unless deliberately restored.
 
@@ -206,7 +207,7 @@ Non-negotiable rules:
 
 ### Known database gaps
 
-- Pool/shutdown/telemetry ownership is fragmented by the separate auth pool and dedicated clients.
+- General/voice query instrumentation wraps `Pool.query`, not checked-out `PoolClient.query`; auth, metrics, and dedicated adapters have named ownership and unified lifecycle but retain workload-local observability rather than pretending they share ordinary lane telemetry.
 - Schema composition is centralized, but the retained `runSchemaBootstrap()` compatibility body still contains partly non-fatal 2 s heal races that do not cancel SQL; new contracts must not copy them.
 - Instrumentation wraps `Pool.query`, not checked-out `PoolClient.query`, auth, or dedicated clients; those paths remain outside the ordinary timing and pressure evidence.
 - Exact session search has the intended index contract but is timing out live; index existence and a boot probe are not proof that every real search pattern is cheap.

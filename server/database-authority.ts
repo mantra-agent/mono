@@ -1,54 +1,66 @@
-import type { PoolConfig } from "pg";
+export type DatabasePoolWorkload = "general" | "voice" | "auth-session" | "metrics";
+export type DedicatedDatabaseWorkload =
+  | "watchdog"
+  | "brain-export"
+  | "brain-preflight"
+  | "role-provisioning";
+export type DatabaseWorkload = DatabasePoolWorkload | DedicatedDatabaseWorkload;
 
-export type DatabasePoolClass = "app" | "system" | "migrator";
-
-export interface DatabasePoolDefinition {
-  poolClass: DatabasePoolClass;
-  connectionStringEnv: "DATABASE_URL" | "SYSTEM_DATABASE_URL" | "MIGRATOR_DATABASE_URL";
-  bypassRls: boolean;
-  allowedCallers: readonly string[];
+export interface DatabaseWorkloadDefinition {
+  kind: "pool" | "dedicated-client";
+  credentialSource: "runtime-primary" | "runtime-metrics" | "authorized-platform-environment";
+  attribution: "ordinary-lane" | "workload-local";
+  timeoutOwner: "adapter-config" | "caller-cursor-budget";
 }
 
-/**
- * Checked-in authority map. It is deliberately inert: callers still construct pools,
- * and MIGRATOR_DATABASE_URL is never consumed by the application runtime.
- */
-export const DATABASE_POOL_DEFINITIONS: Record<DatabasePoolClass, DatabasePoolDefinition> = {
-  app: {
-    poolClass: "app",
-    connectionStringEnv: "DATABASE_URL",
-    bypassRls: false,
-    allowedCallers: ["server/db.ts"],
+/** Checked-in identity and policy catalog for every PostgreSQL connection path. */
+export const DATABASE_WORKLOADS: Record<DatabaseWorkload, DatabaseWorkloadDefinition> = {
+  general: {
+    kind: "pool",
+    credentialSource: "runtime-primary",
+    attribution: "ordinary-lane",
+    timeoutOwner: "adapter-config",
   },
-  system: {
-    poolClass: "system",
-    connectionStringEnv: "SYSTEM_DATABASE_URL",
-    bypassRls: false,
-    allowedCallers: [
-      "server/auth.ts (session store)",
-      "server/metrics-db.ts (metrics isolation)",
-      "server/meeting/locks.ts (advisory locks)",
-      "server/email-sync-timer.ts (LISTEN/NOTIFY)",
-    ],
+  voice: {
+    kind: "pool",
+    credentialSource: "runtime-primary",
+    attribution: "ordinary-lane",
+    timeoutOwner: "adapter-config",
   },
-  migrator: {
-    poolClass: "migrator",
-    connectionStringEnv: "MIGRATOR_DATABASE_URL",
-    bypassRls: true,
-    allowedCallers: ["offline migration runner only"],
+  "auth-session": {
+    kind: "pool",
+    credentialSource: "runtime-primary",
+    attribution: "workload-local",
+    timeoutOwner: "adapter-config",
+  },
+  metrics: {
+    kind: "pool",
+    credentialSource: "runtime-metrics",
+    attribution: "workload-local",
+    timeoutOwner: "adapter-config",
+  },
+  watchdog: {
+    kind: "dedicated-client",
+    credentialSource: "runtime-primary",
+    attribution: "workload-local",
+    timeoutOwner: "adapter-config",
+  },
+  "brain-export": {
+    kind: "dedicated-client",
+    credentialSource: "runtime-primary",
+    attribution: "workload-local",
+    timeoutOwner: "caller-cursor-budget",
+  },
+  "brain-preflight": {
+    kind: "dedicated-client",
+    credentialSource: "runtime-primary",
+    attribution: "workload-local",
+    timeoutOwner: "adapter-config",
+  },
+  "role-provisioning": {
+    kind: "dedicated-client",
+    credentialSource: "authorized-platform-environment",
+    attribution: "workload-local",
+    timeoutOwner: "adapter-config",
   },
 };
-
-export function appPoolConfig(connectionString: string): Pick<PoolConfig, "connectionString"> {
-  if (!connectionString) throw new Error("DATABASE_URL is required for the app pool");
-  return { connectionString };
-}
-
-export function assertRawDatabaseCallerAllowed(
-  poolClass: Exclude<DatabasePoolClass, "migrator">,
-  caller: string,
-): void {
-  if (!DATABASE_POOL_DEFINITIONS[poolClass].allowedCallers.includes(caller)) {
-    throw new Error(`Raw database caller is not allowlisted for ${poolClass} pool: ${caller}`);
-  }
-}
