@@ -1,4 +1,4 @@
-import Config from '../config';
+import { requestServer } from './network';
 
 export interface ApiResponse<T> {
   data: T | null;
@@ -6,18 +6,16 @@ export interface ApiResponse<T> {
 }
 
 /**
- * Fetch wrapper that prepends Config.SERVER_URL, includes credentials
- * for cookie auth, and handles 401 as a sentinel value.
+ * JSON API adapter over the canonical bounded mobile transport. Authentication
+ * remains cookie-owned by the server and iOS shared cookie jar.
  */
 export async function apiFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<ApiResponse<T>> {
   try {
-    await Config.load();
-    const res = await fetch(`${Config.SERVER_URL}${path}`, {
+    const res = await requestServer(path, {
       ...init,
-      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...init?.headers,

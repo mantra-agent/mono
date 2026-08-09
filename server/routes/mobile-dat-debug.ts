@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { objectStorageService } from "../object_storage/objectStorage";
 import { requireAuth } from "../auth";
 import { getPrincipal } from "../principal";
+import { requirePermission } from "../permissions";
 import { registerMediaItem } from "../media/media-storage";
 import { z } from "zod";
 import { createLogger } from "../log";
@@ -67,14 +68,16 @@ export async function waitForMobileDATDebugResult(commandId: number, timeoutMs =
 }
 
 export function registerMobileDATDebugRoutes(app: Express) {
-  app.post("/api/mobile/dat-debug/commands", (req: Request, res: Response) => {
+  const requireMobileDebugControl = [requireAuth, requirePermission("build:write")] as const;
+
+  app.post("/api/mobile/dat-debug/commands", ...requireMobileDebugControl, (req: Request, res: Response) => {
     const parsed = enqueueSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid command" });
     const command = queueMobileDATDebugCommand(parsed.data);
     res.json({ command });
   });
 
-  app.get("/api/mobile/dat-debug/commands", (req: Request, res: Response) => {
+  app.get("/api/mobile/dat-debug/commands", ...requireMobileDebugControl, (req: Request, res: Response) => {
     const parsed = pollSchema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid poll" });
     const pending = commands.filter((command) => command.id > parsed.data.sinceId && !command.consumedAt).slice(0, 5);
@@ -86,7 +89,7 @@ export function registerMobileDATDebugRoutes(app: Express) {
     res.json({ commands: pending, latestId: commands.at(-1)?.id ?? 0 });
   });
 
-  app.post("/api/mobile/dat-debug/commands/:id/result", (req: Request, res: Response) => {
+  app.post("/api/mobile/dat-debug/commands/:id/result", ...requireMobileDebugControl, (req: Request, res: Response) => {
     const commandId = Number(req.params.id);
     if (!Number.isInteger(commandId) || commandId <= 0) return res.status(400).json({ error: "Invalid command id" });
     const command = commands.find((item) => item.id === commandId);
@@ -100,7 +103,7 @@ export function registerMobileDATDebugRoutes(app: Express) {
     res.json({ result: entry });
   });
 
-  app.get("/api/mobile/dat-debug/results", (_req: Request, res: Response) => {
+  app.get("/api/mobile/dat-debug/results", ...requireMobileDebugControl, (_req: Request, res: Response) => {
     res.json(listMobileDATDebugState(50));
   });
 
