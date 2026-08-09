@@ -3,7 +3,6 @@ import { libraryPageIsLive } from "./library-trash";
 import { acquireLibraryParentLocks, db, runWithDatabaseTransaction } from "./db";
 import { eventBus } from "./event-bus";
 import { createLogger } from "./log";
-import type { LibrarySemanticPlacementResult } from "./library-placement";
 import { markSourceChanged } from "./memory/vnext-source-queue";
 import type { Principal } from "./principal";
 import { requireCurrentUserPrincipal } from "./principal-context";
@@ -43,8 +42,24 @@ export interface CreateFiledLibraryPageInput {
   surfaceSection?: string | null;
 }
 
+export interface LibraryFilingResolution {
+  outcome: "explicit_parent" | "explicit_vault" | "vault_root";
+  vaultId: string;
+  indexPageId: null;
+  parentId: string | null;
+  parentTitle: string;
+  structuralRole: LibraryStructuralRole;
+  confidence: 1;
+  reason: string;
+  lint: {
+    requiresReview: false;
+    code: "none" | "explicit_parent";
+    message: null;
+  };
+}
+
 export type CreatedFiledLibraryPage = typeof libraryPages.$inferSelect & {
-  filingResolution: LibrarySemanticPlacementResult;
+  filingResolution: LibraryFilingResolution;
 };
 
 const log = createLogger("LibrarySave");
@@ -199,7 +214,7 @@ export function publishLibraryChanged(action: string, page?: { id?: string | nul
 
 async function resolveStandardLibraryPlacement(
   input: CreateFiledLibraryPageInput,
-): Promise<LibrarySemanticPlacementResult> {
+): Promise<LibraryFilingResolution> {
   const principal = requireCurrentUserPrincipal();
   const structuralRole = normalizeLibraryStructuralRole(
     input.structuralRole,
