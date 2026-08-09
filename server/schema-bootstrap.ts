@@ -6679,7 +6679,9 @@ export async function runSchemaBootstrap(
 
   await heal("Railway shared deployment state", async () => {
     const { ensureRailwayDeploymentStateSchema } = await import("./integrations/railway/deployment-state");
+    const { ensureRailwayRequestAttributionSchema } = await import("./integrations/railway/request-attribution");
     await ensureRailwayDeploymentStateSchema();
+    await ensureRailwayRequestAttributionSchema();
   });
 
   await heal("canonical Tag schema", ensureCanonicalTagSchema);
