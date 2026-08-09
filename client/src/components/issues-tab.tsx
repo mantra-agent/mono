@@ -67,11 +67,11 @@ function StatusIcon({ status, className }: { status: IssueStatus; className?: st
     case "open":
       return <Circle className={cn("text-muted-foreground", className)} />;
     case "in_progress":
-      return <CircleDot className={cn("text-blue-500", className)} />;
+      return <CircleDot className={cn("text-active", className)} />;
     case "in_review":
-      return <CircleDashed className={cn("text-amber-500", className)} />;
+      return <CircleDashed className={cn("text-warning", className)} />;
     case "resolved":
-      return <CircleCheck className={cn("text-emerald-500", className)} />;
+      return <CircleCheck className={cn("text-success", className)} />;
   }
 }
 

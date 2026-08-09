@@ -8,7 +8,8 @@ import { useMentionAutocomplete } from "@/hooks/use-mention-autocomplete";
 import { MentionPopover } from "@/components/mention-popover";
 import { EditableReferenceInput, type EditableReferenceInputHandle } from "@/components/references/editable-reference-input";
 import { useFocusSession } from "@/hooks/use-focus-session";
-import { useSessionSubscription, type SessionStatus, type SessionStreamState } from "@/hooks/use-session-subscription";
+import { useSessionStreamState, type SessionStatus, type SessionStreamState } from "@/hooks/use-session-subscription";
+import { useSessionStreams } from "@/hooks/use-session-activity";
 import { useExecutorStatus } from "@/hooks/use-executor-status";
 import { useChatSend } from "@/hooks/use-chat-send";
 import { useToast } from "@/hooks/use-toast";
@@ -540,6 +541,7 @@ export function BottomBar({
   const { data: agentStatus } = useExecutorStatus();
   const isAgentRunning = agentStatus?.status === "running";
   const voiceSession = useVoiceSessionOptional();
+  const { store: sessionStreamStore, wsConnected } = useSessionStreams();
   const { toast } = useToast();
 
   const contextSessionId = getSessionForRoute(route);
@@ -550,8 +552,8 @@ export function BottomBar({
     voiceSession.activeConversationId === focusedSessionId &&
     voiceSession.status !== "idle"
   );
-  const fallbackSessionSub = useSessionSubscription(controlledSessionSub ? null : focusedSessionId);
-  const sessionSub = controlledSessionSub ?? fallbackSessionSub;
+  const focusedSessionSub = useSessionStreamState(sessionStreamStore, focusedSessionId, wsConnected);
+  const sessionSub = controlledSessionSub ?? focusedSessionSub;
   const showMobileSessionMenu = useCallback(() => {
     if (!isMobile) return;
     setWidgetOpen(true);

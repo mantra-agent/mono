@@ -113,7 +113,7 @@ interface RouteFailureProps {
   onRetry?: () => void;
 }
 
-function RouteFailure({ label, detail, onRetry }: RouteFailureProps) {
+export function RouteFailure({ label, detail, onRetry }: RouteFailureProps) {
   return (
     <div
       className="flex h-full min-h-0 items-center justify-center bg-background p-6"
@@ -241,10 +241,13 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
 
   render() {
     if (this.state.error) {
+      const moduleLoadFailed = this.state.error.name === "RouteLoadError";
       return (
         <RouteFailure
           label={`${this.props.routeLabel} couldn’t open`}
-          detail="The page module failed to load. Reload to request a fresh copy."
+          detail={moduleLoadFailed
+            ? "The page module failed to load. Reload to request a fresh copy."
+            : "The page stopped unexpectedly. Reload to start a fresh render."}
         />
       );
     }

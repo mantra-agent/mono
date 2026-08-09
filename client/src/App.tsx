@@ -42,7 +42,7 @@ import { getProvisionalOnboardingToken } from "@/lib/immersive-entrance";
 import { markNavigationDestinationCommit } from "@/lib/navigation-trace";
 import { UiInteractionProvider } from "@/hooks/use-ui-interaction";
 import { ClaimVisualHandoff } from "@/components/claim-visual-handoff";
-import { PageFallback, RouteLoadBoundary } from "@/components/route-load-boundary";
+import { PageFallback, RouteFailure, RouteLoadBoundary } from "@/components/route-load-boundary";
 import { useProductComposition } from "@/hooks/use-product-composition";
 
 const log = createLogger("App");
@@ -203,18 +203,10 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: 40, fontFamily: "system-ui" }}>
-          <h2 style={{ marginBottom: 8 }}>Something went wrong</h2>
-          <pre style={{ color: "#b91c1c", whiteSpace: "pre-wrap", fontSize: 13 }}>
-            {this.state.error?.message}
-          </pre>
-          <button
-            onClick={() => window.location.reload()}
-            style={{ marginTop: 16, padding: "8px 16px", cursor: "pointer" }}
-          >
-            Reload
-          </button>
-        </div>
+        <RouteFailure
+          label="Mantra couldn’t continue"
+          detail="Reload to start a fresh application session."
+        />
       );
     }
     return this.props.children;
