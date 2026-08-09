@@ -197,7 +197,7 @@ export interface CompactionMeta {
   snapshotHash?: string;
   summary: string;
   /** How `summary` was produced: LLM narrative (primary) or deterministic capsule (fallback/legacy). */
-  summaryKind?: "narrative" | "capsule";
+  summaryKind?: "narrative" | "capsule" | "turn_summaries";
   /** Number of transcript segments that fell back to mechanical excerpts during narrative summarization. */
   degradedSegments?: number;
   capsuleVersion?: 1;

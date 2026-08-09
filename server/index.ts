@@ -820,6 +820,21 @@ app.use((req, res, next) => {
       setTimeout(runVnextSourcePoller, 30_000).unref();
       setInterval(runVnextSourcePoller, VNEXT_SOURCE_POLLER_INTERVAL_MS).unref();
 
+      // Historical continuity has one cross-replica hourly authority. Each run
+      // claims a durable lease and catches up every elapsed closed bucket in
+      // dependency order; retries converge on deterministic bucket identities.
+      const HISTORICAL_CONTINUITY_INTERVAL_MS = 60 * 60 * 1000;
+      const runHistoricalContinuity = () => {
+        import("./historical-continuity").then(async ({ runHistoricalContinuityRollups }) => {
+          const result = await runHistoricalContinuityRollups();
+          log(`[scheduled] historical continuity rollup: created=${result.created}`, "boot");
+        }).catch((err) => {
+          log(`[scheduled] historical continuity rollup failed: ${err instanceof Error ? err.message : String(err)}`, "boot");
+        });
+      };
+      setTimeout(runHistoricalContinuity, 45_000).unref();
+      setInterval(runHistoricalContinuity, HISTORICAL_CONTINUITY_INTERVAL_MS).unref();
+
       // Files folder reconciler: resumable recursive discovery + durable run progress.
       import("./files-index-reconciler")
         .then(({ startFilesIndexReconciler }) => startFilesIndexReconciler())

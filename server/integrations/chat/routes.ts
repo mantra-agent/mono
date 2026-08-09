@@ -3079,6 +3079,39 @@ export async function registerChatRoutes(app: Express): Promise<void> {
             finalContextPressure,
           );
       const msg = terminalDraftWrite?.message ?? createdTerminalMessage;
+      if (msg && (result.status === "succeeded" || result.status === "degraded")) {
+        try {
+          const continuitySession = await chatStorage.getSession(sessionId);
+          const latestUser = [...(continuitySession?.messages || [])]
+            .reverse()
+            .find((message) => message.role === "user" && message.createdAt <= msg.createdAt);
+          if (!continuitySession?.vaultId) {
+            throw new Error("Completed turn has no canonical session Vault");
+          }
+          const { emitCompletedTurnSummary } = await import("../../historical-continuity");
+          await emitCompletedTurnSummary({
+            sessionId,
+            vaultId: continuitySession.vaultId,
+            assistantMessageId: msg.id,
+            turnId,
+            runId,
+            completedAt: msg.createdAt,
+            userContent: latestUser?.content || "",
+            assistantContent: responseContent,
+            toolCalls: (persistedToolCalls || []).map((toolCall) => ({
+              toolName: toolCall.toolName,
+              status: toolCall.status,
+              outcome: toolCall.outcome,
+              result: toolCall.result,
+              error: toolCall.error,
+            })),
+          });
+        } catch (continuityError) {
+          chatLog.error(
+            `completed turn continuity summary failed sessionId=${sessionId} assistantMessageId=${msg?.id || "none"}: ${continuityError instanceof Error ? continuityError.message : String(continuityError)}`,
+          );
+        }
+      }
       if (terminalDraftWrite) {
         terminalDurableRevision = terminalDraftWrite.durableRevision;
       }
