@@ -1,12 +1,6 @@
-import { useRef, useState, Suspense } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { useAuth, type AuthUser, type AuthPrincipal } from "@/hooks/use-auth";
-import { queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Suspense, useState } from "react";
 import { usePageHeader } from "@/hooks/use-page-header";
-import { Compass, TableProperties, Briefcase, Loader2, ChevronRight } from "lucide-react";
+import { Briefcase, ChevronRight, Compass, Loader2, TableProperties } from "lucide-react";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +36,6 @@ function ProfileTreeNode({
 }) {
   return (
     <div className="min-w-0" data-testid={`tree-node-${item.id}`}>
-      {/* Row */}
       <div
         className={cn(
           "group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-xs font-bold uppercase tracking-wider w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
@@ -57,32 +50,24 @@ function ProfileTreeNode({
         <span className="min-w-0 flex-1 truncate">{item.label}</span>
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
+          onClick={(event) => {
+            event.stopPropagation();
             onToggle();
           }}
           className="absolute right-8 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent transition-colors z-10"
           aria-label={expanded ? `Collapse ${item.label}` : `Expand ${item.label}`}
           data-testid={`button-tree-twisty-${item.id}`}
         >
-          <ChevronRight
-            className={cn(
-              "h-3 w-3 transition-transform",
-              expanded && "rotate-90",
-            )}
-          />
+          <ChevronRight className={cn("h-3 w-3 transition-transform", expanded && "rotate-90")} />
         </button>
       </div>
 
-      {/* Expanded content — indented child with connector */}
       {expanded && (
         <div className="min-w-0" data-testid={`tree-children-${item.id}`}>
           <div className="flex min-w-0 items-stretch" style={{ paddingLeft: INDENT_STEP }}>
-            {/* Connector gutter */}
             <div className="shrink-0 w-5 self-stretch relative mr-1" aria-hidden="true">
               <div className="absolute left-1/2 top-0 bottom-0 -translate-x-px border-l border-border" />
             </div>
-            {/* Content */}
             <div className="flex-1 min-w-0 py-2">
               <Suspense fallback={<SectionFallback />}>
                 {item.content}
@@ -97,95 +82,24 @@ function ProfileTreeNode({
 
 export default function ProfilePage() {
   usePageHeader({ title: "Profile" });
-
-  const { user } = useAuth();
-  const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const upload = useMutation({
-    mutationFn: async (file: File) => {
-      const form = new FormData();
-      form.append("file", file);
-      const response = await fetch("/api/auth/profile-picture", { method: "POST", body: form, credentials: "include" });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error || "Profile picture upload failed");
-      }
-      return await response.json() as { avatarObjectPath: string };
-    },
-    onSuccess: ({ avatarObjectPath }) => {
-      queryClient.setQueryData<{ user: AuthUser; principal?: AuthPrincipal | null } | null>(["/api/auth/me"], (current) =>
-        current ? { ...current, user: { ...current.user, avatarObjectPath } } : current,
-      );
-    },
-    onError: (error: Error) => toast({ title: "Upload failed", description: error.message, variant: "destructive" }),
-  });
-
-  const initials = user?.email.slice(0, 2).toUpperCase() ?? "";
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    () => new Set(["mission"]),
-  );
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set(["mission"]));
 
   const toggle = (id: string) =>
-    setExpandedSections((prev) => {
-      const next = new Set(prev);
+    setExpandedSections((previous) => {
+      const next = new Set(previous);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
 
   const items: ProfileTreeItem[] = [
-    {
-      id: "mission",
-      label: "Mission",
-      icon: <Compass className="h-3.5 w-3.5" />,
-      content: <MissionSection />,
-    },
-    {
-      id: "skills",
-      label: "Skills",
-      icon: <TableProperties className="h-3.5 w-3.5" />,
-      content: <SkillsSection />,
-    },
-    {
-      id: "experience",
-      label: "Experience",
-      icon: <Briefcase className="h-3.5 w-3.5" />,
-      content: <ExperienceSection />,
-    },
+    { id: "mission", label: "Mission", icon: <Compass className="h-3.5 w-3.5" />, content: <MissionSection /> },
+    { id: "skills", label: "Skills", icon: <TableProperties className="h-3.5 w-3.5" />, content: <SkillsSection /> },
+    { id: "experience", label: "Experience", icon: <Briefcase className="h-3.5 w-3.5" />, content: <ExperienceSection /> },
   ];
 
   return (
-    <div
-      className="flex flex-col h-full min-w-0 overflow-auto bg-background p-2"
-      data-testid="profile-page"
-    >
-      <div className="flex min-h-20 items-center gap-4 border-b border-border/20 px-2 py-2">
-        <Avatar className="h-16 w-16">
-          {user?.avatarObjectPath && <AvatarImage src={user.avatarObjectPath} alt="Profile picture" className="object-cover" />}
-          <AvatarFallback className="text-base font-semibold">{initials}</AvatarFallback>
-        </Avatar>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          className="sr-only"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) upload.mutate(file);
-            event.target.value = "";
-          }}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          disabled={upload.isPending}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          {upload.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-active" />}
-          Upload photo
-        </Button>
-      </div>
+    <div className="flex flex-col h-full min-w-0 overflow-auto bg-background p-2" data-testid="profile-page">
       <div className="space-y-0">
         {items.map((item) => (
           <ProfileTreeNode

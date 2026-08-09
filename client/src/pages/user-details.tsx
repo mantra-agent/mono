@@ -1,13 +1,15 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Bot, Check, Clock, KeyRound, Loader2, LogOut, Mail, Monitor, Save, X } from "lucide-react";
+import { Bot, Check, Clock, Image, KeyRound, Loader2, LogOut, Mail, Monitor, Save, X } from "lucide-react";
+import { ProfileDetailSection } from "@/components/profile-detail-section";
 import { ProfileTreeRow } from "@/components/profile-tree-row";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAuth, useLogout } from "@/hooks/use-auth";
+import { useAuth, useLogout, type AuthPrincipal, type AuthUser } from "@/hooks/use-auth";
 import { usePageHeader } from "@/hooks/use-page-header";
 import { useToast } from "@/hooks/use-toast";
 import { useUiScale } from "@/hooks/use-ui-scale";
@@ -27,6 +29,26 @@ export default function UserDetailsPage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadPhoto = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/auth/profile-picture", { method: "POST", body: form, credentials: "include" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error || "Profile picture upload failed");
+      }
+      return await response.json() as { avatarObjectPath: string };
+    },
+    onSuccess: ({ avatarObjectPath }) => {
+      queryClient.setQueryData<{ user: AuthUser; principal?: AuthPrincipal | null } | null>(["/api/auth/me"], (current) =>
+        current ? { ...current, user: { ...current.user, avatarObjectPath } } : current,
+      );
+    },
+    onError: (error: Error) => toast({ title: "Upload failed", description: error.message, variant: "destructive" }),
+  });
 
   const updateProfile = useMutation({
     mutationFn: async (data: { email: string }) => {
@@ -77,7 +99,50 @@ export default function UserDetailsPage() {
         </Button>
       </div>
 
-      <div className="space-y-0 px-2 pb-4">
+      <div className="w-full space-y-2 px-2 pb-4 md:w-1/3">
+        <ProfileDetailSection title="Identity" defaultOpen testId="account-identity-section">
+          <ProfileTreeRow
+            label="Profile photo"
+            icon={<Image className="h-3.5 w-3.5" />}
+            hasValue
+            showEmpty
+            testId="account-profile-photo-row"
+            expandedContent={(
+              <div className="flex min-h-20 items-center gap-4 py-1">
+                <Avatar className="h-16 w-16">
+                  {user.avatarObjectPath && <AvatarImage src={user.avatarObjectPath} alt="Profile picture" className="object-cover" />}
+                  <AvatarFallback className="text-base font-semibold">{user.email.slice(0, 2).toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="sr-only"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) uploadPhoto.mutate(file);
+                    event.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  className="min-h-11 bg-cta text-cta-foreground hover:bg-cta/90"
+                  disabled={uploadPhoto.isPending}
+                  onClick={() => fileInputRef.current?.click()}
+                  data-testid="button-upload-profile-photo"
+                >
+                  {uploadPhoto.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-active" />}
+                  Upload photo
+                </Button>
+              </div>
+            )}
+          >
+            <Avatar className="h-7 w-7">
+              {user.avatarObjectPath && <AvatarImage src={user.avatarObjectPath} alt="" className="object-cover" />}
+              <AvatarFallback className="text-[10px] font-semibold">{user.email.slice(0, 2).toUpperCase()}</AvatarFallback>
+            </Avatar>
+          </ProfileTreeRow>
+
         <ProfileTreeRow
           label="Email"
           icon={<Mail className="h-3.5 w-3.5" />}
@@ -136,10 +201,15 @@ export default function UserDetailsPage() {
           <span className="text-muted-foreground">••••••••</span>
         </ProfileTreeRow>
 
-        <DisplayTreeRow />
-        <MeetingAgentTreeRow />
-        <TimezoneTreeRow />
+        </ProfileDetailSection>
 
+        <ProfileDetailSection title="Preferences" testId="account-preferences-section">
+          <DisplayTreeRow />
+          <MeetingAgentTreeRow />
+          <TimezoneTreeRow />
+        </ProfileDetailSection>
+
+        <ProfileDetailSection title="Session" testId="account-session-section">
         <ProfileTreeRow
           label="Log out"
           icon={<LogOut className="h-3.5 w-3.5 text-destructive" />}
@@ -160,6 +230,7 @@ export default function UserDetailsPage() {
         >
           <span className="text-muted-foreground">End session</span>
         </ProfileTreeRow>
+        </ProfileDetailSection>
       </div>
     </div>
   );
