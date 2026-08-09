@@ -23,6 +23,7 @@ import {
 } from "@shared/models/metrics";
 import type { UsageRangeSample } from "./hours-used";
 import type { WorkRangeSample } from "./work-metrics";
+import type { IdentityRangeSample } from "./identity-metrics";
 import { db } from "./db";
 import { metricsDb, ensureMetricsSamplesSchema } from "./metrics-db";
 import {
@@ -340,20 +341,22 @@ export const metricsStorage = {
     return rows.map(mapSample);
   },
 
-  async sampleRange(start: Date, end: Date): Promise<UsageRangeSample & WorkRangeSample> {
+  async sampleRange(start: Date, end: Date): Promise<UsageRangeSample & WorkRangeSample & IdentityRangeSample> {
     const principal = currentPrincipal();
     if (!principal.accountId) {
       throw Object.assign(new Error("Account required"), { status: 400 });
     }
-    const [{ sampleUsageRange }, { sampleWorkRange }] = await Promise.all([
+    const [{ sampleUsageRange }, { sampleWorkRange }, { sampleIdentityRange }] = await Promise.all([
       import("./hours-used"),
       import("./work-metrics"),
+      import("./identity-metrics"),
     ]);
-    const [usage, work] = await Promise.all([
+    const [usage, work, identity] = await Promise.all([
       sampleUsageRange(principal.accountId, start, end),
       sampleWorkRange(start, end),
+      sampleIdentityRange(start, end),
     ]);
-    return { ...usage, ...work };
+    return { ...usage, ...work, ...identity };
   },
 
   async deleteSample(id: string): Promise<MetricSample> {

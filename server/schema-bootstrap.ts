@@ -1323,7 +1323,8 @@ export async function runSchemaBootstrap(
         invite_expires TIMESTAMPTZ,
         reset_token TEXT,
         reset_expires TIMESTAMPTZ,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        password_signup_at TIMESTAMPTZ
       )
     `);
 
@@ -2580,6 +2581,13 @@ export async function runSchemaBootstrap(
     await pool.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_unique`);
     await pool.query(`DROP INDEX IF EXISTS users_username_unique`);
     await pool.query(`ALTER TABLE users DROP COLUMN IF EXISTS username`);
+  });
+
+  await heal("users password signup provenance", async () => {
+    // NULL is deliberate for historical and administratively provisioned rows:
+    // password hashes cannot prove that an account crossed the signup boundary.
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_signup_at TIMESTAMPTZ`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_users_password_signup_at ON users(password_signup_at) WHERE password_signup_at IS NOT NULL`);
   });
 
   await heal("users insert defaults", async () => {
