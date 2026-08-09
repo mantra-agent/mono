@@ -4,7 +4,6 @@ import { and, desc, eq, gte, ne } from "drizzle-orm";
 import { memoryVnextClaims, memoryVnextSourceRefs } from "@shared/schema";
 import { db } from "../db";
 import { eventBus } from "../event-bus";
-import { eventBus } from "../event-bus";
 import { createLogger } from "../log";
 import { requireCurrentUserPrincipal } from "../principal-context";
 import { combineWithVisibleScope } from "../scoped-storage";
@@ -107,11 +106,6 @@ export async function recordMetacognitiveObservation(
   const claimId = result.persistedClaimIds[0];
   if (!claimId) throw new Error("Observation claim was not persisted");
 
-  eventBus.publish({
-    category: "system",
-    event: "data:thoughts_changed",
-    payload: { source: "memory_vnext", action: "observation_recorded", observationId },
-  });
   eventBus.publish({
     category: "system",
     event: "data:thoughts_changed",
