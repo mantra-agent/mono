@@ -13,6 +13,7 @@ import {
   CircleCheck,
   Loader2,
   MoreHorizontal,
+  OctagonAlert,
   Trash2,
 } from "lucide-react";
 import { formatCost } from "@/lib/format-utils";
@@ -275,7 +276,9 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
             </button>
           )}
           {insideHierarchy ? (
-            stepCompleted ? (
+            hasError ? (
+              <OctagonAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />
+            ) : stepCompleted ? (
               <CircleCheck className="h-3.5 w-3.5 shrink-0 text-success" />
             ) : isChildStreaming ? (
               <ActiveStatusSpinner className="h-3.5 w-3.5" />
@@ -360,13 +363,11 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
       </div>
       )}
 
-      {meta.error && (
-        <div className="px-3 pb-2 text-xs text-destructive" data-testid={`text-child-error-${meta.childSessionId}`}>
-          {meta.error}
-        </div>
+      {!expanded && hasError && (
+        <div className={cn("text-xs font-medium text-destructive", insideHierarchy ? "ml-8 px-2 pb-1.5" : "px-8 pb-2")}>Failed</div>
       )}
 
-      {!expanded && !insideHierarchy && (
+      {!expanded && !insideHierarchy && !hasError && (
         <div className="px-8 pb-2 min-h-7" data-testid={`text-child-summary-${meta.childSessionId}`}>
           <div className="text-xs leading-6 text-muted-foreground truncate">
             {latestLine}
@@ -385,6 +386,11 @@ export const ChildSessionBlock = memo(function ChildSessionBlock({
           )}
           data-testid={`child-turns-${meta.childSessionId}`}
         >
+          {meta.error && (
+            <div className="mb-2 border-b border-destructive/20 pb-2 text-xs text-destructive" data-testid={`text-child-error-${meta.childSessionId}`}>
+              <span className="font-medium">Reason:</span> {meta.error}
+            </div>
+          )}
           {segments.length === 0 && isChildStreaming ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
               <Loader2 className="h-3 w-3 animate-spin" />

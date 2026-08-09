@@ -19,7 +19,6 @@ import {
   Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatDiagnosticValue } from "@/lib/diagnostic-error";
 import { usePlanEvents, type PlanEvent } from "@/hooks/use-plan-events";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -144,7 +143,6 @@ export function PlanCard({ planId, title, initialData }: PlanCardProps) {
   const totalCount = localSteps.length;
   const currentStep = localSteps.find(s => s.status === "running");
   const currentStepIndex = currentStep ? localSteps.indexOf(currentStep) : -1;
-  const failedStep = localSteps.find(s => s.status === "failed");
   const isExecuting = localStatus === "executing";
   const isTerminal = localStatus === "completed" || localStatus === "failed" || localStatus === "aborted";
   const isPaused = localStatus === "paused";
@@ -254,13 +252,6 @@ export function PlanCard({ planId, title, initialData }: PlanCardProps) {
             />
           ))}
         </div>
-
-        {/* Error display */}
-        {failedStep && formatDiagnosticValue(failedStep.error) && (
-          <div className="text-xs text-destructive bg-destructive/5 rounded-md p-2 mt-1">
-            <span className="font-medium">Error:</span> {formatDiagnosticValue(failedStep.error)}
-          </div>
-        )}
 
         {/* Actions */}
         <div className="flex items-center gap-2 pt-1">

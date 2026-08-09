@@ -183,14 +183,14 @@ export function StepRow({ step, index, isCurrentStep }: { step: PlanStep; index:
             </span>
           )}
         </div>
-        {expanded && step.outcome && (
-          <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">
-            {step.outcome}
+        {expanded && stepErrorText && (
+          <p className="mt-1 whitespace-pre-wrap text-xs text-destructive">
+            <span className="font-medium">Reason:</span> {stepErrorText}
           </p>
         )}
-        {expanded && stepErrorText && (
-          <p className="text-xs text-destructive mt-1 whitespace-pre-wrap">
-            {stepErrorText}
+        {expanded && step.outcome && (
+          <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
+            {step.outcome}
           </p>
         )}
         {expanded && sessions.length > 0 && (
