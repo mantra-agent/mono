@@ -48,7 +48,7 @@ const ENGINEERING_WRITE_ACTIONS: Record<string, ReadonlySet<string>> = {
 const MODEL_FORBIDDEN_ACTIONS: Record<string, ReadonlySet<string>> = {
   twitter: new Set(["post", "reply", "delete"]), // Hidden compatibility alias.
   content: new Set(["x_post", "x_reply", "x_delete"]),
-  meetings: new Set(["add", "update", "delete"]),
+  meetings: new Set(["update", "delete"]),
   backup: new Set(["delete"]),
   platforms: new Set(["create_connection"]),
   railway: new Set(["redeploy", "restart"]),
