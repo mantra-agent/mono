@@ -1300,14 +1300,17 @@ export async function resolveRuntimeAttempt(
         throw Object.assign(new Error("Failure class is not retryable by the run policy"), { status: 400 });
       }
       if (current.attempt.attemptNumber >= retryPolicy.maxAttempts) {
+        const terminalReasonCode = decision.reasonCode === "handler_exception"
+          ? "retry_policy_exhausted"
+          : decision.reasonCode;
         const terminal = await terminalizeInTransaction(tx, principal, current.run, current.attempt, {
           outcome: "failed",
-          reasonCode: "retry_policy_exhausted",
+          reasonCode: terminalReasonCode,
           attribution: decision.attribution,
           outputRefs: [],
           verificationLevel: "observed",
         });
-        log.info("runtime.run.terminalized", { runId: terminal.run.id, attemptId: current.attempt.id, accountId: terminal.run.accountId, handler: `${terminal.run.handlerKey}@${terminal.run.handlerVersion}`, resourcePool: terminal.run.resourcePool, outcome: "failed", reasonCode: "retry_policy_exhausted" });
+        log.info("runtime.run.terminalized", { runId: terminal.run.id, attemptId: current.attempt.id, accountId: terminal.run.accountId, handler: `${terminal.run.handlerKey}@${terminal.run.handlerVersion}`, resourcePool: terminal.run.resourcePool, outcome: "failed", reasonCode: terminalReasonCode, retryExhausted: true });
         return { phase: "terminal" as const, ...terminal };
       }
       await tx.update(runtimeAttempts).set({

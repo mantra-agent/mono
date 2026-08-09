@@ -144,17 +144,21 @@ class RuntimeDispatcher {
           throw error;
         }
         const retryAt = new Date(Date.now() + Math.min(5 * 60_000, 30_000 * 2 ** Math.max(0, started.attempt.attemptNumber - 1)));
+        const sourceCode = error && typeof error === "object" && "code" in error && typeof error.code === "string"
+          ? error.code.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "_").replace(/^[^a-z]+/, "").slice(0, 120)
+          : "";
+        const reasonCode = sourceCode || "handler_exception";
         decision = {
           kind: "retry",
           failureClass: "handler_transient",
-          reasonCode: "handler_exception",
+          reasonCode,
           attribution: "handler",
           retryAt,
         };
         await appendRuntimeEvidence(fence, {
           eventType: "failure",
-          reasonCode: "handler_exception",
-          payload: { errorType: error instanceof Error ? error.name : typeof error },
+          reasonCode,
+          payload: { errorType: error instanceof Error ? error.name : typeof error, sourceCode: sourceCode || null },
         }).catch(() => undefined);
       }
       await heartbeatQueue;
