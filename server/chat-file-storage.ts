@@ -770,6 +770,9 @@ async function readConv(id: string): Promise<SessionData | null> {
   if (!doc) return null;
   const data = parseConvDocument(id, doc);
   if (!data) return null;
+  const { loadConversationMessages } = await import("./conversation-persistence");
+  const messages = await loadConversationMessages(id);
+  if (messages.length > 0 || data.messages.length === 0) data.messages = messages;
   await applySessionTreeOverlay(data);
   return data;
 }
@@ -938,8 +941,12 @@ async function resolveSessionWriteVaultId(data: SessionData): Promise<string> {
 }
 
 function serializeSessionContent(data: SessionData): string {
-  const { vaultId: _canonicalDocumentVaultId, ...content } = data;
-  return JSON.stringify(content);
+  const {
+    vaultId: _canonicalDocumentVaultId,
+    messages: _canonicalConversationMessages,
+    ...content
+  } = data;
+  return JSON.stringify({ ...content, messages: [] });
 }
 
 function shouldProjectSessionSearch(data: SessionData): boolean {
@@ -981,6 +988,14 @@ async function writeConvInAmbientTransaction(data: SessionData): Promise<number>
     data.title,
     serializeSessionContent(data),
     buildConvDocumentMetadata(data),
+  ));
+  const { replaceConversationMessages } = await import("./conversation-persistence");
+  await runWithPrincipal(writePrincipal, () => replaceConversationMessages(
+    document.documentStoreId,
+    data.id,
+    vaultId,
+    data.durableRevision!,
+    data.messages,
   ));
   await enqueueSearchProjectionAfterCanonicalWrite(document.documentStoreId, data);
   if (
@@ -1429,6 +1444,10 @@ export async function rebuildIndex(): Promise<void> {
 export interface IChatFileStorage {
   getSession(id: string): Promise<FileSession | undefined>;
   getSessionSnapshot(id: string): Promise<{ session: FileSession; messages: FileMessage[] } | null>;
+  getMessagePage(
+    sessionId: string,
+    options?: { beforeOrdinal?: number; limit?: number },
+  ): Promise<{ messages: FileMessage[]; nextBeforeOrdinal: number | null }>;
   getSessions(ids: string[]): Promise<FileSession[]>;
   getSavedSessions(): Promise<FileSession[]>;
   getAllSessions(limit?: number): Promise<FileSession[]>;
@@ -1806,6 +1825,23 @@ export const chatFileStorage: IChatFileStorage = {
     const data = await readConv(id);
     if (!data) return null;
     return { session: convToMeta(data), messages: data.messages };
+  },
+
+  async getMessagePage(sessionId, options) {
+    const doc = await documentStorage.getDocument("chat", sessionId);
+    if (!doc) throw Object.assign(new Error("Session not found"), { status: 404 });
+    const { pageConversationMessages } = await import("./conversation-persistence");
+    const page = await pageConversationMessages(sessionId, options);
+    if (page.messages.length > 0) return page;
+    const legacy = parseConvDocument(sessionId, doc);
+    if (!legacy || legacy.messages.length === 0) return page;
+    const limit = Math.min(Math.max(Math.floor(options?.limit ?? 100), 1), 200);
+    const before = options?.beforeOrdinal ?? legacy.messages.length;
+    const start = Math.max(0, before - limit);
+    return {
+      messages: legacy.messages.slice(start, before),
+      nextBeforeOrdinal: start > 0 ? start : null,
+    };
   },
 
   async getSessions(ids: string[]) {

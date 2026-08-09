@@ -800,6 +800,29 @@ export async function registerChatRoutes(app: Express): Promise<void> {
     }
   });
 
+  app.get("/api/sessions/:id/messages", async (req: Request, res: Response) => {
+    try {
+      const sessionId = req.params.id as string;
+      const beforeOrdinalRaw = req.query.beforeOrdinal;
+      const limitRaw = req.query.limit;
+      const beforeOrdinal = beforeOrdinalRaw === undefined
+        ? undefined
+        : Number.parseInt(String(beforeOrdinalRaw), 10);
+      const limit = limitRaw === undefined ? undefined : Number.parseInt(String(limitRaw), 10);
+      if (beforeOrdinal !== undefined && (!Number.isSafeInteger(beforeOrdinal) || beforeOrdinal < 0)) {
+        return res.status(400).json({ error: "beforeOrdinal must be a non-negative integer" });
+      }
+      const page = await chatStorage.getMessagePage(sessionId, { beforeOrdinal, limit });
+      res.json(page);
+    } catch (error) {
+      const status = typeof (error as { status?: unknown })?.status === "number"
+        ? (error as { status: number }).status
+        : 500;
+      chatLog.error("Error fetching session message page:", error);
+      res.status(status).json({ error: status === 404 ? "Session not found" : "Failed to fetch session messages" });
+    }
+  });
+
   app.get(
     "/api/sessions/:id/compactions/:markerId/messages",
     async (req: Request, res: Response) => {

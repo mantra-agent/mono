@@ -6,6 +6,7 @@ import {
   timestamp,
   jsonb,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -66,6 +67,41 @@ export const messages = pgTable(
     index("idx_messages_scope_owner").on(table.scope, table.ownerUserId),
     index("idx_messages_account").on(table.accountId),
     index("idx_messages_session").on(table.sessionId),
+  ],
+);
+
+export const conversationMessages = pgTable(
+  "conversation_messages",
+  {
+    id: serial("id").primaryKey(),
+    documentStoreId: integer("document_store_id").notNull(),
+    sessionId: text("session_id").notNull(),
+    messageId: text("message_id").notNull(),
+    runId: text("run_id"),
+    turnId: text("turn_id"),
+    assistantAttemptId: text("assistant_attempt_id"),
+    ordinal: integer("ordinal").notNull(),
+    durableRevision: integer("durable_revision").notNull(),
+    payload: jsonb("payload").notNull(),
+    scope: text("scope").notNull().default("user"),
+    ownerUserId: text("owner_user_id").notNull(),
+    accountId: text("account_id").notNull(),
+    vaultId: text("vault_id").notNull(),
+    createdByUserId: text("created_by_user_id"),
+    updatedByUserId: text("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, precision: 6 })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("uk_conversation_messages_identity").on(table.ownerUserId, table.accountId, table.sessionId, table.messageId),
+    uniqueIndex("uk_conversation_messages_ordinal").on(table.ownerUserId, table.accountId, table.sessionId, table.ordinal),
+    index("idx_conversation_messages_scope_owner").on(table.scope, table.ownerUserId),
+    index("idx_conversation_messages_document").on(table.documentStoreId),
+    index("idx_conversation_messages_account_session_ordinal").on(table.accountId, table.sessionId, table.ordinal),
+    index("idx_conversation_messages_attempt").on(table.accountId, table.sessionId, table.assistantAttemptId),
+    index("idx_conversation_messages_vault").on(table.vaultId),
   ],
 );
 
