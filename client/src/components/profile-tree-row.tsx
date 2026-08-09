@@ -149,16 +149,7 @@ export function ProfileTreeRow({
             >
               {actionContent}
             </div>
-          ) : (
-            <span
-              className={cn(
-                "shrink-0",
-                usesSessionMenuControls
-                  ? "h-6 min-h-6 w-6 min-w-6"
-                  : "hidden h-5 w-5 sm:block",
-              )}
-            />
-          )}
+          ) : null}
           {menuContent ? (
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>

@@ -393,6 +393,7 @@ function MetricRow({
       expandedContent={detail}
       testId={testId}
       mobileLayout="inline"
+      valueLayout="compact"
     >
       {status ? <StatusValue status={status} value={value} /> : <NeutralValue>{value}</NeutralValue>}
     </ProfileTreeRow>
