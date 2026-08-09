@@ -1,4 +1,5 @@
 import type { Express, Response } from "express";
+import { requireAuth } from "./auth";
 import { createLogger } from "./log";
 import { organizationService } from "./organization-service";
 
@@ -17,6 +18,8 @@ function handleError(res: Response, error: unknown, fallback: string) {
  * mutations in ownership (billing authority) and enforces the 0..1-org-per-user constraint.
  */
 export function registerOrganizationRoutes(app: Express) {
+  app.use("/api/organizations", requireAuth);
+
   app.get("/api/organizations", async (_req, res) => {
     try {
       res.json({ organizations: await organizationService.list() });

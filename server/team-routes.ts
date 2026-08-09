@@ -1,4 +1,5 @@
 import type { Express, Response } from "express";
+import { requireAuth } from "./auth";
 import { createLogger } from "./log";
 import { teamService } from "./team-service";
 
@@ -16,6 +17,8 @@ function handleError(res: Response, error: unknown, fallback: string) {
  * caller's principal via teamService, which bounds all reads and writes to the caller's account.
  */
 export function registerTeamRoutes(app: Express) {
+  app.use("/api/teams", requireAuth);
+
   app.get("/api/teams", async (_req, res) => {
     try {
       res.json({ teams: await teamService.list() });

@@ -215,6 +215,8 @@ Email synchronization timers must fan out through explicit user principals and o
 
 Access control is server-owned and permission-based. Future code must plug into the existing principal/permission path instead of checking `user.role` or `isAdmin` directly.
 
+Teams are account-scoped grant subjects. `TeamService` is their sole ordinary mutation boundary: every member must hold a live membership in the Team's owning Account, membership/role changes serialize with the Team's grant-subject lock, retries converge to the requested role, and every effective mutation writes `privileged_access_audit` in the same transaction. `authorize.ts` independently requires that same live Account membership before expanding a Team grant, so stale or malformed membership rows remain inert. Team routes establish an authenticated Principal explicitly. Never add users to a Team through global user lookup alone; a Team grant expands into live object access.
+
 ### Key Files
 - `principal.ts` — Principal model and system/service principal constructors
 - `principal-context.ts` — AsyncLocalStorage for current principal in async server work
