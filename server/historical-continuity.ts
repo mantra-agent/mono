@@ -204,12 +204,21 @@ async function rollupOwner(vaultId: string, timezone: string): Promise<number> {
       const bucketEnd = new Date(String(row.bucket_end));
       const existing = await db.execute(sql`SELECT 1 FROM historical_continuity_entries WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id=${vaultId} AND level=${level} AND timezone=${timezone} AND bucket_start=${bucketStart} LIMIT 1`);
       if (existing.rows.length) continue;
-      const sourceIds = row.source_ids as string[];
+      const sourceIds = normalizeSourceEntryIds(row.source_ids);
+      if (!sourceIds.length) {
+        log.warn("continuity.rollup.source_ids_skipped", {
+          level,
+          vaultId,
+          bucketStart: bucketStart.toISOString(),
+          sourceCount: Number(row.source_count) || null,
+        });
+        continue;
+      }
       const result = await chatCompletion({ activity: ACTIVITY_FRAMING, messages: [{ role: "system", content: `Compress these ${sourceLevel} continuity entries into one ${level} chronology summary. Preserve decisions, durable changes, failures, commitments, uncertainty, exact references, dates, IDs, and numbers. Remove repetition. This is model-derived evidence, not truth. Dense markdown bullets; no preamble.` }, { role: "user", content: String(row.source_text).slice(0, 120_000) }], maxTokens: ROLLUP_MAX_OUTPUT_TOKENS, temperature: 0.1, metadata: { source: `historical-continuity.rollup.${level}` } });
       const summary = result.content.trim();
       if (!summary) continue;
       const id = deterministicId(level, principal.userId, principal.accountId, vaultId, timezone, bucketStart.toISOString());
-      await db.execute(sql`INSERT INTO historical_continuity_entries (id, owner_user_id, account_id, vault_id, level, timezone, bucket_start, bucket_end, source_start, source_end, source_count, source_entry_ids, summary, summary_sha256) VALUES (${id}, ${principal.userId}, ${principal.accountId}, ${vaultId}, ${level}, ${timezone}, ${bucketStart}, ${bucketEnd}, ${new Date(String(row.source_start))}, ${new Date(String(row.source_end))}, ${Number(row.source_count)}, ${sourceIds}, ${summary}, ${sha(summary)}) ON CONFLICT DO NOTHING`);
+      await db.execute(sql`INSERT INTO historical_continuity_entries (id, owner_user_id, account_id, vault_id, level, timezone, bucket_start, bucket_end, source_start, source_end, source_count, source_entry_ids, summary, summary_sha256) VALUES (${id}, ${principal.userId}, ${principal.accountId}, ${vaultId}, ${level}, ${timezone}, ${bucketStart}, ${bucketEnd}, ${new Date(String(row.source_start))}, ${new Date(String(row.source_end))}, ${Number(row.source_count)}, ${textArray(sourceIds)}, ${summary}, ${sha(summary)}) ON CONFLICT DO NOTHING`);
       created++;
     }
   }
@@ -280,7 +289,35 @@ export async function getTurnSummariesForCompaction(sessionId: string, assistant
   return (result.rows as Array<Record<string, unknown>>).map((row) => `[${new Date(String(row.bucket_start)).toISOString()}] ${String(row.summary)}`).join("\n\n");
 }
 
+function normalizeSourceEntryIds(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (entry && typeof entry === "object" && "id" in entry && typeof (entry as { id: unknown }).id === "string") {
+          return (entry as { id: string }).id;
+        }
+        return null;
+      })
+      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      return trimmed
+        .slice(1, -1)
+        .split(",")
+        .map((entry) => entry.trim().replace(/^"(.*)"$/, "$1"))
+        .filter(Boolean);
+    }
+    return [trimmed];
+  }
+  return [];
+}
+
 function textArray(values: string[]): SQL {
+  if (!values.length) return sql`ARRAY[]::text[]`;
   return sql`ARRAY[${sql.join(values.map((value) => sql`${value}`), sql`, `)}]::text[]`;
 }
 
