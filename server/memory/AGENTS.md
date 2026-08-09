@@ -216,11 +216,11 @@ The maintenance proof is necessary but not sufficient: Live on 2026-07-28 repeat
 - **Active vNext embeddings are 384-dimensional** (`all-MiniLM-L6-v2`, generated locally per `embedding-profile.ts`), stored in `memory_vnext_claims.embedding` with an HNSW `vector_cosine_ops` index (`idx_memory_vnext_claim_embedding`) created in `schema-bootstrap.ts`. Semantic search is cosine `<=>` and depends on that ANN index plus the `embedding IS NOT NULL` + non-retired predicate; do not assume a plain sequential scan or a different dimension.
 - **Legacy `memory_entries.embedding` is the retiring 1536-dim OpenAI store** with its own HNSW index heal. It is not the active retrieval path. Never conflate the two dimensions or index identities.
 - **pgvector** extension is required and ensured at boot (`CREATE EXTENSION IF NOT EXISTS vector`).
-- **Consolidation timer** runs every 30 minutes. Don't assume entries consolidate immediately.
+- **Legacy Consolidate/Integrate timers are disabled.** Native Runtime source ingestion and the nightly vNext lifecycle are the active processing paths; do not revive timer-driven tier promotion.
 - **Sleep cycle** is gated by a timer (~2 AM CT), not a cron expression.
 - **Graph operations are expensive**. vNext context expansion is capped at two hops with an 80-row frontier and result cap. Don't increase without measuring.
 - **`metadata` is JSONB** — used for tags, source details, deletion scheduling, and arbitrary key-value pairs. Check existing patterns before adding new keys.
-- **Deletion is soft then hard**. Setting `deletionScheduledAt` marks for future cleanup. Hard deletion happens during sleep decay phase.
+- **vNext retirement is evidence-based.** Claims retire for explicit duplicate, contradiction, or supersession evidence; retrieval silence, age, or passive exposure never schedules deletion. Legacy `deletionScheduledAt` belongs only to retiring compatibility data.
 - **Test with small datasets**. The memory table can have 500K+ entries. Always use LIMIT in development queries.
 - Cross-reference: Retrieval is consumed by Context Assembly (see `/server/AGENTS.md` § Context Assembly). Sleep cycle is scheduled by the timer system (see `/server/AGENTS.md` § Autonomous Execution).
 

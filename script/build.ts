@@ -6,6 +6,7 @@ import { execFileSync, execSync } from "child_process";
 import { createHash } from "crypto";
 import { join } from "path";
 import { safeEsmHelperPlugin } from "./safe-esm-helper-plugin";
+import { validateRepositoryCompliance } from "./repository-compliance";
 
 // Dev mode (set via BUILD_DEV_MODE=true in Dockerfile.dev) skips the heavy
 // production-only steps: gitnexus runtime bundling+patches, claude CLI
@@ -654,6 +655,8 @@ async function bundleClaudeCliRuntime() {
 }
 
 async function buildAll() {
+  await validateRepositoryCompliance();
+
   if (DEV_MODE) {
     console.log("BUILD_DEV_MODE=true — skipping GitHub push, DB cleanup, gitnexus runtime bundle, and claude CLI bundle.");
   }

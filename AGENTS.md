@@ -305,6 +305,8 @@ Procedural coding workflows, diagnostic workflow, git/PR workflow, verification 
 
 ## Architecture Audit Standard
 
+`REPOSITORY_COMPLIANCE.md` and `repository-compliance.json` define the repository-wide file denominator, responsibility classes, and evidence-backed exception mechanics. The production build validates that contract before artifact generation. Unclassified files are ordinary authored source; generated artifacts, vendored code, immutable migration history, and compatibility fixtures require explicit provenance and remain subject to universal authority, security, ownership, observability, recovery, and build principles.
+
 Architecture claims are verified only when current source demonstrates both the behavior and its owning composition or mutation boundary. Use exact repository search for identifiers and registrations, GitNexus for callers/flows/impact, and read the authoritative implementation before recording a finding. A principle violation must name the principle, concrete source locations, reachable flow, failed invariant, and smallest coherent cure. Heuristics, file size, naming, or an isolated code smell are leads, not findings.
 
 Dead code requires stronger proof: no static imports/callers; no route, tool, Mod, Skill, Workflow, Hook, Timer, boot, script, native/plugin, provider-callback, or dynamic lookup registration; and no persisted identifier, migration, rollback, or supported compatibility contract that can still reach it. Search strings and graph results are evidence, not proof by themselves. If any dynamic or compatibility path remains plausible, retain the code and state what proof is missing. Do not turn uncertainty into a backlog.
