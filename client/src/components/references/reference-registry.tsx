@@ -54,6 +54,14 @@ function metadataString(ref: ReferenceRef, key: string): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+function humanizeSlug(value: string): string {
+  return value
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
 function priorityHref(ref: ReferenceRef): string {
   const period = ref.id.split(":", 1)[0];
   if (period === "weekly" || period === "next_week") return "/goals?tab=week";
