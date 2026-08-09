@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "crypto";
-import { sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { vaults } from "@shared/models/vaults";
 import { db } from "./db";
 import { chatCompletion } from "./model-client";
 import { ACTIVITY_FRAMING } from "./job-profiles";
 import { createLogger } from "./log";
-import { requireCurrentUserPrincipal, runWithPrincipal } from "./principal-context";
-import type { Principal } from "./principal";
+import { requireCurrentUserPrincipal } from "./principal-context";
 import { estimateTokens } from "./context-builder";
 import { getTimezone } from "./timezone";
 
@@ -31,8 +31,14 @@ interface TurnSummaryInput {
   toolCalls: Array<{ toolName: string; status: string; outcome?: string; result?: unknown; error?: string }>;
 }
 
+interface VisibleVault {
+  id: string;
+  name: string;
+}
+
 interface ContinuityRow {
   id: string;
+  vaultId: string;
   level: ContinuityLevel;
   timezone: string;
   bucketStart: Date;
@@ -172,8 +178,10 @@ function normalizeContinuityRow(raw: Record<string, unknown>): ContinuityRow | n
     });
     return null;
   }
+  if (typeof raw.vault_id !== "string" || !raw.vault_id) return null;
   return {
     id: String(raw.id),
+    vaultId: raw.vault_id,
     level: level as ContinuityRow["level"],
     timezone: resolveHistoryTimezone(typeof raw.timezone === "string" ? raw.timezone : null),
     bucketStart,
@@ -261,27 +269,40 @@ export async function emitCompletedTurnSummary(input: TurnSummaryInput): Promise
   log.info("continuity.turn.persisted", { sessionId: input.sessionId, assistantMessageId: input.assistantMessageId, summaryLength: summary.length });
 }
 
-export async function runHistoricalContinuityRollups(): Promise<{ created: number }> {
-  const bootId = process.env.RAILWAY_DEPLOYMENT_ID || process.env.RAILWAY_GIT_COMMIT_SHA || "local";
-  const leaseKey = "historical-continuity:hourly";
+export async function runHistoricalContinuityRollups(): Promise<{ created: number; vaults: number }> {
+  const principal = requireCurrentUserPrincipal();
+  const visibleVaults = await resolveVisibleVaults();
+  if (!visibleVaults.length) return { created: 0, vaults: 0 };
+
+  const workerId = randomUUID();
+  const leaseKey = `historical-continuity:hourly:${principal.userId}:${principal.accountId}`;
   const claimed = await db.execute(sql`
     INSERT INTO historical_continuity_rollup_leases (lease_key, owner_boot_id, lease_expires_at)
-    VALUES (${leaseKey}, ${bootId}, NOW() + INTERVAL '15 minutes')
+    VALUES (${leaseKey}, ${workerId}, NOW() + INTERVAL '15 minutes')
     ON CONFLICT (lease_key) DO UPDATE SET owner_boot_id=EXCLUDED.owner_boot_id, lease_expires_at=EXCLUDED.lease_expires_at, updated_at=NOW()
-    WHERE historical_continuity_rollup_leases.lease_expires_at < NOW() OR historical_continuity_rollup_leases.owner_boot_id=${bootId}
+    WHERE historical_continuity_rollup_leases.lease_expires_at < NOW()
     RETURNING lease_key
   `);
-  if (!claimed.rows.length) return { created: 0 };
+  if (!claimed.rows.length) return { created: 0, vaults: 0 };
+
   let created = 0;
   try {
-    const owners = await db.execute(sql`SELECT DISTINCT owner_user_id, account_id, vault_id, timezone FROM historical_continuity_entries ORDER BY owner_user_id, account_id, vault_id LIMIT 500`);
-    for (const raw of owners.rows as Array<Record<string, unknown>>) {
-      const principal: Principal = { actorType: "user", userId: String(raw.owner_user_id), accountId: String(raw.account_id), role: "member", scopes: ["user:read", "user:write"], permissions: [], isAdmin: false, impersonation: { impersonatedByActorType: "system", reason: "historical continuity rollup" }, source: "system", visibleVaultIds: [String(raw.vault_id)], activeVaultId: String(raw.vault_id) };
-      created += await runWithPrincipal(principal, () => rollupOwner(String(raw.vault_id), String(raw.timezone)));
+    for (const vault of visibleVaults) {
+      const timezones = await db.execute(sql`
+        SELECT DISTINCT timezone
+        FROM historical_continuity_entries
+        WHERE owner_user_id=${principal.userId}
+          AND account_id=${principal.accountId}
+          AND vault_id=${vault.id}
+        ORDER BY timezone
+      `);
+      for (const row of timezones.rows as Array<Record<string, unknown>>) {
+        created += await rollupOwner(vault.id, resolveHistoryTimezone(String(row.timezone)));
+      }
     }
-    return { created };
+    return { created, vaults: visibleVaults.length };
   } finally {
-    await db.execute(sql`DELETE FROM historical_continuity_rollup_leases WHERE lease_key=${leaseKey} AND owner_boot_id=${bootId}`);
+    await db.execute(sql`DELETE FROM historical_continuity_rollup_leases WHERE lease_key=${leaseKey} AND owner_boot_id=${workerId}`);
   }
 }
 
@@ -333,6 +354,21 @@ async function rollupOwner(vaultId: string, timezone: string): Promise<number> {
   return created;
 }
 
+async function resolveVisibleVaults(): Promise<VisibleVault[]> {
+  const principal = requireCurrentUserPrincipal();
+  const visibleIds = Array.from(new Set(principal.visibleVaultIds ?? [])).filter(Boolean);
+  if (!visibleIds.length) return [];
+  return db
+    .select({ id: vaults.id, name: vaults.name })
+    .from(vaults)
+    .where(and(
+      eq(vaults.accountId, principal.accountId),
+      eq(vaults.isArchived, false),
+      inArray(vaults.id, visibleIds),
+    ))
+    .orderBy(vaults.position, vaults.createdAt);
+}
+
 function appendHistoryLine(
   lines: string[],
   line: string,
@@ -378,34 +414,44 @@ function renderHistoryLevelSection(
 
 export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET): Promise<string> {
   const principal = requireCurrentUserPrincipal();
-  const vaultIds = principal.visibleVaultIds?.length ? principal.visibleVaultIds : principal.activeVaultId ? [principal.activeVaultId] : [];
-  if (!vaultIds.length) return "";
+  const visibleVaults = await resolveVisibleVaults();
+  if (!visibleVaults.length) return "";
+  const vaultIds = visibleVaults.map((vault) => vault.id);
   const result = await db.execute(sql`
     WITH ranked AS (
-      SELECT *, row_number() OVER (PARTITION BY level ORDER BY bucket_start DESC) AS rn
+      SELECT *, row_number() OVER (PARTITION BY vault_id, level ORDER BY bucket_start DESC) AS rn
       FROM historical_continuity_entries
       WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id = ANY(${textArray(vaultIds)})
     )
-    SELECT id, level, timezone, bucket_start, bucket_end, summary, source_start, source_end, source_count, session_id, assistant_message_id
+    SELECT id, vault_id, level, timezone, bucket_start, bucket_end, summary, source_start, source_end, source_count, session_id, assistant_message_id
     FROM ranked WHERE (level='turn' AND rn<=24) OR (level='hour' AND rn<=48) OR (level='day' AND rn<=31) OR (level='week' AND rn<=16) OR (level='month' AND rn<=18) OR (level='quarter' AND rn<=12) OR (level='year' AND rn<=10)
-    ORDER BY CASE level WHEN 'year' THEN 1 WHEN 'quarter' THEN 2 WHEN 'month' THEN 3 WHEN 'week' THEN 4 WHEN 'day' THEN 5 WHEN 'hour' THEN 6 ELSE 7 END, bucket_start ASC
+    ORDER BY vault_id, CASE level WHEN 'year' THEN 1 WHEN 'quarter' THEN 2 WHEN 'month' THEN 3 WHEN 'week' THEN 4 WHEN 'day' THEN 5 WHEN 'hour' THEN 6 ELSE 7 END, bucket_start ASC
   `);
   const rows = (result.rows as Array<Record<string, unknown>>)
     .map(normalizeContinuityRow)
     .filter((row): row is ContinuityRow => row !== null);
-  const projectionTimezone = resolveHistoryTimezone(rows[0]?.timezone || getTimezone());
-  const header = `# HISTORY.md\n\nModel-derived chronology for continuity. Times are local to ${projectionTimezone}. Raw transcripts remain authoritative; memory candidates require independent provenance and validation.\n`;
-  const sections: string[] = [];
-  const budget = { used: estimateTokens(header), tokenBudget };
-  for (const level of ["year", "quarter", "month", "week", "day", "hour", "turn"] as const) {
-    const section = renderHistoryLevelSection(
-      level,
-      rows.filter((row) => row.level === level),
-      budget,
-    );
-    if (section) sections.push(section);
+  const vaultsWithRows = visibleVaults.filter((vault) => rows.some((row) => row.vaultId === vault.id));
+  if (!vaultsWithRows.length) return "";
+
+  const perVaultBudget = Math.max(1, Math.floor(tokenBudget / vaultsWithRows.length));
+  const documents: string[] = [];
+  for (const vault of vaultsWithRows) {
+    const vaultRows = rows.filter((row) => row.vaultId === vault.id);
+    const projectionTimezone = resolveHistoryTimezone(vaultRows[0]?.timezone || getTimezone());
+    const header = `# HISTORY.md — ${vault.name}\n\nVault: ${vault.name}\nModel-derived chronology for continuity. Times are local to ${projectionTimezone}. Raw transcripts remain authoritative; memory candidates require independent provenance and validation.\n`;
+    const budget = { used: estimateTokens(header), tokenBudget: perVaultBudget };
+    const sections: string[] = [];
+    for (const level of ["year", "quarter", "month", "week", "day", "hour", "turn"] as const) {
+      const section = renderHistoryLevelSection(
+        level,
+        vaultRows.filter((row) => row.level === level),
+        budget,
+      );
+      if (section) sections.push(section);
+    }
+    if (sections.length) documents.push(header + sections.join("\n"));
   }
-  return header + sections.join("\n");
+  return documents.join("\n\n---\n\n");
 }
 
 export async function getCompletedTurnSummaryMap(sessionId: string, assistantMessageIds: string[]): Promise<Map<string, string>> {
