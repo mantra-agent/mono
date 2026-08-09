@@ -403,7 +403,7 @@ export async function moveLibraryPage(
         throw clientError(403, `"${root.title}" is protected Library structure and cannot be moved`);
       }
       // Canonical metadata identity is owned and self-healed by
-      // ensureCanonicalVaultMetadataPage, so stale meta classification on a
+      // the retired Library2 metadata bootstrap, so stale meta classification on a
       // descendant must not freeze an ordinary branch. Only non-user scope
       // rows still refuse to ride along with a move.
       const blockedDescendants = subtree.filter(
