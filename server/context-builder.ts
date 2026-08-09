@@ -38,7 +38,6 @@ import { chatFileStorage } from "./chat-file-storage";
 import { listAllEvents, hasCalendarAccess } from "./google-calendar";
 import { listGmailAccounts } from "./gmail";
 import { getJournalEntriesSince } from "./thoughts";
-import { getRecentThoughts } from "./thoughts";
 import { detectSessionType, BLEND_WEIGHTS, modulateWeights } from "./memory/vnext-retrieval-policy";
 import { getSkillDefinitionsForContext, getToolSchemas, getToolCatalog, filterToolsForPersonaBundle } from "./tool-registry";
 import { withTimeout, isTimeoutError, SECTION_RESOLVE_TIMEOUT_MS } from "./timeout";
@@ -2009,25 +2008,19 @@ function formatRelativeTime(date: Date): string {
 const THOUGHT_CONTEXT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const THOUGHT_CONTEXT_LIMIT = 15;
 
-function stripLegacyThoughtTags(text: string): string {
-  return text.replace(/^<thought>\n?/, "").replace(/\n?<\/thought>$/, "");
-}
-
 async function resolveThoughts(): Promise<string> {
   const intro = `What follows is your recent observation history — metacognitive observations you recorded using the observe tool. These are typed: (pattern) what repeats, (gap) expected vs found, (change) what shifted, (connection) how things link, (opportunity) what's possible.
 
 Use this as your foundation: build forward from these insights, go deeper where warranted, and move to new territory. Do not restate or rephrase observations you have already recorded. Quality over quantity — only call observe when the observation is specific, evidence-based, and will genuinely inform future interactions.`;
   try {
-    const allRecent = await getRecentThoughts(THOUGHT_CONTEXT_MAX_AGE_MS, THOUGHT_CONTEXT_LIMIT);
-    const recent = allRecent.filter(t => t.type !== "thought");
+    const { listRecentMetacognitiveObservations } = await import("./memory/metacognitive-observations");
+    const recent = await listRecentMetacognitiveObservations(THOUGHT_CONTEXT_MAX_AGE_MS, THOUGHT_CONTEXT_LIMIT);
     if (recent.length === 0) {
       return `${intro}\n\nNo recent observations.`;
     }
-    const rendered = recent.map(t => {
-      const ts = t.occurredAt ? formatRelativeTime(new Date(t.occurredAt)) : "unknown time";
-      const typeLabel = t.type ? `(${t.type})` : "(reflect)";
-      const cleanText = stripLegacyThoughtTags(t.text);
-      return `${typeLabel} [${ts}] ${cleanText}`;
+    const rendered = recent.map(observation => {
+      const ts = formatRelativeTime(observation.observedAt);
+      return `(${observation.type}, provisional) [${ts}] ${observation.content}`;
     }).join("\n\n");
     return `${intro}\n\n${rendered}`;
   } catch (err: unknown) {

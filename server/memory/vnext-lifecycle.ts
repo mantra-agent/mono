@@ -61,6 +61,7 @@ type LifecycleSkipReason =
   | "unresolved_entities"
   | "no_links"
   | "canonical_criteria_not_met"
+  | "provisional_observation"
   | "already_terminal";
 
 function createRunId(): string {
@@ -137,6 +138,11 @@ function parseEntityMentions(claim: MemoryVnextClaim): Array<{ name: string; ent
 function hasContradictionOrSupersession(candidate: VnextLifecycleCandidate): boolean {
   const metadata = (candidate.claim.metadata as Record<string, unknown> | null) ?? {};
   return Boolean(metadata.contradictedByClaimId || metadata.supersededByClaimId);
+}
+
+function isProvisionalMetacognitiveObservation(candidate: VnextLifecycleCandidate): boolean {
+  const metadata = (candidate.claim.metadata as Record<string, unknown> | null) ?? {};
+  return metadata.assertionKind === "metacognitive_observation" && metadata.assertionStatus === "provisional";
 }
 
 function shouldRetire(candidate: VnextLifecycleCandidate): { shouldRetire: boolean; reason?: string; metadata?: Record<string, unknown> } {
@@ -468,6 +474,17 @@ export async function runVnextLifecycle(options: VnextLifecycleRunOptions = {}):
           metadata: retireDecision.metadata,
         });
         recordRetirement(result, retireDecision.reason ?? "safe_retirement_criteria_met");
+        continue;
+      }
+
+      if (isProvisionalMetacognitiveObservation(candidate) && candidate.sourceRefCount < 2) {
+        recordSkip(result, "provisional_observation");
+        logLifecycle("memory.vnext.lifecycle_skipped", {
+          runId,
+          claimId: candidate.claim.id,
+          stage: candidate.claim.lifecycleStage,
+          reason: "provisional_observation" satisfies LifecycleSkipReason,
+        }, "debug");
         continue;
       }
 

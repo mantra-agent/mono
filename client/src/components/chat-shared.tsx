@@ -1442,7 +1442,8 @@ function ToolIconStrip({
         );
       })}
       {toolSteps.map((step) => {
-        const ToolIcon = resolveToolIcon(step.toolName || "", iconOverrides);
+        const isObservation = step.toolName === "cognition" && step.arguments?.action === "observe";
+        const ToolIcon = resolveToolIcon(isObservation ? "observation" : step.toolName || "", iconOverrides);
         const isActive = step.status === "active";
         const isDone = step.status === "done";
         const isError = step.status === "error";
@@ -1461,9 +1462,15 @@ function ToolIconStrip({
             : isActive
               ? "bg-active/15"
               : "bg-info/15";
-        const reasoning =
-          typeof step.arguments?.reasoning === "string" &&
-          step.arguments.reasoning.trim()
+        const observationType = typeof step.arguments?.observation_type === "string"
+          ? step.arguments.observation_type
+          : "observation";
+        const observationText = typeof step.arguments?.observation === "string"
+          ? step.arguments.observation.trim()
+          : "";
+        const reasoning = isObservation
+          ? `${observationType}: ${observationText || "Observation recorded"}`
+          : typeof step.arguments?.reasoning === "string" && step.arguments.reasoning.trim()
             ? step.arguments.reasoning
             : step.toolName || "tool call";
 

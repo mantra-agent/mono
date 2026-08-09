@@ -15591,21 +15591,23 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     return result;
   },
   async observe(args) {
-    const type = args.type as string;
-    if (!type || !["pattern", "gap", "change", "connection", "opportunity"].includes(type)) {
+    const { isMetacognitiveObservationType, recordMetacognitiveObservation } = await import("./memory/metacognitive-observations");
+    const type = args.type;
+    if (!isMetacognitiveObservationType(type)) {
       return { result: "Invalid type — must be one of: pattern, gap, change, connection, opportunity", error: true };
     }
-    const content = args.content as string;
-    if (!content || content.trim().length === 0) {
+    const content = typeof args.content === "string" ? args.content.trim() : "";
+    if (!content) {
       return { result: "Content is required and cannot be empty", error: true };
     }
     try {
-      const { saveThought, makeThoughtHeader } = await import("./thoughts");
-      const header = makeThoughtHeader(type);
-      const thoughtText = `${header}\n${content}`;
-      const thought = await saveThought(thoughtText, undefined, type);
-      toolExec.log(`observe tool: saved observation id=${thought.id} type=${type}`);
-      return { result: `Observation recorded (${type}): ${thought.id}` };
+      const observation = await recordMetacognitiveObservation({
+        type,
+        content,
+        sessionId: typeof args._sessionId === "string" ? args._sessionId : null,
+      });
+      toolExec.log(`observe tool: recorded provisional claim id=${observation.claimId} type=${type}`);
+      return { result: `Observation recorded (${type}): ${observation.id}` };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       toolExec.error(`observe tool failed: ${msg}`);
