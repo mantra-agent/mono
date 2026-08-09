@@ -44,6 +44,8 @@ const COMPLIANCE_FILES = new Set([
   "script/repository-compliance.ts",
   "server-standards-disposition.json",
   "script/server-standards-disposition.ts",
+  "client-mobile-standards-disposition.json",
+  "script/client-mobile-standards-disposition.ts",
 ]);
 
 function normalizePath(path: string): string {
