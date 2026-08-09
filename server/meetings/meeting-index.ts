@@ -485,6 +485,20 @@ async function projectRecords(snapshots: MeetingSessionSnapshot[]): Promise<Meet
   });
 }
 
+/**
+ * Count the canonical completed Meeting occurrences that the Meetings screen
+ * classifies as having notes. Hydration preserves principal/Vault scope and
+ * confident occurrence-key deduplication; meetingStart owns occurrence time.
+ */
+export async function countCompletedMeetingsWithNotesInRange(start: Date, end: Date): Promise<number> {
+  return searchableSnapshots(await hydrateMeetingSessions(), {
+    lifecycle: "completed",
+    notesFilter: "with_notes",
+    startAfter: start.toISOString(),
+    startBefore: end.toISOString(),
+  }, false).length;
+}
+
 export async function listCompletedMeetings(filter: MeetingIndexFilter = {}): Promise<{
   meetings: MeetingIndexRecord[];
   total: number;

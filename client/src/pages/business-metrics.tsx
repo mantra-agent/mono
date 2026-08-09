@@ -48,12 +48,14 @@ interface MetricsResponse {
   metrics: Metric[];
 }
 
-interface UsageSample {
+interface RangeSample {
   start: string;
   end: string;
   hoursUsed: number;
   activeUsers: number;
   currentUsers: number;
+  shippedPrs: number;
+  meetings: number;
 }
 
 const DIRECTION_LABEL: Record<MetricDirection, string> = {
@@ -311,11 +313,11 @@ export default function BusinessMetricsPage() {
     const now = new Date();
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   }, []);
-  const { data: usage } = useQuery<UsageSample>({
-    queryKey: ["/api/business/metrics/usage-sample", usageDayStart],
+  const { data: usage } = useQuery<RangeSample>({
+    queryKey: ["/api/business/metrics/range-sample", usageDayStart],
     queryFn: async () => {
       const end = new Date().toISOString();
-      const url = `/api/business/metrics/usage-sample?start=${encodeURIComponent(usageDayStart)}&end=${encodeURIComponent(end)}`;
+      const url = `/api/business/metrics/range-sample?start=${encodeURIComponent(usageDayStart)}&end=${encodeURIComponent(end)}`;
       const response = await apiRequest("GET", url);
       return response.json();
     },
@@ -374,7 +376,7 @@ export default function BusinessMetricsPage() {
       </div>
 
       {usage ? (
-        <div className="grid grid-cols-3 gap-2 py-4">
+        <div className="grid grid-cols-2 gap-2 py-4 sm:grid-cols-3 lg:grid-cols-5">
           <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
             <div className="text-sm text-muted-foreground">Hours Used</div>
             <div className="text-lg font-semibold">{formatValue(usage.hoursUsed, "hours")}</div>
@@ -386,6 +388,14 @@ export default function BusinessMetricsPage() {
           <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
             <div className="text-sm text-muted-foreground">Current Users</div>
             <div className="text-lg font-semibold">{formatValue(usage.currentUsers, "users")}</div>
+          </div>
+          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
+            <div className="text-sm text-muted-foreground">Shipped PRs</div>
+            <div className="text-lg font-semibold">{formatValue(usage.shippedPrs, "")}</div>
+          </div>
+          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
+            <div className="text-sm text-muted-foreground">Meetings</div>
+            <div className="text-lg font-semibold">{formatValue(usage.meetings, "")}</div>
           </div>
         </div>
       ) : null}

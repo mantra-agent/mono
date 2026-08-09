@@ -22,6 +22,7 @@ import {
   type StandingObjectiveKey,
 } from "@shared/models/metrics";
 import type { UsageRangeSample } from "./hours-used";
+import type { WorkRangeSample } from "./work-metrics";
 import { db } from "./db";
 import { metricsDb, ensureMetricsSamplesSchema } from "./metrics-db";
 import {
@@ -339,13 +340,20 @@ export const metricsStorage = {
     return rows.map(mapSample);
   },
 
-  async sampleRange(start: Date, end: Date): Promise<UsageRangeSample> {
+  async sampleRange(start: Date, end: Date): Promise<UsageRangeSample & WorkRangeSample> {
     const principal = currentPrincipal();
     if (!principal.accountId) {
       throw Object.assign(new Error("Account required"), { status: 400 });
     }
-    const { sampleUsageRange } = await import("./hours-used");
-    return sampleUsageRange(principal.accountId, start, end);
+    const [{ sampleUsageRange }, { sampleWorkRange }] = await Promise.all([
+      import("./hours-used"),
+      import("./work-metrics"),
+    ]);
+    const [usage, work] = await Promise.all([
+      sampleUsageRange(principal.accountId, start, end),
+      sampleWorkRange(start, end),
+    ]);
+    return { ...usage, ...work };
   },
 
   async deleteSample(id: string): Promise<MetricSample> {
