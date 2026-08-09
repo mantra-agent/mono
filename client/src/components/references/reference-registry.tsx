@@ -37,7 +37,7 @@ import {
   User,
   type LucideIcon,
 } from "lucide-react";
-import type { ReferenceRef, ResolvedReference } from "@shared/references";
+import { REFERENCE_REGISTRY, isKnownReferenceType, type ReferenceRef, type ResolvedReference } from "@shared/references";
 
 export type ClientResolvedReference = Omit<ResolvedReference, "icon"> & {
   Icon: LucideIcon;
@@ -303,21 +303,32 @@ const registry: Record<string, RegistryEntry> = {
 
 export function resolveReference(ref: ReferenceRef): ClientResolvedReference {
   const entry = registry[ref.type];
-  if (!entry) {
+  if (entry) {
     return {
       ref,
-      status: "missing",
-      label: ref.canonical,
+      status: "resolved",
+      label: entry.fallbackLabel(ref),
+      href: entry.href?.(ref),
+      Icon: entry.Icon,
+    };
+  }
+
+  if (isKnownReferenceType(ref.type)) {
+    const sharedDefinition = REFERENCE_REGISTRY[ref.type];
+    return {
+      ref,
+      status: "resolved",
+      label: metadataString(ref, "label") || humanizeSlug(ref.type),
+      href: metadataString(ref, "href") || sharedDefinition.route?.(ref.id),
       Icon: Link2,
-      description: `Unknown reference type: ${ref.type}`,
     };
   }
 
   return {
     ref,
-    status: "resolved",
-    label: entry.fallbackLabel(ref),
-    href: entry.href?.(ref),
-    Icon: entry.Icon,
+    status: "missing",
+    label: ref.canonical,
+    Icon: Link2,
+    description: `Unknown reference type: ${ref.type}`,
   };
 }

@@ -85,6 +85,8 @@ subscribe by sessionId via WS and receive snapshots + deltas.
 
 `client/src/lib/queryClient.ts` defaults: `staleTime: 30_000`, `refetchOnWindowFocus: false`. Do not override with `staleTime: 0` or `refetchOnMount: "always"` unless the surface is intentionally live and the fan-out cost is understood. Prefer event-carried invalidation over force-refetch on mount.
 
+App-shell consumers of live Session state must read `SessionActivityProvider` through `useSessionStreams` plus `useSessionStreamState`; they must not call `useSessionSubscription` and create another logical subscription or browser-recovery owner. Bounded descendant renderers may use the single-session fallback only when their Session is not present in the provider-owned live set.
+
 ## Browser navigation telemetry
 
 `client/src/lib/navigation-trace.ts` is the single in-memory correlation boundary for SPA navigation evidence. History intent, route Suspense/lazy settlement, React Query activity, destination commit, main-thread evidence, and bounded session-stream pressure feed one terminal trace; only that terminal trace enters `browser_performance_telemetry`. Never persist per milestone, query event, frame, or stream delta, and never capture query keys or stream content. The readiness gate tracks only genuine initial loads (`query.state.status === "pending"`); background refetches and interval pollers must not hold a navigation trace open.
@@ -97,6 +99,7 @@ A single shared WebSocket connection handles authenticated `/ws/events` updates 
 
 - `client/src/lib/ws-connection.ts` — Sole physical `/ws/events` creator; owns connection, reconnection, liveness, logical owners, and bounded diagnostics.
 - `client/src/hooks/use-event-stream.ts` — App-root bounded generic-event projection over the shared transport; feature consumers read it and never create or close physical sockets.
+- `client/src/components/route-load-boundary.tsx` — Sole tokenized route/application recovery UI. Route and app error boundaries may supply failure-specific copy and telemetry, but must reuse `RouteFailure` rather than expose raw errors or create parallel fallback styling.
 - Used for: session updates, generic events, client presence, semantic UI interaction, notification badges, and real-time state sync.
 - Multiplexed: different message `type` fields route to registered logical handlers.
 - Feature hooks may acquire balanced logical owner leases, but component or route lifetimes must never own the physical transport.
@@ -256,6 +259,7 @@ Hosting credentials and environment configuration belong to Platform Environment
 One control for `@anything`. Do not invent local typeaheads for tags, people, pages, goals, or other linkable objects.
 
 - **Search:** `client/src/lib/reference-search.ts` (`loadReferenceSuggestions`) is the single multi-type source.
+- **Resolution:** `shared/references.ts#REFERENCE_REGISTRY` owns known type identity and fallback routes. `client/src/components/references/reference-registry.tsx` may add presentation labels/icons and type-specific route detail, but every shared registered type must remain renderable through the shared fallback rather than degrading as unknown.
 - **Rows:** `client/src/components/references/reference-suggestion-row.tsx` — compact one-line rows (icon · label · type).
 - **Field / menu control:** `client/src/components/references/reference-picker.tsx` (`ReferencePicker`). Support `types`, multi/single, inline/menu, and tag create when needed.
 - **Chat:** `useMentionAutocomplete` + `MentionPopover` consume the same search path and rows.
