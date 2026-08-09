@@ -15868,6 +15868,18 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         };
       }
     }
+    if (action === "run_history_rollups") {
+      try {
+        const { runHistoricalContinuityRollups } = await import("./historical-continuity");
+        return { result: JSON.stringify(await runHistoricalContinuityRollups()) };
+      } catch (err: unknown) {
+        return {
+          result: `Failed to run historical continuity rollups: ${err instanceof Error ? err.message : String(err)}`,
+          error: true,
+          failure: classifySystemToolError(err),
+        };
+      }
+    }
     if (action === "tool_stats") {
       try {
         const { getToolStats } = await import("./file-storage/tool-stats");
@@ -15886,7 +15898,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
         return { result: `Failed to get tool stats: ${msg}`, error: true };
       }
     }
-    return { result: `Unknown system action: ${action}. Available: state, logs, log_files, budget, frontend_performance, context_health, reliability, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
+    return { result: `Unknown system action: ${action}. Available: state, logs, log_files, budget, frontend_performance, context_health, reliability, tool_output_pressure, run_history_rollups, events, active_runs, clear_active_run, accounts, tool_stats`, error: true };
   },
   async timers(args) {
     const action = args.action as string;

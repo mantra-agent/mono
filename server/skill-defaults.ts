@@ -42,6 +42,25 @@ import {
 
   export const BUILTIN_SKILL_DEFAULTS: SkillDefault[] = [
   {
+    name: "history-rollup",
+    recommendedPersona: "Operator",
+    description: "Core hourly historical-continuity maintenance. Invokes the deterministic owner-scoped rollup service through the canonical Timer, Runtime, Skill, and tool path.",
+    category: "system",
+    activity: ACTIVITY_MEMORY,
+    author: "system",
+    version: "1.0",
+    addToMemory: false,
+    pinnedToContext: false,
+    sessionType: "autonomous",
+    scoreThreshold: 1,
+    whenToUse: "Runs hourly from the Core managed user Timer to catch up closed historical-continuity buckets for the owner's currently visible Vaults.",
+    outputSpec: "One successful system.run_history_rollups invocation and a concise created-entry/Vault count.",
+    checklist: [
+      { check: "Invoked the registered deterministic historical rollup action", weight: 1, kind: "tool_invoked", tool: "system", action: "run_history_rollups" },
+    ],
+    process: `Invoke system(action: "run_history_rollups") exactly once. Report only its created-entry and visible-Vault counts. Do not inspect or mutate any other state.`,
+  },
+  {
     name: "self-heal",
     recommendedPersona: "Engineer",
     description: "Build-owned nightly production error repair. Inspects canonical reliability evidence, attributes recurring product defects, and ships bounded source repairs through the trusted engineering and production-build gate without publishing production.",
