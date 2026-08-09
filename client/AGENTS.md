@@ -181,6 +181,8 @@ Most detail pages use a tabbed layout via `Tabs` from shadcn/ui:
 
 The client consumes authorization state from `/api/auth/me` via `useAuth()` (`user`, `principal`, `permissions`, `hasPermission`). Use these values to hide, disable, or label privileged UI, but never treat client checks as enforcement. Server routes must still gate with the central permission service.
 
+Installable product routes gate through `ResolvedProductComposition.routes` by stable route ID. Do not inspect `activeMods` by key in page routing or add per-Mod wrappers; installation controls route composition, while named permissions and server authorization remain independent gates.
+
 When adding admin or system UI:
 - Check named permissions (`system:read`, `system:write`, `users:read`, `users:write`, `build:read`, `build:write`) through `hasPermission(...)`.
 - Do not branch on `role` or legacy `isAdmin` except as a derived display convenience.
