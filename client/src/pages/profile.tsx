@@ -1,96 +1,61 @@
-import { useRef, useState, Suspense } from "react";
+import { Suspense, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { useAuth, type AuthUser, type AuthPrincipal } from "@/hooks/use-auth";
-import { queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
+import { Briefcase, ChevronRight, Compass, Loader2, TableProperties } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  HIERARCHY_SECTION_HEADER_CLASS,
+  HIERARCHY_TREE_STACK_CLASS,
+} from "@/components/hierarchy-section-header";
+import { HierarchyTreeRow } from "@/components/hierarchy-tree";
+import { useAuth, type AuthPrincipal, type AuthUser } from "@/hooks/use-auth";
 import { usePageHeader } from "@/hooks/use-page-header";
-import { Compass, TableProperties, Briefcase, Loader2, ChevronRight } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { lazyWithRetry } from "@/lib/lazy-with-retry";
+import { queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
 const MissionSection = lazyWithRetry(() => import("@/pages/profile-mission-tab"));
 const SkillsSection = lazyWithRetry(() => import("@/pages/profile-skills-tab"));
 const ExperienceSection = lazyWithRetry(() => import("@/pages/profile-experience-tab"));
 
-const INDENT_STEP = 16;
-
-interface ProfileTreeItem {
+interface ProfileSection {
   id: string;
   label: string;
   icon: React.ReactNode;
   content: React.ReactNode;
 }
 
+const PROFILE_SECTIONS: ProfileSection[] = [
+  {
+    id: "mission",
+    label: "Mission",
+    icon: <Compass className="h-3.5 w-3.5" />,
+    content: <MissionSection />,
+  },
+  {
+    id: "skills",
+    label: "Skills",
+    icon: <TableProperties className="h-3.5 w-3.5" />,
+    content: <SkillsSection />,
+  },
+  {
+    id: "experience",
+    label: "Experience",
+    icon: <Briefcase className="h-3.5 w-3.5" />,
+    content: <ExperienceSection />,
+  },
+];
+
 function SectionFallback() {
   return (
-    <div className="flex items-center pl-6 py-1" style={{ paddingLeft: INDENT_STEP + 24 }}>
-      <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50" />
-    </div>
-  );
-}
-
-function ProfileTreeNode({
-  item,
-  expanded,
-  onToggle,
-}: {
-  item: ProfileTreeItem;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="min-w-0" data-testid={`tree-node-${item.id}`}>
-      {/* Row */}
-      <div
-        className={cn(
-          "group relative flex items-center gap-2 rounded-md px-2 py-1.5 pr-16 text-xs font-bold uppercase tracking-wider w-full text-left cursor-pointer select-none transition-colors overflow-hidden",
-          expanded
-            ? "bg-accent text-foreground"
-            : "text-muted-foreground hover:bg-accent/70 hover:text-foreground",
-        )}
-        onClick={onToggle}
-        data-testid={`button-profile-section-${item.id}`}
-      >
-        <span className="shrink-0">{item.icon}</span>
-        <span className="min-w-0 flex-1 truncate">{item.label}</span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle();
-          }}
-          className="absolute right-8 top-1/2 -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent transition-colors z-10"
-          aria-label={expanded ? `Collapse ${item.label}` : `Expand ${item.label}`}
-          data-testid={`button-tree-twisty-${item.id}`}
-        >
-          <ChevronRight
-            className={cn(
-              "h-3 w-3 transition-transform",
-              expanded && "rotate-90",
-            )}
-          />
-        </button>
-      </div>
-
-      {/* Expanded content — indented child with connector */}
-      {expanded && (
-        <div className="min-w-0" data-testid={`tree-children-${item.id}`}>
-          <div className="flex min-w-0 items-stretch" style={{ paddingLeft: INDENT_STEP }}>
-            {/* Connector gutter */}
-            <div className="shrink-0 w-5 self-stretch relative mr-1" aria-hidden="true">
-              <div className="absolute left-1/2 top-0 bottom-0 -translate-x-px border-l border-border" />
-            </div>
-            {/* Content */}
-            <div className="flex-1 min-w-0 py-2">
-              <Suspense fallback={<SectionFallback />}>
-                {item.content}
-              </Suspense>
-            </div>
-          </div>
-        </div>
-      )}
+    <div className="flex min-h-11 items-center px-2 py-2">
+      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
     </div>
   );
 }
@@ -101,11 +66,18 @@ export default function ProfilePage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(
+    () => new Set(["mission"]),
+  );
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const form = new FormData();
       form.append("file", file);
-      const response = await fetch("/api/auth/profile-picture", { method: "POST", body: form, credentials: "include" });
+      const response = await fetch("/api/auth/profile-picture", {
+        method: "POST",
+        body: form,
+        credentials: "include",
+      });
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { error?: string };
         throw new Error(body.error || "Profile picture upload failed");
@@ -117,51 +89,37 @@ export default function ProfilePage() {
         current ? { ...current, user: { ...current.user, avatarObjectPath } } : current,
       );
     },
-    onError: (error: Error) => toast({ title: "Upload failed", description: error.message, variant: "destructive" }),
+    onError: (error: Error) => toast({
+      title: "Upload failed",
+      description: error.message,
+      variant: "destructive",
+    }),
   });
 
   const initials = user?.email.slice(0, 2).toUpperCase() ?? "";
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    () => new Set(["mission"]),
-  );
-
-  const toggle = (id: string) =>
-    setExpandedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+  const setSectionOpen = (id: string, open: boolean) => {
+    setExpandedSections((previous) => {
+      const next = new Set(previous);
+      if (open) next.add(id);
+      else next.delete(id);
       return next;
     });
-
-  const items: ProfileTreeItem[] = [
-    {
-      id: "mission",
-      label: "Mission",
-      icon: <Compass className="h-3.5 w-3.5" />,
-      content: <MissionSection />,
-    },
-    {
-      id: "skills",
-      label: "Skills",
-      icon: <TableProperties className="h-3.5 w-3.5" />,
-      content: <SkillsSection />,
-    },
-    {
-      id: "experience",
-      label: "Experience",
-      icon: <Briefcase className="h-3.5 w-3.5" />,
-      content: <ExperienceSection />,
-    },
-  ];
+  };
 
   return (
     <div
-      className="flex flex-col h-full min-w-0 overflow-auto bg-background p-2"
+      className="flex h-full min-w-0 flex-col overflow-auto bg-background p-2"
       data-testid="profile-page"
     >
-      <div className="flex min-h-20 items-center gap-4 border-b border-border/20 px-2 py-2">
-        <Avatar className="h-16 w-16">
-          {user?.avatarObjectPath && <AvatarImage src={user.avatarObjectPath} alt="Profile picture" className="object-cover" />}
+      <div className="flex min-h-20 min-w-0 items-center gap-4 border-b border-border/20 px-2 py-2">
+        <Avatar className="h-16 w-16 shrink-0">
+          {user?.avatarObjectPath && (
+            <AvatarImage
+              src={user.avatarObjectPath}
+              alt="Profile picture"
+              className="object-cover"
+            />
+          )}
           <AvatarFallback className="text-base font-semibold">{initials}</AvatarFallback>
         </Avatar>
         <input
@@ -177,24 +135,62 @@ export default function ProfilePage() {
         />
         <Button
           type="button"
-          variant="outline"
-          className="min-h-11"
+          className="min-h-11 bg-cta text-cta-foreground hover:bg-cta/90"
           disabled={upload.isPending}
           onClick={() => fileInputRef.current?.click()}
         >
-          {upload.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-active" />}
+          {upload.isPending && (
+            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+          )}
           Upload photo
         </Button>
       </div>
-      <div className="space-y-0">
-        {items.map((item) => (
-          <ProfileTreeNode
-            key={item.id}
-            item={item}
-            expanded={expandedSections.has(item.id)}
-            onToggle={() => toggle(item.id)}
-          />
-        ))}
+
+      <div className={HIERARCHY_TREE_STACK_CLASS}>
+        {PROFILE_SECTIONS.map((section) => {
+          const expanded = expandedSections.has(section.id);
+          return (
+            <Collapsible
+              key={section.id}
+              open={expanded}
+              onOpenChange={(open) => setSectionOpen(section.id, open)}
+              className="min-w-0"
+              data-testid={`tree-node-${section.id}`}
+            >
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    HIERARCHY_SECTION_HEADER_CLASS,
+                    "min-h-11 text-left transition-colors hover:bg-accent/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    expanded && "bg-accent text-foreground",
+                  )}
+                  aria-label={expanded ? `Collapse ${section.label}` : `Expand ${section.label}`}
+                  data-testid={`button-profile-section-${section.id}`}
+                >
+                  <span className="shrink-0">{section.icon}</span>
+                  <span className="min-w-0 flex-1 truncate">{section.label}</span>
+                  <ChevronRight
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0 transition-transform",
+                      expanded && "rotate-90",
+                    )}
+                    aria-hidden="true"
+                  />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent data-testid={`tree-children-${section.id}`}>
+                <HierarchyTreeRow continues={false} connectorAnchor="first-row-center">
+                  <div className="min-w-0 py-2">
+                    <Suspense fallback={<SectionFallback />}>
+                      {section.content}
+                    </Suspense>
+                  </div>
+                </HierarchyTreeRow>
+              </CollapsibleContent>
+            </Collapsible>
+          );
+        })}
       </div>
     </div>
   );
