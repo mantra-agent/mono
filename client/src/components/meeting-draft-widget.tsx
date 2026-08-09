@@ -31,7 +31,7 @@ export function MeetingDraftWidget({ draftId }: { draftId: string }) {
   const query = useQuery<{ draft: MeetingDraft }>({
     queryKey: ["/api/meeting-drafts", draftId], enabled: valid,
     queryFn: async () => (await fetch(`/api/meeting-drafts/${draftId}`, { credentials: "include" })).json(),
-    refetchInterval: state => state.state.data?.draft.status === "scheduling" ? 1500 : false,
+    refetchInterval: state => state.state.data?.draft?.status === "scheduling" ? 1500 : false,
   });
   const draft = query.data?.draft;
   const merged = useMemo(() => draft ? { ...draft, ...edits } : null, [draft, edits]);
