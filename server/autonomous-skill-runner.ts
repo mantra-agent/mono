@@ -1601,13 +1601,23 @@ async function runSkillPipeline(
     if (result.status === "degraded") {
       const reason = result.degradationReason || "executor_degraded";
       const budgetExhausted = reason === "iteration_budget_exhausted" || reason === "tool_call_budget_exhausted";
+      const responseLimit = result.responseGenerationLimit;
+      const responseLimitDetail = responseLimit
+        ? ` The final response used ${responseLimit.finalResponseOutputTokens} of ${responseLimit.configuredOutputTokens} configured output tokens.`
+        : "";
       const degradedNotice = budgetExhausted
         ? "The executor reached its bounded work budget. Completed work remains saved; continue in a later run."
-        : "The model reached its output limit before producing final text. Completed tool work remains saved.";
+        : `The model reached its response generation limit before producing final text.${responseLimitDetail} Completed tool work remains saved.`;
       await persistExecutorResult(sessionId, result, degradedNotice).catch((e: unknown) => {
         logger.error(`[SkillChat] [${sessionId}] Failed to persist degraded result: ${e instanceof Error ? e.message : String(e)}`);
       });
-      logger.warn(`[SkillChat] [${sessionId}] Skill degraded: ${reason} (${durationMs}ms, ${toolCallCount} tool calls)`);
+      logger.warn(
+        `[SkillChat] [${sessionId}] Skill degraded: ${reason} ` +
+        `(${durationMs}ms, ${toolCallCount} tool calls)` +
+        (responseLimit
+          ? ` responseGenerationLimit=${responseLimit.configuredOutputTokens} finalResponseOutputTokens=${responseLimit.finalResponseOutputTokens}`
+          : ""),
+      );
       return {
         sessionId,
         status: "degraded",
