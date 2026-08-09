@@ -226,6 +226,7 @@ export function QuestionWidget({
   const [showContext, setShowContext] = useState(
     () => Boolean(recommendation?.principleRevisionIds?.length),
   );
+  const [showAnsweredDetails, setShowAnsweredDetails] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -476,45 +477,63 @@ export function QuestionWidget({
   };
 
   if (response || localDecisionId) {
+    const answer = (response ? answeredLabels : responseLabels(prompt, {
+      questionToolCallId: prompt.toolCallId,
+      selectedOptionIds: selected,
+      ...(otherText.trim() ? { otherText: otherText.trim() } : {}),
+    })).join(", ");
+    const answerReasoning = response?.reasoning || reasoning.trim();
+    const hasAnsweredDetails = Boolean(
+      whyAsking || selectedPrincipleLabels.length > 0 || answerReasoning || decisionId,
+    );
+
     return (
-      <div
-        className="-ml-10 border rounded-md border-success/40 bg-success/5 my-1"
+      <Collapsible
+        open={showAnsweredDetails}
+        onOpenChange={setShowAnsweredDetails}
+        className="-ml-10 my-1 rounded-md border border-success/40 bg-success/5"
         data-testid={`question-widget-${prompt.toolCallId}`}
       >
         <div className="flex items-start gap-2.5 px-3 py-2">
           <SimpleCheckCircle checked interactive={false} className="mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1 space-y-1">
             <p className="text-sm text-foreground">{prompt.question}</p>
-            {whyAsking ? (
-              <p className="text-xs text-muted-foreground" data-testid={`question-why-${prompt.toolCallId}`}>
-                Why I'm asking: {whyAsking}
-              </p>
-            ) : null}
-            <p className="text-xs text-muted-foreground">
-              {(response ? answeredLabels : responseLabels(prompt, {
-                questionToolCallId: prompt.toolCallId,
-                selectedOptionIds: selected,
-                ...(otherText.trim() ? { otherText: otherText.trim() } : {}),
-              })).join(", ")}
-            </p>
-            {selectedPrincipleLabels.length > 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Principles: {selectedPrincipleLabels.join(", ")}
-              </p>
-            ) : null}
-            {(response?.reasoning || reasoning.trim()) ? (
-              <p className="text-xs text-muted-foreground">
-                Reasoning: {response?.reasoning || reasoning.trim()}
-              </p>
-            ) : null}
-            {decisionId ? (
-              <div className="pt-0.5 text-xs" data-testid={`question-decision-${prompt.toolCallId}`}>
-                <InlineReferenceText text={`Recorded as @decision:${decisionId}`} />
-              </div>
-            ) : null}
+            <p className="text-sm font-medium text-foreground">{answer}</p>
           </div>
+          {hasAnsweredDetails ? (
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                aria-label={showAnsweredDetails ? "Collapse answer details" : "Expand answer details"}
+                className="-mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+                data-testid={`question-answered-expand-${prompt.toolCallId}`}
+              >
+                <ChevronRight
+                  className={cn("h-3.5 w-3.5 transition-transform", showAnsweredDetails && "rotate-90")}
+                />
+              </button>
+            </CollapsibleTrigger>
+          ) : null}
         </div>
-      </div>
+        {hasAnsweredDetails ? (
+          <CollapsibleContent>
+            <div className="space-y-1 border-t border-border/40 px-3 py-2 pl-12 text-sm font-normal italic text-muted-foreground">
+              {whyAsking ? (
+                <p data-testid={`question-why-${prompt.toolCallId}`}>Why I'm asking: {whyAsking}</p>
+              ) : null}
+              {selectedPrincipleLabels.length > 0 ? (
+                <p>Principles: {selectedPrincipleLabels.join(", ")}</p>
+              ) : null}
+              {answerReasoning ? <p>Reasoning: {answerReasoning}</p> : null}
+              {decisionId ? (
+                <div className="not-italic" data-testid={`question-decision-${prompt.toolCallId}`}>
+                  <InlineReferenceText text={`Recorded as @decision:${decisionId}`} />
+                </div>
+              ) : null}
+            </div>
+          </CollapsibleContent>
+        ) : null}
+      </Collapsible>
     );
   }
 
