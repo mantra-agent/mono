@@ -1302,7 +1302,7 @@ const ZOMBIE_HARD_CAP_MS = 40 * 60 * 1000;
 
 const DEFAULT_MAX_ITERATIONS = 256;
 const HARD_MAX_ITERATIONS = 256;
-const DEFAULT_MAX_TOOL_CALLS = 96;
+const DEFAULT_MAX_TOOL_CALLS = 256;
 const HARD_MAX_TOOL_CALLS = 256;
 
 function resolveRunBudget(value: number | undefined, fallback: number, ceiling: number): number {
