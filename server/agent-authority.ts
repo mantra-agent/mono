@@ -335,9 +335,6 @@ const FORBIDDEN_SHELL_TOKEN_CLASSES: ReadonlyArray<{ pattern: RegExp; reason: st
   { pattern: /~/, reason: "forbidden:home_expansion", maskPolicy: "all" },
   { pattern: /\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|ftp|telnet)\b/i, reason: "forbidden:network_binary", maskPolicy: "all" },
   { pattern: /\b(?:python|python3|node|deno|bun|perl|ruby|php|lua|eval|source)\b/i, reason: "forbidden:interpreter", maskPolicy: "all" },
-  // `env` remains categorically blocked. `printenv` is classified from parsed command segments below
-  // so quoted search text and paths cannot trip a fuzzy full-command denial.
-  { pattern: /\benv\b/i, reason: "forbidden:env_dump", maskPolicy: "all" },
   // Path-consuming classes: never masked. See ShellMaskPolicy "none" doc above.
   { pattern: /\/(?:proc|sys|dev|root|home)\//i, reason: "forbidden:sensitive_path", maskPolicy: "none" },
   { pattern: /(?:^|[\s/])\.(?:env|npmrc|netrc|gitconfig|git-credentials|aws|ssh|config)(?:[\s/]|$)/i, reason: "forbidden:dotfile_secret", maskPolicy: "none" },
@@ -510,8 +507,8 @@ export function getShellToolContractDescription(): string {
     "Read-only workspace shell. Deterministic allowlist — denied commands fail closed; do not retry variants.",
     `Allow: ${binaries}.`,
     "Compose with `|` `||` `&&` `;` only when every segment starts allowlisted.",
-    "Deny: newlines, backticks, `$(...)`, bare `&`, `<`/`>` redirects, `~`, variable expansion.",
-    `Environment: bare env/printenv, options, assignments, multiple names, and unapproved names are denied; printenv permits exactly one of: ${[...SAFE_SHELL_ENVIRONMENT_NAMES].sort().join(", ")}.`,
+    "Deny: newlines, backticks, command substitution, bare ampersand, redirects, home expansion, and active variable expansion. Single-quote dollar syntax when searching source so it stays inert.",
+    `Environment commands: env is denied; bare printenv, options, assignments, multiple names, and unapproved names are denied; printenv permits exactly one of: ${[...SAFE_SHELL_ENVIRONMENT_NAMES].sort().join(", ")}.`,
     "Redirect exceptions: `>/dev/null`, `N>/dev/null`, `N>&M` (e.g. `2>&1`).",
     "Paths: under `/app`, or system bins in `/bin` `/usr/bin` `/usr/local/bin`.",
     `git: inspection-only (${gitSubs}). Writes → git_write_blocked (use git tool). Unknown/non-read → shell_git_read_only.`,
@@ -611,6 +608,7 @@ export function validateShellCommand(command: string): ToolAuthorityDecision {
     if (first === "which" && !/^which(?:\s+(?:--\s+)?[A-Za-z0-9._+-]+)+$/.test(segment)) {
       return { allowed: false, reason: "which_binary_name_required" };
     }
+    if (first === "env") return { allowed: false, reason: "forbidden:env_dump" };
     if (first === "printenv") {
       const environmentDeny = classifyNamedEnvironmentRead(segment);
       if (environmentDeny) return { allowed: false, reason: environmentDeny };
@@ -645,7 +643,7 @@ const SHELL_DENIAL_GUIDANCE: Readonly<Record<string, string>> = {
   "forbidden:command_substitution":
     "Command substitution ($(...) or backticks) is blocked because the inner command never passes the allowlist. Run the inner command as its own shell call, then use its output.",
   "forbidden:variable_expansion":
-    "Shell variable expansion ($VAR / ${...}) is blocked. Substitute the literal value yourself, or read the target path directly.",
+    "Active shell variable expansion is blocked. Substitute the literal value yourself; when searching source for dollar syntax, put the pattern in single quotes so it stays inert.",
   "forbidden:redirection":
     "File redirection (< or >) is blocked. Allowlisted readers take a path argument directly (e.g. `sed -n '1,40p' file`); discard output with the permitted `>/dev/null`.",
   "forbidden:multiline_command":
