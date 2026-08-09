@@ -2,23 +2,20 @@
  * Voice Webhook Base URL Override
  *
  * Lets the user pin the public base URL used for ElevenLabs callbacks
- * (custom-LLM URL for v2/v2.5, tool webhooks for v3). Useful for testing
- * voice in development against a known-reachable URL — or for forcing
- * production URLs during dev iteration.
+ * for the single ElevenLabs custom-LLM engine. Useful for testing voice in
+ * development against a known-reachable URL — or for forcing production URLs
+ * during dev iteration.
  *
- * When set, the dev-mode "skip PATCH" guard in setupAgentCallbackUrl
- * (v2/v2.5) and provisionV3Agent (v3) is bypassed: the override signals
- * the user has explicitly chosen this URL and we trust it.
+ * When set, the dev-mode "skip PATCH" guard in setupAgentCallbackUrl is
+ * bypassed: the override signals the user has explicitly chosen this URL.
  *
  * Sync getter is required because getPublicBaseUrl() is called from
  * synchronous code paths. The override is loaded from DB at boot and
  * refreshed on every PUT.
  *
- * NOTE (single-process assumption): `cachedOverride` is process-local.
- * In a multi-replica deployment the cache may diverge between replicas
- * until the next `loadVoiceWebhookBaseUrlOverride()` runs. Callers that
- * must see the freshest value (e.g. provisionV3Agent before issuing the
- * PATCH) should call `revalidateVoiceWebhookBaseUrl()` first.
+ * NOTE: `cachedOverride` is process-local. In a multi-replica deployment the
+ * cache may diverge until the next load; mutating routes persist the setting
+ * before reapplying the provider config in the handling process.
  */
 import { createLogger } from "./log";
 import { getSetting, setSetting } from "./system-settings";

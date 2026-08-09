@@ -8,6 +8,8 @@ import {
 } from "../voice-webhook-base-url";
 import { getPublicBaseUrl } from "../voice-llm";
 import { getSecretSync } from "../secrets-store";
+import { requireAuth } from "../auth";
+import { requirePermission } from "../permissions";
 
 const log = createLogger("voice-engine-routes");
 
@@ -17,7 +19,7 @@ export function registerVoiceEngineRoutes(app: Express): void {
   // env var changes.
   void loadVoiceWebhookBaseUrlOverride();
 
-  app.get("/api/voice/webhook-base-url", (_req, res) => {
+  app.get("/api/voice/webhook-base-url", requireAuth, requirePermission("system:read"), (_req, res) => {
     try {
       const override = getVoiceWebhookBaseUrlOverrideSync();
       const effective = getPublicBaseUrl();
@@ -36,7 +38,7 @@ export function registerVoiceEngineRoutes(app: Express): void {
     url: z.string().nullable(),
   });
 
-  app.put("/api/voice/webhook-base-url", async (req, res) => {
+  app.put("/api/voice/webhook-base-url", requireAuth, requirePermission("system:write"), async (req, res) => {
     const parsed = putBaseUrlSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "url is required (string or null to clear)" });
@@ -61,7 +63,7 @@ export function registerVoiceEngineRoutes(app: Express): void {
       res.json({
         override: value,
         effective: getPublicBaseUrl(),
-        reapplied: agentId ? "v2" : "skipped",
+        reapplied: agentId ? "custom_llm" : "skipped",
         reapplyError,
       });
     } catch (err) {

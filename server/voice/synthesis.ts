@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { fetchAndCacheVoiceId, getCachedVoiceId } from "../elevenlabs";
 import { createLogger } from "../log";
+import { providerFetch, readBoundedProviderBody } from "../integrations/provider-http";
 import { getDictionaryLocator } from "../pronunciation";
 import { getSecret } from "../secrets-store";
 import { getTtsConfig } from "../routes/voice-config";
@@ -97,7 +98,7 @@ export async function streamVoiceAudio(text: string): Promise<VoiceAudioStream> 
   }
 
   const startedAt = Date.now();
-  const response = await fetch(
+  const response = await providerFetch(
     `${ELEVENLABS_API_BASE}/text-to-speech/${encodeURIComponent(voiceId)}/stream?${query.toString()}`,
     {
       method: "POST",
@@ -117,12 +118,12 @@ export async function streamVoiceAudio(text: string): Promise<VoiceAudioStream> 
         },
         ...(dictionary ? { pronunciation_dictionary_locators: [dictionary] } : {}),
       }),
-      signal: AbortSignal.timeout(30_000),
+      timeoutMs: 30_000,
     },
   );
 
   if (!response.ok) {
-    const detail = (await response.text().catch(() => "")).slice(0, 500);
+    const detail = await readBoundedProviderBody(response, 500).catch(() => "");
     throw new Error(`ElevenLabs voice synthesis failed (${response.status})${detail ? `: ${detail}` : ""}`);
   }
   if (!response.body) {

@@ -23,12 +23,12 @@ voice/
 ├── synthesis.ts          — Canonical portable speech synthesis for non-browser transports
 ├── stt.ts                — Compatibility re-export of the canonical bounded `server/speech-recognition/` module; meeting transports migrate through it without a parallel STT interface
 ├── turn-context.ts       — TurnContext factory for per-turn state
-├── session-state.ts      — Shim for v2.5 callers (delegates to session.ts)
-├── sse-stream.ts         — Response SSE instrumentation (v2.5)
+├── session-state.ts      — Compatibility type re-export during call-site migration
+├── sse-stream.ts         — Response SSE instrumentation
 ├── diagnostics.ts        — WebSocket routing + thinking persistence
 ├── transcript.ts         — Interim/final transcript fan-out
 ├── keepalive.ts          — Cascade keepalive (re-exports calibration)
-└── index.ts              — Public exports (v2.5 engine surface)
+└── index.ts              — Public custom-LLM engine surface
 ```
 
 ## Key Concepts
@@ -81,6 +81,12 @@ Normal voice configuration is the sole source of truth for voice identity, model
 ## Start Flow
 
 `start-preparation.ts` owns start-domain preparation: chat session-key resolution, context and signed-URL prefetch, CLI pre-warm, default persona readiness, FTUE pre-orientation, exact reconnect preparation, and exceptional system-step persistence. HTTP/SSE transport, lease claiming, provider handoff, and response completion remain in `routes/voice-session.ts`. Do not pass Express request or response objects into the preparation module.
+
+### Residual Migration Constraints
+
+- `session-state.ts`, `sse-stream.ts`, and the internal `handleV25CustomLLM` implementation name remain compatibility identities for current imports and provider configuration; they do not represent another engine. The public callback is `handleCustomLLM`. Remove the compatibility names only after repository imports and stored/provider callback contracts reach zero usage.
+- `voice-session-engine.ts` and `/api/voice/sessions/save` remain a legacy voice-session archive consumed by persisted transcript UI. They are not call-lifecycle authority; canonical live and durable conversation state remains the chat Session plus `voice_session_active` lease. Retire the archive only after migrating stored `voice_session` documents and their UI.
+- Webhook base-URL override caching is process-local. The mutating request reconfigures ElevenLabs in its handling process; other replicas converge on restart/reload and must not treat their cache as provider truth.
 
 ### Provider-Owned System Tools
 ElevenLabs system tools arrive on each custom-LLM request as OpenAI-format tool definitions. `provider-system-tools.ts` is the allowlist and validation boundary. Merge only recognized provider tools into the voice executor, intercept them before ordinary bridge-tool dispatch, then return the selected call to ElevenLabs as OpenAI-format SSE so ElevenLabs remains the sole owner of conversation language and other provider state.

@@ -78,7 +78,7 @@ async function persistStep(ev: DiagEvent): Promise<void> {
         name: ev.step,
         status: "done" as const,
         elapsedMs: ev.elapsedMs,
-        detail: ev.detail || `${ev.step} (v2.5)`,
+        detail: ev.detail || ev.step,
       },
     ],
     undefined,

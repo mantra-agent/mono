@@ -35,7 +35,6 @@ export const SECRET_CATALOG: SecretSpec[] = [
   { name: "ELEVENLABS_API_KEY", section: "elevenlabs", label: "ElevenLabs API Key", description: "Powers voice synthesis and conversational agents. Also serves as the meeting TTS fallback." },
   { name: "CARTESIA_API_KEY", section: "cartesia", label: "Cartesia API Key", description: "Primary meeting-agent text-to-speech provider." },
   { name: "CARTESIA_VOICE_ID", section: "cartesia", label: "Cartesia Voice ID", description: "Voice used when the meeting agent speaks. Copy an ID from the Cartesia Voices page." },
-  { name: "VOICE_V3_WEBHOOK_SECRET", section: "elevenlabs", label: "Voice V3 Webhook Secret", description: "Shared secret ElevenLabs sends on every V3 (native-LLM) tool webhook call. Set here to avoid an env var + redeploy. Required in production." },
   { name: "ELEVENLABS_AGENT_ID", section: "elevenlabs", label: "ElevenLabs Agent ID", description: "Conversational AI agent ID. Required for voice sessions." },
   { name: "BRAVE_API_KEY", section: "brave", label: "Brave Search API Key", description: "Enables web search." },
   { name: "NOTION_API_KEY", section: "notion", label: "Notion API Key", description: "Optional global Notion integration token." },

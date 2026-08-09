@@ -11,7 +11,7 @@
  *   - keepalive.ts       → cascade keepalive (re-exports calibration)
  */
 export { voiceEngine } from "./engine";
-export { handleV25CustomLLM } from "./turn-lifecycle";
+export { handleV25CustomLLM as handleCustomLLM } from "./turn-lifecycle";
 export { emitDiagnostic, withDiag } from "./diagnostics";
 export { instrumentSseResponse } from "./sse-stream";
 export {
