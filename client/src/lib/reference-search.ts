@@ -155,6 +155,22 @@ async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T | null>
   return response.json() as Promise<T>;
 }
 
+/**
+ * Normalize list payloads from heterogeneous reference search endpoints.
+ * Some routes return bare arrays; others wrap them (`{ kpis }`, `{ goals }`, …).
+ * A non-array body must never throw out of `for…of` and empty the whole picker.
+ */
+function asItemArray<T>(value: unknown, keys: string[] = []): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const nested = record[key];
+    if (Array.isArray(nested)) return nested as T[];
+  }
+  return [];
+}
+
 export type LoadReferenceSuggestionsOptions = {
   query: string;
   signal: AbortSignal;
@@ -180,46 +196,44 @@ export async function loadReferenceSuggestions(
   const [library, people, tags, companies, goals, tasks, projects, kpis, businessPlans, wellnessActivities] =
     await Promise.all([
       allow("page") && query
-        ? fetchJson<LibraryPageResult[]>(`/api/info/library?search=${encoded}`, signal)
+        ? fetchJson<unknown>(`/api/info/library?search=${encoded}`, signal)
         : Promise.resolve(null),
       allow("person") && query
-        ? fetchJson<{ people?: PersonResult[] }>(`/api/people/search?q=${encoded}`, signal)
+        ? fetchJson<unknown>(`/api/people/search?q=${encoded}`, signal)
         : Promise.resolve(null),
       allow("tag")
-        ? fetchJson<TagResult[]>(`/api/tags/search?q=${encoded}&limit=${limit}`, signal)
+        ? fetchJson<unknown>(`/api/tags/search?q=${encoded}&limit=${limit}`, signal)
         : Promise.resolve(null),
       allow("company")
-        ? fetchJson<{ companies?: CompanyResult[] }>(
-            `/api/companies${query ? `?q=${encoded}` : ""}`,
-            signal,
-          )
+        ? fetchJson<unknown>(`/api/companies${query ? `?q=${encoded}` : ""}`, signal)
         : Promise.resolve(null),
       allow("goal")
-        ? fetchJson<{ goals?: GoalResult[] }>(
-            `/api/life-goals${query ? `?search=${encoded}` : ""}`,
+        ? fetchJson<unknown>(`/api/life-goals${query ? `?search=${encoded}` : ""}`, signal)
+        : Promise.resolve(null),
+      allow("task")
+        ? fetchJson<unknown>(`/api/projects/tasks`, signal)
+        : Promise.resolve(null),
+      allow("project")
+        ? fetchJson<unknown>(`/api/projects/projects`, signal)
+        : Promise.resolve(null),
+      // KPI list is canonically `{ kpis: [...] }`; search param is `query`, not `q`.
+      allow("kpi")
+        ? fetchJson<unknown>(
+            `/api/business/kpis${query ? `?query=${encoded}` : ""}`,
             signal,
           )
         : Promise.resolve(null),
-      allow("task")
-        ? fetchJson<TaskResult[]>(`/api/projects/tasks`, signal)
-        : Promise.resolve(null),
-      allow("project")
-        ? fetchJson<ProjectResult[]>(`/api/projects/projects`, signal)
-        : Promise.resolve(null),
-      allow("kpi")
-        ? fetchJson<KpiResult[]>(`/api/business/kpis${query ? `?q=${encoded}` : ""}`, signal)
-        : Promise.resolve(null),
       allow("business_plan")
-        ? fetchJson<BusinessPlanResult[]>("/api/business/plans", signal)
+        ? fetchJson<unknown>("/api/business/plans", signal)
         : Promise.resolve(null),
       allow("wellness_activity")
-        ? fetchJson<WellnessActivityResult[]>(`/api/wellness/activities`, signal)
+        ? fetchJson<unknown>(`/api/wellness/activities`, signal)
         : Promise.resolve(null),
     ]);
 
   const suggestions: ReferenceSuggestion[] = [];
 
-  for (const page of library || []) {
+  for (const page of asItemArray<LibraryPageResult>(library)) {
     const refId = page.slug || page.id;
     if (!refId) continue;
     suggestions.push({
@@ -230,7 +244,7 @@ export async function loadReferenceSuggestions(
     });
   }
 
-  for (const person of people?.people || []) {
+  for (const person of asItemArray<PersonResult>(people, ["people"])) {
     suggestions.push({
       type: "person",
       id: String(person.id || person.slug || person.name),
@@ -240,7 +254,8 @@ export async function loadReferenceSuggestions(
     });
   }
 
-  for (const tag of tags || []) {
+  for (const tag of asItemArray<TagResult>(tags, ["tags"])) {
+    if (!tag?.slug) continue;
     suggestions.push({
       type: "tag",
       id: tag.slug,
@@ -250,7 +265,7 @@ export async function loadReferenceSuggestions(
     });
   }
 
-  for (const company of companies?.companies || []) {
+  for (const company of asItemArray<CompanyResult>(companies, ["companies"])) {
     suggestions.push({
       type: "company",
       id: String(company.id),
@@ -259,7 +274,7 @@ export async function loadReferenceSuggestions(
     });
   }
 
-  for (const goal of goals?.goals || []) {
+  for (const goal of asItemArray<GoalResult>(goals, ["goals"])) {
     suggestions.push({
       type: "goal",
       id: String(goal.id),
@@ -268,7 +283,7 @@ export async function loadReferenceSuggestions(
     });
   }
 
-  for (const task of tasks || []) {
+  for (const task of asItemArray<TaskResult>(tasks, ["tasks"])) {
     suggestions.push({
       type: "task",
       id: String(task.id),
@@ -277,7 +292,7 @@ export async function loadReferenceSuggestions(
     });
   }
 
-  for (const project of projects || []) {
+  for (const project of asItemArray<ProjectResult>(projects, ["projects"])) {
     suggestions.push({
       type: "project",
       id: String(project.id),
@@ -286,7 +301,8 @@ export async function loadReferenceSuggestions(
     });
   }
 
-  for (const kpi of kpis || []) {
+  for (const kpi of asItemArray<KpiResult>(kpis, ["kpis"])) {
+    if (!kpi?.id) continue;
     suggestions.push({
       type: "kpi",
       id: kpi.id,
@@ -295,7 +311,8 @@ export async function loadReferenceSuggestions(
     });
   }
 
-  for (const plan of businessPlans || []) {
+  for (const plan of asItemArray<BusinessPlanResult>(businessPlans, ["plans", "businessPlans"])) {
+    if (!plan?.id) continue;
     suggestions.push({
       type: "business_plan",
       id: plan.id,
@@ -305,7 +322,10 @@ export async function loadReferenceSuggestions(
     });
   }
 
-  for (const activity of wellnessActivities || []) {
+  for (const activity of asItemArray<WellnessActivityResult>(wellnessActivities, [
+    "activities",
+    "wellnessActivities",
+  ])) {
     suggestions.push({
       type: "wellness_activity",
       id: String(activity.id ?? activity.name),
