@@ -150,7 +150,7 @@ Memory UI should distinguish memory entries from session mirrors and archive/raw
 | Health | Dashboard, activities, metrics | `/health` |
 | Finance | Summary, transactions, budget | `/finance` |
 | Memory | Search, entry detail, graph | `/memory`, `/memory/:id` |
-| Library | Vault-scoped page tree, editor, notes | `/library` (`/library2` redirects here; Library2 organization is retired) |
+| Library | Vault-scoped page tree, editor, notes | `/library` (`App.tsx` handles the `/library2` bookmark redirect directly; Library2 organization is retired) |
 | Exec | Skills, experience, opportunities | `/exec` |
 | Strategy | Strategy list, move tree | `/strategy`, `/strategy/:id` |
 | Comms | Email, content queue | `/comms` |
