@@ -95,6 +95,7 @@ interface DiagnosticData {
   };
   system: {
     cpuCores: number;
+    cpuLimitVcpus: number | null;
     loadAvg: number[];
     totalMemory: number;
     freeMemory: number;
@@ -102,7 +103,7 @@ interface DiagnosticData {
     arch: string;
   };
   realtime: {
-    cpu: { current: number; history: number[] };
+    cpu: { current: number | null; coreEquivalents: number; history: number[] };
     rss: { current: number; history: number[] };
     eventLoop: { current: number; history: number[] };
     rps: { current: number; history: number[] };
@@ -174,7 +175,8 @@ function formatUptime(seconds: number): string {
   return `${s}s`;
 }
 
-function cpuStatus(percent: number): Status {
+function cpuStatus(percent: number | null): Status {
+  if (percent === null) return "unknown";
   if (percent >= 80) return "red";
   if (percent >= 50) return "amber";
   return "ok";
@@ -673,7 +675,7 @@ function ResourcesView({
     };
   }, []);
 
-  const cpuPercent = diagData?.realtime.cpu.current ?? 0;
+  const cpuPercent = diagData?.realtime.cpu.current ?? null;
   const serviceStatuses: Status[] = [
     eventLoopStatus(r.eventLoop),
     memoryStatus(r.memory),
@@ -758,9 +760,15 @@ function ResourcesView({
                   {diagData && (
                     <MetricRow
                       label="CPU"
-                      value={`${cpuPercent}%`}
+                      value={cpuPercent === null ? "Unavailable" : `${cpuPercent}%`}
                       status={cpuStatus(cpuPercent)}
-                      detail={<DetailText>{diagData.system.cpuCores} cores · load {diagData.system.loadAvg.join(" / ")}</DetailText>}
+                      detail={(
+                        <DetailText>
+                          {diagData.realtime.cpu.coreEquivalents} vCPU used
+                          {diagData.system.cpuLimitVcpus !== null ? ` / ${diagData.system.cpuLimitVcpus} allocated` : " · allocation unavailable"}
+                          {` · load ${diagData.system.loadAvg.join(" / ")}`}
+                        </DetailText>
+                      )}
                       testId="text-cpu-usage"
                     />
                   )}
