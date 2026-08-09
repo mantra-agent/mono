@@ -221,6 +221,11 @@ async function ensureDocumentStoreDocumentsSchema(pool: { query: (sql: string, p
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_path ON document_store_documents(path)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_document_store_updated_at ON document_store_documents(updated_at)`);
   await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_document_store_chat_account_updated_at
+    ON document_store_documents(account_id, updated_at)
+    WHERE document_type = 'chat'
+  `);
+  await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS uk_document_store_meeting_occurrence
     ON document_store_documents(owner_user_id, account_id, ((metadata->'meeting'->>'occurrenceKey')))
     WHERE document_type = 'chat'

@@ -896,7 +896,7 @@ export const TOOLS: Record<string, ToolMeta> = {
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["state", "logs", "log_files", "budget", "frontend_performance", "context_health", "reliability", "tool_output_pressure", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action. Use log_files to list available log files; use logs to read a specific log file. tool_stats returns lifetime cumulative counters and does not support a time window." },
+        action: { type: "string", enum: ["state", "logs", "log_files", "budget", "frontend_performance", "context_health", "reliability", "tool_output_pressure", "run_history_rollups", "events", "active_runs", "clear_active_run", "accounts", "tool_stats"], description: "Action. Use log_files to list available log files; use logs to read a specific log file. tool_stats returns lifetime cumulative counters and does not support a time window." },
         limit: { type: "number", description: "Max entries to return (logs/events default 100; for reliability detail=tool_failures default 50, max 200)" },
         level: { type: "string", description: "Filter by log level: debug, info, warn, error (logs)" },
         source: { type: "string", description: "Filter by source module name (logs)" },

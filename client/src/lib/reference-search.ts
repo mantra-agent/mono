@@ -41,6 +41,8 @@ interface LibraryPageResult {
   slug?: string;
   title?: string;
   oneLiner?: string;
+  updatedAt?: string | Date;
+  createdAt?: string | Date;
 }
 
 interface PersonResult {
@@ -50,6 +52,10 @@ interface PersonResult {
   role?: string;
   company?: string;
   relation?: string;
+  lastInteractionDate?: string;
+  lastViewedAt?: string;
+  updatedAt?: string;
+  createdAt?: string;
 }
 
 interface CompanyResult {
@@ -57,6 +63,8 @@ interface CompanyResult {
   name?: string;
   industry?: string;
   location?: string;
+  updatedAt?: string | Date;
+  createdAt?: string | Date;
 }
 
 interface TagResult {
@@ -64,6 +72,7 @@ interface TagResult {
   label: string;
   color?: string | null;
   usageCount: number;
+  updatedAt?: string | Date;
 }
 
 interface GoalResult {
@@ -72,43 +81,88 @@ interface GoalResult {
   title?: string;
   name?: string;
   domain?: string;
+  updatedAt?: string | Date;
+  createdAt?: string | Date;
+  targetDate?: string;
 }
 
 interface TaskResult {
   id: number;
   title?: string;
   status?: string;
+  updatedAt?: string | Date;
+  createdAt?: string | Date;
+  deadline?: string | null;
 }
 
 interface ProjectResult {
   id: number;
   title?: string;
   status?: string;
+  updatedAt?: string | Date;
+  createdAt?: string | Date;
 }
+
 interface KpiResult {
   id: string;
   name?: string;
   description?: string;
   targetLabel?: string;
+  updatedAt?: string | Date;
 }
 
 interface BusinessPlanResult {
   id: string;
   name?: string;
   vaultId?: string;
+  updatedAt?: string | Date;
 }
 
 interface WellnessActivityResult {
   id?: number;
   name?: string;
   category?: string;
+  updatedAt?: string | Date;
 }
 
 const MAX_RESULTS = 8;
 const WORK_ITEM_TYPES = new Set<string>(["task", "project", "goal"]);
+const MS_DAY = 86_400_000;
+/** Keep ranking candidates above the final slice so recency can surface past first-N arrival order. */
+const RANK_CANDIDATE_CAP = 64;
 
 function normalizeSearchText(value: unknown): string {
   return typeof value === "string" ? value.toLowerCase() : "";
+}
+
+function toEpochMs(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const ms = new Date(value as string | Date).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function bestTimestamp(...values: unknown[]): number {
+  return values.reduce<number>((best, value) => Math.max(best, toEpochMs(value)), 0);
+}
+
+function withRankMeta(
+  suggestion: ReferenceSuggestion,
+  opts: { rankAt?: unknown; linkScore?: number },
+): ReferenceSuggestion {
+  const rankAt = toEpochMs(opts.rankAt);
+  const linkScore =
+    typeof opts.linkScore === "number" && Number.isFinite(opts.linkScore)
+      ? Math.max(0, opts.linkScore)
+      : 0;
+  return {
+    ...suggestion,
+    metadata: {
+      ...suggestion.metadata,
+      ...(rankAt > 0 ? { rankAt } : {}),
+      ...(linkScore > 0 ? { linkScore } : {}),
+    },
+  };
 }
 
 export function matchesSuggestion(suggestion: ReferenceSuggestion, query: string): boolean {
@@ -117,6 +171,52 @@ export function matchesSuggestion(suggestion: ReferenceSuggestion, query: string
   return [suggestion.type, suggestion.id, suggestion.label, suggestion.description].some(
     (value) => normalizeSearchText(value).includes(needle),
   );
+}
+
+/** Exact/prefix label matches beat loose substring hits. */
+function matchQuality(suggestion: ReferenceSuggestion, query: string): number {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return 0;
+  const label = normalizeSearchText(suggestion.label);
+  const id = normalizeSearchText(suggestion.id);
+  if (label === needle || id === needle) return 400;
+  if (label.startsWith(needle) || id.startsWith(needle)) return 300;
+  const tokens = needle.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1 && tokens.every((token) => label.includes(token))) return 220;
+  if (label.includes(needle) || id.includes(needle)) return 160;
+  if (normalizeSearchText(suggestion.description).includes(needle)) return 80;
+  if (normalizeSearchText(suggestion.type).includes(needle)) return 20;
+  return 0;
+}
+
+/** 0–120 from last activity. Half-life ~45 days keeps recent work ahead without burying history. */
+function recencyScore(rankAtMs: number, nowMs: number): number {
+  if (rankAtMs <= 0) return 0;
+  const ageDays = Math.max(0, (nowMs - rankAtMs) / MS_DAY);
+  return Math.round(120 * Math.exp(-ageDays / 45));
+}
+
+/** Connectivity proxy: tag usage today; reserved for graph degree when a cheap index exists. */
+function linkScoreOf(suggestion: ReferenceSuggestion): number {
+  const raw = suggestion.metadata?.linkScore;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.min(100, Math.round(18 * Math.log2(1 + raw)));
+}
+
+function typeBucketScore(type: ReferenceType, triggerChar: "@" | "#"): number {
+  if (triggerChar === "#") {
+    if (WORK_ITEM_TYPES.has(type)) return 50;
+    if (type === "tag") return 30;
+    return 0;
+  }
+  if (type === "person") return 50;
+  if (type === "company") return 35;
+  if (type === "page" || type === "goal" || type === "project" || type === "task") return 20;
+  return 0;
+}
+
+function rankAtOf(suggestion: ReferenceSuggestion): number {
+  return toEpochMs(suggestion.metadata?.rankAt);
 }
 
 export function uniqueSuggestions(suggestions: ReferenceSuggestion[]): ReferenceSuggestion[] {
@@ -129,24 +229,37 @@ export function uniqueSuggestions(suggestions: ReferenceSuggestion[]): Reference
     seen.add(key);
     out.push(suggestion);
   }
-  return out.slice(0, MAX_RESULTS);
+  return out;
 }
 
+/**
+ * Rank suggestions for the active trigger.
+ * Score = match quality + type bucket + link proxy + recency.
+ * Full memory-graph degree is intentionally not loaded on the keystroke path.
+ */
 export function sortSuggestionsByTrigger(
   suggestions: ReferenceSuggestion[],
   triggerChar: "@" | "#" = "@",
+  query = "",
 ): ReferenceSuggestion[] {
-  if (triggerChar === "@") {
-    return [
-      ...suggestions.filter((s) => s.type === "person"),
-      ...suggestions.filter((s) => s.type === "company"),
-      ...suggestions.filter((s) => s.type !== "person" && s.type !== "company"),
-    ];
-  }
-  return [
-    ...suggestions.filter((s) => WORK_ITEM_TYPES.has(s.type)),
-    ...suggestions.filter((s) => !WORK_ITEM_TYPES.has(s.type)),
-  ];
+  const nowMs = Date.now();
+  return [...suggestions].sort((a, b) => {
+    const scoreA =
+      matchQuality(a, query) +
+      typeBucketScore(a.type, triggerChar) +
+      linkScoreOf(a) +
+      recencyScore(rankAtOf(a), nowMs);
+    const scoreB =
+      matchQuality(b, query) +
+      typeBucketScore(b.type, triggerChar) +
+      linkScoreOf(b) +
+      recencyScore(rankAtOf(b), nowMs);
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    // Stable tie-break: newer first, then label.
+    const recencyDiff = rankAtOf(b) - rankAtOf(a);
+    if (recencyDiff !== 0) return recencyDiff;
+    return a.label.localeCompare(b.label);
+  });
 }
 
 async function fetchJson<T>(url: string, signal: AbortSignal): Promise<T | null> {
@@ -202,7 +315,7 @@ export async function loadReferenceSuggestions(
         ? fetchJson<unknown>(`/api/people/search?q=${encoded}`, signal)
         : Promise.resolve(null),
       allow("tag")
-        ? fetchJson<unknown>(`/api/tags/search?q=${encoded}&limit=${limit}`, signal)
+        ? fetchJson<unknown>(`/api/tags/search?q=${encoded}&limit=${Math.max(limit, 20)}`, signal)
         : Promise.resolve(null),
       allow("company")
         ? fetchJson<unknown>(`/api/companies${query ? `?q=${encoded}` : ""}`, signal)
@@ -236,108 +349,174 @@ export async function loadReferenceSuggestions(
   for (const page of asItemArray<LibraryPageResult>(library)) {
     const refId = page.slug || page.id;
     if (!refId) continue;
-    suggestions.push({
-      type: "page",
-      id: String(refId),
-      label: String(page.title || page.oneLiner || refId),
-      description: "Library page",
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "page",
+          id: String(refId),
+          label: String(page.title || page.oneLiner || refId),
+          description: "Library page",
+        },
+        { rankAt: bestTimestamp(page.updatedAt, page.createdAt) },
+      ),
+    );
   }
 
   for (const person of asItemArray<PersonResult>(people, ["people"])) {
-    suggestions.push({
-      type: "person",
-      id: String(person.id || person.slug || person.name),
-      label: String(person.name || person.id),
-      description:
-        [person.role, person.company].filter(Boolean).join(" at ") || person.relation || "Person",
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "person",
+          id: String(person.id || person.slug || person.name),
+          label: String(person.name || person.id),
+          description:
+            [person.role, person.company].filter(Boolean).join(" at ") ||
+            person.relation ||
+            "Person",
+        },
+        {
+          rankAt: bestTimestamp(
+            person.lastInteractionDate,
+            person.lastViewedAt,
+            person.updatedAt,
+            person.createdAt,
+          ),
+        },
+      ),
+    );
   }
 
   for (const tag of asItemArray<TagResult>(tags, ["tags"])) {
     if (!tag?.slug) continue;
-    suggestions.push({
-      type: "tag",
-      id: tag.slug,
-      label: tag.label,
-      description: `Tag · ${tag.usageCount} ${tag.usageCount === 1 ? "usage" : "usages"}`,
-      metadata: tag.color ? { color: tag.color } : undefined,
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "tag",
+          id: tag.slug,
+          label: tag.label,
+          description: `Tag · ${tag.usageCount} ${tag.usageCount === 1 ? "usage" : "usages"}`,
+          metadata: tag.color ? { color: tag.color } : undefined,
+        },
+        {
+          rankAt: tag.updatedAt,
+          // Tag usage is the only cheap connectivity signal on the keystroke path today.
+          linkScore: tag.usageCount,
+        },
+      ),
+    );
   }
 
   for (const company of asItemArray<CompanyResult>(companies, ["companies"])) {
-    suggestions.push({
-      type: "company",
-      id: String(company.id),
-      label: String(company.name || company.id),
-      description: [company.industry, company.location].filter(Boolean).join(" · ") || "Company",
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "company",
+          id: String(company.id),
+          label: String(company.name || company.id),
+          description:
+            [company.industry, company.location].filter(Boolean).join(" · ") || "Company",
+        },
+        { rankAt: bestTimestamp(company.updatedAt, company.createdAt) },
+      ),
+    );
   }
 
   for (const goal of asItemArray<GoalResult>(goals, ["goals"])) {
-    suggestions.push({
-      type: "goal",
-      id: String(goal.id),
-      label: String(goal.shortName || goal.title || goal.name || goal.id),
-      description: goal.domain || "Goal",
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "goal",
+          id: String(goal.id),
+          label: String(goal.shortName || goal.title || goal.name || goal.id),
+          description: goal.domain || "Goal",
+        },
+        { rankAt: bestTimestamp(goal.updatedAt, goal.targetDate, goal.createdAt) },
+      ),
+    );
   }
 
   for (const task of asItemArray<TaskResult>(tasks, ["tasks"])) {
-    suggestions.push({
-      type: "task",
-      id: String(task.id),
-      label: String(task.title || task.id),
-      description: task.status ? `Task · ${task.status}` : "Task",
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "task",
+          id: String(task.id),
+          label: String(task.title || task.id),
+          description: task.status ? `Task · ${task.status}` : "Task",
+        },
+        { rankAt: bestTimestamp(task.updatedAt, task.deadline, task.createdAt) },
+      ),
+    );
   }
 
   for (const project of asItemArray<ProjectResult>(projects, ["projects"])) {
-    suggestions.push({
-      type: "project",
-      id: String(project.id),
-      label: String(project.title || project.id),
-      description: project.status ? `Project · ${project.status}` : "Project",
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "project",
+          id: String(project.id),
+          label: String(project.title || project.id),
+          description: project.status ? `Project · ${project.status}` : "Project",
+        },
+        { rankAt: bestTimestamp(project.updatedAt, project.createdAt) },
+      ),
+    );
   }
 
   for (const kpi of asItemArray<KpiResult>(kpis, ["kpis"])) {
     if (!kpi?.id) continue;
-    suggestions.push({
-      type: "kpi",
-      id: kpi.id,
-      label: kpi.name || kpi.id,
-      description: kpi.targetLabel || kpi.description || "KPI",
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "kpi",
+          id: kpi.id,
+          label: kpi.name || kpi.id,
+          description: kpi.targetLabel || kpi.description || "KPI",
+        },
+        { rankAt: kpi.updatedAt },
+      ),
+    );
   }
 
   for (const plan of asItemArray<BusinessPlanResult>(businessPlans, ["plans", "businessPlans"])) {
     if (!plan?.id) continue;
-    suggestions.push({
-      type: "business_plan",
-      id: plan.id,
-      label: plan.name || plan.id,
-      description: "Business Plan",
-      metadata: plan.vaultId ? { vaultId: plan.vaultId } : undefined,
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "business_plan",
+          id: plan.id,
+          label: plan.name || plan.id,
+          description: "Business Plan",
+          metadata: plan.vaultId ? { vaultId: plan.vaultId } : undefined,
+        },
+        { rankAt: plan.updatedAt },
+      ),
+    );
   }
 
   for (const activity of asItemArray<WellnessActivityResult>(wellnessActivities, [
     "activities",
     "wellnessActivities",
   ])) {
-    suggestions.push({
-      type: "wellness_activity",
-      id: String(activity.id ?? activity.name),
-      label: String(activity.name || activity.id),
-      description: activity.category ? `Wellness · ${activity.category}` : "Wellness activity",
-    });
+    suggestions.push(
+      withRankMeta(
+        {
+          type: "wellness_activity",
+          id: String(activity.id ?? activity.name),
+          label: String(activity.name || activity.id),
+          description: activity.category ? `Wellness · ${activity.category}` : "Wellness activity",
+        },
+        { rankAt: activity.updatedAt },
+      ),
+    );
   }
 
-  const filtered = uniqueSuggestions(
+  const matched = uniqueSuggestions(
     suggestions.filter((s) => matchesSuggestion(s, query) && allow(s.type)),
-  ).slice(0, limit);
+  ).slice(0, RANK_CANDIDATE_CAP);
 
-  logger.debug("suggestions", { count: filtered.length });
-  return sortSuggestionsByTrigger(filtered, triggerChar);
+  const ranked = sortSuggestionsByTrigger(matched, triggerChar, query).slice(0, limit);
+
+  logger.debug("suggestions", { count: ranked.length, candidates: matched.length });
+  return ranked;
 }

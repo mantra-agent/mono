@@ -104,6 +104,20 @@ function materializeDefinition(
 // cannot re-project them while Wellness is inactive.
 export const SYSTEM_TIMER_DEFINITIONS: SystemTimerDefinition[] = [
   {
+    legacyMatch: (t) => t.type === "skill" && t.skillId === "history-rollup",
+    systemKey: "historical-continuity-hourly",
+    name: "Roll Up History",
+    description: "Hourly owner-scoped catch-up for closed historical-continuity buckets in currently visible Vaults",
+    type: "skill",
+    skillId: "history-rollup",
+    prompt: "",
+    schedules: [
+      { id: "sys-skill-history-rollup-hourly", frequency: "every_x_hours", interval: 1 },
+    ],
+    enabled: true,
+    timezone: "__USER_TZ__",
+  },
+  {
     legacyMatch: (t) => t.type === "skill" && t.skillId === "financial-review",
 
     systemKey: "financial-review-monthly",
