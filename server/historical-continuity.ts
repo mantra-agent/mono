@@ -7,14 +7,17 @@ import { createLogger } from "./log";
 import { requireCurrentUserPrincipal, runWithPrincipal } from "./principal-context";
 import type { Principal } from "./principal";
 import { estimateTokens } from "./context-builder";
+import { getTimezone } from "./timezone";
 
 const log = createLogger("HistoricalContinuity");
 const TURN_MAX_INPUT_CHARS = 48_000;
 const TURN_MAX_OUTPUT_TOKENS = 320;
 const ROLLUP_MAX_OUTPUT_TOKENS = 600;
 const HISTORY_TOKEN_BUDGET = 2_400;
+const DEFAULT_HISTORY_TIMEZONE = "America/Chicago";
 const ROLLUP_LEVELS = ["hour", "day", "week", "month", "quarter", "year"] as const;
 type RollupLevel = (typeof ROLLUP_LEVELS)[number];
+type ContinuityLevel = "turn" | RollupLevel;
 
 interface TurnSummaryInput {
   sessionId: string;
@@ -30,7 +33,8 @@ interface TurnSummaryInput {
 
 interface ContinuityRow {
   id: string;
-  level: "turn" | RollupLevel;
+  level: ContinuityLevel;
+  timezone: string;
   bucketStart: Date;
   bucketEnd: Date;
   summary: string;
@@ -44,6 +48,109 @@ interface ContinuityRow {
 function parseDatabaseDate(value: unknown): Date | null {
   const date = value instanceof Date ? value : new Date(String(value));
   return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function resolveHistoryTimezone(value?: string | null): string {
+  const candidate = (value || getTimezone() || DEFAULT_HISTORY_TIMEZONE).trim();
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: candidate });
+    return candidate;
+  } catch {
+    return DEFAULT_HISTORY_TIMEZONE;
+  }
+}
+
+function historyDateParts(date: Date, timeZone: string): Record<string, string> {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).formatToParts(date);
+  const out: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") out[part.type] = part.value;
+  }
+  return out;
+}
+
+function historyZoneLabel(date: Date, timeZone: string): string {
+  try {
+    const generic = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortGeneric" })
+      .formatToParts(date)
+      .find((part) => part.type === "timeZoneName")?.value;
+    if (generic && !/^GMT/i.test(generic) && !/^UTC/i.test(generic)) return generic;
+  } catch {
+    /* fall through */
+  }
+  const short = historyDateParts(date, timeZone).timeZoneName;
+  return short || timeZone;
+}
+
+function historyCivilDateKey(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function historyDayHeading(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(date);
+}
+
+function historyClockLabel(date: Date, timeZone: string): string {
+  const parts = historyDateParts(date, timeZone);
+  const hour = parts.hour || "12";
+  const minute = parts.minute || "00";
+  const dayPeriod = (parts.dayPeriod || "").toUpperCase();
+  const zone = historyZoneLabel(date, timeZone);
+  return `${hour}:${minute} ${dayPeriod} ${zone}`.replace(/\s+/g, " ").trim();
+}
+
+function historyCompactDayLabel(date: Date, timeZone: string): string {
+  const parts = historyDateParts(date, timeZone);
+  return `${parts.weekday || ""} ${parts.month || ""} ${parts.day || ""}, ${parts.year || ""}`.replace(/\s+/g, " ").trim();
+}
+
+function formatHistoryAnchor(level: ContinuityLevel, start: Date, timeZone: string): string {
+  const tz = resolveHistoryTimezone(timeZone);
+  const parts = historyDateParts(start, tz);
+  switch (level) {
+    case "year":
+      return parts.year || String(start.getUTCFullYear());
+    case "quarter": {
+      const month = Number(
+        new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "numeric" }).format(start),
+      );
+      const quarter = Number.isFinite(month) ? Math.floor((month - 1) / 3) + 1 : 1;
+      return `${parts.year || start.getUTCFullYear()} Q${quarter}`;
+    }
+    case "month":
+      return new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "long", year: "numeric" }).format(start);
+    case "week":
+      return `Week of ${historyCompactDayLabel(start, tz)}`;
+    case "day":
+      return historyDayHeading(start, tz);
+    case "hour":
+      return `${historyCompactDayLabel(start, tz)} · ${historyClockLabel(start, tz)}`;
+    case "turn":
+      return `${historyCompactDayLabel(start, tz)} · ${historyClockLabel(start, tz)}`;
+    default:
+      return start.toISOString();
+  }
 }
 
 function normalizeContinuityRow(raw: Record<string, unknown>): ContinuityRow | null {
@@ -68,6 +175,7 @@ function normalizeContinuityRow(raw: Record<string, unknown>): ContinuityRow | n
   return {
     id: String(raw.id),
     level: level as ContinuityRow["level"],
+    timezone: resolveHistoryTimezone(typeof raw.timezone === "string" ? raw.timezone : null),
     bucketStart,
     bucketEnd,
     summary: String(raw.summary),
@@ -225,6 +333,49 @@ async function rollupOwner(vaultId: string, timezone: string): Promise<number> {
   return created;
 }
 
+function appendHistoryLine(
+  lines: string[],
+  line: string,
+  budget: { used: number; tokenBudget: number },
+): boolean {
+  const cost = estimateTokens(line);
+  if (budget.used + cost > budget.tokenBudget) return false;
+  lines.push(line);
+  budget.used += cost;
+  return true;
+}
+
+function renderHistoryLevelSection(
+  level: ContinuityLevel,
+  entries: ContinuityRow[],
+  budget: { used: number; tokenBudget: number },
+): string | null {
+  if (!entries.length) return null;
+  const lines: string[] = [`\n## ${level[0].toUpperCase()}${level.slice(1)}`];
+  const groupByDay = level === "hour" || level === "turn";
+
+  if (!groupByDay) {
+    for (const entry of entries) {
+      const anchor = formatHistoryAnchor(level, entry.bucketStart, entry.timezone);
+      if (!appendHistoryLine(lines, `- ${anchor} — ${entry.summary}`, budget)) break;
+    }
+  } else {
+    let currentDayKey = "";
+    for (const entry of entries) {
+      const dayKey = historyCivilDateKey(entry.bucketStart, entry.timezone);
+      if (dayKey !== currentDayKey) {
+        currentDayKey = dayKey;
+        const dayHeading = historyDayHeading(entry.bucketStart, entry.timezone);
+        if (!appendHistoryLine(lines, `\n### ${dayHeading}`, budget)) break;
+      }
+      const clock = historyClockLabel(entry.bucketStart, entry.timezone);
+      if (!appendHistoryLine(lines, `- ${clock} — ${entry.summary}`, budget)) break;
+    }
+  }
+
+  return lines.length > 1 ? lines.join("\n") : null;
+}
+
 export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET): Promise<string> {
   const principal = requireCurrentUserPrincipal();
   const vaultIds = principal.visibleVaultIds?.length ? principal.visibleVaultIds : principal.activeVaultId ? [principal.activeVaultId] : [];
@@ -235,28 +386,24 @@ export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET
       FROM historical_continuity_entries
       WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND vault_id = ANY(${textArray(vaultIds)})
     )
-    SELECT id, level, bucket_start, bucket_end, summary, source_start, source_end, source_count, session_id, assistant_message_id
+    SELECT id, level, timezone, bucket_start, bucket_end, summary, source_start, source_end, source_count, session_id, assistant_message_id
     FROM ranked WHERE (level='turn' AND rn<=24) OR (level='hour' AND rn<=48) OR (level='day' AND rn<=31) OR (level='week' AND rn<=16) OR (level='month' AND rn<=18) OR (level='quarter' AND rn<=12) OR (level='year' AND rn<=10)
     ORDER BY CASE level WHEN 'year' THEN 1 WHEN 'quarter' THEN 2 WHEN 'month' THEN 3 WHEN 'week' THEN 4 WHEN 'day' THEN 5 WHEN 'hour' THEN 6 ELSE 7 END, bucket_start ASC
   `);
   const rows = (result.rows as Array<Record<string, unknown>>)
     .map(normalizeContinuityRow)
     .filter((row): row is ContinuityRow => row !== null);
-  const header = "# HISTORY.md\n\nModel-derived chronology for continuity. Raw transcripts remain authoritative; memory candidates require independent provenance and validation.\n";
+  const projectionTimezone = resolveHistoryTimezone(rows[0]?.timezone || getTimezone());
+  const header = `# HISTORY.md\n\nModel-derived chronology for continuity. Times are local to ${projectionTimezone}. Raw transcripts remain authoritative; memory candidates require independent provenance and validation.\n`;
   const sections: string[] = [];
-  let used = estimateTokens(header);
+  const budget = { used: estimateTokens(header), tokenBudget };
   for (const level of ["year", "quarter", "month", "week", "day", "hour", "turn"] as const) {
-    const entries = rows.filter((row) => row.level === level);
-    if (!entries.length) continue;
-    const lines: string[] = [`\n## ${level[0].toUpperCase()}${level.slice(1)}`];
-    for (const entry of entries) {
-      const line = `- ${entry.bucketStart.toISOString()} — ${entry.summary}`;
-      const cost = estimateTokens(line);
-      if (used + cost > tokenBudget) break;
-      lines.push(line);
-      used += cost;
-    }
-    if (lines.length > 1) sections.push(lines.join("\n"));
+    const section = renderHistoryLevelSection(
+      level,
+      rows.filter((row) => row.level === level),
+      budget,
+    );
+    if (section) sections.push(section);
   }
   return header + sections.join("\n");
 }
@@ -284,9 +431,24 @@ export async function getCompletedTurnSummaryMap(sessionId: string, assistantMes
 export async function getTurnSummariesForCompaction(sessionId: string, assistantMessageIds: string[]): Promise<string | null> {
   const principal = requireCurrentUserPrincipal();
   if (!assistantMessageIds.length) return null;
-  const result = await db.execute(sql`SELECT assistant_message_id, bucket_start, summary FROM historical_continuity_entries WHERE owner_user_id=${principal.userId} AND account_id=${principal.accountId} AND session_id=${sessionId} AND level='turn' AND assistant_message_id = ANY(${textArray(assistantMessageIds)}) ORDER BY bucket_start`);
+  const result = await db.execute(sql`
+    SELECT assistant_message_id, timezone, bucket_start, summary
+    FROM historical_continuity_entries
+    WHERE owner_user_id=${principal.userId}
+      AND account_id=${principal.accountId}
+      AND session_id=${sessionId}
+      AND level='turn'
+      AND assistant_message_id = ANY(${textArray(assistantMessageIds)})
+    ORDER BY bucket_start
+  `);
   if (result.rows.length !== assistantMessageIds.length) return null;
-  return (result.rows as Array<Record<string, unknown>>).map((row) => `[${new Date(String(row.bucket_start)).toISOString()}] ${String(row.summary)}`).join("\n\n");
+  return (result.rows as Array<Record<string, unknown>>)
+    .map((row) => {
+      const bucketStart = parseDatabaseDate(row.bucket_start) ?? new Date();
+      const timezone = resolveHistoryTimezone(typeof row.timezone === "string" ? row.timezone : null);
+      return `[${formatHistoryAnchor("turn", bucketStart, timezone)}] ${String(row.summary)}`;
+    })
+    .join("\n\n");
 }
 
 function normalizeSourceEntryIds(value: unknown): string[] {
