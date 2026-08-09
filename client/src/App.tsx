@@ -633,7 +633,7 @@ function App() {
         <ClaimVisualHandoff />
         <QueryClientProvider client={queryClient}>
           <PageActivityProvider>
-            <TooltipProvider>
+            <TooltipProvider delayDuration={200} skipDelayDuration={0}>
               {provisionalOnboardingToken !== null ? (
                 <AppShellImmersive onboardingToken={provisionalOnboardingToken} />
               ) : (
