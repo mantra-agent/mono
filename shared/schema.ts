@@ -2159,7 +2159,7 @@ export const workflowStageDefinitionSchema = z.object({
   maxAttempts: z.number().int().positive().optional(),
   allowedTransitions: z.array(z.object({
     toStageKey: z.string().nullable(),
-    on: z.string().trim().min(1),
+    on: workflowAttemptResultSchema,
     reason: z.string().optional(),
   })).default([]),
 });

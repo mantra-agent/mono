@@ -266,7 +266,7 @@ function truncateText(text: string, maxLen = 700): string {
 
 function failedAttempts(attempts: WorkflowStageAttempt[]): WorkflowStageAttempt[] {
   return attempts
-    .filter((attempt) => ["failed", "blocked"].includes(attempt.status) || ["failed", "blocked"].includes(String(attempt.result || "")))
+    .filter((attempt) => attempt.status === "failed" || attempt.result === "failed")
     .sort((a, b) => {
       const completedDelta = (b.completedAt?.getTime() || b.updatedAt?.getTime() || 0) - (a.completedAt?.getTime() || a.updatedAt?.getTime() || 0);
       return completedDelta || b.id - a.id;
