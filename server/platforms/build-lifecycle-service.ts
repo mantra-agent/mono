@@ -467,6 +467,14 @@ function deriveBuildLifecycleGatePolicy(environmentName: string, config: Environ
   };
 }
 
+export async function buildEnvironmentLifecycleSnapshot(environmentId: number) {
+  const lifecycle = await getEnvironmentBuildLifecycleConfig(environmentId);
+  if (!lifecycle) throw new Error(`Environment ${environmentId} not found or has no enabled build lifecycle config`);
+  if (!lifecycle.config?.enabled) throw new Error(`Environment ${environmentId} has no enabled build lifecycle config`);
+  const bindings = await getBindingContext(environmentId);
+  return buildLifecycleSnapshot(lifecycle, bindings);
+}
+
 async function buildLifecycleSnapshot(lifecycle: EnvironmentBuildLifecycleContext, bindings: Awaited<ReturnType<typeof getBindingContext>>) {
   const config = lifecycle.config;
   if (!config) throw new Error("Cannot snapshot missing build lifecycle config");
@@ -519,8 +527,7 @@ export async function startEnvironmentBuildWorkflow(environmentId: number, input
   if (!lifecycle) throw new Error(`Environment ${environmentId} not found or has no enabled build lifecycle config`);
   if (!lifecycle.config?.enabled) throw new Error(`Environment ${environmentId} has no enabled build lifecycle config`);
   await seedBuildWorkflowTemplate();
-  const bindings = await getBindingContext(environmentId);
-  const snapshot = await buildLifecycleSnapshot(lifecycle, bindings);
+  const snapshot = await buildEnvironmentLifecycleSnapshot(environmentId);
   const gatePolicy = snapshot.config.gatePolicy;
   const title = input.title?.trim() || `Build ${lifecycle.platform.name} / ${lifecycle.product.name} / ${lifecycle.environment.name}`;
   const objective = input.objective?.trim() || `Run ${lifecycle.config.workflowTemplateId} for ${lifecycle.platform.name} / ${lifecycle.product.name} / ${lifecycle.environment.name}. Deploy policy: ${snapshot.deploySemantics.mode}${snapshot.deploySemantics.manualPromoteHardGate ? " with manual promotion hard gate" : ""}.`;

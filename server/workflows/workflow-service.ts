@@ -1423,6 +1423,11 @@ export async function createWorkflowRun(input: {
   if (!input.objective?.trim()) throw new Error("Workflow objective is required");
   assertWorkflowEnvironmentRequirement(template, input.linkedEnvironmentId);
   await assertWorkflowCreationSessionsCanOrchestrate([input.parentSessionId, input.createdBySessionId]);
+  const lifecycleSnapshot = input.lifecycleSnapshot ?? (
+    templateId === BUILD_WORKFLOW_TEMPLATE_ID && input.linkedEnvironmentId
+      ? await (await import("../platforms/build-lifecycle-service")).buildEnvironmentLifecycleSnapshot(input.linkedEnvironmentId)
+      : null
+  );
 
   const id = generateWorkflowRunId();
   const initialContent = `# Workflow: ${input.title}\n\nCreating checkpoint...`;
@@ -1448,7 +1453,7 @@ export async function createWorkflowRun(input: {
     currentStageKey: firstStage?.key || null,
     autonomyPolicy: input.autonomyPolicy || template.defaultAutonomyPolicy || {},
     retryPolicy: input.retryPolicy || buildRetryPolicy,
-    lifecycleSnapshot: input.lifecycleSnapshot ?? null,
+    lifecycleSnapshot,
     parentSessionId: input.parentSessionId || null,
     linkedLibraryPageId: page.id,
     linkedPlanId: input.linkedPlanId || null,
