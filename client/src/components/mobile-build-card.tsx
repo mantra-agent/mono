@@ -469,7 +469,7 @@ function MobileBuildLogPanel({
   );
 }
 
-export function MobileBuildCard() {
+export function MobileBuildCard({ appearance = "cockpit" }: { appearance?: "cockpit" | "tree" }) {
   const { toast } = useToast();
   const { data: expoStatus, isLoading: statusLoading } = useQuery<ExpoStatus>({
     queryKey: ["/api/integrations/expo/status"],
@@ -920,6 +920,7 @@ export function MobileBuildCard() {
         ]}
         steps={mobileSteps}
         testId="card-mobile-builds"
+        appearance={appearance}
       />
     </div>
   );
