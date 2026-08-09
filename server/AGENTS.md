@@ -103,6 +103,10 @@ The server is a Node.js/Express/TypeScript monolith running all backend logic: A
 
 ---
 
+## Build workflow context boundary
+
+Every `build-v1` run linked to a Platform Environment persists one immutable snapshot of that Environment's enabled Build Lifecycle before the run or workflow page is created. `buildEnvironmentLifecycleSnapshot(...)` is the canonical resolver for the acceptance target, auth/evidence/gate policy, source commit, and source/hosting bindings; both direct Workflow creation and `startEnvironmentBuildWorkflow(...)` cross it. A caller-supplied snapshot is preserved for replay/import, but an Environment-linked Build run may never silently substitute missing lifecycle state with fallback acceptance defaults. Platform Environment context artifacts remain the sole product/design governing context; repository instructions remain source-bound engineering context rather than Environment artifacts.
+
 ## Build workflow review boundary
 
 The Build workflow's Design stage owns repository/runtime discovery and produces the implementation-ready specification, including the named governing standards it relies on. Design Review consumes that specification and those named standards only: it may reject only a concrete specification statement that violates an exact cited standards provision, may not perform fresh architecture/repository/dependency discovery, and may not add requirements absent from those standards. `SECURITY.md` remains an independently authoritative governing standard, so concrete cited security violations still block review.
