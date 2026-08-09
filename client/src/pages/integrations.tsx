@@ -4609,30 +4609,46 @@ function OuraDetail() {
   });
 
   const connectMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (popup: Window) => {
       const res = await fetch("/api/oura/oauth/start");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to start Oura OAuth");
-      return data as { url: string };
+      popup.location.replace((data as { url: string }).url);
     },
-    onSuccess: ({ url }) => {
-      const popup = window.open(url, "oura-oauth", "width=600,height=760,scrollbars=yes");
-      if (!popup) {
-        toast({ title: "Popup blocked", description: "Allow popups and try again.", variant: "destructive" });
-        return;
-      }
-      toast({ title: "Oura authorization opened", description: "Finish the Oura approval, then return here." });
-      const check = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(check);
-          queryClient.invalidateQueries({ queryKey: ["/api/oura/status"] });
-        }
-      }, 750);
-    },
-    onError: (err: Error) => {
+    onError: (err: Error, popup) => {
+      popup.close();
       toast({ title: "Failed to start Oura connection", description: err.message, variant: "destructive" });
     },
   });
+
+  const startOuraOAuth = useCallback(() => {
+    const popup = window.open("about:blank", "oura-oauth", "width=600,height=760,scrollbars=yes");
+    if (!popup) {
+      toast({ title: "Popup blocked", description: "Allow popups and try again.", variant: "destructive" });
+      return;
+    }
+    connectMutation.mutate(popup);
+  }, [connectMutation, toast]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { type?: string; status?: string; message?: string } | null;
+      if (!data || data.type !== "mantra:oura-oauth") return;
+      queryClient.invalidateQueries({ queryKey: ["/api/oura/status"] });
+      if (data.status === "connected") {
+        toast({ title: "Oura connected" });
+      } else {
+        toast({
+          title: "Oura connection failed",
+          description: data.message || "Please try connecting again.",
+          variant: "destructive",
+        });
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [toast]);
 
   const syncMutation = useMutation({
     mutationFn: async () => {
@@ -4715,7 +4731,7 @@ function OuraDetail() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => connectMutation.mutate()}
+                onClick={startOuraOAuth}
                 disabled={!status?.oauthConfigured || connectMutation.isPending}
                 data-testid="button-connect-oura"
               >
