@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ProfileTreeRow } from "@/components/profile-tree-row";
 import { cn } from "@/lib/utils";
 
 export type PipelineStatus =
@@ -91,6 +92,7 @@ export interface PipelineCockpitProps {
   emptyState?: PipelineEmptyState | null;
   className?: string;
   testId?: string;
+  appearance?: "cockpit" | "tree";
 }
 
 const statusCopy: Record<PipelineStatus, string> = {
@@ -333,9 +335,26 @@ export function PipelineCockpit({
   emptyState,
   className,
   testId = "pipeline-cockpit",
+  appearance = "cockpit",
 }: PipelineCockpitProps) {
   const [open, setOpen] = useState(false);
   const hasExpandableContent = Boolean(emptyState || steps.length > 0 || summary.length > 0);
+
+  if (appearance === "tree") {
+    return (
+      <div className={cn("min-w-0", className)} data-testid={testId}>
+        <ProfileTreeRow label={title} icon={<StatusIcon status={status} />} hasValue showEmpty mobileLayout="inline" valueLayout="compact" defaultOpen={status === "running" || status === "failed" || status === "blocked"} actionContent={primaryAction ? <PipelineActionButton action={primaryAction} /> : secondaryActions} expandedContentClassName="[content-visibility:auto] [contain-intrinsic-size:auto_320px]" expandedContent={hasExpandableContent ? (
+          <div className="space-y-1 border-l border-border/30 pl-2">
+            {statusDetail ? <div className="px-2 py-1.5 text-xs text-muted-foreground">{statusDetail}</div> : null}
+            {summary.map((item) => <ProfileTreeRow key={item.label} label={item.label} hasValue showEmpty mobileLayout="inline" valueLayout="compact" testId={item.testId}><span className="truncate">{item.value}</span></ProfileTreeRow>)}
+            {emptyState ? <div className="px-2 py-1.5 text-sm text-muted-foreground">{emptyState.title}</div> : null}
+            {steps.map((step) => <ProfileTreeRow key={step.id} label={step.label} icon={<StepIcon step={step} />} hasValue={Boolean(step.meta || step.description)} showEmpty mobileLayout="inline" valueLayout="compact" defaultOpen={step.status === "running" || step.status === "failed"} expandedContentClassName="[content-visibility:auto] [contain-intrinsic-size:auto_280px]" expandedContent={step.detail ? <div className="min-w-0">{step.detail}</div> : undefined} testId={step.testId ?? `pipeline-step-${step.id}`}><span className={cn("truncate", step.status === "failed" && "text-error")}>{step.meta || step.description}</span></ProfileTreeRow>)}
+            {primaryAction && secondaryActions ? <div className="flex justify-end px-2 py-1.5">{secondaryActions}</div> : null}
+          </div>
+        ) : undefined}><span className={statusClasses[status].icon}>{statusCopy[status]}</span></ProfileTreeRow>
+      </div>
+    );
+  }
 
   return (
     <Card

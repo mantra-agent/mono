@@ -1000,7 +1000,7 @@ function RunHeader({
 
 // ─── Main tab ──────────────────────────────────────────────────────────────────
 
-export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvironmentId }: { sourcePlatformEnvironmentId: number; targetPlatformEnvironmentId: number }) {
+export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvironmentId, appearance = "cockpit" }: { sourcePlatformEnvironmentId: number; targetPlatformEnvironmentId: number; appearance?: "cockpit" | "tree" }) {
   const summaryPath = `/api/railway/publish/summary?sourcePlatformEnvironmentId=${sourcePlatformEnvironmentId}&targetPlatformEnvironmentId=${targetPlatformEnvironmentId}`;
   const { data, isLoading, error, refetch, isFetching } = usePublishSummary(sourcePlatformEnvironmentId, targetPlatformEnvironmentId);
   const { data: prodStatus } = useProdStatus(targetPlatformEnvironmentId);
@@ -1649,6 +1649,7 @@ export function DevPublishTab({ sourcePlatformEnvironmentId, targetPlatformEnvir
             : null
         }
         testId="publish-pipeline-cockpit"
+        appearance={appearance}
       />
 
       {/* Single publish modal: version → prepare notes → review/edit → approve */}
