@@ -22,6 +22,14 @@
 - Residual/rollback: legacy private implementations remain physically concentrated in `bridge-tools.ts` behind registered umbrella adapters, but cannot become dispatch entries or authority. Their staged file migration is code-shape work, not hidden public authority. Schema validation still leaves full type/range semantics to domain boundaries. Revert the adapter manifest/composition, exact parity gate, handler moves, docs, and this record; no schema, credential, permission, provider, or user-data migration is involved.
 -->
 
+<!-- 2026-08-09 Railway outbound-call attribution boundary:
+- Assets/data: encrypted Railway credentials (A06), provider capacity/release availability (A04/A07), Environment identity, Principal/run provenance, and secret-free rate-limit evidence (S1/S2).
+- Flow/boundary: authorized UI/tool/workflow/observer -> Platform Environment resolver -> `railwayRequest` -> fixed Railway GraphQL origin. Provider responses remain untrusted evidence and never grant authority.
+- Failure/threat: user-owned Build automation and direct pollers share one token while successful calls lacked durable caller attribution, preventing incident reconstruction and allowing token exhaustion to impair release verification (STRIDE repudiation/availability; OBS-01/AGENT-04/EXEC-04).
+- Controls/owner: Core Railway Integration records exactly one serialized, durable, secret-free receipt immediately before each provider HTTP dispatch; settlement stores bounded outcome/status/latency and Railway limit headers. Connector ID or irreversible token fingerprint groups the scarce resource. Cache hits and local cooldown rejects are excluded. Tokens, variables, payloads, bodies, and arbitrary errors are never stored. Owner: Core Platform/Build Infrastructure. Severity: high. SLA: immediate. Status: repaired in source pending build/merge/deploy.
+- Residual/rollback: telemetry begins only after deployment and cannot reconstruct historical calls. A pre-dispatch database failure fails closed; settlement failure leaves a truthful `dispatched` receipt for reconciliation. Revert the additive schema/boundary/docs; retained receipts remain harmless audit history.
+-->
+
 <!-- 2026-08-09 production publish/provider-verification separation:
 - Assets/data: human-approved production branch mutation, exact source/target Platform bindings, encrypted GitHub/Railway credentials, promoted commit identity, deployment evidence, and rollback state (A01/A03/A04/A06/A07).
 - Flow/boundary: authenticated build:write + manual approval -> canonical GitHub main-to-live ref update -> Railway GitHub deployment trigger -> provider deployment/health verification. GitHub and Railway responses remain untrusted external evidence and neither grants approval.
