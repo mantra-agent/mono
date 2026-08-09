@@ -414,6 +414,35 @@ export function resolveServiceInstanceMemoryMB(limits: RailwayServiceInstanceLim
   return null;
 }
 
+function resolveCpuLimitFromValue(value: unknown): number | null {
+  if (!isPlainObject(value)) return null;
+  const vCpus = typeof value.vCPUs === "number" ? value.vCPUs : value.cpu;
+  return typeof vCpus === "number" && Number.isFinite(vCpus) && vCpus > 0 ? vCpus : null;
+}
+
+export function resolveServiceInstanceCpuLimit(limits: RailwayServiceInstanceLimits): number | null {
+  const direct = resolveCpuLimitFromValue(limits);
+  if (direct !== null) return direct;
+
+  const containers = limits.containers;
+  if (Array.isArray(containers)) {
+    for (const container of containers) {
+      const fromContainer = resolveCpuLimitFromValue(container);
+      if (fromContainer !== null) return fromContainer;
+    }
+    return null;
+  }
+  if (isPlainObject(containers)) {
+    const fromContainer = resolveCpuLimitFromValue(containers);
+    if (fromContainer !== null) return fromContainer;
+    for (const container of Object.values(containers)) {
+      const fromNestedContainer = resolveCpuLimitFromValue(container);
+      if (fromNestedContainer !== null) return fromNestedContainer;
+    }
+  }
+  return null;
+}
+
 export async function fetchServiceInstanceLimits(serviceId: string, environmentId: string, token?: string): Promise<RailwayServiceInstanceLimits> {
   const data = await railwayRequest<{ serviceInstanceLimits: RailwayServiceInstanceLimits | null }>(
     SERVICE_INSTANCE_LIMITS_QUERY,
