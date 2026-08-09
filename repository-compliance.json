@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "inventory": {
+    "excludeDirectories": [".git", "node_modules", "dist", ".expo", ".cache", "coverage"]
+  },
+  "classes": {
+    "generated": [
+      {
+        "paths": ["package-lock.json", "mobile/package-lock.json"],
+        "provenance": "npm lockfileVersion 3 output derived from the adjacent package.json",
+        "owner": "Supply Chain",
+        "mutation": "npm_dependencies.set_package or the trusted runtime image build; never hand-edit",
+        "reviewTrigger": "Any manifest, lockfile format, package manager, or dependency graph change"
+      },
+      {
+        "paths": ["migrations/meta/0001_snapshot.json", "migrations/meta/0009_snapshot.json", "migrations/meta/_journal.json"],
+        "provenance": "Drizzle migration metadata derived from schema and migration generation",
+        "owner": "Data Platform",
+        "mutation": "Regenerate through the owning migration tool; never use as deployed-schema authority",
+        "reviewTrigger": "Migration generator, Drizzle version, or schema snapshot change"
+      }
+    ],
+    "vendored": [
+      {
+        "paths": ["client/public/voice/audioConcatProcessor.worklet.js", "client/public/voice/libsamplerate.worklet.js"],
+        "provenance": "Pinned @elevenlabs/client@0.14.0 worklet payload; audioConcatProcessor carries documented local playback patches",
+        "owner": "Voice Platform",
+        "mutation": "Replace from the pinned upstream package, then reapply and document the bounded local patch",
+        "reviewTrigger": "ElevenLabs client version, browser audio pipeline, local patch, or worklet loading contract change"
+      }
+    ],
+    "compatibility_fixture": [
+      {
+        "paths": ["server/skill-defaults.ts", "server/prompt-module-defaults.ts"],
+        "provenance": "Authored bootstrap and compatibility definitions consumed by canonical database reconciliation boundaries",
+        "owner": "Agent Runtime",
+        "mutation": "Edit as authored data with monotonic compatibility and live-authority review",
+        "reviewTrigger": "Fixture schema, canonical database authority, reconciliation, or runtime fallback semantics change"
+      }
+    ],
+    "immutable_migration_history": [
+      {
+        "glob": "migrations/*.sql",
+        "provenance": "Ordered checked-in PostgreSQL migration history",
+        "owner": "Data Platform",
+        "mutation": "Never rewrite an applied migration; add a new forward migration or an explicit rollback migration",
+        "reviewTrigger": "Any migration addition, migration runner change, or evidence that an historical migration was never applied anywhere"
+      }
+    ]
+  }
+}
