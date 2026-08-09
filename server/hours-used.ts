@@ -5,13 +5,14 @@ import { db } from "./db";
 import { createLogger } from "./log";
 import { ensureMetricsSamplesSchema, metricsDb } from "./metrics-db";
 import { enqueueTelemetryWrite } from "./telemetry-write";
+import { upsertInternalPeriodSample } from "./metrics-storage";
 
 const log = createLogger("HoursUsed");
 const LEASE_TAIL_MS = 45_000;
 const RAW_RETENTION_DAYS = 14;
 const ROLLUP_RETENTION_DAYS = 400;
 const HOUR_MS = 60 * 60 * 1000;
-const ROLLUP_INTERVAL_MS = 15 * 60 * 1000;
+const ROLLUP_INTERVAL_MS = 60 * 1000;
 let schemaReady: Promise<void> | null = null;
 let rollupTimer: NodeJS.Timeout | null = null;
 
@@ -109,7 +110,7 @@ export function observeHoursUsedPresence(observation: HoursUsedPresenceObservati
   });
 }
 
-async function ensureHoursUsedMetric(accountId: string): Promise<{ id: string; vaultId: string | null } | null> {
+async function ensureHoursUsedMetric(accountId: string): Promise<{ id: string; ownerUserId: string; vaultId: string | null } | null> {
   const accountRows = await db.execute(sql`
     SELECT a.owner_user_id, u.active_vault_id
     FROM accounts a
@@ -136,10 +137,14 @@ async function ensureHoursUsedMetric(accountId: string): Promise<{ id: string; v
     )
     ON CONFLICT DO NOTHING
   `);
-  const [metric] = await db.select({ id: metrics.id, vaultId: metrics.vaultId }).from(metrics)
+  const [metric] = await db.select({
+    id: metrics.id,
+    ownerUserId: metrics.ownerUserId,
+    vaultId: metrics.vaultId,
+  }).from(metrics)
     .where(sql`${metrics.accountId} = ${accountId} AND ${metrics.slug} = 'hours-used'`)
     .limit(1);
-  return metric ?? null;
+  return metric?.ownerUserId ? { ...metric, ownerUserId: metric.ownerUserId } : null;
 }
 
 async function rollupCompletedHours(now = new Date()): Promise<void> {
@@ -195,20 +200,71 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
   for (const day of days) {
     const metric = await ensureHoursUsedMetric(day.account_id);
     if (!metric) continue;
-    const sampleId = `msamp_hours_used_${day.account_id}_${dayStart.toISOString().slice(0, 10)}`;
-    await metricsDb.execute(sql`
-      INSERT INTO metric_samples (
-        id, metric_id, account_id, vault_id, value, unit, observed_at,
-        source_ref, evidence, period_start, period_end
-      ) VALUES (
-        ${sampleId}, ${metric.id}, ${day.account_id}, ${metric.vaultId}, ${Number(day.seconds_used) / 3600},
-        'hours', ${day.period_end}, 'internal/hours-used-v1',
-        'Union of canonical authenticated client-presence intervals per user.', ${day.period_start}, ${day.period_end}
-      )
-      ON CONFLICT (id) DO UPDATE SET
-        value = EXCLUDED.value, observed_at = EXCLUDED.observed_at,
-        period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end
-    `);
+    await upsertInternalPeriodSample({
+      id: `msamp_hours_used_${day.account_id}_${dayStart.toISOString().slice(0, 10)}`,
+      metricId: metric.id,
+      accountId: day.account_id,
+      ownerUserId: metric.ownerUserId,
+      vaultId: metric.vaultId,
+      value: Number(day.seconds_used) / 3600,
+      unit: "hours",
+      observedAt: day.period_end,
+      sourceRef: "internal/hours-used-v1",
+      evidence: "Union of canonical authenticated client-presence intervals per user.",
+      periodStart: day.period_start,
+      periodEnd: day.period_end,
+    });
+  }
+
+  const currentDayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const provisionalRows = await metricsDb.execute(sql`
+    SELECT account_id,
+      COALESCE(SUM(EXTRACT(EPOCH FROM (upper(merged) - lower(merged)))), 0) AS seconds_used
+    FROM (
+      SELECT account_id, user_id, unnest(range_agg(span)) AS merged
+      FROM (
+        SELECT account_id, user_id,
+          tstzrange(
+            GREATEST(connected_at, ${currentDayStart}),
+            LEAST(
+              COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')),
+              ${now}
+            ),
+            '[)'
+          ) AS span
+        FROM hours_used_intervals
+        WHERE connected_at < ${now}
+          AND COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')) > ${currentDayStart}
+      ) bounded
+      WHERE NOT isempty(span)
+      GROUP BY account_id, user_id
+    ) unions
+    GROUP BY account_id
+    LIMIT 1000
+  `);
+  const provisional = (Array.isArray(provisionalRows)
+    ? provisionalRows
+    : (provisionalRows as unknown as { rows?: unknown[] }).rows ?? []) as Array<{
+      account_id: string;
+      seconds_used: number;
+    }>;
+  for (const day of provisional) {
+    const metric = await ensureHoursUsedMetric(day.account_id);
+    if (!metric) continue;
+    await upsertInternalPeriodSample({
+      id: `msamp_hours_used_${day.account_id}_${currentDayStart.toISOString().slice(0, 10)}`,
+      metricId: metric.id,
+      accountId: day.account_id,
+      ownerUserId: metric.ownerUserId,
+      vaultId: metric.vaultId,
+      value: Number(day.seconds_used) / 3600,
+      unit: "hours",
+      observedAt: now,
+      sourceRef: "internal/hours-used-v1",
+      evidence: "Provisional current UTC day; union of canonical authenticated client-presence intervals per user.",
+      periodStart: currentDayStart,
+      periodEnd: now,
+    });
   }
 
   await metricsDb.execute(sql`

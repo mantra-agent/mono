@@ -1,3 +1,11 @@
+<!-- 2026-08-08 Hours Used provisional projection correction:
+- Assets/data: account/user/client identifiers and presence timestamps (S1), hourly/daily union rollups, one compact current-day Metric sample, and account-scoped invalidation metadata. No content, URL, IP, user agent, or new client signal is collected.
+- Flow/boundary: existing authenticated canonical presence mutation -> metrics interval/rollup database -> one canonical period-sample upsert -> account-scoped EventBus -> existing permission- and principal-scoped Metrics query.
+- Failure/threat: duplicate replicas or retries could append/conflict, cross-account events could disclose metric activity, forged clients could inflate time, and per-heartbeat writes could amplify load (STRIDE spoofing/tampering/repudiation/information disclosure/availability; DATA-01/OBS-01).
+- Controls/owner: Realtime Presence remains the sole source; account/user identity is server supplied; SQL range union deduplicates tabs/devices per user; deterministic account/day sample IDs and conflict updates make replay indistinguishable; one bounded minute cadence replaces heartbeat writes; event audiences carry the exact owner user and account; existing Metrics authorization independently scopes reads. Owner: Core Metrics + Realtime Presence. Severity: medium privacy/integrity. SLA: immediate. Status: implemented in source pending build/merge.
+- Residual/rollback: live intervals remain bounded by the existing 45-second lease tail, and EventBus delivery is process-local; reconnect/query state recovers from the persisted sample. Revert the minute projection, shared sample helper, event invalidation, and this record; additive telemetry data remains valid.
+-->
+
 <!-- 2026-08-08 external calendar meeting-draft approval boundary:
 - Assets/data: principal-owned calendar draft details and attendee emails (S2), connected Google account identity/OAuth authority (S3 boundary), and external Calendar event/invitation side effects.
 - Flow/boundary: model-selected meetings.add -> principal-scoped persisted meeting_drafts row -> authenticated editable inline review -> human-only schedule transition -> canonical Google Calendar events.insert with explicit sendUpdates policy.
