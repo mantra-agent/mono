@@ -273,7 +273,7 @@ Teams are account-scoped grant subjects. `TeamService` is their sole ordinary mu
 
 ### Agent executor work budgets
 
-`AgentExecutor` owns one per-run work envelope in addition to wall-clock watchdogs: bounded provider iterations and actual tool executions. Both SDK-owned and executor-owned tool paths spend the tool budget at `executeToolWithRecovery(...)` before any side effect; callers may narrow but never exceed the Core hard ceilings. Exhaustion preserves completed work and terminalizes through exactly one degradation discriminant (`iteration_budget_exhausted` or `tool_call_budget_exhausted`), never as cancellation, provider failure, or clean success. Runtime capacity, principal/tool authority, idempotency, and human gates remain independent.
+`AgentExecutor` owns one per-run work envelope in addition to wall-clock watchdogs: at most 256 provider iterations and 256 actual tool executions. Both SDK-owned and executor-owned tool paths spend the tool budget at `executeToolWithRecovery(...)` before any side effect; callers may narrow but never exceed the Core hard ceilings. Exhaustion preserves completed work and terminalizes through exactly one degradation discriminant (`iteration_budget_exhausted` or `tool_call_budget_exhausted`), never as cancellation, provider failure, or clean success. Runtime capacity, the 40-minute run hard cap, principal/tool authority, idempotency, and human gates remain independent.
 
 ### Background Document Repair
 
