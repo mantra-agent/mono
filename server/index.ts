@@ -19,7 +19,7 @@ import { spawn } from "child_process";
 import { resolve as resolvePath } from "path";
 import { createLogger } from "./log";
 import { bootTracker, registerBootStatusRoute } from "./boot-tracker";
-import { runSchemaBootstrap } from "./schema-bootstrap";
+import { convergeBootSchema, startPostReadySchemaConvergence } from "./schema-convergence";
 import { isRecoverablePostgresConnectionError } from "./postgres-errors";
 import { closeDatabasePools } from "./db";
 import { admissionController } from "./run-admission";
@@ -57,16 +57,9 @@ process.on("unhandledRejection", (reason) => {
   serverLog.error(`unhandledRejection:`, message);
 });
 
-import { addObjectAclsTable } from "./migrations/add-object-acls";
-import { ensureToolOutputAdmissionsTable } from "./migrations/ensure-tool-output-admissions";
-import { ensureVaults } from "./migrations/ensure-vaults";
 import { migrateProjectNotesSpecToLibrary } from "./migrations/migrate-project-notes-spec-to-library";
 import { runDiagnosedCrossOwnerLibraryChildRepair } from "./migrations/detach-cross-owner-library-child";
 import { runMeetingRecapAgendaSanitizer } from "./migrations/sanitize-meeting-recap-agendas";
-
-const objectAclsMigrationReady = addObjectAclsTable();
-const toolOutputAdmissionsMigrationReady = ensureToolOutputAdmissionsTable();
-const vaultsMigrationReady = objectAclsMigrationReady.then(() => ensureVaults());
 
 
 import { registerSessionOutputBufferListener } from "./session-output-buffer-listener";
@@ -366,37 +359,17 @@ app.use((req, res, next) => {
 
   bootTracker.startPhase("database");
   const tMigrate0 = Date.now();
-  await runSchemaBootstrap("boot");
-  const { ensureRuntimeKernelSchema } = await import("./runtime/runtime-schema");
-  const { pool } = await import("./db");
-  await ensureRuntimeKernelSchema(pool);
+  await convergeBootSchema();
   registerRuntimeProofPathHandlers();
   registerLegacyCapacityHandler();
-  const { ensureLifeAddressingSchema } = await import("./life-addressing-schema");
-  await ensureLifeAddressingSchema(pool);
-  const { ensureModPlatformSchema } = await import("./mod-schema");
-  await ensureModPlatformSchema(pool);
-  const { ensureBuildDeploymentSchema } = await import("./build-deployment-schema");
-  await ensureBuildDeploymentSchema(pool);
   // Validate the code-owned first-party Mod registry before accepting requests.
   // First-party key collisions and dangling references are deployment defects
   // (spec §6.1) and must fail loudly. Pure and additive — nothing renders from
   // the registry yet (Phase 1 shadow).
   const { assertModRegistryValid } = await import("./mods/registry");
   assertModRegistryValid();
-  await vaultsMigrationReady;
   const { ensureMeetingRootsForAllVaults } = await import("./meeting/vault-ownership");
   await ensureMeetingRootsForAllVaults();
-  const { migrateOpportunitySchema } = await import("./opportunity-storage");
-  await migrateOpportunitySchema();
-  const { ensureWorkVaultParentSchema } = await import("./work-vault-schema");
-  await ensureWorkVaultParentSchema(pool);
-  const { ensureMilestonesSchema } = await import("./milestone-schema");
-  await ensureMilestonesSchema(pool);
-  const { ensureMetricsDefinitionsSchema } = await import("./metrics-storage");
-  await ensureMetricsDefinitionsSchema();
-  const { ensureBusinessPlansSchema } = await import("./business-plan-storage");
-  await ensureBusinessPlansSchema();
   await beginRuntimeProcessLifecycle();
   // Persona templates and skill recommendations are a runtime invariant, not
   // optional background maintenance. Complete them before accepting requests
@@ -409,14 +382,8 @@ app.use((req, res, next) => {
   await runDocumentStoreWorkspaceMigrationBootstrap();
   const { purgeRetiredBeliefs } = await import("./memory/retired-beliefs-purge");
   await purgeRetiredBeliefs();
-  const { ensurePermissionSchema } = await import("./permissions");
-  await ensurePermissionSchema();
-  const { retireRegressionDomainSchema } = await import("./migrations/retire-regression-domain");
-  await retireRegressionDomainSchema();
   const { backfillEntityArrayTags } = await import("./migrations/backfill-entity-array-tags");
   await backfillEntityArrayTags();
-  const { ensureMeetingAudioRetentionSchema } = await import("./meeting/audio-retention-schema");
-  await ensureMeetingAudioRetentionSchema();
   const migrateMs = Date.now() - tMigrate0;
   bootPhases.push({ name: "Boot Migrations", durationMs: migrateMs });
   log(`[startup] boot migrations: ${migrateMs}ms`, "boot");
@@ -515,35 +482,7 @@ app.use((req, res, next) => {
   log(`[startup] auth setup: ${authMs}ms`, "boot");
 
 
-  await objectAclsMigrationReady;
-  await toolOutputAdmissionsMigrationReady;
-  await vaultsMigrationReady;
-  const { ensureWorkVaultSchema } = await import("./work-vault-schema");
-  const { pool: workVaultPool } = await import("./db");
-  await ensureWorkVaultSchema(workVaultPool);
-  const { ensureProjectVaultMembershipSchema } = await import("./project-vault-access");
-  await ensureProjectVaultMembershipSchema();
-  const { ensurePlatformVaultMembershipSchema } = await import("./platform-vault-access");
-  await ensurePlatformVaultMembershipSchema();
   await migrateProjectNotesSpecToLibrary();
-  const { ensureObjectGrantSchema } = await import("./object-grant-schema");
-  await ensureObjectGrantSchema(workVaultPool);
-  const { ensureTeamsSchema } = await import("./teams-schema");
-  await ensureTeamsSchema(workVaultPool);
-  const { ensureOrganizationsSchema } = await import("./organizations-schema");
-  await ensureOrganizationsSchema(workVaultPool);
-  const { ensureDriveResourcesSchema } = await import("./drive-resources-schema");
-  await ensureDriveResourcesSchema(workVaultPool);
-  const { ensureFilesIndexSchema } = await import("./files-index-schema");
-  await ensureFilesIndexSchema(workVaultPool);
-  const { ensureDocumentArtifactsSchema } = await import("./document-artifacts-schema");
-  await ensureDocumentArtifactsSchema(workVaultPool);
-  const { ensureAgendaDefinitionSchema } = await import("./agenda-schema");
-  await ensureAgendaDefinitionSchema();
-  const { ensureInvitedSubjectSchema } = await import("./invited-subject-schema");
-  await ensureInvitedSubjectSchema(workVaultPool);
-  const { ensureTaskAssignmentSchema } = await import("./task-assignment-schema");
-  await ensureTaskAssignmentSchema(workVaultPool);
 
   const tRoutes0 = Date.now();
   await registerRoutes(httpServer, app);
@@ -615,15 +554,7 @@ app.use((req, res, next) => {
         process.stdout.write("\n__BOOT_COMPLETE__\n");
       } catch {}
 
-      import("./memory/document-search-indexes")
-        .then(({ startDocumentStoreSearchIndexMaintenance }) => {
-          startDocumentStoreSearchIndexMaintenance();
-        })
-        .catch((err) => {
-          serverLog.warn(
-            `document-store search index maintenance unavailable: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
+      startPostReadySchemaConvergence();
 
       import("./memory/session-search-projection")
         .then(({ startSessionSearchProjectionBackfill }) => {

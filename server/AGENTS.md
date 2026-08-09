@@ -164,17 +164,15 @@ Drizzle is the default query builder and schema mapper, not the only SQL path. R
 - Transaction-scoped advisory locks are the preferred serialization primitive for domain invariants. `ADVISORY_LOCK_NS` + stable FNV keys cover chat documents, Library parents, People merges, compaction, meeting/workflow operations, and related boundaries. Acquire multiple logical locks in deterministic order. Session-scoped advisory locks exist for cross-replica maintenance such as document-search index convergence and require one checked-out unpooled session plus explicit unlock/reset/discard handling.
 - `isSerializationConflict()` classifies `40P01` and `40001`; callers own bounded retry or a 409 mapping. Connection recovery classification covers SQLSTATE class `08`, `57P01`–`57P03`, pool-acquire timeouts, and known disconnect messages. Statement timeout, lock timeout, serialization conflicts, and constraint errors are not connection incidents.
 
-### Schema and index ownership — current reality
+### Schema and index ownership
 
-The deployed schema has multiple active owners:
+`server/schema-convergence.ts` is the sole deployed-schema composition owner. It runs before readiness, names and times each dependency phase, fails startup on an incomplete required phase, and delegates idempotent implementation to `runSchemaBootstrap()` plus bounded subsystem ensure functions. DB Sync may request baseline-table convergence only through the same boundary. Route registrars compose HTTP behavior and must not run DDL or legacy data migrations.
 
-1. `runSchemaBootstrap()` performs extensive pre-readiness `CREATE/ALTER/INDEX/TRIGGER/COMMENT` work. Core ensures fail startup; many later `heal(...)` blocks race work against a 2 s JavaScript timer, log failure/quarantine, and let boot continue. That timer does not cancel the SQL, so a timed-out heal may still hold a pool client and mutate later.
-2. Ordered subsystem ensures and one-time migrations run before route readiness (`ensureVaults`, document-store cutover/bootstrap, work/milestone/grant schemas, persona/skill reconciliation, etc.).
-3. Some route registrars still execute compatibility DDL and data backfills. `registerLibraryRoutes()` is a prominent example and treats several failures as non-fatal.
-4. Post-ready maintenance builds `document_store_documents` trigram indexes with `CREATE INDEX CONCURRENTLY` under a session advisory lock, verifies the exact production query with bounded `EXPLAIN (ANALYZE, BUFFERS)`, then retires old index identities.
-5. SQL migration files and Drizzle table declarations are important specifications but are not the sole live-schema application path.
+`runSchemaBootstrap()` remains a large compatibility implementation actor: core ensures fail startup, while retained `heal(...)` blocks preserve older rolling-deployment repair semantics. Their JavaScript timeout does not cancel SQL, so new schema contracts must not use that pattern; migrate consumers additively and place canonical convergence in the explicit phase graph. Immutable migration SQL and Drizzle declarations are specifications/history, not runtime composition owners.
 
-Railway private networking is runtime-only, so database migrations that use the internal host belong in the start/runtime lifecycle, not image build. Production schema changes remain additive/backward-compatible first. Expensive index replacement uses a fresh versioned name and concurrent build-before-retire. Never add request-time auto-heal as the primary rollout path; keep it as explicit compatibility recovery and move canonical convergence into the ordered boot owner.
+Post-ready document-search maintenance is an explicit delegated actor because PostgreSQL concurrent index operations require an independent session and cannot run inside ordinary transactional convergence. The composition owner launches it after listen; the actor holds a session advisory lock, builds versioned indexes concurrently before retiring old identities, verifies the bounded production query, retries visibly, and never becomes request-time auto-heal.
+
+Railway private networking is runtime-only, so database migrations that use the internal host belong in the start/runtime lifecycle, not image build. Production schema changes remain additive/backward-compatible first. Never add request-time auto-heal as the primary rollout path.
 
 ### Workload classes and concurrency
 
@@ -209,7 +207,7 @@ Non-negotiable rules:
 ### Known database gaps
 
 - Pool/shutdown/telemetry ownership is fragmented by the separate auth pool and dedicated clients.
-- Schema convergence is distributed and partly non-fatal; the 2 s heal race does not cancel SQL.
+- Schema composition is centralized, but the retained `runSchemaBootstrap()` compatibility body still contains partly non-fatal 2 s heal races that do not cancel SQL; new contracts must not copy them.
 - Instrumentation wraps `Pool.query`, not checked-out `PoolClient.query`, auth, or dedicated clients; those paths remain outside the ordinary timing and pressure evidence.
 - Exact session search has the intended index contract but is timing out live; index existence and a boot probe are not proof that every real search pattern is cheap.
 - Context-health orders and filters a growing `api_calls` telemetry set by a JSONB expression and is repeatedly slow in live evidence.

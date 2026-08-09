@@ -17,7 +17,7 @@ import { createLogger } from "../log";
 import { requireAuth, requireAdmin } from "../auth";
 import { getDbSyncImportSecretFromEnv, verifyDbSyncImportAuthHeader } from "../lib/db-sync-import-auth";
 import { fingerprintDbUrl, redactDbUrl } from "../lib/db-sync-safety";
-import { runSchemaBootstrap } from "../schema-bootstrap";
+import { convergeDbSyncSchema } from "../schema-convergence";
 import { eq, sql, count, getTableColumns, getTableName } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 
@@ -1164,9 +1164,9 @@ export async function importDbTables(dbDir: string): Promise<ImportDbResult> {
   const failed: string[] = [];
   const failures: ImportTableFailure[] = [];
 
-  log.debug("Running DB Sync schema bootstrap via app auto-heal");
-  await runSchemaBootstrap("db-sync", INSERT_ORDER.map((entry) => entry.table));
-  log.debug("DB Sync schema bootstrap complete");
+  log.debug("Running DB Sync schema convergence");
+  await convergeDbSyncSchema(INSERT_ORDER.map((entry) => entry.table));
+  log.debug("DB Sync schema convergence complete");
 
   // Make every registry FK DEFERRABLE so the per-table SET CONSTRAINTS
   // ALL DEFERRED below actually defers self-referencing checks
