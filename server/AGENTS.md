@@ -646,9 +646,10 @@ Four interacting layers: intention stack (what), timer scheduler (when), skill r
 - **Preemption:** foreground demand may request cooperative yield from a local background Agent outside its lineage; unused interactive reserve is independently enforced in the database.
 
 ### Hook System
-- Event-driven: glob pattern match → AND-condition on payload → cooldown check → rate limit (100/min)
-- Actions: `run_skill`, `initiate_conversation`, `tool_call`
-- Template interpolation: `{{payload.sessionId}}` in action configs
+- EventBus remains process-local transport; Hooks never replay across boots from that buffer. Within one boot event identity, `system_hook_executions` is the durable admission and lifecycle authority.
+- `HookExecutor` evaluates events in one bounded serial lane. `HookStorage.claimHookExecution()` serializes each Hook across replicas, enforces cooldown and `maxFirings`, and inserts the unique `(hook_id, event_identity)` running claim before dispatch. Completion updates that exact claim and disables a consumed Hook without deleting definition or execution history.
+- Actions: `run_skill`, `initiate_conversation`, `tool_call`. Every action restores the Hook owner Principal; non-Skill actions additionally cross the Runtime compatibility admission façade.
+- Template interpolation: `{{payload.sessionId}}` in action configs.
 
 ### Campaign Architecture
 - Intention + `workPlanPageId` = campaign. Library page contains numbered chunks with status emojis

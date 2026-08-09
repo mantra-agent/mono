@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, jsonb, integer, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, jsonb, integer, boolean, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -51,13 +51,16 @@ export const systemHookExecutions = pgTable("system_hook_executions", {
   id: serial("id").primaryKey(),
   hookId: integer("hook_id").notNull(),
   eventDbId: integer("event_db_id"),
+  eventIdentity: text("event_identity").notNull(),
   actionType: text("action_type").notNull(),
   actionConfigResolved: jsonb("action_config_resolved"),
   status: text("status").notNull().default("dispatched"),
   errorMessage: text("error_message"),
   durationMs: integer("duration_ms"),
   createdAt: timestamp("created_at", { withTimezone: true, precision: 6 }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true, precision: 6 }),
 }, (table) => [
+  uniqueIndex("idx_hook_exec_event_unique").on(table.hookId, table.eventIdentity),
   index("idx_hook_exec_hook_created").on(table.hookId, table.createdAt),
   index("idx_hook_exec_created").on(table.createdAt),
 ]);

@@ -35,7 +35,7 @@ export function registerHooksRoutes(app: Express) {
 
   app.post("/api/hooks", async (req, res) => {
     try {
-      const { name, description, eventPattern, condition, actionType, actionConfig, cooldownSeconds, enabled, createdBy } = req.body;
+      const { name, description, eventPattern, condition, actionType, actionConfig, cooldownSeconds, enabled, maxFirings, createdBy } = req.body;
 
       if (!name || !eventPattern || !actionType || !actionConfig) {
         return res.status(400).json({ error: "Missing required fields: name, eventPattern, actionType, actionConfig" });
@@ -54,6 +54,7 @@ export function registerHooksRoutes(app: Express) {
         actionConfig,
         cooldownSeconds,
         enabled,
+        maxFirings,
         createdBy,
       });
 
@@ -75,7 +76,7 @@ export function registerHooksRoutes(app: Express) {
       const existing = await hookStorage.getHook(id);
       if (!existing) return res.status(404).json({ error: "Hook not found" });
 
-      const { name, description, eventPattern, condition, actionType, actionConfig, cooldownSeconds, enabled } = req.body;
+      const { name, description, eventPattern, condition, actionType, actionConfig, cooldownSeconds, enabled, maxFirings } = req.body;
 
       if (actionType && !["run_skill", "initiate_conversation", "tool_call"].includes(actionType)) {
         return res.status(400).json({ error: "actionType must be one of: run_skill, initiate_conversation, tool_call" });
@@ -90,6 +91,7 @@ export function registerHooksRoutes(app: Express) {
       if (actionConfig !== undefined) updateData.actionConfig = actionConfig;
       if (cooldownSeconds !== undefined) updateData.cooldownSeconds = cooldownSeconds;
       if (enabled !== undefined) updateData.enabled = enabled;
+      if (maxFirings !== undefined) updateData.maxFirings = maxFirings;
 
       const hook = await hookStorage.updateHook(id, updateData);
       hookExecutor.invalidateCache();

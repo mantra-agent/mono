@@ -1,152 +1,93 @@
-import type { BusEvent } from "./event-bus";
-import { eventBus } from "./event-bus";
 import type { SystemHook } from "@shared/schema";
+import type { BusEvent } from "./event-bus";
+import { eventBus, isEventVisibleToPrincipal } from "./event-bus";
 import * as hookStorage from "./hook-storage";
 import { createLogger } from "./log";
-import { isEventVisibleToPrincipal } from "./event-bus";
-import { runWithPrincipal } from "./principal-context";
-import { createNamedSystemPrincipal, createUserPrincipalFromUser, type Principal } from "./principal";
 import { getUserEffectivePermissions } from "./permissions";
+import { createNamedSystemPrincipal, createUserPrincipalFromUser, type Principal } from "./principal";
+import { runWithPrincipal } from "./principal-context";
 import { storage } from "./storage";
 
 const log = createLogger("HookExecutor");
+const MAX_EXECUTIONS_PER_MINUTE = 100;
+
+type HookActionResult = {
+  status: "dispatched" | "success" | "error";
+  errorMessage?: string;
+};
 
 function matchEventPattern(pattern: string, eventName: string): boolean {
-  const regex = new RegExp(
-    '^' + pattern.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$'
-  );
+  const regex = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
   return regex.test(eventName);
 }
 
-function getNestedValue(obj: any, path: string): any {
+function getNestedValue(obj: unknown, path: string): unknown {
   const parts = path.split(".");
   let current = obj;
   for (const part of parts) {
     if (current == null || typeof current !== "object") return undefined;
-    current = current[part];
+    current = (current as Record<string, unknown>)[part];
   }
   return current;
 }
 
-function interpolateTemplates(obj: any, context: Record<string, any>): any {
+function interpolateTemplates(obj: unknown, context: Record<string, unknown>): unknown {
   if (typeof obj === "string") {
-    return obj.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_, path) => {
+    return obj.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_, path: string) => {
       const value = getNestedValue(context, path);
       return value !== undefined ? String(value) : `{{${path}}}`;
     });
   }
-  if (Array.isArray(obj)) return obj.map(item => interpolateTemplates(item, context));
+  if (Array.isArray(obj)) return obj.map((item) => interpolateTemplates(item, context));
   if (obj && typeof obj === "object") {
-    const result: Record<string, any> = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key] = interpolateTemplates(value, context);
-    }
-    return result;
+    return Object.fromEntries(
+      Object.entries(obj as Record<string, unknown>).map(([key, value]) => [key, interpolateTemplates(value, context)]),
+    );
   }
   return obj;
 }
 
-function matchCondition(condition: Record<string, any>, payload: Record<string, any>): boolean {
-  for (const [key, expected] of Object.entries(condition)) {
-    const actual = getNestedValue(payload, key);
-    if (actual !== expected) return false;
-  }
-  return true;
+function matchCondition(condition: Record<string, unknown>, payload: Record<string, unknown>): boolean {
+  return Object.entries(condition).every(([key, expected]) => getNestedValue(payload, key) === expected);
 }
 
 class HookExecutor {
   private hooks: SystemHook[] = [];
-  private lastFired: Map<number, number> = new Map();
-  private executionCounts: Map<number, number> = new Map();
   private executionsThisMinute = 0;
   private minuteResetTimer: NodeJS.Timeout | null = null;
   private initialized = false;
+  private executionQueue: Promise<void> = Promise.resolve();
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
 
     try {
-      const { db } = await import("./db");
-      const { sql } = await import("drizzle-orm");
-      await db.execute(sql`ALTER TABLE system_hooks ADD COLUMN IF NOT EXISTS max_firings integer`);
-    } catch (err: any) {
-      log.warn(`auto-heal max_firings column: ${err.message}`);
-    }
-
-    try {
       await runWithPrincipal(createNamedSystemPrincipal("hook-executor"), () => this.refreshCache());
-    } catch (err: any) {
-      log.warn(`initial hook load failed: ${err.message}`);
+    } catch (error) {
+      log.warn(`initial hook load failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    await runWithPrincipal(createNamedSystemPrincipal("hook-executor"), async () => {
-      for (const hook of this.hooks) {
-        try {
-          const lastExec = await hookStorage.getLastExecution(hook.id);
-          if (lastExec) {
-            this.lastFired.set(hook.id, new Date(lastExec.createdAt).getTime());
-          }
-        } catch { }
-      }
-    });
 
     this.minuteResetTimer = setInterval(() => {
       this.executionsThisMinute = 0;
     }, 60_000);
+    this.minuteResetTimer.unref?.();
 
     eventBus.on("event", (busEvent: BusEvent) => {
-      this.handleEvent(busEvent).catch(err => {
-        log.warn(`hook evaluation failed event=${busEvent.event}: ${err.message}`);
-      });
+      this.executionQueue = this.executionQueue
+        .then(() => this.handleEvent(busEvent))
+        .catch((error) => {
+          log.warn(`hook evaluation failed event=${busEvent.event}: ${error instanceof Error ? error.message : String(error)}`);
+        });
     });
 
-    log.log(`initialized hooks=${this.hooks.length}`);
+    log.info("hook.executor.initialized", { hooks: this.hooks.length, concurrency: 1 });
   }
 
   async handleEvent(busEvent: BusEvent): Promise<void> {
-    if (this.hooks.length === 0) return;
+    if (this.hooks.length === 0 || this.executionsThisMinute >= MAX_EXECUTIONS_PER_MINUTE) return;
 
-    if (this.executionsThisMinute >= 100) {
-      return;
-    }
-
-    // EventBus events are process-local telemetry. Hook execution records
-    // remain durable, but no longer carry a system_events foreign key.
-    const eventDbId: number | undefined = undefined;
-
-    const matchingHooks: Array<{ hook: SystemHook }> = [];
-
-    for (const hook of this.hooks) {
-      if (!hook.enabled) continue;
-
-      try {
-        if (!matchEventPattern(hook.eventPattern, busEvent.event)) continue;
-
-        if (hook.condition && typeof hook.condition === "object" && Object.keys(hook.condition).length > 0) {
-          if (!matchCondition(hook.condition as Record<string, any>, busEvent.payload || {})) continue;
-        }
-
-        if (hook.cooldownSeconds > 0) {
-          const lastTime = this.lastFired.get(hook.id);
-          if (lastTime && (Date.now() - lastTime) < hook.cooldownSeconds * 1000) continue;
-        }
-
-        if (hook.maxFirings != null) {
-          const count = this.executionCounts.get(hook.id) ?? 0;
-          if (count >= hook.maxFirings) continue;
-        }
-
-        if (this.executionsThisMinute >= 100) break;
-        matchingHooks.push({ hook });
-      } catch (err: any) {
-        log.warn(`hook evaluation error hook=${hook.name}: ${err.message}`);
-      }
-    }
-
-    if (matchingHooks.length === 0) return;
-
-    const context: Record<string, any> = {
+    const context: Record<string, unknown> = {
       payload: busEvent.payload || {},
       event: busEvent.event,
       category: busEvent.category,
@@ -155,130 +96,107 @@ class HookExecutor {
       timestamp: busEvent.timestamp,
     };
 
-    for (const { hook } of matchingHooks) {
+    for (const hook of this.hooks) {
+      if (this.executionsThisMinute >= MAX_EXECUTIONS_PER_MINUTE) break;
+      if (!hook.enabled || !matchEventPattern(hook.eventPattern, busEvent.event)) continue;
+      if (
+        hook.condition &&
+        typeof hook.condition === "object" &&
+        Object.keys(hook.condition).length > 0 &&
+        !matchCondition(hook.condition as Record<string, unknown>, busEvent.payload || {})
+      ) continue;
+
       try {
         const principal = await this.resolveHookPrincipal(hook);
         if (!isEventVisibleToPrincipal(busEvent, principal)) continue;
-        const resolvedConfig = interpolateTemplates(
-          JSON.parse(JSON.stringify(hook.actionConfig)),
-          context
-        );
+        const resolvedConfig = interpolateTemplates(hook.actionConfig, context);
+        const execution = await runWithPrincipal(principal, () => hookStorage.claimHookExecution({
+          hookId: hook.id,
+          eventIdentity: `${busEvent.bootId ?? "unknown"}:${busEvent.id}`,
+          actionType: hook.actionType,
+          actionConfigResolved: resolvedConfig,
+        }));
+        if (!execution) continue;
 
-        this.lastFired.set(hook.id, Date.now());
-        this.executionCounts.set(hook.id, (this.executionCounts.get(hook.id) ?? 0) + 1);
         this.executionsThisMinute++;
-
-        runWithPrincipal(principal, async () => {
-          if (hook.actionType === "run_skill") {
-            return this.dispatchAction(hook, resolvedConfig, eventDbId);
-          }
+        const startedAt = Date.now();
+        const result = await runWithPrincipal(principal, async () => {
+          if (hook.actionType === "run_skill") return this.dispatchAction(hook, resolvedConfig);
           const { admissionController } = await import("./run-admission");
           return admissionController.withResourcePool(
             "short_worker",
-            `hook:${hook.id}:${busEvent.id}:${Date.now()}`,
-            () => this.dispatchAction(hook, resolvedConfig, eventDbId),
+            `hook:${hook.id}:${execution.id}`,
+            () => this.dispatchAction(hook, resolvedConfig),
             { activity: `hook.${hook.actionType}` },
           );
-        }).catch(err => {
-          log.error(`dispatch contract failed hook=${hook.name} action=${hook.actionType}: ${err.message}`);
-        });
-      } catch (err: any) {
-        log.warn(`hook dispatch error hook=${hook.name}: ${err.message}`);
-        hookStorage.recordExecution({
-          hookId: hook.id,
-          eventDbId,
-          actionType: hook.actionType,
+        }).catch((error): HookActionResult => ({
           status: "error",
-          errorMessage: err.message,
-        }).catch(() => { });
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }));
+
+        const completion = await runWithPrincipal(principal, () => hookStorage.completeHookExecution({
+          hookId: hook.id,
+          executionId: execution.id,
+          status: result.status,
+          errorMessage: result.errorMessage,
+          durationMs: Date.now() - startedAt,
+        }));
+        if (completion.disabled) this.invalidateCache();
+      } catch (error) {
+        log.warn(`hook dispatch error hook=${hook.name}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
 
-  private async dispatchAction(hook: SystemHook, resolvedConfig: any, eventDbId?: number): Promise<void> {
-    const startTime = Date.now();
-    let status = "dispatched";
-    let errorMessage: string | undefined;
-
+  private async dispatchAction(hook: SystemHook, resolvedConfigValue: unknown): Promise<HookActionResult> {
+    const resolvedConfig = resolvedConfigValue && typeof resolvedConfigValue === "object"
+      ? resolvedConfigValue as Record<string, unknown>
+      : {};
     try {
       switch (hook.actionType) {
         case "run_skill": {
           const { executeAutonomousSkillRun } = await import("./autonomous-skill-runner");
           const skillId = resolvedConfig.skillId || resolvedConfig.skillName;
-          if (!skillId) throw new Error("missing skillId/skillName in action config");
-          executeAutonomousSkillRun(skillId, {
-            preContext: resolvedConfig.preContext || undefined,
+          if (typeof skillId !== "string" || !skillId.trim()) throw new Error("missing skillId/skillName in action config");
+          void executeAutonomousSkillRun(skillId, {
+            preContext: typeof resolvedConfig.preContext === "string" ? resolvedConfig.preContext : undefined,
             hookTriggerId: String(hook.id),
             hookTriggerName: hook.name,
-          }).catch(err => {
-            log.error(`skill run dispatch failed hook=${hook.name} skill=${skillId}: ${err.message}`);
+          }).catch((error) => {
+            log.error(`skill run dispatch failed hook=${hook.name} skill=${skillId}: ${error instanceof Error ? error.message : String(error)}`);
           });
-          status = "dispatched";
-          break;
+          return { status: "dispatched" };
         }
         case "initiate_conversation": {
           const { executeBridgeTool } = await import("./bridge-tools");
-          const topic = resolvedConfig.topic || "Hook-triggered conversation";
-          const message = resolvedConfig.message || "";
           await executeBridgeTool("converse", `hook-${hook.id}-${Date.now()}`, {
             action: "initiate",
-            topic,
-            message,
+            topic: typeof resolvedConfig.topic === "string" ? resolvedConfig.topic : "Hook-triggered conversation",
+            message: typeof resolvedConfig.message === "string" ? resolvedConfig.message : "",
           }, { sessionKey: `hook:${hook.id}`, sessionId: "", authority: { origin: "hook" } });
-          status = "success";
-          break;
+          return { status: "success" };
         }
         case "tool_call": {
           const { executeBridgeTool } = await import("./bridge-tools");
           const toolName = resolvedConfig.toolName;
-          if (!toolName) throw new Error("missing toolName in action config");
-          await executeBridgeTool(toolName, `hook-${hook.id}-${Date.now()}`, resolvedConfig.arguments || {}, {
+          if (typeof toolName !== "string" || !toolName.trim()) throw new Error("missing toolName in action config");
+          const args = resolvedConfig.arguments && typeof resolvedConfig.arguments === "object"
+            ? resolvedConfig.arguments as Record<string, unknown>
+            : {};
+          await executeBridgeTool(toolName, `hook-${hook.id}-${Date.now()}`, args, {
             sessionKey: `hook:${hook.id}`,
             sessionId: "",
             authority: { origin: "hook" },
           });
-          status = "success";
-          break;
+          return { status: "success" };
         }
         default:
           throw new Error(`unknown action type: ${hook.actionType}`);
       }
-    } catch (err: any) {
-      status = "error";
-      errorMessage = err.message;
-      log.error(`hook action failed hook=${hook.name} action=${hook.actionType}: ${err.message}`);
-    }
-
-    const durationMs = Date.now() - startTime;
-
-    // Record execution first, then check if we should consume.
-    // Previously fire-and-forget — countExecutions raced ahead of the write
-    // and always returned 0, so maxFirings deletion never triggered.
-    try {
-      await hookStorage.recordExecution({
-        hookId: hook.id,
-        eventDbId,
-        actionType: hook.actionType,
-        actionConfigResolved: resolvedConfig,
-        status,
-        errorMessage,
-        durationMs,
-      });
-    } catch (err: any) {
-      log.error(`hook execution persistence failed hook=${hook.name} action=${hook.actionType} status=${status}: ${err.message}`);
-    }
-
-    if (hook.maxFirings != null) {
-      try {
-        const count = await hookStorage.countExecutions(hook.id);
-        if (count >= hook.maxFirings!) {
-          await hookStorage.deleteHook(hook.id);
-          this.invalidateCache();
-          log.log(`[HookExecutor] Hook "${hook.name}" reached maxFirings=${hook.maxFirings}, consumed and deleted`);
-        }
-      } catch (err: any) {
-        log.error(`maxFirings enforcement failed hook=${hook.name} hookId=${hook.id}: ${err.message}`);
-      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error(`hook action failed hook=${hook.name} action=${hook.actionType}: ${errorMessage}`);
+      return { status: "error", errorMessage };
     }
   }
 
@@ -295,32 +213,25 @@ class HookExecutor {
   }
 
   async refreshCache(): Promise<void> {
-    try {
-      this.hooks = await hookStorage.listHooksForScheduler();
-      this.executionCounts.clear();
-    } catch (err: any) {
-      log.warn(`hook cache refresh failed: ${err.message}`);
-    }
+    this.hooks = await hookStorage.listHooksForScheduler();
   }
 
   invalidateCache(): void {
-    runWithPrincipal(createNamedSystemPrincipal("hook-executor"), () => this.refreshCache())
-      .catch(err => log.warn(`cache invalidation failed: ${err.message}`));
+    void runWithPrincipal(createNamedSystemPrincipal("hook-executor"), () => this.refreshCache())
+      .catch((error) => log.warn(`cache invalidation failed: ${error instanceof Error ? error.message : String(error)}`));
   }
 
-  testHook(hook: { eventPattern: string; condition?: any; actionConfig: any }, busEvent: BusEvent): {
+  testHook(hook: { eventPattern: string; condition?: unknown; actionConfig: unknown }, busEvent: BusEvent): {
     matches: boolean;
-    resolvedConfig: any;
+    resolvedConfig: unknown;
     patternMatch: boolean;
     conditionMatch: boolean;
   } {
     const patternMatch = matchEventPattern(hook.eventPattern, busEvent.event);
-    let conditionMatch = true;
-    if (hook.condition && typeof hook.condition === "object" && Object.keys(hook.condition).length > 0) {
-      conditionMatch = matchCondition(hook.condition as Record<string, any>, busEvent.payload || {});
-    }
-
-    const context: Record<string, any> = {
+    const conditionMatch = !hook.condition || typeof hook.condition !== "object" || Object.keys(hook.condition).length === 0
+      ? true
+      : matchCondition(hook.condition as Record<string, unknown>, busEvent.payload || {});
+    const context: Record<string, unknown> = {
       payload: busEvent.payload || {},
       event: busEvent.event,
       category: busEvent.category,
@@ -328,15 +239,9 @@ class HookExecutor {
       runId: busEvent.runId || "",
       timestamp: busEvent.timestamp,
     };
-
-    const resolvedConfig = interpolateTemplates(
-      JSON.parse(JSON.stringify(hook.actionConfig)),
-      context
-    );
-
     return {
       matches: patternMatch && conditionMatch,
-      resolvedConfig,
+      resolvedConfig: interpolateTemplates(hook.actionConfig, context),
       patternMatch,
       conditionMatch,
     };

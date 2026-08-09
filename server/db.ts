@@ -1069,6 +1069,7 @@ export const ADVISORY_LOCK_NS = {
   MOD_LIFECYCLE: 0x4d4f444c, // 'MODL' — serializes one account+mod entitlement/install lifecycle transition
   RUNTIME_POOL: 0x5254504c, // 'RTPL' — serializes one runtime resource-pool claim transaction
   RUNTIME_RUN: 0x5254524e, // 'RTRN' — serializes one runtime run terminal/retry/cancel transition
+  HOOK_EXECUTION: 0x484f4f4b, // 'HOOK' — serializes one Hook's cooldown, firing budget, and execution claim
 } as const;
 
 const LIBRARY_ROOT_SENTINEL = "__LIBRARY_ROOT__";

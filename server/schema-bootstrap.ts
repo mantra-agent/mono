@@ -3372,14 +3372,23 @@ export async function runSchemaBootstrap(
         id SERIAL PRIMARY KEY,
         hook_id INTEGER NOT NULL,
         event_db_id INTEGER,
+        event_identity TEXT,
         action_type TEXT NOT NULL,
         action_config_resolved JSONB,
         status TEXT NOT NULL DEFAULT 'dispatched',
         error_message TEXT,
         duration_ms INTEGER,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMPTZ
       )
     `);
+    await pool.query(`ALTER TABLE system_hook_executions ADD COLUMN IF NOT EXISTS event_identity TEXT`);
+    await pool.query(`ALTER TABLE system_hook_executions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`);
+    await pool.query(`UPDATE system_hook_executions SET event_identity = 'legacy:' || id::text WHERE event_identity IS NULL`);
+    await pool.query(`ALTER TABLE system_hook_executions ALTER COLUMN event_identity SET NOT NULL`);
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_hook_exec_event_unique ON system_hook_executions(hook_id, event_identity)`,
+    );
     await pool.query(
       `CREATE INDEX IF NOT EXISTS idx_hook_exec_hook_created ON system_hook_executions(hook_id, created_at)`,
     );
