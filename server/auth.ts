@@ -827,6 +827,7 @@ export function setupAuth(app: Express) {
       const { password, inviteToken, name } = parsed.data;
 
       const hashed = await bcrypt.hash(password, 12);
+      const passwordSignupAt = new Date();
       let user;
 
       if (inviteToken) {
@@ -843,6 +844,7 @@ export function setupAuth(app: Express) {
           const [registeredUser] = await tx.update(users).set({
             email,
             password: hashed,
+            passwordSignupAt,
             inviteToken: null,
             inviteExpires: null,
           }).where(eq(users.id, invitedUser.id)).returning();
@@ -853,7 +855,7 @@ export function setupAuth(app: Express) {
       } else {
         if (process.env.PUBLIC_REGISTRATION_ENABLED !== "true") return res.status(403).json({ error: "An invitation is required" });
         user = await db.transaction(async tx => {
-          const [registeredUser] = await tx.insert(users).values({ email, password: hashed }).returning();
+          const [registeredUser] = await tx.insert(users).values({ email, password: hashed, passwordSignupAt }).returning();
           if (!registeredUser) throw new Error("Registration user creation produced no row");
           return registeredUser;
         });
@@ -970,6 +972,7 @@ export function setupAuth(app: Express) {
 
       const email = normalizeEmailAddress(resolution.email);
       const hashed = await bcrypt.hash(password, 12);
+      const passwordSignupAt = new Date();
 
       // 2-3. Atomically create the real user, establish its Personal identity
       //      foundation, rebind provisional grants, and materialize the recap
@@ -989,7 +992,7 @@ export function setupAuth(app: Express) {
 
         const [createdUser] = await tx
           .insert(users)
-          .values({ email, password: hashed })
+          .values({ email, password: hashed, passwordSignupAt })
           .returning();
         if (!createdUser) throw new Error("Claim user creation produced no row");
         const rebind = await claimInvitedSubjectInTransaction(tx, createdUser);

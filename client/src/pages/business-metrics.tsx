@@ -56,6 +56,12 @@ interface RangeSample {
   currentUsers: number;
   shippedPrs: number;
   meetings: number;
+  newUsers: number;
+  newUsersCoverage: {
+    status: "partial";
+    availableFrom: string | null;
+    historicalRows: "unclassified";
+  };
 }
 
 const DIRECTION_LABEL: Record<MetricDirection, string> = {
@@ -376,7 +382,7 @@ export default function BusinessMetricsPage() {
       </div>
 
       {usage ? (
-        <div className="grid grid-cols-2 gap-2 py-4 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 py-4 sm:grid-cols-3 lg:grid-cols-6">
           <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
             <div className="text-sm text-muted-foreground">Hours Used</div>
             <div className="text-lg font-semibold">{formatValue(usage.hoursUsed, "hours")}</div>
@@ -396,6 +402,10 @@ export default function BusinessMetricsPage() {
           <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
             <div className="text-sm text-muted-foreground">Meetings</div>
             <div className="text-lg font-semibold">{formatValue(usage.meetings, "")}</div>
+          </div>
+          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
+            <div className="text-sm text-muted-foreground">New Users</div>
+            <div className="text-lg font-semibold">{formatValue(usage.newUsers, "users")}</div>
           </div>
         </div>
       ) : null}

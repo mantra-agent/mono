@@ -119,6 +119,7 @@ export const users = pgTable("users", {
     .array()
     .default(sql`'{}'::text[]`),
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+  passwordSignupAt: timestamp("password_signup_at", { withTimezone: true }),
 });
 
 // Global pre-account security subjects. These rows carry no credentials,
