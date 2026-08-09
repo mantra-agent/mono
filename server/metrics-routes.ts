@@ -98,6 +98,26 @@ export function registerMetricsRoutes(app: Express): void {
   );
 
   app.get(
+    "/api/business/metrics/usage-sample",
+    requireAuth,
+    requirePermission("system:read"),
+    async (req: Request, res: Response) => {
+      try {
+        await ensureReady();
+        const start = typeof req.query.start === "string" ? new Date(req.query.start) : null;
+        const end = typeof req.query.end === "string" ? new Date(req.query.end) : null;
+        if (!start || !end) {
+          res.status(400).json({ error: "start and end are required ISO timestamps" });
+          return;
+        }
+        res.json(await metricsStorage.sampleRange(start, end));
+      } catch (error) {
+        respondError(res, "sample usage metrics", error);
+      }
+    },
+  );
+
+  app.get(
     "/api/business/metrics/:id",
     requireAuth,
     requirePermission("system:read"),

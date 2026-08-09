@@ -48,6 +48,14 @@ interface MetricsResponse {
   metrics: Metric[];
 }
 
+interface UsageSample {
+  start: string;
+  end: string;
+  hoursUsed: number;
+  activeUsers: number;
+  currentUsers: number;
+}
+
 const DIRECTION_LABEL: Record<MetricDirection, string> = {
   higher_is_better: "Higher is better",
   lower_is_better: "Lower is better",
@@ -299,6 +307,20 @@ export default function BusinessMetricsPage() {
   const { data, isLoading } = useQuery<MetricsResponse>({
     queryKey: ["/api/business/metrics"],
   });
+  const usageDayStart = useMemo(() => {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  }, []);
+  const { data: usage } = useQuery<UsageSample>({
+    queryKey: ["/api/business/metrics/usage-sample", usageDayStart],
+    queryFn: async () => {
+      const end = new Date().toISOString();
+      const url = `/api/business/metrics/usage-sample?start=${encodeURIComponent(usageDayStart)}&end=${encodeURIComponent(end)}`;
+      const response = await apiRequest("GET", url);
+      return response.json();
+    },
+    refetchInterval: 60_000,
+  });
 
   const deleteMutation = useMutation({
     mutationFn: async (metric: Metric) => {
@@ -339,7 +361,7 @@ export default function BusinessMetricsPage() {
   );
 
   return (
-    <div className="mx-auto max-w-4xl p-4">
+    <div className="p-4">
       <div className={HIERARCHY_TREE_STACK_CLASS}>
         <HierarchySearchInput
           value={query}
@@ -350,6 +372,23 @@ export default function BusinessMetricsPage() {
         />
         <CreateMetricDialog />
       </div>
+
+      {usage ? (
+        <div className="grid grid-cols-3 gap-2 py-4">
+          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
+            <div className="text-sm text-muted-foreground">Hours Used</div>
+            <div className="text-lg font-semibold">{formatValue(usage.hoursUsed, "hours")}</div>
+          </div>
+          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
+            <div className="text-sm text-muted-foreground">Active Users</div>
+            <div className="text-lg font-semibold">{formatValue(usage.activeUsers, "users")}</div>
+          </div>
+          <div className="min-w-0 overflow-hidden rounded-md bg-card p-4">
+            <div className="text-sm text-muted-foreground">Current Users</div>
+            <div className="text-lg font-semibold">{formatValue(usage.currentUsers, "users")}</div>
+          </div>
+        </div>
+      ) : null}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16 text-muted-foreground">

@@ -6,6 +6,14 @@
 - Residual/rollback: Railway's documented quota is token/workspace scoped while Mantra's durable observation counter remains per Platform Environment, so the 800 ceiling is a conservative reserve rather than a complete cross-environment allocator; provider 429 remains intentionally release-blocking until its stated retry time. Revert the request-class contract, observation reserve, publish classifications, server contract, and this record; no schema or credential migration is required.
 -->
 
+<!-- 2026-08-08 Usage range sampling:
+- Assets/data: account/user/client identifiers and canonical presence timestamps (S1); aggregate duration and user counts only leave storage.
+- Flow/boundary: authenticated presence -> account-scoped interval store -> one bounded `[start,end)` sampler -> permission-gated Metrics REST/tool consumers.
+- Failure/threat: cross-account disclosure, unbounded scans, or alternate cadence producers could compromise confidentiality, availability, or metric integrity (STRIDE information disclosure/denial of service/tampering; DATA-01/OBS-01).
+- Controls/owner: account identity derives only from the current Principal; callers cannot supply it; end is exclusive, cannot be future, and ranges are capped at 400 days; one overlap query derives all three values from indexed canonical intervals; responses contain no raw identities. Owner: Core Metrics + Realtime Presence. Severity: low residual. SLA: immediate. Status: implemented in source pending build/merge.
+- Residual/rollback: the 400-day exact interval horizon increases retained S1 timing evidence and metrics-pool scan work; retention remains bounded and rollback is the range endpoint/tool plus retention constant.
+-->
+
 <!-- 2026-08-08 Hours Used provisional projection correction:
 - Assets/data: account/user/client identifiers and presence timestamps (S1), hourly/daily union rollups, one compact current-day Metric sample, and account-scoped invalidation metadata. No content, URL, IP, user agent, or new client signal is collected.
 - Flow/boundary: existing authenticated canonical presence mutation -> metrics interval/rollup database -> one canonical period-sample upsert -> account-scoped EventBus -> existing permission- and principal-scoped Metrics query.
