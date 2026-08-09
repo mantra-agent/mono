@@ -14925,6 +14925,31 @@ const phoneCallHandler: ToolHandler = async (args) => {
   }
 };
 
+async function recordMetacognitiveObservationTool(args: Record<string, any>): Promise<ToolHandlerResult> {
+  const { isMetacognitiveObservationType, recordMetacognitiveObservation } = await import("./memory/metacognitive-observations");
+  const type = args.type;
+  if (!isMetacognitiveObservationType(type)) {
+    return { result: "Invalid type — must be one of: pattern, gap, change, connection, opportunity", error: true };
+  }
+  const content = typeof args.content === "string" ? args.content.trim() : "";
+  if (!content) {
+    return { result: "Content is required and cannot be empty", error: true };
+  }
+  try {
+    const observation = await recordMetacognitiveObservation({
+      type,
+      content,
+      sessionId: typeof args._sessionId === "string" ? args._sessionId : null,
+    });
+    toolExec.log(`observe tool: recorded provisional claim id=${observation.claimId} type=${type}`);
+    return { result: `Observation recorded (${type}): ${observation.id}` };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    toolExec.error(`observe tool failed: ${msg}`);
+    return { result: `Failed to save observation: ${msg}`, error: true };
+  }
+}
+
 const umbrellaHandlers: Record<string, ToolHandler> = {
   async scratch(args) {
     const action = args.action;
@@ -15622,30 +15647,7 @@ const umbrellaHandlers: Record<string, ToolHandler> = {
     }
     return result;
   },
-  async observe(args) {
-    const { isMetacognitiveObservationType, recordMetacognitiveObservation } = await import("./memory/metacognitive-observations");
-    const type = args.type;
-    if (!isMetacognitiveObservationType(type)) {
-      return { result: "Invalid type — must be one of: pattern, gap, change, connection, opportunity", error: true };
-    }
-    const content = typeof args.content === "string" ? args.content.trim() : "";
-    if (!content) {
-      return { result: "Content is required and cannot be empty", error: true };
-    }
-    try {
-      const observation = await recordMetacognitiveObservation({
-        type,
-        content,
-        sessionId: typeof args._sessionId === "string" ? args._sessionId : null,
-      });
-      toolExec.log(`observe tool: recorded provisional claim id=${observation.claimId} type=${type}`);
-      return { result: `Observation recorded (${type}): ${observation.id}` };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toolExec.error(`observe tool failed: ${msg}`);
-      return { result: `Failed to save observation: ${msg}`, error: true };
-    }
-  },
+  observe: recordMetacognitiveObservationTool,
   async system(args) {
     const action = args.action as string;
     if (!action) return { result: "Missing action parameter", error: true };
@@ -17172,7 +17174,7 @@ const cognitionTools: Record<string, ToolHandler> = {
     // to existing handlers so validation, provenance, and profile permissions stay
     // at their deterministic per-action authority boundaries.
     if (action === "observe") {
-      return umbrellaHandlers.observe({ ...args, type: args.observation_type, content: args.observation });
+      return recordMetacognitiveObservationTool({ ...args, type: args.observation_type, content: args.observation });
     }
     if (action === "get_profile" || action === "update_profile") {
       return utilityTools.agent_profile({ ...args, action: action === "get_profile" ? "get" : "update" });
