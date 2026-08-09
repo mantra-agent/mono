@@ -228,6 +228,8 @@ export interface ChatMessage {
   turnId?: string;
   /** Structural visibility discriminant — 'diagnostic' messages are hidden from chat */
   visibility?: "chat" | "diagnostic";
+  /** Immutable model-derived semantic delta for this completed assistant turn. */
+  historicalSummary?: string;
 }
 
 export type { ChildSessionBlockMeta, CrossSessionMeta };
@@ -1003,6 +1005,19 @@ function ThinkingNarrative({ step }: { step: ExecutionStep }) {
       ) : isActive ? (
         <ActiveThinkingStatus startTime={step.timestamp} />
       ) : null}
+    </div>
+  );
+}
+
+function HistoricalSummaryRow({ summary, messageId }: { summary: string; messageId: string }) {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-2 px-1.5 py-1 text-xs text-success/80"
+      data-testid={`historical-summary-${messageId}`}
+    >
+      <Brain className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span className="shrink-0 font-medium">Turn summary</span>
+      <span className="truncate italic text-success/70" title={summary}>{summary}</span>
     </div>
   );
 }
@@ -3195,6 +3210,9 @@ export const ChatTurn = memo(function ChatTurn({
             ))}
           </SuppressedEmailDraftsContext.Provider>
         </div>
+        {layer === 4 && message.assistantState === "settled" && message.historicalSummary?.trim() && (
+          <HistoricalSummaryRow summary={message.historicalSummary.trim()} messageId={message.id} />
+        )}
         <div
           className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground/50 text-left"
           data-testid={`text-message-time-${message.id}`}

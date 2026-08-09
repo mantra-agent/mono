@@ -751,6 +751,15 @@ export async function registerChatRoutes(app: Express): Promise<void> {
         return res.status(404).json({ error: "Session not found" });
       }
       const { session, messages } = snapshot;
+      const assistantMessageIds = messages
+        .filter((message) => message.role === "assistant" && message.assistantState === "settled")
+        .map((message) => message.id);
+      const { getCompletedTurnSummaryMap } = await import("../../historical-continuity");
+      const turnSummaryByMessageId = await getCompletedTurnSummaryMap(id, assistantMessageIds);
+      const projectedMessages = messages.map((message) => ({
+        ...message,
+        historicalSummary: turnSummaryByMessageId.get(message.id),
+      }));
       const TERMINAL_PLAN_STATUSES = ["completed", "completed_with_failures", "failed", "aborted"];
       const planProjection = {
         id: planExecutions.id,
@@ -777,7 +786,7 @@ export async function registerChatRoutes(app: Express): Promise<void> {
           .limit(1)
           .then(rows => rows[0] ?? null),
       ]);
-      res.json({ ...session, messages, activePlan, reviewPlan });
+      res.json({ ...session, messages: projectedMessages, activePlan, reviewPlan });
     } catch (error) {
       chatLog.error("Error fetching session:", error);
       res.status(500).json({ error: "Failed to fetch session" });

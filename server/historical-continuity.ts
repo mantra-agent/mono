@@ -206,6 +206,26 @@ export async function renderHistoryProjection(tokenBudget = HISTORY_TOKEN_BUDGET
   return header + sections.join("\n");
 }
 
+export async function getCompletedTurnSummaryMap(sessionId: string, assistantMessageIds: string[]): Promise<Map<string, string>> {
+  const principal = requireCurrentUserPrincipal();
+  if (!assistantMessageIds.length) return new Map();
+  const result = await db.execute(sql`
+    SELECT assistant_message_id, summary
+    FROM historical_continuity_entries
+    WHERE owner_user_id=${principal.userId}
+      AND account_id=${principal.accountId}
+      AND vault_id = ANY(${principal.visibleVaultIds ?? []}::text[])
+      AND session_id=${sessionId}
+      AND level='turn'
+      AND assistant_message_id = ANY(${assistantMessageIds}::text[])
+  `);
+  return new Map(
+    (result.rows as Array<Record<string, unknown>>)
+      .filter((row) => typeof row.assistant_message_id === "string" && typeof row.summary === "string")
+      .map((row) => [String(row.assistant_message_id), String(row.summary)]),
+  );
+}
+
 export async function getTurnSummariesForCompaction(sessionId: string, assistantMessageIds: string[]): Promise<string | null> {
   const principal = requireCurrentUserPrincipal();
   if (!assistantMessageIds.length) return null;
