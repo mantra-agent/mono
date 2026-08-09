@@ -18,7 +18,8 @@ import {
   ownedInsertValues,
   type ScopeColumns,
 } from "../scoped-storage";
-import { hasActiveBuildAccess } from "./build-access";
+import { hasActiveModAccess } from "./mod-access";
+const hasActiveBuildAccess = (principal: Principal) => hasActiveModAccess(principal, "build");
 
 const observationScope: ScopeColumns = {
   scope: platformDeploymentObservations.scope,

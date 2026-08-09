@@ -27,7 +27,8 @@ import {
   writablePlatform,
 } from "../platforms/platform-access";
 import { libraryPages } from "@shared/models/info";
-import { requireActiveBuild } from "../mods/build-route-access";
+import { requireModRouteGroup } from "../mods/mod-access";
+const requireActiveBuild = requireModRouteGroup("build.platforms");
 
 const log = createLogger("PlatformRoutes");
 const providerConnectionScopeColumns = { scope: providerConnections.scope, ownerUserId: providerConnections.ownerUserId, accountId: providerConnections.accountId };

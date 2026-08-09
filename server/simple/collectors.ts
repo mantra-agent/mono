@@ -1633,8 +1633,8 @@ export async function collectSimpleContext(): Promise<SimpleContextBundle> {
   try {
     const principal = requireCurrentPrincipal();
     if (principal.actorType === "user") {
-      const { hasActiveWellnessAccess } = await import("../mods/wellness-access");
-      if (await hasActiveWellnessAccess(principal)) {
+      const { hasActiveModAccess } = await import("../mods/mod-access");
+      if (await hasActiveModAccess(principal, "wellness")) {
         const now = new Date();
         const activities = await queryActivityStatus();
         const visibleActivities = activities

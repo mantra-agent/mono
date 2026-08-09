@@ -9,8 +9,7 @@ import { inArray } from "drizzle-orm";
 import { listSkillPersonaConfiguration, setSkillPersonaPreference } from "./skill-persona-service";
 import { requireCurrentPrincipal } from "./principal-context";
 import { combineWithVisibleScope } from "./scoped-storage";
-import { hasActiveBuildAccess } from "./mods/build-access";
-import { BUILD_OWNED_SKILL_NAME_SET } from "./skill-identities";
+import { ownerOfExecutableContribution, hasActiveModAccess } from "./mods/mod-access";
 
 const libraryPageScopeColumns = {
   scope: libraryPages.scope,
@@ -36,26 +35,18 @@ function stripSkillForExport(skill: Skill & { references?: SkillReference[]; tru
   return stripped;
 }
 
-const BUILD_SKILL_NAMES = BUILD_OWNED_SKILL_NAME_SET;
-/** Wellness-owned Skills — projection stops when Wellness is inactive. */
-const WELLNESS_SKILL_NAMES = new Set(["reflect", "affirmations", "coach"]);
-
 async function filterModOwnedSkills<T extends { name: string }>(skills: T[]): Promise<T[]> {
   const principal = requireCurrentPrincipal();
-  let next = skills;
-  if (principal.actorType !== "user") {
-    return next.filter(
-      (skill) => !BUILD_SKILL_NAMES.has(skill.name) && !WELLNESS_SKILL_NAMES.has(skill.name),
-    );
+  const owners = new Map<string, boolean>();
+  for (const skill of skills) {
+    const owner = ownerOfExecutableContribution("skill", skill.name);
+    if (!owner || owners.has(owner)) continue;
+    owners.set(owner, principal.actorType === "user" && await hasActiveModAccess(principal, owner));
   }
-  if (!(await hasActiveBuildAccess(principal))) {
-    next = next.filter((skill) => !BUILD_SKILL_NAMES.has(skill.name));
-  }
-  const { hasActiveWellnessAccess } = await import("./mods/wellness-access");
-  if (!(await hasActiveWellnessAccess(principal))) {
-    next = next.filter((skill) => !WELLNESS_SKILL_NAMES.has(skill.name));
-  }
-  return next;
+  return skills.filter((skill) => {
+    const owner = ownerOfExecutableContribution("skill", skill.name);
+    return !owner || owners.get(owner) === true;
+  });
 }
 
 function safeItemName(item: unknown): string {

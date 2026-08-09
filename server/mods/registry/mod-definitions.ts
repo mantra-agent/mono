@@ -15,6 +15,8 @@ import {
   skillRef,
   widget,
   workflowRef,
+  toolRef,
+  serverRouteGroupRef,
 } from "./contribution-builders";
 import { actionsForOwner } from "./action-catalog";
 
@@ -34,6 +36,8 @@ const planning: ModDefinition = {
   compatibility: { minimumCoreVersion: MIN_CORE },
   requiresCore: ["agent", "automation", "references", "ui-composition"],
   contributions: {
+    serverRouteGroups: [serverRouteGroupRef("planning.routes.scenarios", "planning.scenarios")],
+    tools: [toolRef("planning.tool.scenarios", "scenarios")],
     clientRoutes: [
       clientRoute("planning.route.goals", "/goals", "goals"),
       clientRoute("planning.route.goal-detail", "/goals/:id", "goal-detail"),
@@ -94,8 +98,30 @@ const build: ModDefinition = {
       integration("build.integration.expo", "expo", "available", ["mobile-build"]),
       integration("build.integration.sentry", "sentry", "available", ["error-tracking"]),
     ],
+    serverRouteGroups: [
+      serverRouteGroupRef("build.routes.platforms", "build.platforms"),
+      serverRouteGroupRef("build.routes.issues", "build.issues"),
+      serverRouteGroupRef("build.routes.db-sync", "build.db-sync"),
+      serverRouteGroupRef("build.routes.railway", "build.railway"),
+    ],
+    tools: [
+      toolRef("build.tool.code", "code"),
+      toolRef("build.tool.git", "git"),
+      toolRef("build.tool.platforms", "platforms"),
+      toolRef("build.tool.railway", "railway"),
+      toolRef("build.tool.sentry", "sentry"),
+      toolRef("build.tool.expo", "expo"),
+      toolRef("build.tool.npm-dependencies", "npm_dependencies"),
+      toolRef("build.tool.regression", "regression"),
+      toolRef("build.tool.issues", "issues"),
+    ],
     workflows: [workflowRef("build.workflow.build-v1", "build-v1")],
-    skills: [skillRef("build.skill.self-heal", "self-heal")],
+    skills: [
+      skillRef("build.skill.self-heal", "self-heal"),
+      skillRef("build.skill.sentry", "sentry"),
+      skillRef("build.skill.guard", "guard"),
+      skillRef("build.skill.regression", "regression"),
+    ],
     timers: [
       timerTemplateRef("build.timer.reliability-sentinel-30m", "build-reliability-sentinel-30m"),
       timerTemplateRef("build.timer.security-sentinel-weekly", "build-security-sentinel-weekly"),
@@ -124,6 +150,8 @@ const business: ModDefinition = {
   requiresCore: ["agent", "automation", "references", "ui-composition"],
   recommendsMods: ["planning"],
   contributions: {
+    serverRouteGroups: [serverRouteGroupRef("business.routes.api", "business.api")],
+    tools: [toolRef("business.tool.jobs", "jobs")],
     clientRoutes: [
       clientRoute("business.route.business-model", "/business/model", "business-model", { requiredPermissions: ["system:read"] }),
       clientRoute("business.route.advantage", "/business/advantage", "business-advantage"),
@@ -157,6 +185,16 @@ const wellness: ModDefinition = {
   requiresCore: ["agent", "automation", "integration-custody", "ui-composition"],
   recommendsMods: ["planning"],
   contributions: {
+    serverRouteGroups: [
+      serverRouteGroupRef("wellness.routes.api", "wellness.api"),
+      serverRouteGroupRef("wellness.routes.oura", "wellness.oura"),
+    ],
+    tools: [toolRef("wellness.tool.health", "health")],
+    skills: [
+      skillRef("wellness.skill.reflect", "reflect"),
+      skillRef("wellness.skill.affirmations", "affirmations"),
+      skillRef("wellness.skill.coach", "coach"),
+    ],
     clientRoutes: [clientRoute("wellness.route.wellness", "/wellness", "wellness")],
     navigation: [nav("wellness.nav.wellness", "Tools", "Wellness", "Activity", "navigation.wellness.open", "wellness.route.wellness", 8)],
     widgets: [widget("wellness.widget.wellness", "home.primary", "wellness", "wellness", 4)],
@@ -172,7 +210,7 @@ const wellness: ModDefinition = {
     ],
     integrations: [integration("wellness.integration.oura", "oura", "available", ["health-metrics"])],
     // Cadence Timers materialize through wellness-managed-resources under installation ownership.
-    timerTemplates: [
+    timers: [
       timerTemplateRef("wellness.timer.weekly-reflection", "weekly-reflection"),
       timerTemplateRef("wellness.timer.monthly-reflection", "monthly-reflection"),
       timerTemplateRef("wellness.timer.reflect-daily", "reflect-daily"),
@@ -195,6 +233,8 @@ const network: ModDefinition = {
   compatibility: { minimumCoreVersion: MIN_CORE },
   requiresCore: ["agent", "references", "notifications", "ui-composition"],
   contributions: {
+    serverRouteGroups: [serverRouteGroupRef("network.routes.companies", "network.companies")],
+    tools: [toolRef("network.tool.companies", "companies")],
     clientRoutes: [
       clientRoute("network.route.people", "/people", "people"),
       clientRoute("network.route.person-detail", "/people/:id", "people"),
