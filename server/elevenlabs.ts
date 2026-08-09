@@ -4,6 +4,7 @@ import { getSecretSync, onSecretChange } from "./secrets-store";
 import crypto from "crypto";
 import { HIGH_QUALITY_SCRIBE_POLICY } from "./voice/stt";
 import { buildLanguagePresets, ELEVENLABS_ADDITIONAL_LANGUAGE_CODES } from "./voice/provider-system-tools";
+import { providerFetch, readBoundedProviderBody } from "./integrations/provider-http";
 
 const log = createLogger("ElevenLabs");
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
@@ -329,7 +330,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   };
 
   const reqStart = Date.now();
-  const res = await fetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
+  const res = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
     method: "PATCH",
     headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -337,7 +338,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
 
   const patchElapsed = Date.now() - reqStart;
   if (!res.ok) {
-    const error = await res.text();
+    const error = await readBoundedProviderBody(res);
     log.error(`setupAgentCallbackUrl: step 5/6 — PATCH FAILED status=${res.status} elapsed=${patchElapsed}ms body: ${error} (total=${Date.now() - setupStart}ms)`);
     throw new Error(`Failed to setup agent callback URL: ${res.status} ${error}`);
   }
@@ -371,7 +372,7 @@ export async function setupAgentCallbackUrl(agentId: string): Promise<void> {
   log.debug(`setupAgentCallbackUrl: step 6/6 — GET verification`);
   try {
     const getStart = Date.now();
-    const getRes = await fetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
+    const getRes = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
       headers: { "xi-api-key": apiKey },
     });
     const getElapsed = Date.now() - getStart;
@@ -490,7 +491,7 @@ export async function getSignedUrl(agentId: string): Promise<string> {
   const fetchStart = Date.now();
   log.debug(`fetching signed URL for agent=${agentId}`);
 
-  const res = await fetch(
+  const res = await providerFetch(
     `${ELEVENLABS_API_BASE}/convai/conversation/get-signed-url?agent_id=${agentId}`,
     {
       headers: { "xi-api-key": apiKey },
@@ -501,7 +502,7 @@ export async function getSignedUrl(agentId: string): Promise<string> {
   log.debug(`signed URL response status=${res.status} elapsed=${elapsed}ms`);
 
   if (!res.ok) {
-    const error = await res.text();
+    const error = await readBoundedProviderBody(res);
     log.error(`signed URL error body: ${error}`);
     throw new Error(`Failed to get signed URL: ${res.status} ${error}`);
   }
@@ -523,12 +524,12 @@ export interface ElevenLabsVoice {
 export async function listVoices(): Promise<ElevenLabsVoice[]> {
   const apiKey = await getCredentials();
 
-  const res = await fetch(`${ELEVENLABS_API_BASE}/voices`, {
+  const res = await providerFetch(`${ELEVENLABS_API_BASE}/voices`, {
     headers: { "xi-api-key": apiKey },
   });
 
   if (!res.ok) {
-    const error = await res.text();
+    const error = await readBoundedProviderBody(res);
     throw new Error(`Failed to list voices: ${res.status} ${error}`);
   }
 
@@ -543,27 +544,17 @@ export async function listVoices(): Promise<ElevenLabsVoice[]> {
   }));
 }
 
-/**
- * Reapply the v2 custom-LLM config. Called at boot to ensure the agent
- * is in custom-LLM mode with the correct callback URL and TTS settings.
- * Extracted from voice-v3/agent-config.ts during the single-engine cleanup.
- */
-export async function provisionV2Agent(agentId: string): Promise<void> {
-  await setupAgentCallbackUrl(agentId);
-  log.debug(`provisionV2Agent: agent=${agentId} configured for custom-LLM mode`);
-}
-
 export async function getAgentConfig(agentId: string): Promise<Record<string, unknown>> {
   const apiKey = await getCredentials();
   const fetchStart = Date.now();
   log.debug(`fetching agent config for agent=${agentId}`);
-  const res = await fetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
+  const res = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
     headers: { "xi-api-key": apiKey },
   });
   const elapsed = Date.now() - fetchStart;
   log.debug(`agent config response status=${res.status} elapsed=${elapsed}ms`);
   if (!res.ok) {
-    const error = await res.text();
+    const error = await readBoundedProviderBody(res);
     log.error(`agent config error body: ${error}`);
     throw new Error(`Failed to get agent config: ${res.status} ${error}`);
   }
@@ -619,7 +610,7 @@ export async function createInstantVoiceClone(input: InstantVoiceCloneRequest): 
 
   const start = Date.now();
   log.log(`createInstantVoiceClone: uploading ${input.samples.length} sample(s) name=${name}`);
-  const res = await fetch(`${ELEVENLABS_API_BASE}/voices/add`, {
+  const res = await providerFetch(`${ELEVENLABS_API_BASE}/voices/add`, {
     method: "POST",
     headers: { "xi-api-key": apiKey },
     body: form,
@@ -627,7 +618,7 @@ export async function createInstantVoiceClone(input: InstantVoiceCloneRequest): 
   const elapsed = Date.now() - start;
 
   if (!res.ok) {
-    const error = await res.text();
+    const error = await readBoundedProviderBody(res);
     log.error(`createInstantVoiceClone failed status=${res.status} elapsed=${elapsed}ms body=${error}`);
     throw new Error(`Failed to create Instant Voice Clone: ${res.status} ${error}`);
   }
@@ -642,7 +633,7 @@ export async function createInstantVoiceClone(input: InstantVoiceCloneRequest): 
 
 export async function updateAgentVoice(agentId: string, voiceId: string): Promise<void> {
   const apiKey = await getCredentials();
-  const res = await fetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
+  const res = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
     method: "PATCH",
     headers: {
       "xi-api-key": apiKey,
@@ -658,7 +649,7 @@ export async function updateAgentVoice(agentId: string, voiceId: string): Promis
   });
 
   if (!res.ok) {
-    const error = await res.text();
+    const error = await readBoundedProviderBody(res);
     throw new Error(`Failed to update agent voice: ${res.status} ${error}`);
   }
 
@@ -668,7 +659,7 @@ export async function updateAgentVoice(agentId: string, voiceId: string): Promis
 export async function getAgentStatus(agentId: string): Promise<boolean> {
   try {
     const apiKey = await getCredentials();
-    const res = await fetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
+    const res = await providerFetch(`${ELEVENLABS_API_BASE}/convai/agents/${agentId}`, {
       headers: { "xi-api-key": apiKey },
     });
     return res.ok;

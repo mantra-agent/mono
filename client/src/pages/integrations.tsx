@@ -271,9 +271,9 @@ function WebhookBaseUrlSection() {
         </Label>
       </div>
       <p className="text-xs text-muted-foreground" data-testid="text-webhook-base-url-description">
-        Public URL ElevenLabs uses to call back into this server (custom-LLM for v2/v2.5,
-        tool webhooks for v3). Override the auto-detected URL when testing voice in
-        development against a known-reachable address. Leave blank to use the default.
+        Public URL ElevenLabs uses for the custom-LLM callback. Override the auto-detected
+        URL when testing voice in development against a known-reachable address. Leave blank
+        to use the default.
       </p>
       <Input
         id="input-webhook-base-url"

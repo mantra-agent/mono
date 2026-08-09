@@ -7,6 +7,7 @@ import { eventBus } from "../event-bus";
 import { createLogger } from "../log";
 import { getSetting, setSetting } from "../system-settings";
 import { requireAuth } from "../auth";
+import { requirePermission } from "../permissions";
 import { getSecretSync } from "../secrets-store";
 
 const voiceLog = createLogger("VoiceConfig");
@@ -87,6 +88,15 @@ export async function getShowExpressionTags(): Promise<boolean> {
 }
 
 export async function registerVoiceConfigRoutes(app: Express) {
+  app.use("/api/elevenlabs", requireAuth, (req, res, next) => {
+    const permission = req.method === "GET" ? "system:read" : "system:write";
+    return requirePermission(permission)(req, res, next);
+  });
+  app.use("/api/pronunciation", requireAuth, requirePermission("system:read"));
+  app.post("/api/pronunciation", requirePermission("system:write"));
+  app.put("/api/pronunciation", requirePermission("system:write"));
+  app.delete("/api/pronunciation", requirePermission("system:write"));
+
   app.get("/api/elevenlabs/voices", async (_req, res) => {
     try {
       const { listVoices } = await import("../elevenlabs");

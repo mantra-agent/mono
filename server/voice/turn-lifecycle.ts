@@ -8,7 +8,7 @@
  *   4. On error, surface a diagnostic and ensure the response closes.
  *
  * This module is the only entry point the route layer should call when the
- * active engine is v2.5.
+ * active engine is the single custom-LLM voice engine.
  */
 import type { Request, Response } from "express";
 import { createLogger } from "../log";

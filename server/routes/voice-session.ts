@@ -216,8 +216,8 @@ export async function registerVoiceSessionRoutes(app: Express) {
       return res.status(401).json({ error: "Invalid callback capability" });
     }
     try {
-      const { handleV25CustomLLM } = await import("../voice");
-      await handleV25CustomLLM(req, res);
+      const { handleCustomLLM } = await import("../voice");
+      await handleCustomLLM(req, res);
     } catch (err: unknown) {
       const error = normalizeVoiceSessionError(
         err,
@@ -420,7 +420,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
     if (level === "warn") voiceLog.warn(message); else voiceLog.log(message);
   }
 
-  app.get("/api/voice/diagnostics/recent", async (_req, res) => {
+  app.get("/api/voice/diagnostics/recent", requireAuth, async (_req, res) => {
     try {
       const { readLogFile, getCurrentLogFile } = await import("../log");
       const currentFile = getCurrentLogFile();
@@ -985,7 +985,7 @@ export async function registerVoiceSessionRoutes(app: Express) {
     }
   });
 
-  app.post("/api/voice/sessions/save", async (req, res) => {
+  app.post("/api/voice/sessions/save", requireAuth, async (req, res) => {
     try {
       const transcript = Array.isArray(req.body.transcript) ? req.body.transcript : [];
       const toolCalls = Array.isArray(req.body.toolCalls) ? req.body.toolCalls : [];
@@ -1078,8 +1078,11 @@ export async function registerVoiceSessionRoutes(app: Express) {
     }
   });
 
-  app.get("/api/voice/context", async (_req, res) => {
+  app.get("/api/voice/context", requireAuth, async (req, res) => {
     try {
+      const chatSessionId = typeof req.query.chatSessionId === "string" && req.query.chatSessionId.trim()
+        ? req.query.chatSessionId.trim()
+        : undefined;
       const { assembleContext } = await import("../agent-context");
       const { getToolSchemas } = await import("../tool-registry");
       const { filterToolSchemasForAuthority } = await import("../agent-authority");
@@ -1088,8 +1091,8 @@ export async function registerVoiceSessionRoutes(app: Express) {
       const assembled = await assembleContext({
         profile: "voice",
         toolDefinitions: toolDefs,
-        sessionId: chatSessionId || undefined,
-        contextBuildId: `voice-context-preview:${chatSessionId ?? voiceSession.id}`,
+        sessionId: chatSessionId,
+        contextBuildId: `voice-context-preview:${chatSessionId ?? "sessionless"}`,
       });
       const estimatedTokens = Math.ceil(assembled.systemPrompt.length / 4);
       res.json({

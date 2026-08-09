@@ -381,16 +381,16 @@ Real-time voice database work uses the reserved `voice` lane. Install it before 
   - `voice/tool-middleware.ts` — Voice-specific tool middleware (session.end, park_idea, journal, correlation IDs)
   - `voice/thinking-filter.ts` — Strips `<thinking>` blocks from voice streaming output
   - `voice/turn-context.ts` — `TurnContext` factory for per-turn state
-  - `voice/index.ts` — Public exports (`voiceEngine`, `handleV25CustomLLM`, diagnostics, transcript)
+  - `voice/index.ts` — Public exports (`voiceEngine`, `handleCustomLLM`, diagnostics, transcript) for the single custom-LLM engine
   - `voice/engine.ts` — Engine handle, delegates to `turn-lifecycle.ts`
   - `voice/turn-lifecycle.ts` — Request entry, SSE instrumentation, diagnostics
-  - `voice/sse-stream.ts` — Response SSE instrumentation (v2.5)
+  - `voice/sse-stream.ts` — Response SSE instrumentation
   - `voice/diagnostics.ts` — WS routing + thinking persistence
   - `voice/transcript.ts` — Interim/final transcript fan-out
-  - `voice/session-state.ts` — Shim for v2.5 callers (delegates to session.ts)
+  - `voice/session-state.ts` — Compatibility type re-export during call-site migration
 - `voice-llm.ts` — Orchestration hub (~1500 lines): handleCustomLLM, executeVoiceTurn, turn lifecycle. Imports from voice/ submodules.
 - `tool-execution.ts` — Unified tool execution pipeline with middleware chain and idempotency cache
-- `elevenlabs.ts` — ElevenLabs API client (`setupAgentCallbackUrl`, `getSignedUrl`, `fetchAndCacheVoiceId`, `provisionV2Agent`)
+- `elevenlabs.ts` — Bounded ElevenLabs provider adapter (`setupAgentCallbackUrl`, `getSignedUrl`, `fetchAndCacheVoiceId`, synthesis/configuration operations)
 - `routes/voice-session.ts` — `/api/voice/sessions/start` and `/api/voice/sessions/end`
 - `routes/voice-engine.ts` — Webhook base URL override routes
 - `cli-sdk-adapter.ts` — CLI SDK streaming + voice pre-warming (`preWarmVoiceCli`, `claimVoiceWarmHandle`, `cleanupVoiceWarmHandle`)
