@@ -5994,6 +5994,7 @@ export const bridgeHandlers: Record<string, ToolHandler> = {
       if (!start) return { result: "Missing start time. Provide an ISO 8601 datetime.", error: true };
 
       const { getTimezone } = await import("./timezone");
+      const { requireCurrentPrincipal } = await import("./principal-context");
       const { meetingDraftStorage } = await import("./meeting-draft-storage");
       const principal = requireCurrentPrincipal();
       const attendees = Array.isArray(args.attendees)
