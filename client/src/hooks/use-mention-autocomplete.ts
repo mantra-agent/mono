@@ -23,6 +23,10 @@ export type ReferenceTrigger = {
 /**
  * Detect a mention trigger (`@` or `#`) from the text before the cursor.
  * When both characters are present, the one closest to the cursor wins.
+ *
+ * Spaces are part of the query so multi-word people/labels stay open
+ * ("@Michael Miller", multi-word tasks). Newlines, backticks, and `type:`
+ * completion still end the trigger.
  */
 export function findReferenceTrigger(value: string, cursor: number): ReferenceTrigger | null {
   const beforeCursor = value.slice(0, cursor);
@@ -33,7 +37,8 @@ export function findReferenceTrigger(value: string, cursor: number): ReferenceTr
     const beforeChar = pos === 0 ? " " : beforeCursor[pos - 1];
     if (!/\s|[(\[{]/.test(beforeChar)) continue;
     const query = beforeCursor.slice(pos + 1);
-    if (/\s|[`]/.test(query)) continue;
+    // Allow ordinary spaces for multi-word labels; end on hard breaks only.
+    if (/[\n\r`]/.test(query)) continue;
     if (query.includes(":")) continue;
     const candidate: ReferenceTrigger = { start: pos, query, triggerChar: char };
     if (!best || pos > best.start) best = candidate;
