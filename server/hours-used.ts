@@ -9,8 +9,9 @@ import { upsertInternalPeriodSample } from "./metrics-storage";
 
 const log = createLogger("HoursUsed");
 const LEASE_TAIL_MS = 45_000;
-const RAW_RETENTION_DAYS = 14;
+const RAW_RETENTION_DAYS = 400;
 const ROLLUP_RETENTION_DAYS = 400;
+export const USAGE_SAMPLE_MAX_DAYS = 400;
 const HOUR_MS = 60 * 60 * 1000;
 const ROLLUP_INTERVAL_MS = 60 * 1000;
 let schemaReady: Promise<void> | null = null;
@@ -24,6 +25,35 @@ export type HoursUsedPresenceObservation = {
   lastSeenAt: Date;
   active: boolean;
 };
+
+export type UsageRangeSample = {
+  start: string;
+  end: string;
+  hoursUsed: number;
+  activeUsers: number;
+  currentUsers: number;
+};
+
+const USAGE_METRIC_DEFINITIONS = [
+  {
+    key: "hours-used",
+    name: "Hours Used",
+    unit: "hours",
+    description: "Connected time unioned per authenticated user across tabs and devices.",
+  },
+  {
+    key: "active-users",
+    name: "Active Users",
+    unit: "users",
+    description: "Distinct authenticated users connected at any point in the sampled range.",
+  },
+  {
+    key: "current-users",
+    name: "Current Users",
+    unit: "users",
+    description: "Authenticated users connected at the end of the sampled range.",
+  },
+] as const;
 
 export async function ensureHoursUsedSchema(): Promise<void> {
   if (!schemaReady) {
@@ -110,7 +140,7 @@ export function observeHoursUsedPresence(observation: HoursUsedPresenceObservati
   });
 }
 
-async function ensureHoursUsedMetric(accountId: string): Promise<{ id: string; ownerUserId: string; vaultId: string | null } | null> {
+async function ensureUsageMetrics(accountId: string): Promise<Map<string, { id: string; ownerUserId: string; vaultId: string | null }>> {
   const accountRows = await db.execute(sql`
     SELECT a.owner_user_id, u.active_vault_id
     FROM accounts a
@@ -120,31 +150,91 @@ async function ensureHoursUsedMetric(accountId: string): Promise<{ id: string; o
   `);
   const rows = Array.isArray(accountRows) ? accountRows : (accountRows as unknown as { rows?: unknown[] }).rows ?? [];
   const owner = rows[0] as { owner_user_id?: string; active_vault_id?: string | null } | undefined;
-  if (!owner?.owner_user_id) return null;
-  const id = `metric_hours_used_${accountId}`;
-  await db.execute(sql`
-    INSERT INTO metrics (
-      id, name, slug, description, unit, direction, sample_period, adapter_kind,
-      adapter_config, status, scope, owner_user_id, account_id, vault_id, created_by_user_id
-    )
-    SELECT
-      ${id}, 'Hours Used', 'hours-used',
-      'Total hours authenticated users are connected to Mantra, unioned per user across tabs and devices.',
-      'hours', 'higher_is_better', 'daily', 'internal', ${JSON.stringify({ key: "hours-used" })}::jsonb,
-      'active', 'user', ${owner.owner_user_id}, ${accountId}, ${owner.active_vault_id ?? null}, ${owner.owner_user_id}
-    WHERE NOT EXISTS (
-      SELECT 1 FROM metrics WHERE account_id = ${accountId} AND slug = 'hours-used'
-    )
-    ON CONFLICT DO NOTHING
-  `);
-  const [metric] = await db.select({
+  if (!owner?.owner_user_id) return new Map();
+
+  for (const definition of USAGE_METRIC_DEFINITIONS) {
+    const id = `metric_${definition.key.replace(/-/g, "_")}_${accountId}`;
+    await db.execute(sql`
+      INSERT INTO metrics (
+        id, name, slug, description, unit, direction, sample_period, adapter_kind,
+        adapter_config, status, scope, owner_user_id, account_id, vault_id, created_by_user_id
+      )
+      SELECT
+        ${id}, ${definition.name}, ${definition.key}, ${definition.description}, ${definition.unit},
+        'higher_is_better', 'custom', 'internal', ${JSON.stringify({ key: definition.key })}::jsonb,
+        'active', 'user', ${owner.owner_user_id}, ${accountId}, ${owner.active_vault_id ?? null}, ${owner.owner_user_id}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM metrics WHERE account_id = ${accountId} AND slug = ${definition.key}
+      )
+      ON CONFLICT DO NOTHING
+    `);
+  }
+
+  const metricRows = await db.select({
     id: metrics.id,
+    slug: metrics.slug,
     ownerUserId: metrics.ownerUserId,
     vaultId: metrics.vaultId,
   }).from(metrics)
-    .where(sql`${metrics.accountId} = ${accountId} AND ${metrics.slug} = 'hours-used'`)
-    .limit(1);
-  return metric?.ownerUserId ? { ...metric, ownerUserId: metric.ownerUserId } : null;
+    .where(sql`${metrics.accountId} = ${accountId} AND ${metrics.slug} IN ('hours-used', 'active-users', 'current-users')`);
+
+  return new Map(metricRows.flatMap((metric) => metric.ownerUserId
+    ? [[metric.slug, { id: metric.id, ownerUserId: metric.ownerUserId, vaultId: metric.vaultId }]]
+    : []));
+}
+
+function validateUsageRange(start: Date, end: Date): void {
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+    throw Object.assign(new Error("start and end must be valid ISO timestamps"), { status: 400 });
+  }
+  if (end <= start) {
+    throw Object.assign(new Error("end must be after start"), { status: 400 });
+  }
+  if (end.getTime() - start.getTime() > USAGE_SAMPLE_MAX_DAYS * 24 * HOUR_MS) {
+    throw Object.assign(new Error(`range cannot exceed ${USAGE_SAMPLE_MAX_DAYS} days`), { status: 400 });
+  }
+  if (end.getTime() > Date.now() + 60_000) {
+    throw Object.assign(new Error("end cannot be in the future"), { status: 400 });
+  }
+}
+
+export async function sampleUsageRange(accountId: string, start: Date, end: Date): Promise<UsageRangeSample> {
+  validateUsageRange(start, end);
+  await ensureHoursUsedSchema();
+  const rows = await metricsDb.execute(sql`
+    WITH bounded AS (
+      SELECT user_id,
+        tstzrange(
+          GREATEST(connected_at, ${start}),
+          LEAST(COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')), ${end}),
+          '[)'
+        ) AS span,
+        connected_at,
+        COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')) AS effective_end
+      FROM hours_used_intervals
+      WHERE account_id = ${accountId}
+        AND connected_at < ${end}
+        AND COALESCE(disconnected_at, last_seen_at + (${LEASE_TAIL_MS} * interval '1 millisecond')) > ${start}
+    ), merged AS (
+      SELECT user_id, unnest(range_agg(span)) AS span
+      FROM bounded
+      WHERE NOT isempty(span)
+      GROUP BY user_id
+    )
+    SELECT
+      COALESCE((SELECT SUM(EXTRACT(EPOCH FROM (upper(span) - lower(span)))) FROM merged), 0) AS seconds_used,
+      COALESCE((SELECT COUNT(DISTINCT user_id) FROM bounded), 0) AS active_users,
+      COALESCE((SELECT COUNT(DISTINCT user_id) FROM bounded WHERE connected_at < ${end} AND effective_end >= ${end}), 0) AS current_users
+  `);
+  const resultRows = Array.isArray(rows) ? rows : (rows as unknown as { rows?: unknown[] }).rows ?? [];
+  const row = resultRows[0] as { seconds_used?: string | number; active_users?: string | number; current_users?: string | number } | undefined;
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    hoursUsed: Number(row?.seconds_used ?? 0) / 3600,
+    activeUsers: Number(row?.active_users ?? 0),
+    currentUsers: Number(row?.current_users ?? 0),
+  };
 }
 
 async function rollupCompletedHours(now = new Date()): Promise<void> {
@@ -198,7 +288,7 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
     account_id: string; period_start: Date; period_end: Date; seconds_used: number;
   }>;
   for (const day of days) {
-    const metric = await ensureHoursUsedMetric(day.account_id);
+    const metric = (await ensureUsageMetrics(day.account_id)).get("hours-used");
     if (!metric) continue;
     await upsertInternalPeriodSample({
       id: `msamp_hours_used_${day.account_id}_${dayStart.toISOString().slice(0, 10)}`,
@@ -249,7 +339,7 @@ async function rollupCompletedHours(now = new Date()): Promise<void> {
       seconds_used: number;
     }>;
   for (const day of provisional) {
-    const metric = await ensureHoursUsedMetric(day.account_id);
+    const metric = (await ensureUsageMetrics(day.account_id)).get("hours-used");
     if (!metric) continue;
     await upsertInternalPeriodSample({
       id: `msamp_hours_used_${day.account_id}_${currentDayStart.toISOString().slice(0, 10)}`,
