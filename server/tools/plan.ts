@@ -624,6 +624,7 @@ async function handleExecute(
       planId,
       originSessionId: sessionId,
       planTitle,
+      launchKey: `nested/${authority.runtimeRunId}/${String(args._toolCallId || planId)}`,
       parentRuntimeRunId: authority.runtimeRunId,
     });
     return {
@@ -631,43 +632,18 @@ async function handleExecute(
     };
   }
 
-  const { executePlan } = await import("../plan-executor");
+  const principal = requireCurrentPrincipal();
+  const { enqueuePlanExecutionRuntimeRun } = await import("../runtime/proof-path-handlers");
+  const launched = await enqueuePlanExecutionRuntimeRun(principal, {
+    planId,
+    originSessionId: sessionId,
+    planTitle,
+    launchKey: `tool/${sessionId}/${String(args._toolCallId || planId)}`,
+  });
+  return {
+    result: `Plan **${planTitle}** accepted for Runtime execution.\n\nPlan DB ID: ${plan.id}\nRuntime Run ID: ${launched.run.id}\nPage ID: ${plan.pageId} @plan:${plan.id}${page ? ` @page:${page.slug}` : ""}`,
+  };
 
-  if (!plan.blocking) {
-    executePlan(planId, sessionId, planTitle, false).catch((err) => {
-      log.error(
-        `[${planId}] Background execution failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
-    return {
-      result: `Plan **${planTitle}** started in background. You'll be notified on completion or failure.\n\nPlan DB ID: ${plan.id}\nPage ID: ${plan.pageId} @plan:${plan.id}${page ? ` @page:${page.slug}` : ""}`,
-    };
-  }
-
-  const result = await executePlan(planId, sessionId, planTitle, true);
-
-  const isComplete =
-    result.status === "completed" ||
-    result.status === ("completed_with_failures" as PlanStatus);
-  if (isComplete) {
-    return {
-      result: `✅ Plan **${planTitle}** completed — ${result.completedSteps}/${result.totalSteps} steps in ${formatDuration(result.totalDuration)}. @plan:${plan.id}${page ? ` @page:${page.slug}` : ""}`,
-    };
-  } else if (result.status === "needs_review") {
-    return {
-      result: `👀 Plan **${planTitle}** needs review — ${result.completedSteps}/${result.totalSteps} steps executed. @plan:${plan.id}${page ? ` @page:${page.slug}` : ""}`,
-    };
-  } else if (result.status === "paused") {
-    return {
-      result: `⚠️ Plan **${planTitle}** paused — ${result.completedSteps}/${result.totalSteps} steps completed. ${result.error || ""}. Use plan(action: "resume", planId: "${planId}") to retry. @plan:${plan.id}${page ? ` @page:${page.slug}` : ""}`,
-      error: true,
-    };
-  } else {
-    return {
-      result: `❌ Plan **${planTitle}** failed — ${result.error || "Unknown error"}. @plan:${resolvedPlanId}${page ? ` @page:${page.slug}` : ""}`,
-      error: true,
-    };
-  }
 }
 
 /** Legacy execute path for YAML-backed plans created before the DB migration. */

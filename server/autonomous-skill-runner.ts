@@ -664,6 +664,8 @@ export async function executeAutonomousSkillRun(
     coordinationKey?: string;
     /** Native Runtime attempt that already owns capacity for this Skill execution. */
     runtimeFence?: { runId: string; attemptId: string };
+    /** Runtime-owned cancellation signal for a native fenced execution. */
+    signal?: AbortSignal;
   } = {}
 ): Promise<AutonomousRunResult | null> {
   // ── Ensure user principal context ───────────────────────────────────
@@ -1390,11 +1392,14 @@ async function runCouncilPipeline(
 async function runSkillPipeline(
   config: SkillRunConfig,
   sessionId: string,
-  options: { preContext?: string; parentSessionId?: string; spawnReason?: string; spawnerTool?: string; spawnerSkillRun?: string; modelOverride?: string; sessionKeyOverride?: string; admissionTier?: AdmissionTier; lineageId?: string },
+  options: { preContext?: string; parentSessionId?: string; spawnReason?: string; spawnerTool?: string; spawnerSkillRun?: string; modelOverride?: string; sessionKeyOverride?: string; admissionTier?: AdmissionTier; lineageId?: string; runtimeFence?: { runId: string; attemptId: string }; signal?: AbortSignal },
   authoritySkillId: string | undefined,
 ): Promise<AutonomousRunResult> {
   const startTime = Date.now();
   const abortController = new AbortController();
+  const abortFromRuntime = () => abortController.abort(options.signal?.reason ?? "runtime_cancelled");
+  if (options.signal?.aborted) abortFromRuntime();
+  else options.signal?.addEventListener("abort", abortFromRuntime, { once: true });
   const effectiveAdmissionTier = options.admissionTier ?? (options.parentSessionId ? "realtime" : (config.admissionTier ?? "background"));
   const effectiveLineageId = options.lineageId ?? options.parentSessionId ?? sessionId;
 
@@ -1663,6 +1668,7 @@ async function runSkillPipeline(
     return { sessionId, status: "succeeded", summary: content.slice(0, 2000), durationMs };
 
   } finally {
+    options.signal?.removeEventListener("abort", abortFromRuntime);
     inactivityTimer.clear();
     if (stallTimer) clearTimeout(stallTimer);
   }

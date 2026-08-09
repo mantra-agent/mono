@@ -15,6 +15,7 @@ import { runtimeHandlerRegistry, type RuntimeAttemptDecision, type RuntimeHandle
 
 const WEEKLY_IDEAS_HANDLER_KEY = "skill.execute.weekly_ideas";
 const TIMER_SKILL_HANDLER_KEY = "skill.execute.timer";
+const SKILL_EXECUTION_HANDLER_KEY = "skill.execute";
 const MEMORY_SOURCE_HANDLER_KEY = "memory.source.process";
 const PLAN_EXECUTION_HANDLER_KEY = "plan.execute";
 const HANDLER_VERSION = 1;
@@ -34,11 +35,19 @@ interface TimerSkillInput {
   prompt?: string;
 }
 
+interface SkillExecutionInput {
+  skillId: string;
+  preContext?: string;
+  launchKey: string;
+  spawnerTool: string;
+}
+
 interface PlanExecutionInput {
   planId: string;
   originSessionId: string;
   planTitle: string;
-  parentRuntimeRunId: string;
+  launchKey: string;
+  parentRuntimeRunId?: string;
 }
 
 interface MemorySourceInput {
@@ -93,13 +102,29 @@ function parseTimerSkillInput(value: unknown): TimerSkillInput {
   };
 }
 
+function parseSkillExecutionInput(value: unknown): SkillExecutionInput {
+  const input = parseObject(value, "Skill execution input");
+  const preContext = typeof input.preContext === "string" && input.preContext.trim()
+    ? parseBoundedString(input.preContext, "preContext", 40_000)
+    : undefined;
+  return {
+    skillId: parseBoundedString(input.skillId, "skillId", 160),
+    preContext,
+    launchKey: parseBoundedString(input.launchKey, "launchKey", 300),
+    spawnerTool: parseBoundedString(input.spawnerTool, "spawnerTool", 160),
+  };
+}
+
 function parsePlanExecutionInput(value: unknown): PlanExecutionInput {
   const input = parseObject(value, "Plan execution input");
   return {
     planId: parseBoundedString(input.planId, "planId", 160),
     originSessionId: parseBoundedString(input.originSessionId, "originSessionId", 160),
     planTitle: parseBoundedString(input.planTitle, "planTitle", 300),
-    parentRuntimeRunId: parseBoundedString(input.parentRuntimeRunId, "parentRuntimeRunId", 160),
+    launchKey: parseBoundedString(input.launchKey, "launchKey", 300),
+    parentRuntimeRunId: typeof input.parentRuntimeRunId === "string" && input.parentRuntimeRunId.trim()
+      ? parseBoundedString(input.parentRuntimeRunId, "parentRuntimeRunId", 160)
+      : undefined,
   };
 }
 
@@ -288,6 +313,52 @@ async function executeTimerSkill(
   };
 }
 
+async function authorizeSkillExecution(principal: Principal, input: SkillExecutionInput) {
+  requireUserPrincipal(principal);
+  const { storage } = await import("../storage");
+  const skill = await storage.getSkill(input.skillId) ?? await storage.getSkillByName(input.skillId);
+  const allowed = Boolean(skill && skill.status === "active");
+  return { allowed, reasonCode: allowed ? "skill_execution_authorized" : "skill_execution_authority_revoked" };
+}
+
+async function executeSkillRuntime(
+  context: Parameters<RuntimeHandler<SkillExecutionInput>["execute"]>[0],
+  input: SkillExecutionInput,
+): Promise<RuntimeAttemptDecision> {
+  const { storage } = await import("../storage");
+  const existing = terminalSkillRunResult(input.skillId, await storage.getSkillRunByRuntimeRunId(context.fence.runId));
+  if (existing) return existing;
+  const { executeAutonomousSkillRun } = await import("../autonomous-skill-runner");
+  const result = await executeAutonomousSkillRun(input.skillId, {
+    preContext: input.preContext,
+    coordinationKey: `runtime:${context.fence.runId}`,
+    sessionKeyOverride: `runtime:${context.fence.runId}`,
+    spawnerTool: input.spawnerTool,
+    runtimeFence: { runId: context.fence.runId, attemptId: context.fence.attemptId },
+    signal: context.signal,
+  });
+  if (!result) {
+    return {
+      kind: "retry",
+      failureClass: "transient_runtime_coordination",
+      reasonCode: "skill_execution_coordination_busy",
+      attribution: "runtime",
+      retryAt: new Date(Date.now() + 60_000),
+    };
+  }
+  const outputRefs = [`@session:${result.sessionId}`];
+  await context.appendEvidence({
+    eventType: "verification",
+    reasonCode: "skill_execution_observed",
+    payload: { skillId: input.skillId, launchKey: input.launchKey, sessionId: result.sessionId, skillStatus: result.status },
+  });
+  if (result.status === "yielded") {
+    return { kind: "complete", outcome: "cancelled", reasonCode: "skill_execution_yielded", attribution: "runtime", outputRefs, verificationLevel: "observed" };
+  }
+  const outcome = result.status === "succeeded" ? "succeeded" : result.status === "degraded" ? "degraded" : "failed";
+  return { kind: "complete", outcome, reasonCode: `skill_execution_${outcome}`, attribution: "handler", outputRefs, verificationLevel: "observed" };
+}
+
 async function authorizePlanExecution(principal: Principal, input: PlanExecutionInput) {
   requireUserPrincipal(principal);
   const { resolvePlanByIdOrPage } = await import("../plan-service");
@@ -315,7 +386,7 @@ async function executePlanRuntime(
     reasonCode: "plan_execution_observed",
     payload: {
       planId: input.planId,
-      parentRuntimeRunId: input.parentRuntimeRunId,
+      parentRuntimeRunId: input.parentRuntimeRunId ?? null,
       status: result.status,
       completedSteps: result.completedSteps,
       totalSteps: result.totalSteps,
@@ -443,6 +514,17 @@ export function registerRuntimeProofPathHandlers(): void {
       }
     },
   });
+  runtimeHandlerRegistry.register<SkillExecutionInput>({
+    key: SKILL_EXECUTION_HANDLER_KEY,
+    version: HANDLER_VERSION,
+    inputSchemaVersion: INPUT_SCHEMA_VERSION,
+    inputSchema: { parse: parseSkillExecutionInput },
+    resourcePool: "background_agent",
+    executorProfile: "in_process_trusted",
+    requiredCapabilities: ["skill:execute"],
+    authorize: authorizeSkillExecution,
+    execute: executeSkillRuntime,
+  });
   runtimeHandlerRegistry.register<PlanExecutionInput>({
     key: PLAN_EXECUTION_HANDLER_KEY,
     version: HANDLER_VERSION,
@@ -526,6 +608,26 @@ export async function enqueueWeeklyIdeasRuntimeRun(
   });
 }
 
+export async function enqueueSkillExecutionRuntimeRun(
+  principal: Principal,
+  input: SkillExecutionInput,
+) {
+  requireUserPrincipal(principal);
+  return enqueueRuntimeRun(principal, {
+    kind: "skill.execution",
+    handler: { key: SKILL_EXECUTION_HANDLER_KEY, version: HANDLER_VERSION },
+    source: { type: "skill", id: input.skillId },
+    idempotencyKey: `skill-execution/${input.launchKey}`,
+    deadlineAt: new Date(Date.now() + 4 * HOUR_MS),
+    inputSchemaVersion: INPUT_SCHEMA_VERSION,
+    input,
+    inputRefs: [],
+    authorityPolicyVersionAtEnqueue: AUTHORITY_POLICY_VERSION,
+    budget: runtimeBudget(3 * HOUR_MS),
+    retryPolicy: runtimeRetryPolicy(),
+  });
+}
+
 export async function enqueuePlanExecutionRuntimeRun(
   principal: Principal,
   input: PlanExecutionInput,
@@ -535,7 +637,7 @@ export async function enqueuePlanExecutionRuntimeRun(
     kind: "plan.execution",
     handler: { key: PLAN_EXECUTION_HANDLER_KEY, version: HANDLER_VERSION },
     source: { type: "plan", id: input.planId },
-    idempotencyKey: `plan-execution/${input.planId}`,
+    idempotencyKey: `plan-execution/${input.launchKey}`,
     deadlineAt: new Date(Date.now() + 24 * HOUR_MS),
     inputSchemaVersion: INPUT_SCHEMA_VERSION,
     input,
